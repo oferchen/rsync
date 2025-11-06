@@ -129,6 +129,9 @@ pub(crate) fn prepare_invocation(
         fallback_binary,
         rsync_path,
         mut remainder,
+        write_batch,
+        only_write_batch,
+        read_batch,
         #[cfg(feature = "acl")]
         acls,
         #[cfg(feature = "xattr")]
@@ -251,6 +254,21 @@ pub(crate) fn prepare_invocation(
     if let Some(value) = stop_at {
         let mut arg = OsString::from("--stop-at=");
         arg.push(value);
+        command_args.push(arg);
+    }
+    if let Some(prefix) = write_batch {
+        let mut arg = OsString::from("--write-batch=");
+        arg.push(prefix);
+        command_args.push(arg);
+    }
+    if let Some(prefix) = only_write_batch {
+        let mut arg = OsString::from("--only-write-batch=");
+        arg.push(prefix);
+        command_args.push(arg);
+    }
+    if let Some(prefix) = read_batch {
+        let mut arg = OsString::from("--read-batch=");
+        arg.push(prefix);
         command_args.push(arg);
     }
 

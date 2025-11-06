@@ -1,7 +1,9 @@
+use crate::fallback::{CLIENT_FALLBACK_ENV, describe_missing_fallback_binary};
 use crate::message::{Message, Role};
 use crate::rsync_error;
 use rsync_engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
 use std::error::Error;
+use std::ffi::OsStr;
 use std::fmt;
 use std::io;
 use std::path::Path;
@@ -56,6 +58,13 @@ pub(crate) fn missing_operands_error() -> ClientError {
         "missing source operands: supply at least one source and a destination"
     )
     .with_role(Role::Client);
+    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+}
+
+pub(crate) fn fallback_context_missing_error() -> ClientError {
+    let diagnostic = describe_missing_fallback_binary(OsStr::new("rsync"), &[CLIENT_FALLBACK_ENV]);
+    let text = format!("legacy rsync fallback required for this transfer: {diagnostic}");
+    let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Client);
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 

@@ -104,6 +104,8 @@ mod parse_args_reads_tests;
 mod parse_args_recognises_append_tests;
 #[path = "parse_args_recognises_archive.rs"]
 mod parse_args_recognises_archive_tests;
+#[path = "parse_args_recognises_batch.rs"]
+mod parse_args_recognises_batch_tests;
 #[path = "parse_args_recognises_block_size.rs"]
 mod parse_args_recognises_block_size_tests;
 #[path = "parse_args_recognises_checksum.rs"]
@@ -232,6 +234,8 @@ mod remote_fallback_forwards_acls_tests;
 mod remote_fallback_forwards_append_tests;
 #[path = "remote_fallback_forwards_backup.rs"]
 mod remote_fallback_forwards_backup_tests;
+#[path = "remote_fallback_forwards_batch.rs"]
+mod remote_fallback_forwards_batch_tests;
 #[path = "remote_fallback_forwards_compress.rs"]
 mod remote_fallback_forwards_compress_tests;
 #[path = "remote_fallback_forwards_connect.rs"]

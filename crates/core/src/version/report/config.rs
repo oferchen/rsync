@@ -73,7 +73,7 @@ impl VersionInfoConfig {
             supports_hardlink_symlinks: cfg!(unix),
             supports_ipv6: true,
             supports_atimes: true,
-            supports_batchfiles: false,
+            supports_batchfiles: true,
             supports_inplace: true,
             supports_append: true,
             supports_acls: cfg!(feature = "acl"),
