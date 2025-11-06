@@ -30,7 +30,7 @@ use serde::ser::{Serialize, Serializer};
 /// [`OC_RSYNC_BRAND`][super::brand_override_env_var] to accept human-readable aliases.
 /// The parser tolerates ASCII case differences, leading/trailing whitespace, and
 /// versioned program names.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Brand {
     /// Upstream-compatible binaries (`rsync` and `rsyncd`).
     Upstream,

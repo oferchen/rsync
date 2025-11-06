@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use super::{Message, Severity};
-use crate::message::strings;
+use crate::{branding::Brand, message::strings};
 
 impl Message {
     /// Creates a message with the provided severity and payload.
@@ -22,6 +22,7 @@ impl Message {
             text: text.into(),
             role: None,
             source: None,
+            brand: Brand::Upstream,
         }
     }
 

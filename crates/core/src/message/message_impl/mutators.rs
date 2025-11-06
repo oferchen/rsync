@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use super::{Message, Role, Severity, SourceLocation};
+use crate::branding::Brand;
 
 impl Message {
     /// Replaces the message payload with the provided text.
@@ -65,5 +66,20 @@ impl Message {
     pub fn without_code(mut self) -> Self {
         self.code = None;
         self
+    }
+
+    /// Applies a brand to the message, adjusting rendered prefixes accordingly.
+    #[inline]
+    #[must_use = "the updated message must be emitted to observe the applied brand"]
+    pub fn with_brand(mut self, brand: Brand) -> Self {
+        self.brand = brand;
+        self
+    }
+
+    /// Returns the brand associated with the message.
+    #[inline]
+    #[must_use]
+    pub const fn brand(&self) -> Brand {
+        self.brand
     }
 }

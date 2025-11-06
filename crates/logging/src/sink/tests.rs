@@ -1,6 +1,6 @@
 use super::*;
 use crate::LineMode;
-use rsync_core::message::{Message, MessageScratch};
+use rsync_core::{branding::Brand, message::{Message, MessageScratch}};
 use std::io::{self, Cursor, Write};
 
 #[test]
@@ -443,8 +443,9 @@ fn into_parts_allows_reusing_scratch() {
         MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
     sink.write(Message::info("first")).expect("write succeeds");
 
-    let (writer, scratch, mode) = sink.into_parts();
+    let (writer, scratch, mode, brand) = sink.into_parts();
     assert_eq!(mode, LineMode::WithoutNewline);
+    assert_eq!(brand, Brand::Upstream);
 
     let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);
     sink.write(Message::warning("second"))

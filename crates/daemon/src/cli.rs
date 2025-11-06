@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::{Command as ProcessCommand, Stdio};
 
 use rsync_core::{
-    branding::Brand,
+    branding::{self, Brand},
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, FallbackOverride,
         describe_missing_fallback_binary, fallback_binary_available, fallback_override,
@@ -36,8 +36,10 @@ where
     Out: Write,
     Err: Write,
 {
-    let mut stderr_sink = MessageSink::new(stderr);
-    match parse_args(arguments) {
+    let args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
+    let brand = branding::detect_brand(args.first().map(OsString::as_os_str));
+    let mut stderr_sink = MessageSink::with_brand(stderr, brand);
+    match parse_args(args) {
         Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
         Err(error) => {
             let message = rsync_error!(1, "{}", error).with_role(Role::Daemon);

@@ -27,7 +27,8 @@ where
     where
         M: Borrow<Message>,
     {
-        self.render_message(message.borrow(), self.line_mode.append_newline())
+        let branded = message.borrow().clone().with_brand(self.brand);
+        self.render_message(&branded, self.line_mode.append_newline())
     }
 
     /// Writes `message` using an explicit [`LineMode`] without mutating the sink.
@@ -41,7 +42,8 @@ where
     where
         M: Borrow<Message>,
     {
-        self.render_message(message.borrow(), line_mode.append_newline())
+        let branded = message.borrow().clone().with_brand(self.brand);
+        self.render_message(&branded, line_mode.append_newline())
     }
 
     /// Streams pre-rendered [`MessageSegments`] into the underlying writer.
@@ -100,7 +102,8 @@ where
     {
         let append_newline = self.line_mode.append_newline();
         for message in messages {
-            self.render_message(message.borrow(), append_newline)?;
+            let branded = message.borrow().clone().with_brand(self.brand);
+            self.render_message(&branded, append_newline)?;
         }
         Ok(())
     }
@@ -119,7 +122,8 @@ where
     {
         let append_newline = line_mode.append_newline();
         for message in messages {
-            self.render_message(message.borrow(), append_newline)?;
+            let branded = message.borrow().clone().with_brand(self.brand);
+            self.render_message(&branded, append_newline)?;
         }
         Ok(())
     }

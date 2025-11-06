@@ -113,4 +113,29 @@ mod tests {
             "diagnostic should include the branded role trailer"
         );
     }
+
+    #[test]
+    fn oc_brand_reports_usage_with_branded_prefix() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let exit = run_with([OsString::from(OC_PROGRAM_NAME)], &mut stdout, &mut stderr);
+
+        assert_eq!(exit, ExitCode::FAILURE);
+
+        let stderr_text = String::from_utf8(stderr).expect("stderr is UTF-8");
+        assert!(
+            stderr_text.contains("oc-rsync error: syntax or usage error (code 1)"),
+            "oc-branded binary should render diagnostics using the oc-rsync prefix"
+        );
+        assert!(
+            stderr_text.contains("[client=3.4.1-rust]"),
+            "diagnostic should include the branded role trailer"
+        );
+
+        let stdout_text = String::from_utf8(stdout).expect("stdout is UTF-8");
+        assert!(
+            stdout_text.starts_with(&format!("{OC_PROGRAM_NAME}  version")),
+            "oc-branded binary should render usage banner with oc prefix"
+        );
+    }
 }

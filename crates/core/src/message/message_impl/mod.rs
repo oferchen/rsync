@@ -6,6 +6,7 @@ use super::{
     VERSION_SUFFIX,
     numbers::{encode_signed_decimal, encode_unsigned_decimal},
 };
+use crate::branding::Brand;
 
 mod classification;
 mod constructors;
@@ -39,6 +40,7 @@ pub struct Message {
     text: Cow<'static, str>,
     role: Option<Role>,
     source: Option<SourceLocation>,
+    brand: Brand,
 }
 
 impl Message {
@@ -73,23 +75,40 @@ impl Message {
             total_len += slice.len();
         };
 
-        push(self.severity.prefix().as_bytes());
+        let prefix_len = self.render_prefix(self.brand, scratch);
+
+        let code_digits_range = self.code.map(|code| {
+            let digits = encode_signed_decimal(i64::from(code), &mut scratch.code_digits);
+            let len = digits.len();
+            (scratch.code_digits.len() - len, len)
+        });
+
+        let source_info = self.source.as_ref().map(|source| {
+            let digits = encode_unsigned_decimal(u64::from(source.line()), &mut scratch.line_digits);
+            let len = digits.len();
+            let start = scratch.line_digits.len() - len;
+            (source.path().as_bytes(), start, len)
+        });
+
+        {
+            let buffer = scratch.prefix_buffer();
+            push(&buffer[..prefix_len]);
+        }
         push(self.text.as_bytes());
 
-        if let Some(code) = self.code {
+        if let Some((start, len)) = code_digits_range {
             push(b" (code ");
-            let digits = encode_signed_decimal(i64::from(code), &mut scratch.code_digits);
-            push(digits.as_bytes());
+            let digits = &scratch.code_digits[start..start + len];
+            push(digits);
             push(b")");
         }
 
-        if let Some(source) = &self.source {
+        if let Some((path_bytes, start, len)) = source_info {
             push(b" at ");
-            push(source.path().as_bytes());
+            push(path_bytes);
             push(b":");
-            let digits =
-                encode_unsigned_decimal(u64::from(source.line()), &mut scratch.line_digits);
-            push(digits.as_bytes());
+            let digits = &scratch.line_digits[start..start + len];
+            push(digits);
         }
 
         if let Some(role) = self.role {
@@ -109,6 +128,32 @@ impl Message {
             count,
             total_len,
         }
+    }
+
+    fn render_prefix(&self, brand: Brand, scratch: &mut MessageScratch) -> usize {
+        let program_name = match brand {
+            Brand::Oc => match self.role {
+                Some(Role::Daemon | Role::Server) => Brand::Oc.daemon_program_name(),
+                _ => Brand::Oc.client_program_name(),
+            },
+            Brand::Upstream => Brand::Upstream.client_program_name(),
+        };
+        let severity = self.severity.as_str();
+        let buffer = scratch.prefix_buffer_mut();
+        let mut len = 0usize;
+
+        buffer[..program_name.len()].copy_from_slice(program_name.as_bytes());
+        len += program_name.len();
+        buffer[len] = b' ';
+        len += 1;
+        buffer[len..len + severity.len()].copy_from_slice(severity.as_bytes());
+        len += severity.len();
+        buffer[len] = b':';
+        len += 1;
+        buffer[len] = b' ';
+        len += 1;
+
+        len
     }
 
     /// Invokes the provided closure with the vectored representation of the message.
