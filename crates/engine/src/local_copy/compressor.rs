@@ -3,6 +3,9 @@ use std::io;
 use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 
+#[cfg(feature = "lz4")]
+use rsync_compress::lz4::CountingLz4Encoder;
+
 #[cfg(feature = "zstd")]
 use rsync_compress::zstd::CountingZstdEncoder;
 
@@ -11,6 +14,9 @@ use rsync_compress::zstd::CountingZstdEncoder;
 pub enum ActiveCompressor {
     /// zlib-based encoder compatible with upstream rsync's historical default.
     Zlib(CountingZlibEncoder),
+    /// LZ4 frame encoder negotiated via `--compress-choice=lz4`.
+    #[cfg(feature = "lz4")]
+    Lz4(CountingLz4Encoder),
     /// Zstandard encoder negotiated via `--compress-choice=zstd`.
     #[cfg(feature = "zstd")]
     Zstd(CountingZstdEncoder),
@@ -21,6 +27,8 @@ impl ActiveCompressor {
     pub fn new(algorithm: CompressionAlgorithm, level: CompressionLevel) -> io::Result<Self> {
         match algorithm {
             CompressionAlgorithm::Zlib => Ok(Self::Zlib(CountingZlibEncoder::new(level))),
+            #[cfg(feature = "lz4")]
+            CompressionAlgorithm::Lz4 => Ok(Self::Lz4(CountingLz4Encoder::new(level))),
             #[cfg(feature = "zstd")]
             CompressionAlgorithm::Zstd => CountingZstdEncoder::new(level).map(Self::Zstd),
             #[allow(unreachable_patterns)]
@@ -38,6 +46,8 @@ impl ActiveCompressor {
     pub fn write(&mut self, chunk: &[u8]) -> io::Result<()> {
         match self {
             Self::Zlib(encoder) => encoder.write(chunk),
+            #[cfg(feature = "lz4")]
+            Self::Lz4(encoder) => encoder.write(chunk),
             #[cfg(feature = "zstd")]
             Self::Zstd(encoder) => encoder.write(chunk),
         }
@@ -48,6 +58,8 @@ impl ActiveCompressor {
     pub fn bytes_written(&self) -> u64 {
         match self {
             Self::Zlib(encoder) => encoder.bytes_written(),
+            #[cfg(feature = "lz4")]
+            Self::Lz4(encoder) => encoder.bytes_written(),
             #[cfg(feature = "zstd")]
             Self::Zstd(encoder) => encoder.bytes_written(),
         }
@@ -57,6 +69,8 @@ impl ActiveCompressor {
     pub fn finish(self) -> io::Result<u64> {
         match self {
             Self::Zlib(encoder) => encoder.finish(),
+            #[cfg(feature = "lz4")]
+            Self::Lz4(encoder) => encoder.finish(),
             #[cfg(feature = "zstd")]
             Self::Zstd(encoder) => encoder.finish(),
         }

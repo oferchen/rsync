@@ -13,9 +13,9 @@
 //!
 //! # Design
 //!
-//! The crate currently provides the [`zlib`] and [`zstd`] modules, which
+//! The crate currently provides the [`zlib`], [`lz4`], and [`zstd`] modules, which
 //! implement streaming-friendly encoders and decoders built on top of
-//! [`flate2`](https://docs.rs/flate2) and
+//! [`flate2`](https://docs.rs/flate2), [`lz4_flex`](https://docs.rs/lz4_flex), and
 //! [`zstd`](https://docs.rs/zstd) respectively. The API emphasises
 //! incremental processing: callers provide scratch buffers that are filled with
 //! compressed or decompressed data while the internal state tracks totals for
@@ -26,7 +26,8 @@
 //! - Encoders and decoders never allocate internal output buffers. All output is
 //!   written into the caller-provided vectors, allowing upper layers to reuse
 //!   storage across files.
-//! - Streams are finalised explicitly via [`zlib::CountingZlibEncoder::finish`]
+//! - Streams are finalised explicitly via
+//!   [`zlib::CountingZlibEncoder::finish`], [`lz4::CountingLz4Encoder::finish`],
 //!   and [`zstd::CountingZstdEncoder::finish`], which emit trailer bytes and
 //!   report the final compressed length.
 //! - Errors from the underlying zlib implementation are surfaced as
@@ -64,11 +65,14 @@
 //! # See also
 //!
 //! - [`zlib`] for the zlib encoder/decoder implementation and API surface.
+//! - [`lz4`] for the LZ4 frame encoder/decoder implementation.
 //! - [`zstd`] for the Zstandard encoder/decoder implementation.
 //! - `rsync_engine` for the transfer pipeline that integrates these helpers.
 
 pub mod algorithm;
 mod common;
+#[cfg(feature = "lz4")]
+pub mod lz4;
 pub mod zlib;
 #[cfg(feature = "zstd")]
 pub mod zstd;

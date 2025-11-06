@@ -349,6 +349,11 @@ pub(crate) fn default_compress_algorithms() -> Vec<Cow<'static, str>> {
         algorithms.push(Cow::Borrowed("zstd"));
     }
 
+    if cfg!(feature = "lz4") {
+        algorithms.push(Cow::Borrowed("lz4"));
+    }
+
+    algorithms.push(Cow::Borrowed("zlibx"));
     algorithms.push(Cow::Borrowed("zlib"));
     algorithms.push(Cow::Borrowed("none"));
     algorithms

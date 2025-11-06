@@ -15,9 +15,11 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["zstd"]
+default = ["zstd", "lz4"]
 zstd = ["dep:zstd"]
+lz4 = ["dep:lz4_flex"]
 
 [dependencies]
 flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
 zstd = { version = "0.13", optional = true }
+lz4_flex = { version = "0.11", optional = true, default-features = false, features = ["frame"] }
