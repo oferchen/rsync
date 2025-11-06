@@ -2,9 +2,9 @@
 
 #[path = "client.rs"]
 mod client;
-mod support;
 #[path = "daemon_wrapper.rs"]
 mod daemon_wrapper;
+mod support;
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -28,6 +28,7 @@ where
     Out: Write,
     Err: Write,
 {
-    let forwarded = daemon_wrapper::wrap_daemon_arguments(args, Brand::Upstream.daemon_program_name());
+    let forwarded =
+        daemon_wrapper::wrap_daemon_arguments(args, Brand::Upstream.daemon_program_name());
     client::run_with(forwarded, stdout, stderr)
 }

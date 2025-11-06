@@ -34,11 +34,14 @@ mod tests {
 
     #[test]
     fn wrap_daemon_arguments_inserts_flag_and_preserves_rest() {
-        let wrapped = wrap_daemon_arguments([
-            OsString::from("oc-rsyncd"),
-            OsString::from("--config"),
-            OsString::from("/tmp/conf"),
-        ], "oc-rsyncd");
+        let wrapped = wrap_daemon_arguments(
+            [
+                OsString::from("oc-rsyncd"),
+                OsString::from("--config"),
+                OsString::from("/tmp/conf"),
+            ],
+            "oc-rsyncd",
+        );
 
         assert_eq!(wrapped[0], OsString::from("oc-rsyncd"));
         assert_eq!(wrapped[1], OsString::from("--daemon"));
@@ -49,6 +52,9 @@ mod tests {
     #[test]
     fn wrap_daemon_arguments_uses_fallback_when_empty() {
         let wrapped = wrap_daemon_arguments::<[OsString; 0], _>([], "rsyncd");
-        assert_eq!(wrapped, vec![OsString::from("rsyncd"), OsString::from("--daemon")]);
+        assert_eq!(
+            wrapped,
+            vec![OsString::from("rsyncd"), OsString::from("--daemon")]
+        );
     }
 }
