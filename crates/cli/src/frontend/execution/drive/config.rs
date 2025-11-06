@@ -5,6 +5,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_core::client::{
     AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
     SkipCompressList, StrongChecksumChoice, TransferTimeout,
@@ -35,6 +36,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) compression_setting: CompressionSetting,
     pub(crate) compress: bool,
     pub(crate) compression_level_override: Option<rsync_compress::zlib::CompressionLevel>,
+    pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
     pub(crate) owner: bool,
     pub(crate) owner_override: Option<uid_t>,
     pub(crate) group: bool,
@@ -175,6 +177,10 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .timeout(inputs.timeout)
         .connect_timeout(inputs.connect_timeout)
         .stop_at(inputs.stop_deadline);
+
+    if let Some(algorithm) = inputs.compression_algorithm {
+        builder = builder.compression_algorithm(algorithm);
+    }
 
     if let Some(choice) = inputs.checksum_choice {
         builder = builder.checksum_choice(choice);

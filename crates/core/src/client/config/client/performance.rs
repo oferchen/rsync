@@ -17,6 +17,13 @@ impl ClientConfig {
         self.compression_level
     }
 
+    /// Returns the compression algorithm requested by the caller.
+    #[must_use]
+    #[doc(alias = "--compress-choice")]
+    pub const fn compression_algorithm(&self) -> CompressionAlgorithm {
+        self.compression_algorithm
+    }
+
     /// Returns the compression setting that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]

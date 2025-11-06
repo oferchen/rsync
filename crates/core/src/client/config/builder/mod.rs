@@ -8,6 +8,7 @@ use super::{
     FilterRuleSpec, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumChoice,
     TransferTimeout,
 };
+use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_engine::SkipCompressList;
 use rsync_meta::ChmodModifiers;
@@ -36,6 +37,7 @@ pub struct ClientConfigBuilder {
     omit_dir_times: bool,
     omit_link_times: bool,
     compress: bool,
+    compression_algorithm: CompressionAlgorithm,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
     skip_compress: SkipCompressList,
@@ -121,6 +123,7 @@ impl ClientConfigBuilder {
             omit_dir_times: self.omit_dir_times,
             omit_link_times: self.omit_link_times,
             compress: self.compress,
+            compression_algorithm: self.compression_algorithm,
             compression_level: self.compression_level,
             compression_setting: self.compression_setting,
             skip_compress: self.skip_compress,

@@ -53,6 +53,7 @@ pub(crate) fn prepare_invocation(
         compress,
         compress_disabled,
         compress_level,
+        compress_choice,
         skip_compress,
         stop_after,
         stop_at,
@@ -227,6 +228,12 @@ pub(crate) fn prepare_invocation(
     if let Some(level) = compress_level {
         command_args.push(OsString::from("--compress-level"));
         command_args.push(level);
+    }
+
+    if let Some(choice) = compress_choice {
+        let mut arg = OsString::from("--compress-choice=");
+        arg.push(choice);
+        command_args.push(arg);
     }
 
     if let Some(spec) = skip_compress {

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
+use super::ActiveCompressor;
 use super::filter_program::{
     ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
     FilterSegmentLayers, FilterSegmentStack, directory_has_marker,
@@ -31,7 +32,8 @@ use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
 use rsync_bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use rsync_checksums::RollingChecksum;
-use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
+use rsync_compress::algorithm::CompressionAlgorithm;
+use rsync_compress::zlib::CompressionLevel;
 use rsync_filters::FilterRule;
 use rsync_meta::{MetadataOptions, apply_file_metadata_with_options};
 

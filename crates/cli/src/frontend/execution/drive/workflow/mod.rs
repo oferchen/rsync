@@ -81,6 +81,7 @@ where
         compress: compress_flag,
         no_compress,
         compress_level,
+        compress_choice,
         skip_compress,
         owner,
         group,
@@ -225,6 +226,7 @@ where
         compress_flag,
         no_compress,
         compress_level: &compress_level,
+        compress_choice: &compress_choice,
         skip_compress: &skip_compress,
     };
 
@@ -250,6 +252,7 @@ where
         compress_level_cli,
         skip_compress_list,
         compression_setting,
+        compression_algorithm,
     } = match options::derive_settings(stdout, stderr, settings_inputs) {
         options::SettingsOutcome::Proceed(settings) => *settings,
         options::SettingsOutcome::Exit(code) => return code,
@@ -350,6 +353,7 @@ where
         compress,
         compress_disabled,
         compress_level_cli: compress_level_cli.as_ref(),
+        compress_choice: compress_choice.as_ref(),
         skip_compress: skip_compress.as_ref(),
         parsed_chown: parsed_chown.as_ref(),
         owner,
@@ -520,6 +524,7 @@ where
         compression_setting,
         compress,
         compression_level_override,
+        compression_algorithm,
         owner: preserve_owner,
         owner_override: owner_override_value,
         group: preserve_group,

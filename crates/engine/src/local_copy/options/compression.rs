@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 
 use super::types::LocalCopyOptions;
@@ -25,6 +26,14 @@ impl LocalCopyOptions {
         level: Option<CompressionLevel>,
     ) -> Self {
         self.compression_level_override = level;
+        self
+    }
+
+    /// Overrides the compression algorithm to use when compression is enabled.
+    #[must_use]
+    #[doc(alias = "--compress-choice")]
+    pub const fn with_compression_algorithm(mut self, algorithm: CompressionAlgorithm) -> Self {
+        self.compression_algorithm = algorithm;
         self
     }
 
@@ -71,11 +80,28 @@ impl LocalCopyOptions {
         }
     }
 
+    /// Returns the compression algorithm that should be used when compression is enabled.
+    #[must_use]
+    pub const fn compression_algorithm(&self) -> CompressionAlgorithm {
+        self.compression_algorithm
+    }
+
     /// Returns the effective compression level when compression is enabled.
     #[must_use]
     pub const fn effective_compression_level(&self) -> Option<CompressionLevel> {
         if self.compress {
             Some(self.compression_level())
+        } else {
+            None
+        }
+    }
+
+    /// Returns the effective compression algorithm when compression is enabled.
+    #[must_use]
+    #[doc(alias = "--compress-choice")]
+    pub const fn effective_compression_algorithm(&self) -> Option<CompressionAlgorithm> {
+        if self.compress {
+            Some(self.compression_algorithm)
         } else {
             None
         }

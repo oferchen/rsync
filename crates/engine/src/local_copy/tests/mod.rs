@@ -2,6 +2,7 @@ use super::*;
 use crate::signature::SignatureAlgorithm;
 use filetime::{FileTime, set_file_mtime, set_file_times};
 use rsync_bandwidth::BandwidthLimiter;
+use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_filters::{FilterRule, FilterSet};
 use rsync_meta::{ChmodModifiers, MetadataOptions};

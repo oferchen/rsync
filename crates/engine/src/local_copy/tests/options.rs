@@ -371,6 +371,46 @@ fn local_copy_options_compression_level_round_trip() {
 }
 
 #[test]
+fn local_copy_options_compression_algorithm_round_trip() {
+    let options = LocalCopyOptions::default()
+        .with_compression_algorithm(CompressionAlgorithm::Zlib)
+        .compress(true);
+    assert_eq!(options.compression_algorithm(), CompressionAlgorithm::Zlib);
+    assert_eq!(
+        LocalCopyOptions::default().compression_algorithm(),
+        CompressionAlgorithm::default_algorithm()
+    );
+    assert_eq!(
+        LocalCopyOptions::default()
+            .with_compression_algorithm(CompressionAlgorithm::Zlib)
+            .effective_compression_algorithm(),
+        None
+    );
+}
+
+#[test]
+fn local_copy_options_reports_effective_algorithm_when_enabled() {
+    let enabled = LocalCopyOptions::default()
+        .with_compression_algorithm(CompressionAlgorithm::Zlib)
+        .compress(true);
+    assert_eq!(
+        enabled.effective_compression_algorithm(),
+        Some(CompressionAlgorithm::Zlib)
+    );
+
+    #[cfg(feature = "zstd")]
+    {
+        let enabled = LocalCopyOptions::default()
+            .with_compression_algorithm(CompressionAlgorithm::Zstd)
+            .compress(true);
+        assert_eq!(
+            enabled.effective_compression_algorithm(),
+            Some(CompressionAlgorithm::Zstd)
+        );
+    }
+}
+
+#[test]
 fn local_copy_options_size_only_round_trip() {
     let options = LocalCopyOptions::default().size_only(true);
     assert!(options.size_only_enabled());

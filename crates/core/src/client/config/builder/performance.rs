@@ -38,6 +38,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Overrides the compression algorithm used when compression is enabled.
+    #[must_use]
+    #[doc(alias = "--compress-choice")]
+    pub const fn compression_algorithm(mut self, algorithm: CompressionAlgorithm) -> Self {
+        self.compression_algorithm = algorithm;
+        self
+    }
+
     /// Sets the compression level that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]

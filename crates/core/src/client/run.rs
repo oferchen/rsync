@@ -180,6 +180,7 @@ pub fn build_local_copy_options(
                 .bandwidth_limit()
                 .and_then(|limit| limit.burst_bytes()),
         )
+        .with_compression_algorithm(config.compression_algorithm())
         .with_default_compression_level(config.compression_setting().level_or_default())
         .with_skip_compress(config.skip_compress().clone())
         .with_stop_at(config.stop_at())
