@@ -654,6 +654,88 @@ pub(crate) fn copy_symlink(
         }
     }
 
+    if let Some(existing_target) = context.existing_hard_link_target(metadata) {
+        if mode.is_dry_run() {
+            context.summary_mut().record_symlink();
+            context.summary_mut().record_hard_link();
+            if let Some(path) = &record_path {
+                let metadata_snapshot =
+                    LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+                let total_bytes = Some(metadata_snapshot.len());
+                context.record(LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::HardLink,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                ));
+            }
+            context.register_progress();
+            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            return Ok(());
+        }
+
+        let mut attempted_commit = false;
+        loop {
+            match create_hard_link(&existing_target, destination) {
+                Ok(()) => break,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    remove_existing_destination(destination)?;
+                    create_hard_link(&existing_target, destination).map_err(|link_error| {
+                        LocalCopyError::io(
+                            "create hard link",
+                            destination.to_path_buf(),
+                            link_error,
+                        )
+                    })?;
+                    break;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound
+                        && context.delay_updates_enabled()
+                        && !attempted_commit =>
+                {
+                    context.commit_deferred_update_for(&existing_target)?;
+                    attempted_commit = true;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "create hard link",
+                        destination.to_path_buf(),
+                        error,
+                    ));
+                }
+            }
+        }
+
+        context.record_hard_link(metadata, destination);
+        context.summary_mut().record_hard_link();
+        context.summary_mut().record_symlink();
+        if let Some(path) = &record_path {
+            let metadata_snapshot =
+                LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+            let total_bytes = Some(metadata_snapshot.len());
+            context.record(LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::HardLink,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            ));
+        }
+        context.register_created_path(
+            destination,
+            CreatedEntryKind::HardLink,
+            destination_previously_existed,
+        );
+        context.register_progress();
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        return Ok(());
+    }
+
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
@@ -696,6 +778,7 @@ pub(crate) fn copy_symlink(
     #[cfg(feature = "acl")]
     sync_acls_if_requested(preserve_acls, mode, source, destination, false)?;
 
+    context.record_hard_link(metadata, destination);
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
