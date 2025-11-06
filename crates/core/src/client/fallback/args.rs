@@ -166,6 +166,8 @@ pub struct RemoteFallbackArgs {
     pub inplace: Option<bool>,
     /// Routes daemon messages to standard error via `--msgs2stderr`.
     pub msgs_to_stderr: bool,
+    /// Optional `--outbuf` value forwarded to the fallback binary.
+    pub outbuf: Option<OsString>,
     /// Optional `--whole-file`/`--no-whole-file` toggle.
     pub whole_file: Option<bool>,
     /// Optional bandwidth limit forwarded through `--bwlimit`.
