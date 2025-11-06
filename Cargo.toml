@@ -36,6 +36,7 @@ sd-notify = ["rsync-daemon/sd-notify"]
 [dependencies]
 rsync-cli = { path = "crates/cli" }
 rsync-daemon = { path = "crates/daemon" }
+rsync-core = { path = "crates/core" }
 
 [dev-dependencies]
 assert_cmd = "2.0"
