@@ -168,6 +168,7 @@ pub fn build_local_copy_options(
         .max_deletions(config.max_delete())
         .min_file_size(config.min_file_size())
         .max_file_size(config.max_file_size())
+        .with_block_size_override(config.block_size_override())
         .remove_source_files(config.remove_source_files())
         .bandwidth_limit(
             config

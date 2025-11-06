@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::num::NonZeroU64;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -81,6 +81,7 @@ pub struct LocalCopyOptions {
     pub(super) max_deletions: Option<u64>,
     pub(super) min_file_size: Option<u64>,
     pub(super) max_file_size: Option<u64>,
+    pub(super) block_size_override: Option<NonZeroU32>,
     pub(super) remove_source_files: bool,
     pub(super) preallocate: bool,
     pub(super) bandwidth_limit: Option<NonZeroU64>,
@@ -154,6 +155,7 @@ impl LocalCopyOptions {
             max_deletions: None,
             min_file_size: None,
             max_file_size: None,
+            block_size_override: None,
             remove_source_files: false,
             preallocate: false,
             bandwidth_limit: None,

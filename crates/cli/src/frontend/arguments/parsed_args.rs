@@ -43,6 +43,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) max_delete: Option<OsString>,
     pub(crate) min_size: Option<OsString>,
     pub(crate) max_size: Option<OsString>,
+    pub(crate) block_size: Option<OsString>,
     pub(crate) modify_window: Option<OsString>,
     pub(crate) compress: bool,
     pub(crate) no_compress: bool,

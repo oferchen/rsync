@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::io::Write;
+use std::num::NonZeroU32;
 
 use rsync_compress::zlib::CompressionLevel;
 use rsync_core::client::{
@@ -11,9 +12,9 @@ use rsync_core::client::{
 use rsync_logging::MessageSink;
 
 use super::super::{
-    parse_bandwidth_limit, parse_compress_level, parse_compress_level_argument, parse_debug_flags,
-    parse_info_flags, parse_max_delete_argument, parse_modify_window_argument,
-    parse_size_limit_argument,
+    parse_bandwidth_limit, parse_block_size_argument, parse_compress_level,
+    parse_compress_level_argument, parse_debug_flags, parse_info_flags, parse_max_delete_argument,
+    parse_modify_window_argument, parse_size_limit_argument,
 };
 use super::messages::fail_with_message;
 use crate::frontend::{
@@ -39,6 +40,7 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) max_delete: &'a Option<OsString>,
     pub(crate) min_size: &'a Option<OsString>,
     pub(crate) max_size: &'a Option<OsString>,
+    pub(crate) block_size: &'a Option<OsString>,
     pub(crate) modify_window: &'a Option<OsString>,
     pub(crate) compress_flag: bool,
     pub(crate) no_compress: bool,
@@ -61,6 +63,7 @@ pub(crate) struct DerivedSettings {
     pub(crate) max_delete_limit: Option<u64>,
     pub(crate) min_size_limit: Option<u64>,
     pub(crate) max_size_limit: Option<u64>,
+    pub(crate) block_size_override: Option<NonZeroU32>,
     pub(crate) modify_window_setting: Option<u64>,
     pub(crate) compress: bool,
     pub(crate) compress_disabled: bool,
@@ -209,6 +212,14 @@ where
         None => None,
     };
 
+    let block_size_override = match inputs.block_size.as_ref() {
+        Some(value) => match parse_block_size_argument(value.as_os_str()) {
+            Ok(size) => Some(size),
+            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+        },
+        None => None,
+    };
+
     let modify_window_setting = match inputs.modify_window.as_ref() {
         Some(value) => match parse_modify_window_argument(value.as_os_str()) {
             Ok(window) => Some(window),
@@ -299,6 +310,7 @@ where
         max_delete_limit,
         min_size_limit,
         max_size_limit,
+        block_size_override,
         modify_window_setting,
         compress,
         compress_disabled,

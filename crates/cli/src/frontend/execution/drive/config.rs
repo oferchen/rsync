@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 use std::ffi::OsString;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use rsync_core::client::{
@@ -25,6 +26,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) max_delete_limit: Option<u64>,
     pub(crate) min_size_limit: Option<u64>,
     pub(crate) max_size_limit: Option<u64>,
+    pub(crate) block_size_override: Option<NonZeroU32>,
     pub(crate) backup: bool,
     pub(crate) backup_dir: Option<PathBuf>,
     pub(crate) backup_suffix: Option<OsString>,
@@ -113,6 +115,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .max_delete(inputs.max_delete_limit)
         .min_file_size(inputs.min_size_limit)
         .max_file_size(inputs.max_size_limit)
+        .block_size_override(inputs.block_size_override)
         .backup(inputs.backup)
         .backup_directory(inputs.backup_dir.clone())
         .backup_suffix(inputs.backup_suffix.clone())

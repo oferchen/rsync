@@ -169,6 +169,14 @@ pub(crate) fn section_02(command: ClapCommand) -> ClapCommand {
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("block-size")
+                    .long("block-size")
+                    .value_name("SIZE")
+                    .help("Force the delta-transfer block size to SIZE bytes.")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("backup")
                     .long("backup")
                     .short('b')

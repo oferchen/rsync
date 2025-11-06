@@ -102,6 +102,8 @@ mod parse_args_reads_tests;
 mod parse_args_recognises_append_tests;
 #[path = "parse_args_recognises_archive.rs"]
 mod parse_args_recognises_archive_tests;
+#[path = "parse_args_recognises_block_size.rs"]
+mod parse_args_recognises_block_size_tests;
 #[path = "parse_args_recognises_checksum.rs"]
 mod parse_args_recognises_checksum_tests;
 #[path = "parse_args_recognises_chown.rs"]

@@ -29,3 +29,25 @@ fn parse_size_limit_argument_rejects_invalid_suffix() {
         "missing message: {rendered}"
     );
 }
+
+#[test]
+fn parse_block_size_argument_accepts_valid_value() {
+    let parsed = parse_block_size_argument(OsStr::new("4096")).expect("block-size parses");
+    assert_eq!(parsed.get(), 4096);
+}
+
+#[test]
+fn parse_block_size_argument_rejects_zero() {
+    let error = parse_block_size_argument(OsStr::new("0")).expect_err("zero rejected");
+    assert!(error.to_string().contains("size must be positive"));
+}
+
+#[test]
+fn parse_block_size_argument_rejects_large_value() {
+    let error = parse_block_size_argument(OsStr::new("5000000000")).expect_err("overflow rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("size exceeds the supported 32-bit range")
+    );
+}
