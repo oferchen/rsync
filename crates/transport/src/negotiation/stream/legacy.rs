@@ -1,5 +1,7 @@
 use std::io::{self, Read};
 
+use memchr::memchr;
+
 use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LegacyDaemonMessage, NegotiationPrologue,
     ProtocolVersion, parse_legacy_daemon_greeting_bytes,
@@ -153,7 +155,7 @@ impl<R: Read> NegotiatedStream<R> {
             let newline_hit = {
                 let remaining = self.buffered_remaining_slice();
 
-                if let Some(newline_index) = remaining.iter().position(|&byte| byte == b'\n') {
+                if let Some(newline_index) = memchr(b'\n', remaining) {
                     consumed = newline_index + 1;
                     line.try_reserve(consumed)
                         .map_err(map_line_reserve_error_for_io)?;
@@ -189,7 +191,7 @@ impl<R: Read> NegotiatedStream<R> {
                     line.try_reserve(observed.len())
                         .map_err(map_line_reserve_error_for_io)?;
                     line.extend_from_slice(observed);
-                    if observed.contains(&b'\n') {
+                    if memchr(b'\n', observed).is_some() {
                         return Ok(());
                     }
                 }

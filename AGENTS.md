@@ -71,7 +71,13 @@ This document defines the internal actors (“agents”), their responsibilities
   integrations) green. The bandwidth parser in `crates/bandwidth`
   likewise leans on `memchr` to locate decimal separators and exponent markers
   so ASCII scans stay vectorised; updates must keep the byte-oriented fast path
-  aligned with the exhaustive parser tests. Additional CPU offloading should
+  aligned with the exhaustive parser tests. The legacy negotiation readers in
+  `crates/protocol::negotiation::sniffer::legacy` and
+  `crates/transport::negotiation::stream::legacy` now route newline detection
+  through `memchr` so ASCII scanning benefits from the same SIMD acceleration
+  across buffered prefixes and streaming reads. Future changes must preserve
+  the vectorised newline lookup while keeping the replay buffer invariants and
+  associated negotiation tests green. Additional CPU offloading should
   follow the same
   pattern of runtime feature detection (where applicable) paired with
   deterministic tests that compare against the scalar reference implementation.
