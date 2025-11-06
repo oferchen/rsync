@@ -248,6 +248,82 @@ fn out_format_renders_checksum_bytes_as_zero_when_metadata_reused() {
     assert_eq!(rendered.trim_end(), "0");
 }
 
+#[test]
+fn out_format_respects_width_alignment_and_humanization_controls() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    std::fs::create_dir(&src_dir).expect("create src");
+    std::fs::create_dir(&dst_dir).expect("create dst");
+
+    let source = src_dir.join("payload.bin");
+    let contents = vec![0u8; 1536];
+    std::fs::write(&source, &contents).expect("write source");
+    let destination = dst_dir.join("payload.bin");
+
+    let config = ClientConfig::builder()
+        .transfer_args([
+            source.as_os_str().to_os_string(),
+            destination.as_os_str().to_os_string(),
+        ])
+        .force_event_collection(true)
+        .build();
+
+    let outcome =
+        run_client_or_fallback::<io::Sink, io::Sink>(config, None, None).expect("run client");
+    let summary = match outcome {
+        ClientOutcome::Local(summary) => *summary,
+        ClientOutcome::Fallback(_) => panic!("unexpected fallback outcome"),
+    };
+
+    let event = summary
+        .events()
+        .iter()
+        .find(|event| matches!(event.kind(), ClientEventKind::DataCopied))
+        .expect("data copy event present");
+
+    let mut output = Vec::new();
+    parse_out_format(OsStr::new("%10b"))
+        .expect("parse width placeholder")
+        .render(event, &OutFormatContext::default(), &mut output)
+        .expect("render width placeholder");
+    assert_eq!(
+        String::from_utf8(output.clone()).expect("utf8"),
+        format!("{:>10}\n", contents.len())
+    );
+
+    output.clear();
+    parse_out_format(OsStr::new("%-10b"))
+        .expect("parse left-aligned placeholder")
+        .render(event, &OutFormatContext::default(), &mut output)
+        .expect("render left-aligned placeholder");
+    assert_eq!(
+        String::from_utf8(output.clone()).expect("utf8"),
+        format!("{:<10}\n", contents.len())
+    );
+
+    output.clear();
+    parse_out_format(OsStr::new("%'b"))
+        .expect("parse separator placeholder")
+        .render(event, &OutFormatContext::default(), &mut output)
+        .expect("render separator placeholder");
+    assert_eq!(String::from_utf8(output.clone()).expect("utf8"), "1,536\n");
+
+    output.clear();
+    parse_out_format(OsStr::new("%''b"))
+        .expect("parse decimal placeholder")
+        .render(event, &OutFormatContext::default(), &mut output)
+        .expect("render decimal placeholder");
+    assert_eq!(String::from_utf8(output.clone()).expect("utf8"), "1.54K\n");
+
+    output.clear();
+    parse_out_format(OsStr::new("%'''b"))
+        .expect("parse binary placeholder")
+        .render(event, &OutFormatContext::default(), &mut output)
+        .expect("render binary placeholder");
+    assert_eq!(String::from_utf8(output).expect("utf8"), "1.50K\n");
+}
+
 #[cfg(unix)]
 #[test]
 fn out_format_renders_permission_and_identity_placeholders() {
