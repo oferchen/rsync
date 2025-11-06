@@ -15,12 +15,16 @@ where
     S: Into<OsString>,
 {
     let mut iter = arguments.into_iter();
+    let (lower_bound, _) = iter.size_hint();
     let program = iter
         .next()
         .map(Into::into)
         .unwrap_or_else(|| OsString::from(fallback_program));
 
-    let mut forwarded = Vec::with_capacity(2);
+    // Reserve enough space for the program name, the injected `--daemon` flag,
+    // and any remaining arguments so we avoid reallocations for the common
+    // case of long daemon launches that mirror upstream wrappers.
+    let mut forwarded = Vec::with_capacity(lower_bound.saturating_add(2));
     forwarded.push(program);
     forwarded.push(OsString::from("--daemon"));
     forwarded.extend(iter.map(Into::into));
