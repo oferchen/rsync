@@ -8,7 +8,7 @@ Debian/Ubuntu and RPM-based systems.
 ## Binaries and version output
 
 * Client binary: `/usr/bin/oc-rsync`
-* Daemon binary: `/usr/bin/oc-rsyncd`
+* Daemon binary: `/usr/sbin/oc-rsyncd`
 * Version string: `oc-rsync 3.4.1-rust` / `oc-rsyncd 3.4.1-rust`
 
 Run both binaries to confirm the install and to show that they are distinct from
@@ -35,7 +35,7 @@ bootstrapping new deployments.
 ## Systemd unit
 
 The packaged systemd unit is `oc-rsyncd.service` and starts the daemon with
-`/usr/bin/oc-rsyncd`. It does **not** replace or conflict with any existing
+`/usr/sbin/oc-rsyncd`. It does **not** replace or conflict with any existing
 `rsync.service` units. Enable or start it with:
 
 ```sh

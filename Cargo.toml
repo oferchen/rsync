@@ -122,7 +122,7 @@ replaces = []
 
 assets = [
     ["target/dist/oc-rsync", "usr/bin/oc-rsync", "755"],
-    ["target/dist/oc-rsyncd", "usr/bin/oc-rsyncd", "755"],
+    ["target/dist/oc-rsyncd", "usr/sbin/oc-rsyncd", "755"],
     ["LICENSE", "usr/share/doc/oc-rsync/LICENSE", "644"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
@@ -142,7 +142,7 @@ package = "oc-rsync"
 summary = "Rust implementation of rsync-compatible client and daemon installed as oc-rsync/oc-rsyncd"
 assets = [
     { source = "target/dist/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
-    { source = "target/dist/oc-rsyncd", dest = "/usr/bin/oc-rsyncd", mode = "0755" },
+    { source = "target/dist/oc-rsyncd", dest = "/usr/sbin/oc-rsyncd", mode = "0755" },
     { source = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
@@ -192,7 +192,7 @@ buildflags = ["--profile", "dist", "--bins"]
 
 [package.metadata.rpm.targets]
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
-"oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
+"oc-rsyncd" = { path = "/usr/sbin/oc-rsyncd", mode = "0755" }
 
 [profile.dist]
 inherits = "release"
