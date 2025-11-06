@@ -9,6 +9,8 @@ mod options;
 
 pub(super) use drive::execute;
 
+#[cfg(test)]
+use super::arguments::ProgramName;
 pub(crate) use chown::parse_chown_argument;
 pub(crate) use compression::{
     CompressLevelArg, parse_bandwidth_limit, parse_compress_level, parse_compress_level_argument,
@@ -33,3 +35,8 @@ pub(crate) use options::{
     parse_modify_window_argument, parse_protocol_version_arg, parse_size_limit_argument,
     parse_timeout_argument,
 };
+
+#[cfg(test)]
+pub(crate) fn render_missing_operands_stdout(program_name: ProgramName) -> String {
+    drive::render_missing_operands_stdout(program_name)
+}

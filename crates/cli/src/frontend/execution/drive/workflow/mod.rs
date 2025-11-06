@@ -6,6 +6,8 @@ mod preflight;
 
 use fallback_plan::{FallbackArgumentsContext, build_fallback_arguments};
 use operands::ensure_transfer_operands_present;
+#[cfg(test)]
+pub(crate) use operands::render_missing_operands_stdout;
 use preflight::{
     maybe_print_help_or_version, resolve_bind_address, resolve_desired_protocol, resolve_timeout,
     validate_feature_support, validate_stdin_sources_conflict,
