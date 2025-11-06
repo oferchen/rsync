@@ -157,9 +157,9 @@ fn legacy_daemon_greeting() -> String {
     debug_assert!(greeting.ends_with('\n'));
     greeting.pop();
 
-    for digest in LEGACY_HANDSHAKE_DIGESTS {
+    for digest in SUPPORTED_DAEMON_DIGESTS {
         greeting.push(' ');
-        greeting.push_str(digest);
+        greeting.push_str(digest.name());
     }
 
     greeting.push('\n');

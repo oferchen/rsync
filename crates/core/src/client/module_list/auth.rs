@@ -3,9 +3,7 @@ use std::cell::RefCell;
 use std::env;
 use std::io::{BufReader, Write};
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
-use rsync_checksums::strong::Md5;
+use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
 
 use super::super::{ClientError, socket_error};
 use super::types::DaemonAddress;
@@ -13,18 +11,24 @@ use super::types::DaemonAddress;
 pub(crate) struct DaemonAuthContext {
     username: String,
     secret: SensitiveBytes,
+    digest: DaemonAuthDigest,
 }
 
 impl DaemonAuthContext {
-    pub(crate) fn new(username: String, secret: Vec<u8>) -> Self {
+    pub(crate) fn new(username: String, secret: Vec<u8>, digest: DaemonAuthDigest) -> Self {
         Self {
             username,
             secret: SensitiveBytes::new(secret),
+            digest,
         }
     }
 
     pub(crate) fn secret(&self) -> &[u8] {
         self.secret.as_slice()
+    }
+
+    pub(crate) fn digest(&self) -> DaemonAuthDigest {
+        self.digest
     }
 
     #[cfg(test)]
@@ -74,7 +78,7 @@ pub(crate) fn send_daemon_auth_credentials<S>(
 where
     S: Write,
 {
-    let digest = compute_daemon_auth_response(context.secret(), challenge);
+    let digest = compute_daemon_auth_response(context.secret(), challenge, context.digest());
     let mut command = String::with_capacity(context.username.len() + digest.len() + 2);
     command.push_str(&context.username);
     command.push(' ');
@@ -122,14 +126,6 @@ pub(crate) fn load_daemon_password() -> Option<Vec<u8>> {
             value.to_string_lossy().into_owned().into_bytes()
         }
     })
-}
-
-pub(crate) fn compute_daemon_auth_response(secret: &[u8], challenge: &str) -> String {
-    let mut hasher = Md5::new();
-    hasher.update(secret);
-    hasher.update(challenge.as_bytes());
-    let digest = hasher.finalize();
-    STANDARD_NO_PAD.encode(digest)
 }
 
 pub(crate) fn normalize_motd_payload(payload: &str) -> String {
