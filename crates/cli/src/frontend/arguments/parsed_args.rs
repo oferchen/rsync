@@ -85,6 +85,8 @@ pub(crate) struct ParsedArgs {
     pub(crate) delay_updates: bool,
     pub(crate) partial_dir: Option<PathBuf>,
     pub(crate) temp_dir: Option<PathBuf>,
+    pub(crate) log_file: Option<OsString>,
+    pub(crate) log_file_format: Option<OsString>,
     pub(crate) link_dests: Vec<PathBuf>,
     pub(crate) remove_source_files: bool,
     pub(crate) inplace: Option<bool>,

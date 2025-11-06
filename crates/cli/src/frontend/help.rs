@@ -111,6 +111,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-partial Discard partially transferred files on errors.\n",
             "      --partial-dir=DIR  Store partially transferred files in DIR.\n",
             "      --temp-dir=DIR  Store temporary files in DIR while transferring.\n",
+            "      --log-file=FILE  Write transfer events to FILE.\n",
+            "      --log-file-format=FORMAT  Customise entries written via --log-file.\n",
             "      --delay-updates  Put completed updates in place after transfers finish.\n",
             "      --no-delay-updates  Disable delayed updates.\n",
             "      --link-dest=DIR  Create hard links to matching files in DIR when possible.\n",
