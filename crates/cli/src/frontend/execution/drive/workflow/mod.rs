@@ -24,10 +24,14 @@ use crate::frontend::{
     execution::chown::ParsedChown,
 };
 use metadata::MetadataSettings;
-use rsync_core::client::HumanReadableMode;
+use rsync_core::{client::HumanReadableMode, message::Role, rsync_error};
 use rsync_logging::MessageSink;
-use std::io::Write;
+use std::fs::{File, OpenOptions};
+use std::io::{self, Write};
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 use super::{config, filters, metadata, options, summary, validation};
 use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argument};
@@ -132,6 +136,8 @@ where
         delay_updates,
         partial_dir,
         temp_dir,
+        log_file,
+        log_file_format,
         link_dests,
         remove_source_files,
         inplace,
@@ -228,6 +234,8 @@ where
         compress_level: &compress_level,
         compress_choice: &compress_choice,
         skip_compress: &skip_compress,
+        log_file: log_file.as_ref(),
+        log_file_format: log_file_format.as_ref(),
     };
 
     let options::DerivedSettings {
@@ -253,10 +261,15 @@ where
         skip_compress_list,
         compression_setting,
         compression_algorithm,
+        log_file_path,
+        log_file_format_cli,
+        log_file_template,
     } = match options::derive_settings(stdout, stderr, settings_inputs) {
         options::SettingsOutcome::Proceed(settings) => *settings,
         options::SettingsOutcome::Exit(code) => return code,
     };
+
+    let log_file_path_buf = log_file_path.as_ref().map(PathBuf::from);
 
     let numeric_ids_option = numeric_ids;
     let whole_file_option = whole_file;
@@ -425,6 +438,8 @@ where
         #[cfg(feature = "xattr")]
         xattrs,
         itemize_changes,
+        log_file_path: log_file_path_buf.as_ref(),
+        log_file_format: log_file_format_cli.as_ref(),
     };
     let fallback_args = match build_fallback_arguments(fallback_context, stderr) {
         Ok(args) => args,
@@ -432,6 +447,28 @@ where
     };
 
     let numeric_ids = numeric_ids_option.unwrap_or(false);
+
+    let mut log_file_for_local = None;
+    if fallback_args.is_none() {
+        if let (Some(path), Some(template)) =
+            (log_file_path_buf.as_ref(), log_file_template.as_ref())
+        {
+            match open_log_file(path) {
+                Ok(file) => {
+                    log_file_for_local = Some(summary::LogFileConfig {
+                        file,
+                        format: template.clone(),
+                    });
+                }
+                Err(error) => {
+                    let message =
+                        rsync_error!(1, "failed to open log file {}: {error}", path.display())
+                            .with_role(Role::Client);
+                    let _ = stderr.write(&message);
+                }
+            }
+        }
+    }
 
     if let Some(exit_code) = validation::validate_local_only_options(
         fallback_required,
@@ -586,6 +623,7 @@ where
         skip_compress_list,
         itemize_changes,
         out_format_template: out_format_template.clone(),
+        log_file_template: log_file_template.clone(),
         name_level,
     };
 
@@ -623,6 +661,17 @@ where
             out_format_template: out_format_template.as_ref(),
             name_level,
             name_overridden,
+            log_file: log_file_for_local,
         },
     )
+}
+
+fn open_log_file(path: &PathBuf) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o666);
+    }
+    options.open(path)
 }

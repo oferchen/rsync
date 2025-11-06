@@ -19,6 +19,20 @@ pub(crate) fn section_02(command: ClapCommand) -> ClapCommand {
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("log-file")
+                    .long("log-file")
+                    .value_name("FILE")
+                    .help("Write per-file transfer information to FILE.")
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
+                Arg::new("log-file-format")
+                    .long("log-file-format")
+                    .value_name("FORMAT")
+                    .help("Customise the format used when appending to --log-file.")
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("whole-file")
                     .long("whole-file")
                     .short('W')

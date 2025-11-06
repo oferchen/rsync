@@ -48,6 +48,8 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) compress_level: &'a Option<OsString>,
     pub(crate) compress_choice: &'a Option<OsString>,
     pub(crate) skip_compress: &'a Option<OsString>,
+    pub(crate) log_file: Option<&'a OsString>,
+    pub(crate) log_file_format: Option<&'a OsString>,
 }
 
 /// Derived execution settings gathered from [`derive_settings`].
@@ -74,6 +76,9 @@ pub(crate) struct DerivedSettings {
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) compression_setting: CompressionSetting,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
+    pub(crate) log_file_path: Option<OsString>,
+    pub(crate) log_file_format_cli: Option<OsString>,
+    pub(crate) log_file_template: Option<OutFormat>,
 }
 
 /// Outcome of parsing additional execution settings.
@@ -334,6 +339,24 @@ where
         }
     };
 
+    let (log_file_path, log_file_format_cli, log_file_template) = match inputs.log_file {
+        Some(path) => {
+            let (format_string, format_cli) = if let Some(spec) = inputs.log_file_format {
+                (spec.clone(), Some(spec.clone()))
+            } else {
+                (OsString::from("%i %n%L"), None)
+            };
+
+            match parse_out_format(format_string.as_os_str()) {
+                Ok(template) => (Some(path.clone()), format_cli, Some(template)),
+                Err(message) => {
+                    return SettingsOutcome::Exit(fail_with_message(message, stderr));
+                }
+            }
+        }
+        None => (None, None, None),
+    };
+
     SettingsOutcome::Proceed(Box::new(DerivedSettings {
         out_format_template,
         fallback_out_format,
@@ -357,5 +380,8 @@ where
         skip_compress_list,
         compression_setting,
         compression_algorithm,
+        log_file_path,
+        log_file_format_cli,
+        log_file_template,
     }))
 }

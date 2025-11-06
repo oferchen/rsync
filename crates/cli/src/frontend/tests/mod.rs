@@ -74,6 +74,8 @@ mod list_only_tests;
 mod load_tests;
 #[path = "local.rs"]
 mod local_tests;
+#[path = "log_file.rs"]
+mod log_file_tests;
 #[path = "long.rs"]
 mod long_tests;
 #[path = "merge.rs"]
@@ -134,6 +136,8 @@ mod parse_args_recognises_itemize_tests;
 mod parse_args_recognises_keep_tests;
 #[path = "parse_args_recognises_list.rs"]
 mod parse_args_recognises_list_tests;
+#[path = "parse_args_recognises_log.rs"]
+mod parse_args_recognises_log_tests;
 #[path = "parse_args_recognises_mkpath.rs"]
 mod parse_args_recognises_mkpath_tests;
 #[path = "parse_args_recognises_modify.rs"]
@@ -254,6 +258,8 @@ mod remote_fallback_forwards_implied_tests;
 mod remote_fallback_forwards_info_tests;
 #[path = "remote_fallback_forwards_link.rs"]
 mod remote_fallback_forwards_link_tests;
+#[path = "remote_fallback_forwards_log.rs"]
+mod remote_fallback_forwards_log_tests;
 #[path = "remote_fallback_forwards_max.rs"]
 mod remote_fallback_forwards_max_tests;
 #[path = "remote_fallback_forwards_min.rs"]

@@ -122,6 +122,8 @@ pub(crate) fn prepare_invocation(
         timeout,
         connect_timeout,
         out_format,
+        log_file,
+        log_file_format,
         no_motd,
         address_mode,
         fallback_binary,
@@ -417,6 +419,14 @@ pub(crate) fn prepare_invocation(
 
     if let Some(format) = out_format {
         command_args.push(OsString::from("--out-format"));
+        command_args.push(format);
+    }
+    if let Some(path) = log_file {
+        command_args.push(OsString::from("--log-file"));
+        command_args.push(path.into_os_string());
+    }
+    if let Some(format) = log_file_format {
+        command_args.push(OsString::from("--log-file-format"));
         command_args.push(format);
     }
 
