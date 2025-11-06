@@ -2,6 +2,11 @@
 
 use std::ffi::{OsStr, OsString};
 
+fn capacity_hint_for_osstring(hint: usize, overhead: usize) -> usize {
+    const MAX_HINT: usize = 1024;
+    hint.saturating_add(overhead).min(MAX_HINT)
+}
+
 /// Wraps daemon wrapper invocations so they behave like `program --daemon ARGS...`.
 ///
 /// The helper mirrors upstream symlink launchers where the daemon binary is an
@@ -22,10 +27,10 @@ where
         .unwrap_or_else(|| OsString::from(fallback_program));
 
     let rest_capacity = upper_bound.unwrap_or(lower_bound);
-    let mut forwarded = Vec::with_capacity(rest_capacity.saturating_add(2));
+    let mut forwarded = Vec::with_capacity(capacity_hint_for_osstring(rest_capacity, 2));
     forwarded.push(program);
 
-    let mut rest = Vec::with_capacity(rest_capacity);
+    let mut rest = Vec::with_capacity(capacity_hint_for_osstring(rest_capacity, 0));
     let mut saw_daemon_flag = false;
     let mut reached_double_dash = false;
 
@@ -123,6 +128,38 @@ mod tests {
                 OsString::from("--"),
                 OsString::from("--daemon"),
             ]
+        );
+    }
+
+    #[test]
+    fn wrap_daemon_arguments_handles_huge_upper_bound_hints() {
+        struct HugeHintIterator {
+            yielded: bool,
+        }
+
+        impl Iterator for HugeHintIterator {
+            type Item = OsString;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.yielded {
+                    None
+                } else {
+                    self.yielded = true;
+                    Some(OsString::from("oc-rsyncd"))
+                }
+            }
+
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                let lower = if self.yielded { 0 } else { 1 };
+                (lower, Some(usize::MAX))
+            }
+        }
+
+        let wrapped = wrap_daemon_arguments(HugeHintIterator { yielded: false }, "fallback");
+
+        assert_eq!(
+            wrapped,
+            vec![OsString::from("oc-rsyncd"), OsString::from("--daemon")]
         );
     }
 }
