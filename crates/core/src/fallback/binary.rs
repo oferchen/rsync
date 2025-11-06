@@ -3,6 +3,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -30,10 +31,29 @@ impl CacheKey {
     }
 }
 
-fn availability_cache() -> &'static Mutex<HashMap<CacheKey, bool>> {
-    static CACHE: OnceLock<Mutex<HashMap<CacheKey, bool>>> = OnceLock::new();
+#[derive(Clone, Debug)]
+struct AvailabilityEntry {
+    result: bool,
+    matched_path: Option<PathBuf>,
+    recorded_at: Instant,
+}
+
+impl AvailabilityEntry {
+    fn new(result: bool, matched_path: Option<PathBuf>) -> Self {
+        Self {
+            result,
+            matched_path,
+            recorded_at: Instant::now(),
+        }
+    }
+}
+
+fn availability_cache() -> &'static Mutex<HashMap<CacheKey, AvailabilityEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<CacheKey, AvailabilityEntry>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(1);
 
 /// Returns the set of candidate executable paths derived from `binary`.
 ///
@@ -134,26 +154,43 @@ fn apply_extension(base: &Path, ext: &OsStr) -> Option<PathBuf> {
 pub fn fallback_binary_available(binary: &OsStr) -> bool {
     let key = CacheKey::new(binary);
 
-    let cache = availability_cache();
-
-    if let Some(result) = cache
-        .lock()
-        .expect("fallback availability cache lock poisoned")
-        .get(&key)
-        .copied()
     {
-        return result;
+        let mut cache = availability_cache()
+            .lock()
+            .expect("fallback availability cache lock poisoned");
+
+        if let Some(entry) = cache.get(&key) {
+            if entry.result {
+                if let Some(path) = entry.matched_path.as_ref() {
+                    if candidate_is_executable(path) {
+                        return true;
+                    }
+                }
+            } else if entry.recorded_at.elapsed() < NEGATIVE_CACHE_TTL {
+                return false;
+            }
+
+            cache.remove(&key);
+        }
     }
 
-    let available = fallback_binary_candidates(binary)
-        .into_iter()
-        .any(|candidate| candidate_is_executable(&candidate));
+    let (available, matched_path) = evaluate_availability(binary);
 
-    let mut guard = cache
+    let mut cache = availability_cache()
         .lock()
         .expect("fallback availability cache lock poisoned");
-    guard.entry(key).or_insert(available);
+    cache.insert(key, AvailabilityEntry::new(available, matched_path));
     available
+}
+
+fn evaluate_availability(binary: &OsStr) -> (bool, Option<PathBuf>) {
+    for candidate in fallback_binary_candidates(binary) {
+        if candidate_is_executable(&candidate) {
+            return (true, Some(candidate));
+        }
+    }
+
+    (false, None)
 }
 
 /// Formats a diagnostic explaining that a fallback executable is unavailable.
@@ -398,6 +435,28 @@ mod tests {
         }
 
         assert!(fallback_binary_available(temp.path().as_os_str()));
+    }
+
+    #[test]
+    fn fallback_binary_available_detects_removal() {
+        #[allow(unused_mut)]
+        let mut temp = NamedTempFile::new().expect("tempfile");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = temp.as_file().metadata().expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            temp.as_file().set_permissions(permissions).expect("chmod");
+        }
+
+        let os_path = temp.path().as_os_str().to_os_string();
+
+        assert!(fallback_binary_available(os_path.as_os_str()));
+
+        drop(temp);
+
+        assert!(!fallback_binary_available(os_path.as_os_str()));
     }
 
     #[test]
