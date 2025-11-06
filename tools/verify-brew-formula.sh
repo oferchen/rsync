@@ -30,6 +30,31 @@ crate_version = str(cargo_data["package"]["version"]).strip()
 if not crate_version:
     errors.append("Cargo.toml version is empty")
 
+def get_table(data: object, *keys: str) -> dict[str, object] | None:
+    current: object = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        if key not in current:
+            return None
+        current = current[key]
+    if not isinstance(current, dict):
+        return None
+    return current
+
+oc_metadata = get_table(cargo_data, "workspace", "metadata", "oc_rsync")
+upstream_version = ""
+if oc_metadata is None:
+    errors.append("Cargo.toml missing [workspace.metadata.oc_rsync] table")
+else:
+    value = oc_metadata.get("upstream_version")
+    if value is None:
+        errors.append("workspace.metadata.oc_rsync.upstream_version is not set")
+    else:
+        upstream_version = str(value).strip()
+        if not upstream_version:
+            errors.append("workspace.metadata.oc_rsync.upstream_version is empty")
+
 match_version = re.search(r'version "([^"]+)"', text)
 if not match_version:
     errors.append("Formula must declare version")
@@ -47,9 +72,14 @@ else:
     url = match_url.group(1)
     if "github.com/oferchen/rsync/archive/refs/tags/" not in url:
         errors.append("Formula url must reference the GitHub release tarball")
-    sanitized = crate_version.replace("-rust", "")
-    if sanitized and sanitized not in url:
-        errors.append(f"Formula url must include sanitized crate version {sanitized!r}")
+    if crate_version and crate_version not in url:
+        errors.append(
+            "Formula url must include the crate version from Cargo.toml"
+        )
+    if upstream_version and upstream_version not in url:
+        errors.append(
+            "Formula url must include workspace.metadata.oc_rsync.upstream_version"
+        )
 
 match_sha = re.search(r'sha256 "([0-9a-fA-F]{64})"', text)
 if not match_sha:
