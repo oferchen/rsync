@@ -113,17 +113,26 @@ try_fetch_deb() {
   fi
 
   mkdir -p "${install_dir}"
-  (
+  if ! (
     cd "${install_dir}"
-    ar x "$tmp_deb" >/dev/null 2>&1 || true
+    if ! ar x "$tmp_deb" >/dev/null 2>&1; then
+      echo "failed to extract archive payload from ${tmp_deb}" >&2
+      exit 1
+    fi
     if [[ -f data.tar.xz ]]; then
       tar -xf data.tar.xz
       rm -f data.tar.xz
     elif [[ -f data.tar.gz ]]; then
       tar -xzf data.tar.gz
       rm -f data.tar.gz
+    else
+      echo "unexpected .deb layout: missing data.tar archive" >&2
+      exit 1
     fi
-  )
+  ); then
+    rm -f "$tmp_deb"
+    return 1
+  fi
   rm -f "$tmp_deb"
 
   if [[ -x "${install_dir}/usr/bin/rsync" ]]; then
@@ -176,17 +185,26 @@ try_fetch_deb_generic() {
         return 1
       fi
       mkdir -p "${install_dir}"
-      (
+      if ! (
         cd "${install_dir}"
-        ar x "$tmp_deb" >/dev/null 2>&1 || true
+        if ! ar x "$tmp_deb" >/dev/null 2>&1; then
+          echo "failed to extract archive payload from ${tmp_deb}" >&2
+          exit 1
+        fi
         if [[ -f data.tar.xz ]]; then
           tar -xf data.tar.xz
           rm -f data.tar.xz
         elif [[ -f data.tar.gz ]]; then
           tar -xzf data.tar.gz
           rm -f data.tar.gz
+        else
+          echo "unexpected .deb layout: missing data.tar archive" >&2
+          exit 1
         fi
-      )
+      ); then
+        rm -f "$tmp_deb"
+        return 1
+      fi
       rm -f "$tmp_deb"
       if [[ -x "${install_dir}/usr/bin/rsync" ]]; then
         mkdir -p "${install_dir}/bin"

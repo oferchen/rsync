@@ -1,7 +1,5 @@
 
 ## compression encapsulation using identical algorthms as upstream, validate hashing use the same algo as upstream. 
-## ci interop exit code is omitted using || true
-
 ## UPSTREAM-CONSISTENT DAEMON MODEL
 
 **Upstream model:** one binary (`rsync`) enters daemon mode with `--daemon`; supports standalone listen or inetd/systemd socket activation; configured via `rsyncd.conf(5)`. We must mirror this exactly. :contentReference[oaicite:10]{index=10}
