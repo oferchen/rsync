@@ -3,15 +3,17 @@
 class OcRsync < Formula
   desc "Pure-Rust rsync 3.4.1-compatible client/daemon installed as oc-rsync and oc-rsyncd"
   homepage "https://github.com/oferchen/rsync"
-  url "https://github.com/oferchen/rsync/archive/refs/tags/v3.4.1a-rust.tar.gz"
-  sha256 "2a1ddf17924d8263e52afd58ff80267517d2e37b1144cbd96999b4d8472e90f8"
+  url "https://github.com/oferchen/rsync/archive/refs/tags/v3.4.1-rust.tar.gz"
+  sha256 "b51196ce14884b4e99c9823b4dbee2cd3815dbdd647f2fba324cd109b00bfda2"
   version "3.4.1-rust"
   license "GPL-3.0-or-later"
 
   depends_on "rust" => :build
 
   def install
-    system "cargo", "install", *std_cargo_args(path: ".")
+    system "cargo", "build", "--release", "--locked", "--bin", "oc-rsync", "--bin", "oc-rsyncd"
+    bin.install "target/release/oc-rsync"
+    bin.install "target/release/oc-rsyncd"
 
     (etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.conf"
     (etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.secrets"
