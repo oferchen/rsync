@@ -174,6 +174,8 @@ mod parse_args_recognises_sparse_tests;
 mod parse_args_recognises_specials_tests;
 #[path = "parse_args_recognises_stats.rs"]
 mod parse_args_recognises_stats_tests;
+#[path = "parse_args_recognises_stop.rs"]
+mod parse_args_recognises_stop_tests;
 #[path = "parse_args_recognises_super.rs"]
 mod parse_args_recognises_super_tests;
 #[path = "parse_args_recognises_temp.rs"]
@@ -286,6 +288,8 @@ mod remote_fallback_forwards_rsync_tests;
 mod remote_fallback_forwards_safe_tests;
 #[path = "remote_fallback_forwards_skip.rs"]
 mod remote_fallback_forwards_skip_tests;
+#[path = "remote_fallback_forwards_stop.rs"]
+mod remote_fallback_forwards_stop_tests;
 #[path = "remote_fallback_forwards_super.rs"]
 mod remote_fallback_forwards_super_tests;
 #[path = "remote_fallback_forwards_temp.rs"]
@@ -322,6 +326,8 @@ mod short_tests;
 mod size_tests;
 #[path = "stats.rs"]
 mod stats_tests;
+#[path = "stop.rs"]
+mod stop_tests;
 #[path = "timeout.rs"]
 mod timeout_tests;
 #[path = "transfer_request_copies.rs"]

@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use rsync_compress::zlib::CompressionLevel;
 use rsync_filters::FilterSet;
@@ -134,6 +134,7 @@ pub struct LocalCopyOptions {
     pub(super) mkpath: bool,
     pub(super) prune_empty_dirs: bool,
     pub(super) timeout: Option<Duration>,
+    pub(super) stop_at: Option<SystemTime>,
     #[cfg(feature = "xattr")]
     pub(super) preserve_xattrs: bool,
     pub(super) backup: bool,
@@ -208,6 +209,7 @@ impl LocalCopyOptions {
             mkpath: false,
             prune_empty_dirs: false,
             timeout: None,
+            stop_at: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
             backup: false,

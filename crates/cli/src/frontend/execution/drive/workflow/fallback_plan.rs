@@ -1,5 +1,6 @@
 #![deny(unsafe_code)]
 
+use crate::frontend::arguments::{StopRequest, StopRequestKind};
 use crate::frontend::execution::chown::ParsedChown;
 use crate::frontend::progress::ProgressSetting;
 use rsync_core::client::{
@@ -111,6 +112,7 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) address_mode: AddressMode,
     pub(crate) rsync_path: Option<&'a OsString>,
     pub(crate) remainder: &'a [OsString],
+    pub(crate) stop_request: Option<StopRequest>,
     #[cfg(feature = "acl")]
     pub(crate) acls: Option<bool>,
     #[cfg(feature = "xattr")]
@@ -174,6 +176,16 @@ where
         compress_disabled: context.compress_disabled,
         compress_level_cli: context.compress_level_cli.cloned(),
         skip_compress: context.skip_compress.cloned(),
+        stop_after: context
+            .stop_request
+            .as_ref()
+            .filter(|request| matches!(request.kind(), StopRequestKind::StopAfter))
+            .map(|request| request.cli_value().clone()),
+        stop_at: context
+            .stop_request
+            .as_ref()
+            .filter(|request| matches!(request.kind(), StopRequestKind::StopAt))
+            .map(|request| request.cli_value().clone()),
         chown_spec: context.parsed_chown.map(|parsed| parsed.spec().clone()),
         owner: context.owner,
         group: context.group,

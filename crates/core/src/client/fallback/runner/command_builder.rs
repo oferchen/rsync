@@ -54,6 +54,8 @@ pub(crate) fn prepare_invocation(
         compress_disabled,
         compress_level,
         skip_compress,
+        stop_after,
+        stop_at,
         chown,
         owner,
         group,
@@ -230,6 +232,16 @@ pub(crate) fn prepare_invocation(
     if let Some(spec) = skip_compress {
         let mut arg = OsString::from("--skip-compress=");
         arg.push(spec);
+        command_args.push(arg);
+    }
+    if let Some(value) = stop_after {
+        let mut arg = OsString::from("--stop-after=");
+        arg.push(value);
+        command_args.push(arg);
+    }
+    if let Some(value) = stop_at {
+        let mut arg = OsString::from("--stop-at=");
+        arg.push(value);
         command_args.push(arg);
     }
 

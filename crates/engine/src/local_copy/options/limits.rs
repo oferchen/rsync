@@ -1,5 +1,5 @@
 use std::num::NonZeroU64;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use super::types::LocalCopyOptions;
 
@@ -61,6 +61,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Configures an absolute stop-at deadline.
+    #[must_use]
+    #[doc(alias = "--stop-after")]
+    #[doc(alias = "--stop-at")]
+    pub fn with_stop_at(mut self, deadline: Option<SystemTime>) -> Self {
+        self.stop_at = deadline;
+        self
+    }
+
     /// Returns the minimum file size filter configured for the run.
     #[must_use]
     pub const fn min_file_size_limit(&self) -> Option<u64> {
@@ -101,5 +110,11 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn timeout(&self) -> Option<Duration> {
         self.timeout
+    }
+
+    /// Returns the configured stop-at deadline, if any.
+    #[must_use]
+    pub const fn stop_at(&self) -> Option<SystemTime> {
+        self.stop_at
     }
 }

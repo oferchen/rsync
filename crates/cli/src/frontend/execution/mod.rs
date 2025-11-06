@@ -6,6 +6,7 @@ mod flags;
 mod module_list;
 mod operands;
 mod options;
+mod stop;
 
 pub(super) use drive::execute;
 
@@ -35,6 +36,7 @@ pub(crate) use options::{
     parse_max_delete_argument, parse_modify_window_argument, parse_protocol_version_arg,
     parse_size_limit_argument, parse_timeout_argument,
 };
+pub(crate) use stop::{parse_stop_after_argument, parse_stop_at_argument};
 
 #[cfg(test)]
 pub(crate) fn render_missing_operands_stdout(program_name: ProgramName) -> String {

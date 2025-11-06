@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Error produced when planning or executing a local copy fails.
 #[derive(Debug)]
@@ -52,6 +52,12 @@ impl LocalCopyError {
         Self::new(LocalCopyErrorKind::Timeout { duration })
     }
 
+    /// Constructs an error indicating the configured stop-at deadline was reached.
+    #[must_use]
+    pub fn stop_at_reached(target: SystemTime) -> Self {
+        Self::new(LocalCopyErrorKind::StopAtReached { target })
+    }
+
     /// Returns the exit code that mirrors upstream rsync's behaviour.
     #[must_use]
     pub const fn exit_code(&self) -> i32 {
@@ -62,6 +68,7 @@ impl LocalCopyError {
             }
             LocalCopyErrorKind::Timeout { .. } => TIMEOUT_EXIT_CODE,
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
+            LocalCopyErrorKind::StopAtReached { .. } => TIMEOUT_EXIT_CODE,
         }
     }
 
@@ -109,6 +116,9 @@ impl fmt::Display for LocalCopyError {
                     "Deletions stopped due to --max-delete limit ({skipped} {noun} skipped)"
                 )
             }
+            LocalCopyErrorKind::StopAtReached { .. } => {
+                write!(f, "stopping at requested limit")
+            }
         }
     }
 }
@@ -148,6 +158,11 @@ pub enum LocalCopyErrorKind {
         /// Number of entries that were skipped after reaching the limit.
         skipped: u64,
     },
+    /// The configured stop-at deadline was reached.
+    StopAtReached {
+        /// The requested wall-clock deadline.
+        target: SystemTime,
+    },
 }
 
 impl LocalCopyErrorKind {
@@ -160,7 +175,6 @@ impl LocalCopyErrorKind {
                 path,
                 source,
             } => Some((action, path.as_path(), source)),
-            Self::Timeout { .. } => None,
             _ => None,
         }
     }

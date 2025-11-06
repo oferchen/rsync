@@ -112,6 +112,8 @@ pub(crate) struct ParsedArgs {
     pub(crate) protocol: Option<OsString>,
     pub(crate) timeout: Option<OsString>,
     pub(crate) contimeout: Option<OsString>,
+    pub(crate) stop_after: Option<OsString>,
+    pub(crate) stop_at: Option<OsString>,
     pub(crate) out_format: Option<OsString>,
     pub(crate) daemon_port: Option<u16>,
 }

@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use super::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, CompressionSetting, DeleteMode,
@@ -83,6 +84,7 @@ pub struct ClientConfigBuilder {
     address_mode: AddressMode,
     timeout: TransferTimeout,
     connect_timeout: TransferTimeout,
+    stop_deadline: Option<SystemTime>,
     link_dest_paths: Vec<PathBuf>,
     reference_directories: Vec<ReferenceDirectory>,
     connect_program: Option<OsString>,
@@ -167,6 +169,7 @@ impl ClientConfigBuilder {
             address_mode: self.address_mode,
             timeout: self.timeout,
             connect_timeout: self.connect_timeout,
+            stop_at: self.stop_deadline,
             link_dest_paths: self.link_dest_paths,
             reference_directories: self.reference_directories,
             connect_program: self.connect_program,

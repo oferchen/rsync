@@ -42,4 +42,12 @@ impl ClientConfig {
     pub const fn connect_timeout(&self) -> TransferTimeout {
         self.connect_timeout
     }
+
+    /// Returns the configured stop-at deadline, if any.
+    #[must_use]
+    #[doc(alias = "--stop-after")]
+    #[doc(alias = "--stop-at")]
+    pub const fn stop_at(&self) -> Option<SystemTime> {
+        self.stop_at
+    }
 }

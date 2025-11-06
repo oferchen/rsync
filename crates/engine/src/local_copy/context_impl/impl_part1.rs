@@ -9,6 +9,14 @@ impl<'a> CopyContext<'a> {
         let limiter =
             BandwidthLimitComponents::new(options.bandwidth_limit_bytes(), burst).into_limiter();
         let collect_events = options.events_enabled();
+        let stop_at_wallclock = options.stop_at();
+        let stop_deadline = stop_at_wallclock.map(|deadline| {
+            let now = std::time::SystemTime::now();
+            match deadline.duration_since(now) {
+                Ok(duration) => Instant::now() + duration,
+                Err(_) => Instant::now(),
+            }
+        });
         let filter_program = options.filter_program().cloned();
         let dir_merge_layers = filter_program
             .as_ref()
@@ -41,6 +49,8 @@ impl<'a> CopyContext<'a> {
             deferred_deletions: Vec::new(),
             deferred_updates: Vec::new(),
             timeout,
+            stop_deadline,
+            stop_at: stop_at_wallclock,
             last_progress: Instant::now(),
             created_entries: Vec::new(),
             destination_root,
@@ -55,6 +65,14 @@ impl<'a> CopyContext<'a> {
         if let Some(limit) = self.timeout {
             if self.last_progress.elapsed() > limit {
                 return Err(LocalCopyError::timeout(limit));
+            }
+        }
+        if let Some(deadline) = self.stop_deadline {
+            if Instant::now() >= deadline {
+                let target = self
+                    .stop_at
+                    .unwrap_or_else(std::time::SystemTime::now);
+                return Err(LocalCopyError::stop_at_reached(target));
             }
         }
         Ok(())
