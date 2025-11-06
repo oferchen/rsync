@@ -84,7 +84,8 @@ impl Message {
         });
 
         let source_info = self.source.as_ref().map(|source| {
-            let digits = encode_unsigned_decimal(u64::from(source.line()), &mut scratch.line_digits);
+            let digits =
+                encode_unsigned_decimal(u64::from(source.line()), &mut scratch.line_digits);
             let len = digits.len();
             let start = scratch.line_digits.len() - len;
             (source.path().as_bytes(), start, len)

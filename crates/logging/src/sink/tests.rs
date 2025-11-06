@@ -1,6 +1,9 @@
 use super::*;
 use crate::LineMode;
-use rsync_core::{branding::Brand, message::{Message, MessageScratch}};
+use rsync_core::{
+    branding::Brand,
+    message::{Message, MessageScratch},
+};
 use std::io::{self, Cursor, Write};
 
 #[test]
