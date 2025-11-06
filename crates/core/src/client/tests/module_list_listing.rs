@@ -1,5 +1,7 @@
 #[test]
 fn run_module_list_accepts_plaintext_motd_before_acknowledgment() {
+    let _guard = env_lock().lock().expect("env mutex poisoned");
+
     let responses = vec![
         "-----\n",
         "Welcome to the stub rsync service\n",
@@ -27,6 +29,8 @@ fn run_module_list_accepts_plaintext_motd_before_acknowledgment() {
 
 #[test]
 fn run_module_list_suppresses_plaintext_motd_when_requested() {
+    let _guard = env_lock().lock().expect("env mutex poisoned");
+
     let responses = vec![
         "Banner headline\n",
         "@RSYNCD: OK\n",
