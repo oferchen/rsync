@@ -101,6 +101,26 @@ for needle in ["oc-rsync", "oc-rsyncd"]:
     if needle not in text:
         errors.append(f"Formula must reference {needle} to satisfy packaging requirements")
 
+required_config_entries = [
+    '(etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.conf"',
+    '(etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.secrets"',
+]
+missing_configs = [needle for needle in required_config_entries if needle not in text]
+if missing_configs:
+    errors.append(
+        "Formula must install oc-rsyncd configuration assets: " + ", ".join(missing_configs)
+    )
+
+if 'chmod 0600, etc/"oc-rsyncd/oc-rsyncd.secrets"' not in text:
+    errors.append(
+        "Formula must enforce 0600 permissions for oc-rsyncd.secrets via chmod"
+    )
+
+if '(pkgshare/"examples").install "packaging/examples/oc-rsyncd.conf"' not in text:
+    errors.append(
+        "Formula must install the sample oc-rsyncd.conf under pkgshare/examples"
+    )
+
 if errors:
     for error in errors:
         print(f"[ERROR] {error}")
