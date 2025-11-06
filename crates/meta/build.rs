@@ -8,6 +8,10 @@ fn main() {
         return;
     }
 
+    if target_exposes_acl_via_libsystem() {
+        return;
+    }
+
     if let Some(path) = locate_libacl() {
         if let Some(out_dir) = env::var_os("OUT_DIR") {
             let out_dir = PathBuf::from(out_dir);
@@ -26,6 +30,12 @@ fn main() {
     }
 
     println!("cargo:rustc-link-lib=dylib=acl");
+}
+
+fn target_exposes_acl_via_libsystem() -> bool {
+    // Apple's libSystem exposes the POSIX ACL symbols without an external libacl
+    // shim, so adding an explicit `-lacl` linker flag would fail.
+    matches!(env::var("CARGO_CFG_TARGET_VENDOR").as_deref(), Ok("apple"))
 }
 
 fn locate_libacl() -> Option<PathBuf> {
