@@ -7,3 +7,6 @@
   an implicit `--daemon`, mirroring the upstream symlink behaviour.
 - Added regression coverage ensuring the fallback binary availability cache
   expires negative entries once the TTL elapses.
+- Extended the bandwidth parser test suite with exponent and byte-suffix
+  adjustment cases so `--bwlimit` parity with upstream `parse_size_arg()` stays
+  locked down.

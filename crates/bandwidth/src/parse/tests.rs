@@ -57,6 +57,18 @@ fn parse_bandwidth_accepts_trailing_decimal_point() {
 }
 
 #[test]
+fn parse_bandwidth_accepts_exponent_notation() {
+    let bytes = parse_bandwidth_argument("1e3b").expect("parse succeeds");
+    assert_eq!(bytes, NonZeroU64::new(1_000));
+
+    let kibibytes = parse_bandwidth_argument("2.5e2K").expect("parse succeeds");
+    assert_eq!(kibibytes, NonZeroU64::new(256_000));
+
+    let decimal = parse_bandwidth_argument("1e3MB").expect("parse succeeds");
+    assert_eq!(decimal, NonZeroU64::new(1_000_000_000));
+}
+
+#[test]
 fn parse_bandwidth_accepts_large_unit_suffixes() {
     let gibibytes = parse_bandwidth_argument("1G").expect("parse succeeds");
     assert_eq!(gibibytes, NonZeroU64::new(1_024u64.pow(3)));
@@ -109,6 +121,15 @@ fn parse_bandwidth_accepts_leading_decimal_without_integer_part() {
 fn parse_bandwidth_accepts_leading_plus_sign() {
     let limit = parse_bandwidth_argument("+1M").expect("parse succeeds");
     assert_eq!(limit, NonZeroU64::new(1_048_576));
+}
+
+#[test]
+fn parse_bandwidth_honours_postfix_adjustments_for_byte_suffix() {
+    let incremented = parse_bandwidth_argument("600b+1").expect("parse succeeds");
+    assert_eq!(incremented, NonZeroU64::new(601));
+
+    let decremented = parse_bandwidth_argument("600b-1").expect("parse succeeds");
+    assert_eq!(decremented, NonZeroU64::new(599));
 }
 
 #[test]
