@@ -107,6 +107,52 @@ fn execute_copies_fifo_within_directory() {
 
 #[cfg(unix)]
 #[test]
+fn execute_preserves_fifo_hard_links() {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+    let fifo_a = source_root.join("pipe-a");
+    mkfifo_for_tests(&fifo_a, 0o600).expect("mkfifo a");
+    let fifo_b = source_root.join("pipe-b");
+    fs::hard_link(&fifo_a, &fifo_b).expect("link fifo");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .hard_links(true)
+                .specials(true)
+                .permissions(true),
+        )
+        .expect("copy succeeds");
+
+    let dest_a = dest_root.join("pipe-a");
+    let dest_b = dest_root.join("pipe-b");
+    let meta_a = fs::symlink_metadata(&dest_a).expect("dest a metadata");
+    let meta_b = fs::symlink_metadata(&dest_b).expect("dest b metadata");
+
+    assert!(meta_a.file_type().is_fifo());
+    assert!(meta_b.file_type().is_fifo());
+    assert_eq!(meta_a.ino(), meta_b.ino());
+    assert_eq!(meta_a.nlink(), 2);
+    assert_eq!(meta_b.nlink(), 2);
+    assert_eq!(meta_a.permissions().mode() & 0o777, 0o600);
+    assert_eq!(meta_b.permissions().mode() & 0o777, 0o600);
+    assert!(summary.hard_links_created() >= 1);
+    assert_eq!(summary.fifos_created(), 1);
+}
+
+#[cfg(unix)]
+#[test]
 fn execute_without_specials_skips_fifo() {
     let temp = tempdir().expect("tempdir");
     let source_fifo = temp.path().join("source.pipe");

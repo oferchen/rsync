@@ -69,7 +69,7 @@ impl VersionInfoConfig {
             supports_symlinks: cfg!(unix),
             supports_symtimes: cfg!(unix),
             supports_hardlinks: cfg!(unix),
-            supports_hardlink_specials: false,
+            supports_hardlink_specials: cfg!(unix),
             supports_hardlink_symlinks: false,
             supports_ipv6: true,
             supports_atimes: true,
