@@ -1,7 +1,7 @@
 use super::MessageSink;
-use crate::LineModeGuard;
 use crate::line_mode::LineMode;
-use rsync_core::message::MessageScratch;
+use crate::LineModeGuard;
+use rsync_core::{branding::Brand, message::MessageScratch};
 
 impl<W> MessageSink<W> {
     /// Returns a shared reference to the underlying writer.
@@ -85,5 +85,16 @@ impl<W> MessageSink<W> {
     /// between sinks that share a scratch instance.
     pub fn scratch_mut(&mut self) -> &mut MessageScratch {
         &mut self.scratch
+    }
+
+    /// Returns the brand used to render message prefixes.
+    #[must_use]
+    pub const fn brand(&self) -> Brand {
+        self.brand
+    }
+
+    /// Updates the brand used to render subsequent messages.
+    pub fn set_brand(&mut self, brand: Brand) {
+        self.brand = brand;
     }
 }

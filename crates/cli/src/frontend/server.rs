@@ -82,6 +82,7 @@ where
     let _ = stdout.flush();
     let _ = stderr.flush();
 
+    let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
     let upstream_program = Brand::Upstream.client_program_name();
     let upstream_program_os = OsStr::new(upstream_program);
     let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
@@ -89,7 +90,7 @@ where
             let text = format!(
                 "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream {upstream_program} binary"
             );
-            write_server_fallback_error(stderr, text);
+            write_server_fallback_error(stderr, program_brand, text);
             return 1;
         }
         Some(other) => other
@@ -101,7 +102,7 @@ where
     if !fallback_binary_available(fallback.as_os_str()) {
         let diagnostic =
             describe_missing_fallback_binary(fallback.as_os_str(), &[CLIENT_FALLBACK_ENV]);
-        write_server_fallback_error(stderr, diagnostic);
+        write_server_fallback_error(stderr, program_brand, diagnostic);
         return 1;
     }
 
@@ -118,7 +119,7 @@ where
                 "failed to launch fallback {upstream_program} binary '{}': {error}",
                 Path::new(&fallback).display()
             );
-            write_server_fallback_error(stderr, text);
+            write_server_fallback_error(stderr, program_brand, text);
             return 1;
         }
     };
@@ -144,6 +145,7 @@ where
                     terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
                     write_server_fallback_error(
                         stderr,
+                        program_brand,
                         format!("failed to forward fallback stdout: {error}"),
                     );
                     return 1;
@@ -154,6 +156,7 @@ where
                     terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
                     write_server_fallback_error(
                         stderr,
+                        program_brand,
                         format!("failed to forward fallback stderr: {error}"),
                     );
                     return 1;
@@ -163,6 +166,7 @@ where
                 terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
                 write_server_fallback_error(
                     stderr,
+                    program_brand,
                     format!("failed to read stdout from fallback {upstream_program}: {error}"),
                 );
                 return 1;
@@ -171,6 +175,7 @@ where
                 terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
                 write_server_fallback_error(
                     stderr,
+                    program_brand,
                     format!("failed to read stderr from fallback {upstream_program}: {error}"),
                 );
                 return 1;
@@ -194,6 +199,7 @@ where
         Err(error) => {
             write_server_fallback_error(
                 stderr,
+                program_brand,
                 format!("failed to wait for fallback {upstream_program} process: {error}"),
             );
             1
@@ -264,8 +270,12 @@ fn terminate_server_process(
     join_server_thread(stderr_thread);
 }
 
-fn write_server_fallback_error<Err: Write>(stderr: &mut Err, text: impl fmt::Display) {
-    let mut sink = MessageSink::new(stderr);
+fn write_server_fallback_error<Err: Write>(
+    stderr: &mut Err,
+    brand: Brand,
+    text: impl fmt::Display,
+) {
+    let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
     message = message.with_role(Role::Client);
     if super::write_message(&message, &mut sink).is_err() {

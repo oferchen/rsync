@@ -218,6 +218,9 @@ where
         args.push(OsString::from(ProgramName::Rsync.as_str()));
     }
 
+    let detected = detect_program_name(args.first().map(|arg| arg.as_os_str()));
+    let brand = detected.brand();
+
     if server::server_mode_requested(&args) {
         return server::run_server_mode(&args, stdout, stderr);
     }
@@ -226,7 +229,7 @@ where
         return server::run_daemon_mode(daemon_args, stdout, stderr);
     }
 
-    let mut stderr_sink = MessageSink::new(stderr);
+    let mut stderr_sink = MessageSink::with_brand(stderr, brand);
     match parse_args(args) {
         Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
         Err(error) => {

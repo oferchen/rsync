@@ -21,7 +21,8 @@ pub(super) fn fail_with_message<Err>(message: Message, stderr: &mut MessageSink<
 where
     Err: Write,
 {
-    let fallback = message.to_string();
+    let brand = stderr.brand();
+    let fallback = message.clone().with_brand(brand).to_string();
     emit_message_with_fallback(&message, &fallback, stderr);
     message.code().unwrap_or(1)
 }
