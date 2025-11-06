@@ -163,3 +163,28 @@ fn local_copy_timeout_enforced() {
         "destination should not be created on timeout"
     );
 }
+
+#[test]
+fn local_copy_stop_at_enforced() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("dest.bin");
+    fs::write(&source, vec![0u8; 1024]).expect("write source");
+
+    let operands = vec![
+        source.clone().into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let stop_at = std::time::SystemTime::now()
+        .checked_sub(Duration::from_secs(1))
+        .expect("past deadline");
+    let options = LocalCopyOptions::default().with_stop_at(Some(stop_at));
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("stop-at should fail copy");
+
+    assert!(matches!(error.kind(), LocalCopyErrorKind::StopAtReached { .. }));
+    assert!(!destination.exists(), "destination should not exist on stop-at");
+}

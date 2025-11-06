@@ -19,7 +19,10 @@ use super::super::{
 };
 use super::messages::{fail_with_custom_fallback, fail_with_message};
 use super::module_listing::{ModuleListingInputs, maybe_handle_module_listing};
-use crate::frontend::{arguments::ParsedArgs, execution::chown::ParsedChown};
+use crate::frontend::{
+    arguments::{ParsedArgs, StopRequest},
+    execution::chown::ParsedChown,
+};
 use metadata::MetadataSettings;
 use rsync_core::client::HumanReadableMode;
 use rsync_logging::MessageSink;
@@ -27,6 +30,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use super::{config, filters, metadata, options, summary, validation};
+use crate::frontend::execution::{parse_stop_after_argument, parse_stop_at_argument};
 
 pub(crate) fn execute<Out, Err>(
     parsed: ParsedArgs,
@@ -141,6 +145,8 @@ where
         protocol,
         timeout,
         contimeout,
+        stop_after,
+        stop_at,
         out_format,
     } = parsed;
 
@@ -166,6 +172,20 @@ where
     let connect_timeout_setting = match resolve_timeout(contimeout.as_ref(), stderr) {
         Ok(setting) => setting,
         Err(code) => return code,
+    };
+
+    let stop_request = if let Some(value) = stop_after.as_ref() {
+        match parse_stop_after_argument(value.as_os_str()) {
+            Ok(deadline) => Some(StopRequest::new_stop_after(value.clone(), deadline)),
+            Err(message) => return fail_with_message(message, stderr),
+        }
+    } else if let Some(value) = stop_at.as_ref() {
+        match parse_stop_at_argument(value.as_os_str()) {
+            Ok(deadline) => Some(StopRequest::new_stop_at(value.clone(), deadline)),
+            Err(message) => return fail_with_message(message, stderr),
+        }
+    } else {
+        None
     };
 
     if let Some(code) = maybe_print_help_or_version(show_help, show_version, program_name, stdout) {
@@ -395,6 +415,7 @@ where
         address_mode,
         rsync_path: rsync_path.as_ref(),
         remainder: &remainder,
+        stop_request: stop_request.clone(),
         #[cfg(feature = "acl")]
         acls,
         #[cfg(feature = "xattr")]
@@ -548,6 +569,7 @@ where
         whole_file: whole_file_enabled,
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,
+        stop_deadline: stop_request.as_ref().map(StopRequest::deadline),
         checksum_choice,
         compare_destinations,
         copy_destinations,

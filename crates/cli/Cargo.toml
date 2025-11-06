@@ -26,7 +26,7 @@ rsync-protocol = { path = "../protocol" }
 rsync-compress = { path = "../compress" }
 rsync-meta = { path = "../meta" }
 rsync-checksums = { path = "../checksums" }
-time = { version = "0.3", default-features = false, features = ["formatting", "macros"] }
+time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = "3.10"
 
 [target.'cfg(unix)'.dependencies]
