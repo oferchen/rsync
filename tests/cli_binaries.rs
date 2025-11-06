@@ -186,6 +186,15 @@ fn locate_binary(name: &str) -> Option<PathBuf> {
         }
     }
 
+    if let Some(path_var) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_var) {
+            let candidate = dir.join(&binary_name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
     let mut fallback_dir = current_exe;
     fallback_dir.pop();
     if fallback_dir.ends_with("deps") {
@@ -305,6 +314,117 @@ fn split_shell_words(input: &str) -> Result<Vec<String>, &'static str> {
         }
         State::SingleQuoted => Err("unterminated single quote"),
         State::DoubleQuoted => Err("unterminated double quote"),
+    }
+}
+
+#[cfg(test)]
+mod locate_binary_tests {
+    use super::locate_binary;
+    use std::env;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn finds_binary_via_path_search() {
+        let _guard = ENV_MUTEX.lock().expect("env mutex poisoned");
+
+        let temp_dir = TempDir::create().expect("failed to create temporary directory");
+        let binary_name = "oc_rsync_locate_binary";
+        let binary_path = temp_dir
+            .path()
+            .join(format!("{binary_name}{}", std::env::consts::EXE_SUFFIX));
+        fs::write(&binary_path, b"test binary").expect("failed to write binary placeholder");
+
+        let mut paths = vec![temp_dir.path().to_path_buf()];
+        if let Some(original) = env::var_os("PATH") {
+            paths.extend(env::split_paths(&original));
+        }
+
+        let joined = env::join_paths(&paths).expect("failed to build PATH");
+        let _path_guard = EnvVarGuard::set("PATH", joined);
+
+        let resolved = locate_binary(binary_name)
+            .unwrap_or_else(|| panic!("expected {binary_name} to be resolved"));
+        assert_eq!(resolved, binary_path);
+    }
+
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: OsString) -> Self {
+            let original = env::var_os(key);
+            // SAFETY: We guard environment mutations with a process-wide mutex to
+            // avoid concurrent changes across tests, matching the guidance in
+            // `std::env` documentation for multi-threaded programs.
+            unsafe { env::set_var(key, &value) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(original) = self.original.as_ref() {
+                // SAFETY: The global mutex ensures no other thread performs an
+                // environment mutation while we restore the prior value.
+                unsafe { env::set_var(self.key, original) };
+            } else {
+                // SAFETY: Protected by the same mutex as other mutations.
+                unsafe { env::remove_var(self.key) };
+            }
+        }
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn create() -> io::Result<Self> {
+            let mut base = env::temp_dir();
+            base.push("oc_rsync_locate_binary_tests");
+            fs::create_dir_all(&base)?;
+
+            for attempt in 0..100 {
+                let candidate = base.join(unique_component(attempt));
+                match fs::create_dir(&candidate) {
+                    Ok(()) => return Ok(Self { path: candidate }),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "failed to allocate unique temporary directory",
+            ))
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn unique_component(attempt: u32) -> String {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("pid{}_{}_attempt{}", std::process::id(), timestamp, attempt)
     }
 }
 
