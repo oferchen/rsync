@@ -1,3 +1,4 @@
+use crate::auth::SUPPORTED_DAEMON_DIGESTS;
 use crate::branding::Brand;
 use crate::version::{VersionMetadata, version_metadata, version_metadata_for_program};
 use libc::{ino_t, off_t, time_t};
@@ -357,7 +358,10 @@ pub(crate) fn default_compress_algorithms() -> Vec<Cow<'static, str>> {
 /// `--version` output.
 #[must_use]
 pub(crate) fn default_daemon_auth_algorithms() -> Vec<Cow<'static, str>> {
-    vec![Cow::Borrowed("md5"), Cow::Borrowed("md4")]
+    SUPPORTED_DAEMON_DIGESTS
+        .iter()
+        .map(|digest| Cow::Borrowed(digest.name()))
+        .collect()
 }
 
 #[derive(Clone, Debug)]

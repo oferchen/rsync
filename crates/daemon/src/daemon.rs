@@ -41,6 +41,7 @@ use std::os::unix::fs::PermissionsExt;
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
 use rsync_checksums::strong::Md5;
 use rsync_core::{
+    auth::{SUPPORTED_DAEMON_DIGESTS, verify_daemon_auth_response},
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
         parse_bandwidth_limit,
@@ -99,8 +100,6 @@ const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
 /// Error payload returned when updating the connection lock file fails.
 const MODULE_LOCK_ERROR_PAYLOAD: &str =
     "@ERROR: failed to update module connection lock; please try again later";
-/// Digest algorithms advertised during the legacy daemon greeting.
-const LEGACY_HANDSHAKE_DIGESTS: &[&str] = &["sha512", "sha256", "sha1", "md5", "md4"];
 // Deterministic help text describing the currently supported daemon surface.
 //
 // The snapshot adjusts the banner, usage line, and default configuration path

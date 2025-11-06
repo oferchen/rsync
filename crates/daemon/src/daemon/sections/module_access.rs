@@ -146,21 +146,14 @@ fn verify_secret_response(
 
         if let Some((user, secret)) = line.split_once(':') {
             if user == username {
-                let expected = compute_auth_response(secret, challenge);
-                return Ok(expected == response);
+                if verify_daemon_auth_response(secret.as_bytes(), challenge, response) {
+                    return Ok(true);
+                }
             }
         }
     }
 
     Ok(false)
-}
-
-fn compute_auth_response(secret: &str, challenge: &str) -> String {
-    let mut hasher = Md5::new();
-    hasher.update(secret.as_bytes());
-    hasher.update(challenge.as_bytes());
-    let digest = hasher.finalize();
-    STANDARD_NO_PAD.encode(digest)
 }
 
 fn deny_module(
