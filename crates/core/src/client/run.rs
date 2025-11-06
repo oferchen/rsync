@@ -182,6 +182,7 @@ pub fn build_local_copy_options(
         )
         .with_default_compression_level(config.compression_setting().level_or_default())
         .with_skip_compress(config.skip_compress().clone())
+        .with_stop_at(config.stop_at())
         .whole_file(config.whole_file())
         .compress(config.compress())
         .with_compression_level_override(config.compression_level())

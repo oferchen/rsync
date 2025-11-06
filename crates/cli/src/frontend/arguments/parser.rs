@@ -453,6 +453,8 @@ where
     let protocol = matches.remove_one::<OsString>("protocol");
     let timeout = matches.remove_one::<OsString>("timeout");
     let contimeout = matches.remove_one::<OsString>("contimeout");
+    let stop_after = matches.remove_one::<OsString>("stop-after");
+    let stop_at_option = matches.remove_one::<OsString>("stop-at");
     let out_format = matches.remove_one::<OsString>("out-format");
     let itemize_changes = matches.get_flag("itemize-changes");
     let no_motd = matches.get_flag("no-motd");
@@ -560,6 +562,8 @@ where
         protocol,
         timeout,
         contimeout,
+        stop_after,
+        stop_at: stop_at_option,
         out_format,
         daemon_port,
     })

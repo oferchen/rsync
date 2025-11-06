@@ -91,6 +91,11 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             let message = rsync_error!(MAX_DELETE_EXIT_CODE, text).with_role(Role::Client);
             ClientError::new(MAX_DELETE_EXIT_CODE, message)
         }
+        LocalCopyErrorKind::StopAtReached { .. } => {
+            let message =
+                rsync_error!(exit_code, "stopping at requested limit").with_role(Role::Client);
+            ClientError::new(exit_code, message)
+        }
     }
 }
 

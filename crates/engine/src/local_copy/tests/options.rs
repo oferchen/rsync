@@ -333,6 +333,14 @@ fn local_copy_options_timeout_round_trip() {
 }
 
 #[test]
+fn local_copy_options_stop_at_round_trip() {
+    let future = std::time::SystemTime::now() + Duration::from_secs(60);
+    let options = LocalCopyOptions::default().with_stop_at(Some(future));
+    assert_eq!(options.stop_at(), Some(future));
+    assert!(LocalCopyOptions::default().stop_at().is_none());
+}
+
+#[test]
 fn local_copy_options_compression_override_round_trip() {
     let level = NonZeroU8::new(5).expect("level");
     let override_level = CompressionLevel::precise(level);

@@ -25,6 +25,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the deadline at which the transfer should stop.
+    #[must_use]
+    #[doc(alias = "--stop-after")]
+    #[doc(alias = "--stop-at")]
+    pub fn stop_at(mut self, deadline: Option<SystemTime>) -> Self {
+        self.stop_deadline = deadline;
+        self
+    }
+
     /// Configures the command used to reach rsync:// daemons.
     #[must_use]
     #[doc(alias = "--connect-program")]

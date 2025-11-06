@@ -76,6 +76,10 @@ pub struct RemoteFallbackArgs {
     pub compress_level: Option<OsString>,
     /// Optional suffix list forwarded via `--skip-compress`.
     pub skip_compress: Option<OsString>,
+    /// Optional `--stop-after` argument forwarded to the fallback binary.
+    pub stop_after: Option<OsString>,
+    /// Optional `--stop-at` argument forwarded to the fallback binary.
+    pub stop_at: Option<OsString>,
     /// Optional ownership override forwarded via `--chown`.
     pub chown: Option<OsString>,
     /// Optional `--owner`/`--no-owner` toggle.

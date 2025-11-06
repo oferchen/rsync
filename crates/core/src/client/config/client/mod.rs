@@ -1,7 +1,7 @@
 use std::ffi::{OsStr, OsString};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use rsync_compress::zlib::CompressionLevel;
 use rsync_engine::SkipCompressList;
@@ -84,6 +84,7 @@ pub struct ClientConfig {
     pub(super) address_mode: AddressMode,
     pub(super) timeout: TransferTimeout,
     pub(super) connect_timeout: TransferTimeout,
+    pub(super) stop_at: Option<SystemTime>,
     pub(super) link_dest_paths: Vec<PathBuf>,
     pub(super) reference_directories: Vec<ReferenceDirectory>,
     pub(super) connect_program: Option<OsString>,
@@ -166,6 +167,7 @@ impl Default for ClientConfig {
             address_mode: AddressMode::Default,
             timeout: TransferTimeout::Default,
             connect_timeout: TransferTimeout::Default,
+            stop_at: None,
             link_dest_paths: Vec::new(),
             reference_directories: Vec::new(),
             connect_program: None,

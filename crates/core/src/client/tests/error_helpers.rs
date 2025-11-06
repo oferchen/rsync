@@ -95,6 +95,17 @@ mod error_helper_tests {
     }
 
     #[test]
+    fn map_local_copy_error_for_stop_at_reports_message() {
+        let deadline = std::time::SystemTime::now();
+        let exit_code = LocalCopyError::stop_at_reached(deadline).exit_code();
+        let mapped = map_local_copy_error(LocalCopyError::stop_at_reached(deadline));
+        let rendered = render(&mapped);
+
+        assert_eq!(mapped.exit_code(), exit_code);
+        assert!(rendered.contains("stopping at requested limit"), "{rendered}");
+    }
+
+    #[test]
     fn map_local_copy_error_for_delete_limit_handles_pluralisation() {
         let singular = map_local_copy_error(LocalCopyError::delete_limit_exceeded(1));
         let plural = map_local_copy_error(LocalCopyError::delete_limit_exceeded(2));

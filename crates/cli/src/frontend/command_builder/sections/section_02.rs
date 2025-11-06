@@ -483,4 +483,25 @@ pub(crate) fn section_02(command: ClapCommand) -> ClapCommand {
                     .action(ArgAction::Set)
                     .value_parser(OsStringValueParser::new()),
             )
+            .arg(
+                Arg::new("stop-after")
+                    .long("stop-after")
+                    .alias("time-limit")
+                    .value_name("MINS")
+                    .help("Stop the transfer after running for the specified number of minutes.")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with("stop-at"),
+            )
+            .arg(
+                Arg::new("stop-at")
+                    .long("stop-at")
+                    .value_name("WHEN")
+                    .help("Stop the transfer at the specified local time (e.g. HH:MM or YYYY-MM-DDTHH:MM).")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .value_parser(OsStringValueParser::new())
+                    .conflicts_with("stop-after"),
+            )
 }

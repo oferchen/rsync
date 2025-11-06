@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use rsync_core::client::{
     AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
@@ -83,6 +84,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) whole_file: bool,
     pub(crate) timeout: TransferTimeout,
     pub(crate) connect_timeout: TransferTimeout,
+    pub(crate) stop_deadline: Option<SystemTime>,
     pub(crate) checksum_choice: Option<StrongChecksumChoice>,
     pub(crate) compare_destinations: Vec<OsString>,
     pub(crate) copy_destinations: Vec<OsString>,
@@ -171,7 +173,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .append_verify(inputs.append_verify)
         .whole_file(inputs.whole_file)
         .timeout(inputs.timeout)
-        .connect_timeout(inputs.connect_timeout);
+        .connect_timeout(inputs.connect_timeout)
+        .stop_at(inputs.stop_deadline);
 
     if let Some(choice) = inputs.checksum_choice {
         builder = builder.checksum_choice(choice);

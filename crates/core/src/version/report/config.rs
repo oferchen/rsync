@@ -81,7 +81,7 @@ impl VersionInfoConfig {
             secluded_args_mode: SecludedArgsMode::Optional,
             supports_iconv: cfg!(feature = "iconv"),
             supports_prealloc: true,
-            supports_stop_at: false,
+            supports_stop_at: true,
             supports_crtimes: false,
             supports_simd_roll: false,
             supports_asm_roll: false,

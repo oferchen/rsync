@@ -7,7 +7,7 @@ use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use super::filter_program::{
     ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
@@ -72,6 +72,8 @@ pub(crate) struct CopyContext<'a> {
     deferred_deletions: Vec<DeferredDeletion>,
     deferred_updates: Vec<DeferredUpdate>,
     timeout: Option<Duration>,
+    stop_deadline: Option<Instant>,
+    stop_at: Option<SystemTime>,
     last_progress: Instant,
     created_entries: Vec<CreatedEntry>,
     destination_root: PathBuf,
