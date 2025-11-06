@@ -343,7 +343,8 @@ fn run_module_list_authenticates_with_credentials() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth daemon");
     let addr = listener.local_addr().expect("local addr");
     let challenge = "abc123";
-    let expected = compute_daemon_auth_response(b"secret", challenge);
+    let expected =
+        compute_daemon_auth_response(b"secret", challenge, DaemonAuthDigest::Sha512);
 
     let handle = thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {
@@ -411,7 +412,11 @@ fn run_module_list_authenticates_with_password_override() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind override daemon");
     let addr = listener.local_addr().expect("local addr");
     let challenge = "override";
-    let expected = compute_daemon_auth_response(b"override-secret", challenge);
+    let expected = compute_daemon_auth_response(
+        b"override-secret",
+        challenge,
+        DaemonAuthDigest::Sha512,
+    );
 
     let handle = thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {
@@ -484,7 +489,8 @@ fn run_module_list_authenticates_with_split_challenge() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind split auth daemon");
     let addr = listener.local_addr().expect("local addr");
     let challenge = "split123";
-    let expected = compute_daemon_auth_response(b"secret", challenge);
+    let expected =
+        compute_daemon_auth_response(b"secret", challenge, DaemonAuthDigest::Sha512);
 
     let handle = thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {

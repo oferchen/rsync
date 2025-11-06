@@ -4,6 +4,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
+/// Shared daemon authentication helpers.
+pub mod auth;
 /// Bandwidth parsing utilities shared by CLI and daemon entry points.
 pub mod bandwidth;
 /// Branding constants shared across binaries and packaging layers.

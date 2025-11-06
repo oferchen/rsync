@@ -1,6 +1,6 @@
 use super::error::{MAX_DELETE_EXIT_CODE, PROTOCOL_INCOMPATIBLE_EXIT_CODE, map_local_copy_error};
 use super::module_list::{
-    ConnectProgramConfig, DaemonAuthContext, ProxyConfig, SensitiveBytes,
+    ConnectProgramConfig, DaemonAuthContext, DaemonAuthDigest, ProxyConfig, SensitiveBytes,
     compute_daemon_auth_response, connect_direct, connect_via_proxy, establish_proxy_tunnel,
     map_daemon_handshake_error, parse_proxy_spec, resolve_connect_timeout,
     resolve_daemon_addresses, set_test_daemon_password,
@@ -87,7 +87,11 @@ fn sensitive_bytes_zeroizes_on_drop() {
 
 #[test]
 fn daemon_auth_context_zeroizes_secret_on_drop() {
-    let context = DaemonAuthContext::new("user".to_string(), b"supersecret".to_vec());
+    let context = DaemonAuthContext::new(
+        "user".to_string(),
+        b"supersecret".to_vec(),
+        DaemonAuthDigest::Sha512,
+    );
     let zeroed = context.into_zeroized_secret();
     assert!(zeroed.iter().all(|&byte| byte == 0));
 }

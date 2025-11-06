@@ -3,7 +3,8 @@ fn run_module_list_reports_authentication_failure() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind auth daemon");
     let addr = listener.local_addr().expect("local addr");
     let challenge = "abcdef";
-    let expected = compute_daemon_auth_response(b"secret", challenge);
+    let expected =
+        compute_daemon_auth_response(b"secret", challenge, DaemonAuthDigest::Sha512);
 
     let handle = thread::spawn(move || {
         if let Ok((mut stream, _)) = listener.accept() {

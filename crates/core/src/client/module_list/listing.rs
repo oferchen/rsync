@@ -20,6 +20,7 @@ use super::auth::{
 use super::connect::{open_daemon_stream, resolve_connect_timeout};
 use super::errors::{legacy_daemon_error_payload, map_daemon_handshake_error, read_trimmed_line};
 use super::request::{ModuleListOptions, ModuleListRequest};
+use crate::auth::{parse_daemon_digest_list, select_daemon_digest};
 
 /// Collection of daemon modules together with MOTD, warnings, and capabilities.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,6 +190,9 @@ pub fn run_module_list_with_password_and_options(
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| map_daemon_handshake_error(error, addr))?;
+    let server_greeting = handshake.server_greeting().clone();
+    let advertised_digests = parse_daemon_digest_list(server_greeting.digest_list());
+    let selected_digest = select_daemon_digest(&advertised_digests);
     let mut reader = BufReader::new(handshake.into_stream());
 
     reader
@@ -266,7 +270,8 @@ pub fn run_module_list_with_password_and_options(
                             })?
                     };
 
-                    let context = DaemonAuthContext::new(username.to_owned(), secret);
+                    let context =
+                        DaemonAuthContext::new(username.to_owned(), secret, selected_digest);
                     if let Some(challenge) = module {
                         send_daemon_auth_credentials(&mut reader, &context, challenge, addr)?;
                     }
