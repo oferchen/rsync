@@ -16,6 +16,14 @@ use std::io::Write;
 
 pub(crate) use workflow::execute;
 
+#[cfg(test)]
+use super::super::arguments::ProgramName;
+
+#[cfg(test)]
+pub(crate) fn render_missing_operands_stdout(program_name: ProgramName) -> String {
+    workflow::render_missing_operands_stdout(program_name)
+}
+
 pub(crate) fn with_output_writer<'a, Out, Err, R>(
     stdout: &'a mut Out,
     stderr: &'a mut MessageSink<Err>,
