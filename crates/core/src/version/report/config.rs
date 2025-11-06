@@ -71,7 +71,7 @@ impl VersionInfoConfig {
             supports_atimes: true,
             supports_batchfiles: false,
             supports_inplace: true,
-            supports_append: false,
+            supports_append: true,
             supports_acls: cfg!(feature = "acl"),
             supports_xattrs: cfg!(feature = "xattr"),
             secluded_args_mode: SecludedArgsMode::Optional,

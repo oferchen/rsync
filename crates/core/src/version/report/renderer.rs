@@ -331,6 +331,7 @@ pub(crate) fn default_checksum_algorithms() -> Vec<Cow<'static, str>> {
         Cow::Borrowed("xxh128"),
         Cow::Borrowed("xxh3"),
         Cow::Borrowed("xxh64"),
+        Cow::Borrowed("(xxhash)"),
         Cow::Borrowed("md5"),
         Cow::Borrowed("md4"),
         Cow::Borrowed("sha1"),
