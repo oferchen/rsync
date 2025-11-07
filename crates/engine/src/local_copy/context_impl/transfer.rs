@@ -1,4 +1,32 @@
 impl<'a> CopyContext<'a> {
+    fn start_compressor(
+        &self,
+        compress: bool,
+        source: &Path,
+    ) -> Result<Option<ActiveCompressor>, LocalCopyError> {
+        if !compress {
+            return Ok(None);
+        }
+
+        ActiveCompressor::new(self.compression_algorithm(), self.compression_level())
+            .map(Some)
+            .map_err(|error| {
+                LocalCopyError::io("initialise compression", source.to_path_buf(), error)
+            })
+    }
+
+    fn register_limiter_bytes(&mut self, bytes: u64) {
+        if bytes == 0 {
+            return;
+        }
+
+        if let Some(limiter) = self.limiter.as_mut() {
+            let bounded = bytes.min(usize::MAX as u64) as usize;
+            let sleep = limiter.register(bounded);
+            self.summary.record_bandwidth_sleep(sleep.requested());
+        }
+    }
+
     pub(super) fn enter_directory(
         &self,
         source: &Path,
@@ -239,23 +267,7 @@ impl<'a> CopyContext<'a> {
 
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
-        let mut compressor = if compress {
-            match ActiveCompressor::new(
-                self.compression_algorithm(),
-                self.compression_level(),
-            ) {
-                Ok(encoder) => Some(encoder),
-                Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "initialise compression",
-                        source.to_path_buf(),
-                        error,
-                    ));
-                }
-            }
-        } else {
-            None
-        };
+        let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
 
         loop {
@@ -295,21 +307,10 @@ impl<'a> CopyContext<'a> {
                 compressed_delta = Some(delta);
             }
 
-            if let Some(sleep) = if let Some(limiter) = self.limiter.as_mut() {
-                if let Some(delta) = compressed_delta {
-                    if delta > 0 {
-                        let bounded = delta.min(usize::MAX as u64) as usize;
-                        Some(limiter.register(bounded))
-                    } else {
-                        None
-                    }
-                } else {
-                    Some(limiter.register(read))
-                }
+            if let Some(delta) = compressed_delta {
+                self.register_limiter_bytes(delta);
             } else {
-                None
-            } {
-                self.summary.record_bandwidth_sleep(sleep.requested());
+                self.register_limiter_bytes(read as u64);
             }
 
             total_bytes = total_bytes.saturating_add(read as u64);
@@ -335,19 +336,8 @@ impl<'a> CopyContext<'a> {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
             self.register_progress();
-            if let Some(sleep) = if let Some(limiter) = self.limiter.as_mut() {
-                let delta = compressed_total.saturating_sub(compressed_progress);
-                if delta > 0 {
-                    let bounded = delta.min(usize::MAX as u64) as usize;
-                    Some(limiter.register(bounded))
-                } else {
-                    None
-                }
-            } else {
-                None
-            } {
-                self.summary.record_bandwidth_sleep(sleep.requested());
-            }
+            let delta = compressed_total.saturating_sub(compressed_progress);
+            self.register_limiter_bytes(delta);
             FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
             FileCopyOutcome::new(literal_bytes, None)
