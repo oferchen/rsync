@@ -121,7 +121,7 @@ impl VersionInfoReport {
     /// assert!(report
     ///     .metadata()
     ///     .standard_banner()
-    ///     .starts_with("oc-rsyncd  version"));
+    ///     .starts_with("oc-rsync  version"));
     /// ```
     #[must_use]
     pub fn for_daemon_brand(brand: Brand) -> Self {

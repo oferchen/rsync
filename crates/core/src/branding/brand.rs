@@ -5,8 +5,8 @@ use std::fmt;
 use std::path::Path;
 
 use super::constants::{
-    OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
-    UPSTREAM_DAEMON_PROGRAM_NAME,
+    OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_DAEMON_WRAPPER_PROGRAM_NAME,
+    UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME,
 };
 use super::profile::{
     BrandProfile, config_path_candidate_strs, config_path_candidates, oc_profile,
@@ -34,7 +34,7 @@ use serde::ser::{Serialize, Serializer};
 pub enum Brand {
     /// Upstream-compatible binaries (`rsync` and `rsyncd`).
     Upstream,
-    /// Branded binaries installed as `oc-rsync` and `oc-rsyncd`.
+    /// Branded binaries installed as `oc-rsync` with an optional `oc-rsyncd` wrapper.
     Oc,
 }
 
@@ -67,7 +67,14 @@ impl FromStr for Brand {
             return Ok(Self::Upstream);
         }
 
-        if matches_any_program_alias(s, &[OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME]) {
+        if matches_any_program_alias(
+            s,
+            &[
+                OC_CLIENT_PROGRAM_NAME,
+                OC_DAEMON_PROGRAM_NAME,
+                OC_DAEMON_WRAPPER_PROGRAM_NAME,
+            ],
+        ) {
             return Ok(Self::Oc);
         }
 

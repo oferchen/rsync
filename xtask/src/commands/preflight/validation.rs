@@ -49,6 +49,13 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
             branding.daemon_bin
         ),
     )?;
+    ensure(
+        branding.daemon_wrapper_bin.starts_with("oc-"),
+        format!(
+            "daemon_wrapper_bin must start with 'oc-'; found {:?}",
+            branding.daemon_wrapper_bin
+        ),
+    )?;
 
     let config_dir = branding.daemon_config_dir.as_path();
     ensure(

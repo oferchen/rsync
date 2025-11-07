@@ -7,7 +7,8 @@ use std::path::Path;
 use super::constants::{
     LEGACY_DAEMON_CONFIG_DIR, LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_SECRETS_PATH,
     OC_CLIENT_PROGRAM_NAME, OC_DAEMON_CONFIG_DIR, OC_DAEMON_CONFIG_PATH, OC_DAEMON_PROGRAM_NAME,
-    OC_DAEMON_SECRETS_PATH, UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME,
+    OC_DAEMON_SECRETS_PATH, OC_DAEMON_WRAPPER_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
+    UPSTREAM_DAEMON_PROGRAM_NAME,
 };
 
 /// Describes the public-facing identity used by a binary distribution.
@@ -174,10 +175,16 @@ pub fn oc_client_program_name_os_str() -> &'static OsStr {
     OsStr::new(oc_client_program_name())
 }
 
-/// Returns the branded daemon program name exposed as `oc-rsyncd`.
+/// Returns the branded daemon program name exposed as `oc-rsync`.
 #[must_use]
 pub const fn oc_daemon_program_name() -> &'static str {
     OC_DAEMON_PROGRAM_NAME
+}
+
+/// Returns the compatibility wrapper program name exposed as `oc-rsyncd`.
+#[must_use]
+pub const fn oc_daemon_wrapper_program_name() -> &'static str {
+    OC_DAEMON_WRAPPER_PROGRAM_NAME
 }
 
 /// Returns the branded daemon program name as an [`OsStr`].
