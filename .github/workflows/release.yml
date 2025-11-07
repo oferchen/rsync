@@ -18,7 +18,6 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   BIN_CLIENT: oc-rsync
-  BIN_DAEMON: oc-rsyncd
 
 jobs:
   build:
@@ -199,11 +198,6 @@ jobs:
         shell: bash
         run: cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin "${BIN_CLIENT}"
 
-      - name: Build daemon
-        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
-        shell: bash
-        run: cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin "${BIN_DAEMON}"
-
       - name: Derive version from tag v*.*.*-rust (sanitize)
         if: ${{ matrix.platform.enabled }}
         shell: bash
@@ -238,7 +232,6 @@ jobs:
           mkdir -p "$root"
 
           oc="target/${TARGET}/dist/${BIN_CLIENT}"
-          od="target/${TARGET}/dist/${BIN_DAEMON}"
 
           # Windows uses .exe
           if [[ "$TRIPLE" == windows-* ]]; then
@@ -250,10 +243,6 @@ jobs:
           mkdir -p "$stage"
 
           install -m 0755 "$oc" "${stage}/${BIN_CLIENT}" 2>/dev/null || cp "$oc" "${stage}/${BIN_CLIENT}"
-
-          if [[ "${{ matrix.platform.build_daemon }}" == "true" && -f "$od" ]]; then
-            install -m 0755 "$od" "${stage}/${BIN_DAEMON}" 2>/dev/null || cp "$od" "${stage}/${BIN_DAEMON}"
-          fi
 
           for f in README.md CHANGELOG.md LICENSE; do
             [[ -f "$f" ]] && cp "$f" "$stage/"
