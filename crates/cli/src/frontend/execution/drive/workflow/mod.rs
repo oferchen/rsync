@@ -142,6 +142,7 @@ where
         stats,
         partial,
         preallocate,
+        fsync,
         delay_updates,
         partial_dir,
         temp_dir,
@@ -435,6 +436,7 @@ where
         stats,
         partial,
         preallocate,
+        fsync,
         delay_updates,
         partial_dir: partial_dir.as_ref(),
         temp_dir: temp_dir.as_ref(),
@@ -583,6 +585,7 @@ where
     } = metadata;
 
     let prune_empty_dirs_flag = prune_empty_dirs.unwrap_or(false);
+    let fsync_flag = fsync.unwrap_or(false);
     let inplace_enabled = inplace.unwrap_or(false);
     let append_enabled = append.unwrap_or(false);
     let whole_file_enabled = whole_file_option.unwrap_or(true);
@@ -653,6 +656,7 @@ where
         debug_flags_list,
         partial,
         preallocate,
+        fsync: fsync_flag,
         partial_dir: partial_dir.clone(),
         temp_dir: temp_dir.clone(),
         delay_updates,
