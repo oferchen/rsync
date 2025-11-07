@@ -73,6 +73,6 @@ exit 0
 
     let recorded = std::fs::read_to_string(&args_path).expect("read args file");
     let lines: Vec<&str> = recorded.lines().collect();
-    assert!(lines.iter().any(|line| *line == "--no-compress"));
-    assert!(!lines.iter().any(|line| *line == "--compress"));
+    assert!(lines.contains(&"--no-compress"));
+    assert!(!lines.contains(&"--compress"));
 }

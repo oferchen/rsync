@@ -88,29 +88,27 @@ pub(crate) fn compute_metadata_settings(
         Some(value) => Some(parse_group_mapping(value, parsed_chown)?),
         None => None,
     };
-    let preserve_owner = if parsed_chown.and_then(|value| value.owner()).is_some() {
-        true
-    } else if user_mapping.is_some() {
-        true
-    } else if let Some(value) = owner {
-        value
-    } else if super_mode == Some(true) {
-        true
-    } else {
-        archive
-    };
+    let preserve_owner =
+        if parsed_chown.and_then(|value| value.owner()).is_some() || user_mapping.is_some() {
+            true
+        } else if let Some(value) = owner {
+            value
+        } else if super_mode == Some(true) {
+            true
+        } else {
+            archive
+        };
 
-    let preserve_group = if parsed_chown.and_then(|value| value.group()).is_some() {
-        true
-    } else if group_mapping.is_some() {
-        true
-    } else if let Some(value) = group {
-        value
-    } else if super_mode == Some(true) {
-        true
-    } else {
-        archive
-    };
+    let preserve_group =
+        if parsed_chown.and_then(|value| value.group()).is_some() || group_mapping.is_some() {
+            true
+        } else if let Some(value) = group {
+            value
+        } else if super_mode == Some(true) {
+            true
+        } else {
+            archive
+        };
 
     let preserve_permissions = if let Some(value) = perms {
         value

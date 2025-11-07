@@ -119,7 +119,7 @@ pub fn parse_daemon_digest_list(list: Option<&str>) -> Vec<DaemonAuthDigest> {
 #[must_use]
 pub fn select_daemon_digest(advertised: &[DaemonAuthDigest]) -> DaemonAuthDigest {
     for preferred in SUPPORTED_DAEMON_DIGESTS.iter().copied() {
-        if advertised.iter().any(|candidate| *candidate == preferred) {
+        if advertised.contains(&preferred) {
             return preferred;
         }
     }

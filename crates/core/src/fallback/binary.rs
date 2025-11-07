@@ -327,21 +327,14 @@ impl UnixProcessIdentity {
 
 #[cfg(all(unix, not(target_vendor = "apple")))]
 fn collect_supplementary_groups() -> Vec<u32> {
-    use std::convert::TryFrom;
-
     match nix::unistd::getgroups() {
-        Ok(groups) => groups
-            .into_iter()
-            .filter_map(|gid| u32::try_from(gid.as_raw()).ok())
-            .collect(),
+        Ok(groups) => groups.into_iter().map(|gid| gid.as_raw()).collect(),
         Err(_) => Vec::new(),
     }
 }
 
 #[cfg(all(unix, target_vendor = "apple"))]
 fn collect_supplementary_groups() -> Vec<u32> {
-    use std::convert::TryFrom;
-
     const INITIAL_CAPACITY: usize = 32;
     const MAX_CAPACITY: usize = 1 << 12;
 
@@ -357,10 +350,7 @@ fn collect_supplementary_groups() -> Vec<u32> {
                 groups.set_len(len);
             }
 
-            return groups
-                .into_iter()
-                .filter_map(|gid| u32::try_from(gid).ok())
-                .collect();
+            return groups.into_iter().map(|gid| gid as u32).collect();
         }
 
         let errno = std::io::Error::last_os_error()

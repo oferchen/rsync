@@ -145,10 +145,10 @@ fn verify_secret_response(
         }
 
         if let Some((user, secret)) = line.split_once(':') {
-            if user == username {
-                if verify_daemon_auth_response(secret.as_bytes(), challenge, response) {
-                    return Ok(true);
-                }
+            if user == username
+                && verify_daemon_auth_response(secret.as_bytes(), challenge, response)
+            {
+                return Ok(true);
             }
         }
     }

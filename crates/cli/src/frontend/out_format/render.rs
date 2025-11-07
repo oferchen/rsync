@@ -187,27 +187,15 @@ fn format_with_units(value: i64, base: i64) -> Option<String> {
         magnitude = -magnitude;
     }
 
-    let units = if magnitude < base as f64 {
-        'K'
-    } else if {
+    const UNITS: [char; 5] = ['K', 'M', 'G', 'T', 'P'];
+    let mut units = 'P';
+    for (index, candidate) in UNITS.iter().enumerate() {
+        units = *candidate;
+        if magnitude < base as f64 || index == UNITS.len() - 1 {
+            break;
+        }
         magnitude /= base as f64;
-        magnitude < base as f64
-    } {
-        'M'
-    } else if {
-        magnitude /= base as f64;
-        magnitude < base as f64
-    } {
-        'G'
-    } else if {
-        magnitude /= base as f64;
-        magnitude < base as f64
-    } {
-        'T'
-    } else {
-        magnitude /= base as f64;
-        'P'
-    };
+    }
 
     if negative {
         magnitude = -magnitude;

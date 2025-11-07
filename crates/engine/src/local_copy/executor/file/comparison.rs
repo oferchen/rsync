@@ -168,30 +168,6 @@ pub(crate) fn files_match(source: &Path, destination: &Path) -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::tempdir;
-
-    #[test]
-    fn build_delta_signature_honours_block_size_override() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("data.bin");
-        let mut file = fs::File::create(&path).expect("create file");
-        file.write_all(&vec![0u8; 16384]).expect("write data");
-        drop(file);
-
-        let metadata = fs::metadata(&path).expect("metadata");
-        let override_size = NonZeroU32::new(2048).unwrap();
-        let index = build_delta_signature(&path, &metadata, Some(override_size))
-            .expect("signature")
-            .expect("index");
-
-        assert_eq!(index.block_length(), override_size.get() as usize);
-    }
-}
-
 pub(crate) enum StrongHasher {
     Md4(Md4),
     Md5(Md5),
@@ -267,4 +243,28 @@ pub(crate) fn files_checksum_match(
     }
 
     Ok(source_hasher.finalize() == destination_hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn build_delta_signature_honours_block_size_override() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("data.bin");
+        let mut file = fs::File::create(&path).expect("create file");
+        file.write_all(&vec![0u8; 16384]).expect("write data");
+        drop(file);
+
+        let metadata = fs::metadata(&path).expect("metadata");
+        let override_size = NonZeroU32::new(2048).unwrap();
+        let index = build_delta_signature(&path, &metadata, Some(override_size))
+            .expect("signature")
+            .expect("index");
+
+        assert_eq!(index.block_length(), override_size.get() as usize);
+    }
 }
