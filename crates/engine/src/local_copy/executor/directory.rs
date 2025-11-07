@@ -279,6 +279,7 @@ pub(crate) fn copy_directory_recursive(
             Some(base) => base.join(Path::new(&file_name)),
             None => PathBuf::from(Path::new(&file_name)),
         };
+        context.record_file_list_entry(non_empty_path(relative_path.as_path()));
 
         let mut keep_name = true;
 

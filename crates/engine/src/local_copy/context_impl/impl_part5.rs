@@ -63,6 +63,13 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    pub(super) fn record_file_list_entry(&mut self, relative: Option<&Path>) {
+        if let Some(path) = relative {
+            let size = encoded_path_len(path);
+            self.summary.record_file_list_entry(size);
+        }
+    }
+
     #[allow(dead_code)]
     pub(super) fn record_file_list_transfer(&mut self, elapsed: Duration) {
         if !elapsed.is_zero() {
@@ -147,5 +154,28 @@ impl<'a> CopyContext<'a> {
                 }
             }
         }
+    }
+}
+
+fn encoded_path_len(path: &Path) -> usize {
+    const NULL_TERMINATOR: usize = 1;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        path.as_os_str().as_bytes().len() + NULL_TERMINATOR
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        path.as_os_str().encode_wide().count() * 2 + NULL_TERMINATOR
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.to_string_lossy().len() + NULL_TERMINATOR
     }
 }
