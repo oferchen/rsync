@@ -145,15 +145,6 @@ maintainer-scripts = "packaging/deb"
 [package.metadata.rpm]
 package = "oc-rsync"
 summary = "Rust implementation of rsync-compatible client/daemon installed as oc-rsync with an oc-rsyncd wrapper"
-assets = [
-    { source = "target/dist/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
-    { source = "packaging/bin/oc-rsyncd", dest = "/usr/sbin/oc-rsyncd", mode = "0755" },
-    { source = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
-    { source = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
-    { source = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
-    { source = "packaging/default/oc-rsyncd", dest = "/etc/default/oc-rsyncd", mode = "0644", config = true },
-    { source = "packaging/examples/oc-rsyncd.conf", dest = "/usr/share/doc/oc-rsync/examples/oc-rsyncd.conf", mode = "0644" },
-]
 
 [package.metadata.rpm.files."../packaging/systemd/oc-rsyncd.service"]
 path = "/usr/lib/systemd/system/oc-rsyncd.service"
@@ -193,11 +184,13 @@ exit 0
 
 [package.metadata.rpm.cargo]
 profile = "dist"
-buildflags = ["--profile", "dist", "--bins"]
+buildflags = ["--profile", "dist", "--bins", "--features", "legacy-binaries"]
 
 [package.metadata.rpm.targets]
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
-"oc-rsyncd" = { path = "/usr/sbin/oc-rsyncd", mode = "0755" }
+"oc-rsyncd" = { path = "/usr/bin/oc-rsyncd", mode = "0755" }
+"rsync" = { path = "/usr/libexec/oc-rsync/rsync", mode = "0755" }
+"rsyncd" = { path = "/usr/libexec/oc-rsync/rsyncd", mode = "0755" }
 
 [profile.dist]
 inherits = "release"
