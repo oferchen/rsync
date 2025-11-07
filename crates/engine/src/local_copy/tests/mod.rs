@@ -79,7 +79,7 @@ mod acl_sys {
 
     pub const ACL_TYPE_ACCESS: AclType = 0x8000;
 
-    #[link(name = "acl")]
+    #[cfg_attr(not(target_vendor = "apple"), link(name = "acl"))]
     unsafe extern "C" {
         pub fn acl_get_file(path_p: *const c_char, ty: AclType) -> AclHandle;
         pub fn acl_set_file(path_p: *const c_char, ty: AclType, acl: AclHandle) -> c_int;
