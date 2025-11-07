@@ -211,6 +211,10 @@ impl LocalCopySummary {
         self.file_list_size
     }
 
+    pub(in crate::local_copy) fn record_file_list_entry(&mut self, entry_size: usize) {
+        self.file_list_size = self.file_list_size.saturating_add(entry_size as u64);
+    }
+
     /// Returns the time spent enumerating the file list.
     #[must_use]
     pub const fn file_list_generation_time(&self) -> Duration {

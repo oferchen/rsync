@@ -114,6 +114,16 @@ pub(crate) fn copy_sources(
                     }
                 };
                 context.record_file_list_generation(metadata_start.elapsed());
+                let record_relative = if metadata.file_type().is_dir() && source.copy_contents() {
+                    None
+                } else if let Some(root) = relative_root.as_ref() {
+                    non_empty_path(root.as_path()).map(Path::to_path_buf)
+                } else {
+                    source_path
+                        .file_name()
+                        .map(|name| PathBuf::from(Path::new(name)))
+                };
+                context.record_file_list_entry(record_relative.as_deref());
                 let file_type = metadata.file_type();
                 let metadata_options = context.metadata_options();
 
