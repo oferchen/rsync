@@ -86,6 +86,8 @@ pub struct RemoteFallbackArgs {
     pub compress_choice: Option<OsString>,
     /// Optional suffix list forwarded via `--skip-compress`.
     pub skip_compress: Option<OsString>,
+    /// Optional `--open-noatime`/`--no-open-noatime` toggle.
+    pub open_noatime: Option<bool>,
     /// Iconv charset conversion forwarded via `--iconv`/`--no-iconv`.
     pub iconv: IconvSetting,
     /// Optional `--stop-after` argument forwarded to the fallback binary.

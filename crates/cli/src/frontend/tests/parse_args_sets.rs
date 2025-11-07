@@ -84,3 +84,30 @@ fn parse_args_sets_compress_flag() {
 
     assert!(parsed.compress);
 }
+
+#[test]
+fn parse_args_sets_open_noatime_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--open-noatime"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(parsed.open_noatime);
+}
+
+#[test]
+fn parse_args_sets_no_open_noatime_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-open-noatime"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(parsed.no_open_noatime);
+    assert!(!parsed.open_noatime);
+}

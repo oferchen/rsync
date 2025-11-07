@@ -62,6 +62,20 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("open-noatime")
+                .long("open-noatime")
+                .help("Attempt to open source files without updating access times.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-open-noatime"),
+        )
+        .arg(
+            Arg::new("no-open-noatime")
+                .long("no-open-noatime")
+                .help("Disable O_NOATIME handling when opening source files.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("open-noatime"),
+        )
+        .arg(
             Arg::new("iconv")
                 .long("iconv")
                 .value_name("CONVERT_SPEC")

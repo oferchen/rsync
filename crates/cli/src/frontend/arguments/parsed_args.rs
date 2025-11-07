@@ -54,6 +54,8 @@ pub(crate) struct ParsedArgs {
     pub(crate) compress_level: Option<OsString>,
     pub(crate) compress_choice: Option<OsString>,
     pub(crate) skip_compress: Option<OsString>,
+    pub(crate) open_noatime: bool,
+    pub(crate) no_open_noatime: bool,
     pub(crate) iconv: Option<OsString>,
     pub(crate) owner: Option<bool>,
     pub(crate) group: Option<bool>,
