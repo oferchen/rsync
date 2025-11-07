@@ -66,6 +66,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Requests that source files be opened without updating their access times.
+    #[must_use]
+    #[doc(alias = "--open-noatime")]
+    #[doc(alias = "--no-open-noatime")]
+    pub const fn open_noatime(mut self, enabled: bool) -> Self {
+        self.open_noatime = enabled;
+        self
+    }
+
     /// Requests that whole-file transfers be used instead of the delta algorithm.
     #[must_use]
     #[doc(alias = "--whole-file")]

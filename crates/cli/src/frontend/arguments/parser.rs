@@ -173,6 +173,13 @@ where
     let compress_flag = matches.get_flag("compress");
     let no_compress = matches.get_flag("no-compress");
     let mut compress = if no_compress { false } else { compress_flag };
+    let no_open_noatime = matches.get_flag("no-open-noatime");
+    let open_noatime_flag = matches.get_flag("open-noatime");
+    let open_noatime = if no_open_noatime {
+        false
+    } else {
+        open_noatime_flag
+    };
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
     if let Some(ref value) = compress_level_opt {
         if let Ok(setting) = parse_compress_level_argument(value.as_os_str()) {
@@ -560,6 +567,8 @@ where
         compress_level,
         compress_choice,
         skip_compress,
+        open_noatime,
+        no_open_noatime,
         iconv,
         owner,
         group,

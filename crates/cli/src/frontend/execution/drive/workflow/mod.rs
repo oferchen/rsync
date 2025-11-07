@@ -91,6 +91,8 @@ where
         compress_level,
         compress_choice,
         skip_compress,
+        open_noatime,
+        no_open_noatime,
         iconv,
         owner,
         group,
@@ -291,6 +293,14 @@ where
 
     let numeric_ids_option = numeric_ids;
     let whole_file_option = whole_file;
+    let open_noatime_setting = if open_noatime {
+        Some(true)
+    } else if no_open_noatime {
+        Some(false)
+    } else {
+        None
+    };
+    let open_noatime_enabled = open_noatime_setting.unwrap_or(false);
 
     #[allow(unused_variables)]
     let preserve_acls = acls.unwrap_or(false);
@@ -393,6 +403,7 @@ where
         compress_level_cli: compress_level_cli.as_ref(),
         compress_choice: compress_choice.as_ref(),
         skip_compress: skip_compress.as_ref(),
+        open_noatime: open_noatime_setting,
         iconv: iconv_setting.clone(),
         parsed_chown: parsed_chown.as_ref(),
         owner,
@@ -601,6 +612,7 @@ where
         compress,
         compression_level_override,
         compression_algorithm,
+        open_noatime: open_noatime_enabled,
         owner: preserve_owner,
         owner_override: owner_override_value,
         group: preserve_group,

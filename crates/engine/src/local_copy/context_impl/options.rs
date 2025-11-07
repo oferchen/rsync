@@ -39,6 +39,10 @@ impl<'a> CopyContext<'a> {
         self.options.whole_file_enabled()
     }
 
+    pub(super) fn open_noatime_enabled(&self) -> bool {
+        self.options.open_noatime_enabled()
+    }
+
     pub(super) fn sparse_enabled(&self) -> bool {
         self.options.sparse_enabled()
     }

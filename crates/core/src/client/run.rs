@@ -194,6 +194,7 @@ pub fn build_local_copy_options(
         .with_skip_compress(config.skip_compress().clone())
         .with_stop_at(config.stop_at())
         .whole_file(config.whole_file())
+        .open_noatime(config.open_noatime())
         .compress(config.compress())
         .with_compression_level_override(config.compression_level())
         .owner(config.preserve_owner())

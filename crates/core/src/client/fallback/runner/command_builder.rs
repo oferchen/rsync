@@ -59,6 +59,7 @@ pub(crate) fn prepare_invocation(
         compress_level,
         compress_choice,
         skip_compress,
+        open_noatime,
         iconv,
         stop_after,
         stop_at,
@@ -269,6 +270,13 @@ pub(crate) fn prepare_invocation(
         let mut arg = OsString::from("--skip-compress=");
         arg.push(spec);
         command_args.push(arg);
+    }
+    if let Some(flag) = open_noatime {
+        command_args.push(if flag {
+            OsString::from("--open-noatime")
+        } else {
+            OsString::from("--no-open-noatime")
+        });
     }
     match &iconv {
         IconvSetting::Unspecified => {}

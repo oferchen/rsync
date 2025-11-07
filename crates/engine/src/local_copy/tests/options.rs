@@ -467,6 +467,13 @@ fn local_copy_options_relative_round_trip() {
 }
 
 #[test]
+fn local_copy_options_open_noatime_round_trip() {
+    let options = LocalCopyOptions::default().open_noatime(true);
+    assert!(options.open_noatime_enabled());
+    assert!(!LocalCopyOptions::default().open_noatime_enabled());
+}
+
+#[test]
 fn local_copy_options_implied_dirs_round_trip() {
     let options = LocalCopyOptions::default();
     assert!(options.implied_dirs_enabled());

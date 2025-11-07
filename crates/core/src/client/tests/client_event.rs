@@ -287,6 +287,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         compress_level: None,
         compress_choice: None,
         skip_compress: None,
+        open_noatime: None,
         stop_after: None,
         stop_at: None,
         chown: None,

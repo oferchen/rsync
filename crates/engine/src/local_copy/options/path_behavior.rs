@@ -19,6 +19,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Attempts to open source files without updating their access time.
+    #[must_use]
+    #[doc(alias = "--open-noatime")]
+    #[doc(alias = "--no-open-noatime")]
+    pub const fn open_noatime(mut self, enabled: bool) -> Self {
+        self.open_noatime = enabled;
+        self
+    }
+
     /// Requests that unsafe symlinks be followed and copied as their referents.
     #[must_use]
     #[doc(alias = "--copy-unsafe-links")]
@@ -138,6 +147,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn whole_file_enabled(&self) -> bool {
         self.whole_file
+    }
+
+    /// Reports whether source files should be opened without updating access times.
+    #[must_use]
+    pub const fn open_noatime_enabled(&self) -> bool {
+        self.open_noatime
     }
 
     /// Returns whether symlinks should be materialised as their referents.
