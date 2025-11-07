@@ -99,7 +99,7 @@ fn stats_transfer_renders_summary_block() {
     assert!(rendered.contains(&format!("Total file size: {expected_size} bytes")));
     assert!(rendered.contains(&format!("Literal data: {expected_size} bytes")));
     assert!(rendered.contains("Matched data: 0 bytes"));
-    assert!(rendered.contains("File list size: 0"));
+    assert!(rendered.contains("File list size: 10"));
     assert!(rendered.contains("File list generation time:"));
     assert!(rendered.contains("File list transfer time:"));
     assert!(rendered.contains(&format!("Total bytes sent: {expected_size}")));
