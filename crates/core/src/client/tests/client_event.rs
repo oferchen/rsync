@@ -312,6 +312,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         safe_links: false,
         sparse: None,
         devices: None,
+        copy_devices: false,
         specials: None,
         relative: None,
         one_file_system: None,

@@ -85,6 +85,7 @@ pub(crate) fn prepare_invocation(
         safe_links,
         sparse,
         devices,
+        copy_devices,
         specials,
         relative,
         one_file_system,
@@ -399,6 +400,9 @@ pub(crate) fn prepare_invocation(
     }
     push_toggle(&mut command_args, "--sparse", "--no-sparse", sparse);
     push_toggle(&mut command_args, "--devices", "--no-devices", devices);
+    if copy_devices {
+        command_args.push(OsString::from("--copy-devices"));
+    }
     push_toggle(&mut command_args, "--specials", "--no-specials", specials);
     push_toggle(&mut command_args, "--relative", "--no-relative", relative);
     push_toggle(

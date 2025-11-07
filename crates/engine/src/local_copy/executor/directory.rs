@@ -220,6 +220,7 @@ pub(crate) fn copy_directory_recursive(
         CopySymlink,
         CopyFifo,
         CopyDevice,
+        CopyDeviceAsFile,
     }
 
     struct PlannedEntry<'a> {
@@ -305,7 +306,9 @@ pub(crate) fn copy_directory_recursive(
                 EntryAction::SkipNonRegular
             }
         } else if is_device(&effective_type) {
-            if context.devices_enabled() {
+            if context.copy_devices_as_files_enabled() {
+                EntryAction::CopyDeviceAsFile
+            } else if context.devices_enabled() {
                 EntryAction::CopyDevice
             } else {
                 keep_name = false;
@@ -343,7 +346,10 @@ pub(crate) fn copy_directory_recursive(
                                         metadata_override = None;
                                     }
                                 } else if is_device(&target_type) {
-                                    if context.devices_enabled() {
+                                    if context.copy_devices_as_files_enabled() {
+                                        action = EntryAction::CopyDeviceAsFile;
+                                        metadata_override = Some(target_metadata);
+                                    } else if context.devices_enabled() {
                                         action = EntryAction::CopyDevice;
                                         metadata_override = Some(target_metadata);
                                     } else {
@@ -488,6 +494,17 @@ pub(crate) fn copy_directory_recursive(
                     &target_path,
                     entry_metadata,
                     &metadata_options,
+                    Some(planned.relative.as_path()),
+                )?;
+                kept_any = true;
+            }
+            EntryAction::CopyDeviceAsFile => {
+                ensure_directory(context)?;
+                copy_file(
+                    context,
+                    planned.entry.path.as_path(),
+                    &target_path,
+                    entry_metadata,
                     Some(planned.relative.as_path()),
                 )?;
                 kept_any = true;
