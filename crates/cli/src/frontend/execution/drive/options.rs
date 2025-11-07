@@ -75,6 +75,7 @@ pub(crate) struct DerivedSettings {
     pub(crate) compress_level_cli: Option<OsString>,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) compression_setting: CompressionSetting,
+    pub(crate) compress_choice_cli: Option<OsString>,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
     pub(crate) log_file_path: Option<OsString>,
     pub(crate) log_file_format_cli: Option<OsString>,
@@ -239,6 +240,7 @@ where
     let mut compress = inputs.compress_flag;
     let mut compression_level_override = None;
     let mut compression_algorithm = None;
+    let mut compress_choice_cli = inputs.compress_choice.clone();
     let mut compress_choice_disabled = false;
     let mut compress_level_setting = match inputs.compress_level {
         Some(value) => match parse_compress_level(value.as_os_str()) {
@@ -255,6 +257,7 @@ where
                 compression_level_override = None;
                 compress_level_setting = Some(CompressLevelArg::Disable);
                 compress_choice_disabled = true;
+                compress_choice_cli = None;
             }
             Ok(Some(algorithm)) => {
                 compression_algorithm = Some(algorithm);
@@ -295,6 +298,11 @@ where
         compress_level_setting = Some(CompressLevelArg::Disable);
         compress_disabled = true;
         compression_algorithm = None;
+        compress_choice_cli = None;
+    }
+
+    if compress_disabled {
+        compress_choice_cli = None;
     }
 
     let compress_level_cli = match (compress_level_setting.as_ref(), compress_disabled) {
@@ -379,6 +387,7 @@ where
         compress_level_cli,
         skip_compress_list,
         compression_setting,
+        compress_choice_cli,
         compression_algorithm,
         log_file_path,
         log_file_format_cli,
