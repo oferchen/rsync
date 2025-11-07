@@ -5,8 +5,16 @@ mod transfer;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use crate::local_copy::{CopyContext, LocalCopyArgumentError, LocalCopyError};
+use crate::local_copy::{
+    CopyContext,
+    LocalCopyAction,
+    LocalCopyArgumentError,
+    LocalCopyError,
+    LocalCopyMetadata,
+    LocalCopyRecord,
+};
 
 use transfer::execute_transfer;
 
@@ -49,10 +57,6 @@ pub(crate) fn copy_file(
             return Ok(());
         }
     }
-    if let Some(parent) = destination.parent() {
-        context.prepare_parent_directory(parent)?;
-    }
-
     let existing_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -74,6 +78,25 @@ pub(crate) fn copy_file(
     }
 
     let destination_previously_existed = existing_metadata.is_some();
+
+    if context.existing_only_enabled() && existing_metadata.is_none() {
+        context.summary_mut().record_regular_file_skipped_missing();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
+        context.record(LocalCopyRecord::new(
+            record_path.clone(),
+            LocalCopyAction::SkippedMissingDestination,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        ));
+        return Ok(());
+    }
+
+    if let Some(parent) = destination.parent() {
+        context.prepare_parent_directory(parent)?;
+    }
 
     if mode.is_dry_run() {
         dry_run::handle_dry_run(

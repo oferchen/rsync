@@ -17,6 +17,8 @@ pub enum LocalCopyAction {
     DirectoryCreated,
     /// An existing destination file was left untouched due to `--ignore-existing`.
     SkippedExisting,
+    /// A new destination entry was not created due to `--existing`.
+    SkippedMissingDestination,
     /// An existing destination file was newer than the source and left untouched.
     SkippedNewerDestination,
     /// A non-regular file was skipped because support was disabled.

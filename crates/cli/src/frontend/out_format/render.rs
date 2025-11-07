@@ -328,6 +328,7 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
         DataCopied => '>',
         MetadataReused
         | SkippedExisting
+        | SkippedMissingDestination
         | SkippedNewerDestination
         | SkippedNonRegular
         | SkippedDirectory
@@ -346,7 +347,12 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
             SymlinkCopied => ClientEntryKind::Symlink,
             FifoCopied => ClientEntryKind::Fifo,
             DeviceCopied => ClientEntryKind::CharDevice,
-            HardLink | DataCopied | MetadataReused | SkippedExisting | SkippedNewerDestination => {
+            HardLink
+            | DataCopied
+            | MetadataReused
+            | SkippedExisting
+            | SkippedMissingDestination
+            | SkippedNewerDestination => {
                 ClientEntryKind::File
             }
             _ => ClientEntryKind::Other,

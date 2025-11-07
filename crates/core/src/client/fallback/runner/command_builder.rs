@@ -49,6 +49,7 @@ pub(crate) fn prepare_invocation(
         checksum_seed,
         size_only,
         ignore_existing,
+        existing,
         ignore_missing_args,
         update,
         modify_window,
@@ -226,6 +227,9 @@ pub(crate) fn prepare_invocation(
     }
     if ignore_existing {
         command_args.push(OsString::from("--ignore-existing"));
+    }
+    if existing {
+        command_args.push(OsString::from("--existing"));
     }
     if ignore_missing_args {
         command_args.push(OsString::from("--ignore-missing-args"));

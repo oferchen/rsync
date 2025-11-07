@@ -205,6 +205,52 @@ fn execute_with_ignore_missing_args_skips_absent_sources() {
 }
 
 #[test]
+fn execute_with_existing_only_skips_missing_entries() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested_dir = source_root.join("nested");
+    fs::create_dir_all(&nested_dir).expect("create nested dir");
+    fs::write(source_root.join("file.txt"), b"payload").expect("write file");
+    fs::write(nested_dir.join("inner.txt"), b"nested").expect("write nested file");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create destination root");
+
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let report = plan
+        .execute_with_report(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .existing_only(true)
+                .collect_events(true),
+        )
+        .expect("execution succeeds");
+    let summary = report.summary();
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 1);
+    assert_eq!(summary.regular_files_skipped_missing(), 1);
+    assert_eq!(summary.directories_total(), 2);
+    assert_eq!(summary.directories_created(), 0);
+    assert!(!dest_root.join("file.txt").exists());
+    assert!(!dest_root.join("nested").exists());
+
+    let records = report.records();
+    assert!(records.iter().any(|record| {
+        record.action() == &LocalCopyAction::SkippedMissingDestination
+            && record.relative_path() == std::path::Path::new("file.txt")
+    }));
+    assert!(records.iter().any(|record| {
+        record.action() == &LocalCopyAction::SkippedMissingDestination
+            && record.relative_path() == std::path::Path::new("nested")
+    }));
+}
+
+#[test]
 fn execute_skips_files_smaller_than_min_size_limit() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("tiny.txt");

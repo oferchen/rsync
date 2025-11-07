@@ -253,6 +253,10 @@ impl<'a> CopyContext<'a> {
         self.options.ignore_existing_enabled()
     }
 
+    pub(super) fn existing_only_enabled(&self) -> bool {
+        self.options.existing_only_enabled()
+    }
+
     pub(super) fn ignore_missing_args_enabled(&self) -> bool {
         self.options.ignore_missing_args_enabled()
     }

@@ -269,6 +269,12 @@ pub(crate) fn section_01(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("existing")
+                    .long("existing")
+                    .help("Skip creating new files that do not already exist at the destination.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("update")
                     .long("update")
                     .short('u')
