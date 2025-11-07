@@ -1,7 +1,7 @@
 use super::handshake::LegacyDaemonHandshake;
 use crate::handshake_util::{RemoteProtocolAdvertisement, local_cap_reduced_protocol};
 use crate::negotiation::{NegotiatedStreamParts, TryMapInnerError};
-use rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
+use oc_rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
 
 /// Decomposed components of a [`LegacyDaemonHandshake`].
 ///
@@ -12,8 +12,8 @@ use rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
 /// # Examples
 ///
 /// ```
-/// use rsync_protocol::ProtocolVersion;
-/// use rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
+/// use oc_rsync_protocol::ProtocolVersion;
+/// use oc_rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
 /// use std::io::Cursor;
 ///
 /// let transport = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
@@ -146,8 +146,8 @@ impl<R> LegacyDaemonHandshakeParts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]
@@ -285,8 +285,8 @@ impl<R> LegacyDaemonHandshakeParts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::{negotiate_legacy_daemon_session, LegacyDaemonHandshakeParts};
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]
@@ -376,8 +376,8 @@ impl<R> LegacyDaemonHandshakeParts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::{NegotiationPrologue, ProtocolVersion};
-    /// use rsync_transport::negotiate_legacy_daemon_session;
+    /// use oc_rsync_protocol::{NegotiationPrologue, ProtocolVersion};
+    /// use oc_rsync_transport::negotiate_legacy_daemon_session;
     /// use std::io::Cursor;
     ///
     /// let transport = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
@@ -391,7 +391,7 @@ impl<R> LegacyDaemonHandshakeParts<R> {
     /// assert_eq!(greeting.protocol(), expected_protocol);
     /// assert_eq!(negotiated_protocol, expected_protocol);
     /// assert_eq!(stream_parts.decision(), NegotiationPrologue::LegacyAscii);
-    /// assert_eq!(stream_parts.sniffed_prefix_len(), rsync_protocol::LEGACY_DAEMON_PREFIX_LEN);
+    /// assert_eq!(stream_parts.sniffed_prefix_len(), oc_rsync_protocol::LEGACY_DAEMON_PREFIX_LEN);
     /// ```
     #[must_use]
     pub fn into_components(

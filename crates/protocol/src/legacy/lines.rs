@@ -237,7 +237,7 @@ fn write_prefixed_keyword<W: FmtWrite>(
 /// Render a legacy daemon acknowledgment:
 ///
 /// ```
-/// use rsync_protocol::{format_legacy_daemon_message, LegacyDaemonMessage};
+/// use oc_rsync_protocol::{format_legacy_daemon_message, LegacyDaemonMessage};
 ///
 /// let rendered = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
 /// assert_eq!(rendered, "@RSYNCD: OK\n");
@@ -246,7 +246,7 @@ fn write_prefixed_keyword<W: FmtWrite>(
 /// Canonicalise a legacy capability banner:
 ///
 /// ```
-/// use rsync_protocol::{
+/// use oc_rsync_protocol::{
 ///     format_legacy_daemon_message, LegacyDaemonMessage, parse_legacy_daemon_message,
 /// };
 ///
@@ -254,7 +254,7 @@ fn write_prefixed_keyword<W: FmtWrite>(
 /// let rendered = format_legacy_daemon_message(parsed);
 ///
 /// assert_eq!(rendered, "@RSYNCD: CAP 0x1f 0x2\n");
-/// # Ok::<_, rsync_protocol::NegotiationError>(())
+/// # Ok::<_, oc_rsync_protocol::NegotiationError>(())
 /// ```
 #[must_use = "callers typically forward the formatted message to the daemon or logs"]
 pub fn write_legacy_daemon_message<W: FmtWrite>(

@@ -3,7 +3,7 @@ use crate::local_copy::LocalCopyError;
 use crate::local_copy::filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeParser, ExcludeIfPresentRule, FilterProgramError,
 };
-use rsync_filters::FilterRule;
+use oc_rsync_filters::FilterRule;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};

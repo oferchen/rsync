@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::io::{self, Read};
 
-use rsync_checksums::RollingChecksum;
+use oc_rsync_checksums::RollingChecksum;
 
 use crate::delta::index::DeltaSignatureIndex;
 use crate::delta::script::{DeltaScript, DeltaToken};
@@ -134,7 +134,7 @@ mod tests {
     use crate::delta::script::apply_delta;
     use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
     use crate::signature::{SignatureAlgorithm, generate_file_signature};
-    use rsync_protocol::ProtocolVersion;
+    use oc_rsync_protocol::ProtocolVersion;
     use std::io::Cursor;
     use std::num::NonZeroU8;
 

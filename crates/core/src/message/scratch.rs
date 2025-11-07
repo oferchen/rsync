@@ -17,7 +17,7 @@ use std::cell::RefCell;
 /// # Examples
 ///
 /// ```
-/// use rsync_core::{message::{Message, Role, MessageScratch}, message_source};
+/// use oc_rsync_core::{message::{Message, Role, MessageScratch}, message_source};
 ///
 /// let mut scratch = MessageScratch::new();
 /// let message = Message::error(23, "delta-transfer failure")
@@ -71,7 +71,7 @@ impl MessageScratch {
     /// Render a message using the shared scratch buffer and inspect the resulting length.
     ///
     /// ```
-    /// use rsync_core::{
+    /// use oc_rsync_core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };

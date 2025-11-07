@@ -3,7 +3,7 @@ use super::*;
 
 #[test]
 fn clap_parse_error_is_reported_via_message() {
-    let command = clap_command(rsync_core::version::PROGRAM_NAME);
+    let command = clap_command(oc_rsync_core::version::PROGRAM_NAME);
     let error = command
         .try_get_matches_from(vec!["rsync", "--version=extra"])
         .unwrap_err();

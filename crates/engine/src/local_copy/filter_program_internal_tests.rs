@@ -1,5 +1,5 @@
 use super::*;
-use rsync_filters::FilterRule;
+use oc_rsync_filters::FilterRule;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;

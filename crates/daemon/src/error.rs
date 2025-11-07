@@ -11,7 +11,7 @@
 use std::error::Error;
 use std::fmt;
 
-use rsync_core::message::Message;
+use oc_rsync_core::message::Message;
 
 /// Error returned when daemon orchestration fails.
 #[derive(Clone, Debug)]

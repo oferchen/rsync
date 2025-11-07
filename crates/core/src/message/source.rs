@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 /// # Examples
 ///
 /// ```
-/// use rsync_core::message::SourceLocation;
+/// use oc_rsync_core::message::SourceLocation;
 ///
 /// let location = SourceLocation::from_parts(
 ///     env!("CARGO_MANIFEST_DIR"),
@@ -80,7 +80,7 @@ impl SourceLocation {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::message::SourceLocation;
+    /// use oc_rsync_core::message::SourceLocation;
     ///
     /// let inside = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), "src/lib.rs", 12);
     /// assert!(inside.is_workspace_relative());

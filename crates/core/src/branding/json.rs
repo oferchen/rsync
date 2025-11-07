@@ -32,7 +32,7 @@ fn render_manifest_json(pretty: bool) -> String {
 /// serialisation logic.
 ///
 /// ```
-/// let json = rsync_core::branding::manifest_json();
+/// let json = oc_rsync_core::branding::manifest_json();
 /// assert!(json.contains("\"client_program_name\":\"oc-rsync\""));
 /// ```
 #[must_use]
@@ -49,7 +49,7 @@ pub fn manifest_json() -> &'static str {
 /// snapshot directly.
 ///
 /// ```
-/// let json = rsync_core::branding::manifest_json_pretty();
+/// let json = oc_rsync_core::branding::manifest_json_pretty();
 /// assert!(json.lines().any(|line| line.contains("\"daemon_program_name\"")));
 /// ```
 #[must_use]

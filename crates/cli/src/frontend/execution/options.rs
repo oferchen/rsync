@@ -2,12 +2,12 @@ use std::ffi::OsStr;
 use std::num::{IntErrorKind, NonZeroU32, NonZeroU64};
 use std::str::FromStr;
 
-use rsync_core::{
+use oc_rsync_core::{
     client::{HumanReadableMode, IconvParseError, IconvSetting, TransferTimeout},
     message::{Message, Role},
     rsync_error,
 };
-use rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
+use oc_rsync_protocol::{ParseProtocolVersionErrorKind, ProtocolVersion};
 
 pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersion, Message> {
     let text = value.to_string_lossy();

@@ -1,6 +1,6 @@
-# rsync-core
+# oc-rsync-core
 
-`rsync-core` centralises workspace-wide facilities that are reused by the
+`oc-rsync-core` centralises workspace-wide facilities that are reused by the
 `rsync` and `rsyncd` binaries together with supporting transport crates. The
 crate focuses on user-visible message formatting, source-location remapping, and
 shared configuration types so diagnostics mirror upstream rsync while pointing
@@ -23,7 +23,7 @@ at the Rust implementation.
   delta engine is completed.
 - [`fallback`](src/fallback.rs) interprets delegation overrides shared by the
   CLI and daemon binaries.
-- [`bandwidth`](src/bandwidth.rs) re-exports the [`rsync-bandwidth`](../bandwidth/README.md)
+- [`bandwidth`](src/bandwidth.rs) re-exports the [`oc-rsync-bandwidth`](../bandwidth/README.md)
   crate so callers share the same parsing and pacing primitives.
 
 ## Invariants
@@ -51,7 +51,7 @@ Create an error message using the helper APIs and render it into the canonical
 user-facing form:
 
 ```rust
-use rsync_core::{message::Message, message::Role, message_source};
+use oc_rsync_core::{message::Message, message::Role, message_source};
 
 let rendered = Message::error(23, "delta-transfer failure")
     .with_role(Role::Sender)
@@ -64,7 +64,7 @@ assert!(rendered.contains("[sender=3.4.1-rust]"));
 
 ## See also
 
-- [`rsync_core::message::strings`](src/message/strings.rs) exposes upstream-aligned
+- [`oc_rsync_core::message::strings`](src/message/strings.rs) exposes upstream-aligned
   exit-code wording so higher layers render identical diagnostics.
 - [`client::ClientConfig`](src/client/struct.ClientConfig.html) mirrors the
   structure populated by the CLI before invoking the transfer engine.

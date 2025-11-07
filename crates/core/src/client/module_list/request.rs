@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::net::SocketAddr;
 
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_protocol::ProtocolVersion;
 
 use super::super::{AddressMode, ClientError};
 use super::parsing::{parse_host_port, split_daemon_host_module, strip_prefix_ignore_ascii_case};

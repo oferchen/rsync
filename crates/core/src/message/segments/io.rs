@@ -18,7 +18,7 @@ impl<'a> MessageSegments<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::{
+    /// use oc_rsync_core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };

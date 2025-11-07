@@ -1,11 +1,11 @@
 use std::io::{BufReader, Write};
 use std::time::Duration;
 
-use rsync_protocol::{
+use oc_rsync_protocol::{
     LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, parse_legacy_daemon_message,
     parse_legacy_warning_message,
 };
-use rsync_transport::negotiate_legacy_daemon_session;
+use oc_rsync_transport::negotiate_legacy_daemon_session;
 
 use super::super::{
     ClientError, DAEMON_SOCKET_TIMEOUT, PARTIAL_TRANSFER_EXIT_CODE, TransferTimeout,

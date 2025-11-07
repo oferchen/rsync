@@ -1,5 +1,5 @@
 use super::*;
-use rsync_core::branding::rust_version;
+use oc_rsync_core::branding::rust_version;
 
 pub(super) const RSYNC: &str = branding::client_program_name();
 pub(super) const OC_RSYNC: &str = branding::oc_client_program_name();
@@ -171,7 +171,7 @@ pub(super) fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
     let bits: libc::mode_t = (mode & 0o177_777)
         .try_into()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mode out of range"))?;
-    rsync_apple_fs::mkfifo(path, bits)
+    oc_rsync_apple_fs::mkfifo(path, bits)
 }
 
 pub(super) fn assert_contains_client_trailer(rendered: &str) {

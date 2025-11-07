@@ -34,7 +34,7 @@ pub use xxhash::{Xxh3, Xxh3_128, Xxh64};
 /// hasher type.
 ///
 /// ```
-/// use rsync_checksums::strong::{Md5, StrongDigest};
+/// use oc_rsync_checksums::strong::{Md5, StrongDigest};
 ///
 /// let mut hasher = Md5::new();
 /// hasher.update(b"example");

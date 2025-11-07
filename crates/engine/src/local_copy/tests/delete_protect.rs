@@ -16,7 +16,7 @@ fn delete_respects_protect_filters() {
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([rsync_filters::FilterRule::protect("keep.txt")])
+    let filters = FilterSet::from_rules([oc_rsync_filters::FilterRule::protect("keep.txt")])
         .expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
@@ -49,8 +49,8 @@ fn delete_risk_rule_overrides_protection() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters = FilterSet::from_rules([
-        rsync_filters::FilterRule::protect("keep.txt"),
-        rsync_filters::FilterRule::risk("keep.txt"),
+        oc_rsync_filters::FilterRule::protect("keep.txt"),
+        oc_rsync_filters::FilterRule::risk("keep.txt"),
     ])
     .expect("compile filters");
     let options = LocalCopyOptions::default()

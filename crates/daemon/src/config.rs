@@ -10,7 +10,7 @@
 
 use std::ffi::OsString;
 
-use rsync_core::branding::Brand;
+use oc_rsync_core::branding::Brand;
 
 /// Configuration describing the requested daemon operation.
 #[derive(Clone, Debug, Eq, PartialEq)]

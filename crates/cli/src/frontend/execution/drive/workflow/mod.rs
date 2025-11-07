@@ -24,8 +24,8 @@ use crate::frontend::{
     execution::{chown::ParsedChown, resolve_iconv_setting},
 };
 use metadata::MetadataSettings;
-use rsync_core::{client::HumanReadableMode, message::Role, rsync_error};
-use rsync_logging::MessageSink;
+use oc_rsync_core::{client::HumanReadableMode, message::Role, rsync_error};
+use oc_rsync_logging::MessageSink;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;

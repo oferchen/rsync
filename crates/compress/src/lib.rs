@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_compress` exposes compression primitives shared across the Rust rsync
+//! `oc_rsync_compress` exposes compression primitives shared across the Rust rsync
 //! workspace. The initial focus is parity with upstream rsync's zlib-based
 //! compressor while progressively expanding to additional algorithms such as
 //! Zstandard. Higher layers compose these helpers when negotiating `--compress`
@@ -46,7 +46,7 @@
 //! convenience helpers:
 //!
 //! ```
-//! use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder, compress_to_vec, decompress_to_vec};
+//! use oc_rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder, compress_to_vec, decompress_to_vec};
 //!
 //! # fn main() -> std::io::Result<()> {
 //! let data = b"streaming example payload";
@@ -67,7 +67,7 @@
 //! - [`zlib`] for the zlib encoder/decoder implementation and API surface.
 //! - [`lz4`] for the LZ4 frame encoder/decoder implementation.
 //! - [`zstd`] for the Zstandard encoder/decoder implementation.
-//! - `rsync_engine` for the transfer pipeline that integrates these helpers.
+//! - `oc_rsync_engine` for the transfer pipeline that integrates these helpers.
 
 pub mod algorithm;
 mod common;

@@ -1,6 +1,6 @@
 //! Rendering helpers for `--help` output.
 
-use rsync_core::branding::{manifest, rust_version, source_url};
+use oc_rsync_core::branding::{manifest, rust_version, source_url};
 
 use super::ProgramName;
 

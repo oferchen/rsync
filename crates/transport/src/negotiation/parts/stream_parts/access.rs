@@ -1,6 +1,6 @@
 use std::collections::TryReserveError;
 
-use rsync_protocol::NegotiationPrologueSniffer;
+use oc_rsync_protocol::NegotiationPrologueSniffer;
 
 use super::super::super::{NegotiationBufferAccess, NegotiationBufferedSlices};
 use super::NegotiatedStreamParts;
@@ -93,7 +93,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use oc_rsync_transport::sniff_negotiation_stream;
     /// use std::io::{Cursor, Read};
     ///
     /// let mut stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))

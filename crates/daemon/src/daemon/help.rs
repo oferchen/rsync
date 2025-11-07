@@ -1,4 +1,4 @@
-use rsync_core::branding::{Brand, manifest};
+use oc_rsync_core::branding::{Brand, manifest};
 
 /// Renders the deterministic daemon help text for the supplied branding profile.
 pub(crate) fn help_text(brand: Brand) -> String {

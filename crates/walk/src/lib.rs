@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_walk` provides a deterministic filesystem traversal used by the Rust
+//! `oc_rsync_walk` provides a deterministic filesystem traversal used by the Rust
 //! rsync implementation when constructing file lists. The walker enumerates
 //! regular files, directories, and symbolic links while enforcing relative-path
 //! constraints so callers cannot accidentally escape the configured root. The
@@ -47,7 +47,7 @@
 //! walker. The example creates a temporary tree containing a nested file.
 //!
 //! ```
-//! use rsync_walk::WalkBuilder;
+//! use oc_rsync_walk::WalkBuilder;
 //! use std::collections::BTreeSet;
 //! use std::fs;
 //!
@@ -79,9 +79,9 @@
 //!
 //! # See also
 //!
-//! - [`rsync_engine`](https://docs.rs/rsync-engine/latest/rsync_engine/) for the
+//! - [`oc_rsync_engine`](https://docs.rs/oc-rsync-engine/latest/oc_rsync_engine/) for the
 //!   transfer planning facilities that will eventually consume the walker.
-//! - [`rsync_core`](https://docs.rs/rsync-core/latest/rsync_core/) for the
+//! - [`oc_rsync_core`](https://docs.rs/oc-rsync-core/latest/oc_rsync_core/) for the
 //!   central orchestration facade.
 
 mod builder;

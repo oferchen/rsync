@@ -17,7 +17,7 @@ use std::fmt;
 /// original [`NegotiatedStream`](crate::negotiation::NegotiatedStream).
 ///
 /// ```
-/// use rsync_transport::sniff_negotiation_stream;
+/// use oc_rsync_transport::sniff_negotiation_stream;
 /// use std::io::{self, Cursor, Read};
 ///
 /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
@@ -41,7 +41,7 @@ use std::fmt;
 /// context.
 ///
 /// ```
-/// use rsync_transport::sniff_negotiation_stream;
+/// use oc_rsync_transport::sniff_negotiation_stream;
 /// use std::io::{self, Cursor};
 ///
 /// let err = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
@@ -101,7 +101,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use oc_rsync_transport::sniff_negotiation_stream;
     /// use std::io::{self, Cursor};
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
@@ -144,7 +144,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use oc_rsync_transport::sniff_negotiation_stream;
     /// use std::io::{self, Cursor, Read};
     ///
     /// let mut err = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
@@ -184,7 +184,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use oc_rsync_transport::sniff_negotiation_stream;
     /// use std::io::{self, Cursor, Read};
     ///
     /// let err = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
@@ -258,7 +258,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use oc_rsync_transport::sniff_negotiation_stream;
     /// use std::io::{self, Cursor};
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
@@ -271,7 +271,7 @@ impl<T, E> TryMapInnerError<T, E> {
     ///
     /// let mapped = err.map_parts(|error, stream| (error.kind(), stream.into_parts()));
     /// assert_eq!(mapped.error(), &io::ErrorKind::Other);
-    /// assert_eq!(mapped.original().sniffed_prefix_len(), rsync_protocol::LEGACY_DAEMON_PREFIX_LEN);
+    /// assert_eq!(mapped.original().sniffed_prefix_len(), oc_rsync_protocol::LEGACY_DAEMON_PREFIX_LEN);
     /// ```
     #[must_use]
     pub fn map_parts<U, E2, F>(self, map: F) -> TryMapInnerError<U, E2>

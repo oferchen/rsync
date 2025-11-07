@@ -5,8 +5,8 @@ use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use rsync_core::client::{ClientConfigBuilder, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
-use rsync_logging::MessageSink;
+use oc_rsync_core::client::{ClientConfigBuilder, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use oc_rsync_logging::MessageSink;
 
 use super::messages::fail_with_message;
 use crate::frontend::filter_rules::{

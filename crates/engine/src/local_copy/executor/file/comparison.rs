@@ -8,9 +8,9 @@ use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signatu
 use crate::local_copy::LocalCopyError;
 use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signature};
 
-use rsync_checksums::strong::{Md4, Md5, Sha1, Xxh3, Xxh3_128, Xxh64};
-use rsync_meta::MetadataOptions;
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_checksums::strong::{Md4, Md5, Sha1, Xxh3, Xxh3_128, Xxh64};
+use oc_rsync_meta::MetadataOptions;
+use oc_rsync_protocol::ProtocolVersion;
 
 use super::super::super::COPY_BUFFER_SIZE;
 

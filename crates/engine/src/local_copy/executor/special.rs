@@ -17,7 +17,7 @@ use crate::local_copy::sync_acls_if_requested;
 #[cfg(feature = "xattr")]
 use crate::local_copy::sync_xattrs_if_requested;
 
-use rsync_meta::{
+use oc_rsync_meta::{
     MetadataOptions, apply_file_metadata_with_options, apply_symlink_metadata_with_options,
     create_device_node, create_fifo,
 };

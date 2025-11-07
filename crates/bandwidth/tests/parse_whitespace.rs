@@ -1,4 +1,4 @@
-use rsync_bandwidth::{BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit};
+use oc_rsync_bandwidth::{BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit};
 
 fn assert_invalid_argument(text: &str) {
     let err = parse_bandwidth_argument(text).expect_err("argument should be invalid");

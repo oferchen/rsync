@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use globset::{GlobBuilder, GlobMatcher};
-use rsync_filters::{FilterAction, FilterRule};
+use oc_rsync_filters::{FilterAction, FilterRule};
 
 /// Compiled list of rules evaluated sequentially.
 #[derive(Clone, Debug, Default)]

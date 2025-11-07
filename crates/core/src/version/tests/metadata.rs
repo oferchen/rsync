@@ -1,6 +1,6 @@
 use super::{constants::sanitize_build_revision, *};
 use crate::{branding::Brand, workspace};
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_protocol::ProtocolVersion;
 
 #[test]
 fn version_metadata_matches_expected_constants() {

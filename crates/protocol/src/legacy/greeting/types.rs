@@ -120,13 +120,13 @@ impl<'a> LegacyDaemonGreeting<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::parse_legacy_daemon_greeting_details;
+    /// use oc_rsync_protocol::parse_legacy_daemon_greeting_details;
     ///
     /// let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n")?;
     /// let tokens: Vec<_> = greeting.digest_tokens().collect();
     ///
     /// assert_eq!(tokens, ["md5", "md4"]);
-    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// # Ok::<_, oc_rsync_protocol::NegotiationError>(())
     /// ```
     #[must_use]
     pub fn digest_tokens(&self) -> DigestListTokens<'_> {
@@ -143,13 +143,13 @@ impl<'a> LegacyDaemonGreeting<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::parse_legacy_daemon_greeting_details;
+    /// use oc_rsync_protocol::parse_legacy_daemon_greeting_details;
     ///
     /// let greeting = parse_legacy_daemon_greeting_details("@RSYNCD: 31.0 md5 md4\n")?;
     /// assert!(greeting.supports_digest("md5"));
     /// assert!(greeting.supports_digest("MD4"));
     /// assert!(!greeting.supports_digest("sha1"));
-    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// # Ok::<_, oc_rsync_protocol::NegotiationError>(())
     /// ```
     #[must_use]
     pub fn supports_digest(&self, name: &str) -> bool {
@@ -172,7 +172,7 @@ impl<'a> LegacyDaemonGreeting<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::{
+    /// use oc_rsync_protocol::{
     ///     parse_legacy_daemon_greeting_details, LegacyDaemonGreetingOwned,
     /// };
     ///
@@ -182,7 +182,7 @@ impl<'a> LegacyDaemonGreeting<'a> {
     /// assert_eq!(owned.advertised_protocol(), 29);
     /// assert_eq!(owned.subprotocol_raw(), Some(1));
     /// assert_eq!(owned.digest_list(), Some("md4"));
-    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// # Ok::<_, oc_rsync_protocol::NegotiationError>(())
     /// ```
     #[must_use]
     pub fn into_owned(self) -> LegacyDaemonGreetingOwned {
@@ -243,7 +243,7 @@ impl LegacyDaemonGreetingOwned {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
+    /// use oc_rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
     ///
     /// let greeting = LegacyDaemonGreetingOwned::from_parts(
     ///     31,
@@ -257,7 +257,7 @@ impl LegacyDaemonGreetingOwned {
     /// );
     /// assert_eq!(greeting.digest_list(), Some("md4 md5"));
     /// assert!(greeting.has_digest_list());
-    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// # Ok::<_, oc_rsync_protocol::NegotiationError>(())
     /// ```
     #[doc(alias = "@RSYNCD")]
     pub fn from_parts(
@@ -317,7 +317,7 @@ impl LegacyDaemonGreetingOwned {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationError};
+    /// use oc_rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationError};
     ///
     /// let greeting = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4\tmd5".into()))?;
     /// let tokens: Vec<_> = greeting.digest_tokens().collect();
@@ -367,7 +367,7 @@ impl LegacyDaemonGreetingOwned {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
+    /// use oc_rsync_protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
     ///
     /// let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 30.5 md5\n")?;
     /// let (protocol, advertised, subprotocol, digest) = owned.into_parts();
@@ -376,7 +376,7 @@ impl LegacyDaemonGreetingOwned {
     /// assert_eq!(advertised, 30);
     /// assert_eq!(subprotocol, Some(5));
     /// assert_eq!(digest, Some(String::from("md5")));
-    /// # Ok::<_, rsync_protocol::NegotiationError>(())
+    /// # Ok::<_, oc_rsync_protocol::NegotiationError>(())
     /// ```
     #[must_use]
     pub fn into_parts(self) -> (ProtocolVersion, u32, Option<u32>, Option<String>) {
