@@ -11,10 +11,10 @@ use rsync_protocol::{
     ProtocolVersion,
 };
 
-include!("chunk_00.rs");
-include!("chunk_01.rs");
-include!("chunk_02.rs");
-include!("chunk_03.rs");
-include!("chunk_04.rs");
-include!("chunk_05.rs");
-include!("chunk_06.rs");
+include!("legacy_negotiation_test_support.rs");
+include!("legacy_negotiation_sniffer_tests.rs");
+include!("negotiated_stream_buffer_tests.rs");
+include!("negotiated_stream_parts_tests.rs");
+include!("negotiated_stream_clone_tests.rs");
+include!("negotiation_error_handling_tests.rs");
+include!("legacy_daemon_message_tests.rs");

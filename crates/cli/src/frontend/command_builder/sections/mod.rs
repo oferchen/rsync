@@ -1,7 +1,7 @@
-mod section_01;
-mod section_02;
-mod section_03;
+mod build_base_command;
+mod connection_and_logging_options;
+mod transfer_behavior_options;
 
-pub(crate) use section_01::section_01;
-pub(crate) use section_02::section_02;
-pub(crate) use section_03::section_03;
+pub(crate) use build_base_command::build_base_command;
+pub(crate) use connection_and_logging_options::add_connection_and_logging_options;
+pub(crate) use transfer_behavior_options::add_transfer_behavior_options;

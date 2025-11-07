@@ -263,6 +263,8 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         human_readable: None,
         address_mode: AddressMode::Default,
         archive: false,
+        recursive: None,
+        dirs: None,
         delete: false,
         delete_mode: DeleteMode::Disabled,
         delete_excluded: false,

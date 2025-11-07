@@ -1,6 +1,6 @@
 use super::super::{Arg, ArgAction, ClapCommand, OsStringValueParser};
 
-pub(crate) fn section_03(command: ClapCommand) -> ClapCommand {
+pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCommand {
     command
         .arg(
             Arg::new("contimeout")

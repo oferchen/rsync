@@ -1,6 +1,6 @@
 use super::super::{Arg, ArgAction, ClapCommand, OsStringValueParser};
 
-pub(crate) fn section_01(program_name: &'static str) -> ClapCommand {
+pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
     ClapCommand::new(program_name)
             .disable_help_flag(true)
             .disable_version_flag(true)
