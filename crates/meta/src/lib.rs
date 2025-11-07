@@ -93,6 +93,7 @@ mod chmod;
 mod error;
 #[cfg(unix)]
 mod id_lookup;
+mod mapping;
 mod options;
 #[cfg(unix)]
 mod ownership;
@@ -126,6 +127,7 @@ pub use apply::{
 };
 pub use chmod::{ChmodError, ChmodModifiers};
 pub use error::MetadataError;
+pub use mapping::{GroupMapping, MappingKind, MappingParseError, NameMapping, UserMapping};
 pub use options::MetadataOptions;
 pub use special::{create_device_node, create_fifo};
 #[cfg(feature = "xattr")]

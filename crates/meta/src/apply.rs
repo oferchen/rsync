@@ -107,14 +107,31 @@ fn set_owner_like(
         let owner = if let Some(uid) = options.owner_override() {
             Some(ownership::uid_from_raw(uid as RawUid))
         } else if options.owner() {
-            map_uid(metadata.uid() as RawUid, options.numeric_ids_enabled())
+            let mut raw_uid = metadata.uid() as RawUid;
+            if let Some(mapping) = options.user_mapping() {
+                if let Some(mapped) = mapping
+                    .map_uid(raw_uid)
+                    .map_err(|error| MetadataError::new("apply user mapping", destination, error))?
+                {
+                    raw_uid = mapped;
+                }
+            }
+            map_uid(raw_uid, options.numeric_ids_enabled())
         } else {
             None
         };
         let group = if let Some(gid) = options.group_override() {
             Some(ownership::gid_from_raw(gid as RawGid))
         } else if options.group() {
-            map_gid(metadata.gid() as RawGid, options.numeric_ids_enabled())
+            let mut raw_gid = metadata.gid() as RawGid;
+            if let Some(mapping) = options.group_mapping() {
+                if let Some(mapped) = mapping.map_gid(raw_gid).map_err(|error| {
+                    MetadataError::new("apply group mapping", destination, error)
+                })? {
+                    raw_gid = mapped;
+                }
+            }
+            map_gid(raw_gid, options.numeric_ids_enabled())
         } else {
             None
         };

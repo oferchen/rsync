@@ -53,6 +53,8 @@ pub(crate) struct ParsedArgs {
     pub(crate) owner: Option<bool>,
     pub(crate) group: Option<bool>,
     pub(crate) chown: Option<OsString>,
+    pub(crate) usermap: Option<OsString>,
+    pub(crate) groupmap: Option<OsString>,
     pub(crate) chmod: Vec<OsString>,
     pub(crate) perms: Option<bool>,
     pub(crate) super_mode: Option<bool>,

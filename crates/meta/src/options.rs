@@ -1,4 +1,5 @@
 use crate::chmod::ChmodModifiers;
+use crate::{GroupMapping, UserMapping};
 
 /// Options that control metadata preservation during copy operations.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -11,6 +12,8 @@ pub struct MetadataOptions {
     owner_override: Option<u32>,
     group_override: Option<u32>,
     chmod: Option<ChmodModifiers>,
+    user_mapping: Option<UserMapping>,
+    group_mapping: Option<GroupMapping>,
 }
 
 impl MetadataOptions {
@@ -29,6 +32,8 @@ impl MetadataOptions {
             owner_override: None,
             group_override: None,
             chmod: None,
+            user_mapping: None,
+            group_mapping: None,
         }
     }
 
@@ -102,6 +107,20 @@ impl MetadataOptions {
         self
     }
 
+    /// Applies a custom user mapping derived from `--usermap`.
+    #[must_use]
+    pub fn with_user_mapping(mut self, mapping: Option<UserMapping>) -> Self {
+        self.user_mapping = mapping;
+        self
+    }
+
+    /// Applies a custom group mapping derived from `--groupmap`.
+    #[must_use]
+    pub fn with_group_mapping(mut self, mapping: Option<GroupMapping>) -> Self {
+        self.group_mapping = mapping;
+        self
+    }
+
     /// Reports whether ownership should be preserved.
     #[must_use]
     pub const fn owner(&self) -> bool {
@@ -149,6 +168,18 @@ impl MetadataOptions {
     pub fn chmod(&self) -> Option<&ChmodModifiers> {
         self.chmod.as_ref()
     }
+
+    /// Returns the configured user mapping, if any.
+    #[must_use]
+    pub fn user_mapping(&self) -> Option<&UserMapping> {
+        self.user_mapping.as_ref()
+    }
+
+    /// Returns the configured group mapping, if any.
+    #[must_use]
+    pub fn group_mapping(&self) -> Option<&GroupMapping> {
+        self.group_mapping.as_ref()
+    }
 }
 
 impl Default for MetadataOptions {
@@ -174,6 +205,8 @@ mod tests {
         assert!(options.owner_override().is_none());
         assert!(options.group_override().is_none());
         assert!(options.chmod().is_none());
+        assert!(options.user_mapping().is_none());
+        assert!(options.group_mapping().is_none());
 
         assert_eq!(MetadataOptions::default(), options);
     }
@@ -181,6 +214,9 @@ mod tests {
     #[test]
     fn builder_methods_apply_requested_flags() {
         let modifiers = ChmodModifiers::parse("u=rw").expect("parse modifiers");
+
+        let user_map = UserMapping::parse("1000:2000").expect("parse usermap");
+        let group_map = GroupMapping::parse("*:3000").expect("parse groupmap");
 
         let options = MetadataOptions::new()
             .preserve_owner(true)
@@ -190,7 +226,9 @@ mod tests {
             .numeric_ids(true)
             .with_owner_override(Some(42))
             .with_group_override(Some(7))
-            .with_chmod(Some(modifiers.clone()));
+            .with_chmod(Some(modifiers.clone()))
+            .with_user_mapping(Some(user_map.clone()))
+            .with_group_mapping(Some(group_map.clone()));
 
         assert!(options.owner());
         assert!(options.group());
@@ -200,6 +238,8 @@ mod tests {
         assert_eq!(options.owner_override(), Some(42));
         assert_eq!(options.group_override(), Some(7));
         assert_eq!(options.chmod(), Some(&modifiers));
+        assert_eq!(options.user_mapping(), Some(&user_map));
+        assert_eq!(options.group_mapping(), Some(&group_map));
     }
 
     #[test]

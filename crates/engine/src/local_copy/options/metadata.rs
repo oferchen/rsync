@@ -1,4 +1,4 @@
-use rsync_meta::ChmodModifiers;
+use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
 use super::types::LocalCopyOptions;
 
@@ -39,6 +39,20 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn with_chmod(mut self, modifiers: Option<ChmodModifiers>) -> Self {
         self.chmod = modifiers;
+        self
+    }
+
+    /// Applies a custom user mapping derived from `--usermap`.
+    #[must_use]
+    pub fn with_user_mapping(mut self, mapping: Option<UserMapping>) -> Self {
+        self.user_mapping = mapping;
+        self
+    }
+
+    /// Applies a custom group mapping derived from `--groupmap`.
+    #[must_use]
+    pub fn with_group_mapping(mut self, mapping: Option<GroupMapping>) -> Self {
+        self.group_mapping = mapping;
         self
     }
 
@@ -119,6 +133,18 @@ impl LocalCopyOptions {
     #[must_use]
     pub fn chmod(&self) -> Option<&ChmodModifiers> {
         self.chmod.as_ref()
+    }
+
+    /// Returns the configured user mapping, if any.
+    #[must_use]
+    pub fn user_mapping(&self) -> Option<&UserMapping> {
+        self.user_mapping.as_ref()
+    }
+
+    /// Returns the configured group mapping, if any.
+    #[must_use]
+    pub fn group_mapping(&self) -> Option<&GroupMapping> {
+        self.group_mapping.as_ref()
     }
 
     /// Reports whether permissions should be preserved.

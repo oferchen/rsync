@@ -60,6 +60,8 @@ pub(crate) fn prepare_invocation(
         chown,
         owner,
         group,
+        usermap,
+        groupmap,
         chmod,
         perms,
         super_mode,
@@ -276,6 +278,16 @@ pub(crate) fn prepare_invocation(
     if let Some(spec) = chown {
         let mut arg = OsString::from("--chown=");
         arg.push(spec);
+        command_args.push(arg);
+    }
+    if let Some(spec) = usermap {
+        let mut arg = OsString::from("--usermap=");
+        arg.push(&spec);
+        command_args.push(arg);
+    }
+    if let Some(spec) = groupmap {
+        let mut arg = OsString::from("--groupmap=");
+        arg.push(&spec);
         command_args.push(arg);
     }
 
