@@ -89,6 +89,13 @@ jobs:
             echo "RUSTC_WRAPPER=$(command -v sccache)" >> "$GITHUB_ENV"
           fi
 
+      - name: Install Strawberry Perl for OpenSSL build tooling
+        if: ${{ matrix.platform.enabled && startsWith(matrix.platform.runner, 'windows') }}
+        shell: pwsh
+        run: |
+          choco install strawberryperl --yes --no-progress
+          'C:\tools\strawberry\perl\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Setup Zig
         if: ${{ matrix.platform.enabled && matrix.platform.uses_zig }}
         uses: goto-bus-stop/setup-zig@v2
