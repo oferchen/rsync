@@ -1,6 +1,5 @@
 use crate::{branding, workspace};
 use oc_rsync_protocol::ProtocolVersion;
-use std::string::String;
 
 const _: () = {
     let workspace_version = workspace::metadata().protocol_version();
@@ -88,16 +87,4 @@ pub(crate) fn sanitize_build_revision(raw: Option<&'static str>) -> &'static str
 #[must_use]
 pub fn build_revision() -> &'static str {
     sanitize_build_revision(option_env!("OC_RSYNC_BUILD_REV"))
-}
-
-/// Returns the build information line rendered in the capability section.
-#[must_use]
-pub fn build_info_line() -> String {
-    format!(
-        "Rust rsync implementation supporting protocol version {};\n    {};\n    source: {};\n    revision/build: #{}",
-        HIGHEST_PROTOCOL_VERSION,
-        BUILD_TOOLCHAIN,
-        SOURCE_URL,
-        build_revision()
-    )
 }

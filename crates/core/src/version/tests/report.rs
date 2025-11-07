@@ -16,14 +16,6 @@ fn version_info_report_renders_default_report() {
     let bit_inums = mem::size_of::<ino_t>() * 8;
     let bit_timestamps = mem::size_of::<time_t>() * 8;
     let bit_long_ints = mem::size_of::<i64>() * 8;
-    let compiled_features_display = compiled_features_display();
-    let compiled_features_text = if compiled_features_display.is_empty() {
-        "none".to_owned()
-    } else {
-        compiled_features_display.to_string()
-    };
-
-    let build_info = build_info_line();
     assert!(actual.starts_with(&format!("rsync  version {RUST_VERSION}")));
     assert!(actual.contains(&format!(
         "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
@@ -51,10 +43,9 @@ fn version_info_report_renders_default_report() {
     }
     assert!(actual.contains("IPv6, atimes"));
     assert!(actual.contains("optional secluded-args"));
-    let compiled_line = format!("Compiled features:\n    {compiled_features_text}\n");
-    assert!(actual.contains(&compiled_line));
-    let build_info_line = format!("Build info:\n    {build_info}\n");
-    assert!(actual.contains(&build_info_line));
+    assert!(actual.contains(&format!("Source: {SOURCE_URL}")));
+    assert!(!actual.contains("Compiled features:"));
+    assert!(!actual.contains("Build info:"));
     let checksum_algorithms = default_checksum_algorithms()
         .iter()
         .map(|algo| algo.as_ref())
@@ -94,9 +85,8 @@ fn version_info_report_allows_custom_lists() {
     assert!(rendered.contains("Checksum list:\n    alpha\n"));
     assert!(rendered.contains("Compress list:\n    beta\n"));
     assert!(rendered.contains("Daemon auth list:\n    gamma\n"));
-    assert!(rendered.contains("Compiled features:\n"));
-    let build_info = build_info_line();
-    assert!(rendered.contains(&format!("Build info:\n    {build_info}\n")));
+    assert!(!rendered.contains("Compiled features:"));
+    assert!(!rendered.contains("Build info:"));
 }
 
 #[test]
@@ -180,20 +170,12 @@ fn version_info_report_for_brand_with_config_matches_builder() {
 }
 
 #[test]
-fn version_info_report_includes_compiled_feature_section() {
+fn version_info_report_omits_rust_specific_sections() {
     let report = VersionInfoReport::new(VersionInfoConfig::default());
     let rendered = report.human_readable();
 
-    let compiled_features_display = compiled_features_display();
-    let expected_line = if compiled_features_display.is_empty() {
-        "Compiled features:\n    none\n".to_owned()
-    } else {
-        format!("Compiled features:\n    {compiled_features_display}\n")
-    };
-
-    assert!(rendered.contains(&expected_line));
-    let build_info = build_info_line();
-    assert!(rendered.contains(&format!("Build info:\n    {build_info}\n")));
+    assert!(!rendered.contains("Compiled features:"));
+    assert!(!rendered.contains("Build info:"));
 }
 
 #[test]
