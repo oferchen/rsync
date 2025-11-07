@@ -112,6 +112,8 @@ mod parse_args_recognises_archive_tests;
 mod parse_args_recognises_batch_tests;
 #[path = "parse_args_recognises_block_size.rs"]
 mod parse_args_recognises_block_size_tests;
+#[path = "parse_args_recognises_blocking.rs"]
+mod parse_args_recognises_blocking_tests;
 #[path = "parse_args_recognises_checksum.rs"]
 mod parse_args_recognises_checksum_tests;
 #[path = "parse_args_recognises_chown.rs"]
@@ -186,6 +188,8 @@ mod parse_args_recognises_relative_tests;
 mod parse_args_recognises_remove_tests;
 #[path = "parse_args_recognises_safe.rs"]
 mod parse_args_recognises_safe_tests;
+#[path = "parse_args_recognises_sockopts.rs"]
+mod parse_args_recognises_sockopts_tests;
 #[path = "parse_args_recognises_sparse.rs"]
 mod parse_args_recognises_sparse_tests;
 #[path = "parse_args_recognises_specials.rs"]

@@ -100,6 +100,8 @@ pub struct ClientConfig {
     pub(super) reference_directories: Vec<ReferenceDirectory>,
     pub(super) connect_program: Option<OsString>,
     pub(super) bind_address: Option<BindAddress>,
+    pub(super) sockopts: Option<OsString>,
+    pub(super) blocking_io: Option<bool>,
     pub(super) iconv: IconvSetting,
     #[cfg(feature = "acl")]
     pub(super) preserve_acls: bool,
@@ -194,6 +196,8 @@ impl Default for ClientConfig {
             reference_directories: Vec::new(),
             connect_program: None,
             bind_address: None,
+            sockopts: None,
+            blocking_io: None,
             iconv: IconvSetting::Unspecified,
             #[cfg(feature = "acl")]
             preserve_acls: false,

@@ -32,6 +32,8 @@ pub(crate) fn prepare_invocation(
         connect_program,
         port,
         bind_address,
+        sockopts,
+        blocking_io,
         protect_args,
         human_readable: human_readable_mode,
         archive,
@@ -651,6 +653,18 @@ pub(crate) fn prepare_invocation(
         let mut arg = OsString::from("--address=");
         arg.push(address);
         command_args.push(arg);
+    }
+
+    if let Some(opts) = sockopts {
+        let mut arg = OsString::from("--sockopts=");
+        arg.push(opts);
+        command_args.push(arg);
+    }
+
+    match blocking_io {
+        Some(true) => command_args.push(OsString::from("--blocking-io")),
+        Some(false) => command_args.push(OsString::from("--no-blocking-io")),
+        None => {}
     }
 
     if let Some(path) = rsync_path {

@@ -9,6 +9,23 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures socket options that should be forwarded to network transports.
+    #[must_use]
+    #[doc(alias = "--sockopts")]
+    pub fn sockopts(mut self, sockopts: Option<OsString>) -> Self {
+        self.sockopts = sockopts;
+        self
+    }
+
+    /// Controls whether blocking I/O should be forced for remote shells.
+    #[must_use]
+    #[doc(alias = "--blocking-io")]
+    #[doc(alias = "--no-blocking-io")]
+    pub fn blocking_io(mut self, blocking: Option<bool>) -> Self {
+        self.blocking_io = blocking;
+        self
+    }
+
     /// Sets the timeout configuration that should apply to network transfers.
     #[must_use]
     #[doc(alias = "--timeout")]

@@ -23,6 +23,8 @@ pub(crate) struct ParsedArgs {
     pub(crate) protect_args: Option<bool>,
     pub(crate) address_mode: AddressMode,
     pub(crate) bind_address: Option<OsString>,
+    pub(crate) sockopts: Option<OsString>,
+    pub(crate) blocking_io: Option<bool>,
     pub(crate) archive: bool,
     pub(crate) recursive: bool,
     pub(crate) recursive_override: Option<bool>,

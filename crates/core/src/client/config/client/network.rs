@@ -23,6 +23,21 @@ impl ClientConfig {
         self.bind_address.as_ref()
     }
 
+    /// Returns the configured socket options, if any.
+    #[must_use]
+    #[doc(alias = "--sockopts")]
+    pub fn sockopts(&self) -> Option<&OsStr> {
+        self.sockopts.as_deref()
+    }
+
+    /// Returns the requested blocking I/O preference for remote shells.
+    #[must_use]
+    #[doc(alias = "--blocking-io")]
+    #[doc(alias = "--no-blocking-io")]
+    pub const fn blocking_io(&self) -> Option<bool> {
+        self.blocking_io
+    }
+
     /// Returns the requested bandwidth limit, if any.
     #[must_use]
     pub fn bandwidth_limit(&self) -> Option<BandwidthLimit> {

@@ -259,6 +259,8 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         connect_program: None,
         port: None,
         bind_address: None,
+        sockopts: None,
+        blocking_io: None,
         protect_args: None,
         human_readable: None,
         address_mode: AddressMode::Default,

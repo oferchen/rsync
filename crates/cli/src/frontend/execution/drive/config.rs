@@ -21,6 +21,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) address_mode: AddressMode,
     pub(crate) connect_program: Option<OsString>,
     pub(crate) bind_address: Option<oc_rsync_core::client::BindAddress>,
+    pub(crate) sockopts: Option<OsString>,
+    pub(crate) blocking_io: Option<bool>,
     pub(crate) dry_run: bool,
     pub(crate) list_only: bool,
     pub(crate) recursive: bool,
@@ -119,6 +121,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .address_mode(inputs.address_mode)
         .connect_program(inputs.connect_program.clone())
         .bind_address(inputs.bind_address.clone())
+        .sockopts(inputs.sockopts.clone())
+        .blocking_io(inputs.blocking_io)
         .dry_run(inputs.dry_run)
         .list_only(inputs.list_only)
         .recursive(inputs.recursive)

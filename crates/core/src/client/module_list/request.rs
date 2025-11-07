@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::net::SocketAddr;
 
 use oc_rsync_protocol::ProtocolVersion;
@@ -126,6 +126,8 @@ pub struct ModuleListOptions {
     address_mode: AddressMode,
     connect_program: Option<OsString>,
     bind_address: Option<SocketAddr>,
+    sockopts: Option<OsString>,
+    blocking_io: Option<bool>,
 }
 
 impl ModuleListOptions {
@@ -137,6 +139,8 @@ impl ModuleListOptions {
             address_mode: AddressMode::Default,
             connect_program: None,
             bind_address: None,
+            sockopts: None,
+            blocking_io: None,
         }
     }
 
@@ -180,6 +184,35 @@ impl ModuleListOptions {
     #[must_use]
     pub fn connect_program(&self) -> Option<&std::ffi::OsStr> {
         self.connect_program.as_deref()
+    }
+
+    /// Configures additional socket options that should be applied to daemon connections.
+    #[must_use]
+    #[doc(alias = "--sockopts")]
+    pub fn with_sockopts(mut self, sockopts: Option<OsString>) -> Self {
+        self.sockopts = sockopts;
+        self
+    }
+
+    /// Returns the configured socket options, if any.
+    #[must_use]
+    pub fn sockopts(&self) -> Option<&OsStr> {
+        self.sockopts.as_deref()
+    }
+
+    /// Configures the desired blocking I/O mode for daemon TCP sockets.
+    #[must_use]
+    #[doc(alias = "--blocking-io")]
+    #[doc(alias = "--no-blocking-io")]
+    pub const fn with_blocking_io(mut self, blocking: Option<bool>) -> Self {
+        self.blocking_io = blocking;
+        self
+    }
+
+    /// Returns the configured blocking I/O preference, if any.
+    #[must_use]
+    pub const fn blocking_io(&self) -> Option<bool> {
+        self.blocking_io
     }
 
     /// Configures the bind address used when contacting the daemon directly or via a proxy.
