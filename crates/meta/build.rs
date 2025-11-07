@@ -12,6 +12,11 @@ fn main() {
         return;
     }
 
+    if target_triplet_mismatch() {
+        println!("cargo:rustc-link-lib=dylib=acl");
+        return;
+    }
+
     if let Some(path) = locate_libacl() {
         if let Some(out_dir) = env::var_os("OUT_DIR") {
             let out_dir = PathBuf::from(out_dir);
@@ -30,6 +35,13 @@ fn main() {
     }
 
     println!("cargo:rustc-link-lib=dylib=acl");
+}
+
+fn target_triplet_mismatch() -> bool {
+    match (env::var("HOST"), env::var("TARGET")) {
+        (Ok(host), Ok(target)) => host != target,
+        _ => false,
+    }
 }
 
 fn target_exposes_acl_via_libsystem() -> bool {
