@@ -1,7 +1,13 @@
 use std::fs;
-use std::io::{Seek, SeekFrom};
+use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::os::unix::fs::OpenOptionsExt;
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use libc::{self, EACCES, EINVAL, ENOTSUP, EPERM, EROFS};
 
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams, LocalCopyAction,
@@ -90,7 +96,7 @@ pub(super) fn execute_transfer(
         }
     }
 
-    let mut reader = fs::File::open(source)
+    let mut reader = open_source_file(source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     let append_mode = determine_append_mode(
         append_allowed,
@@ -120,7 +126,7 @@ pub(super) fn execute_transfer(
     };
 
     let copy_source = copy_source_override.as_deref().unwrap_or(source);
-    let mut reader = fs::File::open(copy_source)
+    let mut reader = open_source_file(copy_source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
     if append_offset > 0 {
         reader
@@ -324,4 +330,31 @@ pub(super) fn execute_transfer(
     }
 
     Ok(())
+}
+
+fn open_source_file(path: &Path, use_noatime: bool) -> io::Result<fs::File> {
+    if use_noatime {
+        if let Some(file) = try_open_noatime(path)? {
+            return Ok(file);
+        }
+    }
+    fs::File::open(path)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn try_open_noatime(path: &Path) -> io::Result<Option<fs::File>> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true).custom_flags(libc::O_NOATIME);
+    match options.open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) => match error.raw_os_error() {
+            Some(code) if matches!(code, EPERM | EACCES | EINVAL | ENOTSUP | EROFS) => Ok(None),
+            _ => Err(error),
+        },
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn try_open_noatime(_path: &Path) -> io::Result<Option<fs::File>> {
+    Ok(None)
 }

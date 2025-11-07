@@ -55,6 +55,7 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) compress_level_cli: Option<&'a OsString>,
     pub(crate) compress_choice: Option<&'a OsString>,
     pub(crate) skip_compress: Option<&'a OsString>,
+    pub(crate) open_noatime: Option<bool>,
     pub(crate) iconv: IconvSetting,
     pub(crate) parsed_chown: Option<&'a ParsedChown>,
     pub(crate) owner: Option<bool>,
@@ -198,6 +199,7 @@ where
         compress_level_cli: context.compress_level_cli.cloned(),
         compress_choice: context.compress_choice.cloned(),
         skip_compress: context.skip_compress.cloned(),
+        open_noatime: context.open_noatime,
         iconv: context.iconv.clone(),
         stop_after: context
             .stop_request

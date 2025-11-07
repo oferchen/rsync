@@ -45,6 +45,14 @@ impl ClientConfig {
         self.whole_file
     }
 
+    /// Reports whether source files should be opened without updating access times.
+    #[must_use]
+    #[doc(alias = "--open-noatime")]
+    #[doc(alias = "--no-open-noatime")]
+    pub const fn open_noatime(&self) -> bool {
+        self.open_noatime
+    }
+
     /// Reports whether sparse file handling has been requested.
     #[must_use]
     #[doc(alias = "--sparse")]
