@@ -155,6 +155,9 @@ fn runtime_capabilities_reflect_socketpair_support() {
     {
         assert!(!config.supports_socketpairs);
     }
+
+    let expected_openssl = oc_rsync_checksums::openssl_acceleration_available();
+    assert_eq!(config.supports_openssl_crypto, expected_openssl);
 }
 
 #[test]

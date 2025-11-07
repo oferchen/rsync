@@ -14,6 +14,10 @@ The crate currently offers two modules:
 - [`crate::strong`] exposes MD4, MD5, XXH64, and XXH3 (64- and 128-bit) digests
   together with the [`crate::strong::StrongDigest`] trait that higher layers use
   to abstract over the negotiated algorithm.
+- When the crate is built with the default `openssl-vendored` feature (or the
+  narrower `openssl` flag), the MD4 and MD5 wrappers transparently dispatch to
+  OpenSSL's EVP implementations while retaining the pure-Rust fallback so the
+  workspace can advertise `openssl-crypto` capability in the version banner.
 
 The modules are intentionally small, allowing the workspace to enforce strict
 layering while keeping checksum-specific optimisations in one place.
