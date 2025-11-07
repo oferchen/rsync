@@ -25,22 +25,20 @@ jobs:
             runner: macos-14
             target: x86_64-apple-darwin
             build_command: zigbuild
-            build_daemon: true
             uses_zig: true
             needs_cross_gcc: false
             package_linux: false
-            package_brew: true
+            package_brew: false
             generate_sbom: true
           - name: darwin-aarch64
             enabled: true
             runner: macos-14
             target: aarch64-apple-darwin
             build_command: zigbuild
-            build_daemon: true
             uses_zig: true
             needs_cross_gcc: false
             package_linux: false
-            package_brew: true
+            package_brew: false
             generate_sbom: true
 
     runs-on: ${{ matrix.platform.runner }}
