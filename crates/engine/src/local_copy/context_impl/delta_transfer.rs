@@ -22,23 +22,7 @@ impl<'a> CopyContext<'a> {
                 error,
             )
         })?;
-        let mut compressor = if compress {
-            match ActiveCompressor::new(
-                self.compression_algorithm(),
-                self.compression_level(),
-            ) {
-                Ok(encoder) => Some(encoder),
-                Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "initialise compression",
-                        source.to_path_buf(),
-                        error,
-                    ));
-                }
-            }
-        } else {
-            None
-        };
+        let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
@@ -163,14 +147,8 @@ impl<'a> CopyContext<'a> {
             let compressed_total = encoder.finish().map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
             })?;
-            if let Some(limiter) = self.limiter.as_mut() {
-                let delta = compressed_total.saturating_sub(compressed_progress);
-                if delta > 0 {
-                    let bounded = delta.min(usize::MAX as u64) as usize;
-                    let sleep = limiter.register(bounded);
-                    self.summary.record_bandwidth_sleep(sleep.requested());
-                }
-            }
+            let delta = compressed_total.saturating_sub(compressed_progress);
+            self.register_limiter_bytes(delta);
             FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
             FileCopyOutcome::new(literal_bytes, None)
@@ -203,7 +181,6 @@ impl<'a> CopyContext<'a> {
             chunk.len()
         };
 
-        let mut sleep_recorded = None;
         if let Some(encoder) = compressor {
             encoder.write(chunk).map_err(|error| {
                 LocalCopyError::io("compress file", source.to_path_buf(), error)
@@ -211,18 +188,9 @@ impl<'a> CopyContext<'a> {
             let total = encoder.bytes_written();
             let delta = total.saturating_sub(*compressed_progress);
             *compressed_progress = total;
-            if let Some(limiter) = self.limiter.as_mut() {
-                if delta > 0 {
-                    let bounded = delta.min(usize::MAX as u64) as usize;
-                    sleep_recorded = Some(limiter.register(bounded));
-                }
-            }
-        } else if let Some(limiter) = self.limiter.as_mut() {
-            sleep_recorded = Some(limiter.register(chunk.len()));
-        }
-
-        if let Some(sleep) = sleep_recorded {
-            self.summary.record_bandwidth_sleep(sleep.requested());
+            self.register_limiter_bytes(delta);
+        } else {
+            self.register_limiter_bytes(chunk.len() as u64);
         }
 
         Ok(written)
