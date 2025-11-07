@@ -153,6 +153,16 @@ fn protect_rule_blocks_deletion_without_affecting_transfer() {
 }
 
 #[test]
+fn perishable_rule_ignored_for_deletion_checks() {
+    let rule = FilterRule::exclude("*.tmp").with_perishable(true);
+    let set = FilterSet::from_rules([rule]).expect("compiled");
+
+    assert!(!set.allows(Path::new("note.tmp"), false));
+    assert!(set.allows_deletion(Path::new("note.tmp"), false));
+    assert!(set.allows_deletion_when_excluded_removed(Path::new("note.tmp"), false));
+}
+
+#[test]
 fn protect_rule_applies_to_directory_descendants() {
     let set = FilterSet::from_rules([FilterRule::protect("secrets/")]).expect("compiled");
     assert!(set.allows(Path::new("secrets/data.txt"), false));

@@ -51,6 +51,7 @@ pub struct DirMergeOptions {
     sender_side: SideState,
     receiver_side: SideState,
     anchor_root: bool,
+    perishable: bool,
 }
 
 impl DirMergeOptions {
@@ -69,6 +70,7 @@ impl DirMergeOptions {
             sender_side: SideState::Unspecified,
             receiver_side: SideState::Unspecified,
             anchor_root: false,
+            perishable: false,
         }
     }
 
@@ -172,6 +174,13 @@ impl DirMergeOptions {
         self
     }
 
+    /// Marks rules parsed from the file as perishable.
+    #[must_use]
+    pub const fn mark_perishable(mut self) -> Self {
+        self.perishable = true;
+        self
+    }
+
     /// Returns whether the parsed rules should be inherited.
     #[must_use]
     pub const fn inherit_rules(&self) -> bool {
@@ -250,6 +259,12 @@ impl DirMergeOptions {
     #[must_use]
     pub const fn anchor_root_enabled(&self) -> bool {
         self.anchor_root
+    }
+
+    /// Returns whether rules should be marked as perishable.
+    #[must_use]
+    pub const fn perishable(&self) -> bool {
+        self.perishable
     }
 }
 

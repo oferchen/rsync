@@ -27,6 +27,7 @@ pub struct FilterRuleSpec {
     dir_merge_options: Option<DirMergeOptions>,
     applies_to_sender: bool,
     applies_to_receiver: bool,
+    perishable: bool,
 }
 
 impl FilterRuleSpec {
@@ -40,6 +41,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -53,6 +55,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -65,6 +68,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -77,6 +81,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: false,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -89,6 +94,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: false,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -102,6 +108,7 @@ impl FilterRuleSpec {
             dir_merge_options: Some(options),
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -115,6 +122,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -127,6 +135,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: false,
+            perishable: false,
         }
     }
 
@@ -139,6 +148,7 @@ impl FilterRuleSpec {
             dir_merge_options: None,
             applies_to_sender: true,
             applies_to_receiver: false,
+            perishable: false,
         }
     }
 
@@ -158,6 +168,12 @@ impl FilterRuleSpec {
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
+    }
+
+    /// Returns whether the rule should be ignored when pruning directories.
+    #[must_use]
+    pub const fn is_perishable(&self) -> bool {
+        self.perishable
     }
 
     /// Returns the per-directory merge options when present.
@@ -184,6 +200,10 @@ impl FilterRuleSpec {
             return;
         }
 
+        if options.perishable() {
+            self.perishable = true;
+        }
+
         if options.anchor_root_enabled() && !self.pattern.starts_with('/') {
             self.pattern.insert(0, '/');
         }
@@ -195,6 +215,13 @@ impl FilterRuleSpec {
         if let Some(receiver) = options.receiver_side_override() {
             self.applies_to_receiver = receiver;
         }
+    }
+
+    /// Marks the rule as perishable.
+    #[must_use]
+    pub const fn with_perishable(mut self, perishable: bool) -> Self {
+        self.perishable = perishable;
+        self
     }
 }
 

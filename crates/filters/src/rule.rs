@@ -7,6 +7,7 @@ pub struct FilterRule {
     pub(crate) pattern: String,
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
+    pub(crate) perishable: bool,
 }
 
 impl FilterRule {
@@ -18,6 +19,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -29,6 +31,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -40,6 +43,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: false,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -51,6 +55,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: false,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -63,6 +68,7 @@ impl FilterRule {
             pattern: String::new(),
             applies_to_sender: true,
             applies_to_receiver: true,
+            perishable: false,
         }
     }
 
@@ -82,6 +88,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: false,
+            perishable: false,
         }
     }
 
@@ -101,6 +108,7 @@ impl FilterRule {
             pattern: pattern.into(),
             applies_to_sender: true,
             applies_to_receiver: false,
+            perishable: false,
         }
     }
 
@@ -114,6 +122,12 @@ impl FilterRule {
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
+    }
+
+    /// Returns whether the rule should be ignored when pruning directories.
+    #[must_use]
+    pub const fn is_perishable(&self) -> bool {
+        self.perishable
     }
 
     /// Returns whether the rule affects the sending side.
@@ -147,6 +161,13 @@ impl FilterRule {
     pub const fn with_sides(mut self, sender: bool, receiver: bool) -> Self {
         self.applies_to_sender = sender;
         self.applies_to_receiver = receiver;
+        self
+    }
+
+    /// Marks the rule as perishable.
+    #[must_use]
+    pub const fn with_perishable(mut self, perishable: bool) -> Self {
+        self.perishable = perishable;
         self
     }
 

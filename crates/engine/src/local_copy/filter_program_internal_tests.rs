@@ -97,6 +97,32 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
 }
 
 #[test]
+fn perishable_rules_are_ignored_for_deletion_context() {
+    let mut segment = FilterSegment::default();
+    segment
+        .push_rule(FilterRule::exclude("*.tmp").with_perishable(true))
+        .expect("perishable rule added");
+
+    let mut transfer = FilterOutcome::default();
+    segment.apply(
+        Path::new("note.tmp"),
+        false,
+        &mut transfer,
+        FilterContext::Transfer,
+    );
+    assert!(!transfer.allows_transfer());
+
+    let mut deletion = FilterOutcome::default();
+    segment.apply(
+        Path::new("note.tmp"),
+        false,
+        &mut deletion,
+        FilterContext::Deletion,
+    );
+    assert!(deletion.allows_deletion());
+}
+
+#[test]
 fn filter_program_evaluate_applies_dir_merge_layers() {
     let program = FilterProgram::new([
         FilterProgramEntry::Rule(FilterRule::exclude("*.tmp")),
