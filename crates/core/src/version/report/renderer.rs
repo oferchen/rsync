@@ -8,8 +8,6 @@ use std::mem;
 use std::string::String;
 use std::vec::Vec;
 
-use super::super::constants::build_info_line;
-use super::super::features::compiled_features_display;
 use super::config::VersionInfoConfig;
 
 /// Human-readable `--version` output renderer.
@@ -308,17 +306,6 @@ impl VersionInfoReport {
             config.supports_openssl_crypto,
         ));
         items.push(capability_entry("asm-MD5", config.supports_asm_md5));
-
-        items.push(InfoItem::Section("Compiled features"));
-        let compiled_features = compiled_features_display();
-        if compiled_features.is_empty() {
-            items.push(InfoItem::Entry(Cow::Borrowed("none")));
-        } else {
-            items.push(InfoItem::Entry(Cow::Owned(compiled_features.to_string())));
-        }
-
-        items.push(InfoItem::Section("Build info"));
-        items.push(InfoItem::Entry(Cow::Owned(build_info_line())));
 
         debug_assert!(items.capacity() >= BASE_CAPACITY);
         items
