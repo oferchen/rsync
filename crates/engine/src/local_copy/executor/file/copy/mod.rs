@@ -8,11 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::local_copy::{
-    CopyContext,
-    LocalCopyAction,
-    LocalCopyArgumentError,
-    LocalCopyError,
-    LocalCopyMetadata,
+    CopyContext, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata,
     LocalCopyRecord,
 };
 

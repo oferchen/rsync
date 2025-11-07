@@ -65,6 +65,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --ignore-existing  Skip updating files that already exist at the destination.\n",
             "      --existing  Skip creating new destination files; only update those already present.\n",
             "      --ignore-missing-args  Skip missing source arguments without reporting an error.\n",
+            "      --delete-missing-args  Remove destination entries when their source argument is missing.\n",
             "  -u, --update    Skip files that are newer on the destination.\n",
             "      --modify-window=SECS  Treat mtimes within SECS seconds as equal when comparing files.\n",
             "      --exclude=PATTERN  Skip files matching PATTERN.\n",

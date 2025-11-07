@@ -86,6 +86,20 @@ fn delete_delay_flag_is_parsed() {
 }
 
 #[test]
+fn delete_missing_args_flag_is_parsed() {
+    let parsed = super::parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--delete-missing-args"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse succeeds");
+
+    assert!(parsed.delete_missing_args);
+    assert!(parsed.ignore_missing_args);
+}
+
+#[test]
 fn delete_excluded_flag_implies_delete() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),

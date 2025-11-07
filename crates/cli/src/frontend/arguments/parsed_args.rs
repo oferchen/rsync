@@ -29,6 +29,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) dirs: Option<bool>,
     pub(crate) delete_mode: DeleteMode,
     pub(crate) delete_excluded: bool,
+    pub(crate) delete_missing_args: bool,
     pub(crate) backup: bool,
     pub(crate) backup_dir: Option<OsString>,
     pub(crate) backup_suffix: Option<OsString>,

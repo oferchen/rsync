@@ -53,6 +53,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that destination entries corresponding to missing source arguments be removed.
+    #[must_use]
+    #[doc(alias = "--delete-missing-args")]
+    pub const fn delete_missing_args(mut self, delete: bool) -> Self {
+        self.delete_missing_args = delete;
+        self
+    }
+
     /// Requests that newer destination files be preserved.
     #[must_use]
     #[doc(alias = "--update")]
@@ -111,6 +119,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn ignore_missing_args_enabled(&self) -> bool {
         self.ignore_missing_args
+    }
+
+    /// Reports whether missing source arguments should trigger destination deletions.
+    #[must_use]
+    pub const fn delete_missing_args_enabled(&self) -> bool {
+        self.delete_missing_args
     }
 
     /// Reports whether newer destination files should be preserved.

@@ -177,6 +177,12 @@ pub(crate) fn section_02(command: ClapCommand) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("delete-missing-args")
+                    .long("delete-missing-args")
+                    .help("Remove destination entries when their source argument is missing.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("delete-excluded")
                     .long("delete-excluded")
                     .help("Remove excluded destination files during deletion sweeps.")
