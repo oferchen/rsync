@@ -1,5 +1,7 @@
 use super::common::*;
 use super::*;
+use crate::frontend::defaults::SUPPORTED_OPTIONS_LIST;
+use std::collections::BTreeSet;
 
 #[test]
 fn help_flag_renders_static_help_snapshot() {
@@ -49,4 +51,51 @@ fn oc_help_mentions_branded_daemon_phrase() {
     let branded = format!("Run as an {} daemon", branding::oc_client_program_name());
     assert!(rendered.contains(&branded));
     assert!(!rendered.contains(&upstream));
+}
+
+#[test]
+fn supported_options_list_mentions_all_help_flags() {
+    let help = render_help(ProgramName::OcRsync);
+    let options = collect_options(&help);
+
+    for option in &options {
+        assert!(
+            SUPPORTED_OPTIONS_LIST.contains(option),
+            "supported options list missing {option}"
+        );
+    }
+}
+
+fn collect_options(text: &str) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '-' {
+            match chars.peek() {
+                Some('-') => {
+                    chars.next();
+                    let mut token = String::from("--");
+                    while let Some(&next) = chars.peek() {
+                        if next.is_ascii_alphanumeric() || next == '-' {
+                            token.push(next);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if token.len() > 2 {
+                        tokens.insert(token);
+                    }
+                }
+                Some(next) if next.is_ascii_alphabetic() => {
+                    let mut token = String::from("-");
+                    token.push(*next);
+                    chars.next();
+                    tokens.insert(token);
+                }
+                _ => {}
+            }
+        }
+    }
+    tokens
 }
