@@ -5,7 +5,7 @@ use std::string::String;
 
 use super::constants::build_revision;
 use super::constants::{
-    COPYRIGHT_NOTICE, RUST_VERSION, SUBPROTOCOL_VERSION, UPSTREAM_BASE_VERSION, WEB_SITE,
+    COPYRIGHT_NOTICE, RUST_VERSION, SOURCE_URL, SUBPROTOCOL_VERSION, UPSTREAM_BASE_VERSION,
 };
 use super::constants::{
     DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_PROGRAM_NAME, PROGRAM_NAME,
@@ -22,7 +22,7 @@ use super::constants::{
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_core::version::{version_metadata, RUST_VERSION};
+/// use oc_rsync_core::version::{version_metadata, RUST_VERSION, SOURCE_URL};
 ///
 /// let metadata = version_metadata();
 /// let banner = metadata.standard_banner();
@@ -33,7 +33,7 @@ use super::constants::{
 /// )));
 /// assert!(banner.contains("protocol version 32"));
 /// assert!(banner.contains("revision/build #"));
-/// assert!(banner.contains("https://rsync.samba.org/"));
+/// assert!(banner.contains(&format!("Source: {}", SOURCE_URL)));
 /// ```
 #[doc(alias = "--version")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,7 +44,7 @@ pub struct VersionMetadata {
     protocol_version: ProtocolVersion,
     subprotocol_version: u8,
     copyright_notice: &'static str,
-    web_site: &'static str,
+    source_url: &'static str,
 }
 
 impl VersionMetadata {
@@ -84,10 +84,10 @@ impl VersionMetadata {
         self.copyright_notice
     }
 
-    /// Returns the web site advertised by the banner.
+    /// Returns the source URL advertised by the banner.
     #[must_use]
-    pub const fn web_site(&self) -> &'static str {
-        self.web_site
+    pub const fn source_url(&self) -> &'static str {
+        self.source_url
     }
 
     /// Writes the standard textual banner into the provided [`fmt::Write`] sink.
@@ -109,8 +109,8 @@ impl VersionMetadata {
         writer.write_str("Copyright ")?;
         writer.write_str(self.copyright_notice())?;
         writer.write_char('\n')?;
-        writer.write_str("Web site: ")?;
-        writer.write_str(self.web_site())?;
+        writer.write_str("Source: ")?;
+        writer.write_str(self.source_url())?;
         writer.write_char('\n')
     }
 
@@ -177,6 +177,6 @@ pub const fn version_metadata_for_program(program_name: &'static str) -> Version
         protocol_version: ProtocolVersion::NEWEST,
         subprotocol_version: SUBPROTOCOL_VERSION,
         copyright_notice: COPYRIGHT_NOTICE,
-        web_site: WEB_SITE,
+        source_url: SOURCE_URL,
     }
 }
