@@ -25,6 +25,7 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             build_command: build
+            build_daemon: true
             uses_zig: false
             needs_cross_gcc: false
             package_linux: false
@@ -35,6 +36,7 @@ jobs:
             runner: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             build_command: build
+            build_daemon: true
             uses_zig: false
             needs_cross_gcc: true
             package_linux: false
