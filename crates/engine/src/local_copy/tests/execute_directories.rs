@@ -20,6 +20,94 @@ fn execute_with_trailing_separator_copies_contents() {
 }
 
 #[test]
+fn execute_skips_directories_when_recursion_disabled_without_dirs() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested_dir = source_root.join("child");
+    fs::create_dir_all(&nested_dir).expect("create nested dir");
+    fs::write(nested_dir.join("file.txt"), b"payload").expect("write payload");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(false)
+        .dirs(false)
+        .collect_events(true);
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+    let summary = report.summary();
+
+    assert_eq!(summary.directories_total(), 1);
+    assert_eq!(summary.directories_created(), 0);
+    assert_eq!(summary.files_copied(), 0);
+
+    let records = report.records();
+    assert!(
+        records
+            .iter()
+            .any(|record| record.action() == &LocalCopyAction::SkippedDirectory),
+        "expected skipped directory record, got {records:?}"
+    );
+    assert!(
+        !dest_root.join("source").exists(),
+        "destination should not contain skipped directory"
+    );
+}
+
+#[test]
+fn execute_creates_directories_when_dirs_enabled_without_recursion() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested_dir = source_root.join("child");
+    fs::create_dir_all(&nested_dir).expect("create nested dir");
+    fs::write(nested_dir.join("file.txt"), b"payload").expect("write payload");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(false)
+        .dirs(true)
+        .collect_events(true);
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("execution succeeds");
+    let summary = report.summary();
+
+    assert_eq!(summary.directories_total(), 1);
+    assert_eq!(summary.directories_created(), 1);
+    assert_eq!(summary.files_copied(), 0);
+
+    let records = report.records();
+    assert!(
+        records.iter().any(|record| {
+            record.action() == &LocalCopyAction::DirectoryCreated
+                && record.relative_path() == std::path::Path::new("source")
+        }),
+        "expected directory creation record, got {records:?}"
+    );
+    assert!(dest_root.join("source").is_dir());
+    assert!(
+        !dest_root.join("source").join("child").exists(),
+        "dirs flag should not create nested directories"
+    );
+}
+
+#[test]
 fn execute_into_child_directory_succeeds_without_recursing() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");

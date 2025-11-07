@@ -35,6 +35,8 @@ pub(crate) fn prepare_invocation(
         protect_args,
         human_readable: human_readable_mode,
         archive,
+        recursive,
+        dirs,
         delete,
         delete_mode,
         delete_excluded,
@@ -145,6 +147,16 @@ pub(crate) fn prepare_invocation(
     let mut command_args = Vec::new();
     if archive {
         command_args.push(OsString::from("-a"));
+    }
+    match recursive {
+        Some(true) => command_args.push(OsString::from("--recursive")),
+        Some(false) => command_args.push(OsString::from("--no-recursive")),
+        None => {}
+    }
+    match dirs {
+        Some(true) => command_args.push(OsString::from("--dirs")),
+        Some(false) => command_args.push(OsString::from("--no-dirs")),
+        None => {}
     }
     if dry_run {
         command_args.push(OsString::from("--dry-run"));

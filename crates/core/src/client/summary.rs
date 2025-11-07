@@ -250,6 +250,8 @@ pub enum ClientEventKind {
     SkippedNewerDestination,
     /// A non-regular entry was skipped because support was disabled.
     SkippedNonRegular,
+    /// A directory was skipped because recursion was disabled.
+    SkippedDirectory,
     /// A symbolic link was skipped because it was deemed unsafe.
     SkippedUnsafeSymlink,
     /// A directory was skipped to honour `--one-file-system`.
@@ -302,6 +304,7 @@ impl ClientEvent {
             LocalCopyAction::SkippedExisting => ClientEventKind::SkippedExisting,
             LocalCopyAction::SkippedNewerDestination => ClientEventKind::SkippedNewerDestination,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
+            LocalCopyAction::SkippedDirectory => ClientEventKind::SkippedDirectory,
             LocalCopyAction::SkippedUnsafeSymlink => ClientEventKind::SkippedUnsafeSymlink,
             LocalCopyAction::SkippedMountPoint => ClientEventKind::SkippedMountPoint,
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
@@ -318,6 +321,7 @@ impl ClientEvent {
             | LocalCopyAction::SkippedExisting
             | LocalCopyAction::SkippedNewerDestination
             | LocalCopyAction::SkippedNonRegular
+            | LocalCopyAction::SkippedDirectory
             | LocalCopyAction::SkippedUnsafeSymlink
             | LocalCopyAction::SkippedMountPoint
             | LocalCopyAction::EntryDeleted

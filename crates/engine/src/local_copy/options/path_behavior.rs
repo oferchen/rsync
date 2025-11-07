@@ -59,6 +59,24 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Enables or disables recursive traversal of source directories.
+    #[must_use]
+    #[doc(alias = "--recursive")]
+    #[doc(alias = "-r")]
+    pub const fn recursive(mut self, recursive: bool) -> Self {
+        self.recursive = recursive;
+        self
+    }
+
+    /// Enables or disables copying directory entries when recursion is disabled.
+    #[must_use]
+    #[doc(alias = "--dirs")]
+    #[doc(alias = "-d")]
+    pub const fn dirs(mut self, enabled: bool) -> Self {
+        self.dirs = enabled;
+        self
+    }
+
     /// Controls whether parent directories implied by the source path are created.
     #[must_use]
     #[doc(alias = "--implied-dirs")]
@@ -156,6 +174,22 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn relative_paths_enabled(&self) -> bool {
         self.relative_paths
+    }
+
+    /// Reports whether recursive traversal is enabled.
+    #[must_use]
+    #[doc(alias = "--recursive")]
+    #[doc(alias = "-r")]
+    pub const fn recursive_enabled(&self) -> bool {
+        self.recursive
+    }
+
+    /// Reports whether directory entries should be copied when recursion is disabled.
+    #[must_use]
+    #[doc(alias = "--dirs")]
+    #[doc(alias = "-d")]
+    pub const fn dirs_enabled(&self) -> bool {
+        self.dirs
     }
 
     /// Reports whether implied parent directories should be created automatically.

@@ -76,6 +76,24 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables recursive traversal of source directories.
+    #[must_use]
+    #[doc(alias = "--recursive")]
+    #[doc(alias = "-r")]
+    pub const fn recursive(mut self, recursive: bool) -> Self {
+        self.recursive = recursive;
+        self
+    }
+
+    /// Enables or disables copying of directory entries when recursion is disabled.
+    #[must_use]
+    #[doc(alias = "--dirs")]
+    #[doc(alias = "-d")]
+    pub const fn dirs(mut self, enabled: bool) -> Self {
+        self.dirs = enabled;
+        self
+    }
+
     /// Enables or disables traversal across filesystem boundaries.
     #[must_use]
     #[doc(alias = "--one-file-system")]

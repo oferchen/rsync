@@ -204,7 +204,30 @@ pub(crate) fn section_01(program_name: &'static str) -> ClapCommand {
                     .long("recursive")
                     .short('r')
                     .help("Recurse into directories when processing source operands.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-recursive"),
+            )
+            .arg(
+                Arg::new("no-recursive")
+                    .long("no-recursive")
+                    .help("Do not recurse into directories when processing source operands.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("recursive"),
+            )
+            .arg(
+                Arg::new("dirs")
+                    .long("dirs")
+                    .short('d')
+                    .help("Copy directory entries even when recursion is disabled.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-dirs"),
+            )
+            .arg(
+                Arg::new("no-dirs")
+                    .long("no-dirs")
+                    .help("Skip directory entries when recursion is disabled.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("dirs"),
             )
             .arg(
                 Arg::new("checksum")

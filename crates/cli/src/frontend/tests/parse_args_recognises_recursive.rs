@@ -34,3 +34,44 @@ fn parse_args_expands_short_option_clusters() {
         vec![OsString::from("source"), OsString::from("dest")]
     );
 }
+
+#[test]
+fn parse_args_recognises_no_recursive_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-recursive"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse no-recursive");
+
+    assert!(!parsed.recursive);
+    assert_eq!(parsed.recursive_override, Some(false));
+}
+
+#[test]
+fn parse_args_recognises_dirs_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--dirs"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse dirs");
+
+    assert!(!parsed.recursive);
+    assert_eq!(parsed.dirs, Some(true));
+}
+
+#[test]
+fn parse_args_recognises_no_dirs_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-dirs"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse no-dirs");
+
+    assert_eq!(parsed.dirs, Some(false));
+}

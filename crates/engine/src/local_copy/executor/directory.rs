@@ -158,6 +158,38 @@ pub(crate) fn copy_directory_recursive(
         Ok(())
     };
 
+    if !context.recursive_enabled() {
+        ensure_directory(context)?;
+        context.summary_mut().record_directory_total();
+        if creation_record_pending {
+            context.summary_mut().record_directory();
+        }
+        if let Some(record) = pending_record.take() {
+            context.record(record);
+        }
+        if !context.mode().is_dry_run() {
+            let metadata_options = if context.omit_dir_times_enabled() {
+                context.metadata_options().preserve_times(false)
+            } else {
+                context.metadata_options()
+            };
+            apply_directory_metadata_with_options(destination, metadata, metadata_options)
+                .map_err(map_metadata_error)?;
+            #[cfg(feature = "xattr")]
+            sync_xattrs_if_requested(
+                preserve_xattrs,
+                mode,
+                source,
+                destination,
+                true,
+                context.filter_program(),
+            )?;
+            #[cfg(feature = "acl")]
+            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+        }
+        return Ok(true);
+    }
+
     if !directory_ready.get() && !prune_enabled {
         ensure_directory(context)?;
     }
