@@ -167,20 +167,11 @@ pub(super) fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
 ))]
 pub(super) fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
     use std::convert::TryInto;
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
 
     let bits: libc::mode_t = (mode & 0o177_777)
         .try_into()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mode out of range"))?;
-    let path_c = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains interior NUL"))?;
-    let result = unsafe { libc::mkfifo(path_c.as_ptr(), bits) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    rsync_apple_fs::mkfifo(path, bits)
 }
 
 pub(super) fn assert_contains_client_trailer(rendered: &str) {
