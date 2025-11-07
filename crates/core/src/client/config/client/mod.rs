@@ -211,7 +211,7 @@ impl ClientConfig {
     /// Creates a new [`ClientConfigBuilder`].
     #[must_use]
     pub fn builder() -> ClientConfigBuilder {
-        ClientConfigBuilder::default()
+        ClientConfigBuilder::default().recursive(true)
     }
 
     /// Returns the configured iconv setting.
