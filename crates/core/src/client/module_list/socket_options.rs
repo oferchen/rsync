@@ -7,6 +7,15 @@ use crate::client::{ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, SOCKET_IO_EXIT_C
 use crate::message::Role;
 use crate::rsync_error;
 
+// RFC 1349 class selectors are consistent across Unix targets, but libc does
+// not expose them uniformly (for example, Apple platforms omit the aliases), so
+// we provide portable definitions when the `libc` crate does not.
+#[cfg(not(target_family = "windows"))]
+const IPTOS_LOWDELAY: libc::c_int = 0x10;
+
+#[cfg(not(target_family = "windows"))]
+const IPTOS_THROUGHPUT: libc::c_int = 0x08;
+
 #[derive(Clone, Copy)]
 enum SocketOptionKind {
     Bool {
@@ -180,13 +189,13 @@ fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
         "IPTOS_LOWDELAY" => Some(SocketOptionKind::On {
             level: libc::IPPROTO_IP,
             option: libc::IP_TOS,
-            value: libc::IPTOS_LOWDELAY as libc::c_int,
+            value: IPTOS_LOWDELAY,
         }),
         #[cfg(not(target_family = "windows"))]
         "IPTOS_THROUGHPUT" => Some(SocketOptionKind::On {
             level: libc::IPPROTO_IP,
             option: libc::IP_TOS,
-            value: libc::IPTOS_THROUGHPUT as libc::c_int,
+            value: IPTOS_THROUGHPUT,
         }),
         _ => None,
     }
