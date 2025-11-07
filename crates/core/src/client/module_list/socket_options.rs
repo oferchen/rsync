@@ -214,15 +214,16 @@ fn parse_socket_option_value(raw: &str) -> libc::c_int {
     }
 
     if !digits_consumed {
-        for byte in bytes.by_ref() {
+        if let Some(byte) = bytes.by_ref().next() {
             match byte {
                 b'0'..=b'9' => {
                     digits_consumed = true;
                     value = i64::from(byte - b'0');
-                    break;
                 }
                 _ => return 0,
             }
+        } else {
+            return 0;
         }
     }
 
@@ -254,7 +255,7 @@ fn parse_socket_option_value(raw: &str) -> libc::c_int {
 }
 
 fn socket_option_error(name: &str, error: io::Error) -> ClientError {
-    let rendered = format!("failed to set socket option {}: {}", name, error);
+    let rendered = format!("failed to set socket option {name}: {error}");
     let message = rsync_error!(SOCKET_IO_EXIT_CODE, rendered).with_role(Role::Client);
     ClientError::new(SOCKET_IO_EXIT_CODE, message)
 }
