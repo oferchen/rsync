@@ -439,6 +439,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn change_set_detects_permission_changes_for_existing_destination() {
+        use filetime::{FileTime, set_file_mtime};
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -450,12 +451,15 @@ mod tests {
         existing_perms.set_mode(0o644);
         fs::set_permissions(&existing_path, existing_perms).expect("set existing perms");
         let existing = fs::metadata(&existing_path).expect("metadata");
+        let existing_mtime =
+            FileTime::from_system_time(existing.modified().expect("existing mtime"));
 
         let new_path = temp.path().join("updated.txt");
         fs::write(&new_path, b"content").expect("write new");
         let mut new_perms = fs::metadata(&new_path).expect("metadata").permissions();
         new_perms.set_mode(0o600);
         fs::set_permissions(&new_path, new_perms).expect("set new perms");
+        set_file_mtime(&new_path, existing_mtime).expect("align mtime");
         let metadata = fs::metadata(&new_path).expect("metadata");
 
         assert_ne!(metadata.mode(), existing.mode());
