@@ -56,7 +56,7 @@
 ```
 
 bin/oc-rsync/           # Client and daemon entry (binary crate)
-bin/oc-rsyncd/          # Compatibility wrapper (binary crate)
+bin/oc-rsyncd/          # Optional compatibility wrapper (feature-gated binary crate)
 crates/cli/             # CLI: flags/help/UX parity
 crates/core/            # Core types, error model, shared utils
 crates/protocol/        # Protocol v32: negotiation, tags, framing, IO
@@ -143,8 +143,8 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 * **Client/daemon:** Designed to operate with upstream `rsync` daemons and clients.
 * **Exit codes/messages:** Map to upstream conventions; differences are documented inline when safety/perf requires.
 * **Interop harness:** `tools/ci/run_interop.sh` downloads upstream releases 3.0.9,
-  3.1.3, and 3.4.1 and exercises both directions—upstream client → `oc-rsyncd`
-  and `oc-rsync` → upstream daemon—to verify parity while the native transfer
+  3.1.3, and 3.4.1 and exercises both directions—upstream client →
+  `oc-rsync --daemon` and `oc-rsync` → upstream daemon—to verify parity while the native transfer
   engine is integrated.
 * **Smoke test example:**
 
@@ -193,8 +193,8 @@ cargo xtask package --release --tarball
 cargo xtask package --release --tarball --tarball-target x86_64-apple-darwin
 ```
 
-The packaging pipeline installs `oc-rsync` and the `oc-rsyncd` shell wrapper
-under dedicated paths so upstream `rsync` packages can remain installed. CI publishes Linux
+The packaging pipeline installs `oc-rsync` under dedicated paths so upstream `rsync`
+packages can remain installed. CI publishes Linux
 (`x86_64`/`aarch64`) `.deb`/`.rpm` packages, macOS and Windows tarballs
 (`x86_64`/`aarch64`), and a CycloneDX SBOM generated from the same `dist`
 builds.

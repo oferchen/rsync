@@ -6,7 +6,7 @@
 #     3.1.3  -> archive.ubuntu.com
 #     3.4.1  -> deb.debian.org (3.4.1+ds1-6)
 # - Falls back to source build if the exact .deb for this arch is missing
-# - Starts oc-rsyncd on a non-privileged port by passing --port on the CLI
+# - Starts oc-rsync --daemon on a non-privileged port by passing --port on the CLI
 set -euo pipefail
 
 if ! command -v git >/dev/null 2>&1; then
@@ -59,10 +59,10 @@ detect_deb_arch() {
 }
 
 ensure_workspace_binaries() {
-  if [[ -x "${target_dir}/oc-rsync" && -x "${target_dir}/oc-rsyncd" ]]; then
+  if [[ -x "${target_dir}/oc-rsync" ]]; then
     return
   fi
-  cargo --locked build --profile dist --bin oc-rsync --bin oc-rsyncd
+  cargo --locked build --profile dist --bin oc-rsync
 }
 
 build_jobs() {
@@ -400,7 +400,7 @@ cleanup() {
   exit "$exit_code"
 }
 
-# IMPORTANT: oc-rsyncd needs the port on CLI, otherwise it binds to 873 (privileged)
+# IMPORTANT: oc-rsync --daemon needs the port on CLI, otherwise it binds to 873 (privileged)
 start_oc_daemon() {
   local config=$1
   local log_file=$2
@@ -413,7 +413,7 @@ start_oc_daemon() {
   RUST_BACKTRACE=1 \
   OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
   OC_RSYNC_FALLBACK="$fallback_client" \
-    "$oc_daemon" --config "$config" --port "$port" --log-file "$log_file" &
+    "$oc_binary" --daemon --config "$config" --port "$port" --log-file "$log_file" &
   oc_pid=$!
   sleep 1
 }
@@ -439,11 +439,11 @@ run_interop_case() {
   local version_tag=${version//./-}
   local oc_dest="${workdir}/oc-destination-${version_tag}"
   local up_dest="${workdir}/upstream-destination-${version_tag}"
-  local oc_pid_file="${workdir}/oc-rsyncd-${version_tag}.pid"
+  local oc_pid_file="${workdir}/oc-daemon-${version_tag}.pid"
   local up_pid_file="${workdir}/upstream-rsyncd-${version_tag}.pid"
-  local oc_conf="${workdir}/oc-rsyncd-${version_tag}.conf"
+  local oc_conf="${workdir}/oc-daemon-${version_tag}.conf"
   local up_conf="${workdir}/upstream-rsyncd-${version_tag}.conf"
-  local oc_log="${workdir}/oc-rsyncd-${version_tag}.log"
+  local oc_log="${workdir}/oc-daemon-${version_tag}.log"
   local up_log="${workdir}/upstream-rsyncd-${version_tag}.log"
 
   rm -rf "$oc_dest" "$up_dest"
@@ -452,12 +452,12 @@ run_interop_case() {
   write_rust_daemon_conf "$oc_conf" "$oc_pid_file" "$oc_port" "$oc_dest" "oc interop target (${version})"
   write_upstream_conf "$up_conf" "$up_pid_file" "$upstream_port" "$up_dest" "upstream interop target (${version})" "$up_identity"
 
-  echo "Testing upstream rsync ${version} client -> oc-rsyncd"
+  echo "Testing upstream rsync ${version} client -> oc-rsync --daemon"
   start_oc_daemon "$oc_conf" "$oc_log" "$upstream_binary" "$oc_pid_file" "$oc_port"
 
   if ! "$upstream_binary" -av --timeout=10 "${src}/" "rsync://127.0.0.1:${oc_port}/interop" >/dev/null 2>>"$oc_log"; then
-    echo "FAIL: upstream rsync ${version} -> oc-rsyncd"
-    echo "--- oc-rsyncd log (${oc_log}) ---"
+    echo "FAIL: upstream rsync ${version} -> oc-rsync --daemon"
+    echo "--- oc-rsync --daemon log (${oc_log}) ---"
     cat "$oc_log" || true
     stop_oc_daemon
     return 1
@@ -465,7 +465,7 @@ run_interop_case() {
 
   if [[ ! -f "${oc_dest}/payload.txt" ]]; then
     echo "FAIL: upstream rsync ${version} reported success but file missing in oc dest"
-    echo "--- oc-rsyncd log (${oc_log}) ---"
+    echo "--- oc-rsync --daemon log (${oc_log}) ---"
     cat "$oc_log" || true
     stop_oc_daemon
     return 1
@@ -506,7 +506,7 @@ for version in "${versions[@]}"; do
 done
 
 oc_client="${target_dir}/oc-rsync"
-oc_daemon="${target_dir}/oc-rsyncd"
+oc_binary="${target_dir}/oc-rsync"
 
 workdir=$(mktemp -d)
 trap cleanup EXIT

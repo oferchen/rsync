@@ -3,11 +3,11 @@
 This document captures observable gaps between the Rust workspace and upstream
 rsync 3.4.1. Each entry describes the user-visible impact today and outlines
 what must land to eliminate the difference. The canonical entrypoint ships under
-the branded name **oc-rsync 3.4.1-rust** as declared in `Cargo.toml`, with an
-optional shell wrapper installed as **oc-rsyncd** that forwards directly to
-`oc-rsync --daemon`. Compatibility wrappers (**rsync**, **rsyncd**) share the
-same execution paths for environments that still depend on the legacy
-branding. Items remain in this list until the referenced functionality ships
+the branded name **oc-rsync 3.4.1-rust** as declared in `Cargo.toml`. Optional
+wrappers (**oc-rsyncd**, **rsync**, **rsyncd**) share the same execution paths
+when the `legacy-binaries` feature is enabled so environments that still depend
+on alternate naming can opt in without affecting default packaging. Items
+remain in this list until the referenced functionality ships
 and parity is verified by tests or goldens.
 
 ## Blocking Differences
@@ -55,8 +55,9 @@ and parity is verified by tests or goldens.
     `OC_RSYNC_DAEMON_FALLBACK=0`/`false` (or the shared `OC_RSYNC_FALLBACK`
     override); when disabled or when the helper binary is missing the daemon
     explains that transfers are unavailable after completing authentication.
-    The `oc-rsyncd` and `rsyncd` compatibility wrappers expose the same behaviour
-    through the branded and legacy binary names.
+    Optional `oc-rsyncd` and `rsyncd` compatibility wrappers expose the same
+    behaviour through the branded and legacy binary names when the
+    `legacy-binaries` feature is enabled.
     Authentication and authorization flows are in place, and module-level
     `use chroot` directives are parsed with absolute-path enforcement, but real
     module serving and the broader directive matrix remain unimplemented when
@@ -84,12 +85,12 @@ and parity is verified by tests or goldens.
     (x86_64/aarch64), macOS (x86_64/aarch64), and Windows (x86_64/aarch64)
     using the `dist` profile with the Windows aarch64 lane currently disabled
     while the toolchain stabilises. Packaging installs `oc-rsync` under
-    `/usr/bin` together with the shell wrapper `/usr/sbin/oc-rsyncd` so upstream
+    `/usr/bin` without installing extra wrapper binaries so upstream
     rsync packages can remain in place, and
     optional alternatives registration stays disabled unless explicitly
     requested. The `tools/ci/run_interop.sh` harness downloads upstream
     releases 3.0.9, 3.1.3, and 3.4.1 and exercises both directions—upstream
-    client to oc-rsyncd and oc-rsync to upstream daemons—to verify
+    client to oc-rsync --daemon and oc-rsync to upstream daemons—to verify
     interoperability. Automated installation tests, golden filesystem
     comparisons, and the exit-code oracle have not landed yet, so production
     scope gating still depends on manual review for those aspects.
