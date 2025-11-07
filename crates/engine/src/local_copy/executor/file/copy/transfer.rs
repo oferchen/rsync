@@ -134,6 +134,26 @@ pub(super) fn execute_transfer(
         }
     }
 
+    if !file_type.is_file() {
+        return copy_special_as_regular_file(
+            context,
+            source,
+            destination,
+            metadata,
+            metadata_options,
+            record_path,
+            existing_metadata,
+            destination_previously_existed,
+            file_type,
+            relative,
+            mode,
+            #[cfg(feature = "xattr")]
+            preserve_xattrs,
+            #[cfg(feature = "acl")]
+            preserve_acls,
+        );
+    }
+
     let mut reader = open_source_file(source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     let append_mode = determine_append_mode(
@@ -371,6 +391,189 @@ pub(super) fn execute_transfer(
                 FinalizeMetadataParams::new(
                     metadata,
                     metadata_options.clone(),
+                    mode,
+                    source,
+                    relative_for_removal.as_deref(),
+                    file_type,
+                    destination_previously_existed,
+                    #[cfg(feature = "xattr")]
+                    preserve_xattrs,
+                    #[cfg(feature = "acl")]
+                    preserve_acls,
+                ),
+            )?;
+        }
+    } else {
+        context.apply_metadata_and_finalize(
+            destination,
+            FinalizeMetadataParams::new(
+                metadata,
+                metadata_options,
+                mode,
+                source,
+                relative,
+                file_type,
+                destination_previously_existed,
+                #[cfg(feature = "xattr")]
+                preserve_xattrs,
+                #[cfg(feature = "acl")]
+                preserve_acls,
+            ),
+        )?;
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn copy_special_as_regular_file(
+    context: &mut CopyContext,
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    metadata_options: MetadataOptions,
+    record_path: &Path,
+    existing_metadata: Option<&fs::Metadata>,
+    destination_previously_existed: bool,
+    file_type: fs::FileType,
+    relative: Option<&Path>,
+    mode: LocalCopyExecution,
+    #[cfg(feature = "xattr")] preserve_xattrs: bool,
+    #[cfg(feature = "acl")] preserve_acls: bool,
+) -> Result<(), LocalCopyError> {
+    let start = Instant::now();
+    let partial_enabled = context.partial_enabled();
+    let inplace_enabled = context.inplace_enabled();
+    let delay_updates_enabled = context.delay_updates_enabled();
+    let mut guard: Option<DestinationWriteGuard> = None;
+
+    if inplace_enabled {
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(destination)
+            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+        if context.fsync_enabled() {
+            sync_destination_file(&mut file, destination)?;
+        }
+    } else {
+        let (new_guard, mut file) = DestinationWriteGuard::new(
+            destination,
+            partial_enabled,
+            context.partial_directory_path(),
+            context.temp_directory_path(),
+        )?;
+        if context.fsync_enabled() {
+            let target = new_guard.staging_path();
+            sync_destination_file(&mut file, target)?;
+        }
+        guard = Some(new_guard);
+    }
+
+    context.register_created_path(
+        destination,
+        CreatedEntryKind::File,
+        destination_previously_existed,
+    );
+
+    let hard_link_path = if delay_updates_enabled {
+        guard
+            .as_ref()
+            .map(|existing_guard| existing_guard.staging_path())
+            .unwrap_or(destination)
+    } else {
+        destination
+    };
+    context.record_hard_link(metadata, hard_link_path);
+
+    let elapsed = start.elapsed();
+    context.summary_mut().record_file(metadata.len(), 0, None);
+    context.summary_mut().record_elapsed(elapsed);
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let total_bytes = Some(metadata_snapshot.len());
+    let xattrs_enabled = {
+        #[cfg(feature = "xattr")]
+        {
+            preserve_xattrs
+        }
+        #[cfg(not(feature = "xattr"))]
+        {
+            false
+        }
+    };
+    let acls_enabled = {
+        #[cfg(feature = "acl")]
+        {
+            preserve_acls
+        }
+        #[cfg(not(feature = "acl"))]
+        {
+            false
+        }
+    };
+    let change_set = LocalCopyChangeSet::for_file(
+        metadata,
+        existing_metadata,
+        &metadata_options,
+        destination_previously_existed,
+        false,
+        xattrs_enabled,
+        acls_enabled,
+    );
+    context.record(
+        LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            LocalCopyAction::DataCopied,
+            0,
+            total_bytes,
+            elapsed,
+            Some(metadata_snapshot),
+        )
+        .with_change_set(change_set)
+        .with_creation(!destination_previously_existed),
+    );
+
+    if let Err(timeout_error) = context.enforce_timeout() {
+        if let Some(mut existing_guard) = guard {
+            existing_guard.discard();
+        }
+
+        if existing_metadata.is_none() {
+            remove_incomplete_destination(destination);
+        }
+
+        return Err(timeout_error);
+    }
+
+    let relative_for_removal = Some(record_path.to_path_buf());
+    if let Some(existing_guard) = guard {
+        if delay_updates_enabled {
+            let destination_path = existing_guard.final_path().to_path_buf();
+            let update = DeferredUpdate::new(
+                existing_guard,
+                metadata.clone(),
+                metadata_options.clone(),
+                mode,
+                source.to_path_buf(),
+                relative_for_removal.clone(),
+                destination_path,
+                file_type,
+                destination_previously_existed,
+                #[cfg(feature = "xattr")]
+                preserve_xattrs,
+                #[cfg(feature = "acl")]
+                preserve_acls,
+            );
+            context.register_deferred_update(update);
+        } else {
+            let destination_path = existing_guard.final_path().to_path_buf();
+            existing_guard.commit()?;
+            context.apply_metadata_and_finalize(
+                destination_path.as_path(),
+                FinalizeMetadataParams::new(
+                    metadata,
+                    metadata_options,
                     mode,
                     source,
                     relative_for_removal.as_deref(),
