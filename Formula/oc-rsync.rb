@@ -11,10 +11,9 @@ class OcRsync < Formula
   depends_on "rust" => :build
 
   def install
-    system "cargo", "build", "--release", "--locked", "--bin", "oc-rsync"
+    system "cargo", "build", "--release", "--locked", "--bin", "oc-rsync", "--bin", "oc-rsyncd"
     bin.install "target/release/oc-rsync"
-
-    bin.install "packaging/bin/oc-rsyncd"
+    bin.install "target/release/oc-rsyncd"
 
     (etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.conf"
     (etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.secrets"
