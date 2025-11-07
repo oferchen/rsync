@@ -630,6 +630,7 @@ name = "oc-rsync"
 version = "3.4.1-rust"
 dependencies = [
  "assert_cmd",
+ "libc",
  "oc-rsync-cli",
  "oc-rsync-core",
  "oc-rsync-daemon",

@@ -85,6 +85,8 @@ fn parse_max_sessions(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
 fn parse_module_definition(
     value: &OsString,
     default_secrets: Option<&Path>,
+    default_incoming_chmod: Option<&str>,
+    default_outgoing_chmod: Option<&str>,
 ) -> Result<ModuleDefinition, DaemonError> {
     let text = value.to_string_lossy();
     let (name_part, remainder) = text.split_once('=').ok_or_else(|| {
@@ -131,6 +133,8 @@ fn parse_module_definition(
         listable: true,
         use_chroot: true,
         max_connections: None,
+        incoming_chmod: None,
+        outgoing_chmod: None,
     };
 
     if let Some(options_text) = options_part {
@@ -149,6 +153,12 @@ fn parse_module_definition(
                 module.secrets_file = Some(path.to_path_buf());
             }
         }
+        if module.incoming_chmod.is_none() {
+            module.incoming_chmod = default_incoming_chmod.map(str::to_string);
+        }
+        if module.outgoing_chmod.is_none() {
+            module.outgoing_chmod = default_outgoing_chmod.map(str::to_string);
+        }
         return Ok(module);
     }
 
@@ -160,6 +170,13 @@ fn parse_module_definition(
                 "module specified 'auth users' but did not supply a secrets file".to_string(),
             ));
         }
+    }
+
+    if module.incoming_chmod.is_none() {
+        module.incoming_chmod = default_incoming_chmod.map(str::to_string);
+    }
+    if module.outgoing_chmod.is_none() {
+        module.outgoing_chmod = default_outgoing_chmod.map(str::to_string);
     }
 
     Ok(module)
@@ -359,6 +376,22 @@ fn apply_inline_module_options(
                     config_error(format!("invalid max connections value '{value}'"))
                 })?;
                 module.max_connections = max;
+            }
+            "incoming chmod" | "incoming-chmod" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'incoming chmod' option must not be empty".to_string(),
+                    ));
+                }
+                module.incoming_chmod = Some(value.to_string());
+            }
+            "outgoing chmod" | "outgoing-chmod" => {
+                if value.is_empty() {
+                    return Err(config_error(
+                        "'outgoing chmod' option must not be empty".to_string(),
+                    ));
+                }
+                module.outgoing_chmod = Some(value.to_string());
             }
             _ => {
                 return Err(config_error(format!(

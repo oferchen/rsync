@@ -91,9 +91,12 @@ and parity is verified by tests or goldens.
     requested. The `tools/ci/run_interop.sh` harness downloads upstream
     releases 3.0.9, 3.1.3, and 3.4.1 and exercises both directions—upstream
     client to oc-rsync --daemon and oc-rsync to upstream daemons—to verify
-    interoperability. Automated installation tests, golden filesystem
-    comparisons, and the exit-code oracle have not landed yet, so production
-    scope gating still depends on manual review for those aspects.
+    interoperability. An initial deterministic golden test now compares
+    `oc-rsync --version` output with the upstream snapshot captured under fixed
+    locale/time settings, but automated installation tests, filesystem
+    comparisons, broader golden coverage, and the exit-code oracle have not
+    landed yet, so production scope gating still depends on manual review for
+    those aspects.
   - *Removal plan*: Add installation verification, parity goldens, and the
     exit-code oracle to CI so packaging and interop coverage become
     self-verifying.
