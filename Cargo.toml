@@ -104,7 +104,7 @@ legacy_daemon_config_dir = "/etc"
 legacy_daemon_config = "/etc/rsyncd.conf"
 legacy_daemon_secrets = "/etc/rsyncd.secrets"
 source = "https://github.com/oferchen/rsync"
-web_site = "https://rsync.samba.org/"
+web_site = "https://github.com/oferchen/rsync"
 
 [workspace.metadata.oc_rsync.cross_compile]
 linux = ["x86_64", "aarch64"]

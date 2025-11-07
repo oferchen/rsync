@@ -12,7 +12,7 @@ fn version_metadata_matches_expected_constants() {
     assert_eq!(metadata.protocol_version(), ProtocolVersion::NEWEST);
     assert_eq!(metadata.subprotocol_version(), SUBPROTOCOL_VERSION);
     assert_eq!(metadata.copyright_notice(), COPYRIGHT_NOTICE);
-    assert_eq!(metadata.web_site(), WEB_SITE);
+    assert_eq!(metadata.source_url(), SOURCE_URL);
     assert_eq!(HIGHEST_PROTOCOL_VERSION, ProtocolVersion::NEWEST.as_u8());
 }
 
@@ -78,13 +78,13 @@ fn version_metadata_renders_standard_banner() {
         concat!(
             "rsync  version {rust_version} (revision/build #{build_revision})  protocol version {protocol}\n",
             "Copyright {copyright}\n",
-            "Web site: {web_site}\n"
+            "Source: {source_url}\n"
         ),
         rust_version = RUST_VERSION,
         build_revision = build_revision(),
         protocol = ProtocolVersion::NEWEST.as_u8(),
         copyright = COPYRIGHT_NOTICE,
-        web_site = WEB_SITE,
+        source_url = SOURCE_URL,
     );
 
     assert_eq!(rendered, expected);
