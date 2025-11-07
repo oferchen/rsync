@@ -325,55 +325,16 @@ impl UnixProcessIdentity {
     }
 }
 
-#[cfg(all(unix, not(target_vendor = "apple")))]
-fn collect_supplementary_groups() -> Vec<u32> {
-    match nix::unistd::getgroups() {
-        Ok(groups) => groups.into_iter().map(|gid| gid.as_raw()).collect(),
-        Err(_) => Vec::new(),
-    }
-}
-
-#[cfg(all(unix, target_vendor = "apple"))]
+#[cfg(unix)]
 fn collect_supplementary_groups() -> Vec<u32> {
     use std::convert::TryFrom;
 
-    unsafe {
-        let mut size = libc::getgroups(0, std::ptr::null_mut());
-        if size <= 0 {
-            return Vec::new();
-        }
-
-        let mut buffer = match usize::try_from(size) {
-            Ok(len) => vec![0 as libc::gid_t; len],
-            Err(_) => return Vec::new(),
-        };
-
-        loop {
-            let read = libc::getgroups(size, buffer.as_mut_ptr());
-            if read < 0 {
-                return Vec::new();
-            }
-
-            if read <= size {
-                let used = match usize::try_from(read) {
-                    Ok(value) => value,
-                    Err(_) => return Vec::new(),
-                };
-                buffer.truncate(used);
-                break;
-            }
-
-            size = read;
-            match usize::try_from(size) {
-                Ok(len) => buffer.resize(len, 0 as libc::gid_t),
-                Err(_) => return Vec::new(),
-            }
-        }
-
-        buffer
+    match nix::unistd::getgroups() {
+        Ok(groups) => groups
             .into_iter()
-            .filter_map(|gid| u32::try_from(gid).ok())
-            .collect()
+            .filter_map(|gid| u32::try_from(gid.as_raw()).ok())
+            .collect(),
+        Err(_) => Vec::new(),
     }
 }
 
