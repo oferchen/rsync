@@ -46,7 +46,7 @@ pub(crate) fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
     Some(ownership::gid_from_raw(mapped))
 }
 
-fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
+pub(crate) fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
     let mut buffer = vec![0_u8; 1024];
     loop {
         let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
@@ -80,7 +80,7 @@ fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
     }
 }
 
-fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
+pub(crate) fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
     let c_name = match CString::new(name) {
         Ok(name) => name,
         Err(_) => return Ok(None),
@@ -118,7 +118,7 @@ fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
     }
 }
 
-fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
+pub(crate) fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
     let mut buffer = vec![0_u8; 1024];
     loop {
         let mut grp = MaybeUninit::<libc::group>::zeroed();
@@ -152,7 +152,7 @@ fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
     }
 }
 
-fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
+pub(crate) fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
     let c_name = match CString::new(name) {
         Ok(name) => name,
         Err(_) => return Ok(None),

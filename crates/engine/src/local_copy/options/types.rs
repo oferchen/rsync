@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_filters::FilterSet;
-use rsync_meta::ChmodModifiers;
+use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
 use crate::local_copy::filter_program::FilterProgram;
 use crate::local_copy::skip_compress::SkipCompressList;
@@ -145,6 +145,8 @@ pub struct LocalCopyOptions {
     pub(super) link_dests: Vec<LinkDestEntry>,
     pub(super) reference_directories: Vec<ReferenceDirectory>,
     pub(super) chmod: Option<ChmodModifiers>,
+    pub(super) user_mapping: Option<UserMapping>,
+    pub(super) group_mapping: Option<GroupMapping>,
 }
 
 impl LocalCopyOptions {
@@ -221,6 +223,8 @@ impl LocalCopyOptions {
             link_dests: Vec::new(),
             reference_directories: Vec::new(),
             chmod: None,
+            user_mapping: None,
+            group_mapping: None,
         }
     }
 }

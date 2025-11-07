@@ -11,7 +11,7 @@ use super::{
 use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_engine::SkipCompressList;
-use rsync_meta::ChmodModifiers;
+use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
 /// Builder used to assemble a [`ClientConfig`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -34,6 +34,8 @@ pub struct ClientConfigBuilder {
     owner_override: Option<u32>,
     group_override: Option<u32>,
     chmod: Option<ChmodModifiers>,
+    user_mapping: Option<UserMapping>,
+    group_mapping: Option<GroupMapping>,
     omit_dir_times: bool,
     omit_link_times: bool,
     compress: bool,
@@ -121,6 +123,8 @@ impl ClientConfigBuilder {
             owner_override: self.owner_override,
             group_override: self.group_override,
             chmod: self.chmod,
+            user_mapping: self.user_mapping,
+            group_mapping: self.group_mapping,
             omit_dir_times: self.omit_dir_times,
             omit_link_times: self.omit_link_times,
             compress: self.compress,
