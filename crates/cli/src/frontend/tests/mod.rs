@@ -64,6 +64,8 @@ mod format_tests;
 mod h_tests;
 #[path = "help.rs"]
 mod help_tests;
+#[path = "iconv.rs"]
+mod iconv_tests;
 #[path = "info_debug.rs"]
 mod info_debug_tests;
 #[path = "invalid.rs"]
@@ -130,6 +132,8 @@ mod parse_args_recognises_group_tests;
 mod parse_args_recognises_hard_tests;
 #[path = "parse_args_recognises_human.rs"]
 mod parse_args_recognises_human_tests;
+#[path = "parse_args_recognises_iconv.rs"]
+mod parse_args_recognises_iconv_tests;
 #[path = "parse_args_recognises_implied.rs"]
 mod parse_args_recognises_implied_tests;
 #[path = "parse_args_recognises_inplace.rs"]
@@ -260,6 +264,8 @@ mod remote_fallback_forwards_filter_tests;
 mod remote_fallback_forwards_hard_tests;
 #[path = "remote_fallback_forwards_human.rs"]
 mod remote_fallback_forwards_human_tests;
+#[path = "remote_fallback_forwards_iconv.rs"]
+mod remote_fallback_forwards_iconv_tests;
 #[path = "remote_fallback_forwards_implied.rs"]
 mod remote_fallback_forwards_implied_tests;
 #[path = "remote_fallback_forwards_info.rs"]

@@ -50,6 +50,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) compress_level: Option<OsString>,
     pub(crate) compress_choice: Option<OsString>,
     pub(crate) skip_compress: Option<OsString>,
+    pub(crate) iconv: Option<OsString>,
     pub(crate) owner: Option<bool>,
     pub(crate) group: Option<bool>,
     pub(crate) chown: Option<OsString>,
@@ -125,4 +126,5 @@ pub(crate) struct ParsedArgs {
     pub(crate) stop_at: Option<OsString>,
     pub(crate) out_format: Option<OsString>,
     pub(crate) daemon_port: Option<u16>,
+    pub(crate) no_iconv: bool,
 }

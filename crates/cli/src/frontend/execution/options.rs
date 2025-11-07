@@ -3,7 +3,7 @@ use std::num::{IntErrorKind, NonZeroU32, NonZeroU64};
 use std::str::FromStr;
 
 use rsync_core::{
-    client::{HumanReadableMode, TransferTimeout},
+    client::{HumanReadableMode, IconvParseError, IconvSetting, TransferTimeout},
     message::{Message, Role},
     rsync_error,
 };
@@ -197,6 +197,36 @@ pub(crate) fn parse_checksum_seed_argument(value: &OsStr) -> Result<u32, Message
         )
         .with_role(Role::Client)
     })
+}
+
+pub(crate) fn resolve_iconv_setting(
+    spec: Option<&OsStr>,
+    disable: bool,
+) -> Result<IconvSetting, Message> {
+    if let Some(value) = spec {
+        let text = value.to_string_lossy();
+        match IconvSetting::parse(text.as_ref()) {
+            Ok(setting) => Ok(setting),
+            Err(error) => {
+                let detail = match error {
+                    IconvParseError::EmptySpecification => {
+                        "--iconv value must not be empty".to_string()
+                    }
+                    IconvParseError::MissingLocalCharset => {
+                        "--iconv specification is missing the local charset".to_string()
+                    }
+                    IconvParseError::MissingRemoteCharset => {
+                        "--iconv specification is missing the remote charset".to_string()
+                    }
+                };
+                Err(rsync_error!(1, detail).with_role(Role::Client))
+            }
+        }
+    } else if disable {
+        Ok(IconvSetting::Disabled)
+    } else {
+        Ok(IconvSetting::Unspecified)
+    }
 }
 
 pub(crate) fn parse_modify_window_argument(value: &OsStr) -> Result<u64, Message> {

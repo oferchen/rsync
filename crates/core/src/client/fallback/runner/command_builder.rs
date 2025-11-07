@@ -5,7 +5,7 @@ use tempfile::NamedTempFile;
 
 use super::super::args::RemoteFallbackArgs;
 use super::helpers::{fallback_error, prepare_file_list, push_human_readable, push_toggle};
-use crate::client::{AddressMode, ClientError, DeleteMode, TransferTimeout};
+use crate::client::{AddressMode, ClientError, DeleteMode, IconvSetting, TransferTimeout};
 use crate::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
     fallback_binary_available, fallback_override,
@@ -55,6 +55,7 @@ pub(crate) fn prepare_invocation(
         compress_level,
         compress_choice,
         skip_compress,
+        iconv,
         stop_after,
         stop_at,
         chown,
@@ -248,6 +249,22 @@ pub(crate) fn prepare_invocation(
         let mut arg = OsString::from("--skip-compress=");
         arg.push(spec);
         command_args.push(arg);
+    }
+    match &iconv {
+        IconvSetting::Unspecified => {}
+        IconvSetting::Disabled => command_args.push(OsString::from("--no-iconv")),
+        IconvSetting::LocaleDefault => {
+            command_args.push(OsString::from("--iconv=."));
+        }
+        IconvSetting::Explicit { local, remote } => {
+            let mut arg = OsString::from("--iconv=");
+            arg.push(local);
+            if let Some(remote) = remote {
+                arg.push(",");
+                arg.push(remote);
+            }
+            command_args.push(arg);
+        }
     }
     if let Some(value) = stop_after {
         let mut arg = OsString::from("--stop-after=");

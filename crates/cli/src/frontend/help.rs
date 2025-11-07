@@ -89,6 +89,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-compress  Disable compression.\n",
             "      --compress-level=NUM  Override the compression level (0 disables compression).\n",
             "      --skip-compress=LIST  Skip compressing files with suffixes in LIST.\n",
+            "      --iconv=SPEC  Convert filenames between charsets (use '.' for locale defaults).\n",
+            "      --no-iconv    Disable charset conversion.\n",
             "      --info=FLAGS  Adjust informational messages; use --info=help for details.\n",
             "      --debug=FLAGS  Adjust diagnostic output; use --debug=help for details.\n",
             "  -v, --verbose    Increase verbosity; repeat for more detail.\n",
