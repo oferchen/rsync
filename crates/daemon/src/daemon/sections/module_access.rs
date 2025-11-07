@@ -5,6 +5,7 @@ fn respond_with_module_list(
     motd_lines: &[String],
     peer_ip: IpAddr,
     reverse_lookup: bool,
+    messages: &LegacyMessageCache,
 ) -> io::Result<()> {
     for line in motd_lines {
         let payload = if line.is_empty() {
@@ -12,12 +13,10 @@ fn respond_with_module_list(
         } else {
             format!("MOTD {line}")
         };
-        let message = format_legacy_daemon_message(LegacyDaemonMessage::Other(&payload));
-        write_limited(stream, limiter, message.as_bytes())?;
+        messages.write(stream, limiter, LegacyDaemonMessage::Other(payload.as_str()))?;
     }
 
-    let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
-    write_limited(stream, limiter, ok.as_bytes())?;
+    messages.write_ok(stream, limiter)?;
 
     let mut hostname_cache: Option<Option<String>> = None;
     for module in modules {
@@ -41,8 +40,7 @@ fn respond_with_module_list(
         write_limited(stream, limiter, line.as_bytes())?;
     }
 
-    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-    write_limited(stream, limiter, exit.as_bytes())?;
+    messages.write_exit(stream, limiter)?;
     stream.flush()
 }
 
@@ -57,21 +55,25 @@ fn perform_module_authentication(
     limiter: &mut Option<BandwidthLimiter>,
     module: &ModuleDefinition,
     peer_ip: IpAddr,
+    messages: &LegacyMessageCache,
 ) -> io::Result<AuthenticationStatus> {
     let challenge = generate_auth_challenge(peer_ip);
     {
         let stream = reader.get_mut();
-        let message = format_legacy_daemon_message(LegacyDaemonMessage::AuthRequired {
-            module: Some(&challenge),
-        });
-        write_limited(stream, limiter, message.as_bytes())?;
+        messages.write(
+            stream,
+            limiter,
+            LegacyDaemonMessage::AuthRequired {
+                module: Some(&challenge),
+            },
+        )?;
         stream.flush()?;
     }
 
     let response = match read_trimmed_line(reader)? {
         Some(line) => line,
         None => {
-            deny_module(reader.get_mut(), module, peer_ip, limiter)?;
+            deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
             return Ok(AuthenticationStatus::Denied);
         }
     };
@@ -84,17 +86,17 @@ fn perform_module_authentication(
         .unwrap_or("");
 
     if username.is_empty() || digest.is_empty() {
-        deny_module(reader.get_mut(), module, peer_ip, limiter)?;
+        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     if !module.auth_users.iter().any(|user| user == username) {
-        deny_module(reader.get_mut(), module, peer_ip, limiter)?;
+        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     if !verify_secret_response(module, username, &challenge, digest)? {
-        deny_module(reader.get_mut(), module, peer_ip, limiter)?;
+        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
@@ -161,6 +163,7 @@ fn deny_module(
     module: &ModuleDefinition,
     peer_ip: IpAddr,
     limiter: &mut Option<BandwidthLimiter>,
+    messages: &LegacyMessageCache,
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
     let payload = ACCESS_DENIED_PAYLOAD
@@ -168,17 +171,16 @@ fn deny_module(
         .replace("{addr}", &peer_ip.to_string());
     write_limited(stream, limiter, payload.as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
-    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-    write_limited(stream, limiter, exit.as_bytes())?;
+    messages.write_exit(stream, limiter)?;
     stream.flush()
 }
 
 fn send_daemon_ok(
     stream: &mut TcpStream,
     limiter: &mut Option<BandwidthLimiter>,
+    messages: &LegacyMessageCache,
 ) -> io::Result<()> {
-    let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
-    write_limited(stream, limiter, ok.as_bytes())?;
+    messages.write_ok(stream, limiter)?;
     stream.flush()
 }
 
@@ -237,6 +239,7 @@ fn respond_with_module_request(
     options: &[String],
     log_sink: Option<&SharedLogSink>,
     reverse_lookup: bool,
+    messages: &LegacyMessageCache,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         let change = apply_module_bandwidth_limit(
@@ -273,8 +276,7 @@ fn respond_with_module_request(
                     let stream = reader.get_mut();
                     write_limited(stream, limiter, payload.as_bytes())?;
                     write_limited(stream, limiter, b"\n")?;
-                    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-                    write_limited(stream, limiter, exit.as_bytes())?;
+                    messages.write_exit(stream, limiter)?;
                     stream.flush()?;
                     if let Some(log) = log_sink {
                         log_module_limit(
@@ -291,8 +293,7 @@ fn respond_with_module_request(
                     let stream = reader.get_mut();
                     write_limited(stream, limiter, MODULE_LOCK_ERROR_PAYLOAD.as_bytes())?;
                     write_limited(stream, limiter, b"\n")?;
-                    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-                    write_limited(stream, limiter, exit.as_bytes())?;
+                    messages.write_exit(stream, limiter)?;
                     stream.flush()?;
                     if let Some(log) = log_sink {
                         log_module_lock_error(
@@ -321,8 +322,7 @@ fn respond_with_module_request(
                 let stream = reader.get_mut();
                 write_limited(stream, limiter, payload.as_bytes())?;
                 write_limited(stream, limiter, b"\n")?;
-                let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-                write_limited(stream, limiter, exit.as_bytes())?;
+                messages.write_exit(stream, limiter)?;
                 stream.flush()?;
                 if let Some(log) = log_sink {
                     log_module_refused_option(
@@ -339,7 +339,7 @@ fn respond_with_module_request(
             apply_module_timeout(reader.get_mut(), module)?;
             let mut acknowledged = false;
             if module.requires_authentication() {
-                match perform_module_authentication(reader, limiter, module, peer_ip)? {
+                match perform_module_authentication(reader, limiter, module, peer_ip, messages)? {
                     AuthenticationStatus::Denied => {
                         if let Some(log) = log_sink {
                             log_module_auth_failure(
@@ -360,14 +360,14 @@ fn respond_with_module_request(
                                 request,
                             );
                         }
-                        send_daemon_ok(reader.get_mut(), limiter)?;
+                        send_daemon_ok(reader.get_mut(), limiter, messages)?;
                         acknowledged = true;
                     }
                 }
             }
 
             if !acknowledged {
-                send_daemon_ok(reader.get_mut(), limiter)?;
+                send_daemon_ok(reader.get_mut(), limiter, messages)?;
             }
 
             let module_display = sanitize_module_identifier(request);
@@ -392,7 +392,7 @@ fn respond_with_module_request(
                     request,
                 );
             }
-            deny_module(reader.get_mut(), module, peer_ip, limiter)?;
+            deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
             return Ok(());
         }
     } else {
@@ -406,9 +406,8 @@ fn respond_with_module_request(
         }
     }
 
-    let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
     let stream = reader.get_mut();
-    write_limited(stream, limiter, exit.as_bytes())?;
+    messages.write_exit(stream, limiter)?;
     stream.flush()
 }
 
