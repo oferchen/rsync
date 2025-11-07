@@ -94,6 +94,9 @@ pub(crate) fn copy_sources(
                     None
                 };
 
+                let recursion_enabled = context.recursive_enabled();
+                let dirs_enabled = context.dirs_enabled();
+
                 let relative_root = if relative_enabled {
                     source.relative_root()
                 } else {
@@ -128,6 +131,15 @@ pub(crate) fn copy_sources(
                             }
                         }
 
+                        if !recursion_enabled && !dirs_enabled {
+                            let skip_relative = relative_root
+                                .as_ref()
+                                .and_then(|root| non_empty_path(root.as_path()));
+                            context.summary_mut().record_directory_total();
+                            context.record_skipped_directory(skip_relative);
+                            continue;
+                        }
+
                         let mut target_root = destination_path.to_path_buf();
                         if let Some(root) = &relative_root {
                             target_root = destination_path.join(root);
@@ -155,6 +167,13 @@ pub(crate) fn copy_sources(
                         .clone()
                         .unwrap_or_else(|| PathBuf::from(Path::new(name)));
                     if !context.allows(&relative, true) {
+                        continue;
+                    }
+
+                    if !recursion_enabled && !dirs_enabled {
+                        context.summary_mut().record_directory_total();
+                        let record_relative = non_empty_path(relative.as_path());
+                        context.record_skipped_directory(record_relative);
                         continue;
                     }
 

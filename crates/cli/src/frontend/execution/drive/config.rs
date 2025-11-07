@@ -23,6 +23,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) bind_address: Option<rsync_core::client::BindAddress>,
     pub(crate) dry_run: bool,
     pub(crate) list_only: bool,
+    pub(crate) recursive: bool,
+    pub(crate) dirs: Option<bool>,
     pub(crate) delete_mode: DeleteMode,
     pub(crate) delete_excluded: bool,
     pub(crate) max_delete_limit: Option<u64>,
@@ -115,6 +117,12 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .bind_address(inputs.bind_address.clone())
         .dry_run(inputs.dry_run)
         .list_only(inputs.list_only)
+        .recursive(inputs.recursive)
+        .dirs(if inputs.recursive {
+            true
+        } else {
+            inputs.dirs.unwrap_or(false)
+        })
         .delete(
             inputs.delete_mode.is_enabled()
                 || inputs.delete_excluded

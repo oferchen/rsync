@@ -330,6 +330,7 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
         | SkippedExisting
         | SkippedNewerDestination
         | SkippedNonRegular
+        | SkippedDirectory
         | SkippedUnsafeSymlink
         | SkippedMountPoint => '.',
         HardLink => 'h',

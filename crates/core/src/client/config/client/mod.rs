@@ -21,6 +21,8 @@ pub struct ClientConfig {
     pub(super) delete_mode: DeleteMode,
     pub(super) delete_excluded: bool,
     pub(super) max_delete: Option<u64>,
+    pub(super) recursive: bool,
+    pub(super) dirs: bool,
     pub(super) min_file_size: Option<u64>,
     pub(super) max_file_size: Option<u64>,
     pub(super) block_size_override: Option<NonZeroU32>,
@@ -109,6 +111,8 @@ impl Default for ClientConfig {
             delete_mode: DeleteMode::Disabled,
             delete_excluded: false,
             max_delete: None,
+            recursive: false,
+            dirs: false,
             min_file_size: None,
             max_file_size: None,
             block_size_override: None,
@@ -202,6 +206,22 @@ impl ClientConfig {
     #[must_use]
     pub const fn iconv(&self) -> &IconvSetting {
         &self.iconv
+    }
+
+    /// Reports whether recursive traversal is enabled.
+    #[must_use]
+    #[doc(alias = "--recursive")]
+    #[doc(alias = "-r")]
+    pub const fn recursive(&self) -> bool {
+        self.recursive
+    }
+
+    /// Reports whether directory entries should be copied when recursion is disabled.
+    #[must_use]
+    #[doc(alias = "--dirs")]
+    #[doc(alias = "-d")]
+    pub const fn dirs(&self) -> bool {
+        self.dirs
     }
 }
 
