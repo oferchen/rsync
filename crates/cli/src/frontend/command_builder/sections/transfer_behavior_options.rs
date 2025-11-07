@@ -1,6 +1,6 @@
 use super::super::{Arg, ArgAction, ClapCommand, OsStringValueParser};
 
-pub(crate) fn section_02(command: ClapCommand) -> ClapCommand {
+pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand {
     command
             .arg(
                 Arg::new("partial-dir")
