@@ -8,7 +8,8 @@ Debian/Ubuntu, RPM-based systems, and Homebrew installs.
 ## Binaries and version output
 
 * Client + daemon entrypoint: `/usr/bin/oc-rsync`
-* Optional compatibility wrapper: `/usr/sbin/oc-rsyncd` (shell script calling `oc-rsync --daemon`)
+* Optional wrappers (`oc-rsyncd`, `rsync`, `rsyncd`) are gated behind the
+  `legacy-binaries` feature and are not installed by default.
 * Version string: `oc-rsync 3.4.1-rust`
 
 Run the client once and confirm the daemon help path to show that the install is
@@ -44,12 +45,12 @@ brew install ./Formula/oc-rsync.rb
 brew list oc-rsync
 ```
 
-The install places `oc-rsync` under `$(brew --prefix)/bin`, adds the wrapper
-script `oc-rsyncd` in the same directory, and creates the daemon configuration
-directory at `$(brew --prefix)/etc/oc-rsyncd`. The Homebrew audit job verifies
-that the formula points at the current release tarball and that the installed
-entrypoints use the `oc-` prefix. Existing Homebrew `rsync` installations are
-unaffected because no conflicting files are installed.
+The install places `oc-rsync` under `$(brew --prefix)/bin` and creates the
+daemon configuration directory at `$(brew --prefix)/etc/oc-rsyncd`. The
+Homebrew audit job verifies that the formula points at the current release
+tarball and that the installed entrypoint uses the `oc-` prefix. Existing
+Homebrew `rsync` installations are unaffected because no conflicting files are
+installed.
 
 ## Systemd unit
 

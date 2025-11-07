@@ -91,13 +91,12 @@ if any(needle in text for needle in forbidden_bins):
 
 required_bins = [
     'bin.install "target/release/oc-rsync"',
-    'bin.install "target/release/oc-rsyncd"',
 ]
 missing_bins = [needle for needle in required_bins if needle not in text]
 if missing_bins:
     errors.append("Formula must install oc-prefixed binaries via bin.install: " + ", ".join(missing_bins))
 
-for needle in ["oc-rsync", "oc-rsyncd"]:
+for needle in ["oc-rsync"]:
     if needle not in text:
         errors.append(f"Formula must reference {needle} to satisfy packaging requirements")
 
@@ -135,13 +134,17 @@ else:
         ("--release", "use --release for optimized binaries"),
         ("--locked", "pin Cargo.lock when building"),
         ('"--bin", "oc-rsync"', "build the oc-rsync binary"),
-        ('"--bin", "oc-rsyncd"', "build the oc-rsyncd binary"),
     ]:
         if flag not in build_block:
             errors.append(
                 "Formula cargo build invocation must "
                 f"{description}: missing {flag!r}"
             )
+
+if 'shell_output("#{bin}/oc-rsync --daemon --help")' not in text:
+    errors.append(
+        "Formula test block must exercise oc-rsync --daemon --help to validate single-binary daemon mode"
+    )
 
 if errors:
     for error in errors:

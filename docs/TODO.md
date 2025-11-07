@@ -3,9 +3,9 @@
 - Compression now uses the system zlib backend so the encoder and decoder share
   the same implementation as upstream rsync, and checksum validation continues
   to rely on the upstream algorithms provided by `oc_rsync_checksums`.
-- `oc-rsyncd` and `rsyncd` are thin wrappers that invoke the client entrypoint
-  with an implicit `--daemon`, mirroring the upstream symlink behaviour while
-  remaining shell scripts in packaging contexts.
+- Added a `legacy-binaries` feature so optional `oc-rsyncd`/`rsyncd` wrappers
+  invoke the single binary with an implicit `--daemon`, mirroring upstream
+  symlink behaviour without altering default packages.
 - Added regression coverage ensuring the fallback binary availability cache
   expires negative entries once the TTL elapses.
 - Extended the bandwidth parser test suite with exponent and byte-suffix
