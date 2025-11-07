@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use rsync_core::client::{
-    AddressMode, DeleteMode, HumanReadableMode, RemoteFallbackArgs, TransferTimeout,
+    AddressMode, DeleteMode, HumanReadableMode, IconvSetting, RemoteFallbackArgs, TransferTimeout,
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::ProtocolVersion;
@@ -53,6 +53,7 @@ pub(crate) struct FallbackInputs {
     pub(crate) compress_level_cli: Option<OsString>,
     pub(crate) compress_choice: Option<OsString>,
     pub(crate) skip_compress: Option<OsString>,
+    pub(crate) iconv: IconvSetting,
     pub(crate) stop_after: Option<OsString>,
     pub(crate) stop_at: Option<OsString>,
     pub(crate) chown_spec: Option<OsString>,
@@ -198,6 +199,7 @@ where
         compress_level: inputs.compress_level_cli,
         compress_choice: inputs.compress_choice,
         skip_compress: inputs.skip_compress,
+        iconv: inputs.iconv,
         stop_after: inputs.stop_after,
         stop_at: inputs.stop_at,
         chown: inputs.chown_spec,

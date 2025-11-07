@@ -50,4 +50,12 @@ impl ClientConfigBuilder {
         self.address_mode = mode;
         self
     }
+
+    /// Configures the iconv charset conversion behaviour forwarded to downstream transports.
+    #[must_use]
+    #[doc(alias = "--iconv")]
+    pub fn iconv(mut self, setting: IconvSetting) -> Self {
+        self.iconv = setting;
+        self
+    }
 }

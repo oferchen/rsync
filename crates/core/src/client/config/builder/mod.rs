@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use super::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, CompressionSetting, DeleteMode,
-    FilterRuleSpec, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumChoice,
+    FilterRuleSpec, IconvSetting, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumChoice,
     TransferTimeout,
 };
 use rsync_compress::algorithm::CompressionAlgorithm;
@@ -94,6 +94,7 @@ pub struct ClientConfigBuilder {
     reference_directories: Vec<ReferenceDirectory>,
     connect_program: Option<OsString>,
     bind_address: Option<BindAddress>,
+    iconv: IconvSetting,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -183,6 +184,7 @@ impl ClientConfigBuilder {
             reference_directories: self.reference_directories,
             connect_program: self.connect_program,
             bind_address: self.bind_address,
+            iconv: self.iconv,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,
             #[cfg(feature = "xattr")]

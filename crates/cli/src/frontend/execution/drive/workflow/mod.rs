@@ -21,7 +21,7 @@ use super::messages::{fail_with_custom_fallback, fail_with_message};
 use super::module_listing::{ModuleListingInputs, maybe_handle_module_listing};
 use crate::frontend::{
     arguments::{ParsedArgs, StopRequest},
-    execution::chown::ParsedChown,
+    execution::{chown::ParsedChown, resolve_iconv_setting},
 };
 use metadata::MetadataSettings;
 use rsync_core::{client::HumanReadableMode, message::Role, rsync_error};
@@ -87,6 +87,7 @@ where
         compress_level,
         compress_choice,
         skip_compress,
+        iconv,
         owner,
         group,
         chown,
@@ -161,6 +162,7 @@ where
         stop_after,
         stop_at,
         out_format,
+        no_iconv,
     } = parsed;
 
     let password_file = password_file.map(PathBuf::from);
@@ -200,6 +202,12 @@ where
     } else {
         None
     };
+
+    let iconv_setting =
+        match resolve_iconv_setting(iconv.as_ref().map(|value| value.as_os_str()), no_iconv) {
+            Ok(setting) => setting,
+            Err(message) => return fail_with_message(message, stderr),
+        };
 
     if let Some(code) = maybe_print_help_or_version(show_help, show_version, program_name, stdout) {
         return code;
@@ -376,6 +384,7 @@ where
         compress_level_cli: compress_level_cli.as_ref(),
         compress_choice: compress_choice.as_ref(),
         skip_compress: skip_compress.as_ref(),
+        iconv: iconv_setting.clone(),
         parsed_chown: parsed_chown.as_ref(),
         owner,
         group,
@@ -646,6 +655,7 @@ where
         out_format_template: out_format_template.clone(),
         log_file_template: log_file_template.clone(),
         name_level,
+        iconv: iconv_setting.clone(),
     };
 
     let builder = config::build_base_config(config_inputs);
