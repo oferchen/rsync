@@ -123,6 +123,7 @@ fn parse_module_definition(
         bandwidth_limit_configured: false,
         refuse_options: Vec::new(),
         read_only: true,
+        write_only: false,
         numeric_ids: false,
         uid: None,
         gid: None,
@@ -267,6 +268,12 @@ fn apply_inline_module_options(
                     config_error(format!("invalid boolean value '{value}' for 'read only'"))
                 })?;
                 module.read_only = parsed;
+            }
+            "write only" | "write-only" => {
+                let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                    config_error(format!("invalid boolean value '{value}' for 'write only'"))
+                })?;
+                module.write_only = parsed;
             }
             "list" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {

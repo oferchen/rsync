@@ -188,6 +188,16 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_read_only(parsed, path, line_number)?;
                     }
+                    "write only" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!("invalid boolean value '{value}' for 'write only'"),
+                            )
+                        })?;
+                        builder.set_write_only(parsed, path, line_number)?;
+                    }
                     "use chroot" => {
                         let parsed = parse_boolean_directive(value).ok_or_else(|| {
                             config_parse_error(
