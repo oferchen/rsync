@@ -220,6 +220,7 @@ pub fn build_local_copy_options(
         .with_filter_program(filter_program)
         .numeric_ids(config.numeric_ids())
         .preallocate(config.preallocate())
+        .fsync(config.fsync())
         .hard_links(config.preserve_hard_links())
         .sparse(config.sparse())
         .copy_links(config.copy_links())

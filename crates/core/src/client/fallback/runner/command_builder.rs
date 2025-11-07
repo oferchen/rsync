@@ -95,6 +95,7 @@ pub(crate) fn prepare_invocation(
         itemize_changes,
         partial,
         preallocate,
+        fsync,
         delay_updates,
         partial_dir,
         temp_directory,
@@ -449,6 +450,7 @@ pub(crate) fn prepare_invocation(
     if preallocate {
         command_args.push(OsString::from("--preallocate"));
     }
+    push_toggle(&mut command_args, "--fsync", "--no-fsync", fsync);
     if delay_updates {
         command_args.push(OsString::from("--delay-updates"));
     }

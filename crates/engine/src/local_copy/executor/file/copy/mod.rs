@@ -13,6 +13,9 @@ use crate::local_copy::{
 };
 
 use transfer::execute_transfer;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use transfer::take_fsync_call_count;
 
 pub(crate) fn copy_file(
     context: &mut CopyContext,

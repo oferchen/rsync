@@ -322,6 +322,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         itemize_changes: false,
         partial: false,
         preallocate: false,
+        fsync: None,
         delay_updates: false,
         partial_dir: None,
         temp_directory: None,

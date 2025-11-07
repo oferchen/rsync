@@ -50,4 +50,11 @@ impl ClientConfig {
     pub const fn append_verify(&self) -> bool {
         self.append_verify
     }
+
+    /// Reports whether destination files should be fsynced after updates complete.
+    #[must_use]
+    #[doc(alias = "--fsync")]
+    pub const fn fsync(&self) -> bool {
+        self.fsync
+    }
 }

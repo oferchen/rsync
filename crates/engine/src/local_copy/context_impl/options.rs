@@ -59,6 +59,10 @@ impl<'a> CopyContext<'a> {
         self.options.preallocate_enabled()
     }
 
+    pub(super) fn fsync_enabled(&self) -> bool {
+        self.options.fsync_enabled()
+    }
+
     pub(super) fn devices_enabled(&self) -> bool {
         self.options.devices_enabled()
     }

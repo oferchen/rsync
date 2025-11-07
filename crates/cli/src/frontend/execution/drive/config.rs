@@ -82,6 +82,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) debug_flags_list: Vec<OsString>,
     pub(crate) partial: bool,
     pub(crate) preallocate: bool,
+    pub(crate) fsync: bool,
     pub(crate) partial_dir: Option<PathBuf>,
     pub(crate) temp_dir: Option<PathBuf>,
     pub(crate) delay_updates: bool,
@@ -186,6 +187,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .debug_flags(inputs.debug_flags_list.clone())
         .partial(inputs.partial)
         .preallocate(inputs.preallocate)
+        .fsync(inputs.fsync)
         .partial_directory(inputs.partial_dir.clone())
         .temp_directory(inputs.temp_dir.clone())
         .delay_updates(inputs.delay_updates)

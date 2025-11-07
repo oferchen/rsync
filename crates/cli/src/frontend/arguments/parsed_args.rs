@@ -91,6 +91,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) stats: bool,
     pub(crate) partial: bool,
     pub(crate) preallocate: bool,
+    pub(crate) fsync: Option<bool>,
     pub(crate) delay_updates: bool,
     pub(crate) partial_dir: Option<PathBuf>,
     pub(crate) temp_dir: Option<PathBuf>,
