@@ -66,6 +66,8 @@ pub struct RemoteFallbackArgs {
     pub size_only: bool,
     /// Enables `--ignore-existing`.
     pub ignore_existing: bool,
+    /// Enables `--existing`.
+    pub existing: bool,
     /// Enables `--ignore-missing-args`.
     pub ignore_missing_args: bool,
     /// Enables `--update`.

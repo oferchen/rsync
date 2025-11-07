@@ -63,6 +63,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --checksum-seed=NUM  Use NUM as the checksum seed for xxhash algorithms.\n",
             "      --size-only  Skip files whose size matches the destination, ignoring timestamps.\n",
             "      --ignore-existing  Skip updating files that already exist at the destination.\n",
+            "      --existing  Skip creating new destination files; only update those already present.\n",
             "      --ignore-missing-args  Skip missing source arguments without reporting an error.\n",
             "  -u, --update    Skip files that are newer on the destination.\n",
             "      --modify-window=SECS  Treat mtimes within SECS seconds as equal when comparing files.\n",

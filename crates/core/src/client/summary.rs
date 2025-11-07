@@ -69,6 +69,13 @@ impl ClientSummary {
         self.stats.regular_files_ignored_existing()
     }
 
+    /// Returns the number of regular files skipped because the destination was absent and `--existing` was requested.
+    #[must_use]
+    #[doc(alias = "--existing")]
+    pub fn regular_files_skipped_missing(&self) -> u64 {
+        self.stats.regular_files_skipped_missing()
+    }
+
     /// Returns the number of regular files skipped because the destination was newer.
     #[must_use]
     pub fn regular_files_skipped_newer(&self) -> u64 {
@@ -246,6 +253,8 @@ pub enum ClientEventKind {
     DirectoryCreated,
     /// An existing destination file was left untouched due to `--ignore-existing`.
     SkippedExisting,
+    /// A destination entry was not created because it was absent and `--existing` was enabled.
+    SkippedMissingDestination,
     /// An existing destination file was left untouched because it is newer.
     SkippedNewerDestination,
     /// A non-regular entry was skipped because support was disabled.
@@ -302,6 +311,7 @@ impl ClientEvent {
             LocalCopyAction::DeviceCopied => ClientEventKind::DeviceCopied,
             LocalCopyAction::DirectoryCreated => ClientEventKind::DirectoryCreated,
             LocalCopyAction::SkippedExisting => ClientEventKind::SkippedExisting,
+            LocalCopyAction::SkippedMissingDestination => ClientEventKind::SkippedMissingDestination,
             LocalCopyAction::SkippedNewerDestination => ClientEventKind::SkippedNewerDestination,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::SkippedDirectory => ClientEventKind::SkippedDirectory,
@@ -319,6 +329,7 @@ impl ClientEvent {
             | LocalCopyAction::HardLink => true,
             LocalCopyAction::MetadataReused
             | LocalCopyAction::SkippedExisting
+            | LocalCopyAction::SkippedMissingDestination
             | LocalCopyAction::SkippedNewerDestination
             | LocalCopyAction::SkippedNonRegular
             | LocalCopyAction::SkippedDirectory

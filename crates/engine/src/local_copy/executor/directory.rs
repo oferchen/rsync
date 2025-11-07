@@ -87,6 +87,22 @@ pub(crate) fn copy_directory_recursive(
         }
     }
 
+    if destination_missing && context.existing_only_enabled() {
+        context.summary_mut().record_directory_total();
+        if let Some(relative_path) = relative {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            context.record(LocalCopyRecord::new(
+                relative_path.to_path_buf(),
+                LocalCopyAction::SkippedMissingDestination,
+                0,
+                Some(metadata_snapshot.len()),
+                Duration::default(),
+                Some(metadata_snapshot),
+            ));
+        }
+        return Ok(false);
+    }
+
     let list_start = Instant::now();
     let entries = read_directory_entries_sorted(source)?;
     context.record_file_list_generation(list_start.elapsed());

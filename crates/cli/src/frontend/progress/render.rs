@@ -369,6 +369,14 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 )?;
                 continue;
             }
+            ClientEventKind::SkippedMissingDestination => {
+                writeln!(
+                    stdout,
+                    "skipping non-existent destination file \"{}\"",
+                    event.relative_path().display()
+                )?;
+                continue;
+            }
             ClientEventKind::SkippedNewerDestination => {
                 writeln!(
                     stdout,
