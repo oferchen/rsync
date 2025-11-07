@@ -325,56 +325,11 @@ impl UnixProcessIdentity {
     }
 }
 
-#[cfg(all(
-    unix,
-    not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-    ))
-))]
+#[cfg(unix)]
 fn collect_supplementary_groups() -> Vec<u32> {
     match nix::unistd::getgroups() {
         Ok(groups) => groups.into_iter().map(|gid| gid.as_raw()).collect(),
         Err(_) => Vec::new(),
-    }
-}
-
-#[cfg(all(
-    unix,
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-    )
-))]
-fn collect_supplementary_groups() -> Vec<u32> {
-    use std::convert::TryFrom;
-
-    unsafe {
-        let count = libc::getgroups(0, std::ptr::null_mut());
-        if count <= 0 {
-            return Vec::new();
-        }
-
-        let Ok(buffer_len) = usize::try_from(count) else {
-            return Vec::new();
-        };
-
-        let mut groups = vec![0 as libc::gid_t; buffer_len];
-        let written = libc::getgroups(count, groups.as_mut_ptr());
-        if written <= 0 {
-            return Vec::new();
-        }
-
-        let Ok(actual_len) = usize::try_from(written) else {
-            return Vec::new();
-        };
-
-        groups.truncate(actual_len);
-        groups.into_iter().map(|gid| gid as u32).collect()
     }
 }
 
