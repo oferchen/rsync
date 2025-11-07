@@ -220,6 +220,7 @@ fn helper_accessors_forward_to_manifest() {
     assert_eq!(upstream_version(), manifest.upstream_version());
     assert_eq!(protocol_version(), manifest.protocol_version());
     assert_eq!(source_url(), manifest.source_url());
+    assert_eq!(source_line(), format!("Source: {}", manifest.source_url()));
     assert_eq!(build_revision(), manifest.build_revision());
     assert_eq!(build_toolchain(), manifest.build_toolchain());
     assert_eq!(oc_summary(), manifest.oc_summary());

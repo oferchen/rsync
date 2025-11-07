@@ -1,6 +1,6 @@
 //! Rendering helpers for `--help` output.
 
-use oc_rsync_core::branding::{manifest, rust_version, source_url};
+use oc_rsync_core::branding::{manifest, rust_version, source_line};
 
 use super::ProgramName;
 
@@ -17,7 +17,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
     format!(
         concat!(
             "{program} {version}\n",
-            "{website}\n",
+            "{source_line}\n",
             "\n",
             "Usage: {program} [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE[:BURST]] SOURCE... DEST\n",
             "\n",
@@ -191,7 +191,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
         ),
         program = program,
         version = rust_version(),
-        website = source_url(),
+        source_line = source_line(),
         daemon = daemon,
     )
 }
