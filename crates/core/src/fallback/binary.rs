@@ -325,7 +325,7 @@ impl UnixProcessIdentity {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_vendor = "apple")))]
 fn collect_supplementary_groups() -> Vec<u32> {
     use std::convert::TryFrom;
 
@@ -335,6 +335,44 @@ fn collect_supplementary_groups() -> Vec<u32> {
             .filter_map(|gid| u32::try_from(gid.as_raw()).ok())
             .collect(),
         Err(_) => Vec::new(),
+    }
+}
+
+#[cfg(all(unix, target_vendor = "apple"))]
+fn collect_supplementary_groups() -> Vec<u32> {
+    use std::convert::TryFrom;
+
+    const INITIAL_CAPACITY: usize = 32;
+    const MAX_CAPACITY: usize = 1 << 12;
+
+    let mut capacity = INITIAL_CAPACITY;
+
+    loop {
+        let mut groups: Vec<libc::gid_t> = Vec::with_capacity(capacity);
+        let result = unsafe { libc::getgroups(capacity as libc::c_int, groups.as_mut_ptr()) };
+
+        if result >= 0 {
+            let len = result as usize;
+            unsafe {
+                groups.set_len(len);
+            }
+
+            return groups
+                .into_iter()
+                .filter_map(|gid| u32::try_from(gid).ok())
+                .collect();
+        }
+
+        let errno = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or_default();
+
+        if errno == libc::EINVAL && capacity < MAX_CAPACITY {
+            capacity = capacity.saturating_mul(2);
+            continue;
+        }
+
+        return Vec::new();
     }
 }
 
