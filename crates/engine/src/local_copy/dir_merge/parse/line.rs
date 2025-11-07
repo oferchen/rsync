@@ -6,6 +6,157 @@ use super::{
 use crate::local_copy::filter_program::ExcludeIfPresentRule;
 use rsync_filters::FilterRule;
 
+fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
+    if text.is_empty() {
+        return ("", "");
+    }
+
+    if let Some(rest) = text.strip_prefix(',') {
+        let mut parts = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
+        let modifiers = parts.next().unwrap_or("");
+        let remainder = parts.next().unwrap_or("");
+        let remainder =
+            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        return (modifiers, remainder);
+    }
+
+    let mut chars = text.chars();
+    match chars.next() {
+        None => ("", ""),
+        Some(first) if first.is_ascii_whitespace() || first == '_' => {
+            let remainder =
+                text.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+            ("", remainder)
+        }
+        Some(_) => {
+            let mut len = 0;
+            for ch in text.chars() {
+                if ch.is_ascii_whitespace() || ch == '_' {
+                    break;
+                }
+                len += ch.len_utf8();
+            }
+            let modifiers = &text[..len];
+            let remainder =
+                text[len..].trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+            (modifiers, remainder)
+        }
+    }
+}
+
+#[derive(Default)]
+struct RuleModifierState {
+    anchor_root: bool,
+    sender: Option<bool>,
+    receiver: Option<bool>,
+    perishable: bool,
+    xattr_only: bool,
+}
+
+fn parse_rule_modifiers(
+    modifiers: &str,
+    directive: &str,
+    allow_perishable: bool,
+    allow_xattr: bool,
+) -> Result<RuleModifierState, FilterParseError> {
+    let mut state = RuleModifierState::default();
+
+    for modifier in modifiers.chars() {
+        let lower = modifier.to_ascii_lowercase();
+        match lower {
+            '/' => state.anchor_root = true,
+            's' => {
+                state.sender = Some(true);
+                if state.receiver.is_none() {
+                    state.receiver = Some(false);
+                }
+            }
+            'r' => {
+                state.receiver = Some(true);
+                if state.sender.is_none() {
+                    state.sender = Some(false);
+                }
+            }
+            'p' => {
+                if allow_perishable {
+                    state.perishable = true;
+                } else {
+                    return Err(FilterParseError::new(format!(
+                        "filter directive '{directive}' uses unsupported modifier '{}'",
+                        modifier
+                    )));
+                }
+            }
+            'x' => {
+                if allow_xattr {
+                    state.xattr_only = true;
+                } else {
+                    return Err(FilterParseError::new(format!(
+                        "filter directive '{directive}' uses unsupported modifier '{}'",
+                        modifier
+                    )));
+                }
+            }
+            _ => {
+                return Err(FilterParseError::new(format!(
+                    "filter directive '{directive}' uses unsupported modifier '{}'",
+                    modifier
+                )));
+            }
+        }
+    }
+
+    Ok(state)
+}
+
+fn apply_rule_modifiers(
+    mut rule: FilterRule,
+    modifiers: RuleModifierState,
+    directive: &str,
+) -> Result<FilterRule, FilterParseError> {
+    if modifiers.anchor_root {
+        rule = rule.anchor_to_root();
+    }
+
+    if let Some(sender) = modifiers.sender {
+        rule = rule.with_sender(sender);
+    }
+
+    if let Some(receiver) = modifiers.receiver {
+        rule = rule.with_receiver(receiver);
+    }
+
+    if modifiers.perishable {
+        rule = rule.with_perishable(true);
+    }
+
+    if modifiers.xattr_only {
+        match rule.action() {
+            rsync_filters::FilterAction::Include | rsync_filters::FilterAction::Exclude => {
+                rule = rule
+                    .with_xattr_only(true)
+                    .with_sender(true)
+                    .with_receiver(true);
+            }
+            _ => {
+                return Err(FilterParseError::new(format!(
+                    "filter directive '{directive}' cannot combine 'x' modifiers with this directive"
+                )));
+            }
+        }
+    }
+
+    Ok(rule)
+}
+
+fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
+    if let Some((name, modifiers)) = keyword.split_once(',') {
+        (name, modifiers)
+    } else {
+        (keyword, "")
+    }
+}
+
 pub(crate) fn parse_filter_directive_line(
     text: &str,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
@@ -61,97 +212,102 @@ pub(crate) fn parse_filter_directive_line(
     }
 
     if let Some(remainder) = trimmed.strip_prefix('+') {
+        let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
+        let modifiers = parse_rule_modifiers(modifier_text, trimmed, true, true)?;
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '+' requires a pattern"));
         }
-        return Ok(Some(ParsedFilterDirective::Rule(FilterRule::include(
-            pattern.to_string(),
-        ))));
+        let rule = FilterRule::include(pattern.to_string());
+        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
     if let Some(remainder) = trimmed.strip_prefix('-') {
+        let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
+        let modifiers = parse_rule_modifiers(modifier_text, trimmed, true, true)?;
         let pattern = remainder.trim_start();
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '-' requires a pattern"));
         }
-        return Ok(Some(ParsedFilterDirective::Rule(FilterRule::exclude(
-            pattern.to_string(),
-        ))));
+        let rule = FilterRule::exclude(pattern.to_string());
+        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
 
     let mut parts = trimmed.splitn(2, char::is_whitespace);
     let keyword = parts.next().unwrap_or("");
     let remainder = parts.next().unwrap_or("").trim_start();
+    let (keyword, keyword_modifiers) = split_keyword_modifiers(keyword);
 
     let handle_keyword = |pattern: &str,
-                          builder: fn(String) -> FilterRule|
+                          builder: fn(String) -> FilterRule,
+                          allow_perishable: bool,
+                          allow_xattr: bool|
      -> Result<Option<ParsedFilterDirective>, FilterParseError> {
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter directive missing pattern"));
         }
-        Ok(Some(ParsedFilterDirective::Rule(builder(
-            pattern.to_string(),
-        ))))
+        let modifiers =
+            parse_rule_modifiers(keyword_modifiers, trimmed, allow_perishable, allow_xattr)?;
+        let rule = builder(pattern.to_string());
+        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        Ok(Some(ParsedFilterDirective::Rule(rule)))
     };
 
     if keyword.len() == 1 {
         let shorthand = keyword.chars().next().unwrap().to_ascii_lowercase();
         match shorthand {
             'p' => {
-                return handle_keyword(remainder, FilterRule::protect);
+                if !keyword_modifiers.is_empty() {
+                    return Err(FilterParseError::new(format!(
+                        "filter directive '{trimmed}' uses unsupported modifier '{}'",
+                        keyword_modifiers
+                    )));
+                }
+                return handle_keyword(remainder, FilterRule::protect, false, false);
             }
             'r' => {
-                return handle_keyword(remainder, FilterRule::risk);
+                if !keyword_modifiers.is_empty() {
+                    return Err(FilterParseError::new(format!(
+                        "filter directive '{trimmed}' uses unsupported modifier '{}'",
+                        keyword_modifiers
+                    )));
+                }
+                return handle_keyword(remainder, FilterRule::risk, false, false);
             }
             's' => {
-                if remainder.is_empty() {
-                    return Err(FilterParseError::new("filter directive missing pattern"));
-                }
-                let rule = FilterRule::show(remainder.to_string());
-                return Ok(Some(ParsedFilterDirective::Rule(rule)));
+                return handle_keyword(remainder, FilterRule::show, false, false);
             }
             'h' => {
-                if remainder.is_empty() {
-                    return Err(FilterParseError::new("filter directive missing pattern"));
-                }
-                let rule = FilterRule::hide(remainder.to_string());
-                return Ok(Some(ParsedFilterDirective::Rule(rule)));
+                return handle_keyword(remainder, FilterRule::hide, false, false);
             }
             _ => {}
         }
     }
 
     if keyword.eq_ignore_ascii_case("include") {
-        return handle_keyword(remainder, FilterRule::include);
+        return handle_keyword(remainder, FilterRule::include, true, true);
     }
 
     if keyword.eq_ignore_ascii_case("exclude") {
-        return handle_keyword(remainder, FilterRule::exclude);
+        return handle_keyword(remainder, FilterRule::exclude, true, true);
     }
 
     if keyword.eq_ignore_ascii_case("show") {
-        if remainder.is_empty() {
-            return Err(FilterParseError::new("filter directive missing pattern"));
-        }
-        let rule = FilterRule::show(remainder.to_string());
-        return Ok(Some(ParsedFilterDirective::Rule(rule)));
+        return handle_keyword(remainder, FilterRule::show, false, false);
     }
 
     if keyword.eq_ignore_ascii_case("hide") {
-        if remainder.is_empty() {
-            return Err(FilterParseError::new("filter directive missing pattern"));
-        }
-        let rule = FilterRule::hide(remainder.to_string());
-        return Ok(Some(ParsedFilterDirective::Rule(rule)));
+        return handle_keyword(remainder, FilterRule::hide, false, false);
     }
 
     if keyword.eq_ignore_ascii_case("protect") {
-        return handle_keyword(remainder, FilterRule::protect);
+        return handle_keyword(remainder, FilterRule::protect, false, false);
     }
 
     if keyword.eq_ignore_ascii_case("risk") {
-        return handle_keyword(remainder, FilterRule::risk);
+        return handle_keyword(remainder, FilterRule::risk, false, false);
     }
 
     Err(FilterParseError::new(format!(

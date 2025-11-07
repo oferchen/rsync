@@ -172,7 +172,14 @@ pub(crate) fn copy_fifo(
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(map_metadata_error)?;
             #[cfg(feature = "xattr")]
-            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+            sync_xattrs_if_requested(
+                preserve_xattrs,
+                mode,
+                source,
+                destination,
+                true,
+                context.filter_program(),
+            )?;
             #[cfg(feature = "acl")]
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
             context.record_hard_link(metadata, destination);
@@ -209,7 +216,14 @@ pub(crate) fn copy_fifo(
     apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
-    sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+    sync_xattrs_if_requested(
+        preserve_xattrs,
+        mode,
+        source,
+        destination,
+        true,
+        context.filter_program(),
+    )?;
     #[cfg(feature = "acl")]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.record_hard_link(metadata, destination);
@@ -378,7 +392,14 @@ pub(crate) fn copy_device(
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(map_metadata_error)?;
             #[cfg(feature = "xattr")]
-            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+            sync_xattrs_if_requested(
+                preserve_xattrs,
+                mode,
+                source,
+                destination,
+                true,
+                context.filter_program(),
+            )?;
             #[cfg(feature = "acl")]
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
             context.record_hard_link(metadata, destination);
@@ -415,7 +436,14 @@ pub(crate) fn copy_device(
     apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
-    sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+    sync_xattrs_if_requested(
+        preserve_xattrs,
+        mode,
+        source,
+        destination,
+        true,
+        context.filter_program(),
+    )?;
     #[cfg(feature = "acl")]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     context.record_hard_link(metadata, destination);
@@ -774,7 +802,14 @@ pub(crate) fn copy_symlink(
     apply_symlink_metadata_with_options(destination, metadata, symlink_options)
         .map_err(map_metadata_error)?;
     #[cfg(feature = "xattr")]
-    sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, false)?;
+    sync_xattrs_if_requested(
+        preserve_xattrs,
+        mode,
+        source,
+        destination,
+        false,
+        context.filter_program(),
+    )?;
     #[cfg(feature = "acl")]
     sync_acls_if_requested(preserve_acls, mode, source, destination, false)?;
 

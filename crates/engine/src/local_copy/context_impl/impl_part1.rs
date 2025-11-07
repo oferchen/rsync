@@ -139,7 +139,14 @@ impl<'a> CopyContext<'a> {
             .map_err(map_metadata_error)?;
         #[cfg(feature = "xattr")]
         {
-            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+            sync_xattrs_if_requested(
+                preserve_xattrs,
+                mode,
+                source,
+                destination,
+                true,
+                self.filter_program.as_ref(),
+            )?;
         }
         #[cfg(feature = "acl")]
         {

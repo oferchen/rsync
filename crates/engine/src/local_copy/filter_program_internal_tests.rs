@@ -45,6 +45,20 @@ fn filter_program_is_empty_after_clear_entries() {
 }
 
 #[test]
+fn filter_program_xattr_rules_control_allowance() {
+    let program = FilterProgram::new([
+        FilterProgramEntry::Rule(FilterRule::exclude("user.skip").with_xattr_only(true)),
+        FilterProgramEntry::Rule(FilterRule::include("user.keep").with_xattr_only(true)),
+    ])
+    .expect("compile program");
+
+    assert!(program.has_xattr_rules());
+    assert!(!program.allows_xattr("user.skip"));
+    assert!(program.allows_xattr("user.keep"));
+    assert!(program.allows_xattr("user.other"));
+}
+
+#[test]
 fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
     let mut segment = FilterSegment::default();
     segment

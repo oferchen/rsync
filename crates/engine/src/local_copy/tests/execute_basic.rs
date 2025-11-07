@@ -155,6 +155,47 @@ fn execute_copies_file_with_xattrs() {
     assert_eq!(copied, b"value");
 }
 
+#[cfg(feature = "xattr")]
+#[test]
+fn execute_respects_xattr_filter_rules() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    fs::write(&source, b"attr").expect("write source");
+    xattr::set(&source, "user.keep", b"keep").expect("set keep");
+    xattr::set(&source, "user.skip", b"skip").expect("set skip");
+
+    let operands = vec![
+        source.clone().into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let program = FilterProgram::new([
+        FilterProgramEntry::Rule(FilterRule::exclude("user.skip").with_xattr_only(true)),
+        FilterProgramEntry::Rule(FilterRule::include("user.keep").with_xattr_only(true)),
+    ])
+    .expect("compile program");
+
+    let options = LocalCopyOptions::default()
+        .xattrs(true)
+        .with_filter_program(Some(program));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    let kept = xattr::get(&destination, "user.keep")
+        .expect("read keep")
+        .expect("keep present");
+    assert_eq!(kept, b"keep");
+    let skipped = xattr::get(&destination, "user.skip")
+        .expect("read skip")
+        .is_none();
+    assert!(skipped, "excluded xattr should be absent");
+}
+
 #[cfg(all(unix, feature = "acl"))]
 #[test]
 fn execute_copies_file_with_acls() {
