@@ -9,40 +9,54 @@ use oc_rsync_core::rsync_error;
 use super::directive::{FilterDirective, MergeDirective};
 
 fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
+    fn trim_remainder(remainder: &str) -> &str {
+        let remainder =
+            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        if let Some(rest) = remainder.strip_prefix(',') {
+            return rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        }
+        remainder
+    }
+
+    fn split_inner(text: &str) -> (&str, &str) {
+        if text.is_empty() {
+            return ("", "");
+        }
+
+        let mut end = 0usize;
+        let mut saw_separator = false;
+        for (idx, ch) in text.char_indices() {
+            if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
+                saw_separator = true;
+                break;
+            }
+            end = idx + ch.len_utf8();
+        }
+
+        if saw_separator {
+            let modifiers = &text[..end];
+            let remainder = trim_remainder(&text[end..]);
+            (modifiers, remainder)
+        } else {
+            ("", text)
+        }
+    }
+
     if text.is_empty() {
         return ("", "");
     }
 
     if let Some(rest) = text.strip_prefix(',') {
-        let mut parts = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
-        let modifiers = parts.next().unwrap_or("");
-        let remainder = parts.next().unwrap_or("");
-        let remainder =
-            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-        return (modifiers, remainder);
-    }
-
-    let mut chars = text.chars();
-    match chars.next() {
-        None => ("", ""),
-        Some(first) if first.is_ascii_whitespace() || first == '_' => {
-            let remainder =
-                text.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        let (modifiers, remainder) = split_inner(rest);
+        if modifiers.is_empty() {
             ("", remainder)
-        }
-        Some(_) => {
-            let mut len = 0;
-            for ch in text.chars() {
-                if ch.is_ascii_whitespace() || ch == '_' {
-                    break;
-                }
-                len += ch.len_utf8();
-            }
-            let modifiers = &text[..len];
-            let remainder =
-                text[len..].trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+        } else {
             (modifiers, remainder)
         }
+    } else if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
+        ("", trim_remainder(text))
+    } else {
+        split_inner(text)
     }
 }
 
