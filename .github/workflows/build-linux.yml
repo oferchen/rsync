@@ -114,12 +114,6 @@ jobs:
         run: |
           cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --features legacy-binaries --bin rsync
 
-      - name: Build legacy rsyncd wrapper
-        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
-        shell: bash
-        run: |
-          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --features legacy-binaries --bin rsyncd
-
       - name: Build .deb (cargo-deb)
         if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
         shell: bash
