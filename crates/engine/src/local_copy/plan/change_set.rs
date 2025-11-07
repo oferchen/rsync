@@ -217,10 +217,10 @@ impl LocalCopyChangeSet {
             wrote_data,
         ));
 
-        if metadata_options.permissions() {
-            if permissions_changed(metadata, existing, destination_previously_existed) {
-                change_set = change_set.with_permissions_changed(true);
-            }
+        if metadata_options.permissions()
+            && permissions_changed(metadata, existing, destination_previously_existed)
+        {
+            change_set = change_set.with_permissions_changed(true);
         }
 
         if metadata_options.chmod().is_some() {
@@ -318,9 +318,7 @@ fn owner_changed(
     destination_previously_existed: bool,
 ) -> bool {
     if let Some(override_uid) = metadata_options.owner_override() {
-        return existing
-            .and_then(metadata_uid)
-            .map_or(true, |uid| uid != override_uid);
+        return existing.and_then(metadata_uid) != Some(override_uid);
     }
 
     if !metadata_options.owner() {
@@ -346,9 +344,7 @@ fn group_changed(
     destination_previously_existed: bool,
 ) -> bool {
     if let Some(override_gid) = metadata_options.group_override() {
-        return existing
-            .and_then(metadata_gid)
-            .map_or(true, |gid| gid != override_gid);
+        return existing.and_then(metadata_gid) != Some(override_gid);
     }
 
     if !metadata_options.group() {
