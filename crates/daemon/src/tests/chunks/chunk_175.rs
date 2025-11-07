@@ -7,11 +7,14 @@ fn run_daemon_rejects_unknown_argument() {
 
     let error = run_daemon(config).expect_err("unknown argument should fail");
     assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    let rendered = error.message().to_string();
     assert!(
-        error
-            .message()
-            .to_string()
-            .contains("unsupported daemon argument")
+        rendered.contains("unknown option"),
+        "diagnostic should classify unknown daemon flags"
+    );
+    assert!(
+        rendered.contains("--help"),
+        "diagnostic should point operators to the help output"
     );
 }
 
