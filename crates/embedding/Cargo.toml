@@ -1,0 +1,19 @@
+[package]
+name = "oc-rsync-embedding"
+version.workspace = true
+edition = "2024"
+authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
+license = "GPL-3.0-or-later"
+description = "Programmatic entry points for the oc-rsync client and daemon"
+repository = "https://github.com/oferchen/rsync"
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+oc-rsync-cli = { path = "../cli" }
+oc-rsync-daemon = { path = "../daemon" }
+oc-rsync-core = { path = "../core" }
