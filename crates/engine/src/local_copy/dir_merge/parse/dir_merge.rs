@@ -5,16 +5,24 @@ use std::path::PathBuf;
 pub(super) fn parse_dir_merge_directive(
     text: &str,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
-    const DIR_MERGE_PREFIX: &str = "dir-merge";
+    const DIR_MERGE_ALIASES: [&str; 2] = ["dir-merge", "per-dir"];
 
-    if text.len() < DIR_MERGE_PREFIX.len() {
-        return Ok(None);
+    let mut matched = None;
+    for alias in DIR_MERGE_ALIASES {
+        if text.len() < alias.len() {
+            continue;
+        }
+
+        if text[..alias.len()].eq_ignore_ascii_case(alias) {
+            matched = Some((&text[..alias.len()], &text[alias.len()..]));
+            break;
+        }
     }
 
-    let (prefix, mut remainder) = text.split_at(DIR_MERGE_PREFIX.len());
-    if !prefix.eq_ignore_ascii_case(DIR_MERGE_PREFIX) {
-        return Ok(None);
-    }
+    let (label, mut remainder) = match matched {
+        Some(values) => values,
+        None => return Ok(None),
+    };
 
     if let Some(ch) = remainder.chars().next() {
         if ch != ',' && !ch.is_ascii_whitespace() {
@@ -41,9 +49,8 @@ pub(super) fn parse_dir_merge_directive(
         match lower {
             '-' => {
                 if saw_plus {
-                    let message = format!(
-                        "dir-merge directive '{text}' cannot combine '+' and '-' modifiers"
-                    );
+                    let message =
+                        format!("{label} directive '{text}' cannot combine '+' and '-' modifiers");
                     return Err(FilterParseError::new(message));
                 }
                 saw_minus = true;
@@ -51,9 +58,8 @@ pub(super) fn parse_dir_merge_directive(
             }
             '+' => {
                 if saw_minus {
-                    let message = format!(
-                        "dir-merge directive '{text}' cannot combine '+' and '-' modifiers"
-                    );
+                    let message =
+                        format!("{label} directive '{text}' cannot combine '+' and '-' modifiers");
                     return Err(FilterParseError::new(message));
                 }
                 saw_plus = true;
@@ -88,7 +94,7 @@ pub(super) fn parse_dir_merge_directive(
             }
             _ => {
                 let message =
-                    format!("dir-merge directive '{text}' uses unsupported modifier '{modifier}'");
+                    format!("{label} directive '{text}' uses unsupported modifier '{modifier}'");
                 return Err(FilterParseError::new(message));
             }
         }
@@ -98,7 +104,7 @@ pub(super) fn parse_dir_merge_directive(
         if used_cvs_default {
             ".cvsignore"
         } else {
-            let message = format!("dir-merge directive '{text}' is missing a file name");
+            let message = format!("{label} directive '{text}' is missing a file name");
             return Err(FilterParseError::new(message));
         }
     } else {

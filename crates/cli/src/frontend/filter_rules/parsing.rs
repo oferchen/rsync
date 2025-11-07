@@ -412,13 +412,18 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
         )));
     }
 
-    const DIR_MERGE_PREFIX: &str = "dir-merge";
+    const DIR_MERGE_ALIASES: [&str; 2] = ["dir-merge", "per-dir"];
 
-    if trimmed.len() >= DIR_MERGE_PREFIX.len()
-        && trimmed[..DIR_MERGE_PREFIX.len()].eq_ignore_ascii_case(DIR_MERGE_PREFIX)
-    {
-        let mut remainder = trimmed[DIR_MERGE_PREFIX.len()..]
-            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+    let mut matched_prefix = None;
+    for alias in DIR_MERGE_ALIASES {
+        if trimmed.len() >= alias.len() && trimmed[..alias.len()].eq_ignore_ascii_case(alias) {
+            matched_prefix = Some((&trimmed[..alias.len()], &trimmed[alias.len()..]));
+            break;
+        }
+    }
+
+    if let Some((label, mut remainder)) = matched_prefix {
+        remainder = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         let mut modifiers = "";
         if let Some(rest) = remainder.strip_prefix(',') {
             let mut split = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
@@ -436,8 +441,10 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
             if assume_cvsignore {
                 path_text = ".cvsignore";
             } else {
-                let text =
-                    format!("filter rule '{trimmed}' is missing a file name after 'dir-merge'");
+                let text = format!(
+                    "filter rule '{trimmed}' is missing a file name after '{}'",
+                    label
+                );
                 return Err(rsync_error!(1, text).with_role(Role::Client));
             }
         }

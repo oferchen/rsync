@@ -122,6 +122,25 @@ fn parse_filter_directive_dir_merge_without_modifiers() {
 }
 
 #[test]
+fn parse_filter_directive_per_dir_alias_without_modifiers() {
+    let directive = parse_filter_directive_line("per-dir .rsync-filter")
+        .expect("parse")
+        .expect("directive");
+
+    let (path, options) = match directive {
+        ParsedFilterDirective::Merge { path, options } => (path, options),
+        other => panic!("expected dir-merge directive, got {other:?}"),
+    };
+
+    assert_eq!(path, PathBuf::from(".rsync-filter"));
+    let opts = options.expect("options");
+    assert!(opts.inherit_rules());
+    assert!(opts.allows_comments());
+    assert!(!opts.uses_whitespace());
+    assert_eq!(opts.enforced_kind(), None);
+}
+
+#[test]
 fn parse_filter_directive_dir_merge_with_modifiers() {
     let directive = parse_filter_directive_line("dir-merge,+ne rules/filter.txt")
         .expect("parse")
