@@ -22,6 +22,8 @@ struct ModuleDefinition {
     listable: bool,
     use_chroot: bool,
     max_connections: Option<NonZeroU32>,
+    incoming_chmod: Option<String>,
+    outgoing_chmod: Option<String>,
 }
 
 impl ModuleDefinition {
@@ -86,6 +88,18 @@ impl ModuleDefinition {
             self.refuse_options = options.to_vec();
         }
     }
+
+    pub(super) fn inherit_incoming_chmod(&mut self, chmod: Option<&str>) {
+        if self.incoming_chmod.is_none() {
+            self.incoming_chmod = chmod.map(str::to_string);
+        }
+    }
+
+    pub(super) fn inherit_outgoing_chmod(&mut self, chmod: Option<&str>) {
+        if self.outgoing_chmod.is_none() {
+            self.outgoing_chmod = chmod.map(str::to_string);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -137,6 +151,14 @@ impl ModuleDefinition {
 
     pub(super) fn use_chroot(&self) -> bool {
         self.use_chroot
+    }
+
+    pub(super) fn incoming_chmod(&self) -> Option<&str> {
+        self.incoming_chmod.as_deref()
+    }
+
+    pub(super) fn outgoing_chmod(&self) -> Option<&str> {
+        self.outgoing_chmod.as_deref()
     }
 }
 

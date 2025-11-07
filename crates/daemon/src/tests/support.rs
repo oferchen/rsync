@@ -39,6 +39,8 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         listable: true,
         use_chroot: true,
         max_connections: None,
+        incoming_chmod: None,
+        outgoing_chmod: None,
     }
 }
 
@@ -72,6 +74,8 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
         listable: true,
         use_chroot: true,
         max_connections: None,
+        incoming_chmod: None,
+        outgoing_chmod: None,
     }
 }
 

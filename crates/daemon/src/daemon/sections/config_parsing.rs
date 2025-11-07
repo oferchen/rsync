@@ -14,6 +14,8 @@ struct ParsedConfigModules {
     lock_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_bandwidth_limit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
+    global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
 }
 
 fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
@@ -51,6 +53,8 @@ fn parse_config_modules_inner(
     let mut lock_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
     let mut global_bwlimit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)> = None;
     let mut global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)> = None;
+    let mut global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)> = None;
+    let mut global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)> = None;
 
     let result = (|| -> Result<ParsedConfigModules, DaemonError> {
         for (index, raw_line) in contents.lines().enumerate() {
@@ -90,7 +94,16 @@ fn parse_config_modules_inner(
 
                 if let Some(builder) = current.take() {
                     let default_secrets = global_secrets_file.as_ref().map(|(p, _)| p.as_path());
-                    modules.push(builder.finish(path, default_secrets)?);
+                    let default_incoming =
+                        global_incoming_chmod.as_ref().map(|(value, _)| value.as_str());
+                    let default_outgoing =
+                        global_outgoing_chmod.as_ref().map(|(value, _)| value.as_str());
+                    modules.push(builder.finish(
+                        path,
+                        default_secrets,
+                        default_incoming,
+                        default_outgoing,
+                    )?);
                 }
 
                 current = Some(ModuleDefinitionBuilder::new(name.to_string(), line_number));
@@ -260,6 +273,34 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_max_connections(max, path, line_number)?;
                     }
+                    "incoming chmod" | "incoming-chmod" => {
+                        if value.is_empty() {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                "'incoming chmod' directive must not be empty",
+                            ));
+                        }
+                        builder.set_incoming_chmod(
+                            Some(value.to_string()),
+                            path,
+                            line_number,
+                        )?;
+                    }
+                    "outgoing chmod" | "outgoing-chmod" => {
+                        if value.is_empty() {
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                "'outgoing chmod' directive must not be empty",
+                            ));
+                        }
+                        builder.set_outgoing_chmod(
+                            Some(value.to_string()),
+                            path,
+                            line_number,
+                        )?;
+                    }
                     _ => {
                         // Unsupported directives are ignored for now.
                     }
@@ -359,6 +400,40 @@ fn parse_config_modules_inner(
                             }
                         } else {
                             global_secrets_file = Some((secrets_path, origin));
+                        }
+                    }
+
+                    if let Some((incoming, origin)) = included.global_incoming_chmod {
+                        if let Some((existing, existing_origin)) = &global_incoming_chmod {
+                            if existing != &incoming {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'incoming chmod' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            global_incoming_chmod = Some((incoming, origin));
+                        }
+                    }
+
+                    if let Some((outgoing, origin)) = included.global_outgoing_chmod {
+                        if let Some((existing, existing_origin)) = &global_outgoing_chmod {
+                            if existing != &outgoing {
+                                let existing_line = existing_origin.line;
+                                return Err(config_parse_error(
+                                    &origin.path,
+                                    origin.line,
+                                    format!(
+                                        "duplicate 'outgoing chmod' directive in global section (previously defined on line {existing_line})"
+                                    ),
+                                ));
+                            }
+                        } else {
+                            global_outgoing_chmod = Some((outgoing, origin));
                         }
                     }
                 }
@@ -512,6 +587,64 @@ fn parse_config_modules_inner(
                         global_secrets_file = Some((validated, origin));
                     }
                 }
+                "incoming chmod" | "incoming-chmod" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'incoming chmod' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &global_incoming_chmod {
+                        if existing != value {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'incoming chmod' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        global_incoming_chmod = Some((value.to_string(), origin));
+                    }
+                }
+                "outgoing chmod" | "outgoing-chmod" => {
+                    if value.is_empty() {
+                        return Err(config_parse_error(
+                            path,
+                            line_number,
+                            "'outgoing chmod' directive must not be empty",
+                        ));
+                    }
+
+                    let origin = ConfigDirectiveOrigin {
+                        path: canonical.clone(),
+                        line: line_number,
+                    };
+
+                    if let Some((existing, existing_origin)) = &global_outgoing_chmod {
+                        if existing != value {
+                            let existing_line = existing_origin.line;
+                            return Err(config_parse_error(
+                                path,
+                                line_number,
+                                format!(
+                                    "duplicate 'outgoing chmod' directive in global section (previously defined on line {existing_line})"
+                                ),
+                            ));
+                        }
+                    } else {
+                        global_outgoing_chmod = Some((value.to_string(), origin));
+                    }
+                }
                 "lock file" => {
                     let trimmed = value.trim();
                     if trimmed.is_empty() {
@@ -555,7 +688,16 @@ fn parse_config_modules_inner(
 
         if let Some(builder) = current {
             let default_secrets = global_secrets_file.as_ref().map(|(p, _)| p.as_path());
-            modules.push(builder.finish(path, default_secrets)?);
+            let default_incoming =
+                global_incoming_chmod.as_ref().map(|(value, _)| value.as_str());
+            let default_outgoing =
+                global_outgoing_chmod.as_ref().map(|(value, _)| value.as_str());
+            modules.push(builder.finish(
+                path,
+                default_secrets,
+                default_incoming,
+                default_outgoing,
+            )?);
         }
 
         Ok(ParsedConfigModules {
@@ -567,6 +709,8 @@ fn parse_config_modules_inner(
             lock_file,
             global_bandwidth_limit: global_bwlimit,
             global_secrets_file,
+            global_incoming_chmod,
+            global_outgoing_chmod,
         })
     })();
 
