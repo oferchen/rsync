@@ -1,4 +1,4 @@
-use rsync_engine::local_copy::DirMergeOptions;
+use oc_rsync_engine::local_copy::DirMergeOptions;
 
 /// Classifies a filter rule as inclusive or exclusive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

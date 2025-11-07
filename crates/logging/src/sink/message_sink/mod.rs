@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::line_mode::LineMode;
-use rsync_core::{branding::Brand, message::MessageScratch};
+use oc_rsync_core::{branding::Brand, message::MessageScratch};
 
-/// Streaming sink that renders [`rsync_core::message::Message`] values into an
+/// Streaming sink that renders [`oc_rsync_core::message::Message`] values into an
 /// [`std::io::Write`] target.
 ///
 /// The sink owns the underlying writer together with a reusable
@@ -18,8 +18,8 @@ use rsync_core::{branding::Brand, message::MessageScratch};
 /// Collect diagnostics into a [`Vec<u8>`] with newline terminators:
 ///
 /// ```
-/// use rsync_core::message::Message;
-/// use rsync_logging::MessageSink;
+/// use oc_rsync_core::message::Message;
+/// use oc_rsync_logging::MessageSink;
 ///
 /// let mut sink = MessageSink::new(Vec::new());
 ///
@@ -34,8 +34,8 @@ use rsync_core::{branding::Brand, message::MessageScratch};
 /// Render a message without appending a newline:
 ///
 /// ```
-/// use rsync_core::message::Message;
-/// use rsync_logging::{LineMode, MessageSink};
+/// use oc_rsync_core::message::Message;
+/// use oc_rsync_logging::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
 /// sink.write(Message::info("ready"))?;
@@ -47,13 +47,13 @@ use rsync_core::{branding::Brand, message::MessageScratch};
 /// Reuse an existing [`MessageScratch`] when constructing a new sink:
 ///
 /// ```
-/// use rsync_core::message::{Message, MessageScratch};
-/// use rsync_logging::{LineMode, MessageSink};
+/// use oc_rsync_core::message::{Message, MessageScratch};
+/// use oc_rsync_logging::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
 /// sink.write(Message::info("phase one"))?;
 /// let (writer, scratch, mode, brand) = sink.into_parts();
-/// assert_eq!(brand, rsync_core::branding::Brand::Upstream);
+/// assert_eq!(brand, oc_rsync_core::branding::Brand::Upstream);
 /// assert_eq!(mode, LineMode::WithoutNewline);
 ///
 /// let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);

@@ -4,7 +4,7 @@ use super::{
     types::{FilterParseError, ParsedFilterDirective},
 };
 use crate::local_copy::filter_program::ExcludeIfPresentRule;
-use rsync_filters::FilterRule;
+use oc_rsync_filters::FilterRule;
 use std::fmt;
 
 fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
@@ -130,7 +130,7 @@ fn apply_rule_modifiers(
 
     if modifiers.xattr_only {
         match rule.action() {
-            rsync_filters::FilterAction::Include | rsync_filters::FilterAction::Exclude => {
+            oc_rsync_filters::FilterAction::Include | oc_rsync_filters::FilterAction::Exclude => {
                 rule = rule
                     .with_xattr_only(true)
                     .with_sender(true)

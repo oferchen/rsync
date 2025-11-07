@@ -1,7 +1,7 @@
 use crate::binary::{BinaryHandshake, BinaryHandshakeParts};
 use crate::daemon::{LegacyDaemonHandshake, LegacyDaemonHandshakeParts};
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
-use rsync_protocol::NegotiationPrologueSniffer;
+use oc_rsync_protocol::NegotiationPrologueSniffer;
 use std::collections::TryReserveError;
 
 use super::SessionHandshakeParts;
@@ -22,8 +22,8 @@ impl<R> SessionHandshakeParts<R> {
     /// buffered handshake prefix.
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::negotiate_session;
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::negotiate_session;
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Clone, Debug)]

@@ -119,7 +119,7 @@ impl VersionInfoConfig {
     pub fn with_runtime_capabilities() -> Self {
         let mut config = Self::new();
         config.supports_socketpairs = socketpair_available();
-        config.supports_simd_roll = rsync_checksums::simd_acceleration_available();
+        config.supports_simd_roll = oc_rsync_checksums::simd_acceleration_available();
         config
     }
 }

@@ -32,11 +32,11 @@ impl RollingDigest {
     /// # Examples
     ///
     /// ```
-    /// use rsync_checksums::RollingDigest;
+    /// use oc_rsync_checksums::RollingDigest;
     ///
     /// let digest = RollingDigest::from_bytes(b"delta block");
     /// let manual = {
-    ///     let mut checksum = rsync_checksums::RollingChecksum::new();
+    ///     let mut checksum = oc_rsync_checksums::RollingChecksum::new();
     ///     checksum.update(b"delta block");
     ///     checksum.digest()
     /// };
@@ -66,7 +66,7 @@ impl RollingDigest {
     /// # Examples
     ///
     /// ```
-    /// use rsync_checksums::RollingDigest;
+    /// use oc_rsync_checksums::RollingDigest;
     /// use std::io::Cursor;
     ///
     /// let mut reader = Cursor::new(b"streamed input".to_vec());

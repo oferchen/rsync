@@ -8,7 +8,7 @@ fn resolve_iconv_setting_parses_explicit_spec() {
         resolve_iconv_setting(Some(OsStr::new("utf8,iso88591")), false).expect("parse iconv spec");
     assert_eq!(
         setting,
-        rsync_core::client::IconvSetting::Explicit {
+        oc_rsync_core::client::IconvSetting::Explicit {
             local: "utf8".to_string(),
             remote: Some("iso88591".to_string()),
         }

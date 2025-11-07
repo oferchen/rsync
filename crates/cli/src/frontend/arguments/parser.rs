@@ -9,7 +9,7 @@ use crate::frontend::execution::{
 };
 use crate::frontend::filter_rules::{collect_filter_arguments, locate_filter_arguments};
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
-use rsync_core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice};
+use oc_rsync_core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice};
 
 use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};
 

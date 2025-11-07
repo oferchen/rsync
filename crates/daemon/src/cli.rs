@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command as ProcessCommand, Stdio};
 
-use rsync_core::{
+use oc_rsync_core::{
     branding::{self, Brand},
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, FallbackOverride,
@@ -14,7 +14,7 @@ use rsync_core::{
     rsync_error,
     version::VersionInfoReport,
 };
-use rsync_logging::MessageSink;
+use oc_rsync_logging::MessageSink;
 
 use crate::{
     config::DaemonConfig,
@@ -27,7 +27,7 @@ use crate::{
 /// Runs the daemon CLI using the provided argument iterator and output handles.
 ///
 /// The function returns the process exit code that should be used by the caller.
-/// Diagnostics are rendered using the central [`rsync_core::message`] utilities.
+/// Diagnostics are rendered using the central [`oc_rsync_core::message`] utilities.
 #[allow(clippy::module_name_repetitions)]
 pub fn run<I, S, Out, Err>(arguments: I, stdout: &mut Out, stderr: &mut Err) -> i32
 where
@@ -270,7 +270,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsync_core::fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV};
+    use oc_rsync_core::fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV};
     use std::env;
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard, OnceLock};

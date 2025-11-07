@@ -55,7 +55,7 @@ impl RollingSliceError {
     /// # Examples
     ///
     /// ```
-    /// use rsync_checksums::{RollingDigest, RollingSliceError};
+    /// use oc_rsync_checksums::{RollingDigest, RollingSliceError};
     ///
     /// let err = RollingDigest::from_le_slice(&[], 0).unwrap_err();
     /// assert!(err.is_empty());

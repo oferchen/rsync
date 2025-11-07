@@ -1,5 +1,5 @@
 use crate::{branding, workspace};
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_protocol::ProtocolVersion;
 use std::string::String;
 
 const _: () = {

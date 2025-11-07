@@ -27,7 +27,7 @@
 //! example is marked `no_run` because it requires a reachable host.
 //!
 //! ```no_run
-//! use rsync_transport::ssh::SshCommand;
+//! use oc_rsync_transport::ssh::SshCommand;
 //! use std::io::{Read, Write};
 //!
 //! let mut command = SshCommand::new("files.example.com");

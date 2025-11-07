@@ -31,24 +31,24 @@ path = "src/bin/oc-rsyncd.rs"
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
 legacy-binaries = []
-sd-notify = ["rsync-daemon/sd-notify"]
-zstd = ["rsync-core/zstd"]
-lz4 = ["rsync-core/lz4"]
-acl = ["rsync-cli/acl", "rsync-core/acl"]
-xattr = ["rsync-cli/xattr", "rsync-core/xattr"]
-iconv = ["rsync-core/iconv"]
+sd-notify = ["oc-rsync-daemon/sd-notify"]
+zstd = ["oc-rsync-core/zstd"]
+lz4 = ["oc-rsync-core/lz4"]
+acl = ["oc-rsync-cli/acl", "oc-rsync-core/acl"]
+xattr = ["oc-rsync-cli/xattr", "oc-rsync-core/xattr"]
+iconv = ["oc-rsync-core/iconv"]
 
 [dependencies]
-rsync-cli = { path = "crates/cli" }
-rsync-daemon = { path = "crates/daemon" }
-rsync-core = { path = "crates/core" }
+oc-rsync-cli = { path = "crates/cli" }
+oc-rsync-daemon = { path = "crates/daemon" }
+oc-rsync-core = { path = "crates/core" }
 
 [dev-dependencies]
 assert_cmd = "2.0"
-rsync-core = { path = "crates/core" }
+oc-rsync-core = { path = "crates/core" }
 
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
-rsync-windows-gnu-eh = { path = "crates/windows-gnu-eh" }
+oc-rsync-windows-gnu-eh = { path = "crates/windows-gnu-eh" }
 
 [workspace]
 members = [

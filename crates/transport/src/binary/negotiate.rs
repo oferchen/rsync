@@ -1,7 +1,7 @@
 use crate::negotiation::{
     NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
-use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use oc_rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::cmp;
 use std::io::{self, Read, Write};
 

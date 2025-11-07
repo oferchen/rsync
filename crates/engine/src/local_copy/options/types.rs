@@ -3,10 +3,10 @@ use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use rsync_compress::algorithm::CompressionAlgorithm;
-use rsync_compress::zlib::CompressionLevel;
-use rsync_filters::FilterSet;
-use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
+use oc_rsync_compress::algorithm::CompressionAlgorithm;
+use oc_rsync_compress::zlib::CompressionLevel;
+use oc_rsync_filters::FilterSet;
+use oc_rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
 use crate::local_copy::filter_program::FilterProgram;
 use crate::local_copy::skip_compress::SkipCompressList;

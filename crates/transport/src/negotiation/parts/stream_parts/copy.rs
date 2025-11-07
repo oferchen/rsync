@@ -16,7 +16,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use oc_rsync_transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let parts = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
@@ -89,7 +89,7 @@ impl<R> NegotiatedStreamParts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use oc_rsync_transport::sniff_negotiation_stream;
     /// use std::io::{Cursor, IoSliceMut};
     ///
     /// let parts = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))

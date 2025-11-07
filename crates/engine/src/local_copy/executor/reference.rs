@@ -5,7 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::{CopyContext, LocalCopyError, ReferenceDirectoryKind};
-use rsync_meta::MetadataOptions;
+use oc_rsync_meta::MetadataOptions;
 
 use super::{CopyComparison, should_skip_copy};
 

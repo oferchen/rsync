@@ -1,7 +1,7 @@
 use std::collections::TryReserveError;
 use std::io::{self, IoSliceMut, Write};
 
-use rsync_protocol::LEGACY_DAEMON_PREFIX_LEN;
+use oc_rsync_protocol::LEGACY_DAEMON_PREFIX_LEN;
 
 use super::errors::BufferedCopyTooSmall;
 use super::slices::NegotiationBufferedSlices;

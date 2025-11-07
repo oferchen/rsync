@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use crate::client::{AddressMode, DeleteMode, HumanReadableMode, IconvSetting, TransferTimeout};
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_protocol::ProtocolVersion;
 
 /// Arguments used to spawn the legacy `rsync` binary when remote operands are present.
 ///

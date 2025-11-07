@@ -1,7 +1,7 @@
 use std::io::Write;
 
-use rsync_core::message::Message;
-use rsync_logging::MessageSink;
+use oc_rsync_core::message::Message;
+use oc_rsync_logging::MessageSink;
 
 use crate::frontend::write_message;
 

@@ -45,7 +45,7 @@ layout enforced by the workspace metadata.
   a writer reports a partial write. Unit tests cover the path normalisation,
   newline handling, and vectored-write fallback to guarantee parity for the
   current diagnostic surface.【F:crates/core/src/message.rs†L99-L209】【F:crates/core/src/message.rs†L569-L708】【F:crates/core/src/message.rs†L940-L1261】
-- **Streaming sinks** – `rsync_logging::MessageSink` wraps arbitrary writers,
+- **Streaming sinks** – `oc_rsync_logging::MessageSink` wraps arbitrary writers,
   reuses `MessageScratch` buffers, and exposes newline controls that mirror
   upstream logging behaviour. Batch helpers keep newline policy stable while
   emitting progress updates or mixed severities, with tests exercising

@@ -4,7 +4,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
 
-    let mut recorder = rsync_bandwidth::recorded_sleep_session();
+    let mut recorder = oc_rsync_bandwidth::recorded_sleep_session();
     recorder.clear();
 
     let port = allocate_test_port();

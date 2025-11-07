@@ -1,7 +1,7 @@
 use crate::binary::{BinaryHandshake, BinaryHandshakeParts};
 use crate::daemon::{LegacyDaemonHandshake, LegacyDaemonHandshakeParts};
 use crate::negotiation::NegotiatedStreamParts;
-use rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
+use oc_rsync_protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
 
 pub(super) type BinaryHandshakeComponents<R> = (
     u32,
@@ -55,8 +55,8 @@ impl<R> SessionHandshakeParts<R> {
     /// Rebuild a binary session from its components after wrapping the underlying transport:
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::{negotiate_session_parts, SessionHandshakeParts};
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::{negotiate_session_parts, SessionHandshakeParts};
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Clone, Debug)]
@@ -142,8 +142,8 @@ impl<R> SessionHandshakeParts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::{negotiate_session_parts, SessionHandshakeParts};
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::{negotiate_session_parts, SessionHandshakeParts};
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Clone, Debug)]
