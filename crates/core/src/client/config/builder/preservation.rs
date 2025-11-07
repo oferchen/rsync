@@ -27,6 +27,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables copying device contents as regular files.
+    #[must_use]
+    #[doc(alias = "--copy-devices")]
+    pub const fn copy_devices(mut self, copy_devices: bool) -> Self {
+        self.copy_devices = copy_devices;
+        self
+    }
+
     /// Preserves existing destination symlinks that refer to directories.
     #[must_use]
     #[doc(alias = "--keep-dirlinks")]

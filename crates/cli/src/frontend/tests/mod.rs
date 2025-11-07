@@ -262,6 +262,8 @@ mod remote_fallback_forwards_connection_tests;
 mod remote_fallback_forwards_debug_tests;
 #[path = "remote_fallback_forwards_delete.rs"]
 mod remote_fallback_forwards_delete_tests;
+#[path = "remote_fallback_forwards_devices.rs"]
+mod remote_fallback_forwards_devices_tests;
 #[path = "remote_fallback_forwards_double.rs"]
 mod remote_fallback_forwards_double_tests;
 #[path = "remote_fallback_forwards_existing.rs"]

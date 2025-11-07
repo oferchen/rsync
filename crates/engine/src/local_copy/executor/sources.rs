@@ -309,18 +309,27 @@ pub(crate) fn copy_sources(
                             record_path,
                         )?;
                     } else if is_device(&effective_type) {
-                        if !context.devices_enabled() {
+                        if context.copy_devices_as_files_enabled() {
+                            copy_file(
+                                context,
+                                source_path,
+                                &target,
+                                effective_metadata,
+                                record_path,
+                            )?;
+                        } else if !context.devices_enabled() {
                             context.record_skipped_non_regular(record_path);
                             continue;
+                        } else {
+                            copy_device(
+                                context,
+                                source_path,
+                                &target,
+                                effective_metadata,
+                                &metadata_options,
+                                record_path,
+                            )?;
                         }
-                        copy_device(
-                            context,
-                            source_path,
-                            &target,
-                            effective_metadata,
-                            &metadata_options,
-                            record_path,
-                        )?;
                     } else {
                         return Err(LocalCopyError::invalid_argument(
                             LocalCopyArgumentError::UnsupportedFileType,

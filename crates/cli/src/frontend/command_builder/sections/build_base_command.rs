@@ -391,6 +391,12 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .conflicts_with("no-devices"),
             )
             .arg(
+                Arg::new("copy-devices")
+                    .long("copy-devices")
+                    .help("Copy device files as regular files, transferring their contents.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("no-devices")
                     .long("no-devices")
                     .help("Disable device file preservation.")

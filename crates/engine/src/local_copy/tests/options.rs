@@ -460,6 +460,13 @@ fn local_copy_options_devices_round_trip() {
 }
 
 #[test]
+fn local_copy_options_copy_devices_round_trip() {
+    let options = LocalCopyOptions::default().copy_devices_as_files(true);
+    assert!(options.copy_devices_as_files_enabled());
+    assert!(!LocalCopyOptions::default().copy_devices_as_files_enabled());
+}
+
+#[test]
 fn local_copy_options_specials_round_trip() {
     let options = LocalCopyOptions::default().specials(true);
     assert!(options.specials_enabled());

@@ -120,6 +120,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Treats device nodes as regular files and copies their contents.
+    #[must_use]
+    #[doc(alias = "--copy-devices")]
+    pub const fn copy_devices_as_files(mut self, copy: bool) -> Self {
+        self.copy_devices_as_files = copy;
+        self
+    }
+
     /// Requests that special files such as FIFOs be copied.
     #[must_use]
     #[doc(alias = "--specials")]
@@ -230,6 +238,13 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn devices_enabled(&self) -> bool {
         self.devices
+    }
+
+    /// Returns whether device nodes should be copied as regular files.
+    #[must_use]
+    #[doc(alias = "--copy-devices")]
+    pub const fn copy_devices_as_files_enabled(&self) -> bool {
+        self.copy_devices_as_files
     }
 
     /// Reports whether copying of special files has been requested.

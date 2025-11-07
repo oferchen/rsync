@@ -67,6 +67,10 @@ impl<'a> CopyContext<'a> {
         self.options.devices_enabled()
     }
 
+    pub(super) fn copy_devices_as_files_enabled(&self) -> bool {
+        self.options.copy_devices_as_files_enabled()
+    }
+
     pub(super) fn specials_enabled(&self) -> bool {
         self.options.specials_enabled()
     }

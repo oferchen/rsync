@@ -56,6 +56,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) omit_dir_times: bool,
     pub(crate) omit_link_times: bool,
     pub(crate) devices: bool,
+    pub(crate) copy_devices: bool,
     pub(crate) specials: bool,
     pub(crate) checksum: bool,
     pub(crate) checksum_seed: Option<u32>,
@@ -163,6 +164,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .omit_dir_times(inputs.omit_dir_times)
         .omit_link_times(inputs.omit_link_times)
         .devices(inputs.devices)
+        .copy_devices(inputs.copy_devices)
         .specials(inputs.specials)
         .checksum(inputs.checksum)
         .checksum_seed(inputs.checksum_seed)

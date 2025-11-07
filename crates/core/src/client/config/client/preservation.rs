@@ -16,6 +16,13 @@ impl ClientConfig {
         self.copy_dirlinks
     }
 
+    /// Reports whether device nodes should be copied as regular files.
+    #[must_use]
+    #[doc(alias = "--copy-devices")]
+    pub const fn copy_devices(&self) -> bool {
+        self.copy_devices
+    }
+
     /// Reports whether unsafe links should be copied rather than dereferenced.
     #[must_use]
     #[doc(alias = "--copy-unsafe-links")]
