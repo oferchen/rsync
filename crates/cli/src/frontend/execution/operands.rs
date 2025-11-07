@@ -22,7 +22,7 @@ impl UnsupportedOption {
     pub(crate) fn to_message(&self) -> Message {
         let option = self.option.to_string_lossy();
         let text = format!(
-            "unsupported option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
+            "unknown option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
         );
         rsync_error!(1, text).with_role(Role::Client)
     }
@@ -30,7 +30,7 @@ impl UnsupportedOption {
     pub(crate) fn fallback_text(&self) -> String {
         let option = self.option.to_string_lossy();
         format!(
-            "unsupported option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
+            "unknown option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
         )
     }
 }
