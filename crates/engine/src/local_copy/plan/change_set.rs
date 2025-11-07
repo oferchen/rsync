@@ -1,4 +1,5 @@
 use std::fs;
+use std::time::SystemTime;
 
 use oc_rsync_meta::MetadataOptions;
 
@@ -277,13 +278,11 @@ fn determine_time_change(
             return Some(TimeChange::Modified);
         }
 
-        use filetime::FileTime;
+        let new_mtime = metadata_modified_time(metadata);
+        let old_mtime = existing.and_then(metadata_modified_time);
 
-        let new_mtime = FileTime::from_last_modification_time(metadata);
-        let old_mtime = existing.map(FileTime::from_last_modification_time);
-
-        match old_mtime {
-            Some(old_value) if old_value == new_mtime => None,
+        match (new_mtime, old_mtime) {
+            (Some(new_value), Some(old_value)) if new_value == old_value => None,
             _ => Some(TimeChange::Modified),
         }
     } else if wrote_data || !destination_previously_existed {
@@ -361,6 +360,10 @@ fn group_changed(
         (Some(_), None) => true,
         _ => false,
     }
+}
+
+fn metadata_modified_time(metadata: &fs::Metadata) -> Option<SystemTime> {
+    metadata.modified().ok()
 }
 
 #[cfg(unix)]
