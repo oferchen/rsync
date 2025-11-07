@@ -14,6 +14,7 @@ struct ModuleDefinitionBuilder {
     bandwidth_limit_set: bool,
     refuse_options: Option<Vec<String>>,
     read_only: Option<bool>,
+    write_only: Option<bool>,
     numeric_ids: Option<bool>,
     uid: Option<u32>,
     gid: Option<u32>,
@@ -41,6 +42,7 @@ impl ModuleDefinitionBuilder {
             bandwidth_limit_set: false,
             refuse_options: None,
             read_only: None,
+            write_only: None,
             numeric_ids: None,
             uid: None,
             gid: None,
@@ -251,6 +253,24 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_write_only(
+        &mut self,
+        write_only: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.write_only.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'write only' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.write_only = Some(write_only);
+        Ok(())
+    }
+
     fn set_numeric_ids(
         &mut self,
         numeric_ids: bool,
@@ -446,6 +466,7 @@ impl ModuleDefinitionBuilder {
             bandwidth_limit_configured: self.bandwidth_limit_set,
             refuse_options: self.refuse_options.unwrap_or_default(),
             read_only: self.read_only.unwrap_or(true),
+            write_only: self.write_only.unwrap_or(false),
             numeric_ids: self.numeric_ids.unwrap_or(false),
             uid: self.uid,
             gid: self.gid,

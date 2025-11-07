@@ -14,6 +14,7 @@ struct ModuleDefinition {
     bandwidth_limit_configured: bool,
     refuse_options: Vec<String>,
     read_only: bool,
+    write_only: bool,
     numeric_ids: bool,
     uid: Option<u32>,
     gid: Option<u32>,
@@ -108,6 +109,10 @@ impl ModuleDefinition {
 
     pub(super) fn read_only(&self) -> bool {
         self.read_only
+    }
+
+    pub(super) fn write_only(&self) -> bool {
+        self.write_only
     }
 
     pub(super) fn numeric_ids(&self) -> bool {
