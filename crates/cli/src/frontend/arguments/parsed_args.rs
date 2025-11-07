@@ -80,6 +80,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) keep_dirlinks: Option<bool>,
     pub(crate) safe_links: bool,
     pub(crate) devices: Option<bool>,
+    pub(crate) copy_devices: bool,
     pub(crate) specials: Option<bool>,
     pub(crate) relative: Option<bool>,
     pub(crate) one_file_system: Option<bool>,

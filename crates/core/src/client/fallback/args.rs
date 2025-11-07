@@ -139,6 +139,8 @@ pub struct RemoteFallbackArgs {
     pub sparse: Option<bool>,
     /// Optional `--devices`/`--no-devices` toggle.
     pub devices: Option<bool>,
+    /// Enables `--copy-devices` when `true`.
+    pub copy_devices: bool,
     /// Optional `--specials`/`--no-specials` toggle.
     pub specials: Option<bool>,
     /// Optional `--relative`/`--no-relative` toggle.

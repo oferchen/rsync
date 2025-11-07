@@ -264,6 +264,22 @@ fn builder_sets_copy_dirlinks() {
 }
 
 #[test]
+fn builder_sets_copy_devices_flag() {
+    let enabled = ClientConfig::builder()
+        .transfer_args([OsString::from("src"), OsString::from("dst")])
+        .copy_devices(true)
+        .build();
+
+    assert!(enabled.copy_devices());
+
+    let disabled = ClientConfig::builder()
+        .transfer_args([OsString::from("src"), OsString::from("dst")])
+        .build();
+
+    assert!(!disabled.copy_devices());
+}
+
+#[test]
 fn builder_sets_copy_unsafe_links() {
     let enabled = ClientConfig::builder()
         .transfer_args([OsString::from("src"), OsString::from("dst")])

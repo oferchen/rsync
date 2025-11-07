@@ -156,6 +156,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-keep-dirlinks  Disable --keep-dirlinks semantics.\n",
             "  -D              Equivalent to --devices --specials.\n",
             "      --devices   Preserve device files.\n",
+            "      --copy-devices  Copy device files as regular files.\n",
             "      --no-devices  Disable device file preservation.\n",
             "      --specials  Preserve special files such as FIFOs.\n",
             "      --no-specials  Disable preservation of special files.\n",

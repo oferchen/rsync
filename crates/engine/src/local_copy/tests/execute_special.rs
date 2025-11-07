@@ -201,6 +201,39 @@ fn execute_without_specials_records_skip_event() {
     }));
 }
 
+#[cfg(unix)]
+#[test]
+fn execute_copies_devices_as_regular_files_when_requested() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    let operands = vec![
+        OsString::from("/dev/zero"),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .copy_devices_as_files(true)
+                .permissions(true)
+                .times(true),
+        )
+        .expect("device copy succeeds");
+
+    let destination = dest_root.join("zero");
+    let metadata = fs::metadata(&destination).expect("destination metadata");
+    assert!(metadata.is_file());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o666);
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.devices_created(), 0);
+}
+
 #[test]
 fn execute_with_one_file_system_skips_mount_points() {
     let temp = tempdir().expect("tempdir");

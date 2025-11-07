@@ -323,6 +323,7 @@ where
         None
     };
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
+    let copy_devices = matches.get_flag("copy-devices");
     let devices = if matches.get_flag("devices") || matches.get_flag("archive-devices") {
         Some(true)
     } else if matches.get_flag("no-devices") {
@@ -608,6 +609,7 @@ where
         keep_dirlinks,
         safe_links,
         devices,
+        copy_devices,
         specials,
         relative,
         one_file_system,

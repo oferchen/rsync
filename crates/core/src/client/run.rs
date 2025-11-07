@@ -225,6 +225,7 @@ pub fn build_local_copy_options(
         .sparse(config.sparse())
         .copy_links(config.copy_links())
         .copy_dirlinks(config.copy_dirlinks())
+        .copy_devices_as_files(config.copy_devices())
         .copy_unsafe_links(config.copy_unsafe_links())
         .keep_dirlinks(config.keep_dirlinks())
         .safe_links(config.safe_links())

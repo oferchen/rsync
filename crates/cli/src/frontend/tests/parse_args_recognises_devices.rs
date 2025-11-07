@@ -23,3 +23,16 @@ fn parse_args_recognises_devices_flags() {
 
     assert_eq!(parsed.devices, Some(false));
 }
+
+#[test]
+fn parse_args_recognises_copy_devices_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--copy-devices"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(parsed.copy_devices);
+}
