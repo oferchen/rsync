@@ -8,56 +8,82 @@ use oc_rsync_core::rsync_error;
 
 use super::directive::{FilterDirective, MergeDirective};
 
+fn trim_short_rule_remainder(remainder: &str) -> &str {
+    let remainder = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+    if let Some(rest) = remainder.strip_prefix(',') {
+        return rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
+    }
+    remainder
+}
+
 fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
-    fn trim_remainder(remainder: &str) -> &str {
-        let remainder =
-            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-        if let Some(rest) = remainder.strip_prefix(',') {
-            return rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-        }
-        remainder
-    }
-
-    fn split_inner(text: &str) -> (&str, &str) {
-        if text.is_empty() {
-            return ("", "");
-        }
-
-        let mut end = 0usize;
-        let mut saw_separator = false;
-        for (idx, ch) in text.char_indices() {
-            if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
-                saw_separator = true;
-                break;
-            }
-            end = idx + ch.len_utf8();
-        }
-
-        if saw_separator {
-            let modifiers = &text[..end];
-            let remainder = trim_remainder(&text[end..]);
-            (modifiers, remainder)
-        } else {
-            ("", text)
-        }
-    }
-
     if text.is_empty() {
         return ("", "");
     }
 
     if let Some(rest) = text.strip_prefix(',') {
-        let (modifiers, remainder) = split_inner(rest);
+        let (modifiers, remainder) = split_short_rule_modifiers(rest);
         if modifiers.is_empty() {
-            ("", remainder)
-        } else {
-            (modifiers, remainder)
+            return ("", remainder);
         }
-    } else if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
-        ("", trim_remainder(text))
-    } else {
-        split_inner(text)
+        return (modifiers, remainder);
     }
+
+    if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
+        return ("", trim_short_rule_remainder(text));
+    }
+
+    for (idx, ch) in text.char_indices() {
+        if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
+            let modifiers = &text[..idx];
+            let remainder = trim_short_rule_remainder(&text[idx..]);
+            return (modifiers, remainder);
+        }
+    }
+
+    ("", text)
+}
+
+fn split_short_merge_modifiers(text: &str, allow_extended: bool) -> (&str, &str) {
+    if text.is_empty() {
+        return ("", "");
+    }
+
+    if let Some(rest) = text.strip_prefix(',') {
+        let (modifiers, remainder) = split_short_merge_modifiers(rest, allow_extended);
+        if modifiers.is_empty() {
+            return ("", remainder);
+        }
+        return (modifiers, remainder);
+    }
+
+    if matches!(text.chars().next(), Some(ch) if ch.is_ascii_whitespace() || ch == '_') {
+        return ("", trim_short_rule_remainder(text));
+    }
+
+    let mut end = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if ch == ',' || ch == '_' || ch.is_ascii_whitespace() {
+            let modifiers = &text[..end];
+            let remainder = trim_short_rule_remainder(&text[idx..]);
+            return (modifiers, remainder);
+        }
+
+        let lower = ch.to_ascii_lowercase();
+        let base_modifier = matches!(lower, '+' | '-' | 'c' | 'w' | 's' | 'r' | 'p' | '/');
+        let extended_modifier = matches!(lower, 'e' | 'n');
+
+        if base_modifier || (allow_extended && extended_modifier) {
+            end = idx + ch.len_utf8();
+            continue;
+        }
+
+        let modifiers = &text[..end];
+        let remainder = trim_short_rule_remainder(&text[idx..]);
+        return (modifiers, remainder);
+    }
+
+    (&text[..end], "")
 }
 
 #[derive(Default)]
@@ -204,7 +230,7 @@ fn parse_short_merge_directive(text: &str) -> Option<Result<FilterDirective, Mes
     };
 
     let remainder = chars.as_str();
-    let (modifiers, rest) = split_short_rule_modifiers(remainder);
+    let (modifiers, rest) = split_short_merge_modifiers(remainder, allow_extended);
     let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, text, allow_extended) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),

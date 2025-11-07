@@ -1,5 +1,5 @@
 use super::{
-    modifiers::{parse_merge_modifiers, split_short_rule_modifiers},
+    modifiers::{parse_merge_modifiers, split_short_merge_modifiers},
     types::{FilterParseError, ParsedFilterDirective},
 };
 use std::path::PathBuf;
@@ -78,7 +78,7 @@ pub(super) fn parse_short_merge_directive_line(
     };
 
     let remainder = chars.as_str();
-    let (modifiers, rest) = split_short_rule_modifiers(remainder);
+    let (modifiers, rest) = split_short_merge_modifiers(remainder, allow_extended);
     let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, allow_extended)?;
 
     let pattern = rest.trim();
