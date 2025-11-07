@@ -14,6 +14,8 @@
 //! funnelling branding details through this module we keep string literals out
 //! of business logic and make it trivial to update paths or names in one place.
 
+use std::sync::OnceLock;
+
 mod brand;
 mod constants;
 mod detection;
@@ -67,6 +69,15 @@ pub fn protocol_version() -> u32 {
 #[must_use]
 pub fn source_url() -> &'static str {
     manifest().source_url()
+}
+
+/// Returns the canonical `Source:` line rendered by user-facing banners.
+#[must_use]
+pub fn source_line() -> &'static str {
+    static SOURCE_LINE: OnceLock<String> = OnceLock::new();
+    SOURCE_LINE
+        .get_or_init(|| format!("Source: {}", manifest().source_url()))
+        .as_str()
 }
 
 /// Returns the sanitized build revision baked into the binaries.

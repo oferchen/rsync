@@ -1,4 +1,4 @@
-use oc_rsync_core::branding::{Brand, manifest};
+use oc_rsync_core::branding::{Brand, manifest, source_line};
 
 /// Renders the deterministic daemon help text for the supplied branding profile.
 pub(crate) fn help_text(brand: Brand) -> String {
@@ -9,7 +9,7 @@ pub(crate) fn help_text(brand: Brand) -> String {
     format!(
         concat!(
             "{program} {version}\n",
-            "{web_site}\n",
+            "{source_line}\n",
             "\n",
             "Usage: {program} [--help] [--version] [--delegate-system-rsync] [ARGS...]\n",
             "\n",
@@ -39,7 +39,7 @@ pub(crate) fn help_text(brand: Brand) -> String {
         ),
         program = program,
         version = manifest.rust_version(),
-        web_site = manifest.source_url(),
+        source_line = source_line(),
         default_config = default_config,
     )
 }
