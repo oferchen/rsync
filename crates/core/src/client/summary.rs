@@ -311,7 +311,9 @@ impl ClientEvent {
             LocalCopyAction::DeviceCopied => ClientEventKind::DeviceCopied,
             LocalCopyAction::DirectoryCreated => ClientEventKind::DirectoryCreated,
             LocalCopyAction::SkippedExisting => ClientEventKind::SkippedExisting,
-            LocalCopyAction::SkippedMissingDestination => ClientEventKind::SkippedMissingDestination,
+            LocalCopyAction::SkippedMissingDestination => {
+                ClientEventKind::SkippedMissingDestination
+            }
             LocalCopyAction::SkippedNewerDestination => ClientEventKind::SkippedNewerDestination,
             LocalCopyAction::SkippedNonRegular => ClientEventKind::SkippedNonRegular,
             LocalCopyAction::SkippedDirectory => ClientEventKind::SkippedDirectory,

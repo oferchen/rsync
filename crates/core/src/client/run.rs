@@ -213,6 +213,7 @@ pub fn build_local_copy_options(
         .ignore_existing(config.ignore_existing())
         .existing_only(config.existing_only())
         .ignore_missing_args(config.ignore_missing_args())
+        .delete_missing_args(config.delete_missing_args())
         .update(config.update())
         .with_modify_window(config.modify_window_duration())
         .with_filter_program(filter_program)

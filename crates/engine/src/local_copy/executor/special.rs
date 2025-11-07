@@ -614,7 +614,8 @@ pub(crate) fn copy_symlink(
 
     if context.existing_only_enabled() && destination_metadata.is_none() {
         if let Some(relative_path) = record_path.as_ref() {
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+            let metadata_snapshot =
+                LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
             context.record(LocalCopyRecord::new(
                 relative_path.clone(),
                 LocalCopyAction::SkippedMissingDestination,

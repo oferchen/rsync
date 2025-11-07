@@ -205,6 +205,34 @@ fn execute_with_ignore_missing_args_skips_absent_sources() {
 }
 
 #[test]
+fn execute_with_delete_missing_args_removes_destination_entries() {
+    let temp = tempdir().expect("tempdir");
+    let missing = temp.path().join("absent.txt");
+    let destination_root = temp.path().join("dest");
+    fs::create_dir_all(&destination_root).expect("create destination root");
+    let destination = destination_root.join("absent.txt");
+    fs::write(&destination, b"stale").expect("write destination");
+
+    let operands = vec![
+        missing.clone().into_os_string(),
+        destination_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .ignore_missing_args(true)
+                .delete_missing_args(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.items_deleted(), 1);
+    assert!(!destination.exists());
+}
+
+#[test]
 fn execute_with_existing_only_skips_missing_entries() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");

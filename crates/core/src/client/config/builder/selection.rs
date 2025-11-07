@@ -66,6 +66,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables deletion of destination entries for missing source arguments.
+    #[must_use]
+    #[doc(alias = "--delete-missing-args")]
+    pub const fn delete_missing_args(mut self, delete: bool) -> Self {
+        self.delete_missing_args = delete;
+        self
+    }
+
     /// Enables or disables preservation of newer destination files.
     #[must_use]
     #[doc(alias = "--update")]

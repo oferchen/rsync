@@ -65,6 +65,13 @@ impl ClientConfig {
         self.ignore_missing_args
     }
 
+    /// Returns whether destination entries should be removed for missing source arguments.
+    #[must_use]
+    #[doc(alias = "--delete-missing-args")]
+    pub const fn delete_missing_args(&self) -> bool {
+        self.delete_missing_args
+    }
+
     /// Reports whether files newer on the destination should be preserved.
     #[must_use]
     #[doc(alias = "--update")]

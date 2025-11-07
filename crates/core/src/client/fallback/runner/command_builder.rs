@@ -51,6 +51,7 @@ pub(crate) fn prepare_invocation(
         ignore_existing,
         existing,
         ignore_missing_args,
+        delete_missing_args,
         update,
         modify_window,
         compress,
@@ -233,6 +234,9 @@ pub(crate) fn prepare_invocation(
     }
     if ignore_missing_args {
         command_args.push(OsString::from("--ignore-missing-args"));
+    }
+    if delete_missing_args {
+        command_args.push(OsString::from("--delete-missing-args"));
     }
     if update {
         command_args.push(OsString::from("--update"));

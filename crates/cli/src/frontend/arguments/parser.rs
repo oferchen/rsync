@@ -117,7 +117,11 @@ where
     let delete_during_flag = matches.get_flag("delete-during");
     let delete_delay_flag = matches.get_flag("delete-delay");
     let delete_after_flag = matches.get_flag("delete-after");
-    let ignore_missing_args = matches.get_flag("ignore-missing-args");
+    let mut ignore_missing_args = matches.get_flag("ignore-missing-args");
+    let delete_missing_args = matches.get_flag("delete-missing-args");
+    if delete_missing_args {
+        ignore_missing_args = true;
+    }
     let delete_excluded = matches.get_flag("delete-excluded");
     let max_delete = matches.remove_one::<OsString>("max-delete");
     let min_size = matches.remove_one::<OsString>("min-size");
@@ -531,6 +535,7 @@ where
         dirs,
         delete_mode,
         delete_excluded,
+        delete_missing_args,
         backup,
         backup_dir,
         backup_suffix,

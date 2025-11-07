@@ -261,6 +261,10 @@ impl<'a> CopyContext<'a> {
         self.options.ignore_missing_args_enabled()
     }
 
+    pub(super) fn delete_missing_args_enabled(&self) -> bool {
+        self.options.delete_missing_args_enabled()
+    }
+
     pub(super) fn update_enabled(&self) -> bool {
         self.options.update_enabled()
     }
