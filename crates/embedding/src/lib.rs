@@ -174,7 +174,6 @@ impl fmt::Display for CommandError {
 impl Error for CommandError {}
 
 /// Executes the client entry point and captures its output.
-#[must_use]
 pub fn run_client<I, S>(args: I) -> Result<CommandOutput, CommandError>
 where
     I: IntoIterator<Item = S>,
@@ -184,7 +183,6 @@ where
 }
 
 /// Executes the client entry point using caller-provided writers.
-#[must_use]
 pub fn run_client_with<I, S, Out, Err>(
     args: I,
     stdout: &mut Out,
@@ -200,7 +198,6 @@ where
 }
 
 /// Executes the hidden server entry point (invoked via `--server`).
-#[must_use]
 pub fn run_server<I, S>(args: I) -> Result<CommandOutput, CommandError>
 where
     I: IntoIterator<Item = S>,
@@ -210,7 +207,6 @@ where
 }
 
 /// Executes the hidden server entry point using caller-provided writers.
-#[must_use]
 pub fn run_server_with<I, S, Out, Err>(
     args: I,
     stdout: &mut Out,
@@ -226,7 +222,6 @@ where
 }
 
 /// Executes the daemon CLI front-end and captures its output.
-#[must_use]
 pub fn run_daemon<I, S>(args: I) -> Result<CommandOutput, CommandError>
 where
     I: IntoIterator<Item = S>,
@@ -236,7 +231,6 @@ where
 }
 
 /// Executes the daemon CLI front-end using caller-provided writers.
-#[must_use]
 pub fn run_daemon_with<I, S, Out, Err>(
     args: I,
     stdout: &mut Out,
@@ -335,7 +329,7 @@ mod tests {
     #[test]
     fn run_client_matches_cli_output() {
         let args = [client_program_name(), "--version"];
-        let direct = cli_invocation(args.clone());
+        let direct = cli_invocation(args);
         let embedded = run_client(args).expect("--version succeeds");
 
         assert_eq!(embedded.stdout(), direct.stdout());
@@ -347,7 +341,7 @@ mod tests {
         let args = [oc_client_program_name(), "--help"];
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        run_client_with(args.clone(), &mut stdout, &mut stderr).expect("--help succeeds");
+        run_client_with(args, &mut stdout, &mut stderr).expect("--help succeeds");
 
         let direct = cli_invocation(args);
         assert_eq!(stdout, direct.stdout());
@@ -357,7 +351,7 @@ mod tests {
     #[test]
     fn run_client_reports_failure_status() {
         let args = [client_program_name(), "--definitely-invalid-flag"];
-        let error = run_client(args.clone()).expect_err("invalid flag should fail");
+        let error = run_client(args).expect_err("invalid flag should fail");
         assert_eq!(error.exit_status(), 1);
         assert!(
             !error.output().stderr().is_empty(),
@@ -376,7 +370,7 @@ mod tests {
         let args = [daemon_program_name(), "--help"];
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let direct_status = oc_rsync_daemon::run(args.clone(), &mut stdout, &mut stderr);
+        let direct_status = oc_rsync_daemon::run(args, &mut stdout, &mut stderr);
         assert_eq!(direct_status, 0);
         let direct = CommandOutput::new(stdout, stderr);
 
@@ -397,7 +391,7 @@ mod tests {
             ".",
             ".",
         ];
-        let error = run_server(args.clone()).expect_err("fallback disabled should fail");
+        let error = run_server(args).expect_err("fallback disabled should fail");
         assert_eq!(error.exit_status(), 1);
         assert!(
             !error.output().stderr().is_empty(),
