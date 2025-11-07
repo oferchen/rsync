@@ -1,49 +1,12 @@
 use super::{
     dir_merge::parse_dir_merge_directive,
     merge::{parse_merge_directive, parse_short_merge_directive_line},
+    modifiers::split_short_rule_modifiers,
     types::{FilterParseError, ParsedFilterDirective},
 };
 use crate::local_copy::filter_program::ExcludeIfPresentRule;
 use oc_rsync_filters::FilterRule;
 use std::fmt;
-
-fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
-    if text.is_empty() {
-        return ("", "");
-    }
-
-    if let Some(rest) = text.strip_prefix(',') {
-        let mut parts = rest.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
-        let modifiers = parts.next().unwrap_or("");
-        let remainder = parts.next().unwrap_or("");
-        let remainder =
-            remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-        return (modifiers, remainder);
-    }
-
-    let mut chars = text.chars();
-    match chars.next() {
-        None => ("", ""),
-        Some(first) if first.is_ascii_whitespace() || first == '_' => {
-            let remainder =
-                text.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-            ("", remainder)
-        }
-        Some(_) => {
-            let mut len = 0;
-            for ch in text.chars() {
-                if ch.is_ascii_whitespace() || ch == '_' {
-                    break;
-                }
-                len += ch.len_utf8();
-            }
-            let modifiers = &text[..len];
-            let remainder =
-                text[len..].trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-            (modifiers, remainder)
-        }
-    }
-}
 
 #[derive(Default)]
 struct RuleModifierState {
