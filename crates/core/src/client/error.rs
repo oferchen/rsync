@@ -1,7 +1,7 @@
 use crate::fallback::{CLIENT_FALLBACK_ENV, describe_missing_fallback_binary};
 use crate::message::{Message, Role};
 use crate::rsync_error;
-use rsync_engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
+use oc_rsync_engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;

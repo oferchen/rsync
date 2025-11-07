@@ -19,7 +19,7 @@ pub const BRAND: &str = env!("OC_RSYNC_WORKSPACE_BRAND");
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::brand(), workspace::metadata().brand());
 /// ```
@@ -41,7 +41,7 @@ pub const UPSTREAM_VERSION: &str = env!("OC_RSYNC_WORKSPACE_UPSTREAM_VERSION");
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::upstream_version(), workspace::metadata().upstream_version());
 /// ```
@@ -62,7 +62,7 @@ pub const RUST_VERSION: &str = env!("OC_RSYNC_WORKSPACE_RUST_VERSION");
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::rust_version(), workspace::metadata().rust_version());
 /// ```
@@ -83,7 +83,7 @@ pub const CLIENT_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_CLIENT_BIN");
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::client_program_name(), workspace::metadata().client_program_name());
 /// ```
@@ -101,7 +101,7 @@ pub const DAEMON_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_DAEMON_BIN");
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::daemon_program_name(), workspace::metadata().daemon_program_name());
 /// ```
@@ -119,7 +119,7 @@ pub const LEGACY_CLIENT_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_LEGACY_CLI
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::legacy_client_program_name(), workspace::metadata().legacy_client_program_name());
 /// ```
@@ -137,7 +137,7 @@ pub const LEGACY_DAEMON_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_LEGACY_DAE
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::legacy_daemon_program_name(), workspace::metadata().legacy_daemon_program_name());
 /// ```
@@ -178,7 +178,7 @@ pub const SOURCE_URL: &str = env!("OC_RSYNC_WORKSPACE_SOURCE");
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::source_url(), workspace::metadata().source_url());
 /// ```

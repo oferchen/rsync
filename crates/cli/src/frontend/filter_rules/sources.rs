@@ -3,9 +3,9 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 
-use rsync_core::client::{FilterRuleKind, FilterRuleSpec};
-use rsync_core::message::{Message, Role};
-use rsync_core::rsync_error;
+use oc_rsync_core::client::{FilterRuleKind, FilterRuleSpec};
+use oc_rsync_core::message::{Message, Role};
+use oc_rsync_core::rsync_error;
 
 pub(crate) fn append_filter_rules_from_files(
     destination: &mut Vec<FilterRuleSpec>,

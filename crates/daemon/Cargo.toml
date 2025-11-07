@@ -1,5 +1,5 @@
 [package]
-name = "rsync-daemon"
+name = "oc-rsync-daemon"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,19 +15,19 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = []
-sd-notify = ["dep:sd-notify", "rsync-core/sd-notify"]
+sd-notify = ["dep:sd-notify", "oc-rsync-core/sd-notify"]
 
 [dependencies]
 clap = { version = "4.5.49", features = ["std"] }
 base64 = "0.22"
 dns-lookup = "1.0"
-rsync-core = { path = "../core" }
-rsync-protocol = { path = "../protocol" }
-rsync-logging = { path = "../logging" }
-rsync-checksums = { path = "../checksums" }
+oc-rsync-core = { path = "../core" }
+oc-rsync-protocol = { path = "../protocol" }
+oc-rsync-logging = { path = "../logging" }
+oc-rsync-checksums = { path = "../checksums" }
 fs2 = "0.4"
 sd-notify = { version = "0.4.5", optional = true }
 
 [dev-dependencies]
 tempfile = "3.10"
-rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }
+oc-rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }

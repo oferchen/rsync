@@ -3,7 +3,7 @@
 #[cfg(any(feature = "acl", feature = "xattr"))]
 use std::path::Path;
 
-use rsync_meta::MetadataError;
+use oc_rsync_meta::MetadataError;
 
 use super::{FilterProgram, LocalCopyError};
 
@@ -11,9 +11,9 @@ use super::{FilterProgram, LocalCopyError};
 use super::LocalCopyExecution;
 
 #[cfg(feature = "acl")]
-use rsync_meta::sync_acls;
+use oc_rsync_meta::sync_acls;
 #[cfg(feature = "xattr")]
-use rsync_meta::sync_xattrs;
+use oc_rsync_meta::sync_xattrs;
 
 #[cfg(feature = "xattr")]
 pub(crate) fn sync_xattrs_if_requested(

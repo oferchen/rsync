@@ -10,11 +10,11 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::{env, io, process::ExitCode};
 
-use rsync_core::branding::Brand;
+use oc_rsync_core::branding::Brand;
 
 fn main() -> ExitCode {
     #[cfg(all(target_os = "windows", target_env = "gnu"))]
-    rsync_windows_gnu_eh::force_link();
+    oc_rsync_windows_gnu_eh::force_link();
 
     let mut stdout = io::stdout().lock();
     let mut stderr = io::stderr().lock();

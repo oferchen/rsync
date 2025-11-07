@@ -6,7 +6,7 @@ use std::{
     io::{self, BufRead, Cursor, IoSlice, IoSliceMut, Read, Write},
 };
 
-use rsync_protocol::{
+use oc_rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, NegotiationPrologue, NegotiationPrologueSniffer,
     ProtocolVersion,
 };

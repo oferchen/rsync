@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::test_env::{EnvGuard, ENV_LOCK};
-use rsync_core::branding::Brand;
-use rsync_core::fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV};
+use oc_rsync_core::branding::Brand;
+use oc_rsync_core::fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV};
 use std::ffi::{OsStr, OsString};
 
 #[test]

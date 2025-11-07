@@ -17,7 +17,7 @@
 //! Compress data incrementally and obtain the compressed length:
 //!
 //! ```
-//! use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
+//! use oc_rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 //! use std::io::Write;
 //!
 //! let mut encoder = CountingZlibEncoder::new(CompressionLevel::Default);
@@ -30,7 +30,7 @@
 //! [`CountingZlibDecoder`], and collect the decompressed output:
 //!
 //! ```
-//! use rsync_compress::zlib::{
+//! use oc_rsync_compress::zlib::{
 //!     compress_to_vec, CompressionLevel, CountingZlibDecoder, CountingZlibEncoder,
 //! };
 //! use std::io::Read;
@@ -53,7 +53,7 @@
 //! compressed length:
 //!
 //! ```
-//! use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
+//! use oc_rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 //! use std::io::Write;
 //!
 //! let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);

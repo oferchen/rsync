@@ -2,12 +2,12 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 
-use rsync_core::client::{
+use oc_rsync_core::client::{
     AddressMode, BindAddress, ModuleListOptions, ModuleListRequest, TransferTimeout,
     run_module_list_with_password_and_options,
 };
-use rsync_logging::MessageSink;
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_logging::MessageSink;
+use oc_rsync_protocol::ProtocolVersion;
 
 use crate::frontend::{
     execution::render_module_list, password::load_optional_password, write_message,

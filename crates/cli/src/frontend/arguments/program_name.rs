@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 
-use rsync_core::branding::{self, Brand};
+use oc_rsync_core::branding::{self, Brand};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProgramName {

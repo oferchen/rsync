@@ -1,5 +1,5 @@
 [package]
-name = "rsync-windows-gnu-eh"
+name = "oc-rsync-windows-gnu-eh"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

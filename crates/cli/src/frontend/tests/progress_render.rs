@@ -2,7 +2,7 @@ use super::*;
 use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
 };
-use rsync_core::client::{ClientConfig, ClientSummary, HumanReadableMode, run_client};
+use oc_rsync_core::client::{ClientConfig, ClientSummary, HumanReadableMode, run_client};
 use tempfile::TempDir;
 
 fn create_sample_summary() -> (ClientSummary, TempDir) {

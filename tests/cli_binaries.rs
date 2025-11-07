@@ -1,4 +1,4 @@
-use rsync_core::version::{
+use oc_rsync_core::version::{
     DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_PROGRAM_NAME, PROGRAM_NAME,
 };
 use std::collections::BTreeSet;

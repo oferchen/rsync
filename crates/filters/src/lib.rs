@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_filters` provides ordered include/exclude/protect pattern evaluation for the
+//! `oc_rsync_filters` provides ordered include/exclude/protect pattern evaluation for the
 //! Rust `rsync` workspace. The implementation focuses on reproducing the
 //! subset of rsync's filter grammar that governs `--include`/`--exclude`
 //! handling for local filesystem transfers. Patterns honour anchored matches
@@ -53,7 +53,7 @@
 //! re-including a tracked directory:
 //!
 //! ```
-//! use rsync_filters::{FilterRule, FilterSet};
+//! use oc_rsync_filters::{FilterRule, FilterSet};
 //! use std::path::Path;
 //!
 //! let rules = [
@@ -70,7 +70,7 @@
 //!
 //! # See also
 //!
-//! - `rsync_engine::local_copy` integrates [`FilterSet`] to prune directory
+//! - `oc_rsync_engine::local_copy` integrates [`FilterSet`] to prune directory
 //!   traversals during deterministic local copies.
 //! - [`globset`] for the glob matching primitives used internally.
 

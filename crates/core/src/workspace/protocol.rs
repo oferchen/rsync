@@ -18,7 +18,7 @@ pub const PROTOCOL_VERSION: u32 = parse_u32(env!("OC_RSYNC_WORKSPACE_PROTOCOL"))
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(
 ///     workspace::protocol_version_u8() as u32,
@@ -44,7 +44,7 @@ pub const fn protocol_version_u8() -> u8 {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::workspace;
+/// use oc_rsync_core::workspace;
 ///
 /// assert_eq!(workspace::protocol_version_nonzero_u8().get(), 32);
 /// ```

@@ -3,7 +3,7 @@ use crate::daemon::negotiate_legacy_daemon_session_from_stream;
 use crate::negotiation::{
     NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
-use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use oc_rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::io::{self, Read, Write};
 
 use super::super::parts::SessionHandshakeParts;
@@ -146,8 +146,8 @@ where
 /// # Examples
 ///
 /// ```
-/// use rsync_protocol::ProtocolVersion;
-/// use rsync_transport::{
+/// use oc_rsync_protocol::ProtocolVersion;
+/// use oc_rsync_transport::{
 ///     negotiate_session_parts_from_stream, sniff_negotiation_stream, SessionHandshakeParts,
 /// };
 /// use std::io::{self, Cursor, Read, Write};

@@ -128,7 +128,7 @@ impl From<BufferedPrefixTooSmall> for io::Error {
 ///
 /// ```
 /// use std::str::FromStr;
-/// use rsync_protocol::{NegotiationPrologue, ParseNegotiationPrologueError};
+/// use oc_rsync_protocol::{NegotiationPrologue, ParseNegotiationPrologueError};
 ///
 /// let legacy = NegotiationPrologue::from_str(" legacy-ascii ")?;
 /// assert!(legacy.is_legacy());

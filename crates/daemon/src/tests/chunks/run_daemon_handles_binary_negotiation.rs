@@ -1,6 +1,6 @@
 #[test]
 fn run_daemon_handles_binary_negotiation() {
-    use rsync_protocol::{BorrowedMessageFrames, MessageCode};
+    use oc_rsync_protocol::{BorrowedMessageFrames, MessageCode};
 
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));

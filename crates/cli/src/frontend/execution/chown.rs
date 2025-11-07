@@ -2,7 +2,7 @@ use std::ffi::{OsStr, OsString};
 
 use crate::platform::{gid_t, uid_t};
 
-use rsync_core::{
+use oc_rsync_core::{
     message::{Message, Role},
     rsync_error,
 };

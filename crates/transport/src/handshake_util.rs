@@ -8,7 +8,7 @@
 //! drift between handshake wrappers and ensures that tests exercising one code
 //! path also validate the other.
 
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_protocol::ProtocolVersion;
 use std::fmt;
 
 /// Classification of the protocol version advertised by a remote peer.
@@ -72,8 +72,8 @@ impl RemoteProtocolAdvertisement {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::RemoteProtocolAdvertisement;
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::RemoteProtocolAdvertisement;
     ///
     /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
     /// assert_eq!(supported.clamped(), None);
@@ -114,8 +114,8 @@ impl RemoteProtocolAdvertisement {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::RemoteProtocolAdvertisement;
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::RemoteProtocolAdvertisement;
     ///
     /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
     /// assert!(!supported.was_clamped());
@@ -141,8 +141,8 @@ impl RemoteProtocolAdvertisement {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::RemoteProtocolAdvertisement;
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::RemoteProtocolAdvertisement;
     ///
     /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::from_supported(31).unwrap());
     /// assert_eq!(supported.advertised(), 31);
@@ -175,8 +175,8 @@ impl RemoteProtocolAdvertisement {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::RemoteProtocolAdvertisement;
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::RemoteProtocolAdvertisement;
     ///
     /// let supported = RemoteProtocolAdvertisement::Supported(
     ///     ProtocolVersion::from_supported(30).unwrap()
@@ -212,8 +212,8 @@ impl From<RemoteProtocolAdvertisement> for ProtocolVersion {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::RemoteProtocolAdvertisement;
+    /// use oc_rsync_protocol::ProtocolVersion;
+    /// use oc_rsync_transport::RemoteProtocolAdvertisement;
     ///
     /// let supported = RemoteProtocolAdvertisement::Supported(ProtocolVersion::V31);
     /// let negotiated: ProtocolVersion = supported.into();
@@ -281,8 +281,8 @@ pub(crate) const fn remote_advertisement_was_clamped(advertised: u32) -> bool {
 /// `rsync --protocol=29` against a newer daemon.
 ///
 /// ```
-/// use rsync_protocol::ProtocolVersion;
-/// use rsync_transport::local_cap_reduced_protocol;
+/// use oc_rsync_protocol::ProtocolVersion;
+/// use oc_rsync_transport::local_cap_reduced_protocol;
 ///
 /// let remote = ProtocolVersion::from_supported(31).unwrap();
 /// let negotiated = ProtocolVersion::from_supported(29).unwrap();

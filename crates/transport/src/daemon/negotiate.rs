@@ -2,7 +2,7 @@ use super::types::LegacyDaemonHandshake;
 use crate::negotiation::{
     NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
-use rsync_protocol::{
+use oc_rsync_protocol::{
     LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
     NegotiationPrologueSniffer, ProtocolVersion,
 };

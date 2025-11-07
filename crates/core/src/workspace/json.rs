@@ -32,7 +32,7 @@ fn render_metadata_json(pretty: bool) -> String {
 /// serialisation logic.
 ///
 /// ```
-/// let json = rsync_core::workspace::metadata_json();
+/// let json = oc_rsync_core::workspace::metadata_json();
 /// assert!(json.contains("\"brand\":\"oc\""));
 /// assert!(json.contains("\"rust_version\":\"3.4.1-rust\""));
 /// ```
@@ -50,7 +50,7 @@ pub fn metadata_json() -> &'static str {
 /// consume the data directly.
 ///
 /// ```
-/// let json = rsync_core::workspace::metadata_json_pretty();
+/// let json = oc_rsync_core::workspace::metadata_json_pretty();
 /// assert!(json.lines().any(|line| line.contains("\"daemon_program_name\"")));
 /// ```
 #[must_use]

@@ -2,9 +2,9 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;
 
-use rsync_core::{message::Role, rsync_error};
-use rsync_logging::MessageSink;
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_core::{message::Role, rsync_error};
+use oc_rsync_logging::MessageSink;
+use oc_rsync_protocol::ProtocolVersion;
 
 use super::messages::fail_with_message;
 

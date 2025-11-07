@@ -6,8 +6,8 @@ use std::process::ExitCode;
 /// Runs the shared client entry point for every branded executable.
 ///
 /// Both branded binaries—the upstream-compatible client exposed as
-/// `rsync_core::version::PROGRAM_NAME` and the oc-branded wrapper
-/// published as `rsync_core::version::OC_PROGRAM_NAME`—call into this
+/// `oc_rsync_core::version::PROGRAM_NAME` and the oc-branded wrapper
+/// published as `oc_rsync_core::version::OC_PROGRAM_NAME`—call into this
 /// helper. Centralising the logic keeps tests, packaging, and telemetry
 /// focused on a single execution path. The helper forwards its arguments
 /// and I/O handles to the CLI crate and normalises the returned status via
@@ -24,15 +24,15 @@ where
         args,
         stdout,
         stderr,
-        rsync_cli::run,
-        rsync_cli::exit_code_from,
+        oc_rsync_cli::run,
+        oc_rsync_cli::exit_code_from,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::run_with;
-    use rsync_core::version::{OC_PROGRAM_NAME, PROGRAM_NAME};
+    use oc_rsync_core::version::{OC_PROGRAM_NAME, PROGRAM_NAME};
     use std::ffi::OsString;
     use std::process::ExitCode;
 

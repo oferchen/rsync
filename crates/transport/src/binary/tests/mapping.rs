@@ -1,5 +1,5 @@
 use super::helpers::{InstrumentedTransport, MemoryTransport, handshake_bytes};
-use rsync_protocol::ProtocolVersion;
+use oc_rsync_protocol::ProtocolVersion;
 use std::io::{self, Write};
 
 #[test]

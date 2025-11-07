@@ -1,5 +1,5 @@
-use rsync_protocol::ProtocolVersion;
-use rsync_transport::{
+use oc_rsync_protocol::ProtocolVersion;
+use oc_rsync_transport::{
     BufferedCopyTooSmall, NegotiatedStreamParts, SessionHandshakeParts, local_cap_reduced_protocol,
 };
 use std::io::Cursor;

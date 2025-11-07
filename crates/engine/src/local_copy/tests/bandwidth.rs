@@ -1,7 +1,7 @@
 
 #[test]
 fn execute_with_bandwidth_limit_records_sleep() {
-    let mut recorder = rsync_bandwidth::recorded_sleep_session();
+    let mut recorder = oc_rsync_bandwidth::recorded_sleep_session();
     recorder.clear();
 
     let temp = tempdir().expect("tempdir");
@@ -115,7 +115,7 @@ fn bandwidth_limiter_preserves_buffer_for_fast_rates() {
 
 #[test]
 fn execute_without_bandwidth_limit_does_not_sleep() {
-    let mut recorder = rsync_bandwidth::recorded_sleep_session();
+    let mut recorder = oc_rsync_bandwidth::recorded_sleep_session();
     recorder.clear();
 
     let temp = tempdir().expect("tempdir");
@@ -196,7 +196,7 @@ fn execute_records_transmitted_bytes_for_uncompressed_copy() {
 
 #[test]
 fn execute_with_compression_limits_post_compress_bandwidth() {
-    let mut recorder = rsync_bandwidth::recorded_sleep_session();
+    let mut recorder = oc_rsync_bandwidth::recorded_sleep_session();
     recorder.clear();
 
     let temp = tempdir().expect("tempdir");

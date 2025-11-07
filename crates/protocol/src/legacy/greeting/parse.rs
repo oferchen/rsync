@@ -28,13 +28,13 @@ pub fn parse_legacy_daemon_greeting(line: &str) -> Result<ProtocolVersion, Negot
 /// # Examples
 ///
 /// ```
-/// use rsync_protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
+/// use oc_rsync_protocol::{parse_legacy_daemon_greeting_owned, ProtocolVersion};
 ///
 /// let owned = parse_legacy_daemon_greeting_owned("@RSYNCD: 29\n")?;
 /// assert_eq!(owned.protocol(), ProtocolVersion::from_supported(29).unwrap());
 /// assert_eq!(owned.advertised_protocol(), 29);
 /// assert!(!owned.has_subprotocol());
-/// # Ok::<_, rsync_protocol::NegotiationError>(())
+/// # Ok::<_, oc_rsync_protocol::NegotiationError>(())
 /// ```
 #[doc(alias = "@RSYNCD")]
 #[must_use = "legacy daemon greeting parsing errors must be handled"]

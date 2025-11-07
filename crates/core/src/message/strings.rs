@@ -37,19 +37,19 @@
 //! Look up an exit code and render the canonical warning message.
 //!
 //! ```
-//! use rsync_core::message::strings::exit_code_message;
+//! use oc_rsync_core::message::strings::exit_code_message;
 //!
 //! let template = exit_code_message(24).expect("exit code 24 is known");
 //! let rendered = template
 //!     .to_message()
-//!     .with_role(rsync_core::message::Role::Receiver)
+//!     .with_role(oc_rsync_core::message::Role::Receiver)
 //!     .to_string();
 //!
 //! assert!(rendered.contains("rsync warning: some files vanished"));
 //! assert!(rendered.contains("(code 24)"));
 //! assert!(rendered.contains(&format!(
 //!     "[receiver={}]",
-//!     rsync_core::version::RUST_VERSION
+//!     oc_rsync_core::version::RUST_VERSION
 //! )));
 //! ```
 //!
@@ -57,7 +57,7 @@
 //! [`ExitCodeMessage::to_message`].
 //!
 //! ```
-//! use rsync_core::message::{strings::exit_code_message, Message, Severity};
+//! use oc_rsync_core::message::{strings::exit_code_message, Message, Severity};
 //!
 //! let template = exit_code_message(23).expect("exit code 23 is known");
 //! let message: Message = template.into();
@@ -70,8 +70,8 @@
 //! [`ExitCodeMessage`].
 //!
 //! ```
-//! use rsync_core::message::strings::exit_code_severity;
-//! use rsync_core::message::Severity;
+//! use oc_rsync_core::message::strings::exit_code_severity;
+//! use oc_rsync_core::message::Severity;
 //!
 //! assert_eq!(exit_code_severity(24), Some(Severity::Warning));
 //! assert_eq!(exit_code_severity(23), Some(Severity::Error));
@@ -189,13 +189,13 @@ fn message_from_template(template: ExitCodeMessage) -> Message {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::message::strings::exit_code_message;
+/// use oc_rsync_core::message::strings::exit_code_message;
 ///
 /// let template = exit_code_message(35).expect("code 35 is mapped");
 /// assert_eq!(template.code(), 35);
 ///
 /// // `exit_code_message` is a `const fn`, so lookups can happen at compile time.
-/// const REMOTE_SHELL_FAILURE: Option<rsync_core::message::strings::ExitCodeMessage> =
+/// const REMOTE_SHELL_FAILURE: Option<oc_rsync_core::message::strings::ExitCodeMessage> =
 ///     exit_code_message(124);
 /// assert!(REMOTE_SHELL_FAILURE.is_some());
 /// ```
@@ -232,8 +232,8 @@ pub const fn exit_code_message(code: i32) -> Option<ExitCodeMessage> {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::message::strings::exit_code_severity;
-/// use rsync_core::message::Severity;
+/// use oc_rsync_core::message::strings::exit_code_severity;
+/// use oc_rsync_core::message::Severity;
 ///
 /// assert_eq!(exit_code_severity(24), Some(Severity::Warning));
 /// assert_eq!(exit_code_severity(23), Some(Severity::Error));
@@ -257,7 +257,7 @@ pub const fn exit_code_severity(code: i32) -> Option<Severity> {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::message::strings::exit_code_messages;
+/// use oc_rsync_core::message::strings::exit_code_messages;
 ///
 /// let templates = exit_code_messages();
 /// assert!(templates.iter().any(|entry| entry.code() == 24));
