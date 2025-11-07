@@ -4,6 +4,7 @@ mod errors;
 mod listing;
 mod parsing;
 mod request;
+mod socket_options;
 mod types;
 
 pub use listing::{
@@ -26,3 +27,5 @@ pub(super) use connect::{
 };
 #[allow(unused_imports)]
 pub(super) use errors::map_daemon_handshake_error;
+#[cfg(test)]
+pub(crate) use socket_options::apply_socket_options;

@@ -11,6 +11,7 @@ use oc_rsync_protocol::ProtocolVersion;
 /// native protocol engine is completed. Higher level consumers such as the CLI build
 /// this structure from parsed flags before handing control to
 /// [`crate::client::fallback::run_remote_transfer_fallback`].
+#[derive(Clone)]
 pub struct RemoteFallbackArgs {
     /// Enables `--dry-run`.
     pub dry_run: bool,
@@ -27,6 +28,10 @@ pub struct RemoteFallbackArgs {
     pub port: Option<u16>,
     /// Optional bind address forwarded via `--address`.
     pub bind_address: Option<OsString>,
+    /// Optional socket options forwarded via `--sockopts`.
+    pub sockopts: Option<OsString>,
+    /// Optional `--blocking-io`/`--no-blocking-io` toggle.
+    pub blocking_io: Option<bool>,
     /// Controls whether remote shell arguments are protected from expansion.
     ///
     /// When `Some(true)` the fallback command receives `--protect-args`,

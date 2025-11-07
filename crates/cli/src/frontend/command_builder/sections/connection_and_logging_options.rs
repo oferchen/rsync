@@ -21,6 +21,29 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("sockopts")
+                .long("sockopts")
+                .value_name("OPTIONS")
+                .help("Set additional socket options (comma-separated list).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("blocking-io")
+                .long("blocking-io")
+                .help("Force the remote shell to use blocking I/O.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("no-blocking-io"),
+        )
+        .arg(
+            Arg::new("no-blocking-io")
+                .long("no-blocking-io")
+                .help("Disable forced blocking I/O on the remote shell.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("blocking-io"),
+        )
+        .arg(
             Arg::new("compress")
                 .long("compress")
                 .short('z')

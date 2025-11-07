@@ -94,6 +94,28 @@ fn module_list_options_records_bind_address() {
 }
 
 #[test]
+fn module_list_options_retains_sockopts() {
+    let options = ModuleListOptions::default()
+        .with_sockopts(Some(OsString::from("SO_SNDBUF=16384")));
+    assert_eq!(
+        options.sockopts(),
+        Some(std::ffi::OsStr::new("SO_SNDBUF=16384"))
+    );
+
+    let default_options = ModuleListOptions::default();
+    assert!(default_options.sockopts().is_none());
+}
+
+#[test]
+fn module_list_options_tracks_blocking_preference() {
+    let options = ModuleListOptions::default().with_blocking_io(Some(false));
+    assert_eq!(options.blocking_io(), Some(false));
+
+    let default_options = ModuleListOptions::default();
+    assert!(default_options.blocking_io().is_none());
+}
+
+#[test]
 fn resolve_daemon_addresses_filters_ipv4_mode() {
     let address = DaemonAddress::new(String::from("127.0.0.1"), 873).expect("address");
     let addresses =
