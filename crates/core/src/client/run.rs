@@ -162,6 +162,7 @@ pub fn build_local_copy_options(
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {
     let mut options = LocalCopyOptions::default();
+    options = options.recursive(config.recursive());
     if config.delete_mode().is_enabled() || config.delete_excluded() {
         options = options.delete(true);
     }
@@ -226,6 +227,7 @@ pub fn build_local_copy_options(
         .devices(config.preserve_devices())
         .specials(config.preserve_specials())
         .relative_paths(config.relative_paths())
+        .dirs(config.dirs())
         .implied_dirs(config.implied_dirs())
         .mkpath(config.mkpath())
         .prune_empty_dirs(config.prune_empty_dirs())

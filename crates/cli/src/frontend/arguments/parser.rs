@@ -91,7 +91,27 @@ where
     };
     let bind_address_raw = matches.remove_one::<OsString>("address");
     let archive = matches.get_flag("archive");
-    let recursive = archive || matches.get_flag("recursive");
+    let recursive_override = if matches.get_flag("no-recursive") {
+        Some(false)
+    } else if matches.get_flag("recursive") {
+        Some(true)
+    } else {
+        None
+    };
+    let recursive = if recursive_override == Some(false) {
+        false
+    } else if archive {
+        true
+    } else {
+        recursive_override.unwrap_or(false)
+    };
+    let dirs = if matches.get_flag("no-dirs") {
+        Some(false)
+    } else if matches.get_flag("dirs") {
+        Some(true)
+    } else {
+        None
+    };
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
     let delete_during_flag = matches.get_flag("delete-during");
@@ -506,6 +526,8 @@ where
         bind_address: bind_address_raw,
         archive,
         recursive,
+        recursive_override,
+        dirs,
         delete_mode,
         delete_excluded,
         backup,

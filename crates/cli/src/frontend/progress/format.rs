@@ -384,6 +384,7 @@ pub(crate) fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
         ClientEventKind::DirectoryCreated => "directory",
         ClientEventKind::SkippedExisting => "skipped existing file",
         ClientEventKind::SkippedNonRegular => "skipped non-regular file",
+        ClientEventKind::SkippedDirectory => "skipped directory (no recursion)",
         ClientEventKind::SkippedUnsafeSymlink => "skipped unsafe symlink",
         ClientEventKind::SkippedMountPoint => "skipped mount point",
         ClientEventKind::SkippedNewerDestination => "skipped newer destination file",

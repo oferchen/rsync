@@ -21,6 +21,8 @@ pub enum LocalCopyAction {
     SkippedNewerDestination,
     /// A non-regular file was skipped because support was disabled.
     SkippedNonRegular,
+    /// A directory was skipped because recursion was disabled.
+    SkippedDirectory,
     /// A symbolic link was skipped because it was deemed unsafe by `--safe-links`.
     SkippedUnsafeSymlink,
     /// A directory was skipped because it resides on a different filesystem.

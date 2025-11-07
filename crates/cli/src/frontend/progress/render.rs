@@ -385,6 +385,14 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 )?;
                 continue;
             }
+            ClientEventKind::SkippedDirectory => {
+                writeln!(
+                    stdout,
+                    "skipping directory \"{}\" (no recursion)",
+                    event.relative_path().display()
+                )?;
+                continue;
+            }
             ClientEventKind::SkippedUnsafeSymlink => {
                 let mut rendered = format!(
                     "ignoring unsafe symlink \"{}\"",

@@ -25,6 +25,8 @@ pub(crate) struct ParsedArgs {
     pub(crate) bind_address: Option<OsString>,
     pub(crate) archive: bool,
     pub(crate) recursive: bool,
+    pub(crate) recursive_override: Option<bool>,
+    pub(crate) dirs: Option<bool>,
     pub(crate) delete_mode: DeleteMode,
     pub(crate) delete_excluded: bool,
     pub(crate) backup: bool,

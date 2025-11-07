@@ -37,6 +37,10 @@ pub struct RemoteFallbackArgs {
     pub human_readable: Option<HumanReadableMode>,
     /// Enables archive mode (`-a`).
     pub archive: bool,
+    /// Controls recursive traversal (`--recursive`/`--no-recursive`).
+    pub recursive: Option<bool>,
+    /// Controls directory handling when recursion is disabled (`--dirs`/`--no-dirs`).
+    pub dirs: Option<bool>,
     /// Enables `--delete`.
     pub delete: bool,
     /// Selects the deletion timing to forward to the fallback binary.

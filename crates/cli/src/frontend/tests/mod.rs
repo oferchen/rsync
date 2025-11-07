@@ -298,6 +298,8 @@ mod remote_fallback_forwards_preallocate_tests;
 mod remote_fallback_forwards_protect_tests;
 #[path = "remote_fallback_forwards_prune.rs"]
 mod remote_fallback_forwards_prune_tests;
+#[path = "remote_fallback_forwards_recursive.rs"]
+mod remote_fallback_forwards_recursive_tests;
 #[path = "remote_fallback_forwards_reference.rs"]
 mod remote_fallback_forwards_reference_tests;
 #[path = "remote_fallback_forwards_remote.rs"]

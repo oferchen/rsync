@@ -12,6 +12,19 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
+        if let Some(path) = relative {
+            self.record(LocalCopyRecord::new(
+                path.to_path_buf(),
+                LocalCopyAction::SkippedDirectory,
+                0,
+                None,
+                Duration::default(),
+                None,
+            ));
+        }
+    }
+
     pub(super) fn record_skipped_mount_point(&mut self, relative: Option<&Path>) {
         if let Some(path) = relative {
             self.record(LocalCopyRecord::new(

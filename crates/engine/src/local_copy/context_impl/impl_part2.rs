@@ -78,6 +78,14 @@ impl<'a> CopyContext<'a> {
         self.options.relative_paths_enabled()
     }
 
+    pub(super) fn recursive_enabled(&self) -> bool {
+        self.options.recursive_enabled()
+    }
+
+    pub(super) fn dirs_enabled(&self) -> bool {
+        self.options.dirs_enabled()
+    }
+
     pub(super) fn implied_dirs_enabled(&self) -> bool {
         self.options.implied_dirs_enabled()
     }
