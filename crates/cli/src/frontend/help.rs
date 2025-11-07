@@ -104,6 +104,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --progress   Show progress information during transfers.\n",
             "      --no-progress  Disable progress reporting.\n",
             "      --msgs2stderr  Route informational messages to standard error.\n",
+            "      --outbuf=N|L|B  Set stdout buffering to None, Line, or Block.\n",
             "  -i, --itemize-changes  Output a change summary for each updated entry.\n",
             "      --out-format=FORMAT  Customise transfer output using FORMAT.\n",
             "      --stats      Output transfer statistics after completion.\n",

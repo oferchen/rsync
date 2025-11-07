@@ -83,10 +83,12 @@ use std::io::{self, Write};
 mod arguments;
 mod command_builder;
 mod execution;
+mod outbuf;
 
 #[cfg(test)]
 pub(crate) use command_builder::clap_command;
 use execution::execute;
+use outbuf::{OutbufAdapter, parse_outbuf_mode};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use rsync_core::client::*;
@@ -231,7 +233,39 @@ where
 
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);
     match parse_args(args) {
-        Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
+        Ok(parsed) => {
+            let outbuf_mode = match parsed.outbuf.as_ref() {
+                Some(value) => match parse_outbuf_mode(value.as_os_str()) {
+                    Ok(mode) => Some(mode),
+                    Err(message) => {
+                        if write_message(&message, &mut stderr_sink).is_err() {
+                            let _ = writeln!(stderr_sink.writer_mut(), "{message}");
+                        }
+                        return 1;
+                    }
+                },
+                None => None,
+            };
+
+            match outbuf_mode {
+                Some(mode) => {
+                    let mut adapter = OutbufAdapter::new(stdout, mode);
+                    let exit_code = execute(parsed, &mut adapter, &mut stderr_sink);
+                    if let Err(error) = adapter.flush() {
+                        let message =
+                            rsync_error!(1, "failed to flush stdout: {error}", error = error)
+                                .with_role(Role::Client);
+                        if write_message(&message, &mut stderr_sink).is_err() {
+                            let _ = writeln!(stderr_sink.writer_mut(), "{message}");
+                        }
+                        1
+                    } else {
+                        exit_code
+                    }
+                }
+                None => execute(parsed, stdout, &mut stderr_sink),
+            }
+        }
         Err(error) => {
             let mut message = rsync_error!(1, "{}", error);
             message = message.with_role(Role::Client);

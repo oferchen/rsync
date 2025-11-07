@@ -40,6 +40,14 @@ pub(crate) fn section_01(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("outbuf")
+                    .long("outbuf")
+                    .value_name("MODE")
+                    .help("Set stdout buffering to MODE (accepts N, L, or B).")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("itemize-changes")
                     .long("itemize-changes")
                     .short('i')

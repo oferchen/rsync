@@ -96,6 +96,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) append: Option<bool>,
     pub(crate) append_verify: bool,
     pub(crate) msgs_to_stderr: bool,
+    pub(crate) outbuf: Option<OsString>,
     pub(crate) itemize_changes: bool,
     pub(crate) whole_file: Option<bool>,
     pub(crate) excludes: Vec<OsString>,
