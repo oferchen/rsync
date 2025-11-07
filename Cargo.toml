@@ -57,6 +57,7 @@ members = [
     "crates/checksums",
     "crates/core",
     "crates/daemon",
+    "crates/embedding",
     "crates/engine",
     "crates/filters",
     "crates/logging",

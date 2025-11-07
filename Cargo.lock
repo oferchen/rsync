@@ -742,6 +742,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oc-rsync-embedding"
+version = "3.4.1-rust"
+dependencies = [
+ "oc-rsync-cli",
+ "oc-rsync-core",
+ "oc-rsync-daemon",
+]
+
+[[package]]
 name = "oc-rsync-engine"
 version = "3.4.1-rust"
 dependencies = [
