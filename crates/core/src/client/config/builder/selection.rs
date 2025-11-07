@@ -50,6 +50,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables skipping creation of new destination entries.
+    #[must_use]
+    #[doc(alias = "--existing")]
+    pub const fn existing_only(mut self, existing_only: bool) -> Self {
+        self.existing_only = existing_only;
+        self
+    }
+
     /// Enables or disables ignoring missing source arguments.
     #[must_use]
     #[doc(alias = "--ignore-missing-args")]

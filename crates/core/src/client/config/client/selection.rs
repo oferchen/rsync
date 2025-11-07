@@ -51,6 +51,13 @@ impl ClientConfig {
         self.ignore_existing
     }
 
+    /// Returns whether new destination entries should be skipped.
+    #[must_use]
+    #[doc(alias = "--existing")]
+    pub const fn existing_only(&self) -> bool {
+        self.existing_only
+    }
+
     /// Returns whether missing source arguments should be ignored.
     #[must_use]
     #[doc(alias = "--ignore-missing-args")]

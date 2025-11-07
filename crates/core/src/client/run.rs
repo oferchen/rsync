@@ -211,6 +211,7 @@ pub fn build_local_copy_options(
         .with_checksum_algorithm(config.checksum_signature_algorithm())
         .size_only(config.size_only())
         .ignore_existing(config.ignore_existing())
+        .existing_only(config.existing_only())
         .ignore_missing_args(config.ignore_missing_args())
         .update(config.update())
         .with_modify_window(config.modify_window_duration())

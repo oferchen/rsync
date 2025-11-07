@@ -11,6 +11,7 @@ pub struct LocalCopySummary {
     regular_files_total: u64,
     regular_files_matched: u64,
     regular_files_ignored_existing: u64,
+    regular_files_skipped_missing: u64,
     regular_files_skipped_newer: u64,
     directories_total: u64,
     symlinks_total: u64,
@@ -68,6 +69,12 @@ impl LocalCopySummary {
     #[must_use]
     pub const fn regular_files_skipped_newer(&self) -> u64 {
         self.regular_files_skipped_newer
+    }
+
+    /// Returns the number of regular files skipped because the destination was absent and `--existing` was set.
+    #[must_use]
+    pub const fn regular_files_skipped_missing(&self) -> u64 {
+        self.regular_files_skipped_missing
     }
 
     /// Returns the number of directories created during the transfer.
@@ -246,6 +253,10 @@ impl LocalCopySummary {
 
     pub(in crate::local_copy) fn record_regular_file_ignored_existing(&mut self) {
         self.regular_files_ignored_existing = self.regular_files_ignored_existing.saturating_add(1);
+    }
+
+    pub(in crate::local_copy) fn record_regular_file_skipped_missing(&mut self) {
+        self.regular_files_skipped_missing = self.regular_files_skipped_missing.saturating_add(1);
     }
 
     pub(in crate::local_copy) fn record_regular_file_skipped_newer(&mut self) {

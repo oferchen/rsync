@@ -499,6 +499,7 @@ where
         .map(|values| values.collect())
         .unwrap_or_default();
     let ignore_existing = matches.get_flag("ignore-existing");
+    let existing = matches.get_flag("existing");
     let update = matches.get_flag("update");
     let password_file = matches.remove_one::<OsString>("password-file");
     let protocol = matches.remove_one::<OsString>("protocol");
@@ -539,6 +540,7 @@ where
         checksum_seed,
         size_only,
         ignore_existing,
+        existing,
         ignore_missing_args,
         update,
         remainder,

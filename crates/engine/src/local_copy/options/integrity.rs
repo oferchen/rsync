@@ -37,6 +37,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that new destination entries be skipped when missing.
+    #[must_use]
+    #[doc(alias = "--existing")]
+    pub const fn existing_only(mut self, existing: bool) -> Self {
+        self.existing_only = existing;
+        self
+    }
+
     /// Requests that missing source arguments be ignored instead of causing an error.
     #[must_use]
     #[doc(alias = "--ignore-missing-args")]
@@ -91,6 +99,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn ignore_existing_enabled(&self) -> bool {
         self.ignore_existing
+    }
+
+    /// Reports whether missing destination entries should be skipped.
+    #[must_use]
+    pub const fn existing_only_enabled(&self) -> bool {
+        self.existing_only
     }
 
     /// Reports whether missing source arguments should be ignored.

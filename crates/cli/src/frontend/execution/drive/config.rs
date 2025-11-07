@@ -57,6 +57,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) checksum_seed: Option<u32>,
     pub(crate) size_only: bool,
     pub(crate) ignore_existing: bool,
+    pub(crate) existing_only: bool,
     pub(crate) ignore_missing_args: bool,
     pub(crate) update: bool,
     pub(crate) numeric_ids: bool,
@@ -158,6 +159,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .checksum_seed(inputs.checksum_seed)
         .size_only(inputs.size_only)
         .ignore_existing(inputs.ignore_existing)
+        .existing_only(inputs.existing_only)
         .ignore_missing_args(inputs.ignore_missing_args)
         .update(inputs.update)
         .numeric_ids(inputs.numeric_ids)

@@ -44,6 +44,32 @@ pub(crate) fn copy_fifo(
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_fifo_total();
+    if context.existing_only_enabled() {
+        match fs::symlink_metadata(destination) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if let Some(path) = &record_path {
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                    context.record(LocalCopyRecord::new(
+                        path.clone(),
+                        LocalCopyAction::SkippedMissingDestination,
+                        0,
+                        Some(metadata_snapshot.len()),
+                        Duration::default(),
+                        Some(metadata_snapshot),
+                    ));
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+    }
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -264,6 +290,32 @@ pub(crate) fn copy_device(
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_device_total();
+    if context.existing_only_enabled() {
+        match fs::symlink_metadata(destination) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if let Some(path) = &record_path {
+                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                    context.record(LocalCopyRecord::new(
+                        path.clone(),
+                        LocalCopyAction::SkippedMissingDestination,
+                        0,
+                        Some(metadata_snapshot.len()),
+                        Duration::default(),
+                        Some(metadata_snapshot),
+                    ));
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect existing destination",
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+    }
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
@@ -547,6 +599,33 @@ pub(crate) fn copy_symlink(
     context.summary_mut().record_symlink_total();
     let target = fs::read_link(source)
         .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
+
+    let destination_metadata = match fs::symlink_metadata(destination) {
+        Ok(existing) => Some(existing),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    };
+
+    if context.existing_only_enabled() && destination_metadata.is_none() {
+        if let Some(relative_path) = record_path.as_ref() {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+            context.record(LocalCopyRecord::new(
+                relative_path.clone(),
+                LocalCopyAction::SkippedMissingDestination,
+                0,
+                Some(metadata_snapshot.len()),
+                Duration::default(),
+                Some(metadata_snapshot),
+            ));
+        }
+        return Ok(());
+    }
 
     let safety_relative = relative
         .map(Path::to_path_buf)
