@@ -153,6 +153,7 @@ fn handle_legacy_session(
     } = params;
     let mut reader = BufReader::new(stream);
     let mut limiter = BandwidthLimitComponents::new(daemon_limit, daemon_burst).into_limiter();
+    let messages = LegacyMessageCache::new();
 
     let greeting = legacy_daemon_greeting();
     write_limited(reader.get_mut(), &mut limiter, greeting.as_bytes())?;
@@ -164,8 +165,7 @@ fn handle_legacy_session(
     while let Some(line) = read_trimmed_line(&mut reader)? {
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(_)) => {
-                let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok);
-                write_limited(reader.get_mut(), &mut limiter, ok.as_bytes())?;
+                messages.write_ok(reader.get_mut(), &mut limiter)?;
                 reader.get_mut().flush()?;
                 continue;
             }
@@ -194,7 +194,7 @@ fn handle_legacy_session(
 
     let request = request.unwrap_or_default();
 
-    advertise_capabilities(reader.get_mut(), modules)?;
+    advertise_capabilities(reader.get_mut(), modules, &messages)?;
 
     if request == "#list" {
         if let Some(log) = log_sink.as_ref() {
@@ -207,6 +207,7 @@ fn handle_legacy_session(
             motd_lines,
             peer_addr.ip(),
             reverse_lookup,
+            &messages,
         )?;
     } else if request.is_empty() {
         write_limited(
@@ -215,8 +216,7 @@ fn handle_legacy_session(
             HANDSHAKE_ERROR_PAYLOAD.as_bytes(),
         )?;
         write_limited(reader.get_mut(), &mut limiter, b"\n")?;
-        let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit);
-        write_limited(reader.get_mut(), &mut limiter, exit.as_bytes())?;
+        messages.write_exit(reader.get_mut(), &mut limiter)?;
         reader.get_mut().flush()?;
     } else {
         respond_with_module_request(
@@ -229,6 +229,7 @@ fn handle_legacy_session(
             &refused_options,
             log_sink.as_ref(),
             reverse_lookup,
+            &messages,
         )?;
     }
 

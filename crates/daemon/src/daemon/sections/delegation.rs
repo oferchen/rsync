@@ -181,9 +181,13 @@ fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     Ok(Some(line))
 }
 
-fn advertise_capabilities(stream: &mut TcpStream, modules: &[ModuleRuntime]) -> io::Result<()> {
+fn advertise_capabilities(
+    stream: &mut TcpStream,
+    modules: &[ModuleRuntime],
+    messages: &LegacyMessageCache,
+) -> io::Result<()> {
     for payload in advertised_capability_lines(modules) {
-        let message = format_legacy_daemon_message(LegacyDaemonMessage::Capabilities {
+        let message = messages.render(LegacyDaemonMessage::Capabilities {
             flags: payload.as_str(),
         });
         stream.write_all(message.as_bytes())?;
