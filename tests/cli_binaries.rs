@@ -1,5 +1,6 @@
 use oc_rsync_core::version::{
-    DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_PROGRAM_NAME, PROGRAM_NAME,
+    DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_DAEMON_WRAPPER_PROGRAM_NAME, OC_PROGRAM_NAME,
+    PROGRAM_NAME,
 };
 use std::collections::BTreeSet;
 use std::env;
@@ -8,7 +9,11 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 
 const CLIENT_BINARIES: &[&str] = &[PROGRAM_NAME, OC_PROGRAM_NAME];
-const DAEMON_BINARIES: &[&str] = &[DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME];
+const DAEMON_BINARIES: &[&str] = &[
+    DAEMON_PROGRAM_NAME,
+    OC_DAEMON_PROGRAM_NAME,
+    OC_DAEMON_WRAPPER_PROGRAM_NAME,
+];
 
 fn binary_output(name: &str, args: &[&str]) -> Output {
     let mut command = binary_command(name);

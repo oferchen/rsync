@@ -1,8 +1,8 @@
 use super::constants::{
     BRAND, CLIENT_PROGRAM_NAME, DAEMON_CONFIG_DIR, DAEMON_CONFIG_PATH, DAEMON_PROGRAM_NAME,
-    DAEMON_SECRETS_PATH, LEGACY_CLIENT_PROGRAM_NAME, LEGACY_DAEMON_CONFIG_DIR,
-    LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_DAEMON_SECRETS_PATH,
-    RUST_VERSION, SOURCE_URL, UPSTREAM_VERSION, WEB_SITE,
+    DAEMON_SECRETS_PATH, DAEMON_WRAPPER_PROGRAM_NAME, LEGACY_CLIENT_PROGRAM_NAME,
+    LEGACY_DAEMON_CONFIG_DIR, LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_PROGRAM_NAME,
+    LEGACY_DAEMON_SECRETS_PATH, RUST_VERSION, SOURCE_URL, UPSTREAM_VERSION, WEB_SITE,
 };
 use super::protocol::PROTOCOL_VERSION;
 use serde::Serialize;
@@ -16,6 +16,7 @@ pub struct Metadata {
     protocol_version: u32,
     client_program_name: &'static str,
     daemon_program_name: &'static str,
+    daemon_wrapper_program_name: &'static str,
     legacy_client_program_name: &'static str,
     legacy_daemon_program_name: &'static str,
     daemon_config_dir: &'static str,
@@ -63,6 +64,12 @@ impl Metadata {
     #[must_use]
     pub const fn daemon_program_name(self) -> &'static str {
         self.daemon_program_name
+    }
+
+    /// Returns the compatibility wrapper name installed alongside the daemon.
+    #[must_use]
+    pub const fn daemon_wrapper_program_name(self) -> &'static str {
+        self.daemon_wrapper_program_name
     }
 
     /// Returns the upstream-compatible client program name used for symlinks.
@@ -133,6 +140,7 @@ const WORKSPACE_METADATA: Metadata = Metadata {
     protocol_version: PROTOCOL_VERSION,
     client_program_name: CLIENT_PROGRAM_NAME,
     daemon_program_name: DAEMON_PROGRAM_NAME,
+    daemon_wrapper_program_name: DAEMON_WRAPPER_PROGRAM_NAME,
     legacy_client_program_name: LEGACY_CLIENT_PROGRAM_NAME,
     legacy_daemon_program_name: LEGACY_DAEMON_PROGRAM_NAME,
     daemon_config_dir: DAEMON_CONFIG_DIR,

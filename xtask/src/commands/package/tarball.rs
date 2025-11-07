@@ -2,6 +2,7 @@ use crate::error::{TaskError, TaskResult};
 use crate::workspace::WorkspaceBranding;
 use flate2::Compression;
 use flate2::write::GzEncoder;
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -335,6 +336,7 @@ pub(super) fn build_tarball(
         ),
     ];
 
+    let mut seen_destinations = BTreeSet::new();
     for (name, relative, include) in &binaries {
         if !include {
             continue;
@@ -344,6 +346,9 @@ pub(super) fn build_tarball(
         let path = target_dir.join(&file_name);
         ensure_tarball_source(&path)?;
         let destination = format!("{root_name}/{relative}");
+        if !seen_destinations.insert(destination.clone()) {
+            continue;
+        }
         append_file_entry(&mut builder, &destination, &path, 0o755)?;
     }
 
@@ -461,7 +466,8 @@ mod tests {
             rust_version: String::from("3.4.1-rust"),
             protocol: 32,
             client_bin: String::from("oc-rsync"),
-            daemon_bin: String::from("oc-rsyncd"),
+            daemon_bin: String::from("oc-rsync"),
+            daemon_wrapper_bin: String::from("oc-rsyncd"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
             daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),

@@ -19,8 +19,11 @@ pub const DAEMON_PROGRAM_NAME: &str = branding::UPSTREAM_DAEMON_PROGRAM_NAME;
 /// Program name used by the standalone `oc-rsync` client wrapper.
 pub const OC_PROGRAM_NAME: &str = branding::OC_CLIENT_PROGRAM_NAME;
 
-/// Program name used by the standalone `oc-rsyncd` daemon wrapper.
+/// Program name used by the single-binary daemon entrypoint (`oc-rsync --daemon`).
 pub const OC_DAEMON_PROGRAM_NAME: &str = branding::OC_DAEMON_PROGRAM_NAME;
+
+/// Compatibility wrapper name used when shipping the optional `oc-rsyncd` helper.
+pub const OC_DAEMON_WRAPPER_PROGRAM_NAME: &str = branding::OC_DAEMON_WRAPPER_PROGRAM_NAME;
 
 /// First copyright year advertised by the Rust implementation.
 pub const COPYRIGHT_START_YEAR: &str = "2025";

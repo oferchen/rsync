@@ -93,7 +93,7 @@ pub const fn client_program_name() -> &'static str {
 }
 
 /// Canonical daemon binary name shipped with the distribution.
-#[doc(alias = "oc-rsyncd")]
+#[doc(alias = "oc-rsync")]
 pub const DAEMON_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_DAEMON_BIN");
 
 /// Returns the canonical daemon binary name shipped with the distribution.
@@ -108,6 +108,16 @@ pub const DAEMON_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_DAEMON_BIN");
 #[must_use]
 pub const fn daemon_program_name() -> &'static str {
     DAEMON_PROGRAM_NAME
+}
+
+/// Optional compatibility wrapper name installed alongside the canonical daemon binary.
+#[doc(alias = "oc-rsyncd")]
+pub const DAEMON_WRAPPER_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_DAEMON_WRAPPER_BIN");
+
+/// Returns the compatibility wrapper name installed alongside the canonical daemon binary.
+#[must_use]
+pub const fn daemon_wrapper_program_name() -> &'static str {
+    DAEMON_WRAPPER_PROGRAM_NAME
 }
 
 /// Upstream-compatible client binary name used for compatibility symlinks.

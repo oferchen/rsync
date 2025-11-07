@@ -121,7 +121,7 @@ fn version_info_report_with_daemon_brand_updates_banner() {
     let report = VersionInfoReport::new(VersionInfoConfig::default()).with_daemon_brand(Brand::Oc);
     let banner = report.metadata().standard_banner();
 
-    assert!(banner.starts_with("oc-rsyncd  version"));
+    assert!(banner.starts_with("oc-rsync  version"));
 }
 
 #[test]

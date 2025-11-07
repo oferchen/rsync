@@ -19,11 +19,12 @@ mod protocol;
 
 pub use constants::{
     BRAND, CLIENT_PROGRAM_NAME, DAEMON_CONFIG_DIR, DAEMON_CONFIG_PATH, DAEMON_PROGRAM_NAME,
-    DAEMON_SECRETS_PATH, LEGACY_CLIENT_PROGRAM_NAME, LEGACY_DAEMON_CONFIG_DIR,
-    LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_DAEMON_SECRETS_PATH,
-    RUST_VERSION, SOURCE_URL, UPSTREAM_VERSION, WEB_SITE, brand, client_program_name,
-    daemon_program_name, legacy_client_program_name, legacy_daemon_program_name, rust_version,
-    source_url, upstream_version, web_site,
+    DAEMON_SECRETS_PATH, DAEMON_WRAPPER_PROGRAM_NAME, LEGACY_CLIENT_PROGRAM_NAME,
+    LEGACY_DAEMON_CONFIG_DIR, LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_PROGRAM_NAME,
+    LEGACY_DAEMON_SECRETS_PATH, RUST_VERSION, SOURCE_URL, UPSTREAM_VERSION, WEB_SITE, brand,
+    client_program_name, daemon_program_name, daemon_wrapper_program_name,
+    legacy_client_program_name, legacy_daemon_program_name, rust_version, source_url,
+    upstream_version, web_site,
 };
 pub use json::{metadata_json, metadata_json_pretty};
 pub use metadata::{Metadata, metadata};
