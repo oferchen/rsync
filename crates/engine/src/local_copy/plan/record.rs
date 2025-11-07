@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::{LocalCopyAction, LocalCopyMetadata, LocalCopyProgress};
+use super::{LocalCopyAction, LocalCopyChangeSet, LocalCopyMetadata, LocalCopyProgress};
 
 /// Record describing a single filesystem action performed during local copy execution.
 #[derive(Clone, Debug)]
@@ -13,6 +13,7 @@ pub struct LocalCopyRecord {
     elapsed: Duration,
     metadata: Option<LocalCopyMetadata>,
     created: bool,
+    change_set: LocalCopyChangeSet,
 }
 
 impl LocalCopyRecord {
@@ -33,6 +34,7 @@ impl LocalCopyRecord {
             elapsed,
             metadata,
             created: false,
+            change_set: LocalCopyChangeSet::new(),
         }
     }
 
@@ -83,6 +85,19 @@ impl LocalCopyRecord {
     #[must_use]
     pub const fn was_created(&self) -> bool {
         self.created
+    }
+
+    /// Returns the change flags associated with this record.
+    #[must_use]
+    pub const fn change_set(&self) -> LocalCopyChangeSet {
+        self.change_set
+    }
+
+    /// Associates a change-set with the record.
+    #[must_use]
+    pub(in crate::local_copy) fn with_change_set(mut self, change_set: LocalCopyChangeSet) -> Self {
+        self.change_set = change_set;
+        self
     }
 }
 
