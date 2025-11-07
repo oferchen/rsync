@@ -70,6 +70,11 @@ mod sys {
     #![allow(unsafe_code)]
     #![allow(non_camel_case_types)]
 
+    use std::ffi::CString;
+    use std::io;
+    use std::mem;
+    use std::sync::OnceLock;
+
     #[cfg(test)]
     use libc::ssize_t;
     use libc::{c_char, c_int, c_void, mode_t};
@@ -84,18 +89,190 @@ mod sys {
 
     pub const ACL_FIRST_ENTRY: c_int = 0;
 
-    unsafe extern "C" {
-        pub fn acl_get_file(path_p: *const c_char, ty: acl_type_t) -> acl_t;
-        pub fn acl_set_file(path_p: *const c_char, ty: acl_type_t, acl: acl_t) -> c_int;
-        pub fn acl_dup(acl: acl_t) -> acl_t;
-        pub fn acl_free(obj_p: *mut c_void) -> c_int;
-        pub fn acl_from_mode(mode: mode_t) -> acl_t;
-        pub fn acl_delete_def_file(path_p: *const c_char) -> c_int;
-        pub fn acl_get_entry(acl: acl_t, entry_id: c_int, entry_p: *mut acl_entry_t) -> c_int;
+    struct LibAcl {
+        _handle: *mut c_void,
+        acl_get_file: unsafe extern "C" fn(*const c_char, acl_type_t) -> acl_t,
+        acl_set_file: unsafe extern "C" fn(*const c_char, acl_type_t, acl_t) -> c_int,
+        acl_dup: unsafe extern "C" fn(acl_t) -> acl_t,
+        acl_free: unsafe extern "C" fn(*mut c_void) -> c_int,
+        acl_from_mode: unsafe extern "C" fn(mode_t) -> acl_t,
+        acl_delete_def_file: unsafe extern "C" fn(*const c_char) -> c_int,
+        acl_get_entry: unsafe extern "C" fn(acl_t, c_int, *mut acl_entry_t) -> c_int,
         #[cfg(test)]
-        pub fn acl_to_text(acl: acl_t, len_p: *mut ssize_t) -> *mut c_char;
+        acl_to_text: unsafe extern "C" fn(acl_t, *mut ssize_t) -> *mut c_char,
         #[cfg(test)]
-        pub fn acl_from_text(buf_p: *const c_char) -> acl_t;
+        acl_from_text: unsafe extern "C" fn(*const c_char) -> acl_t,
+    }
+
+    unsafe impl Sync for LibAcl {}
+
+    static LIBACL: OnceLock<LibAcl> = OnceLock::new();
+
+    fn not_supported_error() -> io::Error {
+        #[allow(clippy::unnecessary_cast)]
+        let code = libc::ENOTSUP as i32;
+        // Ensure `io::Error::last_os_error()` observes the same errno.
+        unsafe {
+            libc::set_errno(libc::Errno(code));
+        }
+        io::Error::from_raw_os_error(code)
+    }
+
+    fn library() -> io::Result<&'static LibAcl> {
+        LIBACL.get_or_try_init(load_libacl)
+    }
+
+    fn load_libacl() -> io::Result<LibAcl> {
+        let mut last_error = not_supported_error();
+        for name in ["libacl.so.1", "libacl.so"] {
+            match unsafe { open_library(name) } {
+                Ok(lib) => return Ok(lib),
+                Err(error) => last_error = error,
+            }
+        }
+        Err(last_error)
+    }
+
+    unsafe fn open_library(name: &str) -> io::Result<LibAcl> {
+        let c_name = CString::new(name).expect("library name");
+        let handle = libc::dlopen(c_name.as_ptr(), libc::RTLD_NOW);
+        if handle.is_null() {
+            return Err(not_supported_error());
+        }
+        match LibAcl::from_handle(handle) {
+            Ok(lib) => Ok(lib),
+            Err(error) => {
+                libc::dlclose(handle);
+                Err(error)
+            }
+        }
+    }
+
+    impl LibAcl {
+        unsafe fn from_handle(handle: *mut c_void) -> io::Result<Self> {
+            Ok(Self {
+                _handle: handle,
+                acl_get_file: load_symbol(handle, "acl_get_file")?,
+                acl_set_file: load_symbol(handle, "acl_set_file")?,
+                acl_dup: load_symbol(handle, "acl_dup")?,
+                acl_free: load_symbol(handle, "acl_free")?,
+                acl_from_mode: load_symbol(handle, "acl_from_mode")?,
+                acl_delete_def_file: load_symbol(handle, "acl_delete_def_file")?,
+                acl_get_entry: load_symbol(handle, "acl_get_entry")?,
+                #[cfg(test)]
+                acl_to_text: load_symbol(handle, "acl_to_text")?,
+                #[cfg(test)]
+                acl_from_text: load_symbol(handle, "acl_from_text")?,
+            })
+        }
+    }
+
+    unsafe fn load_symbol<T>(handle: *mut c_void, name: &str) -> io::Result<T> {
+        let symbol = CString::new(name).expect("symbol name");
+        let ptr = libc::dlsym(handle, symbol.as_ptr());
+        if ptr.is_null() {
+            return Err(not_supported_error());
+        }
+        Ok(mem::transmute_copy(&ptr))
+    }
+
+    pub unsafe fn acl_get_file(path_p: *const c_char, ty: acl_type_t) -> io::Result<acl_t> {
+        let lib = library()?;
+        let acl = (lib.acl_get_file)(path_p, ty);
+        if acl.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(acl)
+        }
+    }
+
+    pub unsafe fn acl_set_file(
+        path_p: *const c_char,
+        ty: acl_type_t,
+        acl: acl_t,
+    ) -> io::Result<()> {
+        let lib = library()?;
+        let result = (lib.acl_set_file)(path_p, ty, acl);
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    pub unsafe fn acl_dup(acl: acl_t) -> io::Result<acl_t> {
+        let lib = library()?;
+        let duplicated = (lib.acl_dup)(acl);
+        if duplicated.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(duplicated)
+        }
+    }
+
+    pub unsafe fn acl_free(obj_p: *mut c_void) {
+        if obj_p.is_null() {
+            return;
+        }
+        if let Ok(lib) = library() {
+            (lib.acl_free)(obj_p);
+        }
+    }
+
+    pub unsafe fn acl_from_mode(mode: mode_t) -> io::Result<acl_t> {
+        let lib = library()?;
+        let acl = (lib.acl_from_mode)(mode);
+        if acl.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(acl)
+        }
+    }
+
+    pub unsafe fn acl_delete_def_file(path_p: *const c_char) -> io::Result<()> {
+        let lib = library()?;
+        let result = (lib.acl_delete_def_file)(path_p);
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    pub unsafe fn acl_get_entry(
+        acl: acl_t,
+        entry_id: c_int,
+        entry_p: *mut acl_entry_t,
+    ) -> io::Result<c_int> {
+        let lib = library()?;
+        let result = (lib.acl_get_entry)(acl, entry_id, entry_p);
+        if result == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(result)
+        }
+    }
+
+    #[cfg(test)]
+    pub unsafe fn acl_to_text(acl: acl_t, len_p: *mut ssize_t) -> io::Result<*mut c_char> {
+        let lib = library()?;
+        let text = (lib.acl_to_text)(acl, len_p);
+        if text.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(text)
+        }
+    }
+
+    #[cfg(test)]
+    pub unsafe fn acl_from_text(buf_p: *const c_char) -> io::Result<acl_t> {
+        let lib = library()?;
+        let acl = (lib.acl_from_text)(buf_p);
+        if acl.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(acl)
+        }
     }
 }
 
@@ -184,22 +361,17 @@ impl PosixAcl {
 
     fn clone(&self) -> io::Result<Self> {
         // Safety: `acl_dup` returns a new reference when provided with a valid ACL pointer.
-        let duplicated = unsafe { sys::acl_dup(self.0) };
-        if duplicated.is_null() {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(Self::from_raw(duplicated))
-        }
+        let duplicated = unsafe { sys::acl_dup(self.0)? };
+        Ok(Self::from_raw(duplicated))
     }
 
     fn is_empty(&self) -> io::Result<bool> {
         let mut entry: sys::acl_entry_t = ptr::null_mut();
         // Safety: the ACL pointer remains valid for the duration of the call.
-        let result = unsafe { sys::acl_get_entry(self.0, sys::ACL_FIRST_ENTRY, &mut entry) };
+        let result = unsafe { sys::acl_get_entry(self.0, sys::ACL_FIRST_ENTRY, &mut entry)? };
         match result {
             0 => Ok(true),
             1 => Ok(false),
-            -1 => Err(io::Error::last_os_error()),
             value => Err(io::Error::other(format!(
                 "unexpected acl_get_entry result {value}"
             ))),
@@ -221,22 +393,21 @@ impl Drop for PosixAcl {
 fn fetch_acl(path: &Path, ty: sys::acl_type_t) -> io::Result<Option<PosixAcl>> {
     let c_path = CString::new(path.as_os_str().as_bytes())?;
     // Safety: the pointer remains valid for the duration of the call.
-    let acl = unsafe { sys::acl_get_file(c_path.as_ptr(), ty) };
-    if acl.is_null() {
-        let error = io::Error::last_os_error();
-        match error.raw_os_error() {
+    let acl = match unsafe { sys::acl_get_file(c_path.as_ptr(), ty) } {
+        Ok(value) => value,
+        Err(error) => match error.raw_os_error() {
             Some(libc::ENOTSUP) | Some(libc::ENOENT) | Some(libc::EINVAL) | Some(libc::ENODATA) => {
-                Ok(None)
+                return Ok(None);
             }
-            _ => Err(error),
-        }
+            _ => return Err(error),
+        },
+    };
+
+    let acl = PosixAcl::from_raw(acl);
+    if acl.is_empty()? {
+        Ok(None)
     } else {
-        let acl = PosixAcl::from_raw(acl);
-        if acl.is_empty()? {
-            Ok(None)
-        } else {
-            Ok(Some(acl))
-        }
+        Ok(Some(acl))
     }
 }
 
@@ -250,22 +421,14 @@ fn apply_access_acl(path: &Path, acl: Option<&PosixAcl>) -> io::Result<()> {
 fn set_acl(path: &Path, ty: sys::acl_type_t, acl: PosixAcl) -> io::Result<()> {
     let c_path = CString::new(path.as_os_str().as_bytes())?;
     // Safety: arguments are valid pointers and libacl owns the ACL data.
-    let result = unsafe { sys::acl_set_file(c_path.as_ptr(), ty, acl.as_ptr()) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
+    unsafe { sys::acl_set_file(c_path.as_ptr(), ty, acl.as_ptr()) }
 }
 
 fn reset_access_acl(path: &Path) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     let mode = metadata.mode() & 0o777;
     // Safety: acl_from_mode allocates a new ACL from the provided bitmask.
-    let acl = unsafe { sys::acl_from_mode(mode as libc::mode_t) };
-    if acl.is_null() {
-        return Err(io::Error::last_os_error());
-    }
+    let acl = unsafe { sys::acl_from_mode(mode as libc::mode_t)? };
 
     let acl = PosixAcl::from_raw(acl);
     set_acl(path, sys::ACL_TYPE_ACCESS, acl)
@@ -281,15 +444,12 @@ fn apply_default_acl(path: &Path, acl: Option<&PosixAcl>) -> io::Result<()> {
 fn clear_default_acl(path: &Path) -> io::Result<()> {
     let c_path = CString::new(path.as_os_str().as_bytes())?;
     // Safety: the call removes the default ACL when present.
-    let result = unsafe { sys::acl_delete_def_file(c_path.as_ptr()) };
-    if result == 0 {
-        Ok(())
-    } else {
-        let error = io::Error::last_os_error();
-        match error.raw_os_error() {
+    match unsafe { sys::acl_delete_def_file(c_path.as_ptr()) } {
+        Ok(()) => Ok(()),
+        Err(error) => match error.raw_os_error() {
             Some(libc::ENOENT) | Some(libc::ENOTSUP) => Ok(()),
             _ => Err(error),
-        }
+        },
     }
 }
 
@@ -302,16 +462,9 @@ mod tests {
 
     fn acl_to_text(path: &Path, ty: sys::acl_type_t) -> Option<String> {
         let c_path = CString::new(path.as_os_str().as_bytes()).expect("cstring");
-        let acl = unsafe { sys::acl_get_file(c_path.as_ptr(), ty) };
-        if acl.is_null() {
-            return None;
-        }
+        let acl = unsafe { sys::acl_get_file(c_path.as_ptr(), ty) }.ok()?;
         let mut len = 0;
-        let text_ptr = unsafe { sys::acl_to_text(acl, &mut len) };
-        if text_ptr.is_null() {
-            unsafe { sys::acl_free(acl) };
-            return None;
-        }
+        let text_ptr = unsafe { sys::acl_to_text(acl, &mut len) }.ok()?;
         let slice = unsafe { std::slice::from_raw_parts(text_ptr.cast::<u8>(), len as usize) };
         let text = String::from_utf8_lossy(slice).trim().to_string();
         unsafe {
@@ -324,13 +477,11 @@ mod tests {
     fn set_acl_from_text(path: &Path, text: &str, ty: sys::acl_type_t) {
         let c_path = CString::new(path.as_os_str().as_bytes()).expect("cstring");
         let c_text = CString::new(text).expect("text");
-        let acl = unsafe { sys::acl_from_text(c_text.as_ptr()) };
-        assert!(!acl.is_null(), "acl_from_text");
-        let result = unsafe { sys::acl_set_file(c_path.as_ptr(), ty, acl) };
+        let acl = unsafe { sys::acl_from_text(c_text.as_ptr()) }.expect("acl_from_text");
+        unsafe { sys::acl_set_file(c_path.as_ptr(), ty, acl) }.expect("acl_set_file");
         unsafe {
             sys::acl_free(acl);
         }
-        assert_eq!(result, 0, "acl_set_file failed");
     }
 
     #[test]
