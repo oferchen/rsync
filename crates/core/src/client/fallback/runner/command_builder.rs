@@ -99,6 +99,7 @@ pub(crate) fn prepare_invocation(
         append_verify,
         inplace,
         msgs_to_stderr,
+        outbuf,
         whole_file,
         bwlimit,
         excludes,
@@ -417,6 +418,11 @@ pub(crate) fn prepare_invocation(
     }
     if msgs_to_stderr {
         command_args.push(OsString::from("--msgs2stderr"));
+    }
+    if let Some(mode) = outbuf {
+        let mut arg = OsString::from("--outbuf=");
+        arg.push(mode);
+        command_args.push(arg);
     }
 
     if let Some(enabled) = protect_args {

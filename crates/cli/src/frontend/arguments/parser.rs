@@ -296,6 +296,7 @@ where
         None
     };
     let msgs_to_stderr = matches.get_flag("msgs2stderr");
+    let outbuf = matches.remove_one::<OsString>("outbuf");
     let stats = matches.get_flag("stats");
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;
     let preallocate = matches.get_flag("preallocate");
@@ -552,6 +553,7 @@ where
         append,
         append_verify: append_verify_flag,
         msgs_to_stderr,
+        outbuf,
         itemize_changes,
         whole_file,
         excludes,

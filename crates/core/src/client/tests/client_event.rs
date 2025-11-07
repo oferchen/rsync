@@ -326,6 +326,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         append_verify: false,
         inplace: None,
         msgs_to_stderr: false,
+        outbuf: None,
         whole_file: None,
         bwlimit: None,
         excludes: Vec::new(),

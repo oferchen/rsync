@@ -88,6 +88,8 @@ mod non_tests;
 mod operands_tests;
 #[path = "out.rs"]
 mod out_tests;
+#[path = "outbuf.rs"]
+mod outbuf_tests;
 #[path = "parse_args_allows.rs"]
 mod parse_args_allows_tests;
 #[path = "parse_args_captures.rs"]
@@ -152,6 +154,8 @@ mod parse_args_recognises_no_tests;
 mod parse_args_recognises_numeric_tests;
 #[path = "parse_args_recognises_one.rs"]
 mod parse_args_recognises_one_tests;
+#[path = "parse_args_recognises_outbuf.rs"]
+mod parse_args_recognises_outbuf_tests;
 #[path = "parse_args_recognises_owner.rs"]
 mod parse_args_recognises_owner_tests;
 #[path = "parse_args_recognises_partial.rs"]
@@ -276,6 +280,8 @@ mod remote_fallback_forwards_no_tests;
 mod remote_fallback_forwards_omit_tests;
 #[path = "remote_fallback_forwards_one.rs"]
 mod remote_fallback_forwards_one_tests;
+#[path = "remote_fallback_forwards_outbuf.rs"]
+mod remote_fallback_forwards_outbuf_tests;
 #[path = "remote_fallback_forwards_partial.rs"]
 mod remote_fallback_forwards_partial_tests;
 #[path = "remote_fallback_forwards_port.rs"]
