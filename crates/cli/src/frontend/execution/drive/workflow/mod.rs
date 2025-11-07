@@ -209,11 +209,10 @@ where
         None
     };
 
-    let iconv_setting =
-        match resolve_iconv_setting(iconv.as_ref().map(|value| value.as_os_str()), no_iconv) {
-            Ok(setting) => setting,
-            Err(message) => return fail_with_message(message, stderr),
-        };
+    let iconv_setting = match resolve_iconv_setting(iconv.as_deref(), no_iconv) {
+        Ok(setting) => setting,
+        Err(message) => return fail_with_message(message, stderr),
+    };
 
     if let Some(code) = maybe_print_help_or_version(show_help, show_version, program_name, stdout) {
         return code;

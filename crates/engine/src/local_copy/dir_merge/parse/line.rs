@@ -5,6 +5,7 @@ use super::{
 };
 use crate::local_copy::filter_program::ExcludeIfPresentRule;
 use rsync_filters::FilterRule;
+use std::fmt;
 
 fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     if text.is_empty() {
@@ -53,6 +54,12 @@ struct RuleModifierState {
     xattr_only: bool,
 }
 
+fn unsupported_modifier_error(directive: &str, modifier: impl fmt::Display) -> FilterParseError {
+    FilterParseError::new(format!(
+        "filter directive '{directive}' uses unsupported modifier '{modifier}'"
+    ))
+}
+
 fn parse_rule_modifiers(
     modifiers: &str,
     directive: &str,
@@ -81,27 +88,18 @@ fn parse_rule_modifiers(
                 if allow_perishable {
                     state.perishable = true;
                 } else {
-                    return Err(FilterParseError::new(format!(
-                        "filter directive '{directive}' uses unsupported modifier '{}'",
-                        modifier
-                    )));
+                    return Err(unsupported_modifier_error(directive, modifier));
                 }
             }
             'x' => {
                 if allow_xattr {
                     state.xattr_only = true;
                 } else {
-                    return Err(FilterParseError::new(format!(
-                        "filter directive '{directive}' uses unsupported modifier '{}'",
-                        modifier
-                    )));
+                    return Err(unsupported_modifier_error(directive, modifier));
                 }
             }
             _ => {
-                return Err(FilterParseError::new(format!(
-                    "filter directive '{directive}' uses unsupported modifier '{}'",
-                    modifier
-                )));
+                return Err(unsupported_modifier_error(directive, modifier));
             }
         }
     }
@@ -260,19 +258,13 @@ pub(crate) fn parse_filter_directive_line(
         match shorthand {
             'p' => {
                 if !keyword_modifiers.is_empty() {
-                    return Err(FilterParseError::new(format!(
-                        "filter directive '{trimmed}' uses unsupported modifier '{}'",
-                        keyword_modifiers
-                    )));
+                    return Err(unsupported_modifier_error(trimmed, keyword_modifiers));
                 }
                 return handle_keyword(remainder, FilterRule::protect, false, false);
             }
             'r' => {
                 if !keyword_modifiers.is_empty() {
-                    return Err(FilterParseError::new(format!(
-                        "filter directive '{trimmed}' uses unsupported modifier '{}'",
-                        keyword_modifiers
-                    )));
+                    return Err(unsupported_modifier_error(trimmed, keyword_modifiers));
                 }
                 return handle_keyword(remainder, FilterRule::risk, false, false);
             }
