@@ -247,11 +247,11 @@ pub(crate) enum CreatedEntryKind {
     HardLink,
 }
 
-include!("context_impl/impl_part1.rs");
-include!("context_impl/impl_part2.rs");
-include!("context_impl/impl_part3.rs");
-include!("context_impl/impl_part4.rs");
-include!("context_impl/impl_part5.rs");
+include!("context_impl/state.rs");
+include!("context_impl/options.rs");
+include!("context_impl/transfer.rs");
+include!("context_impl/delta_transfer.rs");
+include!("context_impl/reporting.rs");
 
 #[derive(Clone)]
 struct DirectoryFilterHandles {
