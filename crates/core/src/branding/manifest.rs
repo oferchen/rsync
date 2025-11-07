@@ -384,7 +384,7 @@ mod tests {
 
         assert_eq!(summary.brand(), Brand::Oc);
         assert_eq!(summary.client_program_name(), "oc-rsync");
-        assert_eq!(summary.daemon_program_name(), "oc-rsyncd");
+        assert_eq!(summary.daemon_program_name(), "oc-rsync");
         assert_eq!(
             summary.daemon_config_path(),
             "/etc/oc-rsyncd/oc-rsyncd.conf"

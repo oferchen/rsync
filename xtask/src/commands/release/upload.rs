@@ -419,7 +419,8 @@ mod tests {
             rust_version: String::from("3.4.1-rust"),
             protocol: 32,
             client_bin: String::from("oc-rsync"),
-            daemon_bin: String::from("oc-rsyncd"),
+            daemon_bin: String::from("oc-rsync"),
+            daemon_wrapper_bin: String::from("oc-rsyncd"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
             daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
@@ -492,7 +493,7 @@ mod tests {
             .join("target")
             .join("x86_64-unknown-linux-gnu")
             .join("release")
-            .join("oc-rsyncd");
+            .join("oc-rsync");
         let mac_client = workspace
             .join("target")
             .join("x86_64-apple-darwin")
@@ -502,7 +503,7 @@ mod tests {
             .join("target")
             .join("x86_64-apple-darwin")
             .join("release")
-            .join("oc-rsyncd");
+            .join("oc-rsync");
         let windows_client = workspace
             .join("target")
             .join("x86_64-pc-windows-gnu")

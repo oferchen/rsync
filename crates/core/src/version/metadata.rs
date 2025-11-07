@@ -149,7 +149,7 @@ pub const fn oc_version_metadata() -> VersionMetadata {
     version_metadata_for_program(OC_PROGRAM_NAME)
 }
 
-/// Returns metadata configured for the branded `oc-rsyncd` daemon banner.
+/// Returns metadata configured for the branded `oc-rsync` daemon banner.
 #[must_use]
 pub const fn oc_daemon_version_metadata() -> VersionMetadata {
     version_metadata_for_program(OC_DAEMON_PROGRAM_NAME)

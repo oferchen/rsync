@@ -5,9 +5,9 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 //! Thin command-line frontend that orchestrates argument parsing and execution
-//! for the `oc-rsync` and `oc-rsyncd` binaries.
+//! for the `oc-rsync` binary and its optional `oc-rsyncd` wrapper.
 //!
-//! This crate exposes [`run`] as the primary entry point so both binaries can
+//! This crate exposes [`run`] as the primary entry point so all binaries can
 //! share the same parsing and dispatch logic. The actual implementation lives in
 //! the internal `frontend` module, which keeps the majority of the code
 //! organised away from the crate root. Only the surface API is re-exported here

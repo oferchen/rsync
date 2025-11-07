@@ -20,6 +20,8 @@ pub struct WorkspaceBranding {
     pub client_bin: String,
     /// Canonical daemon binary name.
     pub daemon_bin: String,
+    /// Optional compatibility wrapper binary name for the daemon.
+    pub daemon_wrapper_bin: String,
     /// Legacy upstream-compatible client name.
     pub legacy_client_bin: String,
     /// Legacy upstream-compatible daemon name.
@@ -48,12 +50,13 @@ impl WorkspaceBranding {
     /// Returns a concise human-readable summary.
     pub fn summary(&self) -> String {
         format!(
-            "brand={} rust_version={} protocol={} client={} daemon={} config_dir={} config={} secrets={}",
+            "brand={} rust_version={} protocol={} client={} daemon={} wrapper={} config_dir={} config={} secrets={}",
             self.brand,
             self.rust_version,
             self.protocol,
             self.client_bin,
             self.daemon_bin,
+            self.daemon_wrapper_bin,
             self.daemon_config_dir.display(),
             self.daemon_config.display(),
             self.daemon_secrets.display()
@@ -130,6 +133,7 @@ pub fn parse_workspace_branding_from_value(value: &Value) -> TaskResult<Workspac
         protocol: metadata_protocol(oc)?,
         client_bin: metadata_str(oc, "client_bin")?,
         daemon_bin: metadata_str(oc, "daemon_bin")?,
+        daemon_wrapper_bin: metadata_str(oc, "daemon_wrapper_bin")?,
         legacy_client_bin: metadata_str(oc, "legacy_client_bin")?,
         legacy_daemon_bin: metadata_str(oc, "legacy_daemon_bin")?,
         daemon_config_dir: metadata_path(oc, "daemon_config_dir")?,
@@ -265,7 +269,8 @@ upstream_version = "3.4.1"
 rust_version = "3.4.1-rust"
 protocol = 32
 client_bin = "oc-rsync"
-daemon_bin = "oc-rsyncd"
+daemon_bin = "oc-rsync"
+daemon_wrapper_bin = "oc-rsyncd"
 legacy_client_bin = "rsync"
 legacy_daemon_bin = "rsyncd"
 daemon_config_dir = "/etc/oc-rsyncd"
@@ -292,7 +297,8 @@ source = "https://github.com/oferchen/rsync"
             rust_version: String::from("3.4.1-rust"),
             protocol: 32,
             client_bin: String::from("oc-rsync"),
-            daemon_bin: String::from("oc-rsyncd"),
+            daemon_bin: String::from("oc-rsync"),
+            daemon_wrapper_bin: String::from("oc-rsyncd"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
             daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
