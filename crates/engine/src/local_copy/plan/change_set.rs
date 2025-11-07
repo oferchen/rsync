@@ -277,14 +277,14 @@ fn determine_time_change(
             return Some(TimeChange::Modified);
         }
 
-        let new_mtime = metadata.modified().ok();
-        let old_mtime = existing.and_then(|meta| meta.modified().ok());
-        match (new_mtime, old_mtime) {
-            (Some(new_value), Some(old_value)) if new_value != old_value => {
-                Some(TimeChange::Modified)
-            }
-            (Some(_), None) => Some(TimeChange::Modified),
-            _ => None,
+        use filetime::FileTime;
+
+        let new_mtime = FileTime::from_last_modification_time(metadata);
+        let old_mtime = existing.map(FileTime::from_last_modification_time);
+
+        match old_mtime {
+            Some(old_value) if old_value == new_mtime => None,
+            _ => Some(TimeChange::Modified),
         }
     } else if wrote_data || !destination_previously_existed {
         Some(TimeChange::TransferTime)
