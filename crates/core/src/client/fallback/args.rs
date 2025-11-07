@@ -88,6 +88,10 @@ pub struct RemoteFallbackArgs {
     pub owner: Option<bool>,
     /// Optional `--group`/`--no-group` toggle.
     pub group: Option<bool>,
+    /// Optional `--usermap` mapping forwarded to the fallback binary.
+    pub usermap: Option<OsString>,
+    /// Optional `--groupmap` mapping forwarded to the fallback binary.
+    pub groupmap: Option<OsString>,
     /// Repeated `--chmod` specifications forwarded to the fallback binary.
     pub chmod: Vec<OsString>,
     /// Optional `--perms`/`--no-perms` toggle.

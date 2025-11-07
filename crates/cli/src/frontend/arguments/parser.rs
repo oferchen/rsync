@@ -169,6 +169,28 @@ where
     } else {
         None
     };
+    let usermap_values = matches
+        .remove_many::<OsString>("usermap")
+        .map(|values| values.collect::<Vec<_>>())
+        .unwrap_or_default();
+    if usermap_values.len() > 1 {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::TooManyValues,
+            "You can only specify --usermap once.",
+        ));
+    }
+    let usermap = usermap_values.into_iter().next();
+    let groupmap_values = matches
+        .remove_many::<OsString>("groupmap")
+        .map(|values| values.collect::<Vec<_>>())
+        .unwrap_or_default();
+    if groupmap_values.len() > 1 {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::TooManyValues,
+            "You can only specify --groupmap once.",
+        ));
+    }
+    let groupmap = groupmap_values.into_iter().next();
     let chown = matches.remove_one::<OsString>("chown");
     let chmod = matches
         .remove_many::<OsString>("chmod")
@@ -510,6 +532,8 @@ where
         owner,
         group,
         chown,
+        usermap,
+        groupmap,
         chmod,
         perms,
         super_mode,

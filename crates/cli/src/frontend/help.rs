@@ -152,6 +152,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --group      Preserve file group (requires suitable privileges).\n",
             "      --no-group   Disable group preservation.\n",
             "      --chown=USER:GROUP  Set destination ownership to USER and/or GROUP.\n",
+            "      --usermap=STRING  Map source user IDs using STRING rules (OLD:NEW[,...]).\n",
+            "      --groupmap=STRING  Map source group IDs using STRING rules (OLD:NEW[,...]).\n",
             "      --chmod=SPEC  Apply chmod-style SPEC modifiers to received files.\n",
             "  -p, --perms      Preserve file permissions.\n",
             "      --no-perms   Disable permission preservation.\n",

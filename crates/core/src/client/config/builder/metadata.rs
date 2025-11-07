@@ -51,6 +51,20 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Applies a custom user mapping derived from `--usermap`.
+    #[must_use]
+    pub fn user_mapping(mut self, mapping: Option<UserMapping>) -> Self {
+        self.user_mapping = mapping;
+        self
+    }
+
+    /// Applies a custom group mapping derived from `--groupmap`.
+    #[must_use]
+    pub fn group_mapping(mut self, mapping: Option<GroupMapping>) -> Self {
+        self.group_mapping = mapping;
+        self
+    }
+
     /// Requests that permissions be preserved when applying metadata.
     #[must_use]
     #[doc(alias = "--perms")]

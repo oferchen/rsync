@@ -11,6 +11,8 @@ impl<'a> CopyContext<'a> {
             .with_owner_override(self.options.owner_override())
             .with_group_override(self.options.group_override())
             .with_chmod(self.options.chmod().cloned())
+            .with_user_mapping(self.options.user_mapping().cloned())
+            .with_group_mapping(self.options.group_mapping().cloned())
     }
 
     pub(super) fn copy_links_enabled(&self) -> bool {

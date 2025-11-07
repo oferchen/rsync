@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 
 use rsync_meta::ChmodModifiers;
+use rsync_meta::{GroupMapping, MappingKind, NameMapping, UserMapping};
 
 use crate::frontend::execution::chown::ParsedChown;
 
@@ -24,6 +25,8 @@ pub(crate) struct MetadataSettings {
     pub(crate) relative: bool,
     pub(crate) one_file_system: bool,
     pub(crate) chmod_modifiers: Option<ChmodModifiers>,
+    pub(crate) user_mapping: Option<UserMapping>,
+    pub(crate) group_mapping: Option<GroupMapping>,
 }
 
 pub(crate) struct MetadataInputs<'a> {
@@ -31,6 +34,8 @@ pub(crate) struct MetadataInputs<'a> {
     pub(crate) parsed_chown: Option<&'a ParsedChown>,
     pub(crate) owner: Option<bool>,
     pub(crate) group: Option<bool>,
+    pub(crate) usermap: Option<&'a OsString>,
+    pub(crate) groupmap: Option<&'a OsString>,
     pub(crate) perms: Option<bool>,
     pub(crate) super_mode: Option<bool>,
     pub(crate) times: Option<bool>,
@@ -58,6 +63,8 @@ pub(crate) fn compute_metadata_settings(
         owner,
         group,
         perms,
+        usermap,
+        groupmap,
         super_mode,
         times,
         omit_dir_times,
@@ -73,7 +80,17 @@ pub(crate) fn compute_metadata_settings(
         one_file_system,
         chmod,
     } = inputs;
+    let user_mapping = match usermap {
+        Some(value) => Some(parse_user_mapping(value, parsed_chown)?),
+        None => None,
+    };
+    let group_mapping = match groupmap {
+        Some(value) => Some(parse_group_mapping(value, parsed_chown)?),
+        None => None,
+    };
     let preserve_owner = if parsed_chown.and_then(|value| value.owner()).is_some() {
+        true
+    } else if user_mapping.is_some() {
         true
     } else if let Some(value) = owner {
         value
@@ -84,6 +101,8 @@ pub(crate) fn compute_metadata_settings(
     };
 
     let preserve_group = if parsed_chown.and_then(|value| value.group()).is_some() {
+        true
+    } else if group_mapping.is_some() {
         true
     } else if let Some(value) = group {
         value
@@ -152,5 +171,58 @@ pub(crate) fn compute_metadata_settings(
         relative: relative_paths,
         one_file_system: one_file_system_setting,
         chmod_modifiers: modifiers,
+        user_mapping,
+        group_mapping,
     })
+}
+
+fn parse_user_mapping(
+    value: &OsString,
+    parsed_chown: Option<&ParsedChown>,
+) -> Result<UserMapping, rsync_core::message::Message> {
+    if parsed_chown.and_then(|parsed| parsed.owner()).is_some() {
+        return Err(rsync_core::rsync_error!(
+            1,
+            "--usermap conflicts with prior --chown user specification"
+        )
+        .with_role(rsync_core::message::Role::Client));
+    }
+
+    parse_mapping(value, MappingKind::User)
+}
+
+fn parse_group_mapping(
+    value: &OsString,
+    parsed_chown: Option<&ParsedChown>,
+) -> Result<GroupMapping, rsync_core::message::Message> {
+    if parsed_chown.and_then(|parsed| parsed.group()).is_some() {
+        return Err(rsync_core::rsync_error!(
+            1,
+            "--groupmap conflicts with prior --chown group specification"
+        )
+        .with_role(rsync_core::message::Role::Client));
+    }
+
+    parse_mapping(value, MappingKind::Group)
+}
+
+fn parse_mapping<M>(value: &OsString, kind: MappingKind) -> Result<M, rsync_core::message::Message>
+where
+    M: From<NameMapping>,
+{
+    let spec = value.to_string_lossy();
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return Err(rsync_core::rsync_error!(
+            1,
+            format!("{} requires a non-empty mapping specification", kind.flag())
+        )
+        .with_role(rsync_core::message::Role::Client));
+    }
+
+    match NameMapping::parse(kind, trimmed) {
+        Ok(mapping) => Ok(M::from(mapping)),
+        Err(error) => Err(rsync_core::rsync_error!(1, error.to_string())
+            .with_role(rsync_core::message::Role::Client)),
+    }
 }

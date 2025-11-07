@@ -287,6 +287,8 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         chown: None,
         owner: None,
         group: None,
+        usermap: None,
+        groupmap: None,
         chmod: Vec::new(),
         perms: None,
         super_mode: None,

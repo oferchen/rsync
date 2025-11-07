@@ -204,6 +204,8 @@ pub fn build_local_copy_options(
         .times(config.preserve_times())
         .omit_dir_times(config.omit_dir_times())
         .omit_link_times(config.omit_link_times())
+        .with_user_mapping(config.user_mapping().cloned())
+        .with_group_mapping(config.group_mapping().cloned())
         .checksum(config.checksum())
         .with_checksum_algorithm(config.checksum_signature_algorithm())
         .size_only(config.size_only())

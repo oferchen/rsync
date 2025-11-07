@@ -385,6 +385,22 @@ pub(crate) fn section_02(command: ClapCommand) -> ClapCommand {
                     .num_args(1),
             )
             .arg(
+                Arg::new("usermap")
+                    .long("usermap")
+                    .value_name("STRING")
+                    .help("Apply custom user ID mapping rules.")
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
+                Arg::new("groupmap")
+                    .long("groupmap")
+                    .value_name("STRING")
+                    .help("Apply custom group ID mapping rules.")
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
                 Arg::new("chmod")
                     .long("chmod")
                     .value_name("SPEC")

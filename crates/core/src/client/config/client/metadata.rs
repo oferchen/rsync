@@ -34,6 +34,20 @@ impl ClientConfig {
         self.chmod.as_ref()
     }
 
+    /// Returns the configured user mapping, if any.
+    #[must_use]
+    #[doc(alias = "--usermap")]
+    pub fn user_mapping(&self) -> Option<&UserMapping> {
+        self.user_mapping.as_ref()
+    }
+
+    /// Returns the configured group mapping, if any.
+    #[must_use]
+    #[doc(alias = "--groupmap")]
+    pub fn group_mapping(&self) -> Option<&GroupMapping> {
+        self.group_mapping.as_ref()
+    }
+
     /// Reports whether permissions should be preserved.
     #[must_use]
     #[doc(alias = "--perms")]

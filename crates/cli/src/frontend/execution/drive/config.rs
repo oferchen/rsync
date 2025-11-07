@@ -10,7 +10,7 @@ use rsync_core::client::{
     AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
     SkipCompressList, StrongChecksumChoice, TransferTimeout,
 };
-use rsync_meta::ChmodModifiers;
+use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
 use crate::frontend::progress::{NameOutputLevel, ProgressMode};
 use crate::platform::{gid_t, uid_t};
@@ -42,6 +42,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) group: bool,
     pub(crate) group_override: Option<gid_t>,
     pub(crate) chmod_modifiers: Option<ChmodModifiers>,
+    pub(crate) user_mapping: Option<UserMapping>,
+    pub(crate) group_mapping: Option<GroupMapping>,
     pub(crate) permissions: bool,
     pub(crate) times: bool,
     pub(crate) modify_window_setting: Option<u64>,
@@ -134,6 +136,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .group(inputs.group)
         .group_override(inputs.group_override)
         .chmod(inputs.chmod_modifiers.clone())
+        .user_mapping(inputs.user_mapping.clone())
+        .group_mapping(inputs.group_mapping.clone())
         .permissions(inputs.permissions)
         .times(inputs.times)
         .modify_window(inputs.modify_window_setting)

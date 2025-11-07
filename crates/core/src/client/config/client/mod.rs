@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_compress::zlib::CompressionLevel;
 use rsync_engine::SkipCompressList;
-use rsync_meta::ChmodModifiers;
+use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
 use super::builder::ClientConfigBuilder;
 use super::{
@@ -34,6 +34,8 @@ pub struct ClientConfig {
     pub(super) owner_override: Option<u32>,
     pub(super) group_override: Option<u32>,
     pub(super) chmod: Option<ChmodModifiers>,
+    pub(super) user_mapping: Option<UserMapping>,
+    pub(super) group_mapping: Option<GroupMapping>,
     pub(super) omit_dir_times: bool,
     pub(super) omit_link_times: bool,
     pub(super) compress: bool,
@@ -119,6 +121,8 @@ impl Default for ClientConfig {
             owner_override: None,
             group_override: None,
             chmod: None,
+            user_mapping: None,
+            group_mapping: None,
             omit_dir_times: false,
             omit_link_times: false,
             compress: false,
