@@ -582,10 +582,8 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
             if assume_cvsignore {
                 path_text = ".cvsignore";
             } else {
-                let text = format!(
-                    "filter rule '{trimmed}' is missing a file name after '{}'",
-                    label
-                );
+                let text =
+                    format!("filter rule '{trimmed}' is missing a file name after '{label}'");
                 return Err(rsync_error!(1, text).with_role(Role::Client));
             }
         }

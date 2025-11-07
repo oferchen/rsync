@@ -348,7 +348,7 @@ fn try_open_noatime(path: &Path) -> io::Result<Option<fs::File>> {
     match options.open(path) {
         Ok(file) => Ok(Some(file)),
         Err(error) => match error.raw_os_error() {
-            Some(code) if matches!(code, EPERM | EACCES | EINVAL | ENOTSUP | EROFS) => Ok(None),
+            Some(EPERM | EACCES | EINVAL | ENOTSUP | EROFS) => Ok(None),
             _ => Err(error),
         },
     }
