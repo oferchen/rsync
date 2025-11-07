@@ -14,7 +14,7 @@ pub(crate) fn append_cvs_exclude_rules(
 ) -> Result<(), Message> {
     let mut cvs_rules: Vec<FilterRuleSpec> = CVS_EXCLUDE_PATTERNS
         .iter()
-        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_string()))
+        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_string()).with_perishable(true))
         .collect();
 
     if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
@@ -75,7 +75,7 @@ where
             continue;
         }
 
-        destination.push(FilterRuleSpec::exclude(trimmed.to_string()));
+        destination.push(FilterRuleSpec::exclude(trimmed.to_string()).with_perishable(true));
     }
 }
 

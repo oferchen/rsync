@@ -303,13 +303,14 @@ impl<'a> CopyContext<'a> {
                 FilterContext::Deletion,
             );
             if delete_excluded {
-                outcome.allows_deletion_when_excluded_removed()
+                outcome.allows_deletion() || outcome.allows_deletion_when_excluded_removed()
             } else {
                 outcome.allows_deletion()
             }
         } else if let Some(filters) = self.options.filter_set() {
             if delete_excluded {
-                filters.allows_deletion_when_excluded_removed(relative, is_dir)
+                filters.allows_deletion(relative, is_dir)
+                    || filters.allows_deletion_when_excluded_removed(relative, is_dir)
             } else {
                 filters.allows_deletion(relative, is_dir)
             }

@@ -34,6 +34,10 @@ pub(crate) fn apply_dir_merge_rule_defaults(
         rule = rule.anchor_to_root();
     }
 
+    if options.perishable() {
+        rule = rule.with_perishable(true);
+    }
+
     if let Some(sender) = options.sender_side_override() {
         rule = rule.with_sender(sender);
     }

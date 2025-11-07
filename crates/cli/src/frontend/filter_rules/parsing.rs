@@ -237,6 +237,9 @@ pub(crate) fn parse_merge_modifiers(
             'r' => {
                 options = options.receiver_modifier();
             }
+            'p' => {
+                options = options.mark_perishable();
+            }
             '/' => {
                 options = options.anchor_root(true);
             }
