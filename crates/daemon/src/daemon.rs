@@ -146,6 +146,8 @@ pub(crate) fn write_message<W: Write>(
     sink.write(message)
 }
 
+include!("daemon/sections/legacy_messages.rs");
+
 include!("daemon/sections/server_runtime.rs");
 
 include!("daemon/sections/session_runtime.rs");
