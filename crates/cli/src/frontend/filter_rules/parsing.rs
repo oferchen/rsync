@@ -44,6 +44,140 @@ fn split_short_rule_modifiers(text: &str) -> (&str, &str) {
     }
 }
 
+#[derive(Default)]
+struct RuleModifierState {
+    anchor_root: bool,
+    sender: Option<bool>,
+    receiver: Option<bool>,
+    perishable: bool,
+    xattr_only: bool,
+}
+
+fn parse_rule_modifiers(
+    modifiers: &str,
+    directive: &str,
+    allow_perishable: bool,
+    allow_xattr: bool,
+) -> Result<RuleModifierState, Message> {
+    let mut state = RuleModifierState::default();
+
+    for modifier in modifiers.chars() {
+        let lower = modifier.to_ascii_lowercase();
+        match lower {
+            '/' => {
+                state.anchor_root = true;
+            }
+            's' => {
+                state.sender = Some(true);
+                if state.receiver.is_none() {
+                    state.receiver = Some(false);
+                }
+            }
+            'r' => {
+                state.receiver = Some(true);
+                if state.sender.is_none() {
+                    state.sender = Some(false);
+                }
+            }
+            'p' => {
+                if allow_perishable {
+                    state.perishable = true;
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter rule '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
+            }
+            'x' => {
+                if allow_xattr {
+                    state.xattr_only = true;
+                } else {
+                    let message = rsync_error!(
+                        1,
+                        format!(
+                            "filter rule '{directive}' uses unsupported modifier '{}'",
+                            modifier
+                        )
+                    )
+                    .with_role(Role::Client);
+                    return Err(message);
+                }
+            }
+            _ => {
+                let message = rsync_error!(
+                    1,
+                    format!(
+                        "filter rule '{directive}' uses unsupported modifier '{}'",
+                        modifier
+                    )
+                )
+                .with_role(Role::Client);
+                return Err(message);
+            }
+        }
+    }
+
+    Ok(state)
+}
+
+fn apply_rule_modifiers(
+    mut rule: FilterRuleSpec,
+    modifiers: RuleModifierState,
+    directive: &str,
+) -> Result<FilterRuleSpec, Message> {
+    if modifiers.anchor_root {
+        rule = rule.with_anchor();
+    }
+
+    if let Some(sender) = modifiers.sender {
+        rule = rule.with_sender(sender);
+    }
+
+    if let Some(receiver) = modifiers.receiver {
+        rule = rule.with_receiver(receiver);
+    }
+
+    if modifiers.perishable {
+        rule = rule.with_perishable(true);
+    }
+
+    if modifiers.xattr_only {
+        if !matches!(
+            rule.kind(),
+            FilterRuleKind::Include | FilterRuleKind::Exclude
+        ) {
+            let message = rsync_error!(
+                1,
+                format!(
+                    "filter rule '{directive}' cannot combine 'x' modifiers with this directive"
+                )
+            )
+            .with_role(Role::Client);
+            return Err(message);
+        }
+        rule = rule
+            .with_xattr_only(true)
+            .with_sender(true)
+            .with_receiver(true);
+    }
+
+    Ok(rule)
+}
+
+fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
+    if let Some((name, modifiers)) = keyword.split_once(',') {
+        (name, modifiers)
+    } else {
+        (keyword, "")
+    }
+}
+
 fn parse_short_merge_directive(text: &str) -> Option<Result<FilterDirective, Message>> {
     let mut chars = text.chars();
     let first = chars.next()?;
@@ -382,6 +516,8 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
     }
 
     if let Some(remainder) = trimmed.strip_prefix('+') {
+        let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
+        let modifiers = parse_rule_modifiers(modifier_text, trimmed, true, true)?;
         let pattern =
             remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         if pattern.is_empty() {
@@ -393,12 +529,14 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
             .with_role(Role::Client);
             return Err(message);
         }
-        return Ok(FilterDirective::Rule(FilterRuleSpec::include(
-            pattern.to_string(),
-        )));
+        let rule = FilterRuleSpec::include(pattern.to_string());
+        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        return Ok(FilterDirective::Rule(rule));
     }
 
     if let Some(remainder) = trimmed.strip_prefix('-') {
+        let (modifier_text, remainder) = split_short_rule_modifiers(remainder);
+        let modifiers = parse_rule_modifiers(modifier_text, trimmed, true, true)?;
         let pattern =
             remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
         if pattern.is_empty() {
@@ -410,9 +548,9 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
             .with_role(Role::Client);
             return Err(message);
         }
-        return Ok(FilterDirective::Rule(FilterRuleSpec::exclude(
-            pattern.to_string(),
-        )));
+        let rule = FilterRuleSpec::exclude(pattern.to_string());
+        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        return Ok(FilterDirective::Rule(rule));
     }
 
     const DIR_MERGE_ALIASES: [&str; 2] = ["dir-merge", "per-dir"];
@@ -461,41 +599,48 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
     let mut parts = trimmed.splitn(2, |ch: char| ch.is_ascii_whitespace());
     let keyword = parts.next().expect("split always yields at least one part");
     let remainder = parts.next().unwrap_or("");
+    let (keyword, keyword_modifiers) = split_keyword_modifiers(keyword);
     let pattern = remainder.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
 
-    let handle_keyword = |action_label: &str, builder: fn(String) -> FilterRuleSpec| {
+    let build_rule = |builder: fn(String) -> FilterRuleSpec,
+                      allow_perishable: bool,
+                      allow_xattr: bool|
+     -> Result<FilterDirective, Message> {
         if pattern.is_empty() {
-            let text =
-                format!("filter rule '{trimmed}' is missing a pattern after '{action_label}'");
+            let text = format!("filter rule '{trimmed}' is missing a pattern after '{keyword}'");
             let message = rsync_error!(1, text).with_role(Role::Client);
             return Err(message);
         }
 
-        Ok(FilterDirective::Rule(builder(pattern.to_string())))
+        let modifiers =
+            parse_rule_modifiers(keyword_modifiers, trimmed, allow_perishable, allow_xattr)?;
+        let rule = builder(pattern.to_string());
+        let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
+        Ok(FilterDirective::Rule(rule))
     };
 
     if keyword.eq_ignore_ascii_case("include") {
-        return handle_keyword("include", FilterRuleSpec::include);
+        return build_rule(FilterRuleSpec::include, true, true);
     }
 
     if keyword.eq_ignore_ascii_case("exclude") {
-        return handle_keyword("exclude", FilterRuleSpec::exclude);
+        return build_rule(FilterRuleSpec::exclude, true, true);
     }
 
     if keyword.eq_ignore_ascii_case("show") {
-        return handle_keyword("show", FilterRuleSpec::show);
+        return build_rule(FilterRuleSpec::show, false, false);
     }
 
     if keyword.eq_ignore_ascii_case("hide") {
-        return handle_keyword("hide", FilterRuleSpec::hide);
+        return build_rule(FilterRuleSpec::hide, false, false);
     }
 
     if keyword.eq_ignore_ascii_case("protect") {
-        return handle_keyword("protect", FilterRuleSpec::protect);
+        return build_rule(FilterRuleSpec::protect, false, false);
     }
 
     if keyword.eq_ignore_ascii_case("risk") {
-        return handle_keyword("risk", FilterRuleSpec::risk);
+        return build_rule(FilterRuleSpec::risk, false, false);
     }
 
     let message = rsync_error!(

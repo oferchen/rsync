@@ -66,6 +66,28 @@ fn parse_filter_directive_risk_requires_receiver() {
 }
 
 #[test]
+fn parse_filter_directive_keyword_with_xattr_modifier() {
+    let rule = match parse_filter_directive_line("include,x user.keep").expect("parse") {
+        Some(ParsedFilterDirective::Rule(rule)) => rule,
+        other => panic!("expected rule, got {other:?}"),
+    };
+
+    assert!(rule.is_xattr_only());
+    assert!(rule.applies_to_sender());
+    assert!(rule.applies_to_receiver());
+    assert_eq!(rule.pattern(), "user.keep");
+}
+
+#[test]
+fn parse_filter_directive_rejects_xattr_on_show_keyword() {
+    let error = parse_filter_directive_line("show,x user.skip")
+        .expect_err("show keyword should reject xattr modifier");
+    assert!(error
+        .to_string()
+        .contains("uses unsupported modifier 'x'"));
+}
+
+#[test]
 fn parse_filter_directive_shorthand_risk_requires_receiver() {
     let rule = match parse_filter_directive_line("R cache/**").expect("parse") {
         Some(ParsedFilterDirective::Rule(rule)) => rule,

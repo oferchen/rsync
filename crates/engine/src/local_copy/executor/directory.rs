@@ -491,7 +491,14 @@ pub(crate) fn copy_directory_recursive(
         apply_directory_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;
         #[cfg(feature = "xattr")]
-        sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+        sync_xattrs_if_requested(
+            preserve_xattrs,
+            mode,
+            source,
+            destination,
+            true,
+            context.filter_program(),
+        )?;
         #[cfg(feature = "acl")]
         sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     }

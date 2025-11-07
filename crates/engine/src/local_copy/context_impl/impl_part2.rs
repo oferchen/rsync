@@ -63,6 +63,12 @@ impl<'a> CopyContext<'a> {
         self.options.specials_enabled()
     }
 
+    pub(super) fn filter_program(
+        &self,
+    ) -> Option<&crate::local_copy::filter_program::FilterProgram> {
+        self.filter_program.as_ref()
+    }
+
     #[cfg(feature = "acl")]
     pub(super) fn acls_enabled(&self) -> bool {
         self.options.acls_enabled()

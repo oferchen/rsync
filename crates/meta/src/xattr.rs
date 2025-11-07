@@ -63,12 +63,21 @@ pub fn sync_xattrs(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
+    filter: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<(), MetadataError> {
     let source_attrs = list_attributes(source, follow_symlinks)?;
     let mut retained = HashSet::with_capacity(source_attrs.len());
 
     for name in source_attrs.iter() {
         retained.insert(name.clone());
+        let allow = filter
+            .map(|predicate| predicate(&name.to_string_lossy()))
+            .unwrap_or(true);
+
+        if !allow {
+            continue;
+        }
+
         if let Some(value) = read_attribute(source, name, follow_symlinks)? {
             write_attribute(destination, name, &value, follow_symlinks)?;
         } else {
@@ -78,7 +87,15 @@ pub fn sync_xattrs(
 
     let destination_attrs = list_attributes(destination, follow_symlinks)?;
     for name in destination_attrs.iter() {
-        if !retained.contains(name) {
+        if retained.contains(name) {
+            continue;
+        }
+
+        let allow = filter
+            .map(|predicate| predicate(&name.to_string_lossy()))
+            .unwrap_or(true);
+
+        if allow {
             remove_attribute(destination, name, follow_symlinks)?;
         }
     }

@@ -64,7 +64,14 @@ pub(super) fn execute_transfer(
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(crate::local_copy::map_metadata_error)?;
             #[cfg(feature = "xattr")]
-            sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+            sync_xattrs_if_requested(
+                preserve_xattrs,
+                mode,
+                source,
+                destination,
+                true,
+                context.filter_program(),
+            )?;
             #[cfg(feature = "acl")]
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
             context.record_hard_link(metadata, destination);

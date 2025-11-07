@@ -8,6 +8,7 @@ pub struct FilterRule {
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
+    pub(crate) xattr_only: bool,
 }
 
 impl FilterRule {
@@ -20,6 +21,7 @@ impl FilterRule {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -32,6 +34,7 @@ impl FilterRule {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -44,6 +47,7 @@ impl FilterRule {
             applies_to_sender: false,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -56,6 +60,7 @@ impl FilterRule {
             applies_to_sender: false,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -69,6 +74,7 @@ impl FilterRule {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -89,6 +95,7 @@ impl FilterRule {
             applies_to_sender: true,
             applies_to_receiver: false,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -109,6 +116,7 @@ impl FilterRule {
             applies_to_sender: true,
             applies_to_receiver: false,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -169,6 +177,19 @@ impl FilterRule {
     pub const fn with_perishable(mut self, perishable: bool) -> Self {
         self.perishable = perishable;
         self
+    }
+
+    /// Marks the rule as applying exclusively to xattr names.
+    #[must_use]
+    pub const fn with_xattr_only(mut self, xattr_only: bool) -> Self {
+        self.xattr_only = xattr_only;
+        self
+    }
+
+    /// Returns whether the rule applies exclusively to xattr names.
+    #[must_use]
+    pub const fn is_xattr_only(&self) -> bool {
+        self.xattr_only
     }
 
     /// Anchors the pattern to the root of the transfer if it is not already.
