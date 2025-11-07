@@ -427,9 +427,12 @@ fn config_bwlimit_error(
     config_parse_error(path, line, detail)
 }
 
-fn unsupported_option(option: OsString) -> DaemonError {
+fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     let option = option.to_string_lossy();
-    let text = format!("unsupported daemon argument '{option}'");
+    let program = brand.daemon_program_name();
+    let text = format!(
+        "unknown option '{option}': run '{program} --help' to review supported daemon flags"
+    );
     config_error(text)
 }
 

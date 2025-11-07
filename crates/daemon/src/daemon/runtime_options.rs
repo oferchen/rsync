@@ -182,7 +182,7 @@ impl RuntimeOptions {
                 options.modules.push(module);
                 options.inline_modules = true;
             } else {
-                return Err(unsupported_option(argument.clone()));
+                return Err(unsupported_option(argument.clone(), brand));
             }
         }
 
