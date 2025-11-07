@@ -121,6 +121,7 @@ fn out_format_renders_full_checksum_for_non_file_entries_as_spaces() {
 
     let config = ClientConfig::builder()
         .transfer_args([source_operand, dest_operand])
+        .recursive(true)
         .force_event_collection(true)
         .build();
 
@@ -521,6 +522,7 @@ fn out_format_itemized_placeholder_reports_deletion() {
     let config = ClientConfig::builder()
         .transfer_args([source_operand, dest_operand])
         .delete(true)
+        .recursive(true)
         .force_event_collection(true)
         .build();
 
@@ -575,6 +577,7 @@ fn out_format_renders_symlink_target_placeholder() {
             source_dir.as_os_str().to_os_string(),
             dest_dir.as_os_str().to_os_string(),
         ])
+        .recursive(true)
         .force_event_collection(true)
         .build();
 
@@ -622,6 +625,7 @@ fn out_format_renders_combined_name_and_target_placeholder() {
             source_dir.as_os_str().to_os_string(),
             dest_dir.as_os_str().to_os_string(),
         ])
+        .recursive(true)
         .force_event_collection(true)
         .build();
 
