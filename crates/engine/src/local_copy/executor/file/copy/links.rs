@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use crate::local_copy::overrides::create_hard_link;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyError, LocalCopyExecution,
-    LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery, find_reference_action,
-    map_metadata_error, remove_source_entry_if_requested,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
+    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery,
+    find_reference_action, map_metadata_error, remove_source_entry_if_requested,
 };
 
 #[cfg(feature = "acl")]
@@ -190,14 +190,46 @@ pub(super) fn process_links(
                     context.summary_mut().record_regular_file_matched();
                     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                     let total_bytes = Some(metadata_snapshot.len());
-                    context.record(LocalCopyRecord::new(
-                        record_path.to_path_buf(),
-                        LocalCopyAction::MetadataReused,
-                        0,
-                        total_bytes,
-                        Duration::default(),
-                        Some(metadata_snapshot),
-                    ));
+                    let xattrs_enabled = {
+                        #[cfg(feature = "xattr")]
+                        {
+                            preserve_xattrs
+                        }
+                        #[cfg(not(feature = "xattr"))]
+                        {
+                            false
+                        }
+                    };
+                    let acls_enabled = {
+                        #[cfg(feature = "acl")]
+                        {
+                            preserve_acls
+                        }
+                        #[cfg(not(feature = "acl"))]
+                        {
+                            false
+                        }
+                    };
+                    let change_set = LocalCopyChangeSet::for_file(
+                        metadata,
+                        existing_metadata,
+                        &metadata_options,
+                        true,
+                        false,
+                        xattrs_enabled,
+                        acls_enabled,
+                    );
+                    context.record(
+                        LocalCopyRecord::new(
+                            record_path.to_path_buf(),
+                            LocalCopyAction::MetadataReused,
+                            0,
+                            total_bytes,
+                            Duration::default(),
+                            Some(metadata_snapshot),
+                        )
+                        .with_change_set(change_set),
+                    );
                     context.register_progress();
                     remove_source_entry_if_requested(
                         context,

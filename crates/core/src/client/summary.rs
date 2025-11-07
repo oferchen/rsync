@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use oc_rsync_engine::local_copy::{
-    LocalCopyAction, LocalCopyFileKind, LocalCopyMetadata, LocalCopyRecord, LocalCopyReport,
-    LocalCopySummary,
+    LocalCopyAction, LocalCopyChangeSet, LocalCopyFileKind, LocalCopyMetadata, LocalCopyRecord,
+    LocalCopyReport, LocalCopySummary,
 };
 
 /// Summary of the work performed by a client transfer.
@@ -298,6 +298,7 @@ pub struct ClientEvent {
     created: bool,
     destination_root: Arc<PathBuf>,
     destination_path: PathBuf,
+    change_set: LocalCopyChangeSet,
 }
 
 impl ClientEvent {
@@ -354,6 +355,7 @@ impl ClientEvent {
             created,
             destination_root,
             destination_path,
+            change_set: record.change_set(),
         }
     }
 
@@ -375,6 +377,7 @@ impl ClientEvent {
             created: false,
             destination_root,
             destination_path,
+            change_set: LocalCopyChangeSet::new(),
         }
     }
 
@@ -418,6 +421,12 @@ impl ClientEvent {
     #[must_use]
     pub const fn was_created(&self) -> bool {
         self.created
+    }
+
+    /// Returns the change flags associated with this event.
+    #[must_use]
+    pub const fn change_set(&self) -> LocalCopyChangeSet {
+        self.change_set
     }
 
     /// Returns the root directory of the destination tree.

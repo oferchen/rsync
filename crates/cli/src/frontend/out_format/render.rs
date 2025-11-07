@@ -326,6 +326,8 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
 
     fields[0] = match event.kind() {
         DataCopied => '>',
+        HardLink => 'h',
+        DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         MetadataReused
         | SkippedExisting
         | SkippedMissingDestination
@@ -334,8 +336,6 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
         | SkippedDirectory
         | SkippedUnsafeSymlink
         | SkippedMountPoint => '.',
-        HardLink => 'h',
-        DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         _ => '.',
     };
 
@@ -369,21 +369,41 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
         return fields.iter().collect();
     }
 
+    let change_set = event.change_set();
     let attr = &mut fields[2..];
 
-    match event.kind() {
-        DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | HardLink => {
-            attr.fill('+');
-        }
-        DataCopied => {
-            attr[0] = 'c';
-            attr[1] = 's';
-            attr[2] = 't';
-        }
-        SourceRemoved => {
-            attr[0] = 'c';
-        }
-        _ => {}
+    if change_set.checksum_changed() {
+        attr[0] = 'c';
+    }
+    if change_set.size_changed() {
+        attr[1] = 's';
+    }
+    if let Some(marker) = change_set.time_change_marker() {
+        attr[2] = marker;
+    }
+    if change_set.permissions_changed() {
+        attr[3] = 'p';
+    }
+    if change_set.owner_changed() {
+        attr[4] = 'o';
+    }
+    if change_set.group_changed() {
+        attr[5] = 'g';
+    }
+    attr[6] = match (
+        change_set.access_time_changed(),
+        change_set.create_time_changed(),
+    ) {
+        (true, true) => 'b',
+        (true, false) => 'u',
+        (false, true) => 'n',
+        _ => attr[6],
+    };
+    if change_set.acl_changed() {
+        attr[7] = 'a';
+    }
+    if change_set.xattr_changed() {
+        attr[8] = 'x';
     }
 
     fields.iter().collect()
