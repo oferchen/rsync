@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
-description = "Pure-Rust implementation of the rsync client and daemon entrypoints installed as oc-rsync (with optional oc-rsyncd wrapper) for side-by-side deployment"
+description = "Pure-Rust implementation of the rsync client and daemon entrypoints installed as a single oc-rsync binary for side-by-side deployment"
 repository = "https://github.com/oferchen/rsync"
 publish = true
 autobins = false
@@ -121,13 +121,12 @@ section = "utils"
 priority = "optional"
 maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
-extended-description = "Pure-Rust implementation of rsync-compatible client and daemon binaries installed as oc-rsync and oc-rsyncd so they can coexist with the system rsync package without replacing it."
+extended-description = "Pure-Rust implementation of the rsync-compatible client and daemon entrypoints installed as a single oc-rsync binary so it can coexist with the system rsync package without replacing it."
 conflicts = []
 replaces = []
 
 assets = [
     ["target/dist/oc-rsync", "usr/bin/oc-rsync", "755"],
-    ["packaging/bin/oc-rsyncd", "usr/sbin/oc-rsyncd", "755"],
     ["LICENSE", "usr/share/doc/oc-rsync/LICENSE", "644"],
     ["packaging/systemd/oc-rsyncd.service", "/lib/systemd/system/oc-rsyncd.service", "644"],
     ["packaging/etc/oc-rsyncd/oc-rsyncd.conf", "/etc/oc-rsyncd/oc-rsyncd.conf", "644"],
@@ -144,10 +143,9 @@ maintainer-scripts = "packaging/deb"
 
 [package.metadata.rpm]
 package = "oc-rsync"
-summary = "Rust implementation of rsync-compatible client/daemon installed as oc-rsync with an oc-rsyncd wrapper"
+summary = "Rust implementation of the rsync-compatible client/daemon installed as a single oc-rsync binary"
 assets = [
     { source = "target/dist/oc-rsync", dest = "/usr/bin/oc-rsync", mode = "0755" },
-    { source = "packaging/bin/oc-rsyncd", dest = "/usr/sbin/oc-rsyncd", mode = "0755" },
     { source = "packaging/systemd/oc-rsyncd.service", dest = "/usr/lib/systemd/system/oc-rsyncd.service", mode = "0644" },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.conf", dest = "/etc/oc-rsyncd/oc-rsyncd.conf", mode = "0644", config = true },
     { source = "packaging/etc/oc-rsyncd/oc-rsyncd.secrets", dest = "/etc/oc-rsyncd/oc-rsyncd.secrets", mode = "0600", config = true },
@@ -197,7 +195,6 @@ buildflags = ["--profile", "dist", "--bins"]
 
 [package.metadata.rpm.targets]
 "oc-rsync" = { path = "/usr/bin/oc-rsync", mode = "0755" }
-"oc-rsyncd" = { path = "/usr/sbin/oc-rsyncd", mode = "0755" }
 
 [profile.dist]
 inherits = "release"

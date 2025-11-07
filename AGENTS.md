@@ -7,8 +7,9 @@ This document defines the internal actors (“agents”), their responsibilities
 ## Global Conventions
 
 - **Canonical branding metadata** is sourced from `[workspace.metadata.oc_rsync]`
-  in `Cargo.toml`. The branded binaries are **`oc-rsync`** and **`oc-rsyncd`**,
-  the daemon configuration lives under `/etc/oc-rsyncd/` (for example
+  in `Cargo.toml`. The branded entrypoint is **`oc-rsync`** with optional
+  wrappers (**`oc-rsyncd`**, legacy aliases) exposed via the `legacy-binaries`
+  feature. The daemon configuration lives under `/etc/oc-rsyncd/` (for example
   `/etc/oc-rsyncd/oc-rsyncd.conf` and `/etc/oc-rsyncd/oc-rsyncd.secrets`), the
   published version string is `3.4.1-rust`, and the authoritative source
   repository URL is <https://github.com/oferchen/rsync>. Any user-facing surface
