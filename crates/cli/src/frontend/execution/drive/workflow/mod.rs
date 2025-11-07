@@ -61,7 +61,7 @@ where
         address_mode,
         bind_address: bind_address_raw,
         archive,
-        recursive,
+        recursive: _recursive,
         recursive_override,
         dirs,
         delete_mode,
@@ -358,6 +358,7 @@ where
     let files_from_used = !files_from.is_empty();
     let implied_dirs_option = implied_dirs;
     let implied_dirs = implied_dirs_option.unwrap_or(true);
+    let recursive_effective = !matches!(recursive_override, Some(false));
     let batch_mode_requested =
         write_batch.is_some() || only_write_batch.is_some() || read_batch.is_some();
     let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
@@ -383,7 +384,6 @@ where
         bind_address: bind_address.as_ref(),
         human_readable: human_readable_setting,
         archive,
-        recursive,
         recursive_override,
         dirs,
         min_size: &min_size,
@@ -597,7 +597,7 @@ where
         bind_address,
         dry_run,
         list_only,
-        recursive,
+        recursive: recursive_effective,
         dirs,
         delete_mode,
         delete_excluded,
