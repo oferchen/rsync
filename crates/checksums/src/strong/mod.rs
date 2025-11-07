@@ -7,6 +7,8 @@
 
 mod md4;
 mod md5;
+#[cfg(feature = "openssl")]
+mod openssl_support;
 mod sha1;
 mod sha256;
 mod sha512;
@@ -14,6 +16,13 @@ mod xxhash;
 
 pub use md4::Md4;
 pub use md5::Md5;
+#[cfg(feature = "openssl")]
+pub use openssl_support::openssl_acceleration_available;
+#[cfg(not(feature = "openssl"))]
+#[inline]
+pub const fn openssl_acceleration_available() -> bool {
+    false
+}
 pub use sha1::Sha1;
 pub use sha256::Sha256;
 pub use sha512::Sha512;
@@ -81,6 +90,12 @@ pub trait StrongDigest: Sized {
 #[cfg(test)]
 mod tests {
     use super::{Md4, Md5, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+
+    #[cfg(feature = "openssl")]
+    #[test]
+    fn openssl_detection_succeeds_when_feature_enabled() {
+        assert!(super::openssl_acceleration_available());
+    }
 
     #[test]
     fn md5_trait_round_trip_matches_inherent_api() {
