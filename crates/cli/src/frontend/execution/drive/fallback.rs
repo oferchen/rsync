@@ -37,7 +37,6 @@ pub(crate) struct FallbackInputs {
     pub(crate) bind_address: Option<oc_rsync_core::client::BindAddress>,
     pub(crate) human_readable: Option<HumanReadableMode>,
     pub(crate) archive: bool,
-    pub(crate) recursive: bool,
     pub(crate) recursive_override: Option<bool>,
     pub(crate) dirs: Option<bool>,
     pub(crate) delete_for_fallback: bool,
@@ -186,12 +185,11 @@ where
         protect_args: inputs.protect_args,
         human_readable: inputs.human_readable,
         archive: inputs.archive,
-        recursive: if inputs.recursive_override == Some(false) {
-            Some(false)
-        } else if !inputs.archive && inputs.recursive {
-            Some(true)
-        } else {
-            None
+        recursive: match inputs.recursive_override {
+            Some(false) => Some(false),
+            Some(true) => Some(true),
+            None if !inputs.archive => Some(true),
+            None => None,
         },
         dirs: inputs.dirs,
         delete: delete_for_fallback,
