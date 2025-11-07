@@ -71,9 +71,8 @@ exit 0
     assert!(stderr.is_empty());
 
     let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-    let mut lines = recorded.lines();
     let mut seen_choice = false;
-    while let Some(line) = lines.next() {
+    for line in recorded.lines() {
         if line == "--compress-choice=zlib" {
             seen_choice = true;
             break;
