@@ -128,8 +128,7 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     }
     let supported_list = supported.join(", ");
     let rendered = format!(
-        "invalid compression algorithm '{}': supported values include {}",
-        display, supported_list
+        "invalid compression algorithm '{display}': supported values include {supported_list}"
     );
     rsync_error!(1, rendered).with_role(Role::Client)
 }

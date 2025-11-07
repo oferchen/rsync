@@ -173,9 +173,6 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
     }
 
     let now = OffsetDateTime::now_local().map_err(|_| StopAtError::LocalOffset)?;
-    let mut tm_year = tm_year;
-    let mut tm_mon = tm_mon;
-    let mut tm_mday = tm_mday;
     let original_tm_year = tm_year;
     let original_tm_mon = tm_mon;
     let original_tm_mday = tm_mday;
@@ -218,7 +215,11 @@ fn parse_stop_at_internal(input: &str) -> Result<SystemTime, StopAtError> {
         repeat_seconds = 60 * 60;
     }
 
-    if tm_hour > 23 || tm_min > 59 || tm_mon < 0 || tm_mon >= 12 || tm_mday < 1 || tm_mday > 31 {
+    if !(0..=23).contains(&tm_hour)
+        || !(0..=59).contains(&tm_min)
+        || !(0..12).contains(&tm_mon)
+        || !(1..=31).contains(&tm_mday)
+    {
         return Err(StopAtError::InvalidFormat);
     }
 
@@ -332,7 +333,7 @@ fn offset_datetime_to_system_time(datetime: OffsetDateTime) -> Result<SystemTime
     if seconds < 0 {
         return Err(StopAtError::InvalidFormat);
     }
-    let nanos = u32::from(datetime.nanosecond());
+    let nanos = datetime.nanosecond();
     let base = SystemTime::UNIX_EPOCH
         .checked_add(Duration::from_secs(seconds as u64))
         .ok_or(StopAtError::InvalidFormat)?;
