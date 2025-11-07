@@ -275,6 +275,19 @@ fn parse_filter_directive_accepts_dir_merge_without_modifiers() {
 }
 
 #[test]
+fn parse_filter_directive_accepts_per_dir_alias() {
+    let directive =
+        parse_filter_directive(OsStr::new("per-dir .rsync-filter")).expect("per-dir alias parses");
+    assert_eq!(
+        directive,
+        FilterDirective::Rule(FilterRuleSpec::dir_merge(
+            ".rsync-filter".to_string(),
+            DirMergeOptions::default(),
+        )),
+    );
+}
+
+#[test]
 fn parse_filter_directive_accepts_dir_merge_with_remove_modifier() {
     let directive = parse_filter_directive(OsStr::new("dir-merge,- .rsync-filter"))
         .expect("dir-merge with '-' modifier parses");
