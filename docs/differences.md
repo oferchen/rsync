@@ -32,10 +32,11 @@ and parity is verified by tests or goldens.
     the native transport and delta engine are built. The `rsync`
     compatibility wrapper reuses the same execution path. Filter handling via
     `--exclude`/`--exclude-from`/`--include`/`--include-from` and `--filter`
-    with `+`/`-` actions, `show`/`hide`, `protect`/`risk`,
-    `exclude-if-present=FILE`, and `merge`/`dir-merge` directives (including
-    their `.`/`:` shorthands) mirrors rsync's glob semantics for local copies,
-    though the more obscure filter modifiers are still pending. Progress
+    with `+`/`-` actions, `show`/`hide`, `protect`/`risk`, perishable
+    (`p`) modifiers, `exclude-if-present=FILE`, and `merge`/`dir-merge`
+    directives (including their `.`/`:` shorthands) mirrors rsync's glob
+    semantics for local copies, though the xattr-specific filter modifiers
+    are still pending. Progress
     reporting emits streaming, carriage-return updates akin to upstream `rsync`,
     and the `--stats` flag reports the engine's full set of counters
     (bytes sent/received, matched bytes, compression usage, file-list timings,

@@ -13,6 +13,7 @@ pub(crate) struct CompiledRule {
     descendant_matchers: Vec<GlobMatcher>,
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
+    pub(crate) perishable: bool,
 }
 
 impl CompiledRule {
@@ -22,6 +23,7 @@ impl CompiledRule {
             pattern,
             applies_to_sender,
             applies_to_receiver,
+            perishable,
         } = rule;
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
         let mut direct_patterns = HashSet::new();
@@ -53,6 +55,7 @@ impl CompiledRule {
             descendant_matchers,
             applies_to_sender,
             applies_to_receiver,
+            perishable,
         })
     }
 

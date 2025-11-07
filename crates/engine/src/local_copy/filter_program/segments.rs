@@ -43,6 +43,12 @@ impl FilterSegment {
     ) {
         for rule in &self.include_exclude {
             if rule.matches(path, is_dir) {
+                if matches!(context, FilterContext::Deletion) && rule.applies_to_receiver {
+                    outcome.set_delete_excluded(matches!(rule.action, FilterAction::Exclude));
+                }
+                if matches!(context, FilterContext::Deletion) && rule.perishable {
+                    continue;
+                }
                 match context {
                     FilterContext::Transfer => {
                         if rule.applies_to_sender {
@@ -61,6 +67,9 @@ impl FilterSegment {
         }
 
         for rule in &self.protect_risk {
+            if matches!(context, FilterContext::Deletion) && rule.perishable {
+                continue;
+            }
             if rule.matches(path, is_dir) {
                 let applies = match context {
                     FilterContext::Transfer => rule.applies_to_sender,
@@ -104,6 +113,7 @@ pub(crate) enum FilterContext {
 pub(crate) struct FilterOutcome {
     transfer_allowed: bool,
     protected: bool,
+    excluded_for_delete_excluded: bool,
 }
 
 impl FilterOutcome {
@@ -111,6 +121,7 @@ impl FilterOutcome {
         Self {
             transfer_allowed: true,
             protected: false,
+            excluded_for_delete_excluded: false,
         }
     }
 
@@ -123,7 +134,7 @@ impl FilterOutcome {
     }
 
     pub(crate) fn allows_deletion_when_excluded_removed(self) -> bool {
-        !self.protected
+        self.excluded_for_delete_excluded && !self.protected
     }
 
     fn set_transfer_allowed(&mut self, allowed: bool) {
@@ -136,6 +147,10 @@ impl FilterOutcome {
 
     fn unprotect(&mut self) {
         self.protected = false;
+    }
+
+    fn set_delete_excluded(&mut self, excluded: bool) {
+        self.excluded_for_delete_excluded = excluded;
     }
 }
 
@@ -153,6 +168,7 @@ struct CompiledRule {
     descendant_matchers: Vec<GlobMatcher>,
     applies_to_sender: bool,
     applies_to_receiver: bool,
+    perishable: bool,
 }
 
 impl CompiledRule {
@@ -189,6 +205,7 @@ impl CompiledRule {
             descendant_matchers: compile_patterns(descendant_patterns, &pattern)?,
             applies_to_sender,
             applies_to_receiver,
+            perishable: rule.is_perishable(),
         })
     }
 
