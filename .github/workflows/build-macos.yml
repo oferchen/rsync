@@ -120,12 +120,6 @@ jobs:
         run: |
           cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin oc-rsync
 
-      - name: Build oc-rsyncd (dist, locked)
-        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
-        shell: bash
-        run: |
-          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin oc-rsyncd
-
       - name: Build legacy rsync wrapper
         if: ${{ matrix.platform.enabled }}
         shell: bash
@@ -172,15 +166,6 @@ jobs:
         with:
           name: oc-rsync-${{ matrix.platform.name }}
           path: target/${{ matrix.platform.target }}/dist/oc-rsync*
-          if-no-files-found: error
-          retention-days: 10
-
-      - name: Upload oc-rsyncd artifact
-        if: ${{ matrix.platform.enabled && matrix.platform.build_daemon }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: oc-rsyncd-${{ matrix.platform.name }}
-          path: target/${{ matrix.platform.target }}/dist/oc-rsyncd*
           if-no-files-found: error
           retention-days: 10
 
