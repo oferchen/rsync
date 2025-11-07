@@ -32,10 +32,10 @@ pub const LATEST_COPYRIGHT_YEAR: &str = "2025";
 pub const COPYRIGHT_NOTICE: &str = "(C) 2025 by Ofer Chen.";
 
 /// Web site advertised by `rsync` in `--version` output.
-pub const WEB_SITE: &str = workspace::SOURCE_URL;
+pub const WEB_SITE: &str = workspace::WEB_SITE;
 
 /// Repository URL advertised by version banners and documentation.
-pub const SOURCE_URL: &str = WEB_SITE;
+pub const SOURCE_URL: &str = workspace::SOURCE_URL;
 
 /// Human-readable toolchain description rendered in `--version` output.
 pub const BUILD_TOOLCHAIN: &str = "Built in Rust 2024";
