@@ -232,8 +232,16 @@ pub(crate) fn process_merge_directive(
 }
 
 fn merge_directive_requires_argument(keyword: &str) -> bool {
+    if keyword.contains('=') {
+        return false;
+    }
+
     matches!(
         keyword,
-        "merge" | "include" | "exclude" | "show" | "hide" | "protect"
-    ) || keyword.starts_with("dir-merge")
+        "include" | "exclude" | "show" | "hide" | "protect" | "risk" | "exclude-if-present"
+    ) || keyword.starts_with("merge")
+        || keyword.starts_with("dir-merge")
+        || keyword.starts_with("per-dir")
+        || keyword == "."
+        || keyword == ":"
 }
