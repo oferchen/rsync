@@ -28,6 +28,7 @@ pub struct FilterRuleSpec {
     applies_to_sender: bool,
     applies_to_receiver: bool,
     perishable: bool,
+    xattr_only: bool,
 }
 
 impl FilterRuleSpec {
@@ -42,6 +43,7 @@ impl FilterRuleSpec {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -56,6 +58,7 @@ impl FilterRuleSpec {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -69,6 +72,7 @@ impl FilterRuleSpec {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -82,6 +86,7 @@ impl FilterRuleSpec {
             applies_to_sender: false,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -95,6 +100,7 @@ impl FilterRuleSpec {
             applies_to_sender: false,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -109,6 +115,7 @@ impl FilterRuleSpec {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -123,6 +130,7 @@ impl FilterRuleSpec {
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -136,6 +144,7 @@ impl FilterRuleSpec {
             applies_to_sender: true,
             applies_to_receiver: false,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -149,6 +158,7 @@ impl FilterRuleSpec {
             applies_to_sender: true,
             applies_to_receiver: false,
             perishable: false,
+            xattr_only: false,
         }
     }
 
@@ -200,6 +210,11 @@ impl FilterRuleSpec {
             return;
         }
 
+        if self.xattr_only {
+            // Xattr-only rules are not subject to per-directory overrides.
+            return;
+        }
+
         if options.perishable() {
             self.perishable = true;
         }
@@ -221,6 +236,42 @@ impl FilterRuleSpec {
     #[must_use]
     pub const fn with_perishable(mut self, perishable: bool) -> Self {
         self.perishable = perishable;
+        self
+    }
+
+    /// Marks the rule as applying exclusively to xattr names.
+    #[must_use]
+    pub const fn with_xattr_only(mut self, xattr_only: bool) -> Self {
+        self.xattr_only = xattr_only;
+        self
+    }
+
+    /// Reports whether the rule applies exclusively to xattr names.
+    #[must_use]
+    pub const fn is_xattr_only(&self) -> bool {
+        self.xattr_only
+    }
+
+    /// Applies sender-side overrides.
+    #[must_use]
+    pub const fn with_sender(mut self, applies: bool) -> Self {
+        self.applies_to_sender = applies;
+        self
+    }
+
+    /// Applies receiver-side overrides.
+    #[must_use]
+    pub const fn with_receiver(mut self, applies: bool) -> Self {
+        self.applies_to_receiver = applies;
+        self
+    }
+
+    /// Anchors the pattern to the root of the transfer when requested.
+    #[must_use]
+    pub fn with_anchor(mut self) -> Self {
+        if !self.pattern.starts_with('/') {
+            self.pattern.insert(0, '/');
+        }
         self
     }
 }

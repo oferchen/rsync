@@ -293,12 +293,14 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
             FilterRuleKind::Include => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::include(rule.pattern().to_string())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable()),
+                    .with_perishable(rule.is_perishable())
+                    .with_xattr_only(rule.is_xattr_only()),
             )),
             FilterRuleKind::Exclude => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::exclude(rule.pattern().to_string())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable()),
+                    .with_perishable(rule.is_perishable())
+                    .with_xattr_only(rule.is_xattr_only()),
             )),
             FilterRuleKind::Clear => entries.push(FilterProgramEntry::Clear),
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(

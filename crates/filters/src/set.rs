@@ -23,6 +23,9 @@ impl FilterSet {
         let mut protect_risk = Vec::new();
 
         for rule in rules.into_iter() {
+            if rule.is_xattr_only() {
+                continue;
+            }
             match rule.action {
                 FilterAction::Include | FilterAction::Exclude => {
                     include_exclude.push(CompiledRule::new(rule)?);

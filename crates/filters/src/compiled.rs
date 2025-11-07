@@ -24,7 +24,12 @@ impl CompiledRule {
             applies_to_sender,
             applies_to_receiver,
             perishable,
+            xattr_only,
         } = rule;
+        debug_assert!(
+            !xattr_only,
+            "xattr-only rules should be filtered before compilation"
+        );
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
         let mut direct_patterns = HashSet::new();
         direct_patterns.insert(core_pattern.clone());

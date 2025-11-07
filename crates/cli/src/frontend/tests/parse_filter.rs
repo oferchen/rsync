@@ -200,6 +200,49 @@ fn parse_filter_directive_accepts_merge_with_forced_exclude() {
 }
 
 #[test]
+fn parse_filter_directive_accepts_xattr_only_rules() {
+    let include = parse_filter_directive(OsStr::new("+x user.keep"))
+        .expect("short include with xattr modifier parses");
+    assert_eq!(
+        include,
+        FilterDirective::Rule(
+            FilterRuleSpec::include("user.keep".to_string()).with_xattr_only(true)
+        )
+    );
+
+    let exclude = parse_filter_directive(OsStr::new("-x user.skip"))
+        .expect("short exclude with xattr modifier parses");
+    assert_eq!(
+        exclude,
+        FilterDirective::Rule(
+            FilterRuleSpec::exclude("user.skip".to_string()).with_xattr_only(true)
+        )
+    );
+
+    let keyword = parse_filter_directive(OsStr::new("include,x user.keep"))
+        .expect("keyword include with xattr modifier parses");
+    assert_eq!(
+        keyword,
+        FilterDirective::Rule(
+            FilterRuleSpec::include("user.keep".to_string()).with_xattr_only(true)
+        )
+    );
+}
+
+#[test]
+fn parse_filter_directive_rejects_xattr_on_unsupported_keywords() {
+    let protect_error =
+        parse_filter_directive(OsStr::new("protect,x secrets")).expect_err("protect,x should fail");
+    let rendered = protect_error.to_string();
+    assert!(rendered.contains("uses unsupported modifier 'x'"));
+
+    let show_error =
+        parse_filter_directive(OsStr::new("show,x meta")).expect_err("show,x should fail");
+    let rendered = show_error.to_string();
+    assert!(rendered.contains("uses unsupported modifier 'x'"));
+}
+
+#[test]
 fn parse_filter_directive_accepts_merge_with_cvs_alias() {
     let directive = parse_filter_directive(OsStr::new("merge,C")).expect("merge,C should parse");
     let (options, _) = parse_merge_modifiers("C", "merge,C", false).expect("modifiers");

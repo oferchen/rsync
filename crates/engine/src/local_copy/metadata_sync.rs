@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rsync_meta::MetadataError;
 
-use super::LocalCopyError;
+use super::{FilterProgram, LocalCopyError};
 
 #[cfg(any(feature = "acl", feature = "xattr"))]
 use super::LocalCopyExecution;
@@ -22,9 +22,21 @@ pub(crate) fn sync_xattrs_if_requested(
     source: &Path,
     destination: &Path,
     follow_symlinks: bool,
+    filter_program: Option<&FilterProgram>,
 ) -> Result<(), LocalCopyError> {
     if preserve_xattrs && !mode.is_dry_run() {
-        sync_xattrs(source, destination, follow_symlinks).map_err(map_metadata_error)?;
+        if let Some(program) = filter_program {
+            if program.has_xattr_rules() {
+                let filter = |name: &str| program.allows_xattr(name);
+                sync_xattrs(source, destination, follow_symlinks, Some(&filter))
+                    .map_err(map_metadata_error)?;
+            } else {
+                sync_xattrs(source, destination, follow_symlinks, None)
+                    .map_err(map_metadata_error)?;
+            }
+        } else {
+            sync_xattrs(source, destination, follow_symlinks, None).map_err(map_metadata_error)?;
+        }
     }
     Ok(())
 }

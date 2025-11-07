@@ -2,7 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
-use rsync_filters::FilterRule;
+use globset::{GlobBuilder, GlobMatcher};
+use rsync_filters::{FilterAction, FilterRule};
 
 use super::super::LocalCopyError;
 use super::rules::{DirMergeRule, ExcludeIfPresentRule};
@@ -23,6 +24,7 @@ pub struct FilterProgram {
     instructions: Vec<FilterInstruction>,
     dir_merge_rules: Vec<DirMergeRule>,
     exclude_if_present_rules: Vec<ExcludeIfPresentRule>,
+    xattr_rules: Vec<XattrRule>,
 }
 
 impl FilterProgram {
@@ -35,10 +37,16 @@ impl FilterProgram {
         let mut dir_merge_rules = Vec::new();
         let mut exclude_if_present_rules = Vec::new();
         let mut current_segment = FilterSegment::default();
+        let mut xattr_rules = Vec::new();
 
         for entry in entries {
             match entry {
                 FilterProgramEntry::Rule(rule) => {
+                    if rule.is_xattr_only() {
+                        let compiled = XattrRule::new(&rule)?;
+                        xattr_rules.push(compiled);
+                        continue;
+                    }
                     current_segment.push_rule(rule)?;
                 }
                 FilterProgramEntry::Clear => {
@@ -46,6 +54,7 @@ impl FilterProgram {
                     instructions.clear();
                     dir_merge_rules.clear();
                     exclude_if_present_rules.clear();
+                    xattr_rules.clear();
                 }
                 FilterProgramEntry::DirMerge(rule) => {
                     if !current_segment.is_empty() || instructions.is_empty() {
@@ -76,6 +85,7 @@ impl FilterProgram {
             instructions,
             dir_merge_rules,
             exclude_if_present_rules,
+            xattr_rules,
         })
     }
 
@@ -88,14 +98,15 @@ impl FilterProgram {
     /// Reports whether the program contains no rules.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.instructions
-            .iter()
-            .all(|instruction| match instruction {
-                FilterInstruction::Segment(segment) => segment.is_empty(),
-                FilterInstruction::DirMerge { .. } | FilterInstruction::ExcludeIfPresent { .. } => {
-                    false
-                }
-            })
+        self.xattr_rules.is_empty()
+            && self
+                .instructions
+                .iter()
+                .all(|instruction| match instruction {
+                    FilterInstruction::Segment(segment) => segment.is_empty(),
+                    FilterInstruction::DirMerge { .. }
+                    | FilterInstruction::ExcludeIfPresent { .. } => false,
+                })
     }
 
     /// Evaluates the program for the provided path.
@@ -159,6 +170,29 @@ impl FilterProgram {
 
         Ok(false)
     }
+
+    pub(crate) fn has_xattr_rules(&self) -> bool {
+        !self.xattr_rules.is_empty()
+    }
+
+    pub(crate) fn allows_xattr(&self, name: &str) -> bool {
+        if self.xattr_rules.is_empty() {
+            return true;
+        }
+
+        let mut decision = None;
+        for rule in &self.xattr_rules {
+            if rule.matches(name) {
+                decision = Some(rule.action);
+            }
+        }
+
+        match decision {
+            Some(FilterAction::Exclude) => false,
+            Some(FilterAction::Include) | None => true,
+            Some(FilterAction::Protect | FilterAction::Risk | FilterAction::Clear) => true,
+        }
+    }
 }
 
 /// Entry used to construct a [`FilterProgram`].
@@ -200,6 +234,39 @@ impl fmt::Display for FilterProgramError {
             "failed to compile filter pattern '{}': {}",
             self.pattern, self.source
         )
+    }
+}
+
+#[derive(Clone, Debug)]
+struct XattrRule {
+    action: FilterAction,
+    matcher: GlobMatcher,
+}
+
+impl XattrRule {
+    fn new(rule: &FilterRule) -> Result<Self, FilterProgramError> {
+        debug_assert!(rule.is_xattr_only());
+        let pattern = rule.pattern().to_string();
+        let glob = GlobBuilder::new(&pattern)
+            .literal_separator(true)
+            .backslash_escape(true)
+            .build()
+            .map_err(|error| FilterProgramError::new(pattern.clone(), error))?;
+
+        let action = rule.action();
+        debug_assert!(matches!(
+            action,
+            FilterAction::Include | FilterAction::Exclude
+        ));
+
+        Ok(Self {
+            action,
+            matcher: glob.compile_matcher(),
+        })
+    }
+
+    fn matches(&self, name: &str) -> bool {
+        self.matcher.is_match(name)
     }
 }
 

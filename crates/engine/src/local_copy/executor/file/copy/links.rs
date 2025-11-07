@@ -259,7 +259,14 @@ pub(super) fn process_links(
                         )
                         .map_err(map_metadata_error)?;
                         #[cfg(feature = "xattr")]
-                        sync_xattrs_if_requested(preserve_xattrs, mode, source, destination, true)?;
+                        sync_xattrs_if_requested(
+                            preserve_xattrs,
+                            mode,
+                            source,
+                            destination,
+                            true,
+                            context.filter_program(),
+                        )?;
                         #[cfg(feature = "acl")]
                         sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
                         context.record_hard_link(metadata, destination);
