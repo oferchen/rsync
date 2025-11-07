@@ -64,8 +64,9 @@ mod plan;
 mod skip_compress;
 
 pub use plan::{
-    LocalCopyAction, LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata, LocalCopyPlan,
-    LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary,
+    LocalCopyAction, LocalCopyChangeSet, LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata,
+    LocalCopyPlan, LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler, LocalCopyReport,
+    LocalCopySummary, TimeChange,
 };
 
 pub use options::{DeleteTiming, LocalCopyOptions, ReferenceDirectory, ReferenceDirectoryKind};

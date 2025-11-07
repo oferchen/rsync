@@ -1,4 +1,5 @@
 mod action;
+mod change_set;
 mod execution;
 mod metadata;
 mod plan_impl;
@@ -8,6 +9,7 @@ mod report;
 mod summary;
 
 pub use action::LocalCopyAction;
+pub use change_set::{LocalCopyChangeSet, TimeChange};
 pub use execution::LocalCopyExecution;
 pub use metadata::{LocalCopyFileKind, LocalCopyMetadata};
 pub use plan_impl::LocalCopyPlan;

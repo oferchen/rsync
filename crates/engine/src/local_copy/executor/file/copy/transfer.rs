@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams, LocalCopyAction,
-    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
 #[cfg(test)]
@@ -90,14 +90,46 @@ pub(super) fn execute_transfer(
             context.summary_mut().record_regular_file_matched();
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             let total_bytes = Some(metadata_snapshot.len());
-            context.record(LocalCopyRecord::new(
-                record_path.to_path_buf(),
-                LocalCopyAction::MetadataReused,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
+            let xattrs_enabled = {
+                #[cfg(feature = "xattr")]
+                {
+                    preserve_xattrs
+                }
+                #[cfg(not(feature = "xattr"))]
+                {
+                    false
+                }
+            };
+            let acls_enabled = {
+                #[cfg(feature = "acl")]
+                {
+                    preserve_acls
+                }
+                #[cfg(not(feature = "acl"))]
+                {
+                    false
+                }
+            };
+            let change_set = LocalCopyChangeSet::for_file(
+                metadata,
+                existing_metadata,
+                &metadata_options,
+                true,
+                false,
+                xattrs_enabled,
+                acls_enabled,
+            );
+            context.record(
+                LocalCopyRecord::new(
+                    record_path.to_path_buf(),
+                    LocalCopyAction::MetadataReused,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                .with_change_set(change_set),
+            );
             return Ok(());
         }
     }
@@ -260,6 +292,36 @@ pub(super) fn execute_transfer(
     context.summary_mut().record_elapsed(elapsed);
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
+    let xattrs_enabled = {
+        #[cfg(feature = "xattr")]
+        {
+            preserve_xattrs
+        }
+        #[cfg(not(feature = "xattr"))]
+        {
+            false
+        }
+    };
+    let acls_enabled = {
+        #[cfg(feature = "acl")]
+        {
+            preserve_acls
+        }
+        #[cfg(not(feature = "acl"))]
+        {
+            false
+        }
+    };
+    let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
+    let change_set = LocalCopyChangeSet::for_file(
+        metadata,
+        existing_metadata,
+        &metadata_options,
+        destination_previously_existed,
+        wrote_data,
+        xattrs_enabled,
+        acls_enabled,
+    );
     context.record(
         LocalCopyRecord::new(
             record_path.to_path_buf(),
@@ -269,6 +331,7 @@ pub(super) fn execute_transfer(
             elapsed,
             Some(metadata_snapshot),
         )
+        .with_change_set(change_set)
         .with_creation(!destination_previously_existed),
     );
 
