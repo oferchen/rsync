@@ -70,6 +70,8 @@ pub struct RemoteFallbackArgs {
     pub existing: bool,
     /// Enables `--ignore-missing-args`.
     pub ignore_missing_args: bool,
+    /// Enables `--delete-missing-args`.
+    pub delete_missing_args: bool,
     /// Enables `--update`.
     pub update: bool,
     /// Optional `--modify-window` tolerance forwarded to the fallback binary.

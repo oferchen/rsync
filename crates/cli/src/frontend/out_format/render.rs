@@ -352,9 +352,7 @@ fn format_itemized_changes(event: &ClientEvent) -> String {
             | MetadataReused
             | SkippedExisting
             | SkippedMissingDestination
-            | SkippedNewerDestination => {
-                ClientEntryKind::File
-            }
+            | SkippedNewerDestination => ClientEntryKind::File,
             _ => ClientEntryKind::Other,
         }) {
         ClientEntryKind::File => 'f',
