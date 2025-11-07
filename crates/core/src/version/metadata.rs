@@ -33,7 +33,7 @@ use super::constants::{
 /// )));
 /// assert!(banner.contains("protocol version 32"));
 /// assert!(banner.contains("revision/build #"));
-/// assert!(banner.contains("https://github.com/oferchen/rsync"));
+/// assert!(banner.contains("https://rsync.samba.org/"));
 /// ```
 #[doc(alias = "--version")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
