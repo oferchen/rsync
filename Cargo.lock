@@ -887,6 +887,7 @@ dependencies = [
  "rsync-meta",
  "rsync-protocol",
  "rsync-transport",
+ "rustix 0.38.44",
  "serde",
  "serde_json",
  "socket2",
