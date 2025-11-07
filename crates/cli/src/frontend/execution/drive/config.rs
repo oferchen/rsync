@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use rsync_compress::algorithm::CompressionAlgorithm;
 use rsync_core::client::{
     AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
-    SkipCompressList, StrongChecksumChoice, TransferTimeout,
+    IconvSetting, SkipCompressList, StrongChecksumChoice, TransferTimeout,
 };
 use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
@@ -103,6 +103,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) out_format_template: Option<crate::frontend::out_format::OutFormat>,
     pub(crate) log_file_template: Option<crate::frontend::out_format::OutFormat>,
     pub(crate) name_level: NameOutputLevel,
+    pub(crate) iconv: IconvSetting,
 }
 
 /// Builds the base [`ClientConfigBuilder`] from the provided inputs.
@@ -183,7 +184,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .force_fallback(inputs.force_fallback)
         .timeout(inputs.timeout)
         .connect_timeout(inputs.connect_timeout)
-        .stop_at(inputs.stop_deadline);
+        .stop_at(inputs.stop_deadline)
+        .iconv(inputs.iconv.clone());
 
     if let Some(algorithm) = inputs.compression_algorithm {
         builder = builder.compression_algorithm(algorithm);

@@ -4,7 +4,8 @@ use crate::frontend::arguments::{StopRequest, StopRequestKind};
 use crate::frontend::execution::chown::ParsedChown;
 use crate::frontend::progress::ProgressSetting;
 use rsync_core::client::{
-    AddressMode, BindAddress, DeleteMode, HumanReadableMode, RemoteFallbackArgs, TransferTimeout,
+    AddressMode, BindAddress, DeleteMode, HumanReadableMode, IconvSetting, RemoteFallbackArgs,
+    TransferTimeout,
 };
 use rsync_logging::MessageSink;
 use rsync_protocol::ProtocolVersion;
@@ -49,6 +50,7 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) compress_level_cli: Option<&'a OsString>,
     pub(crate) compress_choice: Option<&'a OsString>,
     pub(crate) skip_compress: Option<&'a OsString>,
+    pub(crate) iconv: IconvSetting,
     pub(crate) parsed_chown: Option<&'a ParsedChown>,
     pub(crate) owner: Option<bool>,
     pub(crate) group: Option<bool>,
@@ -186,6 +188,7 @@ where
         compress_level_cli: context.compress_level_cli.cloned(),
         compress_choice: context.compress_choice.cloned(),
         skip_compress: context.skip_compress.cloned(),
+        iconv: context.iconv.clone(),
         stop_after: context
             .stop_request
             .as_ref()

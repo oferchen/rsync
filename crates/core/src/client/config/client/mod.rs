@@ -11,7 +11,7 @@ use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 use super::builder::ClientConfigBuilder;
 use super::{
     AddressMode, BandwidthLimit, BindAddress, CompressionSetting, DeleteMode, FilterRuleSpec,
-    ReferenceDirectory, StrongChecksumChoice, TransferTimeout,
+    IconvSetting, ReferenceDirectory, StrongChecksumChoice, TransferTimeout,
 };
 
 /// Configuration describing the requested client operation.
@@ -94,6 +94,7 @@ pub struct ClientConfig {
     pub(super) reference_directories: Vec<ReferenceDirectory>,
     pub(super) connect_program: Option<OsString>,
     pub(super) bind_address: Option<BindAddress>,
+    pub(super) iconv: IconvSetting,
     #[cfg(feature = "acl")]
     pub(super) preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -181,6 +182,7 @@ impl Default for ClientConfig {
             reference_directories: Vec::new(),
             connect_program: None,
             bind_address: None,
+            iconv: IconvSetting::Unspecified,
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]
@@ -194,6 +196,12 @@ impl ClientConfig {
     #[must_use]
     pub fn builder() -> ClientConfigBuilder {
         ClientConfigBuilder::default()
+    }
+
+    /// Returns the configured iconv setting.
+    #[must_use]
+    pub const fn iconv(&self) -> &IconvSetting {
+        &self.iconv
     }
 }
 

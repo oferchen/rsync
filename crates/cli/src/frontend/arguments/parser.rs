@@ -155,6 +155,8 @@ where
             compress = !setting.is_disabled();
         }
     }
+    let iconv = matches.remove_one::<OsString>("iconv");
+    let no_iconv = matches.get_flag("no-iconv");
     let owner = if matches.get_flag("owner") {
         Some(true)
     } else if matches.get_flag("no-owner") {
@@ -529,6 +531,7 @@ where
         compress_level,
         compress_choice,
         skip_compress,
+        iconv,
         owner,
         group,
         chown,
@@ -604,5 +607,6 @@ where
         stop_at: stop_at_option,
         out_format,
         daemon_port,
+        no_iconv,
     })
 }

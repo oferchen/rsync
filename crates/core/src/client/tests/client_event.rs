@@ -9,6 +9,7 @@ use super::run::build_local_copy_options;
 use super::*;
 use crate::bandwidth;
 use crate::client::fallback::write_daemon_password;
+use crate::client::IconvSetting;
 use crate::fallback::CLIENT_FALLBACK_ENV;
 use crate::version::RUST_VERSION;
 use rsync_compress::zlib::CompressionLevel;
@@ -355,6 +356,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         log_file: None,
         log_file_format: None,
         no_motd: false,
+        iconv: IconvSetting::Unspecified,
         fallback_binary: None,
         rsync_path: None,
         remainder: Vec::new(),

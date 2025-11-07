@@ -62,6 +62,25 @@ pub(crate) fn section_03(command: ClapCommand) -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("iconv")
+                .long("iconv")
+                .value_name("CONVERT_SPEC")
+                .help(
+                    "Convert filenames using iconv (use '.' for locale defaults or LOCAL,REMOTE charsets).",
+                )
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new())
+                .conflicts_with("no-iconv"),
+        )
+        .arg(
+            Arg::new("no-iconv")
+                .long("no-iconv")
+                .help("Disable iconv charset conversion.")
+                .action(ArgAction::SetTrue)
+                .conflicts_with("iconv"),
+        )
+        .arg(
             Arg::new("info")
                 .long("info")
                 .value_name("FLAGS")

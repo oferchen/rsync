@@ -14,6 +14,7 @@ mod client;
 mod compress_env;
 mod enums;
 mod filters;
+mod iconv;
 mod network;
 mod reference;
 mod skip_compress;
@@ -27,6 +28,7 @@ pub use enums::{
     StrongChecksumAlgorithm, StrongChecksumChoice, TransferTimeout,
 };
 pub use filters::{FilterRuleKind, FilterRuleSpec};
+pub use iconv::{IconvParseError, IconvSetting};
 pub use network::BindAddress;
 pub use reference::{ReferenceDirectory, ReferenceDirectoryKind};
 pub use skip_compress::{parse_skip_compress_list, skip_compress_from_env};
