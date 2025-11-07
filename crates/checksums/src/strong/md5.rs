@@ -1,11 +1,50 @@
 use digest::Digest;
+use std::fmt;
 
 use super::StrongDigest;
+#[cfg(feature = "openssl")]
+use super::openssl_support;
 
 /// Streaming MD5 hasher used by rsync when backward compatibility demands it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Md5 {
-    inner: md5::Md5,
+    inner: Md5Backend,
+}
+
+#[derive(Clone)]
+enum Md5Backend {
+    #[cfg(feature = "openssl")]
+    OpenSsl(openssl::hash::Hasher),
+    Rust(md5::Md5),
+}
+
+impl Md5Backend {
+    fn new() -> Self {
+        #[cfg(feature = "openssl")]
+        {
+            if let Some(hasher) = openssl_support::new_md5_hasher() {
+                return Self::OpenSsl(hasher);
+            }
+        }
+
+        Self::Rust(md5::Md5::new())
+    }
+}
+
+impl fmt::Debug for Md5 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Md5").field("backend", &self.inner).finish()
+    }
+}
+
+impl fmt::Debug for Md5Backend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            #[cfg(feature = "openssl")]
+            Md5Backend::OpenSsl(_) => f.write_str("OpenSsl"),
+            Md5Backend::Rust(_) => f.write_str("Rust"),
+        }
+    }
 }
 
 impl Default for Md5 {
@@ -19,19 +58,34 @@ impl Md5 {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: md5::Md5::new(),
+            inner: Md5Backend::new(),
         }
     }
 
     /// Feeds additional bytes into the digest state.
     pub fn update(&mut self, data: &[u8]) {
-        self.inner.update(data);
+        match &mut self.inner {
+            #[cfg(feature = "openssl")]
+            Md5Backend::OpenSsl(hasher) => {
+                hasher.update(data).expect("OpenSSL MD5 update failed");
+            }
+            Md5Backend::Rust(hasher) => hasher.update(data),
+        }
     }
 
     /// Finalises the digest and returns the 128-bit MD5 output.
     #[must_use]
     pub fn finalize(self) -> [u8; 16] {
-        self.inner.finalize().into()
+        match self.inner {
+            #[cfg(feature = "openssl")]
+            Md5Backend::OpenSsl(mut hasher) => {
+                let mut output = [0_u8; 16];
+                let bytes = hasher.finish().expect("OpenSSL MD5 finalisation failed");
+                output.copy_from_slice(bytes.as_ref());
+                output
+            }
+            Md5Backend::Rust(hasher) => hasher.finalize().into(),
+        }
     }
 
     /// Convenience helper that computes the MD5 digest for `data` in one shot.
@@ -51,11 +105,11 @@ impl StrongDigest for Md5 {
     }
 
     fn update(&mut self, data: &[u8]) {
-        self.inner.update(data);
+        self.update(data);
     }
 
     fn finalize(self) -> Self::Digest {
-        self.inner.finalize().into()
+        self.finalize()
     }
 }
 

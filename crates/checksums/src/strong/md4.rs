@@ -1,11 +1,50 @@
 use digest::Digest;
+use std::fmt;
 
 use super::StrongDigest;
+#[cfg(feature = "openssl")]
+use super::openssl_support;
 
 /// Streaming MD4 hasher mirroring upstream rsync's default strong checksum.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Md4 {
-    inner: md4::Md4,
+    inner: Md4Backend,
+}
+
+#[derive(Clone)]
+enum Md4Backend {
+    #[cfg(feature = "openssl")]
+    OpenSsl(openssl::hash::Hasher),
+    Rust(md4::Md4),
+}
+
+impl Md4Backend {
+    fn new() -> Self {
+        #[cfg(feature = "openssl")]
+        {
+            if let Some(hasher) = openssl_support::new_md4_hasher() {
+                return Self::OpenSsl(hasher);
+            }
+        }
+
+        Self::Rust(md4::Md4::new())
+    }
+}
+
+impl fmt::Debug for Md4 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Md4").field("backend", &self.inner).finish()
+    }
+}
+
+impl fmt::Debug for Md4Backend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            #[cfg(feature = "openssl")]
+            Md4Backend::OpenSsl(_) => f.write_str("OpenSsl"),
+            Md4Backend::Rust(_) => f.write_str("Rust"),
+        }
+    }
 }
 
 impl Default for Md4 {
@@ -19,19 +58,34 @@ impl Md4 {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: md4::Md4::new(),
+            inner: Md4Backend::new(),
         }
     }
 
     /// Feeds additional bytes into the digest state.
     pub fn update(&mut self, data: &[u8]) {
-        self.inner.update(data);
+        match &mut self.inner {
+            #[cfg(feature = "openssl")]
+            Md4Backend::OpenSsl(hasher) => {
+                hasher.update(data).expect("OpenSSL MD4 update failed");
+            }
+            Md4Backend::Rust(hasher) => hasher.update(data),
+        }
     }
 
     /// Finalises the digest and returns the 128-bit MD4 output.
     #[must_use]
     pub fn finalize(self) -> [u8; 16] {
-        self.inner.finalize().into()
+        match self.inner {
+            #[cfg(feature = "openssl")]
+            Md4Backend::OpenSsl(mut hasher) => {
+                let mut output = [0_u8; 16];
+                let bytes = hasher.finish().expect("OpenSSL MD4 finalisation failed");
+                output.copy_from_slice(bytes.as_ref());
+                output
+            }
+            Md4Backend::Rust(hasher) => hasher.finalize().into(),
+        }
     }
 
     /// Convenience helper that computes the MD4 digest for `data` in one shot.
@@ -51,11 +105,11 @@ impl StrongDigest for Md4 {
     }
 
     fn update(&mut self, data: &[u8]) {
-        self.inner.update(data);
+        self.update(data);
     }
 
     fn finalize(self) -> Self::Digest {
-        self.inner.finalize().into()
+        self.finalize()
     }
 }
 

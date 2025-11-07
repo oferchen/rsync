@@ -10,3 +10,4 @@ pub mod strong;
 pub use rolling::{
     RollingChecksum, RollingDigest, RollingError, RollingSliceError, simd_acceleration_available,
 };
+pub use strong::openssl_acceleration_available;

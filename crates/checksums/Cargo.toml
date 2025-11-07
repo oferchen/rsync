@@ -10,6 +10,11 @@ no-default-features = false
 rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+default = ["openssl-vendored"]
+openssl = ["dep:openssl"]
+openssl-vendored = ["openssl", "openssl/vendored"]
+
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
@@ -17,6 +22,7 @@ digest = { version = "0.10", default-features = false, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
+openssl = { version = "0.10", optional = true }
 
 [dev-dependencies]
 proptest = "1.4"
