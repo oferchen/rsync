@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn change_set_detects_size_and_time_changes() {
-        use filetime::{set_file_mtime, FileTime};
+        use filetime::{FileTime, set_file_mtime};
 
         let temp = tempfile::tempdir().expect("tempdir");
         let existing_path = temp.path().join("existing.txt");
@@ -457,9 +457,7 @@ mod tests {
 
         let new_path = temp.path().join("updated.txt");
         fs::write(&new_path, b"content").expect("write new");
-        let mut new_perms = fs::metadata(&new_path)
-            .expect("metadata")
-            .permissions();
+        let mut new_perms = fs::metadata(&new_path).expect("metadata").permissions();
         new_perms.set_mode(0o600);
         fs::set_permissions(&new_path, new_perms).expect("set new perms");
         let metadata = fs::metadata(&new_path).expect("metadata");
