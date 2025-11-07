@@ -144,3 +144,9 @@ mod tests;
 #[cfg(test)]
 #[path = "filter_program_internal_tests.rs"]
 mod filter_program_internal_tests;
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    #[allow(unused_imports)]
+    pub(crate) use super::executor::take_fsync_call_count;
+}

@@ -158,6 +158,8 @@ pub struct RemoteFallbackArgs {
     pub partial: bool,
     /// Enables `--preallocate`.
     pub preallocate: bool,
+    /// Controls `--fsync`/`--no-fsync` forwarding.
+    pub fsync: Option<bool>,
     /// Enables `--delay-updates`.
     pub delay_updates: bool,
     /// Optional directory forwarded via `--partial-dir`.

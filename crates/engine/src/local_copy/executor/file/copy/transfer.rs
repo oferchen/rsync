@@ -9,10 +9,16 @@ use std::os::unix::fs::OpenOptionsExt;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use libc::{self, EACCES, EINVAL, ENOTSUP, EPERM, EROFS};
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams, LocalCopyAction,
     LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
+
+#[cfg(test)]
+static FSYNC_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(feature = "acl")]
 use crate::local_copy::sync_acls_if_requested;
@@ -194,6 +200,10 @@ pub(super) fn execute_transfer(
         start,
     );
 
+    if copy_result.is_ok() && context.fsync_enabled() {
+        sync_destination_file(&mut writer, preallocate_target)?;
+    }
+
     drop(writer);
 
     let staging_path_for_links = guard
@@ -330,6 +340,28 @@ pub(super) fn execute_transfer(
     }
 
     Ok(())
+}
+
+fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), LocalCopyError> {
+    writer
+        .sync_all()
+        .map_err(|error| LocalCopyError::io("fsync destination file", path.to_path_buf(), error))?;
+    record_fsync_call();
+    Ok(())
+}
+
+#[cfg(test)]
+fn record_fsync_call() {
+    FSYNC_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(not(test))]
+fn record_fsync_call() {}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn take_fsync_call_count() -> usize {
+    FSYNC_CALL_COUNT.swap(0, Ordering::Relaxed)
 }
 
 fn open_source_file(path: &Path, use_noatime: bool) -> io::Result<fs::File> {

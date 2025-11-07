@@ -14,6 +14,8 @@ pub(crate) use backup::{compute_backup_path, copy_entry_to_backup};
 pub(crate) use comparison::files_checksum_match;
 pub(crate) use comparison::{CopyComparison, should_skip_copy};
 pub(crate) use copy::copy_file;
+#[cfg(test)]
+pub(crate) use copy::take_fsync_call_count;
 pub(crate) use guard::{DestinationWriteGuard, remove_existing_destination};
 #[cfg(test)]
 pub(crate) use paths::partial_destination_path;

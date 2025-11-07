@@ -135,6 +135,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-append  Disable append mode for destination updates.\n",
             "      --append-verify  Append data while verifying that existing bytes match the sender.\n",
             "      --preallocate  Preallocate destination files before writing.\n",
+            "      --fsync    Fsync updated files after writing completes.\n",
             "      --inplace    Write updated data directly to destination files.\n",
             "      --no-inplace Use temporary files when updating regular files.\n",
             "  -h, --human-readable  Output numbers in a human-readable format.\n",

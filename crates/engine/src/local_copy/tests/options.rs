@@ -21,6 +21,13 @@ fn local_copy_options_delete_delay_round_trip() {
 }
 
 #[test]
+fn local_copy_options_fsync_round_trip() {
+    let options = LocalCopyOptions::default().fsync(true);
+    assert!(options.fsync_enabled());
+    assert!(!LocalCopyOptions::default().fsync_enabled());
+}
+
+#[test]
 fn local_copy_options_modify_window_round_trip() {
     let window = Duration::from_secs(5);
     let options = LocalCopyOptions::default().with_modify_window(window);

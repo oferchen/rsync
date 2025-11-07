@@ -118,6 +118,20 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("fsync")
+                    .long("fsync")
+                    .help("Fsync updated destination files after writing.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-fsync"),
+            )
+            .arg(
+                Arg::new("no-fsync")
+                    .long("no-fsync")
+                    .help("Skip forced fsync even when enabled earlier.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("fsync"),
+            )
+            .arg(
                 Arg::new("inplace")
                     .long("inplace")
                     .help("Write updated data directly to destination files.")

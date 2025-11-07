@@ -71,4 +71,12 @@ impl ClientConfigBuilder {
         }
         self
     }
+
+    /// Requests that updated destination files be synchronised with storage after writing.
+    #[must_use]
+    #[doc(alias = "--fsync")]
+    pub const fn fsync(mut self, fsync: bool) -> Self {
+        self.fsync = fsync;
+        self
+    }
 }

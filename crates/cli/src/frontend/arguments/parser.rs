@@ -355,6 +355,13 @@ where
     let stats = matches.get_flag("stats");
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;
     let preallocate = matches.get_flag("preallocate");
+    let fsync = if matches.get_flag("fsync") {
+        Some(true)
+    } else if matches.get_flag("no-fsync") {
+        Some(false)
+    } else {
+        None
+    };
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir = matches
         .remove_one::<OsString>("partial-dir")
@@ -604,6 +611,7 @@ where
         stats,
         partial,
         preallocate,
+        fsync,
         delay_updates,
         partial_dir,
         temp_dir,

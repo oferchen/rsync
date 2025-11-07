@@ -39,6 +39,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that updated files be flushed to stable storage once writing completes.
+    #[must_use]
+    #[doc(alias = "--fsync")]
+    pub const fn fsync(mut self, fsync: bool) -> Self {
+        self.fsync = fsync;
+        self
+    }
+
     /// Selects the directory used to retain partial files when transfers fail.
     #[must_use]
     #[doc(alias = "--partial-dir")]
@@ -117,6 +125,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn delay_updates_enabled(&self) -> bool {
         self.delay_updates
+    }
+
+    /// Reports whether destination files should be fsynced after updates.
+    #[must_use]
+    pub const fn fsync_enabled(&self) -> bool {
+        self.fsync
     }
 
     /// Reports whether in-place destination updates have been requested.
