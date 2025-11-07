@@ -35,6 +35,8 @@ pub(crate) struct FallbackInputs {
     pub(crate) connect_program: Option<OsString>,
     pub(crate) daemon_port: Option<u16>,
     pub(crate) bind_address: Option<oc_rsync_core::client::BindAddress>,
+    pub(crate) sockopts: Option<OsString>,
+    pub(crate) blocking_io: Option<bool>,
     pub(crate) human_readable: Option<HumanReadableMode>,
     pub(crate) archive: bool,
     pub(crate) recursive: bool,
@@ -183,6 +185,8 @@ where
         bind_address: inputs
             .bind_address
             .map(|address| address.raw().to_os_string()),
+        sockopts: inputs.sockopts,
+        blocking_io: inputs.blocking_io,
         protect_args: inputs.protect_args,
         human_readable: inputs.human_readable,
         archive: inputs.archive,

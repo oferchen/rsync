@@ -19,7 +19,10 @@ use super::auth::{
 };
 use super::connect::{open_daemon_stream, resolve_connect_timeout};
 use super::errors::{legacy_daemon_error_payload, map_daemon_handshake_error, read_trimmed_line};
-use super::request::{ModuleListOptions, ModuleListRequest};
+use super::request::ModuleListOptions;
+use super::request::ModuleListRequest;
+use super::socket_options::apply_socket_options;
+use super::types::DaemonAddress;
 use crate::auth::{parse_daemon_digest_list, select_daemon_digest};
 
 /// Collection of daemon modules together with MOTD, warnings, and capabilities.
@@ -179,7 +182,7 @@ pub fn run_module_list_with_password_and_options(
     let effective_timeout = effective_timeout(timeout, DAEMON_SOCKET_TIMEOUT);
     let connect_duration = resolve_connect_timeout(connect_timeout, timeout, DAEMON_SOCKET_TIMEOUT);
 
-    let stream = open_daemon_stream(
+    let mut stream = open_daemon_stream(
         addr,
         connect_duration,
         effective_timeout,
@@ -187,6 +190,8 @@ pub fn run_module_list_with_password_and_options(
         options.connect_program(),
         options.bind_address(),
     )?;
+
+    configure_daemon_stream(&mut stream, &options, addr)?;
 
     let handshake = negotiate_legacy_daemon_session(stream, request.protocol())
         .map_err(|error| map_daemon_handshake_error(error, addr))?;
@@ -349,6 +354,31 @@ pub fn run_module_list_with_password_and_options(
     }
 
     Ok(ModuleList::new(motd, warnings, capabilities, entries))
+}
+
+fn configure_daemon_stream(
+    stream: &mut super::connect::DaemonStream,
+    options: &ModuleListOptions,
+    addr: &DaemonAddress,
+) -> Result<(), ClientError> {
+    if let super::connect::DaemonStream::Tcp(socket) = stream {
+        if let Some(values) = options.sockopts() {
+            apply_socket_options(socket, values)?;
+        }
+
+        if let Some(blocking) = options.blocking_io() {
+            socket.set_nonblocking(!blocking).map_err(|error| {
+                let action = if blocking {
+                    "set blocking mode for"
+                } else {
+                    "set nonblocking mode for"
+                };
+                socket_error(action, addr.socket_addr_display(), error)
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 fn effective_timeout(timeout: TransferTimeout, default: Duration) -> Option<Duration> {

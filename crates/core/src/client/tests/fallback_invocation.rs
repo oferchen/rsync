@@ -531,3 +531,98 @@ fn remote_fallback_forwards_mkpath_flag() {
     assert!(captured.lines().any(|line| line == "--mkpath"));
 }
 
+#[cfg(unix)]
+#[test]
+fn remote_fallback_forwards_sockopts_argument() {
+    let _lock = env_lock().lock().expect("env mutex poisoned");
+    let temp = tempdir().expect("tempdir created");
+    let capture_path = temp.path().join("args.txt");
+    let script_path = temp.path().join("capture.sh");
+    let script_contents = capture_args_script();
+    fs::write(&script_path, script_contents).expect("script written");
+    let metadata = fs::metadata(&script_path).expect("script metadata");
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+    let mut args = baseline_fallback_args();
+    args.fallback_binary = Some(script_path.into_os_string());
+    args.sockopts = Some(OsString::from("SO_SNDBUF=4096,SO_RCVBUF=4096"));
+    args.remainder = vec![OsString::from(format!(
+        "CAPTURE={}",
+        capture_path.display()
+    ))];
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+        .expect("fallback invocation succeeds");
+
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    let captured = fs::read_to_string(&capture_path).expect("capture contents");
+    assert!(captured
+        .lines()
+        .any(|line| line == "--sockopts=SO_SNDBUF=4096,SO_RCVBUF=4096"));
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_fallback_forwards_blocking_io_flags() {
+    let _lock = env_lock().lock().expect("env mutex poisoned");
+    let temp = tempdir().expect("tempdir created");
+    let capture_path = temp.path().join("args.txt");
+    let script_path = temp.path().join("capture.sh");
+    let script_contents = capture_args_script();
+    fs::write(&script_path, script_contents).expect("script written");
+    let metadata = fs::metadata(&script_path).expect("script metadata");
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&script_path, permissions).expect("script permissions set");
+
+    let mut args = baseline_fallback_args();
+    args.fallback_binary = Some(script_path.clone().into_os_string());
+    args.blocking_io = Some(true);
+    args.remainder = vec![OsString::from(format!(
+        "CAPTURE={}",
+        capture_path.display()
+    ))];
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    run_remote_transfer_fallback(&mut stdout, &mut stderr, args.clone())
+        .expect("fallback invocation succeeds");
+
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+    let captured = fs::read_to_string(&capture_path).expect("capture contents");
+    assert!(captured.lines().any(|line| line == "--blocking-io"));
+
+    let capture_path_no = temp.path().join("args-no-blocking.txt");
+    let script_path_no = temp.path().join("capture-no.sh");
+    fs::write(&script_path_no, capture_args_script()).expect("script written");
+    let metadata_no = fs::metadata(&script_path_no).expect("script metadata");
+    let mut permissions_no = metadata_no.permissions();
+    permissions_no.set_mode(0o755);
+    fs::set_permissions(&script_path_no, permissions_no).expect("script permissions set");
+
+    let mut args_no = args;
+    args_no.fallback_binary = Some(script_path_no.into_os_string());
+    args_no.blocking_io = Some(false);
+    args_no.remainder = vec![OsString::from(format!(
+        "CAPTURE={}",
+        capture_path_no.display()
+    ))];
+
+    let mut stdout_no = Vec::new();
+    let mut stderr_no = Vec::new();
+    run_remote_transfer_fallback(&mut stdout_no, &mut stderr_no, args_no)
+        .expect("fallback invocation succeeds");
+
+    assert!(stdout_no.is_empty());
+    assert!(stderr_no.is_empty());
+    let captured_no = fs::read_to_string(&capture_path_no).expect("capture contents");
+    assert!(captured_no.lines().any(|line| line == "--no-blocking-io"));
+    assert!(!captured_no.lines().any(|line| line == "--blocking-io"));
+}
+

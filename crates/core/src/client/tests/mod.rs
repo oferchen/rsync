@@ -10,4 +10,5 @@ include!("module_list_request.rs");
 include!("module_list_proxy.rs");
 include!("module_list_auth.rs");
 include!("module_list_listing.rs");
+include!("module_list_socket_options.rs");
 include!("error_helpers.rs");

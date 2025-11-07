@@ -90,6 +90,14 @@ where
         AddressMode::Default
     };
     let bind_address_raw = matches.remove_one::<OsString>("address");
+    let sockopts = matches.remove_one::<OsString>("sockopts");
+    let blocking_io = if matches.get_flag("blocking-io") {
+        Some(true)
+    } else if matches.get_flag("no-blocking-io") {
+        Some(false)
+    } else {
+        None
+    };
     let archive = matches.get_flag("archive");
     let recursive_override = if matches.get_flag("no-recursive") {
         Some(false)
@@ -543,6 +551,8 @@ where
         protect_args,
         address_mode,
         bind_address: bind_address_raw,
+        sockopts,
+        blocking_io,
         archive,
         recursive,
         recursive_override,

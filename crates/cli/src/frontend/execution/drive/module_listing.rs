@@ -25,6 +25,8 @@ pub(super) struct ModuleListingInputs<'a> {
     pub connect_program: Option<&'a OsString>,
     pub timeout_setting: TransferTimeout,
     pub connect_timeout_setting: TransferTimeout,
+    pub sockopts: Option<&'a OsString>,
+    pub blocking_io: Option<bool>,
 }
 
 pub(super) fn maybe_handle_module_listing<Out, Err>(
@@ -48,6 +50,8 @@ where
         connect_program,
         timeout_setting,
         connect_timeout_setting,
+        sockopts,
+        blocking_io,
     } = inputs;
 
     if !file_list_operands.is_empty() {
@@ -87,7 +91,9 @@ where
         .suppress_motd(no_motd)
         .with_address_mode(address_mode)
         .with_bind_address(bind_address.map(|addr| addr.socket()))
-        .with_connect_program(connect_program.cloned());
+        .with_connect_program(connect_program.cloned())
+        .with_sockopts(sockopts.cloned())
+        .with_blocking_io(blocking_io);
 
     match run_module_list_with_password_and_options(
         request,
