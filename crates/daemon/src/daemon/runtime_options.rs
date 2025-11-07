@@ -23,6 +23,8 @@ struct RuntimeOptions {
     lock_file_from_config: bool,
     delegate_arguments: Vec<OsString>,
     inline_modules: bool,
+    global_incoming_chmod: Option<String>,
+    global_outgoing_chmod: Option<String>,
 }
 
 impl Default for RuntimeOptions {
@@ -51,6 +53,8 @@ impl Default for RuntimeOptions {
             lock_file_from_config: false,
             delegate_arguments: Vec::new(),
             inline_modules: false,
+            global_incoming_chmod: None,
+            global_outgoing_chmod: None,
         }
     }
 }
@@ -172,7 +176,12 @@ impl RuntimeOptions {
                     .next()
                     .ok_or_else(|| missing_argument_value("--module"))?;
                 let mut module =
-                    parse_module_definition(value, options.global_secrets_file.as_deref())?;
+                    parse_module_definition(
+                        value,
+                        options.global_secrets_file.as_deref(),
+                        options.global_incoming_chmod.as_deref(),
+                        options.global_outgoing_chmod.as_deref(),
+                    )?;
                 if let Some(global) = &options.global_refuse_options {
                     module.inherit_refuse_options(global);
                 }
@@ -365,6 +374,14 @@ impl RuntimeOptions {
             self.set_global_secrets_file(secrets, &origin)?;
         }
 
+        if let Some((incoming, origin)) = parsed.global_incoming_chmod {
+            self.set_global_incoming_chmod(incoming, &origin)?;
+        }
+
+        if let Some((outgoing, origin)) = parsed.global_outgoing_chmod {
+            self.set_global_outgoing_chmod(outgoing, &origin)?;
+        }
+
         if !parsed.motd_lines.is_empty() {
             self.motd_lines.extend(parsed.motd_lines);
         }
@@ -373,6 +390,18 @@ impl RuntimeOptions {
         if let Some(global) = &self.global_refuse_options {
             for module in &mut modules {
                 module.inherit_refuse_options(global);
+            }
+        }
+
+        if let Some(incoming) = self.global_incoming_chmod.as_deref() {
+            for module in &mut modules {
+                module.inherit_incoming_chmod(Some(incoming));
+            }
+        }
+
+        if let Some(outgoing) = self.global_outgoing_chmod.as_deref() {
+            for module in &mut modules {
+                module.inherit_outgoing_chmod(Some(outgoing));
             }
         }
 
@@ -407,6 +436,54 @@ impl RuntimeOptions {
         }
 
         self.global_refuse_options = Some(options);
+        Ok(())
+    }
+
+    fn set_global_incoming_chmod(
+        &mut self,
+        value: String,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.global_incoming_chmod {
+            if existing != &value {
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'incoming chmod' directive in global section",
+                ));
+            }
+            return Ok(());
+        }
+
+        for module in &mut self.modules {
+            module.inherit_incoming_chmod(Some(&value));
+        }
+
+        self.global_incoming_chmod = Some(value);
+        Ok(())
+    }
+
+    fn set_global_outgoing_chmod(
+        &mut self,
+        value: String,
+        origin: &ConfigDirectiveOrigin,
+    ) -> Result<(), DaemonError> {
+        if let Some(existing) = &self.global_outgoing_chmod {
+            if existing != &value {
+                return Err(config_parse_error(
+                    &origin.path,
+                    origin.line,
+                    "duplicate 'outgoing chmod' directive in global section",
+                ));
+            }
+            return Ok(());
+        }
+
+        for module in &mut self.modules {
+            module.inherit_outgoing_chmod(Some(&value));
+        }
+
+        self.global_outgoing_chmod = Some(value);
         Ok(())
     }
 

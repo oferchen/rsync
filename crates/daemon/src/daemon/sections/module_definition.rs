@@ -22,6 +22,8 @@ struct ModuleDefinitionBuilder {
     listable: Option<bool>,
     use_chroot: Option<bool>,
     max_connections: Option<Option<NonZeroU32>>,
+    incoming_chmod: Option<Option<String>>,
+    outgoing_chmod: Option<Option<String>>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -50,6 +52,8 @@ impl ModuleDefinitionBuilder {
             listable: None,
             use_chroot: None,
             max_connections: None,
+            incoming_chmod: None,
+            outgoing_chmod: None,
         }
     }
 
@@ -393,10 +397,54 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_incoming_chmod(
+        &mut self,
+        chmod: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.incoming_chmod.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'incoming chmod' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.incoming_chmod = Some(chmod);
+        Ok(())
+    }
+
+    fn set_outgoing_chmod(
+        &mut self,
+        chmod: Option<String>,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.outgoing_chmod.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!(
+                    "duplicate 'outgoing chmod' directive in module '{}'",
+                    self.name
+                ),
+            ));
+        }
+
+        self.outgoing_chmod = Some(chmod);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
         default_secrets: Option<&Path>,
+        default_incoming_chmod: Option<&str>,
+        default_outgoing_chmod: Option<&str>,
     ) -> Result<ModuleDefinition, DaemonError> {
         let path = self.path.ok_or_else(|| {
             config_parse_error(
@@ -474,6 +522,12 @@ impl ModuleDefinitionBuilder {
             listable: self.listable.unwrap_or(true),
             use_chroot,
             max_connections: self.max_connections.unwrap_or(None),
+            incoming_chmod: self
+                .incoming_chmod
+                .unwrap_or_else(|| default_incoming_chmod.map(str::to_string)),
+            outgoing_chmod: self
+                .outgoing_chmod
+                .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
         })
     }
 }
