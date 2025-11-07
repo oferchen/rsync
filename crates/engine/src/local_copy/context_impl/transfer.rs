@@ -269,8 +269,12 @@ impl<'a> CopyContext<'a> {
         let mut literal_bytes: u64 = 0;
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
+        let expected_remaining = total_size.saturating_sub(initial_bytes);
 
         loop {
+            if total_bytes >= expected_remaining {
+                break;
+            }
             self.enforce_timeout()?;
             let chunk_len = if let Some(limiter) = self.limiter.as_ref() {
                 limiter.recommended_read_size(buffer.len())
