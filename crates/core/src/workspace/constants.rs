@@ -186,3 +186,20 @@ pub const SOURCE_URL: &str = env!("OC_RSYNC_WORKSPACE_SOURCE");
 pub const fn source_url() -> &'static str {
     SOURCE_URL
 }
+
+/// Canonical project web site advertised by version banners.
+pub const WEB_SITE: &str = env!("OC_RSYNC_WORKSPACE_WEB_SITE");
+
+/// Returns the canonical project web site advertised by version banners.
+///
+/// # Examples
+///
+/// ```
+/// use oc_rsync_core::workspace;
+///
+/// assert_eq!(workspace::web_site(), workspace::metadata().web_site());
+/// ```
+#[must_use]
+pub const fn web_site() -> &'static str {
+    WEB_SITE
+}
