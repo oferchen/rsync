@@ -112,7 +112,7 @@ impl MappingTarget {
                 Some(uid) => Ok(uid),
                 None => Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("Unknown --usermap name on receiver: {}", name),
+                    format!("Unknown --usermap name on receiver: {name}"),
                 )),
             },
         }
@@ -125,7 +125,7 @@ impl MappingTarget {
                 Some(gid) => Ok(gid),
                 None => Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("Unknown --groupmap name on receiver: {}", name),
+                    format!("Unknown --groupmap name on receiver: {name}"),
                 )),
             },
         }
@@ -232,13 +232,13 @@ impl NameMapping {
     }
 
     fn map_uid(&self, uid: RawUid) -> io::Result<Option<RawUid>> {
-        self.resolve_rule(uid as u32)?
+        self.resolve_rule(uid)?
             .map(|rule| rule.target.resolve_uid())
             .transpose()
     }
 
     fn map_gid(&self, gid: RawGid) -> io::Result<Option<RawGid>> {
-        self.resolve_rule(gid as u32)?
+        self.resolve_rule(gid)?
             .map(|rule| rule.target.resolve_gid())
             .transpose()
     }

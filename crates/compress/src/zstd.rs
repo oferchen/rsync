@@ -24,7 +24,6 @@ where
 
 impl CountingZstdEncoder<CountingSink> {
     /// Creates a new encoder that discards the compressed output while tracking its length.
-    #[must_use]
     pub fn new(level: CompressionLevel) -> io::Result<Self> {
         Self::with_sink(CountingSink, level)
     }
@@ -43,8 +42,7 @@ where
     /// Creates a new encoder that writes compressed bytes into `sink`.
     pub fn with_sink(sink: W, level: CompressionLevel) -> io::Result<Self> {
         let writer = CountingWriter::new(sink);
-        let encoder = ZstdEncoder::new(writer, zstd_level(level))
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+        let encoder = ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;
         Ok(Self { inner: encoder })
     }
 
@@ -73,10 +71,7 @@ where
 
     /// Completes the stream and returns the sink together with the number of compressed bytes.
     pub fn finish_into_inner(self) -> io::Result<(W, u64)> {
-        let writer = self
-            .inner
-            .finish()
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+        let writer = self.inner.finish().map_err(io::Error::other)?;
         Ok(writer.into_parts())
     }
 }
@@ -92,10 +87,8 @@ where
     R: Read,
 {
     /// Creates a new decoder that wraps the provided reader.
-    #[must_use]
     pub fn new(reader: R) -> io::Result<Self> {
-        let decoder = ZstdDecoder::new(reader)
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+        let decoder = ZstdDecoder::new(reader).map_err(io::Error::other)?;
         Ok(Self {
             inner: decoder,
             bytes: 0,
@@ -146,18 +139,14 @@ where
 
 /// Compresses `input` into a new [`Vec`].
 pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<u8>> {
-    let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level(level))
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let mut encoder = ZstdEncoder::new(Vec::new(), zstd_level(level)).map_err(io::Error::other)?;
     encoder.write_all(input)?;
-    encoder
-        .finish()
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))
+    encoder.finish().map_err(io::Error::other)
 }
 
 /// Decompresses `input` into a new [`Vec`].
 pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
-    let mut decoder =
-        ZstdDecoder::new(input).map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+    let mut decoder = ZstdDecoder::new(input).map_err(io::Error::other)?;
     let mut output = Vec::new();
     io::copy(&mut decoder, &mut output)?;
     Ok(output)

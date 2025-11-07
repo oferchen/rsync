@@ -146,16 +146,16 @@ where
             }
 
             if let Some(mut log) = log_file {
-                if let Err(error) = emit_log_output(
-                    &summary,
-                    &mut log,
+                if let Err(error) = emit_log_output(EmitLogOutputParams {
+                    summary: &summary,
+                    log: &mut log,
                     verbosity,
                     stats,
                     list_only,
                     name_level,
                     name_overridden,
                     human_readable_mode,
-                ) {
+                }) {
                     let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                         writeln!(writer, "warning: failed to append to log file: {error}")
                     });
@@ -186,16 +186,28 @@ where
     }
 }
 
-fn emit_log_output(
-    summary: &ClientSummary,
-    log: &mut LogFileConfig,
+struct EmitLogOutputParams<'a> {
+    summary: &'a ClientSummary,
+    log: &'a mut LogFileConfig,
     verbosity: u8,
     stats: bool,
     list_only: bool,
     name_level: NameOutputLevel,
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
-) -> io::Result<()> {
+}
+
+fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
+    let EmitLogOutputParams {
+        summary,
+        log,
+        verbosity,
+        stats,
+        list_only,
+        name_level,
+        name_overridden,
+        human_readable_mode,
+    } = params;
     let context = OutFormatContext::default();
     emit_transfer_summary(
         summary,

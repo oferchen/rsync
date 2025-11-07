@@ -52,9 +52,7 @@ where
 
     /// Appends data to the compression stream.
     pub fn write(&mut self, input: &[u8]) -> io::Result<()> {
-        self.inner
-            .write_all(input)
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))
+        self.inner.write_all(input).map_err(io::Error::other)
     }
 
     /// Returns the number of compressed bytes produced so far.
@@ -77,10 +75,7 @@ where
 
     /// Completes the stream and returns the sink together with the number of compressed bytes.
     pub fn finish_into_inner(self) -> io::Result<(W, u64)> {
-        let writer = self
-            .inner
-            .finish()
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+        let writer = self.inner.finish().map_err(io::Error::other)?;
         Ok(writer.into_parts())
     }
 }
@@ -153,12 +148,8 @@ where
 pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<u8>> {
     let frame_info = frame_info_for_level(level);
     let mut encoder = FrameEncoder::with_frame_info(frame_info, Vec::new());
-    encoder
-        .write_all(input)
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
-    encoder
-        .finish()
-        .map_err(|error| io::Error::new(io::ErrorKind::Other, error))
+    encoder.write_all(input).map_err(io::Error::other)?;
+    encoder.finish().map_err(io::Error::other)
 }
 
 /// Decompresses `input` into a new [`Vec`].

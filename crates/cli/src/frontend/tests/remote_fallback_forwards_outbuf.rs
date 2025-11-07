@@ -37,7 +37,7 @@ exit 0
     let recorded = std::fs::read_to_string(&args_path).expect("read args file");
     let args: Vec<&str> = recorded.lines().collect();
     assert!(
-        args.iter().any(|&arg| arg == "--outbuf=B"),
+        args.contains(&"--outbuf=B"),
         "args missing --outbuf=B flag: {args:?}"
     );
 }
