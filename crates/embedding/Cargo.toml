@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
 description = "Programmatic entry points for the oc-rsync client and daemon"
-repository = "https://github.com/oferchen/rsync"
+repository.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
