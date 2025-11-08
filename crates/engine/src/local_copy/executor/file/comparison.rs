@@ -110,13 +110,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     }
 
     match (source.modified(), destination.modified()) {
-        (Ok(src), Ok(dst)) => {
-            if !system_time_within_window(src, dst, modify_window) {
-                return false;
-            }
-
-            files_contents_identical(source_path, destination_path).unwrap_or(false)
-        }
+        (Ok(src), Ok(dst)) => system_time_within_window(src, dst, modify_window),
         _ => false,
     }
 }
@@ -130,6 +124,44 @@ pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Du
         Ok(diff) => diff <= window,
         Err(_) => matches!(b.duration_since(a), Ok(diff) if diff <= window),
     }
+}
+
+enum LockstepCheck {
+    Continue,
+    Diverged,
+}
+
+fn compare_files_lockstep<F>(source: &Path, destination: &Path, mut on_chunk: F) -> io::Result<bool>
+where
+    F: FnMut(&[u8], &[u8]) -> LockstepCheck,
+{
+    let mut source_file = fs::File::open(source)?;
+    let mut destination_file = fs::File::open(destination)?;
+    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    loop {
+        let source_read = source_file.read(&mut source_buffer)?;
+        let destination_read = destination_file.read(&mut destination_buffer)?;
+
+        if source_read != destination_read {
+            return Ok(false);
+        }
+
+        if source_read == 0 {
+            break;
+        }
+
+        match on_chunk(
+            &source_buffer[..source_read],
+            &destination_buffer[..destination_read],
+        ) {
+            LockstepCheck::Continue => {}
+            LockstepCheck::Diverged => return Ok(false),
+        }
+    }
+
+    Ok(true)
 }
 
 pub(crate) enum StrongHasher {
@@ -201,54 +233,6 @@ pub(crate) fn files_checksum_match(
     Ok(source_hasher.finalize() == destination_hasher.finalize())
 }
 
-enum LockstepCheck {
-    Continue,
-    Diverged,
-}
-
-fn compare_files_lockstep<F>(source: &Path, destination: &Path, mut on_chunk: F) -> io::Result<bool>
-where
-    F: FnMut(&[u8], &[u8]) -> LockstepCheck,
-{
-    let mut source_file = fs::File::open(source)?;
-    let mut destination_file = fs::File::open(destination)?;
-    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
-    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
-
-    loop {
-        let source_read = source_file.read(&mut source_buffer)?;
-        let destination_read = destination_file.read(&mut destination_buffer)?;
-
-        if source_read != destination_read {
-            return Ok(false);
-        }
-
-        if source_read == 0 {
-            break;
-        }
-
-        match on_chunk(
-            &source_buffer[..source_read],
-            &destination_buffer[..destination_read],
-        ) {
-            LockstepCheck::Continue => {}
-            LockstepCheck::Diverged => return Ok(false),
-        }
-    }
-
-    Ok(true)
-}
-
-fn files_contents_identical(source: &Path, destination: &Path) -> io::Result<bool> {
-    compare_files_lockstep(source, destination, |source_chunk, destination_chunk| {
-        if source_chunk == destination_chunk {
-            LockstepCheck::Continue
-        } else {
-            LockstepCheck::Diverged
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn should_skip_copy_detects_content_changes_with_identical_timestamps() {
+    fn should_skip_copy_skips_when_metadata_matches() {
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let destination = temp.path().join("dest.txt");
@@ -300,7 +284,7 @@ mod tests {
             modify_window: Duration::ZERO,
         };
 
-        assert!(!should_skip_copy(comparison));
+        assert!(should_skip_copy(comparison));
     }
 
     #[test]
