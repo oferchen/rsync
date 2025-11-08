@@ -1,5 +1,5 @@
 use oc_rsync_core::version::{
-    DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_PROGRAM_NAME, PROGRAM_NAME,
+    DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_PROGRAM_NAME, PROGRAM_NAME,
 };
 use std::collections::BTreeSet;
 use std::env;
@@ -7,8 +7,22 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-const CLIENT_BINARIES: &[&str] = &[PROGRAM_NAME, OC_PROGRAM_NAME];
-const DAEMON_BINARIES: &[&str] = &[DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME];
+fn unique_program_names(names: &[&'static str]) -> Vec<&'static str> {
+    let mut seen = BTreeSet::new();
+    names
+        .iter()
+        .copied()
+        .filter(|name| seen.insert(*name))
+        .collect()
+}
+
+fn client_binaries() -> Vec<&'static str> {
+    unique_program_names(&[PROGRAM_NAME, LEGACY_PROGRAM_NAME])
+}
+
+fn daemon_binaries() -> Vec<&'static str> {
+    unique_program_names(&[DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME])
+}
 
 fn binary_output(name: &str, args: &[&str]) -> Output {
     let mut command = binary_command(name);
@@ -26,9 +40,9 @@ fn combined_utf8(output: &std::process::Output) -> String {
 
 #[test]
 fn client_help_lists_usage() {
-    for &binary in CLIENT_BINARIES {
+    for binary in client_binaries() {
         if locate_binary(binary).is_none() {
-            if binary == OC_PROGRAM_NAME {
+            if binary == PROGRAM_NAME {
                 panic!("expected {binary} to be available for testing");
             }
             println!(
@@ -51,9 +65,9 @@ fn client_help_lists_usage() {
 
 #[test]
 fn client_without_operands_shows_usage() {
-    for &binary in CLIENT_BINARIES {
+    for binary in client_binaries() {
         if locate_binary(binary).is_none() {
-            if binary == OC_PROGRAM_NAME {
+            if binary == PROGRAM_NAME {
                 panic!("expected {binary} to be available for testing");
             }
             println!(
@@ -74,9 +88,9 @@ fn client_without_operands_shows_usage() {
 
 #[test]
 fn daemon_help_lists_usage() {
-    for &binary in DAEMON_BINARIES {
+    for binary in daemon_binaries() {
         if locate_binary(binary).is_none() {
-            if binary == OC_DAEMON_PROGRAM_NAME {
+            if binary == DAEMON_PROGRAM_NAME {
                 panic!("expected {binary} to be available for testing");
             }
             println!(
@@ -99,9 +113,9 @@ fn daemon_help_lists_usage() {
 
 #[test]
 fn daemon_rejects_unknown_flag() {
-    for &binary in DAEMON_BINARIES {
+    for binary in daemon_binaries() {
         if locate_binary(binary).is_none() {
-            if binary == OC_DAEMON_PROGRAM_NAME {
+            if binary == DAEMON_PROGRAM_NAME {
                 panic!("expected {binary} to be available for testing");
             }
             println!(

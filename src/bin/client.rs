@@ -3,15 +3,14 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::process::ExitCode;
 
-/// Runs the shared client entry point for every branded executable.
+/// Runs the shared client entry point for the `oc-rsync` binary.
 ///
-/// Both branded binaries—the upstream-compatible client exposed as
-/// `oc_rsync_core::version::PROGRAM_NAME` and the oc-branded wrapper
-/// published as `oc_rsync_core::version::OC_PROGRAM_NAME`—call into this
-/// helper. Centralising the logic keeps tests, packaging, and telemetry
-/// focused on a single execution path. The helper forwards its arguments
-/// and I/O handles to the CLI crate and normalises the returned status via
-/// the shared exit-code mapper.
+/// The helper still honours legacy invocation names (for example, `rsync`)
+/// so downstream packaging can provide compatibility symlinks without shipping
+/// extra binaries. Centralising the logic keeps tests, packaging, and telemetry
+/// focused on a single execution path. The helper forwards its arguments and
+/// I/O handles to the CLI crate and normalises the returned status via the
+/// shared exit-code mapper.
 #[must_use]
 pub fn run_with<I, Out, Err>(args: I, stdout: &mut Out, stderr: &mut Err) -> ExitCode
 where
@@ -32,15 +31,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::run_with;
-    use oc_rsync_core::version::{OC_PROGRAM_NAME, PROGRAM_NAME};
+    use oc_rsync_core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME};
     use std::ffi::OsString;
     use std::process::ExitCode;
 
-    const CLIENT_NAMES: &[&str] = &[PROGRAM_NAME, OC_PROGRAM_NAME];
+    fn client_program_names() -> Vec<&'static str> {
+        if LEGACY_PROGRAM_NAME == PROGRAM_NAME {
+            vec![PROGRAM_NAME]
+        } else {
+            vec![PROGRAM_NAME, LEGACY_PROGRAM_NAME]
+        }
+    }
 
     #[test]
     fn version_flag_reports_success_for_all_binaries() {
-        for &name in CLIENT_NAMES {
+        for name in client_program_names() {
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
             let exit = run_with([name, "--version"], &mut stdout, &mut stderr);
@@ -59,7 +64,7 @@ mod tests {
 
     #[test]
     fn unknown_flag_reports_failure_for_all_binaries() {
-        for &name in CLIENT_NAMES {
+        for name in client_program_names() {
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
             let exit = run_with(
@@ -105,8 +110,10 @@ mod tests {
 
         let stderr_text = String::from_utf8(stderr).expect("stderr is UTF-8");
         assert!(
-            stderr_text.contains("rsync error: syntax or usage error (code 1)"),
-            "diagnostic should use the canonical syntax-or-usage error wording"
+            stderr_text.contains(&format!(
+                "{PROGRAM_NAME} error: syntax or usage error (code 1)"
+            )),
+            "diagnostic should use the branded syntax-or-usage error wording"
         );
         assert!(
             stderr_text.contains("[client=3.4.1-rust]"),
@@ -115,17 +122,25 @@ mod tests {
     }
 
     #[test]
-    fn oc_brand_reports_usage_with_branded_prefix() {
+    fn legacy_brand_reports_usage_with_legacy_prefix() {
+        if LEGACY_PROGRAM_NAME == PROGRAM_NAME {
+            return;
+        }
+
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let exit = run_with([OsString::from(OC_PROGRAM_NAME)], &mut stdout, &mut stderr);
+        let exit = run_with(
+            [OsString::from(LEGACY_PROGRAM_NAME)],
+            &mut stdout,
+            &mut stderr,
+        );
 
         assert_eq!(exit, ExitCode::FAILURE);
 
         let stderr_text = String::from_utf8(stderr).expect("stderr is UTF-8");
         assert!(
-            stderr_text.contains("oc-rsync error: syntax or usage error (code 1)"),
-            "oc-branded binary should render diagnostics using the oc-rsync prefix"
+            stderr_text.contains("rsync error: syntax or usage error (code 1)"),
+            "legacy branded binary should render diagnostics using the upstream prefix"
         );
         assert!(
             stderr_text.contains("[client=3.4.1-rust]"),
@@ -134,8 +149,8 @@ mod tests {
 
         let stdout_text = String::from_utf8(stdout).expect("stdout is UTF-8");
         assert!(
-            stdout_text.starts_with(&format!("{OC_PROGRAM_NAME}  version")),
-            "oc-branded binary should render usage banner with oc prefix"
+            stdout_text.starts_with(&format!("{LEGACY_PROGRAM_NAME}  version")),
+            "legacy binary should render usage banner with upstream prefix"
         );
     }
 }
