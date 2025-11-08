@@ -2,7 +2,7 @@ use super::constants::{
     BRAND, CLIENT_PROGRAM_NAME, DAEMON_CONFIG_DIR, DAEMON_CONFIG_PATH, DAEMON_PROGRAM_NAME,
     DAEMON_SECRETS_PATH, DAEMON_WRAPPER_PROGRAM_NAME, LEGACY_CLIENT_PROGRAM_NAME,
     LEGACY_DAEMON_CONFIG_DIR, LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_PROGRAM_NAME,
-    LEGACY_DAEMON_SECRETS_PATH, RUST_VERSION, SOURCE_URL, UPSTREAM_VERSION, WEB_SITE,
+    LEGACY_DAEMON_SECRETS_PATH, RUST_VERSION, SOURCE_URL, UPSTREAM_VERSION,
 };
 use super::protocol::PROTOCOL_VERSION;
 use serde::Serialize;
@@ -26,7 +26,6 @@ pub struct Metadata {
     legacy_daemon_config_path: &'static str,
     legacy_daemon_secrets_path: &'static str,
     source_url: &'static str,
-    web_site: &'static str,
 }
 
 impl Metadata {
@@ -125,12 +124,6 @@ impl Metadata {
     pub const fn source_url(self) -> &'static str {
         self.source_url
     }
-
-    /// Returns the canonical project web site advertised by version banners.
-    #[must_use]
-    pub const fn web_site(self) -> &'static str {
-        self.web_site
-    }
 }
 
 const WORKSPACE_METADATA: Metadata = Metadata {
@@ -150,7 +143,6 @@ const WORKSPACE_METADATA: Metadata = Metadata {
     legacy_daemon_config_path: LEGACY_DAEMON_CONFIG_PATH,
     legacy_daemon_secrets_path: LEGACY_DAEMON_SECRETS_PATH,
     source_url: SOURCE_URL,
-    web_site: WEB_SITE,
 };
 
 /// Returns an immutable snapshot of the workspace branding and packaging metadata.
