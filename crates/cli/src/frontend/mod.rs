@@ -245,7 +245,7 @@ where
 {
     let mut args: Vec<OsString> = arguments.into_iter().map(Into::into).collect();
     if args.is_empty() {
-        args.push(OsString::from(ProgramName::Rsync.as_str()));
+        args.push(OsString::from(ProgramName::OcRsync.as_str()));
     }
 
     let detected = detect_program_name(args.first().map(|arg| arg.as_os_str()));
