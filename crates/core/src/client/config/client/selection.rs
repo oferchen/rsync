@@ -45,6 +45,13 @@ impl ClientConfig {
         self.size_only
     }
 
+    /// Reports whether timestamp-based quick checks should be skipped.
+    #[must_use]
+    #[doc(alias = "--ignore-times")]
+    pub const fn ignore_times(&self) -> bool {
+        self.ignore_times
+    }
+
     /// Returns whether existing destination files should be skipped.
     #[must_use]
     pub const fn ignore_existing(&self) -> bool {

@@ -9,7 +9,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--ipv4, --ipv6, --daemon, --dry-run/-n, --list-only, --archive/-a, --recursive/-r, --no-recursive, ",
     "--dirs/-d, --no-dirs, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, ",
     "--delete-excluded, --max-delete, --min-size, --max-size, --block-size, --backup/-b, --backup-dir, ",
-    "--suffix, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-existing, --existing, ",
+    "--suffix, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-times, --ignore-existing, --existing, ",
     "--ignore-missing-args, --delete-missing-args, --update/-u, --modify-window, --exclude, --exclude-from, ",
     "--include, --include-from, --compare-dest, --copy-dest, --link-dest, --hard-links/-H, --no-hard-links, ",
     "--cvs-exclude/-C, --filter/-F (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, ",

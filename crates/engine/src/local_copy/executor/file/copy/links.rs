@@ -38,6 +38,7 @@ pub(super) fn process_links(
     destination_previously_existed: bool,
     file_type: fs::FileType,
     size_only_enabled: bool,
+    ignore_times_enabled: bool,
     checksum_enabled: bool,
     mode: LocalCopyExecution,
     #[cfg(feature = "xattr")] preserve_xattrs: bool,
@@ -53,6 +54,7 @@ pub(super) fn process_links(
         metadata,
         &metadata_options,
         size_only_enabled,
+        ignore_times_enabled,
         checksum_enabled,
     )? {
         let mut attempted_commit = false;
@@ -182,6 +184,7 @@ pub(super) fn process_links(
                 metadata,
                 metadata_options: &metadata_options,
                 size_only: size_only_enabled,
+                ignore_times: ignore_times_enabled,
                 checksum: checksum_enabled,
             },
         )? {

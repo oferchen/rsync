@@ -36,6 +36,13 @@ fn local_copy_options_modify_window_round_trip() {
 }
 
 #[test]
+fn local_copy_options_ignore_times_round_trip() {
+    let options = LocalCopyOptions::default().ignore_times(true);
+    assert!(options.ignore_times_enabled());
+    assert!(!LocalCopyOptions::default().ignore_times_enabled());
+}
+
+#[test]
 fn should_skip_copy_requires_exact_mtime_when_window_zero() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
@@ -59,6 +66,7 @@ fn should_skip_copy_requires_exact_mtime_when_window_zero() {
         destination: &dest_meta,
         options: &metadata_options,
         size_only: false,
+        ignore_times: false,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5,
         modify_window: Duration::ZERO,
@@ -91,6 +99,7 @@ fn should_skip_copy_allows_difference_within_window() {
         destination: &dest_meta,
         options: &metadata_options,
         size_only: false,
+        ignore_times: false,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5,
         modify_window: Duration::from_secs(5),
@@ -106,6 +115,7 @@ fn should_skip_copy_allows_difference_within_window() {
         destination: &dest_meta,
         options: &metadata_options,
         size_only: false,
+        ignore_times: false,
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5,
         modify_window: Duration::from_secs(5),

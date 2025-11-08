@@ -437,6 +437,7 @@ where
         .unwrap_or_default();
     let checksum = matches.get_flag("checksum");
     let size_only = matches.get_flag("size-only");
+    let ignore_times = matches.get_flag("ignore-times");
     let (checksum_choice, checksum_choice_arg) =
         match matches.remove_one::<OsString>("checksum-choice") {
             Some(value) => {
@@ -569,6 +570,7 @@ where
         checksum_choice_arg,
         checksum_seed,
         size_only,
+        ignore_times,
         ignore_existing,
         existing,
         ignore_missing_args,

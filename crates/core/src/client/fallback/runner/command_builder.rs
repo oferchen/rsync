@@ -50,6 +50,7 @@ pub(crate) fn prepare_invocation(
         checksum_choice,
         checksum_seed,
         size_only,
+        ignore_times,
         ignore_existing,
         existing,
         ignore_missing_args,
@@ -230,6 +231,9 @@ pub(crate) fn prepare_invocation(
     }
     if size_only {
         command_args.push(OsString::from("--size-only"));
+    }
+    if ignore_times {
+        command_args.push(OsString::from("--ignore-times"));
     }
     if ignore_existing {
         command_args.push(OsString::from("--ignore-existing"));
