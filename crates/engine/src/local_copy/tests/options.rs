@@ -123,6 +123,49 @@ fn should_skip_copy_allows_difference_within_window() {
 }
 
 #[test]
+fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let destination = temp.path().join("dest");
+    fs::write(&source, b"payload").expect("write source");
+    fs::write(&destination, b"payload").expect("write destination");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_200, 0);
+    set_file_mtime(&source, timestamp).expect("set source mtime");
+    set_file_mtime(&destination, timestamp).expect("set destination mtime");
+
+    let metadata_options = MetadataOptions::new().preserve_times(true);
+    let source_meta = fs::metadata(&source).expect("source metadata");
+    let dest_meta = fs::metadata(&destination).expect("dest metadata");
+
+    assert!(should_skip_copy(CopyComparison {
+        source_path: &source,
+        source: &source_meta,
+        destination_path: &destination,
+        destination: &dest_meta,
+        options: &metadata_options,
+        size_only: false,
+        ignore_times: false,
+        checksum: false,
+        checksum_algorithm: SignatureAlgorithm::Md5,
+        modify_window: Duration::ZERO,
+    }));
+
+    assert!(!should_skip_copy(CopyComparison {
+        source_path: &source,
+        source: &source_meta,
+        destination_path: &destination,
+        destination: &dest_meta,
+        options: &metadata_options,
+        size_only: false,
+        ignore_times: true,
+        checksum: false,
+        checksum_algorithm: SignatureAlgorithm::Md5,
+        modify_window: Duration::ZERO,
+    }));
+}
+
+#[test]
 fn local_copy_options_backup_round_trip() {
     let options = LocalCopyOptions::default().backup(true);
     assert!(options.backup_enabled());

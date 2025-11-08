@@ -43,20 +43,10 @@ where
     let mut dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");
     let mkpath = matches.get_flag("mkpath");
-    let prune_empty_dirs = if matches.get_flag("no-prune-empty-dirs") {
-        Some(false)
-    } else if matches.get_flag("prune-empty-dirs") {
-        Some(true)
-    } else {
-        None
-    };
-    let omit_link_times = if matches.get_flag("no-omit-link-times") {
-        Some(false)
-    } else if matches.get_flag("omit-link-times") {
-        Some(true)
-    } else {
-        None
-    };
+    let prune_empty_dirs =
+        tri_state_flag_negative_first(&matches, "prune-empty-dirs", "no-prune-empty-dirs");
+    let omit_link_times =
+        tri_state_flag_negative_first(&matches, "omit-link-times", "no-omit-link-times");
     if list_only {
         dry_run = true;
     }
@@ -91,21 +81,9 @@ where
     };
     let bind_address_raw = matches.remove_one::<OsString>("address");
     let sockopts = matches.remove_one::<OsString>("sockopts");
-    let blocking_io = if matches.get_flag("blocking-io") {
-        Some(true)
-    } else if matches.get_flag("no-blocking-io") {
-        Some(false)
-    } else {
-        None
-    };
+    let blocking_io = tri_state_flag_positive_first(&matches, "blocking-io", "no-blocking-io");
     let archive = matches.get_flag("archive");
-    let recursive_override = if matches.get_flag("no-recursive") {
-        Some(false)
-    } else if matches.get_flag("recursive") {
-        Some(true)
-    } else {
-        None
-    };
+    let recursive_override = tri_state_flag_negative_first(&matches, "recursive", "no-recursive");
     let recursive = if recursive_override == Some(false) {
         false
     } else if archive {
@@ -113,13 +91,7 @@ where
     } else {
         recursive_override.unwrap_or(false)
     };
-    let dirs = if matches.get_flag("no-dirs") {
-        Some(false)
-    } else if matches.get_flag("dirs") {
-        Some(true)
-    } else {
-        None
-    };
+    let dirs = tri_state_flag_negative_first(&matches, "dirs", "no-dirs");
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
     let delete_during_flag = matches.get_flag("delete-during");
@@ -196,20 +168,8 @@ where
     }
     let iconv = matches.remove_one::<OsString>("iconv");
     let no_iconv = matches.get_flag("no-iconv");
-    let owner = if matches.get_flag("owner") {
-        Some(true)
-    } else if matches.get_flag("no-owner") {
-        Some(false)
-    } else {
-        None
-    };
-    let group = if matches.get_flag("group") {
-        Some(true)
-    } else if matches.get_flag("no-group") {
-        Some(false)
-    } else {
-        None
-    };
+    let owner = tri_state_flag_positive_first(&matches, "owner", "no-owner");
+    let group = tri_state_flag_positive_first(&matches, "group", "no-group");
     let usermap_values = matches
         .remove_many::<OsString>("usermap")
         .map(|values| values.collect::<Vec<_>>())
@@ -237,76 +197,17 @@ where
         .remove_many::<OsString>("chmod")
         .map(|values| values.collect())
         .unwrap_or_default();
-    let perms = if matches.get_flag("perms") {
-        Some(true)
-    } else if matches.get_flag("no-perms") {
-        Some(false)
-    } else {
-        None
-    };
-    let super_mode = if matches.get_flag("super") {
-        Some(true)
-    } else if matches.get_flag("no-super") {
-        Some(false)
-    } else {
-        None
-    };
-    let times = if matches.get_flag("times") {
-        Some(true)
-    } else if matches.get_flag("no-times") {
-        Some(false)
-    } else {
-        None
-    };
-    let omit_dir_times = if matches.get_flag("omit-dir-times") {
-        Some(true)
-    } else if matches.get_flag("no-omit-dir-times") {
-        Some(false)
-    } else {
-        None
-    };
-    let acls = if matches.get_flag("acls") {
-        Some(true)
-    } else if matches.get_flag("no-acls") {
-        Some(false)
-    } else {
-        None
-    };
-    let xattrs = if matches.get_flag("xattrs") {
-        Some(true)
-    } else if matches.get_flag("no-xattrs") {
-        Some(false)
-    } else {
-        None
-    };
-    let numeric_ids = if matches.get_flag("numeric-ids") {
-        Some(true)
-    } else if matches.get_flag("no-numeric-ids") {
-        Some(false)
-    } else {
-        None
-    };
-    let hard_links = if matches.get_flag("hard-links") {
-        Some(true)
-    } else if matches.get_flag("no-hard-links") {
-        Some(false)
-    } else {
-        None
-    };
-    let sparse = if matches.get_flag("sparse") {
-        Some(true)
-    } else if matches.get_flag("no-sparse") {
-        Some(false)
-    } else {
-        None
-    };
-    let copy_links = if matches.get_flag("copy-links") {
-        Some(true)
-    } else if matches.get_flag("no-copy-links") {
-        Some(false)
-    } else {
-        None
-    };
+    let perms = tri_state_flag_positive_first(&matches, "perms", "no-perms");
+    let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
+    let times = tri_state_flag_positive_first(&matches, "times", "no-times");
+    let omit_dir_times =
+        tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
+    let acls = tri_state_flag_positive_first(&matches, "acls", "no-acls");
+    let xattrs = tri_state_flag_positive_first(&matches, "xattrs", "no-xattrs");
+    let numeric_ids = tri_state_flag_positive_first(&matches, "numeric-ids", "no-numeric-ids");
+    let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
+    let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
+    let copy_links = tri_state_flag_positive_first(&matches, "copy-links", "no-copy-links");
     let copy_dirlinks = matches.get_flag("copy-dirlinks");
     let copy_unsafe_links_option = if matches.get_flag("copy-unsafe-links") {
         Some(true)
@@ -315,13 +216,8 @@ where
     } else {
         None
     };
-    let keep_dirlinks = if matches.get_flag("keep-dirlinks") {
-        Some(true)
-    } else if matches.get_flag("no-keep-dirlinks") {
-        Some(false)
-    } else {
-        None
-    };
+    let keep_dirlinks =
+        tri_state_flag_positive_first(&matches, "keep-dirlinks", "no-keep-dirlinks");
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
     let copy_devices = matches.get_flag("copy-devices");
     let devices = if matches.get_flag("devices") || matches.get_flag("archive-devices") {
@@ -338,40 +234,17 @@ where
     } else {
         None
     };
-    let relative = if matches.get_flag("relative") {
-        Some(true)
-    } else if matches.get_flag("no-relative") {
-        Some(false)
-    } else {
-        None
-    };
-    let one_file_system = if matches.get_flag("one-file-system") {
-        Some(true)
-    } else if matches.get_flag("no-one-file-system") {
-        Some(false)
-    } else {
-        None
-    };
-    let implied_dirs = if matches.get_flag("implied-dirs") {
-        Some(true)
-    } else if matches.get_flag("no-implied-dirs") {
-        Some(false)
-    } else {
-        None
-    };
+    let relative = tri_state_flag_positive_first(&matches, "relative", "no-relative");
+    let one_file_system =
+        tri_state_flag_positive_first(&matches, "one-file-system", "no-one-file-system");
+    let implied_dirs = tri_state_flag_positive_first(&matches, "implied-dirs", "no-implied-dirs");
     let msgs_to_stderr = matches.get_flag("msgs2stderr");
     let outbuf = matches.remove_one::<OsString>("outbuf");
     let stats = matches.get_flag("stats");
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;
     let no_partial = matches.get_flag("no-partial");
     let preallocate = matches.get_flag("preallocate");
-    let fsync = if matches.get_flag("fsync") {
-        Some(true)
-    } else if matches.get_flag("no-fsync") {
-        Some(false)
-    } else {
-        None
-    };
+    let fsync = tri_state_flag_positive_first(&matches, "fsync", "no-fsync");
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
     let partial_dir_cli = matches
         .remove_one::<OsString>("partial-dir")
@@ -406,13 +279,7 @@ where
     let link_destinations = link_dest_args;
     let remove_source_files =
         matches.get_flag("remove-source-files") || matches.get_flag("remove-sent-files");
-    let inplace = if matches.get_flag("inplace") {
-        Some(true)
-    } else if matches.get_flag("no-inplace") {
-        Some(false)
-    } else {
-        None
-    };
+    let inplace = tri_state_flag_positive_first(&matches, "inplace", "no-inplace");
     let append_verify_flag = matches.get_flag("append-verify");
     let append = if append_verify_flag || matches.get_flag("append") {
         Some(true)
@@ -421,13 +288,7 @@ where
     } else {
         None
     };
-    let whole_file = if matches.get_flag("whole-file") {
-        Some(true)
-    } else if matches.get_flag("no-whole-file") {
-        Some(false)
-    } else {
-        None
-    };
+    let whole_file = tri_state_flag_positive_first(&matches, "whole-file", "no-whole-file");
     let progress_setting = if matches.get_flag("progress") {
         ProgressSetting::PerFile
     } else if matches.get_flag("no-progress") {
@@ -683,4 +544,32 @@ where
         daemon_port,
         no_iconv,
     })
+}
+
+fn tri_state_flag_positive_first(
+    matches: &clap::ArgMatches,
+    positive: &str,
+    negative: &str,
+) -> Option<bool> {
+    if matches.get_flag(positive) {
+        Some(true)
+    } else if matches.get_flag(negative) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn tri_state_flag_negative_first(
+    matches: &clap::ArgMatches,
+    positive: &str,
+    negative: &str,
+) -> Option<bool> {
+    if matches.get_flag(negative) {
+        Some(false)
+    } else if matches.get_flag(positive) {
+        Some(true)
+    } else {
+        None
+    }
 }
