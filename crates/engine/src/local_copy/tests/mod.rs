@@ -5,7 +5,7 @@ use oc_rsync_bandwidth::BandwidthLimiter;
 use oc_rsync_compress::algorithm::CompressionAlgorithm;
 use oc_rsync_compress::zlib::CompressionLevel;
 use oc_rsync_filters::{FilterRule, FilterSet};
-use oc_rsync_meta::{ChmodModifiers, MetadataOptions};
+use oc_rsync_meta::ChmodModifiers;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Seek, SeekFrom, Write};

@@ -182,7 +182,6 @@ pub(super) fn process_links(
                 relative: record_path,
                 source,
                 metadata,
-                metadata_options: &metadata_options,
                 size_only: size_only_enabled,
                 ignore_times: ignore_times_enabled,
                 checksum: checksum_enabled,

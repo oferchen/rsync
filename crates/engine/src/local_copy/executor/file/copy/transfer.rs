@@ -68,7 +68,6 @@ pub(super) fn execute_transfer(
             source: metadata,
             destination_path: destination,
             destination: existing,
-            options: &metadata_options,
             size_only: size_only_enabled,
             ignore_times: ignore_times_enabled,
             checksum: checksum_enabled,
