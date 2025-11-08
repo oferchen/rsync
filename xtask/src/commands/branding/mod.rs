@@ -45,6 +45,7 @@ rust_version = "3.4.1-rust"
 protocol = 32
 client_bin = "demo-rsync"
 daemon_bin = "demo-rsyncd"
+daemon_wrapper_bin = "demo-rsyncd"
 legacy_client_bin = "rsync"
 legacy_daemon_bin = "rsyncd"
 daemon_config_dir = "/etc/demo-rsyncd"
