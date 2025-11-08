@@ -110,7 +110,21 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     }
 
     match (source.modified(), destination.modified()) {
-        (Ok(src), Ok(dst)) => system_time_within_window(src, dst, modify_window),
+        (Ok(src), Ok(dst)) => {
+            if system_time_within_window(src, dst, modify_window) {
+                if modify_window.is_zero() {
+                    match files_checksum_match(source_path, destination_path, checksum_algorithm) {
+                        Ok(true) => true,
+                        Ok(false) => false,
+                        Err(_) => false,
+                    }
+                } else {
+                    true
+                }
+            } else {
+                false
+            }
+        }
         _ => false,
     }
 }
@@ -259,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn should_skip_copy_skips_when_metadata_matches() {
+    fn should_skip_copy_rewrites_when_metadata_matches_but_content_differs() {
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let destination = temp.path().join("dest.txt");
@@ -284,7 +298,7 @@ mod tests {
             modify_window: Duration::ZERO,
         };
 
-        assert!(should_skip_copy(comparison));
+        assert!(!should_skip_copy(comparison));
     }
 
     #[test]

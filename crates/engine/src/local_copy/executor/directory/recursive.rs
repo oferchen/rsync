@@ -1,11 +1,7 @@
-//! Directory traversal and recursive copy logic.
-
 use std::cell::Cell;
-use std::cmp::Ordering;
-use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
@@ -20,14 +16,9 @@ use crate::local_copy::{
 };
 use oc_rsync_meta::apply_directory_metadata_with_options;
 
-use super::{non_empty_path, symlink_target_is_safe};
-
-#[derive(Debug)]
-pub(crate) struct DirectoryEntry {
-    file_name: OsString,
-    path: PathBuf,
-    metadata: fs::Metadata,
-}
+use super::super::non_empty_path;
+use super::planner::{EntryAction, apply_pre_transfer_deletions, plan_directory_entries};
+use super::support::read_directory_entries_sorted;
 
 pub(crate) fn copy_directory_recursive(
     context: &mut CopyContext,
@@ -210,217 +201,10 @@ pub(crate) fn copy_directory_recursive(
         ensure_directory(context)?;
     }
 
-    #[derive(Clone, Copy)]
-    enum EntryAction {
-        SkipExcluded,
-        SkipNonRegular,
-        SkipMountPoint,
-        CopyDirectory,
-        CopyFile,
-        CopySymlink,
-        CopyFifo,
-        CopyDevice,
-        CopyDeviceAsFile,
-    }
+    let plan = plan_directory_entries(context, &entries, relative, root_device)?;
+    apply_pre_transfer_deletions(context, destination, relative, &plan)?;
 
-    struct PlannedEntry<'a> {
-        entry: &'a DirectoryEntry,
-        relative: PathBuf,
-        action: EntryAction,
-        metadata_override: Option<fs::Metadata>,
-    }
-
-    impl<'a> PlannedEntry<'a> {
-        fn metadata(&self) -> &fs::Metadata {
-            self.metadata_override
-                .as_ref()
-                .unwrap_or(&self.entry.metadata)
-        }
-    }
-
-    let deletion_enabled = context.options().delete_extraneous();
-    let delete_timing = context.delete_timing();
-    let mut keep_names = if deletion_enabled {
-        Vec::with_capacity(entries.len())
-    } else {
-        Vec::new()
-    };
-    let mut planned_entries = Vec::with_capacity(entries.len());
-
-    for entry in entries.iter() {
-        context.enforce_timeout()?;
-        context.register_progress();
-
-        let file_name = entry.file_name.clone();
-        let entry_metadata = &entry.metadata;
-        let entry_type = entry_metadata.file_type();
-        let mut metadata_override = None;
-        let mut effective_type = entry_type;
-        if entry_type.is_symlink()
-            && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
-        {
-            match follow_symlink_metadata(entry.path.as_path()) {
-                Ok(target_metadata) => {
-                    let target_type = target_metadata.file_type();
-                    if context.copy_links_enabled()
-                        || (context.copy_dirlinks_enabled() && target_type.is_dir())
-                    {
-                        effective_type = target_type;
-                        metadata_override = Some(target_metadata);
-                    }
-                }
-                Err(error) => {
-                    if context.copy_links_enabled() {
-                        return Err(error);
-                    }
-                }
-            }
-        }
-        let relative_path = match relative {
-            Some(base) => base.join(Path::new(&file_name)),
-            None => PathBuf::from(Path::new(&file_name)),
-        };
-        context.record_file_list_entry(non_empty_path(relative_path.as_path()));
-
-        let mut keep_name = true;
-
-        let mut action = if !context.allows(&relative_path, effective_type.is_dir()) {
-            // Skip excluded entries while optionally allowing deletion sweeps to remove them.
-            if context.options().delete_excluded_enabled() {
-                keep_name = false;
-            }
-            EntryAction::SkipExcluded
-        } else if entry_type.is_dir() {
-            EntryAction::CopyDirectory
-        } else if effective_type.is_file() {
-            EntryAction::CopyFile
-        } else if effective_type.is_dir() {
-            EntryAction::CopyDirectory
-        } else if entry_type.is_symlink() && !context.copy_links_enabled() {
-            EntryAction::CopySymlink
-        } else if is_fifo(&effective_type) {
-            if context.specials_enabled() {
-                EntryAction::CopyFifo
-            } else {
-                keep_name = false;
-                EntryAction::SkipNonRegular
-            }
-        } else if is_device(&effective_type) {
-            if context.copy_devices_as_files_enabled() {
-                EntryAction::CopyDeviceAsFile
-            } else if context.devices_enabled() {
-                EntryAction::CopyDevice
-            } else {
-                keep_name = false;
-                EntryAction::SkipNonRegular
-            }
-        } else {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::UnsupportedFileType,
-            ));
-        };
-
-        if matches!(action, EntryAction::CopySymlink)
-            && context.safe_links_enabled()
-            && context.copy_unsafe_links_enabled()
-        {
-            match fs::read_link(entry.path.as_path()) {
-                Ok(target) => {
-                    if !symlink_target_is_safe(&target, relative_path.as_path()) {
-                        match follow_symlink_metadata(entry.path.as_path()) {
-                            Ok(target_metadata) => {
-                                let target_type = target_metadata.file_type();
-                                if target_type.is_dir() {
-                                    action = EntryAction::CopyDirectory;
-                                    metadata_override = Some(target_metadata);
-                                } else if target_type.is_file() {
-                                    action = EntryAction::CopyFile;
-                                    metadata_override = Some(target_metadata);
-                                } else if is_fifo(&target_type) {
-                                    if context.specials_enabled() {
-                                        action = EntryAction::CopyFifo;
-                                        metadata_override = Some(target_metadata);
-                                    } else {
-                                        keep_name = false;
-                                        action = EntryAction::SkipNonRegular;
-                                        metadata_override = None;
-                                    }
-                                } else if is_device(&target_type) {
-                                    if context.copy_devices_as_files_enabled() {
-                                        action = EntryAction::CopyDeviceAsFile;
-                                        metadata_override = Some(target_metadata);
-                                    } else if context.devices_enabled() {
-                                        action = EntryAction::CopyDevice;
-                                        metadata_override = Some(target_metadata);
-                                    } else {
-                                        keep_name = false;
-                                        action = EntryAction::SkipNonRegular;
-                                        metadata_override = None;
-                                    }
-                                } else {
-                                    return Err(LocalCopyError::invalid_argument(
-                                        LocalCopyArgumentError::UnsupportedFileType,
-                                    ));
-                                }
-                            }
-                            Err(error) => {
-                                return Err(error);
-                            }
-                        }
-                    }
-                }
-                Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "read symbolic link",
-                        entry.path.to_path_buf(),
-                        error,
-                    ));
-                }
-            }
-        }
-
-        if matches!(action, EntryAction::CopyDirectory) && context.one_file_system_enabled() {
-            if let Some(root) = root_device {
-                if let Some(entry_device) = device_identifier(
-                    entry.path.as_path(),
-                    metadata_override.as_ref().unwrap_or(entry_metadata),
-                ) {
-                    if entry_device != root {
-                        action = EntryAction::SkipMountPoint;
-                    }
-                }
-            }
-        }
-
-        if deletion_enabled && keep_name {
-            let preserve_name = match delete_timing {
-                Some(DeleteTiming::Before) => matches!(
-                    action,
-                    EntryAction::CopyDirectory
-                        | EntryAction::SkipExcluded
-                        | EntryAction::SkipMountPoint
-                ),
-                _ => true,
-            };
-
-            if preserve_name {
-                keep_names.push(file_name.clone());
-            }
-        }
-
-        planned_entries.push(PlannedEntry {
-            entry,
-            relative: relative_path,
-            action,
-            metadata_override,
-        });
-    }
-
-    if deletion_enabled && matches!(delete_timing, Some(DeleteTiming::Before)) {
-        delete_extraneous_entries(context, destination, relative, &keep_names)?;
-    }
-
-    for planned in planned_entries {
+    for planned in plan.planned_entries {
         let file_name = &planned.entry.file_name;
         let target_path = destination.join(Path::new(file_name));
         let entry_metadata = planned.metadata();
@@ -512,15 +296,15 @@ pub(crate) fn copy_directory_recursive(
         }
     }
 
-    if deletion_enabled {
-        match delete_timing.unwrap_or(DeleteTiming::During) {
+    if plan.deletion_enabled {
+        match plan.delete_timing.unwrap_or(DeleteTiming::During) {
             DeleteTiming::Before => {}
             DeleteTiming::During => {
-                delete_extraneous_entries(context, destination, relative, &keep_names)?;
+                delete_extraneous_entries(context, destination, relative, &plan.keep_names)?;
             }
             DeleteTiming::Delay | DeleteTiming::After => {
                 let relative_owned = relative.map(Path::to_path_buf);
-                context.defer_deletion(destination.to_path_buf(), relative_owned, keep_names);
+                context.defer_deletion(destination.to_path_buf(), relative_owned, plan.keep_names);
             }
         }
     }
@@ -570,83 +354,4 @@ pub(crate) fn copy_directory_recursive(
     }
 
     Ok(true)
-}
-
-pub(crate) fn read_directory_entries_sorted(
-    path: &Path,
-) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
-    let mut entries = Vec::new();
-    let read_dir = fs::read_dir(path)
-        .map_err(|error| LocalCopyError::io("read directory", path.to_path_buf(), error))?;
-
-    for entry in read_dir {
-        let entry = entry.map_err(|error| {
-            LocalCopyError::io("read directory entry", path.to_path_buf(), error)
-        })?;
-        let entry_path = entry.path();
-        let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
-            LocalCopyError::io("inspect directory entry", entry_path.to_path_buf(), error)
-        })?;
-        entries.push(DirectoryEntry {
-            file_name: entry.file_name(),
-            path: entry_path,
-            metadata,
-        });
-    }
-
-    entries.sort_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
-    Ok(entries)
-}
-
-fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-
-        left.as_bytes().cmp(right.as_bytes())
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-
-        let left_wide: Vec<u16> = left.encode_wide().collect();
-        let right_wide: Vec<u16> = right.encode_wide().collect();
-        left_wide.cmp(&right_wide)
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        left.to_string_lossy().cmp(&right.to_string_lossy())
-    }
-}
-
-pub(crate) fn is_fifo(file_type: &fs::FileType) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileTypeExt;
-
-        file_type.is_fifo()
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = file_type;
-        false
-    }
-}
-
-pub(crate) fn is_device(file_type: &fs::FileType) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileTypeExt;
-
-        file_type.is_char_device() || file_type.is_block_device()
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = file_type;
-        false
-    }
 }
