@@ -142,6 +142,39 @@ fn execute_with_size_only_skips_same_size_different_content() {
 }
 
 #[test]
+fn execute_with_ignore_times_rewrites_matching_timestamps() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("destination.txt");
+
+    fs::write(&source, b"newdata").expect("write source");
+    fs::write(&destination, b"olddata").expect("write destination");
+
+    let timestamp = FileTime::from_unix_time(1_700_200_000, 0);
+    set_file_times(&source, timestamp, timestamp).expect("set source times");
+    set_file_times(&destination, timestamp, timestamp).expect("set destination times");
+
+    let operands = vec![
+        source.clone().into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().ignore_times(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(
+        fs::read(&destination).expect("read destination"),
+        b"newdata"
+    );
+}
+
+#[test]
 fn execute_with_ignore_existing_skips_existing_destination() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
