@@ -29,7 +29,9 @@ use oc_rsync_meta::{MetadataOptions, apply_file_metadata_with_options};
 
 use super::super::super::super::COPY_BUFFER_SIZE;
 use super::super::append::{AppendMode, determine_append_mode};
-use super::super::comparison::{CopyComparison, build_delta_signature, should_skip_copy};
+use super::super::comparison::{
+    CopyComparison, build_delta_signature, files_checksum_match, should_skip_copy,
+};
 use super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::preallocate::maybe_preallocate_destination;
 
@@ -63,7 +65,7 @@ pub(super) fn execute_transfer(
     let file_size = metadata.len();
 
     if let Some(existing) = existing_metadata {
-        if should_skip_copy(CopyComparison {
+        let mut skip = should_skip_copy(CopyComparison {
             source_path: source,
             source: metadata,
             destination_path: destination,
@@ -73,7 +75,26 @@ pub(super) fn execute_transfer(
             checksum: checksum_enabled,
             checksum_algorithm: context.options().checksum_algorithm(),
             modify_window: context.options().modify_window(),
-        }) {
+        });
+
+        if skip && context.options().backup_enabled() && !checksum_enabled && existing.is_file() {
+            skip = match files_checksum_match(
+                source,
+                destination,
+                context.options().checksum_algorithm(),
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "compare existing destination",
+                        destination.to_path_buf(),
+                        error,
+                    ));
+                }
+            };
+        }
+
+        if skip {
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(crate::local_copy::map_metadata_error)?;
             #[cfg(feature = "xattr")]
@@ -133,6 +154,10 @@ pub(super) fn execute_transfer(
             );
             return Ok(());
         }
+    }
+
+    if let Some(existing) = existing_metadata {
+        context.backup_existing_entry(destination, relative, existing.file_type())?;
     }
 
     if !file_type.is_file() {
