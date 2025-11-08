@@ -110,16 +110,6 @@ pub const fn daemon_program_name() -> &'static str {
     DAEMON_PROGRAM_NAME
 }
 
-/// Optional compatibility wrapper name installed alongside the canonical daemon binary.
-#[doc(alias = "oc-rsyncd")]
-pub const DAEMON_WRAPPER_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_DAEMON_WRAPPER_BIN");
-
-/// Returns the compatibility wrapper name installed alongside the canonical daemon binary.
-#[must_use]
-pub const fn daemon_wrapper_program_name() -> &'static str {
-    DAEMON_WRAPPER_PROGRAM_NAME
-}
-
 /// Upstream-compatible client binary name used for compatibility symlinks.
 #[doc(alias = "rsync")]
 pub const LEGACY_CLIENT_PROGRAM_NAME: &str = env!("OC_RSYNC_WORKSPACE_LEGACY_CLIENT_BIN");

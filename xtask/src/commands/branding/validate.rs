@@ -32,13 +32,6 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
-    if !branding.daemon_wrapper_bin.starts_with(&expected_prefix) {
-        return Err(TaskError::Validation(format!(
-            "daemon wrapper binary '{}' must use '{}' prefix",
-            branding.daemon_wrapper_bin, expected_prefix
-        )));
-    }
-
     let expected_dir_suffix = format!("{}-rsyncd", branding.brand);
     if branding
         .daemon_config_dir
@@ -222,7 +215,6 @@ mod tests {
             protocol: 32,
             client_bin: String::from("oc-rsync"),
             daemon_bin: String::from("oc-rsync"),
-            daemon_wrapper_bin: String::from("oc-rsyncd"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
             daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
@@ -300,17 +292,6 @@ mod tests {
         assert!(matches!(
             error,
             TaskError::Validation(message) if message.contains("daemon binary")
-        ));
-    }
-
-    #[test]
-    fn validate_branding_rejects_missing_wrapper_prefix() {
-        let mut branding = sample_branding();
-        branding.daemon_wrapper_bin = String::from("rsyncd");
-        let error = validate_branding(&branding).unwrap_err();
-        assert!(matches!(
-            error,
-            TaskError::Validation(message) if message.contains("daemon wrapper binary")
         ));
     }
 

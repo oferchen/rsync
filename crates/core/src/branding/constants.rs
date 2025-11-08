@@ -28,11 +28,6 @@ pub const OC_CLIENT_PROGRAM_NAME: &str = workspace::metadata().client_program_na
 #[doc(alias = "oc-rsync")]
 pub const OC_DAEMON_PROGRAM_NAME: &str = workspace::metadata().daemon_program_name();
 
-/// Compatibility wrapper name provided for deployments that still reference `oc-rsyncd`.
-#[doc(alias = "oc-rsyncd")]
-pub const OC_DAEMON_WRAPPER_PROGRAM_NAME: &str =
-    workspace::metadata().daemon_wrapper_program_name();
-
 /// Directory that packages install for daemon configuration snippets.
 #[doc(alias = "/etc/oc-rsyncd")]
 pub const OC_DAEMON_CONFIG_DIR: &str = workspace::metadata().daemon_config_dir();

@@ -5,8 +5,8 @@ use std::fmt;
 use std::path::Path;
 
 use super::constants::{
-    OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_DAEMON_WRAPPER_PROGRAM_NAME,
-    UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME,
+    OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
+    UPSTREAM_DAEMON_PROGRAM_NAME,
 };
 use super::profile::{
     BrandProfile, config_path_candidate_strs, config_path_candidates, oc_profile,
@@ -19,12 +19,11 @@ use serde::ser::{Serialize, Serializer};
 ///
 /// The workspace recognises both upstream-compatible names (`rsync`/`rsyncd`),
 /// typically provided via symlinks or remote invocations, and the branded
-/// binaries (`oc-rsync`/`oc-rsyncd`). Centralising the mapping keeps
-/// higher layers free from string comparisons and ensures configuration paths,
-/// help banners, and diagnostics stay consistent across entry points. The
-/// [`Brand::profile`] method exposes the corresponding [`BrandProfile`], which in
-/// turn provides program names and filesystem locations for the selected
-/// distribution.
+/// single binary (`oc-rsync`). Centralising the mapping keeps higher layers free
+/// from string comparisons and ensures configuration paths, help banners, and
+/// diagnostics stay consistent across entry points. The [`Brand::profile`]
+/// method exposes the corresponding [`BrandProfile`], which in turn provides
+/// program names and filesystem locations for the selected distribution.
 ///
 /// `Brand` implements [`FromStr`], allowing environment variables such as
 /// [`OC_RSYNC_BRAND`][super::brand_override_env_var] to accept human-readable aliases.
@@ -34,7 +33,7 @@ use serde::ser::{Serialize, Serializer};
 pub enum Brand {
     /// Upstream-compatible binaries (`rsync` and `rsyncd`).
     Upstream,
-    /// Branded binaries installed as `oc-rsync` with an optional `oc-rsyncd` wrapper.
+    /// Branded binaries installed as the single `oc-rsync` entry point.
     Oc,
 }
 
@@ -67,14 +66,12 @@ impl FromStr for Brand {
             return Ok(Self::Upstream);
         }
 
-        if matches_any_program_alias(
-            s,
-            &[
-                OC_CLIENT_PROGRAM_NAME,
-                OC_DAEMON_PROGRAM_NAME,
-                OC_DAEMON_WRAPPER_PROGRAM_NAME,
-            ],
-        ) {
+        if matches_any_program_alias(s, &[OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME]) {
+            return Ok(Self::Oc);
+        }
+
+        const OC_LEGACY_DAEMON_ALIAS: &str = "oc-rsyncd";
+        if matches_program_alias(s, OC_LEGACY_DAEMON_ALIAS) {
             return Ok(Self::Oc);
         }
 
@@ -118,12 +115,6 @@ impl Brand {
     #[must_use]
     pub const fn daemon_program_name(self) -> &'static str {
         self.profile().daemon_program_name()
-    }
-
-    /// Returns the compatibility wrapper program name, if available.
-    #[must_use]
-    pub const fn daemon_wrapper_program_name(self) -> Option<&'static str> {
-        self.profile().daemon_wrapper_program_name()
     }
 
     /// Returns the preferred daemon configuration directory as a [`Path`].

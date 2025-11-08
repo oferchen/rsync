@@ -3,10 +3,11 @@
 This document captures observable gaps between the Rust workspace and upstream
 rsync 3.4.1. Each entry describes the user-visible impact today and outlines
 what must land to eliminate the difference. The canonical entrypoint ships under
-the branded name **oc-rsync 3.4.1-rust** as declared in `Cargo.toml`. Optional
-wrappers (**oc-rsyncd**, **rsync**, **rsyncd**) share the same execution paths
-when the `legacy-binaries` feature is enabled so environments that still depend
-on alternate naming can opt in without affecting default packaging. Items
+the branded name **oc-rsync 3.4.1-rust** as declared in `Cargo.toml`. The
+workspace ships a single binary (`oc-rsync`) that covers both client and
+daemon roles. Downstream packages that require alternate names must provide
+their own symlinks without relying on additional binaries from this
+repository. Items
 remain in this list until the referenced functionality ships
 and parity is verified by tests or goldens.
 
@@ -55,9 +56,6 @@ and parity is verified by tests or goldens.
     `OC_RSYNC_DAEMON_FALLBACK=0`/`false` (or the shared `OC_RSYNC_FALLBACK`
     override); when disabled or when the helper binary is missing the daemon
     explains that transfers are unavailable after completing authentication.
-    Optional `oc-rsyncd` and `rsyncd` compatibility wrappers expose the same
-    behaviour through the branded and legacy binary names when the
-    `legacy-binaries` feature is enabled.
     Authentication and authorization flows are in place, and module-level
     `use chroot` directives are parsed with absolute-path enforcement, but real
     module serving and the broader directive matrix remain unimplemented when

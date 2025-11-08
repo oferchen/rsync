@@ -90,7 +90,6 @@ fn load_workspace_metadata(workspace_root: &Path) -> WorkspaceMetadata {
         protocol: int_field(oc_rsync_table, "protocol"),
         client_bin: str_field(oc_rsync_table, "client_bin"),
         daemon_bin: str_field(oc_rsync_table, "daemon_bin"),
-        daemon_wrapper_bin: str_field(oc_rsync_table, "daemon_wrapper_bin"),
         legacy_client_bin: str_field(oc_rsync_table, "legacy_client_bin"),
         legacy_daemon_bin: str_field(oc_rsync_table, "legacy_daemon_bin"),
         daemon_config_dir: str_field(oc_rsync_table, "daemon_config_dir"),
@@ -155,7 +154,6 @@ struct WorkspaceMetadata {
     protocol: u32,
     client_bin: String,
     daemon_bin: String,
-    daemon_wrapper_bin: String,
     legacy_client_bin: String,
     legacy_daemon_bin: String,
     daemon_config_dir: String,
@@ -182,12 +180,6 @@ impl WorkspaceMetadata {
                 expect_eq(&self.client_bin, "oc-rsync", manifest_path, "client_bin");
                 expect_eq(&self.daemon_bin, "oc-rsync", manifest_path, "daemon_bin");
                 expect_eq(
-                    &self.daemon_wrapper_bin,
-                    "oc-rsyncd",
-                    manifest_path,
-                    "daemon_wrapper_bin",
-                );
-                expect_eq(
                     &self.daemon_config_dir,
                     "/etc/oc-rsyncd",
                     manifest_path,
@@ -209,12 +201,6 @@ impl WorkspaceMetadata {
             "upstream" => {
                 expect_eq(&self.client_bin, "rsync", manifest_path, "client_bin");
                 expect_eq(&self.daemon_bin, "rsyncd", manifest_path, "daemon_bin");
-                expect_eq(
-                    &self.daemon_wrapper_bin,
-                    "rsyncd",
-                    manifest_path,
-                    "daemon_wrapper_bin",
-                );
                 expect_eq(
                     &self.daemon_config_dir,
                     "/etc",
@@ -316,10 +302,6 @@ impl WorkspaceMetadata {
         println!(
             "cargo:rustc-env=OC_RSYNC_WORKSPACE_DAEMON_BIN={}",
             self.daemon_bin
-        );
-        println!(
-            "cargo:rustc-env=OC_RSYNC_WORKSPACE_DAEMON_WRAPPER_BIN={}",
-            self.daemon_wrapper_bin
         );
         println!(
             "cargo:rustc-env=OC_RSYNC_WORKSPACE_LEGACY_CLIENT_BIN={}",

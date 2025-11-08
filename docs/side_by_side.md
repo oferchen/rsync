@@ -8,8 +8,6 @@ Debian/Ubuntu, RPM-based systems, and Homebrew installs.
 ## Binaries and version output
 
 * Client + daemon entrypoint: `/usr/bin/oc-rsync`
-* Optional wrappers (`oc-rsyncd`, `rsync`, `rsyncd`) are gated behind the
-  `legacy-binaries` feature and are not installed by default.
 * Version string: `oc-rsync 3.4.1-rust`
 
 Run the client once and confirm the daemon help path to show that the install is

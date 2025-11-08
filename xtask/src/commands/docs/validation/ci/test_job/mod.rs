@@ -66,7 +66,6 @@ rust_version = "3.4.1-rust"
 protocol = 32
 client_bin = "oc-rsync"
 daemon_bin = "oc-rsync"
-daemon_wrapper_bin = "oc-rsyncd"
 legacy_client_bin = "rsync"
 legacy_daemon_bin = "rsyncd"
 daemon_config_dir = "/etc/oc-rsyncd"
