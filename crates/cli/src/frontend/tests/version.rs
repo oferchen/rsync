@@ -45,7 +45,7 @@ fn version_flag_ignores_additional_operands() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
 
-    let expected = VersionInfoReport::default().human_readable();
+    let expected = VersionInfoReport::for_client_brand(Brand::Upstream).human_readable();
     assert_eq!(stdout, expected.into_bytes());
 }
 
@@ -61,6 +61,6 @@ fn short_version_flag_ignores_additional_operands() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
 
-    let expected = VersionInfoReport::default().human_readable();
+    let expected = VersionInfoReport::for_client_brand(Brand::Upstream).human_readable();
     assert_eq!(stdout, expected.into_bytes());
 }
