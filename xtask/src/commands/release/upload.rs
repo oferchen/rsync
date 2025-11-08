@@ -521,14 +521,7 @@ mod tests {
         }
 
         let artifacts = gather_release_artifacts(workspace, &branding).expect("gather artifacts");
-        let mut expected = vec![
-            deb,
-            rpm,
-            tarball,
-            linux_binary,
-            mac_binary,
-            windows_binary,
-        ];
+        let mut expected = vec![deb, rpm, tarball, linux_binary, mac_binary, windows_binary];
         expected.sort();
         assert_eq!(artifacts, expected);
     }

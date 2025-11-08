@@ -13,9 +13,8 @@ use libc::{self, EACCES, EINVAL, ENOTSUP, EPERM, EROFS};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams,
-    LocalCopyAction, LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata,
-    LocalCopyRecord,
+    CopyContext, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams, LocalCopyAction,
+    LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
 #[cfg(test)]
@@ -81,8 +80,7 @@ pub(super) fn execute_transfer(
         if skip {
             let requires_content_verification = existing.is_file()
                 && !checksum_enabled
-                && (context.options().backup_enabled()
-                    || context.delete_timing().is_some());
+                && (context.options().backup_enabled() || context.delete_timing().is_some());
 
             if requires_content_verification {
                 skip = match files_checksum_match(
