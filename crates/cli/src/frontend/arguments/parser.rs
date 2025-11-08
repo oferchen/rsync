@@ -363,6 +363,7 @@ where
     let outbuf = matches.remove_one::<OsString>("outbuf");
     let stats = matches.get_flag("stats");
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;
+    let no_partial = matches.get_flag("no-partial");
     let preallocate = matches.get_flag("preallocate");
     let fsync = if matches.get_flag("fsync") {
         Some(true)
@@ -372,10 +373,23 @@ where
         None
     };
     let delay_updates = matches.get_flag("delay-updates") && !matches.get_flag("no-delay-updates");
-    let partial_dir = matches
+    let partial_dir_cli = matches
         .remove_one::<OsString>("partial-dir")
         .map(PathBuf::from);
-    let partial = partial_flag || partial_dir.is_some();
+    let partial_dir = if no_partial {
+        None
+    } else if let Some(dir) = partial_dir_cli {
+        Some(dir)
+    } else {
+        env::var_os("RSYNC_PARTIAL_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    let partial = if no_partial {
+        false
+    } else {
+        partial_flag || partial_dir.is_some()
+    };
     let temp_dir = matches
         .remove_one::<OsString>("temp-dir")
         .map(PathBuf::from);
