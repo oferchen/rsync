@@ -3,15 +3,14 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::process::ExitCode;
 
-/// Runs the shared client entry point for every branded executable.
+/// Runs the shared client entry point for every supported executable name.
 ///
-/// Both branded binaries—the upstream-compatible client exposed as
-/// `oc_rsync_core::version::PROGRAM_NAME` and the oc-branded wrapper
-/// published as `oc_rsync_core::version::OC_PROGRAM_NAME`—call into this
-/// helper. Centralising the logic keeps tests, packaging, and telemetry
-/// focused on a single execution path. The helper forwards its arguments
-/// and I/O handles to the CLI crate and normalises the returned status via
-/// the shared exit-code mapper.
+/// The workspace installs a single binary (`oc-rsync`), but users may
+/// provide their own compatibility symlinks that point at upstream naming
+/// conventions (`rsync`). Centralising the logic keeps tests, packaging, and
+/// telemetry focused on a single execution path regardless of the invoking
+/// alias. The helper forwards its arguments and I/O handles to the CLI
+/// crate and normalises the returned status via the shared exit-code mapper.
 #[must_use]
 pub fn run_with<I, Out, Err>(args: I, stdout: &mut Out, stderr: &mut Err) -> ExitCode
 where

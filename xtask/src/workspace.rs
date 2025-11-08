@@ -20,7 +20,7 @@ pub struct WorkspaceBranding {
     pub client_bin: String,
     /// Canonical daemon binary name.
     pub daemon_bin: String,
-    /// Optional compatibility wrapper binary name for the daemon.
+    /// Compatibility alias for the daemon binary (typically matches [`daemon_bin`]).
     pub daemon_wrapper_bin: String,
     /// Legacy upstream-compatible client name.
     pub legacy_client_bin: String,
@@ -270,7 +270,7 @@ rust_version = "3.4.1-rust"
 protocol = 32
 client_bin = "oc-rsync"
 daemon_bin = "oc-rsync"
-daemon_wrapper_bin = "oc-rsyncd"
+daemon_wrapper_bin = "oc-rsync"
 legacy_client_bin = "rsync"
 legacy_daemon_bin = "rsyncd"
 daemon_config_dir = "/etc/oc-rsyncd"
@@ -298,7 +298,7 @@ source = "https://github.com/oferchen/rsync"
             protocol: 32,
             client_bin: String::from("oc-rsync"),
             daemon_bin: String::from("oc-rsync"),
-            daemon_wrapper_bin: String::from("oc-rsyncd"),
+            daemon_wrapper_bin: String::from("oc-rsync"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
             daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),

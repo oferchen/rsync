@@ -28,7 +28,7 @@ pub const OC_CLIENT_PROGRAM_NAME: &str = workspace::metadata().client_program_na
 #[doc(alias = "oc-rsync")]
 pub const OC_DAEMON_PROGRAM_NAME: &str = workspace::metadata().daemon_program_name();
 
-/// Compatibility wrapper name provided for deployments that still reference `oc-rsyncd`.
+/// Compatibility alias recognised when deployments provide an `oc-rsyncd` symlink.
 #[doc(alias = "oc-rsyncd")]
 pub const OC_DAEMON_WRAPPER_PROGRAM_NAME: &str =
     workspace::metadata().daemon_wrapper_program_name();

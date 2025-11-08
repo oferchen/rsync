@@ -20,7 +20,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     println!("Preparing {}", branding.summary());
 
     if options.build_deb || options.build_rpm {
-        build_workspace_binaries(workspace, &options.profile, None, None, true)?;
+        build_workspace_binaries(workspace, &options.profile, None, None)?;
     }
 
     if options.build_deb {
@@ -95,7 +95,6 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
                 &options.profile,
                 Some(build.spec.target_triple),
                 build.linker.as_ref(),
-                true,
             )?;
             tarball::build_tarball(workspace, &branding, &options.profile, &build.spec)?;
         }
@@ -137,7 +136,6 @@ pub(super) fn build_workspace_binaries(
     profile: &Option<OsString>,
     target: Option<&str>,
     linker_override: Option<&LinkerOverride>,
-    include_legacy: bool,
 ) -> TaskResult<()> {
     if let Some(target) = target {
         ensure_rust_target_installed(target)?;
@@ -155,11 +153,6 @@ pub(super) fn build_workspace_binaries(
         OsString::from("--bins"),
         OsString::from("--locked"),
     ];
-
-    if include_legacy {
-        args.push(OsString::from("--features"));
-        args.push(OsString::from("legacy-binaries"));
-    }
 
     let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
 

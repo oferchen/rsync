@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(summary.brand(), Brand::Oc);
         assert_eq!(summary.client_program_name(), "oc-rsync");
         assert_eq!(summary.daemon_program_name(), "oc-rsync");
-        assert_eq!(summary.daemon_wrapper_program_name(), Some("oc-rsyncd"));
+        assert_eq!(summary.daemon_wrapper_program_name(), Some("oc-rsync"));
         assert_eq!(
             summary.daemon_config_path(),
             "/etc/oc-rsyncd/oc-rsyncd.conf"
@@ -450,6 +450,6 @@ mod tests {
         let summary = manifest.oc_summary();
         let rendered = summary.to_string();
 
-        assert!(rendered.contains("wrapper=oc-rsyncd"));
+        assert!(rendered.contains("wrapper=oc-rsync"));
     }
 }

@@ -141,8 +141,6 @@ fn detect_brand_matches_invocation_argument() {
         detect_brand(Some(OsStr::new("/usr/bin/oc-rsync"))),
         Brand::Oc
     );
-    assert_eq!(detect_brand(Some(OsStr::new("oc-rsyncd"))), Brand::Oc);
-    assert_eq!(detect_brand(Some(OsStr::new("OC-RSYNCD"))), Brand::Oc);
     assert_eq!(
         detect_brand(Some(OsStr::new("/usr/bin/oc-rsync-3.4.1"))),
         Brand::Oc
@@ -188,8 +186,6 @@ fn matches_program_alias_accepts_windows_extensions() {
     assert!(matches_program_alias("rsync.exe", "rsync"));
     assert!(matches_program_alias("RSYNCD.EXE", "rsyncd"));
     assert!(matches_program_alias("oc-rsync.EXE", "oc-rsync"));
-    assert!(matches_program_alias("OC-RSYNCD.EXE", "oc-rsyncd"));
-    assert!(!matches_program_alias("rsyncd.exe", "oc-rsyncd"));
 }
 
 #[test]

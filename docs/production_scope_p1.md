@@ -4,10 +4,9 @@ This document freezes the mandatory scope that must reach green status before th
 
 > **Binary naming note**: The production scope targets the branded
 > `oc-rsync` entrypoint (client plus `--daemon`) defined in the workspace
-> metadata. The shell wrapper `oc-rsyncd` and the legacy compatibility
-> wrappers (`rsync`, `rsyncd`) remain available behind the
-> `legacy-binaries` feature so existing tooling can opt-in explicitly
-> without conflicting with upstream packages.
+> metadata. Deployments may add their own compatibility symlinks if they
+> must reference upstream naming, but the workspace itself only builds and
+> ships the oc-prefixed binary to avoid clashing with system packages.
 
 ## Platforms
 - Linux x86_64

@@ -94,7 +94,7 @@ pub const CLIENT_FALLBACK_ENV: &str = "OC_RSYNC_FALLBACK";
 
 /// Name of the daemon-specific fallback override environment variable.
 ///
-/// When present, the value controls whether `oc-rsyncd` should delegate module
+/// When present, the value controls whether `oc-rsync --daemon` should delegate module
 /// sessions to the upstream `rsync` binary. The helper mirrors the
 /// workspace-wide client override ([`CLIENT_FALLBACK_ENV`]) while allowing
 /// operators to toggle delegation independently for the daemon process.
@@ -103,7 +103,7 @@ pub const DAEMON_FALLBACK_ENV: &str = "OC_RSYNC_DAEMON_FALLBACK";
 /// Name of the daemon auto-delegation environment variable.
 ///
 /// Setting [`DAEMON_AUTO_DELEGATE_ENV`] to a truthy value enables the
-/// compatibility mode where `oc-rsyncd` launches the upstream `rsync` binary
+/// compatibility mode where `oc-rsync --daemon` launches the upstream `rsync` binary
 /// without requiring the `--delegate-system-rsync` flag. The constant lives in
 /// this module so callers and integration tests share the same identifier when
 /// toggling the behaviour.

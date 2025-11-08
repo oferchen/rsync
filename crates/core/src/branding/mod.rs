@@ -8,7 +8,7 @@
 //! so that packaging, documentation, and runtime behaviour remain aligned. The
 //! module records both the upstream-compatible `rsync`/`rsyncd` names (used by
 //! symlinks and remote invocations) and the branded `oc-rsync` single binary
-//! (with its optional `oc-rsyncd` wrapper) together with convenience accessors
+//! together with convenience accessors
 //! that allow the CLI and daemon crates to select the correct identity for a
 //! given execution mode. By
 //! funnelling branding details through this module we keep string literals out

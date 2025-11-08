@@ -183,7 +183,7 @@ impl WorkspaceMetadata {
                 expect_eq(&self.daemon_bin, "oc-rsync", manifest_path, "daemon_bin");
                 expect_eq(
                     &self.daemon_wrapper_bin,
-                    "oc-rsyncd",
+                    "oc-rsync",
                     manifest_path,
                     "daemon_wrapper_bin",
                 );

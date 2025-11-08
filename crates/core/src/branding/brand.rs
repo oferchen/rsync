@@ -19,7 +19,8 @@ use serde::ser::{Serialize, Serializer};
 ///
 /// The workspace recognises both upstream-compatible names (`rsync`/`rsyncd`),
 /// typically provided via symlinks or remote invocations, and the branded
-/// binaries (`oc-rsync`/`oc-rsyncd`). Centralising the mapping keeps
+/// binary (`oc-rsync`) together with any administrator-supplied aliases.
+/// Centralising the mapping keeps
 /// higher layers free from string comparisons and ensures configuration paths,
 /// help banners, and diagnostics stay consistent across entry points. The
 /// [`Brand::profile`] method exposes the corresponding [`BrandProfile`], which in
@@ -34,7 +35,7 @@ use serde::ser::{Serialize, Serializer};
 pub enum Brand {
     /// Upstream-compatible binaries (`rsync` and `rsyncd`).
     Upstream,
-    /// Branded binaries installed as `oc-rsync` with an optional `oc-rsyncd` wrapper.
+    /// Branded binary installed as `oc-rsync` (additional aliases may be symlinked).
     Oc,
 }
 

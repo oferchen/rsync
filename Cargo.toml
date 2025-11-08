@@ -11,27 +11,11 @@ publish = true
 autobins = false
 
 [[bin]]
-name = "rsync"
-path = "src/bin/rsync.rs"
-required-features = ["legacy-binaries"]
-
-[[bin]]
-name = "rsyncd"
-path = "src/bin/rsyncd.rs"
-required-features = ["legacy-binaries"]
-
-[[bin]]
 name = "oc-rsync"
 path = "src/bin/oc-rsync.rs"
 
-[[bin]]
-name = "oc-rsyncd"
-path = "src/bin/oc-rsyncd.rs"
-required-features = ["legacy-binaries"]
-
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
-legacy-binaries = []
 sd-notify = ["oc-rsync-daemon/sd-notify"]
 zstd = ["oc-rsync-core/zstd"]
 lz4 = ["oc-rsync-core/lz4"]
@@ -94,7 +78,7 @@ rust_version = "3.4.1-rust"
 protocol = 32
 client_bin = "oc-rsync"
 daemon_bin = "oc-rsync"
-daemon_wrapper_bin = "oc-rsyncd"
+daemon_wrapper_bin = "oc-rsync"
 legacy_client_bin = "rsync"
 legacy_daemon_bin = "rsyncd"
 daemon_config_dir = "/etc/oc-rsyncd"

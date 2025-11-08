@@ -5,7 +5,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 //! Thin command-line frontend that orchestrates argument parsing and execution
-//! for the `oc-rsync` binary and its optional `oc-rsyncd` wrapper.
+//! for the `oc-rsync` binary (and any compatibility symlink that points at it).
 //!
 //! This crate exposes [`run`] as the primary entry point so all binaries can
 //! share the same parsing and dispatch logic. The actual implementation lives in

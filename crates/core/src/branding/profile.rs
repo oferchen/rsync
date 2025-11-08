@@ -193,7 +193,7 @@ pub const fn oc_daemon_program_name() -> &'static str {
     OC_DAEMON_PROGRAM_NAME
 }
 
-/// Returns the compatibility wrapper program name exposed as `oc-rsyncd`.
+/// Returns the compatibility alias recognised as `oc-rsyncd` when present.
 #[must_use]
 pub const fn oc_daemon_wrapper_program_name() -> &'static str {
     OC_DAEMON_WRAPPER_PROGRAM_NAME
@@ -205,19 +205,19 @@ pub fn oc_daemon_program_name_os_str() -> &'static OsStr {
     OsStr::new(oc_daemon_program_name())
 }
 
-/// Returns the canonical configuration directory used by `oc-rsyncd`.
+/// Returns the canonical configuration directory used by the daemon (`/etc/oc-rsyncd`).
 #[must_use]
 pub fn oc_daemon_config_dir() -> &'static Path {
     oc_profile().daemon_config_dir()
 }
 
-/// Returns the canonical configuration path used by `oc-rsyncd`.
+/// Returns the canonical configuration path used by the daemon (`/etc/oc-rsyncd/oc-rsyncd.conf`).
 #[must_use]
 pub fn oc_daemon_config_path() -> &'static Path {
     oc_profile().daemon_config_path()
 }
 
-/// Returns the canonical secrets path used by `oc-rsyncd`.
+/// Returns the canonical secrets path used by the daemon (`/etc/oc-rsyncd/oc-rsyncd.secrets`).
 #[must_use]
 pub fn oc_daemon_secrets_path() -> &'static Path {
     oc_profile().daemon_secrets_path()

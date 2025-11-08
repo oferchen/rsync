@@ -21,7 +21,7 @@ pub const OC_PROGRAM_NAME: &str = branding::OC_CLIENT_PROGRAM_NAME;
 /// Program name used by the single-binary daemon entrypoint (`oc-rsync --daemon`).
 pub const OC_DAEMON_PROGRAM_NAME: &str = branding::OC_DAEMON_PROGRAM_NAME;
 
-/// Compatibility wrapper name used when shipping the optional `oc-rsyncd` helper.
+/// Compatibility alias used when invoking the daemon via an alternate program name.
 pub const OC_DAEMON_WRAPPER_PROGRAM_NAME: &str = branding::OC_DAEMON_WRAPPER_PROGRAM_NAME;
 
 /// First copyright year advertised by the Rust implementation.
