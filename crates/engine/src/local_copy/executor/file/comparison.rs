@@ -115,10 +115,6 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
                 return false;
             }
 
-            if modify_window.is_zero() {
-                return files_content_equal(source_path, destination_path).unwrap_or(false);
-            }
-
             true
         }
         _ => false,
@@ -211,31 +207,6 @@ pub(crate) fn files_checksum_match(
     }
 
     Ok(source_hasher.finalize() == destination_hasher.finalize())
-}
-
-pub(crate) fn files_content_equal(source: &Path, destination: &Path) -> io::Result<bool> {
-    let mut source_file = fs::File::open(source)?;
-    let mut destination_file = fs::File::open(destination)?;
-
-    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
-    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
-
-    loop {
-        let source_read = source_file.read(&mut source_buffer)?;
-        let destination_read = destination_file.read(&mut destination_buffer)?;
-
-        if source_read != destination_read {
-            return Ok(false);
-        }
-
-        if source_read == 0 {
-            return Ok(true);
-        }
-
-        if source_buffer[..source_read] != destination_buffer[..destination_read] {
-            return Ok(false);
-        }
-    }
 }
 
 #[cfg(test)]
