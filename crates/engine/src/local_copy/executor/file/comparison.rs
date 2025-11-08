@@ -115,11 +115,6 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
                 return false;
             }
 
-            if !checksum && !size_only && modify_window.is_zero() && src == dst {
-                return files_checksum_match(source_path, destination_path, checksum_algorithm)
-                    .unwrap_or(false);
-            }
-
             true
         }
         _ => false,
