@@ -139,3 +139,15 @@ fn metadata_matches_manifest() {
         oc["source"].as_str().expect("source")
     );
 }
+
+#[test]
+fn oc_brand_exposes_single_binary() {
+    let snapshot = metadata();
+    if snapshot.brand() == "oc" {
+        assert_eq!(
+            snapshot.client_program_name(),
+            snapshot.daemon_program_name(),
+            "oc branding must resolve to a single binary name",
+        );
+    }
+}

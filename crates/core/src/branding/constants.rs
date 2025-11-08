@@ -51,3 +51,6 @@ pub const LEGACY_DAEMON_CONFIG_DIR: &str = workspace::metadata().legacy_daemon_c
 /// Legacy secrets file path supported for backwards compatibility with upstream deployments.
 #[doc(alias = "/etc/rsyncd.secrets")]
 pub const LEGACY_DAEMON_SECRETS_PATH: &str = workspace::metadata().legacy_daemon_secrets_path();
+
+/// Canonical source repository URL advertised by version banners and documentation.
+pub const SOURCE_URL: &str = workspace::metadata().source_url();
