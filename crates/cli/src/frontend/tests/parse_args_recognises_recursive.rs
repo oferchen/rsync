@@ -75,3 +75,28 @@ fn parse_args_recognises_no_dirs_flag() {
 
     assert_eq!(parsed.dirs, Some(false));
 }
+
+#[test]
+fn parse_args_prefers_last_dirs_toggle() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--dirs"),
+        OsString::from("--no-dirs"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse dirs then no-dirs");
+
+    assert_eq!(parsed.dirs, Some(false));
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-dirs"),
+        OsString::from("--dirs"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse no-dirs then dirs");
+
+    assert_eq!(parsed.dirs, Some(true));
+}

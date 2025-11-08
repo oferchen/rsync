@@ -551,13 +551,7 @@ fn tri_state_flag_positive_first(
     positive: &str,
     negative: &str,
 ) -> Option<bool> {
-    if matches.get_flag(positive) {
-        Some(true)
-    } else if matches.get_flag(negative) {
-        Some(false)
-    } else {
-        None
-    }
+    tri_state_flag_with_order(matches, positive, negative, true)
 }
 
 fn tri_state_flag_negative_first(
@@ -565,11 +559,45 @@ fn tri_state_flag_negative_first(
     positive: &str,
     negative: &str,
 ) -> Option<bool> {
-    if matches.get_flag(negative) {
-        Some(false)
-    } else if matches.get_flag(positive) {
-        Some(true)
-    } else {
-        None
+    tri_state_flag_with_order(matches, positive, negative, false)
+}
+
+fn tri_state_flag_with_order(
+    matches: &clap::ArgMatches,
+    positive: &str,
+    negative: &str,
+    prefer_positive_on_tie: bool,
+) -> Option<bool> {
+    let positive_present = matches.get_flag(positive);
+    let negative_present = matches.get_flag(negative);
+
+    match (positive_present, negative_present) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        (false, false) => None,
+        (true, true) => {
+            let positive_index = last_occurrence(matches, positive);
+            let negative_index = last_occurrence(matches, negative);
+            match (positive_index, negative_index) {
+                (Some(pos), Some(neg)) => {
+                    if pos > neg {
+                        Some(true)
+                    } else if neg > pos {
+                        Some(false)
+                    } else if prefer_positive_on_tie {
+                        Some(true)
+                    } else {
+                        Some(false)
+                    }
+                }
+                (Some(_), None) => Some(true),
+                (None, Some(_)) => Some(false),
+                (None, None) => Some(prefer_positive_on_tie),
+            }
+        }
     }
+}
+
+fn last_occurrence(matches: &clap::ArgMatches, id: &str) -> Option<usize> {
+    matches.indices_of(id).and_then(|indices| indices.max())
 }
