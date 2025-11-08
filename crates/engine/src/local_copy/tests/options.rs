@@ -57,14 +57,11 @@ fn should_skip_copy_requires_exact_mtime_when_window_zero() {
 
     let source_meta = fs::metadata(&source).expect("source metadata");
     let dest_meta = fs::metadata(&destination).expect("dest metadata");
-    let metadata_options = MetadataOptions::new().preserve_times(true);
-
     assert!(!should_skip_copy(CopyComparison {
         source_path: &source,
         source: &source_meta,
         destination_path: &destination,
         destination: &dest_meta,
-        options: &metadata_options,
         size_only: false,
         ignore_times: false,
         checksum: false,
@@ -87,8 +84,6 @@ fn should_skip_copy_allows_difference_within_window() {
     set_file_mtime(&source, base).expect("set source mtime");
     set_file_mtime(&destination, within).expect("set dest mtime");
 
-    let metadata_options = MetadataOptions::new().preserve_times(true);
-
     let source_meta = fs::metadata(&source).expect("source metadata");
     let mut dest_meta = fs::metadata(&destination).expect("dest metadata");
 
@@ -97,7 +92,6 @@ fn should_skip_copy_allows_difference_within_window() {
         source: &source_meta,
         destination_path: &destination,
         destination: &dest_meta,
-        options: &metadata_options,
         size_only: false,
         ignore_times: false,
         checksum: false,
@@ -113,7 +107,6 @@ fn should_skip_copy_allows_difference_within_window() {
         source: &source_meta,
         destination_path: &destination,
         destination: &dest_meta,
-        options: &metadata_options,
         size_only: false,
         ignore_times: false,
         checksum: false,
@@ -134,7 +127,6 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
     set_file_mtime(&source, timestamp).expect("set source mtime");
     set_file_mtime(&destination, timestamp).expect("set destination mtime");
 
-    let metadata_options = MetadataOptions::new().preserve_times(true);
     let source_meta = fs::metadata(&source).expect("source metadata");
     let dest_meta = fs::metadata(&destination).expect("dest metadata");
 
@@ -143,7 +135,6 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         source: &source_meta,
         destination_path: &destination,
         destination: &dest_meta,
-        options: &metadata_options,
         size_only: false,
         ignore_times: false,
         checksum: false,
@@ -156,7 +147,6 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         source: &source_meta,
         destination_path: &destination,
         destination: &dest_meta,
-        options: &metadata_options,
         size_only: false,
         ignore_times: true,
         checksum: false,

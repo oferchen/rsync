@@ -5,7 +5,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::{CopyContext, LocalCopyError, ReferenceDirectoryKind};
-use oc_rsync_meta::MetadataOptions;
 
 use super::{CopyComparison, should_skip_copy};
 
@@ -39,7 +38,6 @@ pub(crate) struct ReferenceQuery<'a> {
     pub(crate) relative: &'a Path,
     pub(crate) source: &'a Path,
     pub(crate) metadata: &'a fs::Metadata,
-    pub(crate) metadata_options: &'a MetadataOptions,
     pub(crate) size_only: bool,
     pub(crate) ignore_times: bool,
     pub(crate) checksum: bool,
@@ -54,7 +52,6 @@ pub(crate) fn find_reference_action(
         relative,
         source,
         metadata,
-        metadata_options,
         size_only,
         ignore_times,
         checksum,
@@ -82,7 +79,6 @@ pub(crate) fn find_reference_action(
             source: metadata,
             destination_path: &candidate,
             destination: &candidate_metadata,
-            options: metadata_options,
             size_only,
             ignore_times,
             checksum,
