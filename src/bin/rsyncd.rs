@@ -28,7 +28,9 @@ where
     Out: Write,
     Err: Write,
 {
-    let forwarded =
-        daemon_wrapper::wrap_daemon_arguments(args, Brand::Upstream.daemon_program_name());
+    let fallback_program = Brand::Upstream
+        .daemon_wrapper_program_name()
+        .unwrap_or_else(|| Brand::Upstream.daemon_program_name());
+    let forwarded = daemon_wrapper::wrap_daemon_arguments(args, fallback_program);
     client::run_with(forwarded, stdout, stderr)
 }
