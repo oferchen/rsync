@@ -115,10 +115,6 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
                 return false;
             }
 
-            if src == dst && source.is_file() && destination.is_file() {
-                return files_content_matches(source_path, destination_path).unwrap_or(false);
-            }
-
             true
         }
         _ => false,
@@ -203,16 +199,6 @@ pub(crate) fn files_checksum_match(
     }
 
     Ok(source_hasher.finalize() == destination_hasher.finalize())
-}
-
-pub(crate) fn files_content_matches(source: &Path, destination: &Path) -> io::Result<bool> {
-    compare_files_lockstep(source, destination, |src_chunk, dst_chunk| {
-        if src_chunk == dst_chunk {
-            LockstepCheck::Continue
-        } else {
-            LockstepCheck::Diverged
-        }
-    })
 }
 
 enum LockstepCheck {
