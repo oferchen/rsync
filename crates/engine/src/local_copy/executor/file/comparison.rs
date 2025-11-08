@@ -78,6 +78,7 @@ pub(crate) struct CopyComparison<'a> {
     pub(crate) destination: &'a fs::Metadata,
     pub(crate) options: &'a MetadataOptions,
     pub(crate) size_only: bool,
+    pub(crate) ignore_times: bool,
     pub(crate) checksum: bool,
     pub(crate) checksum_algorithm: SignatureAlgorithm,
     pub(crate) modify_window: Duration,
@@ -91,6 +92,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
         destination,
         options,
         size_only,
+        ignore_times,
         checksum,
         checksum_algorithm,
         modify_window,
@@ -106,6 +108,10 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
 
     if size_only {
         return true;
+    }
+
+    if ignore_times {
+        return false;
     }
 
     if options.times() {

@@ -29,6 +29,14 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Disables timestamp-based quick checks so files are always rescanned.
+    #[must_use]
+    #[doc(alias = "--ignore-times")]
+    pub const fn ignore_times(mut self, ignore: bool) -> Self {
+        self.ignore_times = ignore;
+        self
+    }
+
     /// Requests that existing destination files be skipped.
     #[must_use]
     #[doc(alias = "--ignore-existing")]
@@ -101,6 +109,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn size_only_enabled(&self) -> bool {
         self.size_only
+    }
+
+    /// Reports whether timestamp-based quick checks should be skipped.
+    #[must_use]
+    pub const fn ignore_times_enabled(&self) -> bool {
+        self.ignore_times
     }
 
     /// Reports whether existing destination files should be skipped.

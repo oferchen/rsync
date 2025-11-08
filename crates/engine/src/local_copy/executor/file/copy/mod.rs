@@ -126,6 +126,7 @@ pub(crate) fn copy_file(
     let inplace_enabled = context.inplace_enabled();
     let checksum_enabled = context.checksum_enabled();
     let size_only_enabled = context.size_only_enabled();
+    let ignore_times_enabled = context.ignore_times_enabled();
     let append_allowed = context.append_enabled();
     let append_verify = context.append_verify_enabled();
     let whole_file_enabled = context.whole_file_enabled();
@@ -148,6 +149,7 @@ pub(crate) fn copy_file(
         destination_previously_existed,
         file_type,
         size_only_enabled,
+        ignore_times_enabled,
         checksum_enabled,
         mode,
         #[cfg(feature = "xattr")]
@@ -179,6 +181,7 @@ pub(crate) fn copy_file(
         use_sparse_writes,
         compress_enabled,
         size_only_enabled,
+        ignore_times_enabled,
         checksum_enabled,
         mode,
         #[cfg(feature = "xattr")]

@@ -261,6 +261,10 @@ impl<'a> CopyContext<'a> {
         self.options.size_only_enabled()
     }
 
+    pub(super) fn ignore_times_enabled(&self) -> bool {
+        self.options.ignore_times_enabled()
+    }
+
     pub(super) fn ignore_existing_enabled(&self) -> bool {
         self.options.ignore_existing_enabled()
     }

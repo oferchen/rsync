@@ -263,6 +263,12 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("ignore-times")
+                    .long("ignore-times")
+                    .help("Disable quick checks based on size and modification time.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("ignore-existing")
                     .long("ignore-existing")
                     .help("Skip updating files that already exist at the destination.")

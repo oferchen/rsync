@@ -53,6 +53,7 @@ pub(super) fn execute_transfer(
     use_sparse_writes: bool,
     compress_enabled: bool,
     size_only_enabled: bool,
+    ignore_times_enabled: bool,
     checksum_enabled: bool,
     mode: LocalCopyExecution,
     #[cfg(feature = "xattr")] preserve_xattrs: bool,
@@ -69,6 +70,7 @@ pub(super) fn execute_transfer(
             destination: existing,
             options: &metadata_options,
             size_only: size_only_enabled,
+            ignore_times: ignore_times_enabled,
             checksum: checksum_enabled,
             checksum_algorithm: context.options().checksum_algorithm(),
             modify_window: context.options().modify_window(),
@@ -535,7 +537,7 @@ fn copy_special_as_regular_file(
     );
 
     if let Err(timeout_error) = context.enforce_timeout() {
-        if let Some(mut existing_guard) = guard {
+        if let Some(existing_guard) = guard {
             existing_guard.discard();
         }
 
