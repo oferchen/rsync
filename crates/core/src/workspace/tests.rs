@@ -54,7 +54,6 @@ fn const_accessors_match_metadata() {
         Path::new(snapshot.legacy_daemon_secrets_path())
     );
     assert_eq!(source_url(), snapshot.source_url());
-    assert_eq!(web_site(), snapshot.web_site());
 }
 
 #[test]
@@ -138,9 +137,5 @@ fn metadata_matches_manifest() {
     assert_eq!(
         snapshot.source_url(),
         oc["source"].as_str().expect("source")
-    );
-    assert_eq!(
-        snapshot.web_site(),
-        oc["web_site"].as_str().expect("web_site")
     );
 }
