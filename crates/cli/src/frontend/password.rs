@@ -12,7 +12,7 @@ use oc_rsync_core::{
     message::{Message, Role},
     rsync_error,
 };
-use std::fs;
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 
@@ -57,7 +57,19 @@ pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
     }
 
     let display = path.display();
-    let metadata = fs::metadata(path).map_err(|error| {
+    // Open the password file before inspecting its metadata so the
+    // subsequent permission checks and read operations run against the same
+    // handle. This mirrors upstream rsync's approach and avoids time-of-check
+    // to time-of-use races where an attacker swaps the path after the
+    // metadata check but before the read.
+    let mut file = File::open(path).map_err(|error| {
+        rsync_error!(
+            1,
+            format!("failed to access password file '{}': {}", display, error)
+        )
+        .with_role(Role::Client)
+    })?;
+    let metadata = file.metadata().map_err(|error| {
         rsync_error!(
             1,
             format!("failed to access password file '{}': {}", display, error)
@@ -90,7 +102,8 @@ pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
         }
     }
 
-    let mut bytes = fs::read(path).map_err(|error| {
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|error| {
         rsync_error!(
             1,
             format!("failed to read password file '{}': {}", display, error)
