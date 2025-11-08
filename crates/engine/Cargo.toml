@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Transfer engine components for the Rust rsync implementation"
-repository = "https://github.com/oferchen/rsync"
+repository.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true

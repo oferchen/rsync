@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Bandwidth parsing and pacing utilities for the Rust rsync implementation"
-repository = "https://github.com/oferchen/rsync"
+repository.workspace = true
 readme = "README.md"
 publish = false
 

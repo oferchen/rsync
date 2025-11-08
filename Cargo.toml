@@ -6,7 +6,7 @@ rust-version = "1.88"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
 description = "Pure-Rust implementation of the rsync client and daemon entrypoints installed as a single oc-rsync binary for side-by-side deployment"
-repository = "https://github.com/oferchen/rsync"
+repository.workspace = true
 publish = true
 autobins = false
 
@@ -64,6 +64,7 @@ rust-version = "1.88"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
 version = "3.4.1-rust"
+repository = "https://github.com/oferchen/rsync"
 
 [workspace.metadata.docs.rs]
 all-features = true
