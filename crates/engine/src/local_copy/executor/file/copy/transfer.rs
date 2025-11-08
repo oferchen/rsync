@@ -13,8 +13,9 @@ use libc::{self, EACCES, EINVAL, ENOTSUP, EPERM, EROFS};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, DeferredUpdate, FinalizeMetadataParams, LocalCopyAction,
-    LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CreatedEntryKind, DeferredUpdate, DeleteTiming, FinalizeMetadataParams,
+    LocalCopyAction, LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata,
+    LocalCopyRecord,
 };
 
 #[cfg(test)]
@@ -77,21 +78,31 @@ pub(super) fn execute_transfer(
             modify_window: context.options().modify_window(),
         });
 
-        if skip && context.options().backup_enabled() && !checksum_enabled && existing.is_file() {
-            skip = match files_checksum_match(
-                source,
-                destination,
-                context.options().checksum_algorithm(),
-            ) {
-                Ok(result) => result,
-                Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "compare existing destination",
-                        destination.to_path_buf(),
-                        error,
+        if skip {
+            let requires_content_verification = existing.is_file()
+                && !checksum_enabled
+                && (context.options().backup_enabled()
+                    || matches!(
+                        context.delete_timing(),
+                        Some(DeleteTiming::After | DeleteTiming::Delay)
                     ));
-                }
-            };
+
+            if requires_content_verification {
+                skip = match files_checksum_match(
+                    source,
+                    destination,
+                    context.options().checksum_algorithm(),
+                ) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "compare existing destination",
+                            destination.to_path_buf(),
+                            error,
+                        ));
+                    }
+                };
+            }
         }
 
         if skip {
