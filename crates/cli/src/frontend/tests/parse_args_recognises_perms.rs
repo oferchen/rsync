@@ -36,3 +36,28 @@ fn parse_args_recognises_perms_and_times_flags() {
     assert_eq!(parsed.omit_dir_times, Some(false));
     assert_eq!(parsed.omit_link_times, Some(false));
 }
+
+#[test]
+fn parse_args_prefers_last_perms_toggle() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--perms"),
+        OsString::from("--no-perms"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse conflicting perms");
+
+    assert_eq!(parsed.perms, Some(false));
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-perms"),
+        OsString::from("--perms"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse overriding perms");
+
+    assert_eq!(parsed.perms, Some(true));
+}
