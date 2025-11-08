@@ -112,7 +112,7 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) exclude_from: &'a [OsString],
     pub(crate) include_from: &'a [OsString],
     pub(crate) filters: &'a [OsString],
-    pub(crate) rsync_filter_shortcuts: u8,
+    pub(crate) rsync_filter_shortcuts: usize,
     pub(crate) compare_destinations: &'a [OsString],
     pub(crate) copy_destinations: &'a [OsString],
     pub(crate) link_destinations: &'a [OsString],
