@@ -58,20 +58,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::wrap_daemon_arguments;
+    use oc_rsync_core::version::OC_DAEMON_WRAPPER_PROGRAM_NAME;
     use std::ffi::OsString;
 
     #[test]
     fn wrap_daemon_arguments_inserts_flag_and_preserves_rest() {
         let wrapped = wrap_daemon_arguments(
             [
-                OsString::from("oc-rsyncd"),
+                OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME),
                 OsString::from("--config"),
                 OsString::from("/tmp/conf"),
             ],
-            "oc-rsyncd",
+            OC_DAEMON_WRAPPER_PROGRAM_NAME,
         );
 
-        assert_eq!(wrapped[0], OsString::from("oc-rsyncd"));
+        assert_eq!(wrapped[0], OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME));
         assert_eq!(wrapped[1], OsString::from("--daemon"));
         assert_eq!(wrapped[2], OsString::from("--config"));
         assert_eq!(wrapped[3], OsString::from("/tmp/conf"));
@@ -90,18 +91,18 @@ mod tests {
     fn wrap_daemon_arguments_does_not_duplicate_daemon_flag() {
         let wrapped = wrap_daemon_arguments(
             [
-                OsString::from("oc-rsyncd"),
+                OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME),
                 OsString::from("--daemon"),
                 OsString::from("--config"),
                 OsString::from("/tmp/conf"),
             ],
-            "oc-rsyncd",
+            OC_DAEMON_WRAPPER_PROGRAM_NAME,
         );
 
         assert_eq!(
             wrapped,
             vec![
-                OsString::from("oc-rsyncd"),
+                OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME),
                 OsString::from("--daemon"),
                 OsString::from("--config"),
                 OsString::from("/tmp/conf"),
@@ -113,17 +114,17 @@ mod tests {
     fn wrap_daemon_arguments_inserts_daemon_flag_after_double_dash() {
         let wrapped = wrap_daemon_arguments(
             [
-                OsString::from("oc-rsyncd"),
+                OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME),
                 OsString::from("--"),
                 OsString::from("--daemon"),
             ],
-            "oc-rsyncd",
+            OC_DAEMON_WRAPPER_PROGRAM_NAME,
         );
 
         assert_eq!(
             wrapped,
             vec![
-                OsString::from("oc-rsyncd"),
+                OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME),
                 OsString::from("--daemon"),
                 OsString::from("--"),
                 OsString::from("--daemon"),
@@ -145,7 +146,7 @@ mod tests {
                     None
                 } else {
                     self.yielded = true;
-                    Some(OsString::from("oc-rsyncd"))
+                    Some(OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME))
                 }
             }
 
@@ -159,7 +160,10 @@ mod tests {
 
         assert_eq!(
             wrapped,
-            vec![OsString::from("oc-rsyncd"), OsString::from("--daemon")]
+            vec![
+                OsString::from(OC_DAEMON_WRAPPER_PROGRAM_NAME),
+                OsString::from("--daemon"),
+            ]
         );
     }
 }
