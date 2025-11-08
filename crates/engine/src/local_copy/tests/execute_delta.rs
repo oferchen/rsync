@@ -13,16 +13,20 @@ fn execute_delta_copy_reuses_existing_blocks() {
     let mut prefix = vec![b'A'; 700];
     let mut suffix = vec![b'B'; 700];
     let mut replacement = vec![b'C'; 700];
+    let prefix_len = prefix.len() as u64;
+    let replacement_len = replacement.len() as u64;
 
     let mut initial = Vec::new();
     initial.append(&mut prefix.clone());
     initial.append(&mut suffix);
     fs::write(&dest_path, &initial).expect("write initial destination");
+    set_file_mtime(&dest_path, FileTime::from_unix_time(1, 0)).expect("set destination mtime");
 
     let mut updated = Vec::new();
     updated.append(&mut prefix);
     updated.append(&mut replacement);
     fs::write(&source_path, &updated).expect("write updated source");
+    set_file_mtime(&source_path, FileTime::from_unix_time(2, 0)).expect("set source mtime");
 
     let operands = vec![
         source_path.clone().into_os_string(),
@@ -38,6 +42,8 @@ fn execute_delta_copy_reuses_existing_blocks() {
         .expect("delta copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.bytes_copied(), replacement_len);
+    assert_eq!(summary.matched_bytes(), prefix_len);
     assert_eq!(fs::read(&dest_path).expect("read destination"), updated);
 }
 
