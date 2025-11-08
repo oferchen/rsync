@@ -110,7 +110,17 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     }
 
     match (source.modified(), destination.modified()) {
-        (Ok(src), Ok(dst)) => system_time_within_window(src, dst, modify_window),
+        (Ok(src), Ok(dst)) => {
+            if !system_time_within_window(src, dst, modify_window) {
+                return false;
+            }
+
+            if modify_window.is_zero() {
+                return files_content_equal(source_path, destination_path).unwrap_or(false);
+            }
+
+            true
+        }
         _ => false,
     }
 }
@@ -203,11 +213,38 @@ pub(crate) fn files_checksum_match(
     Ok(source_hasher.finalize() == destination_hasher.finalize())
 }
 
+pub(crate) fn files_content_equal(source: &Path, destination: &Path) -> io::Result<bool> {
+    let mut source_file = fs::File::open(source)?;
+    let mut destination_file = fs::File::open(destination)?;
+
+    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    loop {
+        let source_read = source_file.read(&mut source_buffer)?;
+        let destination_read = destination_file.read(&mut destination_buffer)?;
+
+        if source_read != destination_read {
+            return Ok(false);
+        }
+
+        if source_read == 0 {
+            return Ok(true);
+        }
+
+        if source_buffer[..source_read] != destination_buffer[..destination_read] {
+            return Ok(false);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    use filetime::{FileTime, set_file_mtime};
 
     #[test]
     fn build_delta_signature_honours_block_size_override() {
@@ -224,5 +261,63 @@ mod tests {
             .expect("index");
 
         assert_eq!(index.block_length(), override_size.get() as usize);
+    }
+
+    #[test]
+    fn should_skip_copy_detects_content_changes_with_identical_timestamps() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, b"fresh").expect("write source");
+        fs::write(&destination, b"stale").expect("write destination");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
+        set_file_mtime(&destination, mtime).expect("set destination mtime");
+
+        let dest_meta = fs::metadata(&destination).expect("dest metadata");
+        let comparison = CopyComparison {
+            source_path: &source,
+            source: &source_meta,
+            destination_path: &destination,
+            destination: &dest_meta,
+            size_only: false,
+            ignore_times: false,
+            checksum: false,
+            checksum_algorithm: SignatureAlgorithm::Md5,
+            modify_window: Duration::ZERO,
+        };
+
+        assert!(!should_skip_copy(comparison));
+    }
+
+    #[test]
+    fn should_skip_copy_accepts_identical_content_with_identical_timestamps() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, b"fresh").expect("write source");
+        fs::write(&destination, b"fresh").expect("write destination");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
+        set_file_mtime(&destination, mtime).expect("set destination mtime");
+
+        let dest_meta = fs::metadata(&destination).expect("dest metadata");
+        let comparison = CopyComparison {
+            source_path: &source,
+            source: &source_meta,
+            destination_path: &destination,
+            destination: &dest_meta,
+            size_only: false,
+            ignore_times: false,
+            checksum: false,
+            checksum_algorithm: SignatureAlgorithm::Md5,
+            modify_window: Duration::ZERO,
+        };
+
+        assert!(should_skip_copy(comparison));
     }
 }
