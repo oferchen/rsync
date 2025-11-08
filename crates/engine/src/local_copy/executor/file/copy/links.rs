@@ -52,7 +52,6 @@ pub(super) fn process_links(
         relative_for_link,
         source,
         metadata,
-        &metadata_options,
         size_only_enabled,
         ignore_times_enabled,
         checksum_enabled,

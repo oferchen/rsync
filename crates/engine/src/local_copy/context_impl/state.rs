@@ -164,7 +164,6 @@ impl<'a> CopyContext<'a> {
         relative: &Path,
         source: &Path,
         metadata: &fs::Metadata,
-        _metadata_options: &MetadataOptions,
         size_only: bool,
         ignore_times: bool,
         checksum: bool,

@@ -115,7 +115,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
                 return false;
             }
 
-            true
+            files_contents_identical(source_path, destination_path).unwrap_or(false)
         }
         _ => false,
     }
@@ -237,6 +237,16 @@ where
     }
 
     Ok(true)
+}
+
+fn files_contents_identical(source: &Path, destination: &Path) -> io::Result<bool> {
+    compare_files_lockstep(source, destination, |source_chunk, destination_chunk| {
+        if source_chunk == destination_chunk {
+            LockstepCheck::Continue
+        } else {
+            LockstepCheck::Diverged
+        }
+    })
 }
 
 #[cfg(test)]
