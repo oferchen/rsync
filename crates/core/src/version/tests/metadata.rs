@@ -60,6 +60,12 @@ fn version_metadata_for_program_overrides_program_name() {
     let via_brand_daemon = version_metadata_for_daemon_brand(Brand::Oc);
     assert_eq!(via_brand_daemon.program_name(), OC_DAEMON_PROGRAM_NAME);
 
+    let upstream = version_metadata_for_client_brand(Brand::Upstream);
+    assert_eq!(upstream.program_name(), LEGACY_PROGRAM_NAME);
+
+    let upstream_daemon = version_metadata_for_daemon_brand(Brand::Upstream);
+    assert_eq!(upstream_daemon.program_name(), LEGACY_DAEMON_PROGRAM_NAME);
+
     let custom = version_metadata_for_program("custom-rsync");
     assert_eq!(custom.program_name(), "custom-rsync");
     assert_eq!(custom.protocol_version(), ProtocolVersion::NEWEST);
@@ -76,7 +82,7 @@ fn version_metadata_renders_standard_banner() {
 
     let expected = format!(
         concat!(
-            "rsync  version {rust_version} (revision/build #{build_revision})  protocol version {protocol}\n",
+            "oc-rsync  version {rust_version} (revision/build #{build_revision})  protocol version {protocol}\n",
             "Copyright {copyright}\n",
             "Source: {source_url}\n"
         ),

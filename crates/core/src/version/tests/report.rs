@@ -16,7 +16,7 @@ fn version_info_report_renders_default_report() {
     let bit_inums = mem::size_of::<ino_t>() * 8;
     let bit_timestamps = mem::size_of::<time_t>() * 8;
     let bit_long_ints = mem::size_of::<i64>() * 8;
-    assert!(actual.starts_with(&format!("rsync  version {RUST_VERSION}")));
+    assert!(actual.starts_with(&format!("oc-rsync  version {RUST_VERSION}")));
     assert!(actual.contains(&format!(
         "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
     )));
@@ -91,11 +91,18 @@ fn version_info_report_allows_custom_lists() {
 
 #[test]
 fn version_info_report_with_program_name_updates_banner() {
-    let report =
-        VersionInfoReport::new(VersionInfoConfig::default()).with_program_name(DAEMON_PROGRAM_NAME);
+    let report = VersionInfoReport::new(VersionInfoConfig::default())
+        .with_program_name(LEGACY_DAEMON_PROGRAM_NAME);
     let banner = report.metadata().standard_banner();
 
     assert!(banner.starts_with("rsyncd  version"));
+
+    let oc_banner = VersionInfoReport::new(VersionInfoConfig::default())
+        .with_program_name(DAEMON_PROGRAM_NAME)
+        .metadata()
+        .standard_banner();
+
+    assert!(oc_banner.starts_with("oc-rsync  version"));
 }
 
 #[test]

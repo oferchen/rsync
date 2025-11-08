@@ -11,7 +11,7 @@ use super::constants::{
     DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_PROGRAM_NAME, PROGRAM_NAME,
 };
 
-/// Static metadata describing the standard version banner rendered by `rsync`.
+/// Static metadata describing the standard version banner rendered by `oc-rsync`.
 ///
 /// The structure mirrors upstream `print_rsync_version()` so higher layers can
 /// render byte-identical banners without hard-coding strings at the call site
@@ -28,7 +28,7 @@ use super::constants::{
 /// let banner = metadata.standard_banner();
 ///
 /// assert!(banner.starts_with(&format!(
-///     "rsync  version {} ",
+///     "oc-rsync  version {} ",
 ///     RUST_VERSION
 /// )));
 /// assert!(banner.contains("protocol version 32"));
