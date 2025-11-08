@@ -130,6 +130,20 @@ fn brand_profiles_match_expected_programs() {
 }
 
 #[test]
+fn brand_profile_alias_detection_handles_client_and_daemon_programs() {
+    let upstream = Brand::Upstream.profile();
+    assert!(upstream.matches_daemon_program_alias(OsStr::new("rsyncd")));
+    assert!(upstream.matches_daemon_program_alias(OsStr::new("/usr/bin/RSYNCD.EXE")));
+    assert!(!upstream.matches_daemon_program_alias(OsStr::new("rsync")));
+    assert!(upstream.matches_client_program_alias(OsStr::new("rsync")));
+    assert!(upstream.matches_client_program_alias(OsStr::new("/usr/local/bin/rsync-3.4.1")));
+
+    let oc = Brand::Oc.profile();
+    assert!(oc.matches_client_program_alias(OsStr::new("oc-rsync")));
+    assert!(oc.matches_daemon_program_alias(OsStr::new("oc-rsync")));
+}
+
+#[test]
 fn detect_brand_matches_invocation_argument() {
     let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
     assert_eq!(detect_brand(Some(OsStr::new("rsync"))), Brand::Upstream);
