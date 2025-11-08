@@ -282,12 +282,15 @@ mod tests {
     }
 
     impl EnvGuard {
+        #[allow(unsafe_code)]
         fn remove_many<const N: usize>(keys: [&'static str; N]) -> Self {
             let guard = env_lock().lock().unwrap();
             let mut previous = Vec::with_capacity(N);
             for key in keys {
                 previous.push((key, env::var_os(key)));
-                env::remove_var(key);
+                unsafe {
+                    env::remove_var(key);
+                }
             }
             Self {
                 previous,
@@ -297,12 +300,17 @@ mod tests {
     }
 
     impl Drop for EnvGuard {
+        #[allow(unsafe_code)]
         fn drop(&mut self) {
             while let Some((key, value)) = self.previous.pop() {
                 if let Some(value) = value {
-                    env::set_var(key, value);
+                    unsafe {
+                        env::set_var(key, value);
+                    }
                 } else {
-                    env::remove_var(key);
+                    unsafe {
+                        env::remove_var(key);
+                    }
                 }
             }
         }

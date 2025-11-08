@@ -487,10 +487,13 @@ mod tests {
     }
 
     impl EnvGuard {
+        #[allow(unsafe_code)]
         fn set(key: &'static str, value: &str) -> Self {
             let guard = env_lock().lock().unwrap();
             let previous = env::var_os(key);
-            env::set_var(key, value);
+            unsafe {
+                env::set_var(key, value);
+            }
             Self {
                 key,
                 previous,
@@ -498,10 +501,13 @@ mod tests {
             }
         }
 
+        #[allow(unsafe_code)]
         fn remove(key: &'static str) -> Self {
             let guard = env_lock().lock().unwrap();
             let previous = env::var_os(key);
-            env::remove_var(key);
+            unsafe {
+                env::remove_var(key);
+            }
             Self {
                 key,
                 previous,
@@ -511,11 +517,16 @@ mod tests {
     }
 
     impl Drop for EnvGuard {
+        #[allow(unsafe_code)]
         fn drop(&mut self) {
             if let Some(previous) = self.previous.take() {
-                env::set_var(self.key, previous);
+                unsafe {
+                    env::set_var(self.key, previous);
+                }
             } else {
-                env::remove_var(self.key);
+                unsafe {
+                    env::remove_var(self.key);
+                }
             }
         }
     }
