@@ -490,27 +490,17 @@ mod tests {
             .join(DIST_PROFILE)
             .join("rpmbuild/RPMS/x86_64")
             .join("oc-rsync-3.4.1-1.x86_64.rpm");
-        let linux_client = workspace
+        let linux_binary = workspace
             .join("target")
             .join("x86_64-unknown-linux-gnu")
             .join("release")
             .join("oc-rsync");
-        let linux_daemon = workspace
-            .join("target")
-            .join("x86_64-unknown-linux-gnu")
-            .join("release")
-            .join("oc-rsync");
-        let mac_client = workspace
+        let mac_binary = workspace
             .join("target")
             .join("x86_64-apple-darwin")
             .join("release")
             .join("oc-rsync");
-        let mac_daemon = workspace
-            .join("target")
-            .join("x86_64-apple-darwin")
-            .join("release")
-            .join("oc-rsync");
-        let windows_client = workspace
+        let windows_binary = workspace
             .join("target")
             .join("x86_64-pc-windows-gnu")
             .join("release")
@@ -520,11 +510,9 @@ mod tests {
             &tarball,
             &deb,
             &rpm,
-            &linux_client,
-            &linux_daemon,
-            &mac_client,
-            &mac_daemon,
-            &windows_client,
+            &linux_binary,
+            &mac_binary,
+            &windows_binary,
         ] {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).expect("create parent directories");
@@ -537,11 +525,9 @@ mod tests {
             deb,
             rpm,
             tarball,
-            linux_client,
-            linux_daemon,
-            mac_client,
-            mac_daemon,
-            windows_client,
+            linux_binary,
+            mac_binary,
+            windows_binary,
         ];
         expected.sort();
         assert_eq!(artifacts, expected);
@@ -564,27 +550,17 @@ mod tests {
             .join(DIST_PROFILE)
             .join("rpmbuild/RPMS/x86_64")
             .join("oc-rsync-3.4.1-1.x86_64.rpm");
-        let linux_client = workspace
+        let linux_binary = workspace
             .join("target")
             .join("x86_64-unknown-linux-gnu")
             .join("release")
             .join("oc-rsync");
-        let linux_daemon = workspace
-            .join("target")
-            .join("x86_64-unknown-linux-gnu")
-            .join("release")
-            .join("oc-rsyncd");
-        let mac_client = workspace
+        let mac_binary = workspace
             .join("target")
             .join("x86_64-apple-darwin")
             .join("release")
             .join("oc-rsync");
-        let mac_daemon = workspace
-            .join("target")
-            .join("x86_64-apple-darwin")
-            .join("release")
-            .join("oc-rsyncd");
-        let windows_client = workspace
+        let windows_binary = workspace
             .join("target")
             .join("x86_64-pc-windows-gnu")
             .join("release")
@@ -594,11 +570,9 @@ mod tests {
             &tarball,
             &deb,
             &rpm,
-            &linux_client,
-            &linux_daemon,
-            &mac_client,
-            &mac_daemon,
-            &windows_client,
+            &linux_binary,
+            &mac_binary,
+            &windows_binary,
         ] {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).expect("create parent directories");
@@ -650,11 +624,9 @@ mod tests {
             deb.to_string_lossy().into_owned(),
             rpm.to_string_lossy().into_owned(),
             tarball.to_string_lossy().into_owned(),
-            linux_client.to_string_lossy().into_owned(),
-            linux_daemon.to_string_lossy().into_owned(),
-            mac_client.to_string_lossy().into_owned(),
-            mac_daemon.to_string_lossy().into_owned(),
-            windows_client.to_string_lossy().into_owned(),
+            linux_binary.to_string_lossy().into_owned(),
+            mac_binary.to_string_lossy().into_owned(),
+            windows_binary.to_string_lossy().into_owned(),
         ];
         asset_lines.sort();
         expected_lines.extend(asset_lines);
