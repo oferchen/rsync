@@ -104,7 +104,7 @@ const MODULE_LOCK_ERROR_PAYLOAD: &str =
 //
 // The snapshot adjusts the banner, usage line, and default configuration path
 // to reflect the supplied [`Brand`], ensuring invocations via compatibility
-// symlinks and the canonical `oc-rsync` binary (or its optional `oc-rsyncd` wrapper) emit brand-appropriate help
+// symlinks and the canonical single `oc-rsync` binary emit brand-appropriate help
 // output.
 
 include!("daemon/module_state.rs");

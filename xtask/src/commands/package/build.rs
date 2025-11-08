@@ -137,7 +137,7 @@ pub(super) fn build_workspace_binaries(
     profile: &Option<OsString>,
     target: Option<&str>,
     linker_override: Option<&LinkerOverride>,
-    include_legacy: bool,
+    _include_legacy: bool,
 ) -> TaskResult<()> {
     if let Some(target) = target {
         ensure_rust_target_installed(target)?;
@@ -155,11 +155,6 @@ pub(super) fn build_workspace_binaries(
         OsString::from("--bins"),
         OsString::from("--locked"),
     ];
-
-    if include_legacy {
-        args.push(OsString::from("--features"));
-        args.push(OsString::from("legacy-binaries"));
-    }
 
     let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
 

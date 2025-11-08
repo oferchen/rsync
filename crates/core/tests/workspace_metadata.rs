@@ -2,8 +2,7 @@ use oc_rsync_core::branding::{
     BRAND_OVERRIDE_ENV, LEGACY_DAEMON_CONFIG_DIR, LEGACY_DAEMON_CONFIG_PATH,
     LEGACY_DAEMON_SECRETS_PATH, OC_CLIENT_PROGRAM_NAME, OC_DAEMON_CONFIG_DIR,
     OC_DAEMON_CONFIG_PATH, OC_DAEMON_PROGRAM_NAME, OC_DAEMON_SECRETS_PATH,
-    OC_DAEMON_WRAPPER_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME,
-    brand_override_env_var,
+    UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME, brand_override_env_var,
 };
 use oc_rsync_core::workspace::{
     self, CLIENT_PROGRAM_NAME, DAEMON_CONFIG_DIR, DAEMON_CONFIG_PATH, DAEMON_PROGRAM_NAME,
@@ -23,10 +22,6 @@ fn workspace_metadata_matches_constants() {
     assert_eq!(metadata.protocol_version(), PROTOCOL_VERSION);
     assert_eq!(metadata.client_program_name(), CLIENT_PROGRAM_NAME);
     assert_eq!(metadata.daemon_program_name(), DAEMON_PROGRAM_NAME);
-    assert_eq!(
-        metadata.daemon_wrapper_program_name(),
-        workspace::daemon_wrapper_program_name()
-    );
     assert_eq!(
         metadata.legacy_client_program_name(),
         LEGACY_CLIENT_PROGRAM_NAME
@@ -67,10 +62,6 @@ fn branding_constants_align_with_workspace_metadata() {
     );
     assert_eq!(OC_CLIENT_PROGRAM_NAME, metadata.client_program_name());
     assert_eq!(OC_DAEMON_PROGRAM_NAME, metadata.daemon_program_name());
-    assert_eq!(
-        OC_DAEMON_WRAPPER_PROGRAM_NAME,
-        metadata.daemon_wrapper_program_name()
-    );
     assert_eq!(OC_DAEMON_CONFIG_DIR, metadata.daemon_config_dir());
     assert_eq!(OC_DAEMON_CONFIG_PATH, metadata.daemon_config_path());
     assert_eq!(OC_DAEMON_SECRETS_PATH, metadata.daemon_secrets_path());
