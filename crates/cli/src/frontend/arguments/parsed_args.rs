@@ -40,6 +40,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) checksum_choice_arg: Option<OsString>,
     pub(crate) checksum_seed: Option<u32>,
     pub(crate) size_only: bool,
+    pub(crate) ignore_times: bool,
     pub(crate) ignore_existing: bool,
     pub(crate) existing: bool,
     pub(crate) ignore_missing_args: bool,

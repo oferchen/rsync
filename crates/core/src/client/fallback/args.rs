@@ -69,6 +69,8 @@ pub struct RemoteFallbackArgs {
     pub checksum_seed: Option<u32>,
     /// Enables `--size-only`.
     pub size_only: bool,
+    /// Enables `--ignore-times`.
+    pub ignore_times: bool,
     /// Enables `--ignore-existing`.
     pub ignore_existing: bool,
     /// Enables `--existing`.

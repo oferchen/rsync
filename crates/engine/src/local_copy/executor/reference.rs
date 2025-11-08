@@ -41,6 +41,7 @@ pub(crate) struct ReferenceQuery<'a> {
     pub(crate) metadata: &'a fs::Metadata,
     pub(crate) metadata_options: &'a MetadataOptions,
     pub(crate) size_only: bool,
+    pub(crate) ignore_times: bool,
     pub(crate) checksum: bool,
 }
 
@@ -55,6 +56,7 @@ pub(crate) fn find_reference_action(
         metadata,
         metadata_options,
         size_only,
+        ignore_times,
         checksum,
     } = query;
     for reference in context.reference_directories() {
@@ -82,6 +84,7 @@ pub(crate) fn find_reference_action(
             destination: &candidate_metadata,
             options: metadata_options,
             size_only,
+            ignore_times,
             checksum,
             checksum_algorithm: context.options().checksum_algorithm(),
             modify_window: context.options().modify_window(),

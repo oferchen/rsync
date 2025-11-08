@@ -42,6 +42,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables ignoring file timestamps during quick checks.
+    #[must_use]
+    #[doc(alias = "--ignore-times")]
+    pub const fn ignore_times(mut self, ignore_times: bool) -> Self {
+        self.ignore_times = ignore_times;
+        self
+    }
+
     /// Enables or disables skipping of existing destination files.
     #[must_use]
     #[doc(alias = "--ignore-existing")]

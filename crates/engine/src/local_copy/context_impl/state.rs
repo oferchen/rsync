@@ -166,6 +166,7 @@ impl<'a> CopyContext<'a> {
         metadata: &fs::Metadata,
         metadata_options: &MetadataOptions,
         size_only: bool,
+        ignore_times: bool,
         checksum: bool,
     ) -> Result<Option<PathBuf>, LocalCopyError> {
         if self.options.link_dest_entries().is_empty() {
@@ -197,6 +198,7 @@ impl<'a> CopyContext<'a> {
                 destination: &candidate_metadata,
                 options: metadata_options,
                 size_only,
+                ignore_times,
                 checksum,
                 checksum_algorithm: self.options.checksum_algorithm(),
                 modify_window: self.options.modify_window(),
