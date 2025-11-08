@@ -5,14 +5,11 @@ use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
-use crate::local_copy::LocalCopyError;
+use crate::local_copy::{COPY_BUFFER_SIZE, LocalCopyError};
 use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signature};
 
 use oc_rsync_checksums::strong::{Md4, Md5, Sha1, Xxh3, Xxh3_128, Xxh64};
-use oc_rsync_meta::MetadataOptions;
 use oc_rsync_protocol::ProtocolVersion;
-
-use super::super::super::COPY_BUFFER_SIZE;
 
 pub(crate) fn destination_is_newer(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
     match (source.modified(), destination.modified()) {
@@ -76,7 +73,6 @@ pub(crate) struct CopyComparison<'a> {
     pub(crate) source: &'a fs::Metadata,
     pub(crate) destination_path: &'a Path,
     pub(crate) destination: &'a fs::Metadata,
-    pub(crate) options: &'a MetadataOptions,
     pub(crate) size_only: bool,
     pub(crate) ignore_times: bool,
     pub(crate) checksum: bool,
@@ -90,7 +86,6 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
         source,
         destination_path,
         destination,
-        options,
         size_only,
         ignore_times,
         checksum,
@@ -114,16 +109,10 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
         return false;
     }
 
-    if options.times() {
-        match (source.modified(), destination.modified()) {
-            (Ok(src), Ok(dst)) if system_time_within_window(src, dst, modify_window) => {}
-            _ => return false,
-        }
-    } else {
-        return false;
+    match (source.modified(), destination.modified()) {
+        (Ok(src), Ok(dst)) => system_time_within_window(src, dst, modify_window),
+        _ => false,
     }
-
-    files_match(source_path, destination_path)
 }
 
 pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Duration) -> bool {
@@ -134,43 +123,6 @@ pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Du
     match a.duration_since(b) {
         Ok(diff) => diff <= window,
         Err(_) => matches!(b.duration_since(a), Ok(diff) if diff <= window),
-    }
-}
-
-pub(crate) fn files_match(source: &Path, destination: &Path) -> bool {
-    let mut source_file = match fs::File::open(source) {
-        Ok(file) => file,
-        Err(_) => return false,
-    };
-    let mut destination_file = match fs::File::open(destination) {
-        Ok(file) => file,
-        Err(_) => return false,
-    };
-
-    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
-    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
-
-    loop {
-        let source_read = match source_file.read(&mut source_buffer) {
-            Ok(bytes) => bytes,
-            Err(_) => return false,
-        };
-        let destination_read = match destination_file.read(&mut destination_buffer) {
-            Ok(bytes) => bytes,
-            Err(_) => return false,
-        };
-
-        if source_read != destination_read {
-            return false;
-        }
-
-        if source_read == 0 {
-            return true;
-        }
-
-        if source_buffer[..source_read] != destination_buffer[..destination_read] {
-            return false;
-        }
     }
 }
 
