@@ -9,17 +9,25 @@ const _: () = {
     }
 };
 
-/// Program name rendered by the `rsync` client when displaying version banners.
-pub const PROGRAM_NAME: &str = branding::UPSTREAM_CLIENT_PROGRAM_NAME;
+/// Program name rendered by the `oc-rsync` client when displaying version banners.
+pub const PROGRAM_NAME: &str = branding::OC_CLIENT_PROGRAM_NAME;
 
-/// Program name rendered by the `rsyncd` daemon when displaying version banners.
-pub const DAEMON_PROGRAM_NAME: &str = branding::UPSTREAM_DAEMON_PROGRAM_NAME;
+/// Program name rendered by the `oc-rsync --daemon` entry point when displaying version banners.
+pub const DAEMON_PROGRAM_NAME: &str = branding::OC_DAEMON_PROGRAM_NAME;
 
-/// Program name used by the standalone `oc-rsync` client wrapper.
-pub const OC_PROGRAM_NAME: &str = branding::OC_CLIENT_PROGRAM_NAME;
+/// Alias of [`PROGRAM_NAME`] retained for backwards compatibility with older code that
+/// referenced the branded constant directly.
+pub const OC_PROGRAM_NAME: &str = PROGRAM_NAME;
 
-/// Program name used by the single-binary daemon entrypoint (`oc-rsync --daemon`).
-pub const OC_DAEMON_PROGRAM_NAME: &str = branding::OC_DAEMON_PROGRAM_NAME;
+/// Alias of [`DAEMON_PROGRAM_NAME`] retained for backwards compatibility with older code that
+/// referenced the branded constant directly.
+pub const OC_DAEMON_PROGRAM_NAME: &str = DAEMON_PROGRAM_NAME;
+
+/// Legacy upstream client program name recognised for compatibility shims.
+pub const LEGACY_PROGRAM_NAME: &str = branding::UPSTREAM_CLIENT_PROGRAM_NAME;
+
+/// Legacy upstream daemon program name recognised for compatibility shims.
+pub const LEGACY_DAEMON_PROGRAM_NAME: &str = branding::UPSTREAM_DAEMON_PROGRAM_NAME;
 
 /// First copyright year advertised by the Rust implementation.
 pub const COPYRIGHT_START_YEAR: &str = "2025";
