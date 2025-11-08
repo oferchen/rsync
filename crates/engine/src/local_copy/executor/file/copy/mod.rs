@@ -133,10 +133,6 @@ pub(crate) fn copy_file(
     let compress_enabled = context.should_compress(record_path.as_path());
     let relative_for_link = relative.unwrap_or(record_path.as_path());
 
-    if let Some(existing) = existing_metadata.as_ref() {
-        context.backup_existing_entry(destination, relative, existing.file_type())?;
-    }
-
     let link_outcome = links::process_links(
         context,
         source,
