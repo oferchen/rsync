@@ -115,6 +115,10 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
                 return false;
             }
 
+            if src == dst && source.is_file() && destination.is_file() {
+                return files_content_matches(source_path, destination_path).unwrap_or(false);
+            }
+
             true
         }
         _ => false,
@@ -181,12 +185,47 @@ pub(crate) fn files_checksum_match(
     destination: &Path,
     algorithm: SignatureAlgorithm,
 ) -> io::Result<bool> {
-    let mut source_file = fs::File::open(source)?;
-    let mut destination_file = fs::File::open(destination)?;
-
     let mut source_hasher = StrongHasher::new(algorithm);
     let mut destination_hasher = StrongHasher::new(algorithm);
 
+    let identical = compare_files_lockstep(source, destination, |src_chunk, dst_chunk| {
+        if src_chunk != dst_chunk {
+            LockstepCheck::Diverged
+        } else {
+            source_hasher.update(src_chunk);
+            destination_hasher.update(dst_chunk);
+            LockstepCheck::Continue
+        }
+    })?;
+
+    if !identical {
+        return Ok(false);
+    }
+
+    Ok(source_hasher.finalize() == destination_hasher.finalize())
+}
+
+pub(crate) fn files_content_matches(source: &Path, destination: &Path) -> io::Result<bool> {
+    compare_files_lockstep(source, destination, |src_chunk, dst_chunk| {
+        if src_chunk == dst_chunk {
+            LockstepCheck::Continue
+        } else {
+            LockstepCheck::Diverged
+        }
+    })
+}
+
+enum LockstepCheck {
+    Continue,
+    Diverged,
+}
+
+fn compare_files_lockstep<F>(source: &Path, destination: &Path, mut on_chunk: F) -> io::Result<bool>
+where
+    F: FnMut(&[u8], &[u8]) -> LockstepCheck,
+{
+    let mut source_file = fs::File::open(source)?;
+    let mut destination_file = fs::File::open(destination)?;
     let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
     let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
 
@@ -202,11 +241,16 @@ pub(crate) fn files_checksum_match(
             break;
         }
 
-        source_hasher.update(&source_buffer[..source_read]);
-        destination_hasher.update(&destination_buffer[..destination_read]);
+        match on_chunk(
+            &source_buffer[..source_read],
+            &destination_buffer[..destination_read],
+        ) {
+            LockstepCheck::Continue => {}
+            LockstepCheck::Diverged => return Ok(false),
+        }
     }
 
-    Ok(source_hasher.finalize() == destination_hasher.finalize())
+    Ok(true)
 }
 
 #[cfg(test)]
