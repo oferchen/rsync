@@ -214,7 +214,7 @@ pub struct RemoteFallbackArgs {
     /// Raw filter directives forwarded via repeated `--filter` flags.
     pub filters: Vec<OsString>,
     /// Number of times the `-F` shortcut was supplied.
-    pub rsync_filter_shortcuts: u8,
+    pub rsync_filter_shortcuts: usize,
     /// Reference directories forwarded via repeated `--compare-dest` flags.
     pub compare_destinations: Vec<OsString>,
     /// Reference directories forwarded via repeated `--copy-dest` flags.

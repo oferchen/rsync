@@ -385,7 +385,7 @@ where
         .remove_many::<OsString>("filter")
         .map(|values| values.collect())
         .unwrap_or_default();
-    let rsync_filter_shortcuts = rsync_filter_indices.len() as u8;
+    let rsync_filter_shortcuts = rsync_filter_indices.len();
     let filter_args = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
     let cvs_exclude = matches.get_flag("cvs-exclude");
     let files_from = matches

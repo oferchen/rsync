@@ -117,7 +117,7 @@ pub(crate) struct FallbackInputs {
     pub(crate) exclude_from: Vec<OsString>,
     pub(crate) include_from: Vec<OsString>,
     pub(crate) filters: Vec<OsString>,
-    pub(crate) rsync_filter_shortcuts: u8,
+    pub(crate) rsync_filter_shortcuts: usize,
     pub(crate) compare_destinations: Vec<OsString>,
     pub(crate) copy_destinations: Vec<OsString>,
     pub(crate) link_destinations: Vec<OsString>,
