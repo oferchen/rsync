@@ -110,21 +110,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     }
 
     match (source.modified(), destination.modified()) {
-        (Ok(src), Ok(dst)) => {
-            if system_time_within_window(src, dst, modify_window) {
-                if modify_window.is_zero() {
-                    match files_checksum_match(source_path, destination_path, checksum_algorithm) {
-                        Ok(true) => true,
-                        Ok(false) => false,
-                        Err(_) => false,
-                    }
-                } else {
-                    true
-                }
-            } else {
-                false
-            }
-        }
+        (Ok(src), Ok(dst)) => system_time_within_window(src, dst, modify_window),
         _ => false,
     }
 }
@@ -273,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn should_skip_copy_rewrites_when_metadata_matches_but_content_differs() {
+    fn should_skip_copy_rewrites_with_checksum_when_metadata_matches_but_content_differs() {
         let temp = tempdir().expect("tempdir");
         let source = temp.path().join("source.txt");
         let destination = temp.path().join("dest.txt");
@@ -293,7 +279,7 @@ mod tests {
             destination: &dest_meta,
             size_only: false,
             ignore_times: false,
-            checksum: false,
+            checksum: true,
             checksum_algorithm: SignatureAlgorithm::Md5,
             modify_window: Duration::ZERO,
         };
