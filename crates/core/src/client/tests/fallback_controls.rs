@@ -524,6 +524,17 @@ fn run_client_delete_removes_extraneous_entries() {
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
 
+    {
+        use filetime::{FileTime, set_file_times};
+
+        let newer = FileTime::from_unix_time(1_700_000_100, 0);
+        let older = FileTime::from_unix_time(1_700_000_000, 0);
+        let source_path = source_root.join("keep.txt");
+        let dest_path = dest_root.join("keep.txt");
+        set_file_times(&source_path, newer, newer).expect("set source mtime");
+        set_file_times(&dest_path, older, older).expect("set dest mtime");
+    }
+
     let mut source_operand = source_root.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
 
