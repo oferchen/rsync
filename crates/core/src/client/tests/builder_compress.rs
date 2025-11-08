@@ -412,6 +412,26 @@ fn local_copy_options_honour_temp_directory_setting() {
 }
 
 #[test]
+fn local_copy_options_respect_one_file_system_setting() {
+    let enabled = ClientConfig::builder()
+        .transfer_args([OsString::from("src"), OsString::from("dst")])
+        .one_file_system(true)
+        .build();
+
+    let enabled_options = build_local_copy_options(&enabled, None);
+    assert!(enabled.one_file_system());
+    assert!(enabled_options.one_file_system_enabled());
+
+    let default = ClientConfig::builder()
+        .transfer_args([OsString::from("src"), OsString::from("dst")])
+        .build();
+
+    let default_options = build_local_copy_options(&default, None);
+    assert!(!default.one_file_system());
+    assert!(!default_options.one_file_system_enabled());
+}
+
+#[test]
 fn resolve_connect_timeout_prefers_explicit_setting() {
     let explicit = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
     let resolved =
