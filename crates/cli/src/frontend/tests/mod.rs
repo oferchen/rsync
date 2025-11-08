@@ -88,7 +88,7 @@ mod module_tests;
 mod non_tests;
 #[path = "operands.rs"]
 mod operands_tests;
-#[path = "out.rs"]
+#[path = "out/mod.rs"]
 mod out_tests;
 #[path = "outbuf.rs"]
 mod outbuf_tests;
