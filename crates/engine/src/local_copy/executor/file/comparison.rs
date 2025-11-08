@@ -101,12 +101,12 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
             .unwrap_or(false);
     }
 
-    if size_only {
-        return true;
-    }
-
     if ignore_times {
         return false;
+    }
+
+    if size_only {
+        return true;
     }
 
     match (source.modified(), destination.modified()) {
@@ -295,5 +295,34 @@ mod tests {
         };
 
         assert!(should_skip_copy(comparison));
+    }
+
+    #[test]
+    fn should_skip_copy_respects_ignore_times_even_with_size_only() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source.txt");
+        let destination = temp.path().join("dest.txt");
+
+        fs::write(&source, b"fresh").expect("write source");
+        fs::write(&destination, b"stale").expect("write destination");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let mtime = FileTime::from_system_time(source_meta.modified().expect("source mtime"));
+        set_file_mtime(&destination, mtime).expect("set destination mtime");
+
+        let dest_meta = fs::metadata(&destination).expect("dest metadata");
+        let comparison = CopyComparison {
+            source_path: &source,
+            source: &source_meta,
+            destination_path: &destination,
+            destination: &dest_meta,
+            size_only: true,
+            ignore_times: true,
+            checksum: false,
+            checksum_algorithm: SignatureAlgorithm::Md5,
+            modify_window: Duration::ZERO,
+        };
+
+        assert!(!should_skip_copy(comparison));
     }
 }
