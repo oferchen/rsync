@@ -120,6 +120,12 @@ impl Brand {
         self.profile().daemon_program_name()
     }
 
+    /// Returns the compatibility wrapper program name, if available.
+    #[must_use]
+    pub const fn daemon_wrapper_program_name(self) -> Option<&'static str> {
+        self.profile().daemon_wrapper_program_name()
+    }
+
     /// Returns the preferred daemon configuration directory as a [`Path`].
     #[must_use]
     pub fn daemon_config_dir(self) -> &'static Path {
