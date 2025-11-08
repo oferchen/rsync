@@ -390,23 +390,21 @@ mod tests {
             }
         }
 
-        #[allow(unsafe_code)]
         fn set(&mut self, key: &'static str, value: OsString) {
             if self.previous.iter().all(|(existing, _)| existing != &key) {
                 self.previous.push((key, env::var_os(key)));
             }
-            unsafe { env::set_var(key, &value) };
+            env::set_var(key, &value);
         }
     }
 
-    #[allow(unsafe_code)]
     impl Drop for ScopedEnv {
         fn drop(&mut self) {
             for (key, value) in self.previous.drain(..).rev() {
                 if let Some(value) = value {
-                    unsafe { env::set_var(key, value) };
+                    env::set_var(key, value);
                 } else {
-                    unsafe { env::remove_var(key) };
+                    env::remove_var(key);
                 }
             }
         }
