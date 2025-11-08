@@ -130,6 +130,21 @@ fn brand_profiles_match_expected_programs() {
 }
 
 #[test]
+fn oc_brand_uses_single_binary() {
+    let oc = Brand::Oc.profile();
+    assert_eq!(
+        oc.client_program_name(),
+        oc.daemon_program_name(),
+        "the oc brand must resolve to a single binary name",
+    );
+    assert_eq!(
+        oc.client_program_name(),
+        OC_CLIENT_PROGRAM_NAME,
+        "oc client program name must match metadata",
+    );
+}
+
+#[test]
 fn brand_profile_alias_detection_handles_client_and_daemon_programs() {
     let upstream = Brand::Upstream.profile();
     assert!(upstream.matches_daemon_program_alias(OsStr::new("rsyncd")));
