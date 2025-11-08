@@ -367,10 +367,10 @@ mod locate_binary_tests {
     impl EnvVarGuard {
         fn set(key: &'static str, value: OsString) -> Self {
             let original = env::var_os(key);
-            // SAFETY: We guard environment mutations with a process-wide mutex to
-            // avoid concurrent changes across tests, matching the guidance in
+            // We guard environment mutations with a process-wide mutex to avoid
+            // concurrent changes across tests, matching the guidance in
             // `std::env` documentation for multi-threaded programs.
-            unsafe { env::set_var(key, &value) };
+            env::set_var(key, &value);
             Self { key, original }
         }
     }
@@ -378,12 +378,12 @@ mod locate_binary_tests {
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             if let Some(original) = self.original.as_ref() {
-                // SAFETY: The global mutex ensures no other thread performs an
+                // The global mutex ensures no other thread performs an
                 // environment mutation while we restore the prior value.
-                unsafe { env::set_var(self.key, original) };
+                env::set_var(self.key, original);
             } else {
-                // SAFETY: Protected by the same mutex as other mutations.
-                unsafe { env::remove_var(self.key) };
+                // Protected by the same mutex as other mutations.
+                env::remove_var(self.key);
             }
         }
     }

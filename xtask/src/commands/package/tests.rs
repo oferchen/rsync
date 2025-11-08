@@ -48,10 +48,9 @@ impl ScopedEnv {
         self.previous.push((key, env::var_os(key)));
     }
 
-    #[allow(unsafe_code)]
     fn set_os(&mut self, key: &'static str, value: &OsStr) {
         self.ensure_tracked(key);
-        unsafe { env::set_var(key, value) };
+        env::set_var(key, value);
     }
 
     fn set_str(&mut self, key: &'static str, value: &str) {
@@ -60,13 +59,12 @@ impl ScopedEnv {
 }
 
 impl Drop for ScopedEnv {
-    #[allow(unsafe_code)]
     fn drop(&mut self) {
         for (key, previous) in self.previous.drain(..).rev() {
             if let Some(value) = previous {
-                unsafe { env::set_var(key, value) };
+                env::set_var(key, value);
             } else {
-                unsafe { env::remove_var(key) };
+                env::remove_var(key);
             }
         }
     }
