@@ -39,7 +39,8 @@ pub struct BrandManifest {
 ///
 /// Instances of this structure are produced via
 /// [`BrandManifest::summary_for`] and expose the canonical program names,
-/// configuration paths, and version metadata associated with a given brand.
+/// configuration paths, version metadata, and optional compatibility wrapper
+/// names associated with a given brand.
 /// The summary keeps branding details and release identifiers in one place so
 /// packaging automation, documentation generators, and entry points can surface
 /// consistent human-readable descriptions without duplicating string literals.
@@ -57,6 +58,7 @@ pub struct BrandManifest {
 pub struct BrandSummary {
     brand: Brand,
     profile: BrandProfile,
+    daemon_wrapper_program_name: Option<&'static str>,
     rust_version: &'static str,
     upstream_version: &'static str,
     protocol_version: u32,
@@ -171,6 +173,7 @@ impl BrandManifest {
         BrandSummary {
             brand,
             profile: self.profile_for(brand),
+            daemon_wrapper_program_name: self.profile_for(brand).daemon_wrapper_program_name(),
             rust_version: self.rust_version,
             upstream_version: self.upstream_version,
             protocol_version: self.protocol_version,
@@ -235,6 +238,12 @@ impl BrandSummary {
         self.profile.daemon_program_name()
     }
 
+    /// Returns the compatibility wrapper program name, if one exists.
+    #[must_use]
+    pub const fn daemon_wrapper_program_name(self) -> Option<&'static str> {
+        self.daemon_wrapper_program_name
+    }
+
     /// Returns the canonical daemon configuration directory for the brand.
     #[must_use]
     pub const fn daemon_config_dir(self) -> &'static str {
@@ -292,12 +301,17 @@ impl BrandSummary {
 
 impl fmt::Display for BrandSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let wrapper = self
+            .daemon_wrapper_program_name()
+            .unwrap_or_else(|| self.daemon_program_name());
+
         write!(
             f,
-            "brand={} client={} daemon={} config={} secrets={} version={} (upstream {}) protocol={} source={} revision={} toolchain={}",
+            "brand={} client={} daemon={} wrapper={} config={} secrets={} version={} (upstream {}) protocol={} source={} revision={} toolchain={}",
             self.brand.label(),
             self.client_program_name(),
             self.daemon_program_name(),
+            wrapper,
             self.daemon_config_path(),
             self.daemon_secrets_path(),
             self.rust_version(),
@@ -336,6 +350,14 @@ mod tests {
         assert_eq!(
             manifest.daemon_program_name_for(Brand::Upstream),
             metadata.legacy_daemon_program_name()
+        );
+        assert_eq!(
+            manifest.oc().daemon_wrapper_program_name(),
+            Some(metadata.daemon_wrapper_program_name())
+        );
+        assert_eq!(
+            manifest.upstream().daemon_wrapper_program_name(),
+            Some(metadata.legacy_daemon_program_name())
         );
         assert_eq!(
             manifest.daemon_config_dir_for(Brand::Oc),
@@ -385,6 +407,7 @@ mod tests {
         assert_eq!(summary.brand(), Brand::Oc);
         assert_eq!(summary.client_program_name(), "oc-rsync");
         assert_eq!(summary.daemon_program_name(), "oc-rsync");
+        assert_eq!(summary.daemon_wrapper_program_name(), Some("oc-rsyncd"));
         assert_eq!(
             summary.daemon_config_path(),
             "/etc/oc-rsyncd/oc-rsyncd.conf"
@@ -414,9 +437,19 @@ mod tests {
         assert_eq!(summary.brand(), Brand::Upstream);
         assert_eq!(summary.client_program_name(), "rsync");
         assert_eq!(summary.daemon_program_name(), "rsyncd");
+        assert_eq!(summary.daemon_wrapper_program_name(), Some("rsyncd"));
         assert_eq!(summary.daemon_config_path(), "/etc/rsyncd.conf");
         assert_eq!(summary.daemon_secrets_path(), "/etc/rsyncd.secrets");
         assert_eq!(summary.rust_version(), manifest.rust_version());
         assert_eq!(summary.upstream_version(), manifest.upstream_version());
+    }
+
+    #[test]
+    fn summary_display_includes_wrapper_alias() {
+        let manifest = manifest();
+        let summary = manifest.oc_summary();
+        let rendered = summary.to_string();
+
+        assert!(rendered.contains("wrapper=oc-rsyncd"));
     }
 }
