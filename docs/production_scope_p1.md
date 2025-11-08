@@ -2,12 +2,11 @@
 
 This document freezes the mandatory scope that must reach green status before the Rust implementation can be considered production ready. The entries mirror upstream rsync 3.4.1 (protocol 32) behavior and are verified exclusively through observed parity with the upstream project while tracking the branded **oc-rsync 3.4.1-rust** release line.
 
-> **Binary naming note**: The production scope targets the branded
+> **Binary naming note**: The production scope targets the single branded
 > `oc-rsync` entrypoint (client plus `--daemon`) defined in the workspace
-> metadata. The shell wrapper `oc-rsyncd` and the legacy compatibility
-> wrappers (`rsync`, `rsyncd`) remain available behind the
-> `legacy-binaries` feature so existing tooling can opt-in explicitly
-> without conflicting with upstream packages.
+> metadata. Legacy binary names are not built by default; downstream
+> packages may provide their own symlinks if necessary, but the workspace
+> ships only the unified `oc-rsync` binary.
 
 ## Platforms
 - Linux x86_64

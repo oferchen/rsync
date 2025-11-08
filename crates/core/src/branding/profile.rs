@@ -7,15 +7,13 @@ use std::path::Path;
 use super::constants::{
     LEGACY_DAEMON_CONFIG_DIR, LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_SECRETS_PATH,
     OC_CLIENT_PROGRAM_NAME, OC_DAEMON_CONFIG_DIR, OC_DAEMON_CONFIG_PATH, OC_DAEMON_PROGRAM_NAME,
-    OC_DAEMON_SECRETS_PATH, OC_DAEMON_WRAPPER_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
-    UPSTREAM_DAEMON_PROGRAM_NAME,
+    OC_DAEMON_SECRETS_PATH, UPSTREAM_CLIENT_PROGRAM_NAME, UPSTREAM_DAEMON_PROGRAM_NAME,
 };
 
 /// Describes the public-facing identity used by a binary distribution.
 ///
 /// The structure captures the canonical client and daemon program names
-/// together with the optional compatibility wrapper name, configuration
-/// directory, configuration file, and secrets file that ship with the
+/// together with the configuration directory, configuration file, and secrets file that ship with the
 /// distribution. Higher layers select the appropriate
 /// [`BrandProfile`] to render banners, locate configuration files, or display
 /// diagnostic messages without duplicating string literals across the
@@ -26,7 +24,6 @@ use super::constants::{
 pub struct BrandProfile {
     client_program_name: &'static str,
     daemon_program_name: &'static str,
-    daemon_wrapper_program_name: Option<&'static str>,
     daemon_config_dir: &'static str,
     daemon_config_path: &'static str,
     daemon_secrets_path: &'static str,
@@ -38,7 +35,6 @@ impl BrandProfile {
     pub const fn new(
         client_program_name: &'static str,
         daemon_program_name: &'static str,
-        daemon_wrapper_program_name: Option<&'static str>,
         daemon_config_dir: &'static str,
         daemon_config_path: &'static str,
         daemon_secrets_path: &'static str,
@@ -46,7 +42,6 @@ impl BrandProfile {
         Self {
             client_program_name,
             daemon_program_name,
-            daemon_wrapper_program_name,
             daemon_config_dir,
             daemon_config_path,
             daemon_secrets_path,
@@ -63,12 +58,6 @@ impl BrandProfile {
     #[must_use]
     pub const fn daemon_program_name(&self) -> &'static str {
         self.daemon_program_name
-    }
-
-    /// Returns the compatibility wrapper program name, if one is provided.
-    #[must_use]
-    pub const fn daemon_wrapper_program_name(&self) -> Option<&'static str> {
-        self.daemon_wrapper_program_name
     }
 
     /// Returns the daemon configuration directory as a string slice.
@@ -111,7 +100,6 @@ impl BrandProfile {
 const UPSTREAM_PROFILE: BrandProfile = BrandProfile::new(
     UPSTREAM_CLIENT_PROGRAM_NAME,
     UPSTREAM_DAEMON_PROGRAM_NAME,
-    Some(UPSTREAM_DAEMON_PROGRAM_NAME),
     LEGACY_DAEMON_CONFIG_DIR,
     LEGACY_DAEMON_CONFIG_PATH,
     LEGACY_DAEMON_SECRETS_PATH,
@@ -120,7 +108,6 @@ const UPSTREAM_PROFILE: BrandProfile = BrandProfile::new(
 const OC_PROFILE: BrandProfile = BrandProfile::new(
     OC_CLIENT_PROGRAM_NAME,
     OC_DAEMON_PROGRAM_NAME,
-    Some(OC_DAEMON_WRAPPER_PROGRAM_NAME),
     OC_DAEMON_CONFIG_DIR,
     OC_DAEMON_CONFIG_PATH,
     OC_DAEMON_SECRETS_PATH,
@@ -191,12 +178,6 @@ pub fn oc_client_program_name_os_str() -> &'static OsStr {
 #[must_use]
 pub const fn oc_daemon_program_name() -> &'static str {
     OC_DAEMON_PROGRAM_NAME
-}
-
-/// Returns the compatibility wrapper program name exposed as `oc-rsyncd`.
-#[must_use]
-pub const fn oc_daemon_wrapper_program_name() -> &'static str {
-    OC_DAEMON_WRAPPER_PROGRAM_NAME
 }
 
 /// Returns the branded daemon program name as an [`OsStr`].

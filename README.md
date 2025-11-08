@@ -56,7 +56,6 @@
 ```
 
 bin/oc-rsync/           # Client and daemon entry (binary crate)
-bin/oc-rsyncd/          # Optional compatibility wrapper (feature-gated binary crate)
 crates/cli/             # CLI: flags/help/UX parity
 crates/core/            # Core types, error model, shared utils
 crates/protocol/        # Protocol v32: negotiation, tags, framing, IO

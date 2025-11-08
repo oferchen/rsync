@@ -126,10 +126,6 @@ fn brand_profiles_match_expected_programs() {
     let oc = Brand::Oc.profile();
     assert_eq!(oc.client_program_name(), OC_CLIENT_PROGRAM_NAME);
     assert_eq!(oc.daemon_program_name(), OC_DAEMON_PROGRAM_NAME);
-    assert_eq!(
-        oc_daemon_wrapper_program_name(),
-        OC_DAEMON_WRAPPER_PROGRAM_NAME
-    );
     assert_eq!(oc.daemon_config_dir(), Path::new(OC_DAEMON_CONFIG_DIR));
 }
 
@@ -141,8 +137,6 @@ fn detect_brand_matches_invocation_argument() {
         detect_brand(Some(OsStr::new("/usr/bin/oc-rsync"))),
         Brand::Oc
     );
-    assert_eq!(detect_brand(Some(OsStr::new("oc-rsyncd"))), Brand::Oc);
-    assert_eq!(detect_brand(Some(OsStr::new("OC-RSYNCD"))), Brand::Oc);
     assert_eq!(
         detect_brand(Some(OsStr::new("/usr/bin/oc-rsync-3.4.1"))),
         Brand::Oc

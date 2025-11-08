@@ -48,7 +48,6 @@ oc_metadata = get_table(cargo_data, "workspace", "metadata", "oc_rsync")
 upstream_version = ""
 client_bin = ""
 daemon_bin = ""
-daemon_wrapper_bin = ""
 source_url = ""
 daemon_config_dir = None
 daemon_config = None
@@ -75,7 +74,9 @@ else:
     upstream_version = expect_string(oc_metadata, "upstream_version")
     client_bin = expect_string(oc_metadata, "client_bin")
     daemon_bin = expect_string(oc_metadata, "daemon_bin")
-    daemon_wrapper_bin = expect_string(oc_metadata, "daemon_wrapper_bin")
+    daemon_wrapper_bin = ""
+    if "daemon_wrapper_bin" in oc_metadata:
+        daemon_wrapper_bin = expect_string(oc_metadata, "daemon_wrapper_bin")
     source_url = expect_string(oc_metadata, "source")
 
     config_dir_value = expect_string(oc_metadata, "daemon_config_dir")
@@ -147,9 +148,7 @@ missing_bins = [needle for needle in required_bins if needle not in text]
 if missing_bins:
     errors.append("Formula must install oc-prefixed binaries via bin.install: " + ", ".join(missing_bins))
 
-for needle in filter(None, [client_bin, daemon_wrapper_bin]):
-    if needle not in text:
-        errors.append(f"Formula must reference {needle} to satisfy packaging requirements")
+
 
 required_config_entries = []
 if daemon_config_dir and daemon_config and daemon_secrets:

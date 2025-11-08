@@ -467,7 +467,6 @@ mod tests {
             protocol: 32,
             client_bin: String::from("oc-rsync"),
             daemon_bin: String::from("oc-rsync"),
-            daemon_wrapper_bin: String::from("oc-rsyncd"),
             legacy_client_bin: String::from("rsync"),
             legacy_daemon_bin: String::from("rsyncd"),
             daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),

@@ -1,7 +1,7 @@
 # Resume Notes
 
 ## Status
-- Workspace implements the canonical **oc-rsync 3.4.1-rust** entrypoint (client plus `--daemon`) with a deterministic local copy engine, message formatting, and protocol negotiation scaffolding that already mirrors upstream interfaces for local execution. Optional branded (`oc-rsyncd`) and legacy (`rsyncd`) wrappers behind the `legacy-binaries` feature reuse the same execution paths for environments that still reference alternate naming.
+- Workspace implements the canonical **oc-rsync 3.4.1-rust** entrypoint (client plus `--daemon`) with a deterministic local copy engine, message formatting, and protocol negotiation scaffolding that already mirrors upstream interfaces for local execution. The workspace only ships the unified `oc-rsync` binary so side-by-side installs remain conflict-free; any alternate names must be provided via downstream packaging symlinks if required.
 - Remote transfers still delegate to the system `rsync` binary while the native transport and delta pipeline are being integrated; remaining observable gaps are tracked in `docs/differences.md` and scoped by `docs/production_scope_p1.md`.
 - Documentation, branding, and CI guardrails (lint, coverage, packaging, cross-compilation) are established and enforced via the reusable CI workflows (`ci.yml`, `lint.yml`, `test-linux.yml`, `cross-compile.yml`, and the platform-specific build workflows under `.github/workflows/build-*.yml`).
 

@@ -9,7 +9,6 @@ use super::brand::{Brand, default_brand, matches_program_alias};
 use super::manifest;
 use super::override_env::brand_override_from_env;
 use super::profile::BrandProfile;
-use crate::workspace;
 
 /// Returns the branding profile that matches the provided program name.
 #[must_use]
@@ -21,11 +20,7 @@ fn classify_program_name(program: &str) -> Option<Brand> {
     let manifest = manifest();
     let oc_client = manifest.client_program_name_for(Brand::Oc);
     let oc_daemon = manifest.daemon_program_name_for(Brand::Oc);
-    let oc_wrapper = workspace::metadata().daemon_wrapper_program_name();
-    if matches_program_alias(program, oc_client)
-        || matches_program_alias(program, oc_daemon)
-        || matches_program_alias(program, oc_wrapper)
-    {
+    if matches_program_alias(program, oc_client) || matches_program_alias(program, oc_daemon) {
         return Some(Brand::Oc);
     }
 

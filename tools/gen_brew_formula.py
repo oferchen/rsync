@@ -25,7 +25,6 @@ class Branding:
 
     client_bin: str
     daemon_bin: str
-    daemon_wrapper_bin: str
     upstream_version: str
     rust_version: str
     source_url: str
@@ -116,7 +115,6 @@ def read_branding(manifest: dict[str, object]) -> Branding:
     branding = Branding(
         client_bin=client_bin,
         daemon_bin=daemon_bin,
-        daemon_wrapper_bin=_expect_string(metadata, "daemon_wrapper_bin"),
         upstream_version=_expect_string(metadata, "upstream_version"),
         rust_version=_expect_string(metadata, "rust_version"),
         source_url=_expect_string(metadata, "source"),
