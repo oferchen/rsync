@@ -100,7 +100,6 @@ fn load_workspace_metadata(workspace_root: &Path) -> WorkspaceMetadata {
         legacy_daemon_config: str_field(oc_rsync_table, "legacy_daemon_config"),
         legacy_daemon_secrets: str_field(oc_rsync_table, "legacy_daemon_secrets"),
         source: str_field(oc_rsync_table, "source"),
-        web_site: str_field(oc_rsync_table, "web_site"),
     };
 
     metadata.validate(&manifest_path);
@@ -166,7 +165,6 @@ struct WorkspaceMetadata {
     legacy_daemon_config: String,
     legacy_daemon_secrets: String,
     source: String,
-    web_site: String,
 }
 
 impl WorkspaceMetadata {
@@ -175,7 +173,7 @@ impl WorkspaceMetadata {
         self.validate_versions(manifest_path);
         self.validate_protocol(manifest_path);
         self.validate_legacy_paths(manifest_path);
-        self.validate_links(manifest_path);
+        self.validate_source(manifest_path);
     }
 
     fn validate_branding(&self, manifest_path: &Path) {
@@ -293,9 +291,8 @@ impl WorkspaceMetadata {
         );
     }
 
-    fn validate_links(&self, manifest_path: &Path) {
+    fn validate_source(&self, manifest_path: &Path) {
         validate_non_empty(&self.source, manifest_path, "source");
-        validate_non_empty(&self.web_site, manifest_path, "web_site");
     }
 
     fn emit_cargo_env(&self) {
@@ -357,10 +354,6 @@ impl WorkspaceMetadata {
             self.legacy_daemon_secrets
         );
         println!("cargo:rustc-env=OC_RSYNC_WORKSPACE_SOURCE={}", self.source);
-        println!(
-            "cargo:rustc-env=OC_RSYNC_WORKSPACE_WEB_SITE={}",
-            self.web_site
-        );
     }
 }
 
