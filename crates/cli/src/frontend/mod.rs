@@ -95,6 +95,7 @@ pub(crate) use oc_rsync_core::client::*;
 #[allow(unused_imports)]
 pub(crate) use oc_rsync_core::version::VersionInfoReport;
 use oc_rsync_core::{
+    branding::Brand,
     message::{Message, Role},
     rsync_error,
 };
@@ -145,7 +146,7 @@ pub(crate) use filter_rules::{
 use help::help_text;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use oc_rsync_core::branding::{self as branding, Brand};
+pub(crate) use oc_rsync_core::branding::{self as branding};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use oc_rsync_core::client::{AddressMode, StrongChecksumChoice, TransferTimeout};
@@ -204,6 +205,33 @@ fn write_message<W: Write>(message: &Message, sink: &mut MessageSink<W>) -> io::
     sink.write(message)
 }
 
+fn daemon_invoked_via_program_name(args: &[OsString], brand: Brand) -> bool {
+    let Some(program) = args.first() else {
+        return false;
+    };
+    let profile = brand.profile();
+
+    profile.daemon_program_name() != profile.client_program_name()
+        && profile.matches_daemon_program_alias(program.as_os_str())
+}
+
+fn daemon_mode_arguments_for_alias(args: &[OsString], brand: Brand) -> Option<Vec<OsString>> {
+    if args.is_empty() {
+        return None;
+    }
+
+    if !daemon_invoked_via_program_name(args, brand) {
+        return None;
+    }
+
+    let mut synthetic = Vec::with_capacity(args.len() + 1);
+    synthetic.push(args[0].clone());
+    synthetic.push(OsString::from("--daemon"));
+    synthetic.extend(args.iter().skip(1).cloned());
+
+    server::daemon_mode_arguments(&synthetic)
+}
+
 /// The function returns the process exit code that should be used by the caller.
 /// On success, `0` is returned. All diagnostics are rendered using the central
 /// [`oc_rsync_core::message`] utilities to preserve formatting and trailers.
@@ -223,12 +251,20 @@ where
     let detected = detect_program_name(args.first().map(|arg| arg.as_os_str()));
     let brand = detected.brand();
 
+    let daemon_alias_requested = daemon_invoked_via_program_name(&args, brand);
+
     if server::server_mode_requested(&args) {
         return server::run_server_mode(&args, stdout, stderr);
     }
 
     if let Some(daemon_args) = server::daemon_mode_arguments(&args) {
         return server::run_daemon_mode(daemon_args, stdout, stderr);
+    }
+
+    if daemon_alias_requested {
+        if let Some(daemon_args) = daemon_mode_arguments_for_alias(&args, brand) {
+            return server::run_daemon_mode(daemon_args, stdout, stderr);
+        }
     }
 
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);

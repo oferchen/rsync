@@ -74,6 +74,26 @@ fn oc_daemon_flag_delegates_to_oc_daemon_version() {
 }
 
 #[test]
+fn legacy_daemon_invocation_without_flag_delegates_to_daemon() {
+    let mut expected_stdout = Vec::new();
+    let mut expected_stderr = Vec::new();
+    let expected_code = daemon_cli::run(
+        [OsStr::new(RSYNCD), OsStr::new("--version")],
+        &mut expected_stdout,
+        &mut expected_stderr,
+    );
+
+    assert_eq!(expected_code, 0);
+    assert!(expected_stderr.is_empty());
+
+    let (code, stdout, stderr) = run_with_args([OsStr::new(RSYNCD), OsStr::new("--version")]);
+
+    assert_eq!(code, expected_code);
+    assert_eq!(stdout, expected_stdout);
+    assert_eq!(stderr, expected_stderr);
+}
+
+#[test]
 fn daemon_mode_arguments_ignore_operands_after_double_dash() {
     let args = vec![
         OsString::from(RSYNC),

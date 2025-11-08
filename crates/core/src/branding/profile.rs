@@ -4,6 +4,7 @@ use serde::Serialize;
 use std::ffi::OsStr;
 use std::path::Path;
 
+use super::brand::matches_program_alias;
 use super::constants::{
     LEGACY_DAEMON_CONFIG_DIR, LEGACY_DAEMON_CONFIG_PATH, LEGACY_DAEMON_SECRETS_PATH,
     OC_CLIENT_PROGRAM_NAME, OC_DAEMON_CONFIG_DIR, OC_DAEMON_CONFIG_PATH, OC_DAEMON_PROGRAM_NAME,
@@ -95,6 +96,30 @@ impl BrandProfile {
     pub fn daemon_secrets_path(&self) -> &'static Path {
         Path::new(self.daemon_secrets_path)
     }
+
+    /// Returns `true` when the provided program identifier matches a client alias.
+    #[must_use]
+    pub fn matches_client_program_alias(&self, program: &OsStr) -> bool {
+        program_alias_matches(program, self.client_program_name)
+    }
+
+    /// Returns `true` when the provided program identifier matches a daemon alias.
+    #[must_use]
+    pub fn matches_daemon_program_alias(&self, program: &OsStr) -> bool {
+        program_alias_matches(program, self.daemon_program_name)
+    }
+}
+
+fn program_alias_matches(program: &OsStr, canonical: &str) -> bool {
+    let path = Path::new(program);
+
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| matches_program_alias(value, canonical))
+        || path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| matches_program_alias(value, canonical))
 }
 
 const UPSTREAM_PROFILE: BrandProfile = BrandProfile::new(
