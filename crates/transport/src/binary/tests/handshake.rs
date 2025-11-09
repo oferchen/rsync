@@ -1,13 +1,19 @@
 use super::super::BinaryHandshake;
-use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes};
+use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes, handshake_payload};
 use crate::RemoteProtocolAdvertisement;
-use protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use protocol::{
+    CompatibilityFlags, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
+};
 use std::io::{Read, Write};
+
+fn sample_flags() -> CompatibilityFlags {
+    CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST
+}
 
 #[test]
 fn binary_handshake_round_trips_from_components() {
     let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
-    let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+    let transport = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
@@ -17,6 +23,7 @@ fn binary_handshake_round_trips_from_components() {
     let remote_protocol = handshake.remote_protocol();
     let local_advertised = handshake.local_advertised_protocol();
     let negotiated_protocol = handshake.negotiated_protocol();
+    let remote_flags = handshake.remote_compatibility_flags();
     let stream = handshake.into_stream();
 
     let rebuilt = BinaryHandshake::from_components(
@@ -24,6 +31,7 @@ fn binary_handshake_round_trips_from_components() {
         remote_protocol,
         local_advertised,
         negotiated_protocol,
+        remote_flags,
         stream,
     );
 
@@ -31,6 +39,7 @@ fn binary_handshake_round_trips_from_components() {
     assert_eq!(rebuilt.remote_protocol(), remote_protocol);
     assert_eq!(rebuilt.local_advertised_protocol(), local_advertised);
     assert_eq!(rebuilt.negotiated_protocol(), negotiated_protocol);
+    assert_eq!(rebuilt.remote_compatibility_flags(), remote_flags);
     assert_eq!(rebuilt.stream().decision(), NegotiationPrologue::Binary);
     assert_eq!(rebuilt.stream().buffered(), expected_buffer.as_slice());
     assert_eq!(
@@ -42,17 +51,19 @@ fn binary_handshake_round_trips_from_components() {
 #[test]
 fn into_stream_parts_exposes_negotiation_state() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+    let transport = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
 
     assert!(!handshake.local_protocol_was_capped());
-    let (remote_adv, remote, local_advertised, negotiated, parts) = handshake.into_stream_parts();
+    let (remote_adv, remote, local_advertised, negotiated, remote_flags, parts) =
+        handshake.into_stream_parts();
     assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
     assert_eq!(remote, remote_version);
     assert_eq!(local_advertised, ProtocolVersion::NEWEST);
     assert_eq!(negotiated, remote_version);
+    assert_eq!(remote_flags, sample_flags());
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
     assert_eq!(
         parts.sniffed_prefix(),
@@ -78,7 +89,7 @@ fn into_stream_parts_exposes_negotiation_state() {
 #[test]
 fn binary_handshake_parts_into_components_matches_accessors() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let remote_advertisement = handshake_bytes(remote_version);
+    let remote_advertisement = handshake_payload(remote_version, sample_flags());
     let transport = MemoryTransport::new(&remote_advertisement);
 
     let parts = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
@@ -89,15 +100,17 @@ fn binary_handshake_parts_into_components_matches_accessors() {
     let expected_remote = parts.remote_protocol();
     let expected_local = parts.local_advertised_protocol();
     let expected_negotiated = parts.negotiated_protocol();
+    let expected_flags = parts.remote_compatibility_flags();
     let expected_consumed = parts.stream_parts().buffered_consumed();
     let expected_buffer = parts.stream_parts().buffered().to_vec();
 
-    let (advertised, remote, local, negotiated, stream_parts) = parts.into_components();
+    let (advertised, remote, local, negotiated, flags, stream_parts) = parts.into_components();
 
     assert_eq!(advertised, expected_advertised);
     assert_eq!(remote, expected_remote);
     assert_eq!(local, expected_local);
     assert_eq!(negotiated, expected_negotiated);
+    assert_eq!(flags, expected_flags);
     assert_eq!(stream_parts.decision(), NegotiationPrologue::Binary);
     assert_eq!(
         stream_parts.sniffed_prefix(),
@@ -110,25 +123,33 @@ fn binary_handshake_parts_into_components_matches_accessors() {
 #[test]
 fn from_stream_parts_rehydrates_binary_handshake() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let transport = CountingTransport::new(&handshake_bytes(remote_version));
+    let transport = CountingTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
 
     assert!(!handshake.local_protocol_was_capped());
-    let (remote_adv, remote, local_advertised, negotiated, parts) = handshake.into_stream_parts();
+    let (remote_adv, remote, local_advertised, negotiated, remote_flags, parts) =
+        handshake.into_stream_parts();
     assert_eq!(remote_adv, u32::from(remote_version.as_u8()));
     assert_eq!(remote, remote_version);
     assert_eq!(local_advertised, ProtocolVersion::NEWEST);
     assert_eq!(negotiated, remote_version);
     assert_eq!(parts.decision(), NegotiationPrologue::Binary);
 
-    let mut rehydrated =
-        BinaryHandshake::from_stream_parts(remote_adv, remote, local_advertised, negotiated, parts);
+    let mut rehydrated = BinaryHandshake::from_stream_parts(
+        remote_adv,
+        remote,
+        local_advertised,
+        negotiated,
+        remote_flags,
+        parts,
+    );
 
     assert!(!rehydrated.local_protocol_was_capped());
     assert_eq!(rehydrated.remote_protocol(), remote_version);
     assert_eq!(rehydrated.negotiated_protocol(), remote_version);
+    assert_eq!(rehydrated.remote_compatibility_flags(), sample_flags());
     assert_eq!(rehydrated.stream().decision(), NegotiationPrologue::Binary);
 
     rehydrated
@@ -148,7 +169,7 @@ fn from_stream_parts_rehydrates_binary_handshake() {
 #[test]
 fn into_parts_round_trips_binary_handshake() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let transport = CountingTransport::new(&handshake_bytes(remote_version));
+    let transport = CountingTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
@@ -161,6 +182,7 @@ fn into_parts_round_trips_binary_handshake() {
     assert_eq!(parts.remote_protocol(), remote_version);
     assert_eq!(parts.negotiated_protocol(), remote_version);
     assert_eq!(parts.local_advertised_protocol(), ProtocolVersion::NEWEST);
+    assert_eq!(parts.remote_compatibility_flags(), sample_flags());
     assert!(!parts.remote_protocol_was_clamped());
     assert!(!parts.local_protocol_was_capped());
     assert_eq!(parts.stream_parts().decision(), NegotiationPrologue::Binary);
@@ -168,6 +190,7 @@ fn into_parts_round_trips_binary_handshake() {
     let mut rebuilt = parts.into_handshake();
     assert_eq!(rebuilt.remote_protocol(), remote_version);
     assert_eq!(rebuilt.negotiated_protocol(), remote_version);
+    assert_eq!(rebuilt.remote_compatibility_flags(), sample_flags());
 
     rebuilt
         .stream_mut()
@@ -186,7 +209,7 @@ fn into_parts_round_trips_binary_handshake() {
 #[test]
 fn binary_handshake_rehydrates_sniffer_state() {
     let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
-    let mut bytes = handshake_bytes(remote_version).to_vec();
+    let mut bytes = handshake_payload(remote_version, sample_flags());
     bytes.extend_from_slice(b"payload");
     let transport = MemoryTransport::new(&bytes);
 

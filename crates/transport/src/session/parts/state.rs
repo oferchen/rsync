@@ -1,13 +1,14 @@
 use crate::binary::{BinaryHandshake, BinaryHandshakeParts};
 use crate::daemon::{LegacyDaemonHandshake, LegacyDaemonHandshakeParts};
 use crate::negotiation::NegotiatedStreamParts;
-use protocol::{LegacyDaemonGreetingOwned, ProtocolVersion};
+use protocol::{CompatibilityFlags, LegacyDaemonGreetingOwned, ProtocolVersion};
 
 pub(super) type BinaryHandshakeComponents<R> = (
     u32,
     ProtocolVersion,
     ProtocolVersion,
     ProtocolVersion,
+    CompatibilityFlags,
     NegotiatedStreamParts<R>,
 );
 
@@ -97,6 +98,7 @@ impl<R> SessionHandshakeParts<R> {
     ///     remote_protocol,
     ///     local_advertised,
     ///     negotiated,
+    ///     remote_flags,
     ///     stream_parts,
     /// ) = parts.clone().into_binary().expect("binary components");
     ///
@@ -105,6 +107,7 @@ impl<R> SessionHandshakeParts<R> {
     ///     remote_protocol,
     ///     local_advertised,
     ///     negotiated,
+    ///     remote_flags,
     ///     stream_parts,
     /// );
     ///
@@ -117,6 +120,7 @@ impl<R> SessionHandshakeParts<R> {
         remote_protocol: ProtocolVersion,
         local_advertised: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
+        remote_compatibility_flags: CompatibilityFlags,
         stream: NegotiatedStreamParts<R>,
     ) -> Self {
         SessionHandshakeParts::Binary(
@@ -125,6 +129,7 @@ impl<R> SessionHandshakeParts<R> {
                 remote_protocol,
                 local_advertised,
                 negotiated_protocol,
+                remote_compatibility_flags,
                 stream,
             )
             .into_parts(),

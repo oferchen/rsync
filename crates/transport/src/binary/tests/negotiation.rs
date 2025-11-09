@@ -1,12 +1,16 @@
-use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes};
+use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes, handshake_payload};
 use crate::RemoteProtocolAdvertisement;
-use protocol::{NegotiationPrologueSniffer, ProtocolVersion};
+use protocol::{CompatibilityFlags, NegotiationPrologueSniffer, ProtocolVersion};
 use std::io;
+
+fn sample_flags() -> CompatibilityFlags {
+    CompatibilityFlags::INC_RECURSE | CompatibilityFlags::VARINT_FLIST_FLAGS
+}
 
 #[test]
 fn negotiate_binary_session_exchanges_versions() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+    let transport = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
@@ -26,6 +30,7 @@ fn negotiate_binary_session_exchanges_versions() {
         handshake.remote_advertisement(),
         RemoteProtocolAdvertisement::Supported(remote_version)
     );
+    assert_eq!(handshake.remote_compatibility_flags(), sample_flags(),);
     assert!(!handshake.remote_protocol_was_clamped());
     assert!(!handshake.local_protocol_was_capped());
 
@@ -39,9 +44,13 @@ fn negotiate_binary_session_exchanges_versions() {
 #[test]
 fn negotiate_binary_session_clamps_future_protocols() {
     let future_version = 40u32;
-    let transport = MemoryTransport::new(&future_version.to_be_bytes());
+    let mut payload = future_version.to_be_bytes().to_vec();
+    sample_flags()
+        .encode_to_vec(&mut payload)
+        .expect("compatibility encoding succeeds");
+    let transport = MemoryTransport::new(&payload);
 
-    let desired = ProtocolVersion::from_supported(29).expect("29 supported");
+    let desired = ProtocolVersion::from_supported(31).expect("31 supported");
     let handshake =
         super::negotiate_binary_session(transport, desired).expect("future versions clamp");
 
@@ -52,6 +61,7 @@ fn negotiate_binary_session_clamps_future_protocols() {
         handshake.remote_advertisement(),
         RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
     );
+    assert_eq!(handshake.remote_compatibility_flags(), sample_flags());
 
     let parts = handshake.into_parts();
     assert_eq!(parts.remote_protocol(), ProtocolVersion::NEWEST);
@@ -63,6 +73,7 @@ fn negotiate_binary_session_clamps_future_protocols() {
         parts.remote_advertisement(),
         RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
     );
+    assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 
     let transport = parts.into_handshake().into_stream().into_inner();
     assert_eq!(transport.written(), &handshake_bytes(desired));
@@ -71,7 +82,11 @@ fn negotiate_binary_session_clamps_future_protocols() {
 #[test]
 fn negotiate_binary_session_clamps_protocols_beyond_u8_range() {
     let future_version = 0x0001_0200u32;
-    let transport = MemoryTransport::new(&future_version.to_be_bytes());
+    let mut payload = future_version.to_be_bytes().to_vec();
+    sample_flags()
+        .encode_to_vec(&mut payload)
+        .expect("compatibility encoding succeeds");
+    let transport = MemoryTransport::new(&payload);
 
     let err = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect_err("future advertisements beyond upstream cap must error");
@@ -80,7 +95,11 @@ fn negotiate_binary_session_clamps_protocols_beyond_u8_range() {
 
 #[test]
 fn negotiate_binary_session_clamps_u32_max_advertisement() {
-    let transport = MemoryTransport::new(&u32::MAX.to_be_bytes());
+    let mut payload = u32::MAX.to_be_bytes().to_vec();
+    sample_flags()
+        .encode_to_vec(&mut payload)
+        .expect("compatibility encoding succeeds");
+    let transport = MemoryTransport::new(&payload);
 
     let err = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect_err("maximum u32 advertisement must exceed upstream cap");
@@ -91,7 +110,7 @@ fn negotiate_binary_session_clamps_u32_max_advertisement() {
 fn negotiate_binary_session_applies_cap() {
     let remote_version = ProtocolVersion::NEWEST;
     let desired = ProtocolVersion::from_supported(30).expect("30 supported");
-    let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+    let transport = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let handshake =
         super::negotiate_binary_session(transport, desired).expect("handshake succeeds");
@@ -111,12 +130,14 @@ fn negotiate_binary_session_applies_cap() {
         handshake.remote_advertisement(),
         RemoteProtocolAdvertisement::Supported(remote_version)
     );
+    assert_eq!(handshake.remote_compatibility_flags(), sample_flags());
     assert!(!handshake.remote_protocol_was_clamped());
     assert!(handshake.local_protocol_was_capped());
 
     let parts = handshake.into_parts();
     assert!(!parts.remote_protocol_was_clamped());
     assert!(parts.local_protocol_was_capped());
+    assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 }
 
 #[test]
@@ -139,12 +160,14 @@ fn negotiate_binary_session_rejects_out_of_range_version() {
 
 #[test]
 fn negotiate_binary_session_flushes_advertisement() {
-    let transport = CountingTransport::new(&handshake_bytes(ProtocolVersion::NEWEST));
+    let transport =
+        CountingTransport::new(&handshake_payload(ProtocolVersion::NEWEST, sample_flags()));
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
 
     assert!(!handshake.local_protocol_was_capped());
+    assert_eq!(handshake.remote_compatibility_flags(), sample_flags());
     let transport = handshake.into_stream().into_inner();
     assert_eq!(transport.flushes(), 1);
     assert_eq!(
@@ -156,8 +179,8 @@ fn negotiate_binary_session_flushes_advertisement() {
 #[test]
 fn negotiate_binary_session_with_sniffer_reuses_instance() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let transport1 = MemoryTransport::new(&handshake_bytes(remote_version));
-    let transport2 = MemoryTransport::new(&handshake_bytes(remote_version));
+    let transport1 = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
+    let transport2 = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let mut sniffer = NegotiationPrologueSniffer::new();
 
@@ -170,6 +193,7 @@ fn negotiate_binary_session_with_sniffer_reuses_instance() {
     assert_eq!(handshake1.remote_protocol(), remote_version);
     assert_eq!(handshake1.negotiated_protocol(), remote_version);
     assert!(!handshake1.local_protocol_was_capped());
+    assert_eq!(handshake1.remote_compatibility_flags(), sample_flags());
 
     drop(handshake1);
 
@@ -182,4 +206,5 @@ fn negotiate_binary_session_with_sniffer_reuses_instance() {
     assert_eq!(handshake2.remote_protocol(), remote_version);
     assert_eq!(handshake2.negotiated_protocol(), remote_version);
     assert!(!handshake2.local_protocol_was_capped());
+    assert_eq!(handshake2.remote_compatibility_flags(), sample_flags());
 }
