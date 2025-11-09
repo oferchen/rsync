@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+  echo "usage: $0 <platform> <package>" >&2
+  exit 1
+fi
+
+platform="$1"
+package="$2"
+
+declare target=""
+declare dist_dir=""
+declare arch_label=""
+
+case "$platform" in
+  aarch64)
+    target="aarch64-unknown-linux-gnu"
+    dist_dir="dist/linux-aarch64"
+    arch_label="aarch64"
+    ;;
+  amd64|x86_64)
+    target="x86_64-unknown-linux-gnu"
+    dist_dir="dist/linux-amd64"
+    arch_label="amd64"
+    ;;
+  *)
+    echo "unsupported platform '$platform'" >&2
+    exit 1
+    ;;
+esac
+
+mkdir -p "$dist_dir"
+
+if [[ ! -f "target/$target/dist/oc-rsync" ]]; then
+  echo "Building oc-rsync binary for $target"
+  cargo --locked build --profile dist --target "$target" --bin oc-rsync
+fi
+
+copy_artifacts() {
+  local pattern="$1"
+  local source_dir="$2"
+  local found=false
+
+  if [[ -d "$source_dir" ]]; then
+    while IFS= read -r -d '' artifact; do
+      found=true
+      echo "Copying $(basename "$artifact") to $dist_dir"
+      cp -v "$artifact" "$dist_dir/"
+    done < <(find "$source_dir" -type f -name "$pattern" -print0)
+  fi
+
+  if [[ "$found" == false ]]; then
+    echo "no artifacts matching '$pattern' were produced in $source_dir" >&2
+    exit 1
+  fi
+}
+
+case "$package" in
+  tar.gz)
+    echo "Building tarball for $target"
+    OC_RSYNC_PACKAGE_SKIP_BUILD=1 cargo xtask package --release --tarball --tarball-target "$target"
+    copy_artifacts "oc-rsync-*${target}.tar.gz" "target/dist"
+    ;;
+  deb)
+    echo "Building Debian package for $target"
+    cargo deb --profile dist --locked --target "$target" --no-strip
+    copy_artifacts "*.deb" "target/$target/debian"
+    ;;
+  rpm)
+    echo "Building RPM package for $target"
+    cargo rpm build -v --target "$target"
+    copy_artifacts "*.rpm" "target/$target/dist/rpmbuild/RPMS"
+    ;;
+  *)
+    echo "unsupported package '$package'" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -f "target/$target/dist/oc-rsync" ]]; then
+  cp -v "target/$target/dist/oc-rsync" "$dist_dir/oc-rsync-$arch_label"
+fi
