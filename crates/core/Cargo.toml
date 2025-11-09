@@ -26,10 +26,15 @@ libc = "0.2"
 nix = { version = "0.29", default-features = false, features = ["user"] }
 rustix = { version = "0.38", features = ["process"] }
 base64 = "0.22"
-checksums = { path = "../checksums" }
 tempfile = "3.10"
 socket2 = "0.4"
 branding = { path = "../branding" }
+
+[target.'cfg(not(windows))'.dependencies]
+checksums = { path = "../checksums" }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
