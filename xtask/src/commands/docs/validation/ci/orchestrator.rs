@@ -13,11 +13,18 @@ pub(super) fn validate_ci_orchestrator(
     let display_path = display_path(workspace, &path);
 
     let mut observed_jobs = collect_job_names(&contents);
-    let mut expected_jobs = BTreeSet::new();
+    let mut required_jobs = BTreeSet::new();
+    let mut allowed_jobs = BTreeSet::new();
 
-    for spec in EXPECTED_JOBS {
-        expected_jobs.insert(spec.name);
-        validate_job_section(&display_path, &contents, spec, failures);
+    for spec in REQUIRED_JOBS {
+        required_jobs.insert(spec.name);
+        allowed_jobs.insert(spec.name);
+        validate_job_section(&display_path, &contents, spec, failures, true);
+    }
+
+    for spec in OPTIONAL_JOBS {
+        allowed_jobs.insert(spec.name);
+        validate_job_section(&display_path, &contents, spec, failures, false);
     }
 
     observed_jobs.retain(|job| !job.starts_with('#'));
@@ -30,14 +37,17 @@ pub(super) fn validate_ci_orchestrator(
             continue;
         }
 
-        if !expected_jobs.contains(job.as_str()) {
+        if !allowed_jobs.contains(job.as_str()) {
+            let mut allowed = allowed_jobs.iter().copied().collect::<Vec<_>>();
+            allowed.sort_unstable();
             failures.push(format!(
-                "{display_path}: unexpected CI job '{job}' (only lint/test-linux/cross-compile/interop are allowed)"
+                "{display_path}: unexpected CI job '{job}' (allowed jobs: {})",
+                allowed.join(", ")
             ));
         }
     }
 
-    for expected in expected_jobs {
+    for expected in required_jobs {
         if !observed_jobs.iter().any(|job| job.as_str() == expected) {
             failures.push(format!(
                 "{display_path}: missing required CI job '{expected}'"
@@ -54,7 +64,7 @@ struct JobSpec {
     needs: Option<&'static str>,
 }
 
-const EXPECTED_JOBS: &[JobSpec] = &[
+const REQUIRED_JOBS: &[JobSpec] = &[
     JobSpec {
         name: "lint",
         workflow: "./.github/workflows/lint.yml",
@@ -70,24 +80,28 @@ const EXPECTED_JOBS: &[JobSpec] = &[
         workflow: "./.github/workflows/cross-compile.yml",
         needs: Some("lint"),
     },
-    JobSpec {
-        name: "interop",
-        workflow: "./.github/workflows/interop.yml",
-        needs: Some("lint"),
-    },
 ];
+
+const OPTIONAL_JOBS: &[JobSpec] = &[JobSpec {
+    name: "interop",
+    workflow: "./.github/workflows/interop.yml",
+    needs: Some("lint"),
+}];
 
 fn validate_job_section(
     display_path: &str,
     contents: &str,
     spec: &JobSpec,
     failures: &mut Vec<String>,
+    required: bool,
 ) {
     let Some(section) = extract_job_section(contents, spec.name) else {
-        failures.push(format!(
-            "{display_path}: missing CI job definition '{name}'",
-            name = spec.name
-        ));
+        if required {
+            failures.push(format!(
+                "{display_path}: missing CI job definition '{name}'",
+                name = spec.name
+            ));
+        }
         return;
     };
 
