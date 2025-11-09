@@ -32,6 +32,13 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
+    if branding.daemon_bin != branding.client_bin {
+        return Err(TaskError::Validation(format!(
+            "daemon binary '{}' must match client binary '{}' so a single executable handles both roles",
+            branding.daemon_bin, branding.client_bin
+        )));
+    }
+
     let expected_dir_suffix = format!("{}-rsyncd", branding.brand);
     if branding
         .daemon_config_dir
@@ -292,6 +299,17 @@ mod tests {
         assert!(matches!(
             error,
             TaskError::Validation(message) if message.contains("daemon binary")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_rejects_distinct_daemon_binary() {
+        let mut branding = sample_branding();
+        branding.daemon_bin = String::from("oc-rsyncd");
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("must match client binary")
         ));
     }
 
