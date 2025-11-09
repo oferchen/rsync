@@ -110,12 +110,6 @@ jobs:
         run: |
           cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --bin oc-rsync
 
-      - name: Build legacy rsync wrapper
-        if: ${{ matrix.platform.enabled }}
-        shell: bash
-        run: |
-          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --all-features --bin rsync
-
       - name: Build .deb (cargo-deb)
         if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
         shell: bash
