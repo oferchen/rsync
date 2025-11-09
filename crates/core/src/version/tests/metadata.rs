@@ -70,11 +70,10 @@ fn version_metadata_renders_standard_banner() {
         .expect("writing to String cannot fail");
 
     let expected = format!(
-        concat!(
-            "oc-rsync  version {rust_version} (revision/build #{build_revision})  protocol version {protocol}\n",
-            "Copyright {copyright}\n",
-            "Source: {source_url}\n"
-        ),
+        "{program}  version {rust_version} (revision/build #{build_revision})  protocol version {protocol}\n\
+Copyright {copyright}\n\
+Source: {source_url}\n",
+        program = PROGRAM_NAME,
         rust_version = RUST_VERSION,
         build_revision = build_revision(),
         protocol = ProtocolVersion::NEWEST.as_u8(),
