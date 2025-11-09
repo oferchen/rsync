@@ -104,10 +104,14 @@ where
     };
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);
     let remote_compatibility_flags = if negotiated_protocol.uses_binary_negotiation() {
-        match CompatibilityFlags::read_from(&mut stream) {
-            Ok(flags) => flags,
-            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => CompatibilityFlags::EMPTY,
-            Err(err) => return Err(err),
+        let mut first = [0u8; 1];
+        match stream.read(&mut first)? {
+            0 => CompatibilityFlags::EMPTY,
+            read @ 1 => {
+                let mut chained = (&first[..read]).chain(&mut stream);
+                CompatibilityFlags::read_from(&mut chained)?
+            }
+            _ => unreachable!("single-byte buffer limits read results to 0 or 1"),
         }
     } else {
         CompatibilityFlags::EMPTY

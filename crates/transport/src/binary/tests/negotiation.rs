@@ -177,6 +177,35 @@ fn negotiate_binary_session_flushes_advertisement() {
 }
 
 #[test]
+fn negotiate_binary_session_handles_absent_compatibility_flags() {
+    let remote_version = ProtocolVersion::NEWEST;
+    let bytes = handshake_bytes(remote_version);
+    let transport = MemoryTransport::new(&bytes);
+
+    let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+        .expect("handshake succeeds without compatibility payload");
+
+    assert_eq!(handshake.remote_protocol(), remote_version);
+    assert_eq!(
+        handshake.remote_compatibility_flags(),
+        CompatibilityFlags::EMPTY
+    );
+}
+
+#[test]
+fn negotiate_binary_session_errors_on_truncated_compatibility_flags() {
+    let remote_version = ProtocolVersion::NEWEST;
+    let mut payload = handshake_bytes(remote_version).to_vec();
+    payload.push(0x80); // Indicates an additional byte that never arrives.
+    let transport = MemoryTransport::new(&payload);
+
+    let err = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+        .expect_err("truncated compatibility flags must fail");
+
+    assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
 fn negotiate_binary_session_with_sniffer_reuses_instance() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
     let transport1 = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
