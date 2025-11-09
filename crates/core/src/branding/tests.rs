@@ -208,11 +208,12 @@ fn detect_brand_recognises_debug_suffixes_without_digits() {
 
 #[test]
 fn matches_program_alias_accepts_windows_extensions() {
+    let alias = format!("{}d", oc_client_program_name());
     assert!(matches_program_alias("rsync.exe", "rsync"));
     assert!(matches_program_alias("RSYNCD.EXE", "rsyncd"));
     assert!(matches_program_alias("oc-rsync.EXE", "oc-rsync"));
-    assert!(matches_program_alias("OC-RSYNCD.EXE", "oc-rsyncd"));
-    assert!(!matches_program_alias("rsyncd.exe", "oc-rsyncd"));
+    assert!(matches_program_alias("OC-RSYNCD.EXE", &alias));
+    assert!(!matches_program_alias("rsyncd.exe", &alias));
 }
 
 #[test]
@@ -372,8 +373,10 @@ fn detect_brand_ignores_invalid_override_environment_variable() {
 
 #[test]
 fn brand_from_str_accepts_aliases() {
+    let daemon_alias = format!("{}d", oc_client_program_name());
+    let upper_daemon_alias = daemon_alias.to_ascii_uppercase();
     assert_eq!(Brand::from_str("oc").unwrap(), Brand::Oc);
-    assert_eq!(Brand::from_str("OC-RSYNCD").unwrap(), Brand::Oc);
+    assert_eq!(Brand::from_str(&upper_daemon_alias).unwrap(), Brand::Oc);
     assert_eq!(Brand::from_str("oc_rsync").unwrap(), Brand::Oc);
     assert_eq!(Brand::from_str("OC.RSYNC").unwrap(), Brand::Oc);
     assert_eq!(Brand::from_str(" rsync-3.4.1 ").unwrap(), Brand::Upstream);
