@@ -173,6 +173,7 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
         branding.daemon_bin.as_str(),
         unit_daemon_config.as_str(),
         unit_daemon_secrets.as_str(),
+        branding.source.as_str(),
         "Description=oc-rsyncd",
         "OC_RSYNC_CONFIG",
         "OC_RSYNC_SECRETS",
@@ -190,6 +191,18 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
             ),
         )?;
     }
+
+    let expected_documentation_line = format!("Documentation={}", branding.source);
+    ensure(
+        unit_contents
+            .lines()
+            .any(|line| line.trim() == expected_documentation_line),
+        format!(
+            "systemd unit {} must declare '{}' to keep Documentation aligned with workspace branding",
+            systemd_unit.display(),
+            expected_documentation_line
+        ),
+    )?;
 
     ensure(
         !unit_contents.contains("Alias=rsyncd.service"),
@@ -278,6 +291,57 @@ fn rpm_assets_include(table: &TomlTable, destination: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn sample_branding() -> WorkspaceBranding {
+        WorkspaceBranding {
+            brand: String::from("oc"),
+            upstream_version: String::from("3.4.1"),
+            rust_version: String::from("3.4.1-rust"),
+            protocol: 32,
+            client_bin: String::from("oc-rsync"),
+            daemon_bin: String::from("oc-rsync"),
+            legacy_client_bin: String::from("rsync"),
+            legacy_daemon_bin: String::from("rsyncd"),
+            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
+            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
+            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
+            legacy_daemon_config_dir: PathBuf::from("/etc"),
+            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
+            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
+            source: String::from("https://example.invalid/oc-rsync"),
+            cross_compile: BTreeMap::new(),
+            cross_compile_matrix: BTreeMap::new(),
+        }
+    }
+
+    fn write_unit_file(root: &Path, branding: &WorkspaceBranding, documentation: &str) {
+        let systemd_dir = root.join("packaging").join("systemd");
+        fs::create_dir_all(&systemd_dir).expect("create systemd directory");
+        let path = systemd_dir.join("oc-rsyncd.service");
+        let config = branding.daemon_config.display().to_string();
+        let secrets = branding.daemon_secrets.display().to_string();
+        let contents = format!(
+            "[Unit]\n\
+             Description=oc-rsyncd daemon providing rsync protocol services\n\
+             Documentation={documentation}\n\
+             [Service]\n\
+             Environment=\"OC_RSYNC_CONFIG={config}\"\n\
+             Environment=\"OC_RSYNC_SECRETS={secrets}\"\n\
+             Environment=\"RSYNCD_CONFIG={config}\"\n\
+             Environment=\"RSYNCD_SECRETS={secrets}\"\n\
+             ExecStart=/usr/bin/{binary} --daemon --config ${{RSYNCD_CONFIG}} $RSYNCD_ARGS\n\
+             [Install]\n\
+             WantedBy=multi-user.target\n",
+            documentation = documentation,
+            config = config,
+            secrets = secrets,
+            binary = branding.daemon_bin,
+        );
+        fs::write(path, contents).expect("write systemd unit");
+    }
 
     #[test]
     fn deb_asset_helpers_match_expected_entries() {
@@ -343,5 +407,28 @@ mod tests {
             .and_then(Value::as_table)
             .expect("rpm table present");
         assert!(!rpm_assets_include(rpm, "/etc/oc-rsyncd/oc-rsyncd.conf"));
+    }
+
+    #[test]
+    fn validate_systemd_unit_accepts_workspace_source_url() {
+        let branding = sample_branding();
+        let temp = tempdir().expect("tempdir");
+        write_unit_file(temp.path(), &branding, &branding.source);
+
+        validate_systemd_unit(temp.path(), &branding)
+            .expect("systemd unit should satisfy branding checks");
+    }
+
+    #[test]
+    fn validate_systemd_unit_rejects_mismatched_documentation_url() {
+        let branding = sample_branding();
+        let temp = tempdir().expect("tempdir");
+        write_unit_file(temp.path(), &branding, "https://example.invalid/other");
+
+        let error = validate_systemd_unit(temp.path(), &branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains(&branding.source)
+        ));
     }
 }
