@@ -2,8 +2,8 @@ use super::super::*;
 use super::common::MemoryTransport;
 use crate::RemoteProtocolAdvertisement;
 use protocol::{
-    LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
-    format_legacy_daemon_greeting,
+    LEGACY_DAEMON_PREFIX_LEN, NegotiationError, NegotiationPrologue,
+    NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
 };
 use std::io::{self, Read, Write};
 
@@ -103,55 +103,32 @@ fn negotiate_clamps_future_advertisement() {
 #[test]
 fn negotiate_clamps_large_future_advertisement() {
     let transport = MemoryTransport::new(b"@RSYNCD: 999.0\n");
-    let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
-        .expect("handshake should succeed");
+    let err = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+        .expect_err("advertisements beyond the upstream cap must be rejected");
 
-    assert_eq!(handshake.server_greeting().advertised_protocol(), 999);
-    assert_eq!(handshake.remote_advertised_protocol(), 999);
-    assert_eq!(handshake.server_protocol(), ProtocolVersion::NEWEST);
-    assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
-    assert!(handshake.remote_protocol_was_clamped());
-    assert!(!handshake.local_protocol_was_capped());
-    assert_eq!(
-        handshake.remote_advertisement(),
-        RemoteProtocolAdvertisement::from_raw(999, ProtocolVersion::NEWEST)
-    );
-
-    let parts = handshake.into_parts();
-    assert!(parts.remote_protocol_was_clamped());
-    assert!(!parts.local_protocol_was_capped());
-    assert_eq!(
-        parts.remote_advertisement(),
-        RemoteProtocolAdvertisement::from_raw(999, ProtocolVersion::NEWEST)
-    );
-
-    let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    let negotiation = err
+        .into_inner()
+        .and_then(|inner| inner.downcast::<NegotiationError>().ok())
+        .expect("negotiation error available");
+    assert_eq!(*negotiation, NegotiationError::UnsupportedVersion(999));
 }
 
 #[test]
 fn negotiate_clamps_max_u32_advertisement() {
     let transport = MemoryTransport::new(b"@RSYNCD: 4294967295.0\n");
-    let handshake = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
-        .expect("handshake should succeed");
+    let err = negotiate_legacy_daemon_session(transport, ProtocolVersion::NEWEST)
+        .expect_err("u32::MAX advertisements exceed upstream cap");
 
-    assert_eq!(handshake.server_greeting().advertised_protocol(), u32::MAX);
-    assert_eq!(handshake.remote_advertised_protocol(), u32::MAX);
-    assert_eq!(handshake.server_protocol(), ProtocolVersion::NEWEST);
-    assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
-    assert!(handshake.remote_protocol_was_clamped());
-    assert!(!handshake.local_protocol_was_capped());
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    let negotiation = err
+        .into_inner()
+        .and_then(|inner| inner.downcast::<NegotiationError>().ok())
+        .expect("negotiation error available");
     assert_eq!(
-        handshake.remote_advertisement(),
-        RemoteProtocolAdvertisement::from_raw(u32::MAX, ProtocolVersion::NEWEST)
+        *negotiation,
+        NegotiationError::UnsupportedVersion(u32::MAX)
     );
-
-    let parts = handshake.into_parts();
-    assert!(parts.remote_protocol_was_clamped());
-    assert!(!parts.local_protocol_was_capped());
-
-    let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), b"@RSYNCD: 32.0\n");
 }
 
 #[test]

@@ -22,8 +22,8 @@ struct CustomAdvertised(u8);
 
 impl ProtocolVersionAdvertisement for CustomAdvertised {
     #[inline]
-    fn into_advertised_version(self) -> u8 {
-        self.0
+    fn into_advertised_version(self) -> u32 {
+        u32::from(self.0)
     }
 }
 

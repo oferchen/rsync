@@ -153,8 +153,8 @@ fn ensure_under_dir(
 fn ensure_has_file_name(path: &Path, label: &str) -> TaskResult<()> {
     if path.file_name().is_none() {
         return Err(TaskError::Validation(format!(
-            "{label} '{}' must include a file name",
-            path.display()
+            "{label} '{path}' must include a file name",
+            path = path.display()
         )));
     }
 
@@ -167,15 +167,15 @@ fn ensure_named_file(path: &Path, expected: &str, label: &str) -> TaskResult<()>
         .and_then(|value| value.to_str())
         .ok_or_else(|| {
             TaskError::Validation(format!(
-                "{label} '{}' must include a file name",
-                path.display()
+                "{label} '{path}' must include a file name",
+                path = path.display()
             ))
         })?;
 
     if name != expected {
         return Err(TaskError::Validation(format!(
-            "{label} '{}' must be named '{expected}'",
-            path.display()
+            "{label} '{path}' must be named '{expected}'",
+            path = path.display()
         )));
     }
 
@@ -189,15 +189,13 @@ fn ensure_binary_name(name: &str, label: &str) -> TaskResult<()> {
 
     if name.chars().any(char::is_whitespace) {
         return Err(TaskError::Validation(format!(
-            "{label} '{}' must not contain whitespace",
-            name
+            "{label} '{name}' must not contain whitespace"
         )));
     }
 
     if name.chars().any(std::path::is_separator) {
         return Err(TaskError::Validation(format!(
-            "{label} '{}' must not include path separators",
-            name
+            "{label} '{name}' must not include path separators"
         )));
     }
 
