@@ -2,8 +2,8 @@ use super::super::*;
 use super::common::MemoryTransport;
 use crate::RemoteProtocolAdvertisement;
 use protocol::{
-    LEGACY_DAEMON_PREFIX_LEN, NegotiationError, NegotiationPrologue,
-    NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
+    LEGACY_DAEMON_PREFIX_LEN, NegotiationError, NegotiationPrologue, NegotiationPrologueSniffer,
+    ProtocolVersion, format_legacy_daemon_greeting,
 };
 use std::io::{self, Read, Write};
 
@@ -125,10 +125,7 @@ fn negotiate_clamps_max_u32_advertisement() {
         .into_inner()
         .and_then(|inner| inner.downcast::<NegotiationError>().ok())
         .expect("negotiation error available");
-    assert_eq!(
-        *negotiation,
-        NegotiationError::UnsupportedVersion(u32::MAX)
-    );
+    assert_eq!(*negotiation, NegotiationError::UnsupportedVersion(u32::MAX));
 }
 
 #[test]
