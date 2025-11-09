@@ -1,17 +1,22 @@
-use super::helpers::{InstrumentedTransport, MemoryTransport, handshake_bytes};
-use protocol::ProtocolVersion;
+use super::helpers::{InstrumentedTransport, MemoryTransport, handshake_bytes, handshake_payload};
+use protocol::{CompatibilityFlags, ProtocolVersion};
 use std::io::{self, Write};
+
+fn sample_flags() -> CompatibilityFlags {
+    CompatibilityFlags::INC_RECURSE | CompatibilityFlags::VARINT_FLIST_FLAGS
+}
 
 #[test]
 fn map_stream_inner_preserves_protocols_and_replays_transport() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let remote_advertisement = handshake_bytes(remote_version);
+    let remote_advertisement = handshake_payload(remote_version, sample_flags());
     let transport = MemoryTransport::new(&remote_advertisement);
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
 
     assert!(!handshake.local_protocol_was_capped());
+    assert_eq!(handshake.remote_compatibility_flags(), sample_flags());
     let mut handshake = handshake.map_stream_inner(InstrumentedTransport::new);
     handshake
         .stream_mut()
@@ -41,13 +46,14 @@ fn map_stream_inner_preserves_protocols_and_replays_transport() {
 #[test]
 fn try_map_stream_inner_transforms_transport() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let remote_advertisement = handshake_bytes(remote_version);
+    let remote_advertisement = handshake_payload(remote_version, sample_flags());
     let transport = MemoryTransport::new(&remote_advertisement);
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
 
     assert!(!handshake.local_protocol_was_capped());
+    assert_eq!(handshake.remote_compatibility_flags(), sample_flags());
     let mut handshake = handshake
         .try_map_stream_inner(
             |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {
@@ -72,13 +78,14 @@ fn try_map_stream_inner_transforms_transport() {
 #[test]
 fn parts_map_stream_inner_transforms_transport() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let remote_advertisement = handshake_bytes(remote_version);
+    let remote_advertisement = handshake_payload(remote_version, sample_flags());
     let transport = MemoryTransport::new(&remote_advertisement);
 
     let parts = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds")
         .into_parts();
     assert_eq!(parts.remote_protocol(), remote_version);
+    assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 
     let mapped = parts.map_stream_inner(InstrumentedTransport::new);
     assert_eq!(mapped.remote_protocol(), remote_version);
@@ -103,7 +110,7 @@ fn parts_map_stream_inner_transforms_transport() {
 #[test]
 fn parts_try_map_stream_inner_transforms_transport() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let remote_advertisement = handshake_bytes(remote_version);
+    let remote_advertisement = handshake_payload(remote_version, sample_flags());
     let transport = MemoryTransport::new(&remote_advertisement);
 
     let parts = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
@@ -132,7 +139,7 @@ fn parts_try_map_stream_inner_transforms_transport() {
 #[test]
 fn parts_try_map_stream_inner_preserves_original_on_error() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let remote_advertisement = handshake_bytes(remote_version);
+    let remote_advertisement = handshake_payload(remote_version, sample_flags());
     let transport = MemoryTransport::new(&remote_advertisement);
 
     let parts = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
@@ -158,13 +165,14 @@ fn parts_try_map_stream_inner_preserves_original_on_error() {
 #[test]
 fn try_map_stream_inner_preserves_original_on_error() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
-    let remote_advertisement = handshake_bytes(remote_version);
+    let remote_advertisement = handshake_payload(remote_version, sample_flags());
     let transport = MemoryTransport::new(&remote_advertisement);
 
     let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("handshake succeeds");
 
     assert!(!handshake.local_protocol_was_capped());
+    assert_eq!(handshake.remote_compatibility_flags(), sample_flags());
     let err = handshake
         .try_map_stream_inner(
             |inner| -> Result<InstrumentedTransport, (io::Error, MemoryTransport)> {

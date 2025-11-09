@@ -1,6 +1,8 @@
 use crate::handshake_util::{RemoteProtocolAdvertisement, local_cap_reduced_protocol};
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
-use protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use protocol::{
+    CompatibilityFlags, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
+};
 use std::collections::TryReserveError;
 
 use super::BinaryHandshakeParts;
@@ -24,6 +26,7 @@ pub struct BinaryHandshake<R> {
     remote_advertisement: RemoteProtocolAdvertisement,
     negotiated_protocol: ProtocolVersion,
     local_advertised: ProtocolVersion,
+    remote_compatibility_flags: CompatibilityFlags,
 }
 
 impl<R> BinaryHandshake<R> {
@@ -55,6 +58,19 @@ impl<R> BinaryHandshake<R> {
     #[must_use]
     pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
         self.local_advertised
+    }
+
+    /// Returns the compatibility flags advertised by the remote peer.
+    ///
+    /// Compatibility flags are exchanged after the protocol negotiation when
+    /// both sides speak the binary handshake (protocol 30 or newer). They
+    /// describe optional behaviours supported by the sender. Upstream rsync
+    /// propagates future bits even when the local build does not understand
+    /// their semantics; callers can use [`CompatibilityFlags::has_unknown_bits`]
+    /// to detect that condition and surface downgraded diagnostics.
+    #[must_use]
+    pub const fn remote_compatibility_flags(&self) -> CompatibilityFlags {
+        self.remote_compatibility_flags
     }
 
     /// Reports whether the remote peer advertised a protocol newer than we support.
@@ -180,6 +196,7 @@ impl<R> BinaryHandshake<R> {
         ProtocolVersion,
         ProtocolVersion,
         ProtocolVersion,
+        CompatibilityFlags,
         NegotiatedStream<R>,
     ) {
         (
@@ -187,6 +204,7 @@ impl<R> BinaryHandshake<R> {
             self.remote_advertisement.negotiated(),
             self.local_advertised,
             self.negotiated_protocol,
+            self.remote_compatibility_flags,
             self.stream,
         )
     }
@@ -194,14 +212,21 @@ impl<R> BinaryHandshake<R> {
     /// Decomposes the handshake into a [`BinaryHandshakeParts`] structure.
     #[must_use]
     pub fn into_parts(self) -> BinaryHandshakeParts<R> {
-        let (remote_advertised, remote_protocol, local_advertised, negotiated_protocol, stream) =
-            self.into_stream_parts();
+        let (
+            remote_advertised,
+            remote_protocol,
+            local_advertised,
+            negotiated_protocol,
+            remote_compatibility_flags,
+            stream,
+        ) = self.into_stream_parts();
         let remote_advertisement =
             RemoteProtocolAdvertisement::from_raw(remote_advertised, remote_protocol);
         BinaryHandshakeParts::from_components(
             remote_advertisement,
             negotiated_protocol,
             local_advertised,
+            remote_compatibility_flags,
             stream,
         )
     }
@@ -209,13 +234,20 @@ impl<R> BinaryHandshake<R> {
     /// Reconstructs a [`BinaryHandshake`] from previously extracted parts.
     #[must_use]
     pub fn from_parts(parts: BinaryHandshakeParts<R>) -> Self {
-        let (remote_advertised, remote_protocol, local_advertised, negotiated_protocol, stream) =
-            parts.into_components();
+        let (
+            remote_advertised,
+            remote_protocol,
+            local_advertised,
+            negotiated_protocol,
+            remote_compatibility_flags,
+            stream,
+        ) = parts.into_components();
         Self::from_stream_parts(
             remote_advertised,
             remote_protocol,
             local_advertised,
             negotiated_protocol,
+            remote_compatibility_flags,
             stream,
         )
     }
@@ -232,6 +264,7 @@ impl<R> BinaryHandshake<R> {
         remote_protocol: ProtocolVersion,
         local_advertised: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
+        remote_compatibility_flags: CompatibilityFlags,
         stream: NegotiatedStream<R>,
     ) -> Self {
         debug_assert_eq!(stream.decision(), NegotiationPrologue::Binary);
@@ -244,6 +277,7 @@ impl<R> BinaryHandshake<R> {
             ),
             local_advertised,
             negotiated_protocol,
+            remote_compatibility_flags,
         }
     }
 
@@ -264,6 +298,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertisement,
             negotiated_protocol,
             local_advertised,
+            remote_compatibility_flags,
         } = self;
 
         BinaryHandshake {
@@ -271,6 +306,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertisement,
             negotiated_protocol,
             local_advertised,
+            remote_compatibility_flags,
         }
     }
 
@@ -290,6 +326,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertisement,
             negotiated_protocol,
             local_advertised,
+            remote_compatibility_flags,
         } = self;
 
         stream
@@ -299,6 +336,7 @@ impl<R> BinaryHandshake<R> {
                 remote_advertisement,
                 negotiated_protocol,
                 local_advertised,
+                remote_compatibility_flags,
             })
             .map_err(|err| {
                 err.map_original(|stream| BinaryHandshake {
@@ -306,6 +344,7 @@ impl<R> BinaryHandshake<R> {
                     remote_advertisement,
                     negotiated_protocol,
                     local_advertised,
+                    remote_compatibility_flags,
                 })
             })
     }
@@ -325,6 +364,7 @@ impl<R> BinaryHandshake<R> {
         ProtocolVersion,
         ProtocolVersion,
         ProtocolVersion,
+        CompatibilityFlags,
         NegotiatedStreamParts<R>,
     ) {
         let Self {
@@ -332,6 +372,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertisement,
             negotiated_protocol,
             local_advertised,
+            remote_compatibility_flags,
         } = self;
 
         (
@@ -339,6 +380,7 @@ impl<R> BinaryHandshake<R> {
             remote_advertisement.negotiated(),
             local_advertised,
             negotiated_protocol,
+            remote_compatibility_flags,
             stream.into_parts(),
         )
     }
@@ -356,6 +398,7 @@ impl<R> BinaryHandshake<R> {
         remote_protocol: ProtocolVersion,
         local_advertised: ProtocolVersion,
         negotiated_protocol: ProtocolVersion,
+        remote_compatibility_flags: CompatibilityFlags,
         parts: NegotiatedStreamParts<R>,
     ) -> Self {
         debug_assert_eq!(parts.decision(), NegotiationPrologue::Binary);
@@ -368,6 +411,7 @@ impl<R> BinaryHandshake<R> {
             ),
             local_advertised,
             negotiated_protocol,
+            remote_compatibility_flags,
         }
     }
 }

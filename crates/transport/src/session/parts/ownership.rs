@@ -130,13 +130,20 @@ impl<R> SessionHandshakeParts<R> {
     pub fn into_binary(self) -> HandshakePartsResult<BinaryHandshakeComponents<R>, R> {
         match self {
             SessionHandshakeParts::Binary(parts) => {
-                let (remote_advertised, remote_protocol, local_advertised, negotiated, stream) =
-                    parts.into_components();
+                let (
+                    remote_advertised,
+                    remote_protocol,
+                    local_advertised,
+                    negotiated,
+                    remote_compatibility_flags,
+                    stream,
+                ) = parts.into_components();
                 Ok((
                     remote_advertised,
                     remote_protocol,
                     local_advertised,
                     negotiated,
+                    remote_compatibility_flags,
                     stream,
                 ))
             }

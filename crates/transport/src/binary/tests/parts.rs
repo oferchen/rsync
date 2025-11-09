@@ -1,12 +1,16 @@
-use super::helpers::{MemoryTransport, handshake_bytes};
+use super::helpers::{MemoryTransport, handshake_bytes, handshake_payload};
 use crate::RemoteProtocolAdvertisement;
-use protocol::ProtocolVersion;
+use protocol::{CompatibilityFlags, ProtocolVersion};
 use std::io::Write;
+
+fn sample_flags() -> CompatibilityFlags {
+    CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST
+}
 
 #[test]
 fn parts_stream_parts_mut_exposes_inner_transport() {
     let remote_version = ProtocolVersion::from_supported(31).expect("protocol 31 supported");
-    let transport = MemoryTransport::new(&handshake_bytes(remote_version));
+    let transport = MemoryTransport::new(&handshake_payload(remote_version, sample_flags()));
 
     let mut parts = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
         .expect("binary handshake succeeds")
@@ -30,6 +34,7 @@ fn parts_stream_parts_mut_exposes_inner_transport() {
         RemoteProtocolAdvertisement::Supported(remote_version)
     );
     assert_eq!(parts.negotiated_protocol(), remote_version);
+    assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 
     let inner = parts.into_handshake().into_stream().into_inner();
     let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
