@@ -373,6 +373,7 @@ impl<R> BinaryHandshakeParts<R> {
     ///     let expected_remote = parts.remote_protocol();
     ///     let expected_local = parts.local_advertised_protocol();
     ///     let expected_negotiated = parts.negotiated_protocol();
+    ///     let expected_flags = parts.remote_compatibility_flags();
     ///     let (
     ///         remote_advertised,
     ///         remote_protocol,
@@ -387,7 +388,7 @@ impl<R> BinaryHandshakeParts<R> {
     ///     assert_eq!(remote_protocol, expected_remote);
     ///     assert_eq!(local_advertised, expected_local);
     ///     assert_eq!(negotiated_protocol, expected_negotiated);
-    ///     assert_eq!(remote_flags, parts.remote_compatibility_flags());
+    ///     assert_eq!(remote_flags, expected_flags);
     ///     assert_eq!(
     ///         stream_parts.decision(),
     ///         protocol::NegotiationPrologue::Binary

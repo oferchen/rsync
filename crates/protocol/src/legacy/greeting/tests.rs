@@ -309,8 +309,8 @@ fn parses_large_future_version_numbers_by_clamping() {
 
 #[test]
 fn rejects_future_versions_beyond_cap() {
-    let err = parse_legacy_daemon_greeting("@RSYNCD: 999999999999.0\n").unwrap_err();
-    assert_eq!(err, NegotiationError::UnsupportedVersion(999999999999));
+    let err = parse_legacy_daemon_greeting("@RSYNCD: 4294967295.0\n").unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(u32::MAX));
 }
 
 #[test]
