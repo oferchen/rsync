@@ -52,14 +52,14 @@ pub(super) fn ensure_contains(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::workspace;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::workspace;
 
-    // #[test]
-    // fn validate_documents_accepts_workspace_branding() {
-    //     let workspace = workspace::workspace_root().expect("workspace root");
-    //     validate_documents(&workspace).expect("documents validate");
-    // }
-}
+//     #[test]
+//     fn validate_documents_accepts_workspace_branding() {
+//         let workspace = workspace::workspace_root().expect("workspace root");
+//         validate_documents(&workspace).expect("documents validate");
+//     }
+// }
