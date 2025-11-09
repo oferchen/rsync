@@ -32,20 +32,20 @@ jobs:
             linux: true
 
           # Windows (gnu)
-          - target: x86_64-pc-windows-gnu
-            os-arch: windows-amd64
-            linux: false
-          - target: aarch64-pc-windows-gnu
-            os-arch: windows-aarch64
-            linux: false
+          # - target: x86_64-pc-windows-gnu
+          #   os-arch: windows-amd64
+          #   linux: false
+          # - target: aarch64-pc-windows-gnu
+          #   os-arch: windows-aarch64
+          #   linux: false
 
           # macOS (Darwin)
-          - target: x86_64-apple-darwin
-            os-arch: macos-amd64
-            linux: false
-          - target: aarch64-apple-darwin
-            os-arch: macos-aarch64
-            linux: false
+          # - target: x86_64-apple-darwin
+          #   os-arch: macos-amd64
+          #   linux: false
+          # - target: aarch64-apple-darwin
+          #   os-arch: macos-aarch64
+          #   linux: false
 
     steps:
       - name: Checkout
