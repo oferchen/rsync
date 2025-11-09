@@ -94,15 +94,10 @@ where
     stream.read_exact(&mut remote_buf)?;
     let remote_advertised = u32::from_be_bytes(remote_buf);
 
-    let remote_byte = remote_advertised.min(u32::from(u8::MAX)) as u8;
-
-    let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_byte) {
+    let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_advertised) {
         Ok(protocol) => protocol,
-        Err(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "binary negotiation protocol identifier outside supported range",
-            ));
+        Err(err) => {
+            return Err(io::Error::from(err));
         }
     };
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);

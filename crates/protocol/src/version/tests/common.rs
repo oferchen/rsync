@@ -4,31 +4,36 @@ use std::collections::BTreeSet;
 use super::{ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP};
 
 pub(super) fn reference_negotiation(
-    peer_versions: &[u8],
+    peer_versions: &[u32],
 ) -> Result<ProtocolVersion, NegotiationError> {
     let mut recognized = BTreeSet::new();
     let mut supported_bitmap: u64 = 0;
-    let mut oldest_rejection: Option<u8> = None;
+    let mut oldest_rejection: Option<u32> = None;
 
     for &advertised in peer_versions {
-        if advertised < ProtocolVersion::OLDEST.as_u8() {
-            oldest_rejection = Some(match oldest_rejection {
-                Some(current) if advertised >= current => current,
-                _ => advertised,
-            });
-            continue;
-        }
+        match ProtocolVersion::from_peer_advertisement(advertised) {
+            Ok(proto) => {
+                let value = proto.as_u8();
+                recognized.insert(value);
 
-        let clamped = advertised.min(ProtocolVersion::NEWEST.as_u8());
-        recognized.insert(clamped);
+                let bit = 1u64 << value;
+                if SUPPORTED_PROTOCOL_BITMAP & bit != 0 {
+                    supported_bitmap |= bit;
 
-        let bit = 1u64 << clamped;
-        if SUPPORTED_PROTOCOL_BITMAP & bit != 0 {
-            supported_bitmap |= bit;
-
-            if clamped == ProtocolVersion::NEWEST.as_u8() {
-                return Ok(ProtocolVersion::NEWEST);
+                    if value == ProtocolVersion::NEWEST.as_u8() {
+                        return Ok(ProtocolVersion::NEWEST);
+                    }
+                }
             }
+            Err(NegotiationError::UnsupportedVersion(value))
+                if value < u32::from(ProtocolVersion::OLDEST.as_u8()) =>
+            {
+                oldest_rejection = Some(match oldest_rejection {
+                    Some(current) if value >= current => current,
+                    _ => value,
+                });
+            }
+            Err(err) => return Err(err),
         }
     }
 
@@ -46,7 +51,7 @@ pub(super) fn reference_negotiation(
     Err(NegotiationError::NoMutualProtocol { peer_versions })
 }
 
-pub(super) fn collect_advertised<I, T>(inputs: I) -> Vec<u8>
+pub(super) fn collect_advertised<I, T>(inputs: I) -> Vec<u32>
 where
     I: IntoIterator<Item = T>,
     T: ProtocolVersionAdvertisement,
@@ -64,13 +69,13 @@ mod tests {
 
     #[test]
     fn reference_negotiation_prefers_highest_supported_version() {
-        let negotiated = reference_negotiation(&[27, 32, 30]).expect("must select newest");
+        let negotiated = reference_negotiation(&[27u32, 32, 30]).expect("must select newest");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
     #[test]
     fn reference_negotiation_reports_oldest_rejection() {
-        let err = reference_negotiation(&[27, 26]).unwrap_err();
+        let err = reference_negotiation(&[27u32, 26]).unwrap_err();
         assert_eq!(err, NegotiationError::UnsupportedVersion(26));
     }
 
@@ -87,14 +92,14 @@ mod tests {
 
     #[test]
     fn reference_negotiation_clamps_future_versions_to_newest() {
-        let negotiated = reference_negotiation(&[40]).expect("future versions clamp");
+        let negotiated = reference_negotiation(&[40u32]).expect("future versions clamp");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
     #[test]
     fn collect_advertised_preserves_supported_sequence() {
-        let expected: Vec<u8> = ProtocolVersion::supported_versions_iter()
-            .map(ProtocolVersion::as_u8)
+        let expected: Vec<u32> = ProtocolVersion::supported_versions_iter()
+            .map(|version| u32::from(version.as_u8()))
             .collect();
         let collected = collect_advertised(expected.iter().copied());
         assert_eq!(collected, expected);
@@ -104,7 +109,7 @@ mod tests {
     fn collect_advertised_bounds_future_and_negative_inputs() {
         let future = u16::from(u8::MAX) + 10;
         let collected = collect_advertised([future]);
-        assert_eq!(collected, vec![u8::MAX]);
+        assert_eq!(collected, vec![u32::from(future)]);
 
         let collected = collect_advertised([-5i16, 31i16]);
         assert_eq!(collected, vec![0, 31]);

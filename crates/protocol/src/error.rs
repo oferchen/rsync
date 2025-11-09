@@ -12,7 +12,7 @@ pub enum NegotiationError {
         peer_versions: Vec<u8>,
     },
     /// The peer advertised a protocol version outside the upstream supported range.
-    UnsupportedVersion(u8),
+    UnsupportedVersion(u32),
     /// A legacy ASCII daemon greeting could not be parsed.
     MalformedLegacyGreeting {
         /// The raw greeting text without trailing newlines.
@@ -41,7 +41,7 @@ impl NegotiationError {
     /// offending byte directly in the diagnostic. The accessor allows callers to recover that
     /// value without pattern matching on [`NegotiationError::UnsupportedVersion`].
     #[must_use]
-    pub const fn unsupported_version(&self) -> Option<u8> {
+    pub const fn unsupported_version(&self) -> Option<u32> {
         match self {
             Self::UnsupportedVersion(version) => Some(*version),
             _ => None,
