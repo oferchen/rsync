@@ -392,7 +392,14 @@ fn session_handshake_parts_from_binary_components_round_trips() {
 
     let parts = negotiate_session_parts(transport, ProtocolVersion::NEWEST)
         .expect("binary negotiation succeeds");
-    let (remote_advertised, remote_protocol, local_advertised, negotiated, stream_parts) = parts
+    let (
+        remote_advertised,
+        remote_protocol,
+        local_advertised,
+        negotiated,
+        remote_flags,
+        stream_parts,
+    ) = parts
         .clone()
         .into_binary()
         .expect("binary components available");
@@ -402,6 +409,7 @@ fn session_handshake_parts_from_binary_components_round_trips() {
         remote_protocol,
         local_advertised,
         negotiated,
+        remote_flags,
         stream_parts,
     );
 
