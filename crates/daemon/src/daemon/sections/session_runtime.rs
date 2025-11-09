@@ -256,8 +256,7 @@ fn handle_binary_session_internal(
     let mut client_bytes = [0u8; 4];
     stream.read_exact(&mut client_bytes)?;
     let client_raw = u32::from_be_bytes(client_bytes);
-    let client_byte = client_raw.min(u32::from(u8::MAX)) as u8;
-    ProtocolVersion::from_peer_advertisement(client_byte).map_err(|_| {
+    ProtocolVersion::from_peer_advertisement(client_raw).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "binary negotiation protocol identifier outside supported range",

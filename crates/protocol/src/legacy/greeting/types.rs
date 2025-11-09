@@ -285,8 +285,7 @@ impl LegacyDaemonGreetingOwned {
             return Err(NegotiationError::MalformedLegacyGreeting { input: rendered });
         }
 
-        let negotiated_byte = advertised_protocol.min(u32::from(u8::MAX)) as u8;
-        let protocol = ProtocolVersion::from_peer_advertisement(negotiated_byte)?;
+        let protocol = ProtocolVersion::from_peer_advertisement(advertised_protocol)?;
 
         Ok(Self {
             protocol,

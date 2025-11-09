@@ -119,8 +119,8 @@ fn select_highest_mutual_accepts_non_zero_unsigned_advertisements() {
     check(NonZeroUsize::new(32).expect("non-zero"));
 
     let future = NonZeroU64::new(200).expect("non-zero");
-    let negotiated = select_highest_mutual([future]).expect("future values clamp");
-    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    let err = select_highest_mutual([future]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(200));
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn select_highest_mutual_accepts_non_zero_signed_advertisements() {
     );
 
     let future = NonZeroI128::new(200).expect("non-zero");
-    let negotiated = select_highest_mutual([future]).expect("future values clamp");
-    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    let err = select_highest_mutual([future]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(200));
 }
 
 #[test]
@@ -201,8 +201,8 @@ fn select_highest_mutual_accepts_wrapping_unsigned_advertisements() {
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 
     let future = Wrapping::<u128>(200);
-    let negotiated = select_highest_mutual([future]).expect("wrapping future clamps");
-    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    let err = select_highest_mutual([future]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(200));
 }
 
 #[test]
@@ -289,23 +289,23 @@ fn select_highest_mutual_clamps_negative_signed_advertisements() {
 #[test]
 fn select_highest_mutual_saturates_large_signed_advertisements() {
     let peers = [i32::MAX];
-    let negotiated = select_highest_mutual(peers).expect("large signed values clamp to newest");
-    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    let err = select_highest_mutual(peers).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(i32::MAX as u32));
 
     let peers = [i128::MAX];
-    let negotiated = select_highest_mutual(peers).expect("i128 advertisements clamp");
-    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    let err = select_highest_mutual(peers).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(u32::MAX));
 }
 
 #[test]
 fn select_highest_mutual_saturates_wider_integer_advertisements() {
     let peers = [u32::MAX];
-    let negotiated = select_highest_mutual(peers).expect("future versions clamp");
-    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    let err = select_highest_mutual(peers).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(u32::MAX));
 
     let peers = [u128::MAX];
-    let negotiated = select_highest_mutual(peers).expect("u128 advertisements clamp");
-    assert_eq!(negotiated, ProtocolVersion::NEWEST);
+    let err = select_highest_mutual(peers).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(u32::MAX));
 }
 
 #[test]
@@ -353,4 +353,17 @@ fn select_highest_mutual_prefers_newest_when_future_and_too_old_mix() {
     let negotiated = select_highest_mutual([0, 40])
         .expect("unsupported low versions must not mask clamped future ones");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn rejects_advertisements_beyond_upstream_cap() {
+    let err = select_highest_mutual([41u8]).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(41));
+
+    let err =
+        select_highest_mutual([u32::from(ProtocolVersion::NEWEST.as_u8()) + 100]).unwrap_err();
+    assert_eq!(
+        err,
+        NegotiationError::UnsupportedVersion(ProtocolVersion::NEWEST.as_u8() as u32 + 100)
+    );
 }

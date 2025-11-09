@@ -15,7 +15,7 @@ where
 {
     let mut supported_bitmap: u64 = 0;
     let mut recognized_versions = RecognizedVersions::new();
-    let mut oldest_rejection: Option<u8> = None;
+    let mut oldest_rejection: Option<u32> = None;
 
     for version in peer_versions {
         let advertised = version.into_advertised_version();
@@ -39,7 +39,7 @@ where
                 }
             }
             Err(NegotiationError::UnsupportedVersion(value))
-                if value < ProtocolVersion::OLDEST.as_u8() =>
+                if value < u32::from(ProtocolVersion::OLDEST.as_u8()) =>
             {
                 if oldest_rejection.is_none_or(|current| value < current) {
                     oldest_rejection = Some(value);

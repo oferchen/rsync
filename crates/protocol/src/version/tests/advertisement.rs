@@ -15,6 +15,12 @@ fn rejects_peer_advertisements_older_than_supported_range() {
 }
 
 #[test]
+fn rejects_peer_advertisements_beyond_upstream_cap() {
+    let err = ProtocolVersion::from_peer_advertisement(41).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(41));
+}
+
+#[test]
 fn rejects_zero_peer_advertisement() {
     let err = ProtocolVersion::from_peer_advertisement(0).unwrap_err();
     assert_eq!(err, NegotiationError::UnsupportedVersion(0));
