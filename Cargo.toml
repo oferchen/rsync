@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
-description = "Pure-Rust implementation of the rsync client and daemon entrypoints installed as a single oc-rsync binary for side-by-side deployment"
+description = "Pure-Rust implementation of the rsync client and daemon"
 repository.workspace = true
 publish = true
 autobins = false
@@ -80,8 +80,8 @@ rust_version = "3.4.1-rust"
 protocol = 32
 client_bin = "oc-rsync"
     daemon_bin = "oc-rsync"
-    legacy_client_bin = "rsync"
-    legacy_daemon_bin = "rsyncd"
+#    legacy_client_bin = "rsync"
+#    legacy_daemon_bin = "rsyncd"
 daemon_config_dir = "/etc/oc-rsyncd"
 daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
 daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
@@ -97,10 +97,10 @@ windows = ["x86_64", "aarch64"]
 
 [workspace.metadata.oc_rsync.cross_compile_matrix]
 "linux-x86_64" = true
-"linux-aarch64" = true
-"darwin-x86_64" = true
-"darwin-aarch64" = true
-"windows-x86_64" = true
+"linux-aarch64" = false
+"darwin-x86_64" = false
+"darwin-aarch64" = false
+"windows-x86_64" = false
 "windows-aarch64" = false
 "windows-x86" = false
 
@@ -154,9 +154,9 @@ mode = "0644"
 path = "/etc/oc-rsyncd/oc-rsyncd.secrets"
 mode = "0600"
 
-[package.metadata.rpm.files."../packaging/default/oc-rsyncd"]
-path = "/etc/default/oc-rsyncd"
-mode = "0644"
+# [package.metadata.rpm.files."../packaging/default/oc-rsyncd"]
+# path = "/etc/default/oc-rsyncd"
+# mode = "0644"
 
 
 [package.metadata.rpm.scripts]
@@ -189,4 +189,5 @@ buildflags = ["--profile", "dist", "--bins"]
 inherits = "release"
 lto = "thin"
 codegen-units = 1
-strip = "debuginfo"
+#strip = "debuginfo"
+strip = true
