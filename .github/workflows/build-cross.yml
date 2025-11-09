@@ -3,7 +3,7 @@ name: build-cross
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "v*.*.*-rust"
   workflow_dispatch:
 
 permissions:
