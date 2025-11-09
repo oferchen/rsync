@@ -1,4 +1,4 @@
-use core::slice;
+use ::core::slice;
 
 use crate::legacy::{LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN};
 

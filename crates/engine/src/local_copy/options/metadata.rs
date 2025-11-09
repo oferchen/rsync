@@ -1,4 +1,4 @@
-use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
 
 use super::types::LocalCopyOptions;
 

@@ -1,5 +1,5 @@
 [package]
-name = "rsync-engine"
+name = "engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,12 +15,12 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-rsync-meta = { path = "../meta", default-features = false }
-rsync-filters = { path = "../filters" }
-rsync-checksums = { path = "../checksums" }
-rsync-compress = { path = "../compress" }
-rsync-protocol = { path = "../protocol" }
-rsync-bandwidth = { path = "../bandwidth" }
+metadata = { path = "../metadata", default-features = false }
+filters = { path = "../filters" }
+checksums = { path = "../checksums" }
+compress = { path = "../compress" }
+protocol = { path = "../protocol" }
+bandwidth = { path = "../bandwidth" }
 globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
 libc = { version = "0.2", optional = true }
@@ -28,15 +28,15 @@ memchr = "2.7"
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr"]
-xattr = ["rsync-meta/xattr"]
-acl = ["rsync-meta/acl", "dep:libc"]
-zstd = ["rsync-compress/zstd"]
-lz4 = ["rsync-compress/lz4"]
+xattr = ["metadata/xattr"]
+acl = ["metadata/acl", "dep:libc"]
+zstd = ["compress/zstd"]
+lz4 = ["compress/lz4"]
 
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
 xattr = "1.3"
-rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }
+bandwidth = { path = "../bandwidth", features = ["test-support"] }
 libc = "0.2"
-rsync-apple-fs = { path = "../apple-fs" }
+apple-fs = { path = "../apple-fs" }

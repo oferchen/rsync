@@ -3,10 +3,10 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use rsync_compress::algorithm::CompressionAlgorithm;
-use rsync_compress::zlib::CompressionLevel;
-use rsync_engine::SkipCompressList;
-use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use compress::algorithm::CompressionAlgorithm;
+use compress::zlib::CompressionLevel;
+use engine::SkipCompressList;
 
 use super::builder::ClientConfigBuilder;
 use super::{

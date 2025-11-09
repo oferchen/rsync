@@ -1,5 +1,5 @@
 use crate::error::NegotiationError;
-use core::num::{
+use ::core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, Wrapping,
 };
@@ -20,7 +20,7 @@ fn downgrades_when_peer_lacks_newest() {
 
 #[test]
 fn reports_no_mutual_protocol() {
-    let err = select_highest_mutual(core::iter::empty::<u8>()).unwrap_err();
+    let err = select_highest_mutual(::core::iter::empty::<u8>()).unwrap_err();
     assert_eq!(
         err,
         NegotiationError::NoMutualProtocol {

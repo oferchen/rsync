@@ -17,7 +17,7 @@ fn parse_lossy_ascii_bytes<'a, T, F>(line: &'a [u8], parser: F) -> Result<T, Neg
 where
     F: FnOnce(&'a str) -> Result<T, NegotiationError>,
 {
-    match core::str::from_utf8(line) {
+    match ::core::str::from_utf8(line) {
         Ok(text) => parser(text),
         Err(_) => Err(NegotiationError::MalformedLegacyGreeting {
             input: lossy_trimmed_input(line),

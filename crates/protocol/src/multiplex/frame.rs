@@ -1,4 +1,4 @@
-use core::ops::{Deref, DerefMut};
+use ::core::ops::{Deref, DerefMut};
 use std::io::{self, Write};
 
 use crate::envelope::{HEADER_LEN, MessageCode, MessageHeader};
@@ -38,7 +38,7 @@ impl MessageFrame {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::{MessageCode, MessageFrame};
+    /// use protocol::{MessageCode, MessageFrame};
     ///
     /// # fn example() -> std::io::Result<()> {
     /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;
@@ -126,7 +126,7 @@ impl MessageFrame {
     ///
     /// ```
     /// # use std::io;
-    /// use rsync_protocol::{MessageCode, MessageFrame};
+    /// use protocol::{MessageCode, MessageFrame};
     ///
     /// # fn example() -> io::Result<()> {
     /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;
@@ -163,7 +163,7 @@ impl MessageFrame {
     ///
     /// ```
     /// # use std::io;
-    /// use rsync_protocol::{MessageCode, MessageFrame};
+    /// use protocol::{MessageCode, MessageFrame};
     ///
     /// # fn example() -> io::Result<()> {
     /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;

@@ -14,8 +14,8 @@
 
 #[cfg(all(target_os = "windows", target_env = "gnu"))]
 mod windows_gnu {
+    use ::core::mem::transmute;
     use core::ffi::{c_char, c_void};
-    use core::mem::transmute;
     use core::ptr;
     use core::sync::atomic::{AtomicUsize, Ordering};
 

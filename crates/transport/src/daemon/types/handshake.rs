@@ -1,7 +1,7 @@
 use super::parts::LegacyDaemonHandshakeParts;
 use crate::handshake_util::{RemoteProtocolAdvertisement, local_cap_reduced_protocol};
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
-use rsync_protocol::{
+use protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
 use std::collections::TryReserveError;
@@ -87,8 +87,8 @@ impl<R> LegacyDaemonHandshake<R> {
     /// Limit the daemon negotiation to protocol 29 even though the server banner advertises 31.
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::negotiate_legacy_daemon_session;
+    /// use protocol::ProtocolVersion;
+    /// use transport::negotiate_legacy_daemon_session;
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]

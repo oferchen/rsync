@@ -8,10 +8,10 @@ use super::{
     FilterRuleSpec, IconvSetting, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumChoice,
     TransferTimeout,
 };
-use rsync_compress::algorithm::CompressionAlgorithm;
-use rsync_compress::zlib::CompressionLevel;
-use rsync_engine::SkipCompressList;
-use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
+use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
+use compress::algorithm::CompressionAlgorithm;
+use compress::zlib::CompressionLevel;
+use engine::SkipCompressList;
 
 /// Builder used to assemble a [`ClientConfig`].
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

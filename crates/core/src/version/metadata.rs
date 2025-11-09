@@ -1,5 +1,5 @@
 use crate::branding::Brand;
-use rsync_protocol::ProtocolVersion;
+use protocol::ProtocolVersion;
 use std::fmt::{self, Write as FmtWrite};
 use std::string::String;
 
@@ -22,7 +22,7 @@ use super::constants::{
 /// # Examples
 ///
 /// ```
-/// use rsync_core::version::{version_metadata, RUST_VERSION, SOURCE_URL};
+/// use core::version::{version_metadata, RUST_VERSION, SOURCE_URL};
 ///
 /// let metadata = version_metadata();
 /// let banner = metadata.standard_banner();

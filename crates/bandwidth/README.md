@@ -1,6 +1,6 @@
-# rsync-bandwidth
+# bandwidth
 
-`rsync-bandwidth` centralises the parsing and pacing logic that backs
+`bandwidth` centralises the parsing and pacing logic that backs
 [`rsync`'s `--bwlimit` option](https://download.samba.org/pub/rsync/rsync.html).
 Higher level crates reuse the utilities exposed here so both the client and
 daemon share identical validation and throttling behaviour.
@@ -59,7 +59,7 @@ boilerplate. Convenience accessors such as `snapshot`, `last_duration`, and
 ## Example
 
 ```rust
-use rsync_bandwidth::{parse_bandwidth_argument, BandwidthLimiter};
+use bandwidth::{parse_bandwidth_argument, BandwidthLimiter};
 use std::num::NonZeroU64;
 
 let limit = parse_bandwidth_argument("8M").expect("valid limit")
@@ -76,8 +76,8 @@ chunks to reduce context switches.
 
 ## See also
 
-- [`rsync-core`](https://docs.rs/rsync-core/) and
-  [`rsync-daemon`](https://docs.rs/rsync-daemon/) for integration points that
+- [`core`](https://docs.rs/core/) and
+  [`daemon`](https://docs.rs/daemon/) for integration points that
   orchestrate parsing, transport, and pacing.
-- [`rsync-protocol`](https://docs.rs/rsync-protocol/) for message framing and
+- [`protocol`](https://docs.rs/protocol/) for message framing and
   version negotiation.

@@ -2,8 +2,8 @@ use crate::binary::BinaryHandshake;
 use crate::daemon::LegacyDaemonHandshake;
 use crate::handshake_util::RemoteProtocolAdvertisement;
 use crate::negotiation::{NegotiatedStream, TryMapInnerError};
-use core::convert::TryFrom;
-use rsync_protocol::{
+use ::core::convert::TryFrom;
+use protocol::{
     LegacyDaemonGreetingOwned, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
 use std::collections::TryReserveError;
@@ -129,8 +129,8 @@ impl<R> SessionHandshake<R> {
     /// Force the session to run at protocol 29 despite the peer advertising 31.
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::negotiate_session;
+    /// use protocol::ProtocolVersion;
+    /// use transport::negotiate_session;
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]
@@ -249,8 +249,8 @@ impl<R> SessionHandshake<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::negotiate_session;
+    /// use protocol::ProtocolVersion;
+    /// use transport::negotiate_session;
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]

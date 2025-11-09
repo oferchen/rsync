@@ -1,6 +1,6 @@
-# `rsync_protocol`
+# `protocol`
 
-`rsync_protocol` implements the negotiation and multiplexing primitives required by the
+`protocol` implements the negotiation and multiplexing primitives required by the
 Rust `rsync` implementation. The crate mirrors upstream rsync 3.4.1 behaviour so higher
 layers can negotiate protocol versions, interpret legacy daemon banners, and exchange
 multiplexed frames without depending on the original C sources.
@@ -51,7 +51,7 @@ negotiation. The helper behaves exactly like upstream rsync's `io.c:check_protok
 classifying the session based on the first byte.
 
 ```rust
-use rsync_protocol::{detect_negotiation_prologue, NegotiationPrologue};
+use protocol::{detect_negotiation_prologue, NegotiationPrologue};
 
 assert_eq!(
     detect_negotiation_prologue(b"@RSYNCD: 30.0\n"),
@@ -67,7 +67,7 @@ Once the negotiation style is known, the highest mutually supported protocol can
 derived from the peer advertisement.
 
 ```rust
-use rsync_protocol::{select_highest_mutual, ProtocolVersion};
+use protocol::{select_highest_mutual, ProtocolVersion};
 
 let negotiated = select_highest_mutual([32, 31]).expect("mutual version exists");
 assert_eq!(negotiated, ProtocolVersion::NEWEST);
@@ -80,7 +80,7 @@ buffered prefix, allowing callers to reuse it without copying more data than ups
 rsync would have consumed.
 
 ```rust
-use rsync_protocol::{
+use protocol::{
     NegotiationPrologue, NegotiationPrologueSniffer, parse_legacy_daemon_greeting,
 };
 use std::io::{Cursor, Read};
@@ -105,13 +105,13 @@ assert_eq!(full_line, b"@RSYNCD: 31.0\n");
 assert_eq!(
     parse_legacy_daemon_greeting(std::str::from_utf8(&full_line).unwrap())
         .expect("banner is well-formed"),
-    rsync_protocol::ProtocolVersion::from_supported(31).unwrap()
+    protocol::ProtocolVersion::from_supported(31).unwrap()
 );
 ```
 
 ## See also
 
-- [`rsync_transport`](https://docs.rs/rsync-transport) for transport wrappers that reuse
+- [`transport`](https://docs.rs/transport) for transport wrappers that reuse
   the sniffers and parsers exposed here.
-- [`rsync_core`](https://docs.rs/rsync-core) for message formatting utilities that rely on
+- [`core`](https://docs.rs/core) for message formatting utilities that rely on
   negotiated protocol numbers.

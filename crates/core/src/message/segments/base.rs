@@ -19,7 +19,7 @@ use super::super::MAX_MESSAGE_SEGMENTS;
 /// Convert the segments into a slice suitable for [`write_vectored`](std::io::Write::write_vectored).
 ///
 /// ```
-/// use rsync_core::{
+/// use core::{
 ///     message::{Message, MessageScratch, Role},
 ///     message_source,
 /// };
@@ -80,7 +80,7 @@ impl<'a> MessageSegments<'a> {
     /// Iterate over the segments to compute their cumulative length.
     ///
     /// ```
-    /// use rsync_core::{
+    /// use core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };
@@ -112,7 +112,7 @@ impl<'a> MessageSegments<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::{
+    /// use core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };
@@ -154,7 +154,7 @@ impl<'a> MessageSegments<'a> {
     /// Iterate mutably over the slices and confirm they are all non-empty.
     ///
     /// ```
-    /// use rsync_core::{
+    /// use core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };

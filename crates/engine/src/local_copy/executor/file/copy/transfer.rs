@@ -25,7 +25,7 @@ use crate::local_copy::sync_acls_if_requested;
 #[cfg(feature = "xattr")]
 use crate::local_copy::sync_xattrs_if_requested;
 
-use rsync_meta::{MetadataOptions, apply_file_metadata_with_options};
+use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
 use super::super::super::super::COPY_BUFFER_SIZE;
 use super::super::append::{AppendMode, determine_append_mode};

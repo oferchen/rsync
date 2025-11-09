@@ -1,4 +1,4 @@
-use core::slice;
+use ::core::slice;
 use std::collections::TryReserveError;
 use std::io::{self, Read};
 

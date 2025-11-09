@@ -1,5 +1,5 @@
 [package]
-name = "rsync-embedding"
+name = "embedding"
 version.workspace = true
 edition = "2024"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
@@ -14,6 +14,6 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-rsync-cli = { path = "../cli" }
-rsync-daemon = { path = "../daemon" }
-rsync-core = { path = "../core" }
+cli = { path = "../cli" }
+daemon = { path = "../daemon" }
+core = { path = "../core" }

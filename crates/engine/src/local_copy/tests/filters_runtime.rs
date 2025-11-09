@@ -14,7 +14,7 @@ fn execute_respects_exclude_filter() {
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
         .expect("compile filters");
     let options = LocalCopyOptions::default().filters(Some(filters));
 
@@ -48,7 +48,7 @@ fn execute_prunes_empty_directories_when_enabled() {
         dest_without_prune.clone().into_os_string(),
     ];
     let plan_without = LocalCopyPlan::from_operands(&operands_without).expect("plan");
-    let filters_without = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+    let filters_without = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
         .expect("compile filters");
     let options_without = LocalCopyOptions::default().filters(Some(filters_without));
     let summary_without = plan_without
@@ -60,7 +60,7 @@ fn execute_prunes_empty_directories_when_enabled() {
         dest_with_prune.clone().into_os_string(),
     ];
     let plan_with = LocalCopyPlan::from_operands(&operands_with).expect("plan");
-    let filters_with = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+    let filters_with = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
         .expect("compile filters");
     let options_with = LocalCopyOptions::default()
         .filters(Some(filters_with))
@@ -125,8 +125,8 @@ fn execute_respects_include_filter_override() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters = FilterSet::from_rules([
-        rsync_filters::FilterRule::exclude("*.tmp"),
-        rsync_filters::FilterRule::include("keep.tmp"),
+        filters::FilterRule::exclude("*.tmp"),
+        filters::FilterRule::include("keep.tmp"),
     ])
     .expect("compile filters");
     let options = LocalCopyOptions::default().filters(Some(filters));
@@ -270,7 +270,7 @@ fn dir_merge_clear_keyword_discards_previous_rules() {
 
     assert_eq!(entries.rules.len(), 1);
     assert!(entries.rules.iter().any(|rule| {
-        rule.pattern() == "skip" && matches!(rule.action(), rsync_filters::FilterAction::Exclude)
+        rule.pattern() == "skip" && matches!(rule.action(), filters::FilterAction::Exclude)
     }));
     assert!(entries.exclude_if_present.is_empty());
 }

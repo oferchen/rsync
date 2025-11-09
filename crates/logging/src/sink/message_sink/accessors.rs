@@ -1,7 +1,7 @@
 use super::MessageSink;
 use crate::LineModeGuard;
 use crate::line_mode::LineMode;
-use rsync_core::{branding::Brand, message::MessageScratch};
+use core::{branding::Brand, message::MessageScratch};
 
 impl<W> MessageSink<W> {
     /// Returns a shared reference to the underlying writer.

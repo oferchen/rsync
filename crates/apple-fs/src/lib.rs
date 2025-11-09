@@ -75,7 +75,7 @@ mod unix {
 ///     .as_nanos();
 /// let path = env::temp_dir().join(format!("rsync_fifo_{unique}"));
 /// # let _ = fs::remove_file(&path);
-/// rsync_apple_fs::mkfifo(&path, 0o600).unwrap();
+/// apple_fs::mkfifo(&path, 0o600).unwrap();
 /// let metadata = fs::metadata(&path).unwrap();
 /// assert!(metadata.file_type().is_fifo());
 /// fs::remove_file(&path).unwrap();
@@ -112,7 +112,7 @@ pub fn mkfifo(path: &Path, mode: libc::mode_t) -> io::Result<()> {
 ///     .as_nanos();
 /// let path = env::temp_dir().join(format!("rsync_mknod_{unique}"));
 /// # let _ = fs::remove_file(&path);
-/// rsync_apple_fs::mknod(&path, libc::S_IFIFO | 0o600, 0).unwrap();
+/// apple_fs::mknod(&path, libc::S_IFIFO | 0o600, 0).unwrap();
 /// let metadata = fs::metadata(&path).unwrap();
 /// assert!(metadata.file_type().is_fifo());
 /// fs::remove_file(&path).unwrap();

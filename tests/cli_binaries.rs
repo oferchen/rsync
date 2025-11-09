@@ -1,4 +1,4 @@
-use rsync_core::version::{
+use core::version::{
     DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_PROGRAM_NAME, PROGRAM_NAME,
 };
 use std::collections::BTreeSet;

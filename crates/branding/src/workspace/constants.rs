@@ -18,7 +18,7 @@ pub const BRAND: &str = crate::generated::BRAND;
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::brand(), workspace::metadata().brand());
 /// ```
@@ -40,7 +40,7 @@ pub const UPSTREAM_VERSION: &str = crate::generated::UPSTREAM_VERSION;
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::upstream_version(), workspace::metadata().upstream_version());
 /// ```
@@ -61,7 +61,7 @@ pub const RUST_VERSION: &str = crate::generated::RUST_VERSION;
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::rust_version(), workspace::metadata().rust_version());
 /// ```
@@ -82,7 +82,7 @@ pub const CLIENT_PROGRAM_NAME: &str = crate::generated::CLIENT_PROGRAM_NAME;
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::client_program_name(), workspace::metadata().client_program_name());
 /// ```
@@ -100,7 +100,7 @@ pub const DAEMON_PROGRAM_NAME: &str = crate::generated::DAEMON_PROGRAM_NAME;
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::daemon_program_name(), workspace::metadata().daemon_program_name());
 /// ```
@@ -118,7 +118,7 @@ pub const LEGACY_CLIENT_PROGRAM_NAME: &str = crate::generated::LEGACY_CLIENT_PRO
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::legacy_client_program_name(), workspace::metadata().legacy_client_program_name());
 /// ```
@@ -136,7 +136,7 @@ pub const LEGACY_DAEMON_PROGRAM_NAME: &str = crate::generated::LEGACY_DAEMON_PRO
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::legacy_daemon_program_name(), workspace::metadata().legacy_daemon_program_name());
 /// ```
@@ -177,7 +177,7 @@ pub const SOURCE_URL: &str = crate::generated::SOURCE_URL;
 /// # Examples
 ///
 /// ```
-/// use rsync_branding::workspace;
+/// use branding::workspace;
 ///
 /// assert_eq!(workspace::source_url(), workspace::metadata().source_url());
 /// ```

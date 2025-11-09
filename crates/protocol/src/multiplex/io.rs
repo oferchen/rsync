@@ -25,7 +25,7 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
 /// The helper mirrors [`crate::send_msg`] but allows callers that already decoded or constructed a
 /// [`MessageFrame`] to transmit it without manually splitting the frame into its tag and payload.
 /// The payload length is recomputed through [`MessageFrame::header`] to catch mutations performed via
-/// [`core::ops::DerefMut`], and the upstream-compatible encoding is reused through the same vectored write
+/// [`::core::ops::DerefMut`], and the upstream-compatible encoding is reused through the same vectored write
 /// path. [`MessageFrame::encode_into_writer`] forwards to this helper for ergonomic access from an
 /// owned frame.
 pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<()> {

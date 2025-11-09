@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use rsync_core::client::{ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode};
+use core::client::{ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode};
 
 use super::format::{
     compute_rate, describe_event_kind, event_matches_name_level, format_list_permissions,

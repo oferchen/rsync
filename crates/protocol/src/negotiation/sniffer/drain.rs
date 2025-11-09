@@ -1,4 +1,4 @@
-use core::mem;
+use ::core::mem;
 use std::collections::TryReserveError;
 use std::io::{self, IoSliceMut, Write};
 

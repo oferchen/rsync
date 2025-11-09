@@ -1,5 +1,5 @@
 use crate::local_copy::filter_program::{DirMergeOptions, ExcludeIfPresentRule};
-use rsync_filters::FilterRule;
+use filters::FilterRule;
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;

@@ -1,6 +1,6 @@
 use crate::handshake_util::{RemoteProtocolAdvertisement, local_cap_reduced_protocol};
 use crate::negotiation::{NegotiatedStream, NegotiatedStreamParts, TryMapInnerError};
-use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::collections::TryReserveError;
 
 use super::BinaryHandshakeParts;
@@ -87,8 +87,8 @@ impl<R> BinaryHandshake<R> {
     /// `rsync --protocol=29`.
     ///
     /// ```
-    /// use rsync_protocol::ProtocolVersion;
-    /// use rsync_transport::negotiate_binary_session;
+    /// use protocol::ProtocolVersion;
+    /// use transport::negotiate_binary_session;
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]

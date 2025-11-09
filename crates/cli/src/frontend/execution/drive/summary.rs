@@ -3,14 +3,14 @@
 use std::fs::File;
 use std::io::{self, Write};
 
-use rsync_core::{
+use core::{
     client::{
         ClientConfig, ClientOutcome, ClientProgressObserver, ClientSummary, HumanReadableMode,
         RemoteFallbackArgs, RemoteFallbackContext, run_client_or_fallback,
     },
     message::Message,
 };
-use rsync_logging::MessageSink;
+use logging::MessageSink;
 
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},

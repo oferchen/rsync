@@ -1,7 +1,7 @@
 use std::fs;
 use std::time::SystemTime;
 
-use rsync_meta::MetadataOptions;
+use ::metadata::MetadataOptions;
 
 /// Describes the attributes that changed for a recorded local-copy action.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

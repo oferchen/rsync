@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_transport` houses the transport adapters used by the Rust `rsync`
+//! `transport` houses the transport adapters used by the Rust `rsync`
 //! implementation. The crate currently focuses on handshake detection and
 //! exposes wrappers that preserve bytes consumed while deciding between legacy
 //! ASCII and binary negotiations.
@@ -24,7 +24,7 @@
 //! - [`SessionHandshake`] builds on top of both flows to expose a high-level
 //!   session negotiation entry point.
 //!
-//! Each module is structured as a facade over the `rsync_protocol` crate, making
+//! Each module is structured as a facade over the `protocol` crate, making
 //! it possible to slot different transports (SSH stdio vs TCP daemon) behind the
 //! same interface.
 //!
@@ -49,7 +49,7 @@
 //! prefix.
 //!
 //! ```
-//! use rsync_transport::sniff_negotiation_stream;
+//! use transport::sniff_negotiation_stream;
 //! use std::io::Cursor;
 //!
 //! let cursor = Cursor::new(&b"@RSYNCD: 31.0\n"[..]);
@@ -61,8 +61,8 @@
 //!
 //! # See also
 //!
-//! - [`rsync_protocol`] for the negotiation parsers that back these adapters.
-//! - `rsync_core` for the message helpers used when transport-level errors are
+//! - [`protocol`] for the negotiation parsers that back these adapters.
+//! - `core` for the message helpers used when transport-level errors are
 //!   reported to the user.
 
 mod binary;

@@ -1,6 +1,6 @@
 use std::ffi::{OsStr, OsString};
 
-use rsync_core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
 
 /// Represents a parsed filter directive from the CLI.
 #[derive(Clone, Debug, Eq, PartialEq)]

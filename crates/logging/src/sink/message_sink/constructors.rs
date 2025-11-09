@@ -1,6 +1,6 @@
 use super::MessageSink;
 use crate::line_mode::LineMode;
-use rsync_core::{branding::Brand, message::MessageScratch};
+use core::{branding::Brand, message::MessageScratch};
 
 impl<W> MessageSink<W> {
     /// Creates a new sink that appends a newline after each rendered message.

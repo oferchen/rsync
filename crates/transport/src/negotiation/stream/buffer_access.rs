@@ -34,7 +34,7 @@ impl<R> NegotiatedStream<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
@@ -68,7 +68,7 @@ impl<R> NegotiatedStream<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
@@ -108,7 +108,7 @@ impl<R> NegotiatedStream<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
@@ -135,7 +135,7 @@ impl<R> NegotiatedStream<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
@@ -168,7 +168,7 @@ impl<R> NegotiatedStream<R> {
     /// Returns the sniffed negotiation prefix together with any buffered remainder.
     ///
     /// The tuple mirrors the view exposed by
-    /// [`rsync_protocol::NegotiationPrologueSniffer::buffered_split`],
+    /// [`protocol::NegotiationPrologueSniffer::buffered_split`],
     /// allowing higher layers to borrow both slices simultaneously when staging replay
     /// buffers. The first element contains the portion of the canonical prefix that has not
     /// yet been replayed, while the second slice exposes any additional payload that
@@ -194,7 +194,7 @@ impl<R> NegotiatedStream<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::{Cursor, Read};
     ///
     /// let mut stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
@@ -275,7 +275,7 @@ impl<R> NegotiatedStream<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::{Cursor, Read};
     ///
     /// let mut stream =
@@ -341,7 +341,7 @@ impl<R> NegotiatedStream<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::{Cursor, IoSliceMut};
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))

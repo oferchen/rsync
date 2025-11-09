@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use rsync_engine::local_copy::{
+use engine::local_copy::{
     LocalCopyAction, LocalCopyChangeSet, LocalCopyFileKind, LocalCopyMetadata, LocalCopyRecord,
     LocalCopyReport, LocalCopySummary,
 };

@@ -7,7 +7,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use rsync_checksums::strong::{Md4, Md5, Sha1, Sha256, Sha512};
+use checksums::strong::{Md4, Md5, Sha1, Sha256, Sha512};
 
 /// Digest algorithms supported for daemon challenge/response authentication.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

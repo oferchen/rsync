@@ -50,7 +50,7 @@ impl WalkError {
     /// # Examples
     ///
     /// ```
-    /// use rsync_walk::WalkBuilder;
+    /// use walk::WalkBuilder;
     ///
     /// let result = WalkBuilder::new("./definitely_missing_root").build();
     /// let error = match result {

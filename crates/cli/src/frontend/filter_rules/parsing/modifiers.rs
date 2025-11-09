@@ -1,6 +1,6 @@
-use rsync_core::client::{FilterRuleKind, FilterRuleSpec};
-use rsync_core::message::{Message, Role};
-use rsync_core::rsync_error;
+use core::client::{FilterRuleKind, FilterRuleSpec};
+use core::message::{Message, Role};
+use core::rsync_error;
 
 #[derive(Default)]
 pub(super) struct RuleModifierState {

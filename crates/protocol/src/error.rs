@@ -1,4 +1,4 @@
-use core::fmt;
+use ::core::fmt;
 
 use crate::version::ProtocolVersion;
 use std::io;

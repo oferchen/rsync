@@ -1,6 +1,6 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use rsync_protocol::{
+use protocol::{
     CompatibilityFlags, DigestListTokens, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonGreeting, LogCode, LogCodeConversionError, MessageCode, NegotiationError,
     NegotiationPrologue, NegotiationPrologueSniffer, ParseLogCodeError,
@@ -37,14 +37,14 @@ fn custom_advertised_types_can_participate_in_negotiation() {
 #[test]
 fn supported_protocol_exports_remain_consistent() {
     assert_eq!(
-        rsync_protocol::SUPPORTED_PROTOCOL_COUNT,
-        rsync_protocol::SUPPORTED_PROTOCOLS.len(),
+        protocol::SUPPORTED_PROTOCOL_COUNT,
+        protocol::SUPPORTED_PROTOCOLS.len(),
     );
 }
 
 #[test]
 fn supported_protocols_match_upstream_order() {
-    assert_eq!(rsync_protocol::SUPPORTED_PROTOCOLS, [32, 31, 30, 29, 28]);
+    assert_eq!(protocol::SUPPORTED_PROTOCOLS, [32, 31, 30, 29, 28]);
 }
 
 #[test]
@@ -70,48 +70,46 @@ fn named_protocol_version_constants_are_exposed() {
 
 #[test]
 fn message_header_constants_match_upstream_definition() {
-    assert_eq!(rsync_protocol::MESSAGE_HEADER_LEN, 4);
-    assert_eq!(rsync_protocol::MAX_PAYLOAD_LENGTH, 0x00FF_FFFF);
+    assert_eq!(protocol::MESSAGE_HEADER_LEN, 4);
+    assert_eq!(protocol::MAX_PAYLOAD_LENGTH, 0x00FF_FFFF);
 
-    let header = rsync_protocol::MessageHeader::new(rsync_protocol::MessageCode::Info, 0)
+    let header = protocol::MessageHeader::new(protocol::MessageCode::Info, 0)
         .expect("zero-length payloads are valid");
-    assert_eq!(header.encode().len(), rsync_protocol::MESSAGE_HEADER_LEN);
+    assert_eq!(header.encode().len(), protocol::MESSAGE_HEADER_LEN);
 }
 
 #[test]
 fn multiplex_base_constant_matches_upstream_definition() {
-    assert_eq!(rsync_protocol::MPLEX_BASE, 7);
+    assert_eq!(protocol::MPLEX_BASE, 7);
 }
 
 #[test]
 fn supported_protocol_exports_cover_range() {
     assert_eq!(
         ProtocolVersion::supported_protocol_numbers(),
-        &rsync_protocol::SUPPORTED_PROTOCOLS,
+        &protocol::SUPPORTED_PROTOCOLS,
     );
     assert_eq!(
         ProtocolVersion::supported_protocol_numbers_array(),
-        &rsync_protocol::SUPPORTED_PROTOCOLS,
+        &protocol::SUPPORTED_PROTOCOLS,
     );
     assert_eq!(
         ProtocolVersion::supported_versions_array(),
         &ProtocolVersion::SUPPORTED_VERSIONS,
     );
     assert_eq!(
-        rsync_protocol::SUPPORTED_PROTOCOLS_DISPLAY,
+        protocol::SUPPORTED_PROTOCOLS_DISPLAY,
         ProtocolVersion::supported_protocol_numbers_display(),
     );
-    assert!(
-        ProtocolVersion::supported_protocol_numbers_iter().eq(rsync_protocol::SUPPORTED_PROTOCOLS)
-    );
+    assert!(ProtocolVersion::supported_protocol_numbers_iter().eq(protocol::SUPPORTED_PROTOCOLS));
 
-    let exported_range = rsync_protocol::SUPPORTED_PROTOCOL_RANGE.clone();
+    let exported_range = protocol::SUPPORTED_PROTOCOL_RANGE.clone();
     assert_eq!(ProtocolVersion::supported_range(), exported_range.clone());
 
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, *exported_range.start());
     assert_eq!(newest, *exported_range.end());
-    assert_eq!(rsync_protocol::SUPPORTED_PROTOCOL_BOUNDS, (oldest, newest));
+    assert_eq!(protocol::SUPPORTED_PROTOCOL_BOUNDS, (oldest, newest));
 }
 
 #[test]
@@ -123,8 +121,8 @@ fn supported_protocol_iter_types_expose_exact_size_and_double_ended_iteration() 
         let clone = iter.clone();
         assert_eq!(clone.len(), iter.len(), "cloned iterator must preserve len");
         let expected = (
-            rsync_protocol::SUPPORTED_PROTOCOL_COUNT,
-            Some(rsync_protocol::SUPPORTED_PROTOCOL_COUNT),
+            protocol::SUPPORTED_PROTOCOL_COUNT,
+            Some(protocol::SUPPORTED_PROTOCOL_COUNT),
         );
         assert_eq!(iter.size_hint(), expected);
         assert!(iter.next().is_some(), "iterator must yield from the front");
@@ -259,9 +257,7 @@ fn supported_version_lookup_by_index_matches_slice() {
         assert_eq!(ProtocolVersion::from_supported_index(index), Some(version));
     }
 
-    assert!(
-        ProtocolVersion::from_supported_index(rsync_protocol::SUPPORTED_PROTOCOL_COUNT).is_none()
-    );
+    assert!(ProtocolVersion::from_supported_index(protocol::SUPPORTED_PROTOCOL_COUNT).is_none());
 }
 
 #[test]
@@ -291,9 +287,9 @@ fn protocol_version_as_usize_exposes_const_index() {
 
 #[test]
 fn legacy_daemon_prefix_constants_are_public() {
-    assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX, "@RSYNCD:");
-    assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX_LEN, 8);
-    assert_eq!(rsync_protocol::LEGACY_DAEMON_PREFIX_BYTES, b"@RSYNCD:");
+    assert_eq!(protocol::LEGACY_DAEMON_PREFIX, "@RSYNCD:");
+    assert_eq!(protocol::LEGACY_DAEMON_PREFIX_LEN, 8);
+    assert_eq!(protocol::LEGACY_DAEMON_PREFIX_BYTES, b"@RSYNCD:");
 }
 
 #[test]
