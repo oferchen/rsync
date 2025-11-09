@@ -17,7 +17,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 metadata = { path = "../metadata", default-features = false }
 filters = { path = "../filters" }
-checksums = { path = "../checksums" }
 compress = { path = "../compress" }
 protocol = { path = "../protocol" }
 bandwidth = { path = "../bandwidth" }
@@ -25,6 +24,12 @@ globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
 libc = { version = "0.2", optional = true }
 memchr = "2.7"
+
+[target.'cfg(not(windows))'.dependencies]
+checksums = { path = "../checksums" }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr"]
