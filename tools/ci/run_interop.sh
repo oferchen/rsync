@@ -9,13 +9,13 @@
 # - Starts oc-rsync --daemon on a non-privileged port by passing --port on the CLI
 set -euo pipefail
 
-if ! command -v git >/dev/null 2>&1; then
-  echo "git is required to build upstream rsync releases for interop tests" >&2
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required to fetch Ubuntu/Debian rsync packages" >&2
   exit 1
 fi
 
-if ! command -v curl >/dev/null 2>&1; then
-  echo "curl is required to fetch Ubuntu/Debian rsync packages" >&2
+if ! command -v tar >/dev/null 2>&1; then
+  echo "tar is required to unpack upstream rsync releases" >&2
   exit 1
 fi
 
@@ -29,6 +29,7 @@ upstream_install_root="${workspace_root}/target/interop/upstream-install"
 # Versions we test against
 versions=(3.0.9 3.1.3 3.4.1)
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
+rsync_tarball_base_url="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
 
 # Mirrors (can be overridden in CI)
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
@@ -222,6 +223,9 @@ try_fetch_deb_generic() {
 clone_upstream_source() {
   local version=$1
   local destination=$2
+  if ! command -v git >/dev/null 2>&1; then
+    return 1
+  fi
   local tag_candidates=("v${version}" "${version}")
 
   for tag in "${tag_candidates[@]}"; do
@@ -229,6 +233,37 @@ clone_upstream_source() {
       return 0
     fi
   done
+  return 1
+}
+
+fetch_upstream_tarball() {
+  local version=$1
+  local destination=$2
+  local tarball_url="${rsync_tarball_base_url}/rsync-${version}.tar.gz"
+  local tmp_tar
+  tmp_tar=$(mktemp)
+
+  if ! curl -fsSL "$tarball_url" -o "$tmp_tar"; then
+    rm -f "$tmp_tar"
+    return 1
+  fi
+
+  mkdir -p "$upstream_src_root"
+  rm -rf "$destination" "${upstream_src_root}/rsync-${version}"
+
+  if ! tar -xzf "$tmp_tar" -C "$upstream_src_root" >/dev/null 2>&1; then
+    rm -f "$tmp_tar"
+    rm -rf "$destination"
+    return 1
+  fi
+
+  rm -f "$tmp_tar"
+
+  if [[ -d "$destination" ]]; then
+    return 0
+  fi
+
+  rm -rf "$destination"
   return 1
 }
 
@@ -240,10 +275,13 @@ build_upstream_from_source() {
   rm -rf "$src_dir"
   mkdir -p "$upstream_src_root" "$upstream_install_root"
 
-  echo "Cloning upstream rsync ${version} from ${rsync_repo_url}"
-  if ! clone_upstream_source "$version" "$src_dir"; then
-    echo "Failed to clone upstream rsync ${version} from ${rsync_repo_url}" >&2
-    exit 1
+  echo "Fetching upstream rsync ${version} release tarball from ${rsync_tarball_base_url}"
+  if ! fetch_upstream_tarball "$version" "$src_dir"; then
+    echo "Falling back to cloning upstream rsync ${version} from ${rsync_repo_url}" >&2
+    if ! clone_upstream_source "$version" "$src_dir"; then
+      echo "Failed to obtain upstream rsync ${version} sources" >&2
+      exit 1
+    fi
   fi
 
   pushd "$src_dir" >/dev/null
