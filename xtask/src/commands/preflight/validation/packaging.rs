@@ -9,7 +9,26 @@ pub(crate) fn validate_packaging_assets(
     workspace: &Path,
     branding: &WorkspaceBranding,
 ) -> TaskResult<()> {
-    let packaging_root = workspace.join("packaging").join("etc").join("oc-rsyncd");
+    let brand = branding.brand.trim();
+    if brand.is_empty() {
+        return Err(validation_error("workspace brand label must not be empty"));
+    }
+
+    let config_dir_name = branding
+        .daemon_config_dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            validation_error(format!(
+                "daemon_config_dir '{}' must include a terminal component",
+                branding.daemon_config_dir.display()
+            ))
+        })?;
+
+    let packaging_root = workspace
+        .join("packaging")
+        .join("etc")
+        .join(config_dir_name);
     let config_name = file_name(branding.daemon_config.as_path(), "daemon_config")?;
     let secrets_name = file_name(branding.daemon_secrets.as_path(), "daemon_secrets")?;
 
@@ -30,7 +49,7 @@ pub(crate) fn validate_packaging_assets(
 
     validate_bin_manifest_packaging(workspace, branding)?;
     validate_systemd_unit(workspace, branding)?;
-    validate_default_env(workspace)?;
+    validate_default_env(workspace, branding)?;
 
     Ok(())
 }
@@ -156,10 +175,15 @@ fn validate_bin_manifest_packaging(
 }
 
 fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> TaskResult<()> {
+    let brand = branding.brand.trim();
+    ensure(!brand.is_empty(), "workspace brand label must not be empty")?;
+
+    let unit_label = format!("{brand}-rsyncd");
+    let unit_filename = format!("{unit_label}.service");
     let systemd_unit = workspace
         .join("packaging")
         .join("systemd")
-        .join("oc-rsyncd.service");
+        .join(&unit_filename);
     let unit_contents = fs::read_to_string(&systemd_unit).map_err(|error| {
         TaskError::Io(std::io::Error::new(
             error.kind(),
@@ -169,12 +193,13 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
 
     let unit_daemon_config = branding.daemon_config.display().to_string();
     let unit_daemon_secrets = branding.daemon_secrets.display().to_string();
+    let expected_description =
+        format!("Description={unit_label} daemon providing rsync protocol services");
     let unit_snippets = [
         branding.daemon_bin.as_str(),
         unit_daemon_config.as_str(),
         unit_daemon_secrets.as_str(),
         branding.source.as_str(),
-        "Description=oc-rsyncd",
         "OC_RSYNC_CONFIG",
         "OC_RSYNC_SECRETS",
         "RSYNCD_CONFIG",
@@ -185,12 +210,25 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
         ensure(
             unit_contents.contains(snippet),
             format!(
-                "systemd unit {} missing required snippet '{}': update packaging/systemd/oc-rsyncd.service",
+                "systemd unit {} missing required snippet '{}': update packaging/systemd/{}",
                 systemd_unit.display(),
-                snippet
+                snippet,
+                unit_filename
             ),
         )?;
     }
+
+    ensure(
+        unit_contents
+            .lines()
+            .any(|line| line.trim() == expected_description),
+        format!(
+            "systemd unit {} missing description '{}': update packaging/systemd/{}",
+            systemd_unit.display(),
+            expected_description,
+            unit_filename,
+        ),
+    )?;
 
     let expected_documentation_line = format!("Documentation={}", branding.source);
     ensure(
@@ -215,11 +253,15 @@ fn validate_systemd_unit(workspace: &Path, branding: &WorkspaceBranding) -> Task
     Ok(())
 }
 
-fn validate_default_env(workspace: &Path) -> TaskResult<()> {
+fn validate_default_env(workspace: &Path, branding: &WorkspaceBranding) -> TaskResult<()> {
+    let brand = branding.brand.trim();
+    ensure(!brand.is_empty(), "workspace brand label must not be empty")?;
+    let env_basename = format!("{brand}-rsyncd");
+
     let env_file = workspace
         .join("packaging")
         .join("default")
-        .join("oc-rsyncd");
+        .join(&env_basename);
     let env_contents = fs::read_to_string(&env_file).map_err(|error| {
         TaskError::Io(std::io::Error::new(
             error.kind(),
@@ -238,9 +280,10 @@ fn validate_default_env(workspace: &Path) -> TaskResult<()> {
         ensure(
             env_contents.contains(snippet),
             format!(
-                "environment defaults {} missing '{}': update packaging/default/oc-rsyncd",
+                "environment defaults {} missing '{}': update packaging/default/{}",
                 env_file.display(),
-                snippet
+                snippet,
+                env_basename
             ),
         )?;
     }
@@ -320,12 +363,13 @@ mod tests {
     fn write_unit_file(root: &Path, branding: &WorkspaceBranding, documentation: &str) {
         let systemd_dir = root.join("packaging").join("systemd");
         fs::create_dir_all(&systemd_dir).expect("create systemd directory");
-        let path = systemd_dir.join("oc-rsyncd.service");
+        let unit_label = format!("{}-rsyncd", branding.brand.trim());
+        let path = systemd_dir.join(format!("{unit_label}.service"));
         let config = branding.daemon_config.display().to_string();
         let secrets = branding.daemon_secrets.display().to_string();
         let contents = format!(
             "[Unit]\n\
-             Description=oc-rsyncd daemon providing rsync protocol services\n\
+             Description={unit_label} daemon providing rsync protocol services\n\
              Documentation={documentation}\n\
              [Service]\n\
              Environment=\"OC_RSYNC_CONFIG={config}\"\n\
