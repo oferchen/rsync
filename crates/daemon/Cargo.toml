@@ -24,9 +24,14 @@ dns-lookup = "1.0"
 core = { path = "../core" }
 protocol = { path = "../protocol" }
 logging = { path = "../logging" }
-checksums = { path = "../checksums" }
 fs2 = "0.4"
 sd-notify = { version = "0.4.5", optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+checksums = { path = "../checksums" }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
 
 [dev-dependencies]
 tempfile = "3.10"
