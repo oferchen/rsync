@@ -1,48 +1,61 @@
 name: brew-formula
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: write
   pull-requests: write
 
 env:
-  REPO: oferchen/rsync
+  FORMULA_PATH: Formula/oc-rsync.rb
 
 jobs:
-  generate-brew-formula:
+  update-brew:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Update Homebrew formula
-        id: update
-        env:
-          OC_RSYNC_REPO: ${{ env.REPO }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./tools/update-brew-formula.sh
+      - name: Extract tag
+        id: vars
+        run: |
+          TAG="${GITHUB_REF##*/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Upload formula artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: homebrew-formula
-          path: Formula/oc-rsync.rb
+      - name: Generate formula
+        run: |
+          VERSION="${{ steps.vars.outputs.tag }}"
+          mkdir -p Formula
+          cat > "${FORMULA_PATH}" <<EOF
+class OcRsync < Formula
+  desc "Pure-Rust rsync 3.4.1-compatible implementation"
+  homepage "https://github.com/oferchen/rsync"
+  version "${VERSION}"
+  url "https://github.com/oferchen/rsync/releases/download/${VERSION}/oc-rsync-macos-amd64.tar.gz"
+  sha256 "CHANGE_ME"
+  license "GPL-3.0-or-later"
 
-      - name: Create PR with formula
+  def install
+    bin.install "oc-rsync"
+    bin.install "oc-rsyncd"
+  end
+
+  test do
+    system "#{bin}/oc-rsync", "--version"
+  end
+end
+EOF
+
+      - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "chore: update Homebrew formula for ${{ steps.update.outputs.version }}"
-          title: "Update Homebrew formula for ${{ steps.update.outputs.version }}"
+          commit-message: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
+          title: "Update Homebrew formula for ${{ steps.vars.outputs.tag }}"
           body: "Auto-generated from release assets."
-          branch: "ci/brew-formula-${{ steps.update.outputs.version }}"
-          base: ${{ github.event.repository.default_branch || 'master' }}
-          add-paths: |
-            Formula/oc-rsync.rb
-          token: ${{ secrets.GITHUB_TOKEN }}
-          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          author: oferchen <2673257+oferchen@users.noreply.github.com>
-          delete-branch: false
+          branch: "ci/brew-formula-${{ steps.vars.outputs.tag }}"
+          base: master

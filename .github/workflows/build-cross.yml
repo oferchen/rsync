@@ -1,0 +1,99 @@
+name: build-cross
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # adjust to your actual bin names in the repo:
+  BINARIES: "oc-rsync oc-rsyncd"
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - target: x86_64-unknown-linux-gnu
+            os-arch: linux-amd64
+            linux: true
+          - target: aarch64-unknown-linux-gnu
+            os-arch: linux-aarch64
+            linux: true
+
+          # Windows (gnu)
+          - target: x86_64-pc-windows-gnu
+            os-arch: windows-amd64
+            linux: false
+          - target: aarch64-pc-windows-gnu
+            os-arch: windows-aarch64
+            linux: false
+
+          # macOS (Darwin)
+          - target: x86_64-apple-darwin
+            os-arch: macos-amd64
+            linux: false
+          - target: aarch64-apple-darwin
+            os-arch: macos-aarch64
+            linux: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ matrix.target }}
+
+      - name: Install zig
+        run: .github/scripts/install-zig.sh
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      - name: Build (release) with zig
+        run: |
+          for bin in $BINARIES; do
+            cargo zigbuild --release --target ${{ matrix.target }} --bin "$bin"
+          done
+
+      - name: Make tarball
+        run: .github/scripts/make-tarball.sh ${{ matrix.target }} oc-rsync-${{ matrix.os-arch }}.tar.gz "$BINARIES"
+
+      - name: Package Linux (.deb, .rpm)
+        if: matrix.linux
+        run: .github/scripts/package-linux.sh ${{ matrix.target }}
+
+      - name: Upload artifact (tar.gz)
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsync-${{ matrix.os-arch }}.tar.gz
+          path: oc-rsync-${{ matrix.os-arch }}.tar.gz
+
+      - name: Upload .deb
+        if: matrix.linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.os-arch }}
+          path: target/${{ matrix.target }}/debian/*.deb
+
+      - name: Upload .rpm
+        if: matrix.linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.os-arch }}
+          path: target/${{ matrix.target }}/generate-rpm/*.rpm
