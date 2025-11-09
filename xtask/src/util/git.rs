@@ -25,7 +25,7 @@ pub fn list_tracked_files(workspace: &Path) -> TaskResult<Vec<PathBuf>> {
         });
     }
 
-    Ok(parse_null_separated_paths(&output.stdout)?)
+    parse_null_separated_paths(&output.stdout)
 }
 
 /// Returns all Rust sources tracked or untracked within the repository via git.

@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync"
+name = "rsync-bin"
 version = "3.4.1-rust"
 edition = "2024"
 rust-version = "1.88"

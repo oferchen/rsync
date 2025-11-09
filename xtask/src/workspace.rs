@@ -103,6 +103,25 @@ pub fn load_workspace_branding(workspace: &Path) -> TaskResult<WorkspaceBranding
     parse_workspace_branding(&manifest)
 }
 
+/// Returns the name of the root package defined in `Cargo.toml`.
+pub fn root_package_name(workspace: &Path) -> TaskResult<String> {
+    let manifest = read_workspace_manifest(workspace)?;
+    let value = manifest.parse::<Value>().map_err(|error| {
+        TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))
+    })?;
+
+    let package_table = value
+        .get("package")
+        .and_then(Value::as_table)
+        .ok_or_else(|| metadata_error("missing [package] table"))?;
+
+    package_table
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| metadata_error("missing package.name entry"))
+}
+
 /// Parses the branding metadata from the provided manifest contents.
 pub fn parse_workspace_branding(manifest: &str) -> TaskResult<WorkspaceBranding> {
     let value = manifest.parse::<Value>().map_err(|error| {
@@ -356,5 +375,12 @@ source = "https://github.com/oferchen/rsync"
         let manifest = "[workspace]\n[workspace.metadata]\n";
         let error = parse_workspace_branding(manifest).unwrap_err();
         assert!(matches!(error, TaskError::Metadata(_)));
+    }
+
+    #[test]
+    fn root_package_name_matches_manifest() {
+        let workspace = super::workspace_root().expect("workspace root");
+        let name = super::root_package_name(&workspace).expect("package name");
+        assert_eq!(name, "rsync-bin");
     }
 }

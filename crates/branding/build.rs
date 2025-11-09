@@ -36,7 +36,7 @@ fn main() {
 }
 
 fn determine_build_revision(manifest_dir: &Path) -> String {
-    if let Some(override_revision) = env::var("OC_RSYNC_BUILD_OVERRIDE").ok() {
+    if let Ok(override_revision) = env::var("OC_RSYNC_BUILD_OVERRIDE") {
         let trimmed = override_revision.trim();
         if !trimmed.is_empty() {
             return trimmed.to_owned();
@@ -148,7 +148,7 @@ fn load_workspace_metadata(workspace_root: &Path) -> WorkspaceMetadata {
     }
 }
 
-fn str_field<'a>(table: &'a Table, key: &str) -> String {
+fn str_field(table: &Table, key: &str) -> String {
     table
         .get(key)
         .and_then(toml::Value::as_str)
