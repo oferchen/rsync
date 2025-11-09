@@ -86,8 +86,8 @@ cargo build --workspace
 cargo build --workspace --release
 
 # Version/help parity check
-cargo run -p oc-rsync -- --version
-cargo run -p oc-rsync -- --help
+cargo run --bin oc-rsync -- --version
+cargo run --bin oc-rsync -- --help
 ````
 
 ---
@@ -149,7 +149,7 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 
   ```bash
   # Replace host/module with your upstream rsyncd endpoint
-  cargo run -p oc-rsync -- -av rsync://host/module/ /tmp/sync-test
+  cargo run --bin oc-rsync -- -av rsync://host/module/ /tmp/sync-test
   ```
 
 ---
@@ -205,8 +205,8 @@ builds.
 Defaults aim to **mirror [rsync](https://rsync.samba.org/)** semantics. Flags/envs follow upstream names where feasible.
 
 ```bash
-cargo run -p oc-rsync -- --help
-cargo run -p oc-rsync -- --daemon --help
+cargo run --bin oc-rsync -- --help
+cargo run --bin oc-rsync -- --daemon --help
 ```
 
 ---
