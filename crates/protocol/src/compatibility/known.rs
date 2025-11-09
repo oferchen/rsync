@@ -134,7 +134,7 @@ impl KnownCompatibilityFlag {
     ///
     /// ```
     /// use std::str::FromStr;
-    /// use oc_rsync_protocol::KnownCompatibilityFlag;
+    /// use rsync_protocol::KnownCompatibilityFlag;
     ///
     /// let parsed = KnownCompatibilityFlag::from_str("CF_INC_RECURSE").expect("known flag");
     /// assert_eq!(parsed, KnownCompatibilityFlag::IncRecurse);

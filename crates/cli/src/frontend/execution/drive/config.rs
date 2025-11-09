@@ -5,12 +5,12 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use oc_rsync_compress::algorithm::CompressionAlgorithm;
-use oc_rsync_core::client::{
+use rsync_compress::algorithm::CompressionAlgorithm;
+use rsync_core::client::{
     AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
     IconvSetting, SkipCompressList, StrongChecksumChoice, TransferTimeout,
 };
-use oc_rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
+use rsync_meta::{ChmodModifiers, GroupMapping, UserMapping};
 
 use crate::frontend::progress::{NameOutputLevel, ProgressMode};
 use crate::platform::{gid_t, uid_t};
@@ -20,7 +20,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) transfer_operands: Vec<OsString>,
     pub(crate) address_mode: AddressMode,
     pub(crate) connect_program: Option<OsString>,
-    pub(crate) bind_address: Option<oc_rsync_core::client::BindAddress>,
+    pub(crate) bind_address: Option<rsync_core::client::BindAddress>,
     pub(crate) sockopts: Option<OsString>,
     pub(crate) blocking_io: Option<bool>,
     pub(crate) dry_run: bool,
@@ -40,7 +40,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) bandwidth_limit: Option<BandwidthLimit>,
     pub(crate) compression_setting: CompressionSetting,
     pub(crate) compress: bool,
-    pub(crate) compression_level_override: Option<oc_rsync_compress::zlib::CompressionLevel>,
+    pub(crate) compression_level_override: Option<rsync_compress::zlib::CompressionLevel>,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
     pub(crate) open_noatime: bool,
     pub(crate) owner: bool,

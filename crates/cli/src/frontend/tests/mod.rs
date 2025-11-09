@@ -3,14 +3,14 @@
 use super::server;
 use super::*;
 use crate::password::set_password_stdin_input;
-use oc_rsync_checksums::strong::Md5;
-use oc_rsync_core::fallback::CLIENT_FALLBACK_ENV;
-use oc_rsync_core::{
+use rsync_checksums::strong::Md5;
+use rsync_core::fallback::CLIENT_FALLBACK_ENV;
+use rsync_core::{
     branding::manifest,
     client::{ClientEventKind, FilterRuleKind},
 };
-use oc_rsync_daemon as daemon_cli;
-use oc_rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
+use rsync_daemon as daemon_cli;
+use rsync_filters::{FilterRule as EngineFilterRule, FilterSet};
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom, Write};

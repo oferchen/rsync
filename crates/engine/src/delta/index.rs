@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
-use oc_rsync_checksums::RollingDigest;
+use rsync_checksums::RollingDigest;
 
 use crate::signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
@@ -123,7 +123,7 @@ mod tests {
     use super::*;
     use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
     use crate::signature::{SignatureAlgorithm, generate_file_signature};
-    use oc_rsync_protocol::ProtocolVersion;
+    use rsync_protocol::ProtocolVersion;
     use std::num::NonZeroU8;
 
     #[test]

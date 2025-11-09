@@ -14,7 +14,7 @@ use crate::local_copy::{
     follow_symlink_metadata, map_metadata_error, overrides::create_hard_link,
     remove_source_entry_if_requested,
 };
-use oc_rsync_meta::{MetadataOptions, apply_symlink_metadata_with_options};
+use rsync_meta::{MetadataOptions, apply_symlink_metadata_with_options};
 
 use super::super::{is_device, is_fifo};
 use super::{device::copy_device, fifo::copy_fifo};

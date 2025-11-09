@@ -23,15 +23,15 @@ where
         args,
         stdout,
         stderr,
-        oc_rsync_cli::run,
-        oc_rsync_cli::exit_code_from,
+        rsync_cli::run,
+        rsync_cli::exit_code_from,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::run_with;
-    use oc_rsync_core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME};
+    use rsync_core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME};
     use std::ffi::OsString;
     use std::process::ExitCode;
 

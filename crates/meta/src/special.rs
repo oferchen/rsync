@@ -114,7 +114,7 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
         .try_into()
         .map_err(|_| invalid_mode_error("create fifo", destination))?;
 
-    oc_rsync_apple_fs::mkfifo(destination, mode)
+    rsync_apple_fs::mkfifo(destination, mode)
         .map_err(|error| MetadataError::new("create fifo", destination, error))
 }
 
@@ -164,7 +164,7 @@ fn create_device_node_inner(
         .map_err(|_| invalid_device_error(destination))?;
     let mode = type_bits | permissions;
 
-    oc_rsync_apple_fs::mknod(destination, mode, device)
+    rsync_apple_fs::mknod(destination, mode, device)
         .map_err(|error| MetadataError::new("create device", destination, error))
 }
 

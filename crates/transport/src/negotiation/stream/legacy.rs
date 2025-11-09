@@ -2,7 +2,7 @@ use std::io::{self, Read};
 
 use memchr::memchr;
 
-use oc_rsync_protocol::{
+use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreeting, LegacyDaemonMessage, NegotiationPrologue,
     ProtocolVersion, parse_legacy_daemon_greeting_bytes,
     parse_legacy_daemon_greeting_bytes_details, parse_legacy_daemon_message_bytes,
@@ -15,8 +15,8 @@ use super::base::NegotiatedStream;
 impl<R: Read> NegotiatedStream<R> {
     /// Reads the legacy daemon greeting line after the negotiation prefix has been sniffed.
     ///
-    /// The method mirrors [`oc_rsync_protocol::read_legacy_daemon_line`] but operates on the
-    /// replaying stream wrapper instead of a [`oc_rsync_protocol::NegotiationPrologueSniffer`]. It expects the
+    /// The method mirrors [`rsync_protocol::read_legacy_daemon_line`] but operates on the
+    /// replaying stream wrapper instead of a [`rsync_protocol::NegotiationPrologueSniffer`]. It expects the
     /// negotiation to have been classified as legacy ASCII and the canonical `@RSYNCD:` prefix
     /// to remain fully buffered. Consuming any of the replay bytes before invoking the helper
     /// results in an [`io::ErrorKind::InvalidInput`] error so higher layers cannot accidentally
@@ -38,7 +38,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// Reads and parses the legacy daemon greeting using the replaying stream wrapper.
     ///
     /// The helper forwards to [`Self::read_legacy_daemon_line`] before delegating to
-    /// [`oc_rsync_protocol::parse_legacy_daemon_greeting_bytes`]. On success the negotiated
+    /// [`rsync_protocol::parse_legacy_daemon_greeting_bytes`]. On success the negotiated
     /// [`ProtocolVersion`] is returned while leaving any bytes after the newline buffered for
     /// subsequent reads.
     #[doc(alias = "@RSYNCD")]
@@ -66,7 +66,7 @@ impl<R: Read> NegotiatedStream<R> {
 
     /// Reads and parses a legacy daemon control message such as `@RSYNCD: OK` or `@RSYNCD: AUTHREQD`.
     ///
-    /// The helper mirrors [`oc_rsync_protocol::parse_legacy_daemon_message_bytes`] but operates on the
+    /// The helper mirrors [`rsync_protocol::parse_legacy_daemon_message_bytes`] but operates on the
     /// replaying transport wrapper so callers can continue using [`Read`] after the buffered
     /// negotiation prefix has been replayed. The returned [`LegacyDaemonMessage`] borrows the
     /// supplied buffer, matching the lifetime semantics of the parser from the protocol crate.
@@ -82,7 +82,7 @@ impl<R: Read> NegotiatedStream<R> {
     /// Reads and parses a legacy daemon error line of the form `@ERROR: ...`.
     ///
     /// Empty payloads are returned as `Some("")`, mirroring the behaviour of
-    /// [`oc_rsync_protocol::parse_legacy_error_message_bytes`]. Any parsing failure is converted into
+    /// [`rsync_protocol::parse_legacy_error_message_bytes`]. Any parsing failure is converted into
     /// [`io::ErrorKind::InvalidData`], matching the conversion performed by the protocol crate.
     #[doc(alias = "@ERROR")]
     pub fn read_and_parse_legacy_daemon_error_message<'a>(

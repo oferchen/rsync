@@ -53,7 +53,7 @@
 //! [`crate::fallback::FallbackOverride::resolve_or_default`].
 //!
 //! ```
-//! use oc_rsync_core::fallback::FallbackOverride;
+//! use rsync_core::fallback::FallbackOverride;
 //! use std::ffi::OsStr;
 //!
 //! let default = FallbackOverride::Default;
@@ -73,7 +73,7 @@
 //!
 //! - [`crate::client::run_remote_transfer_fallback`] for the primary consumer of
 //!   these helpers on the client side.
-//! - `oc_rsync_daemon::run` for daemon-side delegation.
+//! - `rsync_daemon::run` for daemon-side delegation.
 
 mod binary;
 
@@ -149,7 +149,7 @@ impl FallbackOverride {
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_core::fallback::{interpret_override_value, FallbackOverride};
+/// use rsync_core::fallback::{interpret_override_value, FallbackOverride};
 /// use std::ffi::OsStr;
 ///
 /// assert_eq!(

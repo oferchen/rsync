@@ -1,5 +1,5 @@
 use super::*;
-use oc_rsync_engine::signature::SignatureAlgorithm;
+use rsync_engine::signature::SignatureAlgorithm;
 
 impl ClientConfig {
     /// Reports whether strong checksum comparison should be used when evaluating updates.

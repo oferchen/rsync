@@ -119,7 +119,7 @@ fn load_workspace_metadata(workspace_root: &Path) -> WorkspaceMetadata {
             )
         });
 
-    let oc_rsync_table = metadata_table
+    let rsync_table = metadata_table
         .get("oc_rsync")
         .and_then(toml::Value::as_table)
         .unwrap_or_else(|| {
@@ -130,21 +130,21 @@ fn load_workspace_metadata(workspace_root: &Path) -> WorkspaceMetadata {
         });
 
     WorkspaceMetadata {
-        brand: str_field(oc_rsync_table, "brand"),
-        upstream_version: str_field(oc_rsync_table, "upstream_version"),
-        rust_version: str_field(oc_rsync_table, "rust_version"),
-        protocol: int_field(oc_rsync_table, "protocol"),
-        client_bin: str_field(oc_rsync_table, "client_bin"),
-        daemon_bin: str_field(oc_rsync_table, "daemon_bin"),
-        legacy_client_bin: str_field(oc_rsync_table, "legacy_client_bin"),
-        legacy_daemon_bin: str_field(oc_rsync_table, "legacy_daemon_bin"),
-        daemon_config_dir: str_field(oc_rsync_table, "daemon_config_dir"),
-        daemon_config: str_field(oc_rsync_table, "daemon_config"),
-        daemon_secrets: str_field(oc_rsync_table, "daemon_secrets"),
-        legacy_daemon_config_dir: str_field(oc_rsync_table, "legacy_daemon_config_dir"),
-        legacy_daemon_config: str_field(oc_rsync_table, "legacy_daemon_config"),
-        legacy_daemon_secrets: str_field(oc_rsync_table, "legacy_daemon_secrets"),
-        source: str_field(oc_rsync_table, "source"),
+        brand: str_field(rsync_table, "brand"),
+        upstream_version: str_field(rsync_table, "upstream_version"),
+        rust_version: str_field(rsync_table, "rust_version"),
+        protocol: int_field(rsync_table, "protocol"),
+        client_bin: str_field(rsync_table, "client_bin"),
+        daemon_bin: str_field(rsync_table, "daemon_bin"),
+        legacy_client_bin: str_field(rsync_table, "legacy_client_bin"),
+        legacy_daemon_bin: str_field(rsync_table, "legacy_daemon_bin"),
+        daemon_config_dir: str_field(rsync_table, "daemon_config_dir"),
+        daemon_config: str_field(rsync_table, "daemon_config"),
+        daemon_secrets: str_field(rsync_table, "daemon_secrets"),
+        legacy_daemon_config_dir: str_field(rsync_table, "legacy_daemon_config_dir"),
+        legacy_daemon_config: str_field(rsync_table, "legacy_daemon_config"),
+        legacy_daemon_secrets: str_field(rsync_table, "legacy_daemon_secrets"),
+        source: str_field(rsync_table, "source"),
     }
 }
 

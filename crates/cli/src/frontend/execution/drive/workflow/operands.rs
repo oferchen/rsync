@@ -1,8 +1,8 @@
 #![deny(unsafe_code)]
 
 use crate::frontend::arguments::ProgramName;
-use oc_rsync_core::{message::Role, rsync_exit_code, version::VersionInfoReport};
-use oc_rsync_logging::MessageSink;
+use rsync_core::{message::Role, rsync_exit_code, version::VersionInfoReport};
+use rsync_logging::MessageSink;
 use std::ffi::OsString;
 use std::io::Write;
 

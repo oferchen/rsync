@@ -1,7 +1,7 @@
 use std::io;
 use std::vec::Vec;
 
-use oc_rsync_protocol::NegotiationPrologue;
+use rsync_protocol::NegotiationPrologue;
 
 use super::super::parts::{NegotiatedStreamParts, TryMapInnerError};
 use super::super::{NegotiationBuffer, NegotiationBufferAccess};

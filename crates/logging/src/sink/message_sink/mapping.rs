@@ -7,7 +7,7 @@ impl<W> MessageSink<W> {
     ///
     /// The helper consumes the sink, applies the provided conversion to the
     /// underlying writer, and returns a new sink that reuses the previous
-    /// [`oc_rsync_core::message::MessageScratch`]. This mirrors patterns such as `BufWriter::into_inner`
+    /// [`rsync_core::message::MessageScratch`]. This mirrors patterns such as `BufWriter::into_inner`
     /// where callers often want to hand ownership of the buffered writer to a
     /// higher layer without reinitialising per-sink state.
     #[must_use]
@@ -57,7 +57,7 @@ impl<W> MessageSink<W> {
     /// The previous writer is returned to the caller so buffered diagnostics can be inspected or
     /// flushed before it is dropped. This avoids rebuilding the entire [`MessageSink`] when the
     /// destination changes—for example, when switching from standard output to a log file mid-run.
-    /// The method performs an in-place swap, keeping the existing [`oc_rsync_core::message::MessageScratch`] zeroed and
+    /// The method performs an in-place swap, keeping the existing [`rsync_core::message::MessageScratch`] zeroed and
     /// reusing it for subsequent writes.
     #[must_use = "the returned writer contains diagnostics produced before the replacement"]
     pub fn replace_writer(&mut self, mut writer: W) -> W {

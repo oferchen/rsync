@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::Path;
 
 use globset::{GlobBuilder, GlobMatcher};
-use oc_rsync_filters::{FilterAction, FilterRule};
+use rsync_filters::{FilterAction, FilterRule};
 
 use super::super::LocalCopyError;
 use super::rules::{DirMergeRule, ExcludeIfPresentRule};

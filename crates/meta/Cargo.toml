@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync-meta"
+name = "rsync-meta"
 version.workspace = true
 edition = "2024"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
@@ -21,7 +21,7 @@ libc = "0.2"
 xattr = { version = "1.6", optional = true }
 
 [target.'cfg(any(target_os = "ios", target_os = "macos", target_os = "tvos", target_os = "watchos"))'.dependencies]
-oc-rsync-apple-fs = { path = "../apple-fs" }
+rsync-apple-fs = { path = "../apple-fs" }
 
 [features]
 default = []

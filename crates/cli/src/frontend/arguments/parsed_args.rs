@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use oc_rsync_core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice};
+use rsync_core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice};
 
 use super::bandwidth::BandwidthArgument;
 use super::program_name::ProgramName;

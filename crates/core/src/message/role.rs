@@ -28,7 +28,7 @@ impl Role {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_core::message::Role;
+    /// use rsync_core::message::Role;
     ///
     /// let labels: Vec<&str> = Role::ALL
     ///     .into_iter()
@@ -57,7 +57,7 @@ impl Role {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_core::message::Role;
+    /// use rsync_core::message::Role;
     ///
     /// assert_eq!(Role::Sender.as_str(), "sender");
     /// assert_eq!(Role::Receiver.as_str(), "receiver");

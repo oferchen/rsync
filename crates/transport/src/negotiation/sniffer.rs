@@ -1,8 +1,6 @@
 use std::io::{self, Read};
 
-use oc_rsync_protocol::{
-    LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationPrologueSniffer,
-};
+use rsync_protocol::{LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationPrologueSniffer};
 
 use super::NegotiatedStream;
 

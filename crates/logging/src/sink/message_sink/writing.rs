@@ -1,6 +1,6 @@
 use super::MessageSink;
 use crate::line_mode::LineMode;
-use oc_rsync_core::message::{Message, MessageSegments};
+use rsync_core::message::{Message, MessageSegments};
 use std::borrow::Borrow;
 use std::io::{self, Write};
 

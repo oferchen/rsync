@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use oc_rsync_compress::algorithm::CompressionAlgorithm;
-use oc_rsync_compress::zlib::CompressionLevel;
+use rsync_compress::algorithm::CompressionAlgorithm;
+use rsync_compress::zlib::CompressionLevel;
 
 use super::types::LocalCopyOptions;
 use crate::local_copy::skip_compress::SkipCompressList;

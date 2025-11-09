@@ -19,8 +19,8 @@ use crate::frontend::{
         resolve_file_list_entries, resolve_iconv_setting, transfer_requires_remote,
     },
 };
-use oc_rsync_core::{client::HumanReadableMode, message::Role, rsync_error};
-use oc_rsync_logging::MessageSink;
+use rsync_core::{client::HumanReadableMode, message::Role, rsync_error};
+use rsync_logging::MessageSink;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;

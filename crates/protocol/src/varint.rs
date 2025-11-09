@@ -21,7 +21,7 @@
 //! without touching an I/O object:
 //!
 //! ```
-//! use oc_rsync_protocol::{decode_varint, encode_varint_to_vec};
+//! use rsync_protocol::{decode_varint, encode_varint_to_vec};
 //!
 //! let mut encoded = Vec::new();
 //! encode_varint_to_vec(255, &mut encoded);

@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use oc_rsync_core::{
+use rsync_core::{
     message::{Message, Role},
     rsync_error,
 };
