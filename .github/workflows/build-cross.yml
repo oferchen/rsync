@@ -1,4 +1,4 @@
-name: build-cross
+name: Build-cross
 
 on:
   push:
