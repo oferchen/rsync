@@ -1,8 +1,9 @@
+use super::DIST_PROFILE;
 use crate::error::{TaskError, TaskResult};
 use crate::workspace::WorkspaceBranding;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -259,11 +260,7 @@ pub(super) fn build_tarball(
     profile: &Option<OsString>,
     spec: &TarballSpec,
 ) -> TaskResult<()> {
-    let profile_name = tarball_profile_name(profile);
-    let target_dir = workspace
-        .join("target")
-        .join(spec.target_triple)
-        .join(&profile_name);
+    let skip_build = env::var_os("OC_RSYNC_PACKAGE_SKIP_BUILD").is_some();
 
     let extension = spec.binary_extension();
     let root_name = format!(
@@ -343,7 +340,7 @@ pub(super) fn build_tarball(
         }
 
         let file_name = format!("{name}{extension}");
-        let path = target_dir.join(&file_name);
+        let path = resolve_binary_path(workspace, spec, profile, skip_build, &file_name)?;
         ensure_tarball_source(&path)?;
         let destination = format!("{root_name}/{relative}");
         if !seen_destinations.insert(destination.clone()) {
@@ -363,6 +360,68 @@ fn tarball_profile_name(profile: &Option<OsString>) -> String {
         .as_ref()
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("debug"))
+}
+
+fn resolve_binary_path(
+    workspace: &Path,
+    spec: &TarballSpec,
+    profile: &Option<OsString>,
+    skip_build: bool,
+    file_name: &str,
+) -> TaskResult<PathBuf> {
+    let directories = tarball_binary_directories(workspace, spec, profile, skip_build);
+    let mut primary_candidate = None;
+
+    for directory in directories {
+        let candidate = directory.join(file_name);
+        if primary_candidate.is_none() {
+            primary_candidate = Some(candidate.clone());
+        }
+
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    let missing_path = primary_candidate.unwrap_or_else(|| {
+        workspace
+            .join("target")
+            .join(spec.target_triple)
+            .join(tarball_profile_name(profile))
+            .join(file_name)
+    });
+
+    Err(TaskError::Validation(format!(
+        "tarball source file missing: {}",
+        missing_path.display()
+    )))
+}
+
+fn tarball_binary_directories(
+    workspace: &Path,
+    spec: &TarballSpec,
+    profile: &Option<OsString>,
+    skip_build: bool,
+) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    let mut seen = HashSet::new();
+    let base = workspace.join("target").join(spec.target_triple);
+
+    let mut push_directory = |profile_name: String| {
+        if seen.insert(profile_name.clone()) {
+            directories.push(base.join(&profile_name));
+        }
+    };
+
+    push_directory(tarball_profile_name(profile));
+
+    if skip_build {
+        for fallback in [DIST_PROFILE, "release", "debug"] {
+            push_directory(fallback.to_string());
+        }
+    }
+
+    directories
 }
 
 fn ensure_tarball_source(path: &Path) -> TaskResult<()> {
@@ -440,6 +499,8 @@ mod tests {
     use super::*;
     use crate::test_support;
     use std::collections::BTreeMap;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn branding_with_cross_compile(
         linux_arches: &[&str],
@@ -501,5 +562,36 @@ mod tests {
             error,
             TaskError::Validation(message) if message.contains("unknown tarball target triple")
         ));
+    }
+
+    #[test]
+    fn resolve_binary_path_falls_back_to_release_when_build_skipped() {
+        let workspace = tempdir().expect("create workspace");
+        let release_dir = workspace
+            .path()
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join("release");
+        fs::create_dir_all(&release_dir).expect("create release directory");
+        let expected_binary = release_dir.join("oc-rsync");
+        fs::write(&expected_binary, b"binary").expect("write fake binary");
+
+        let spec = TarballSpec {
+            platform: TarballPlatform::Linux,
+            arch: "amd64",
+            metadata_arch: "x86_64",
+            target_triple: "x86_64-unknown-linux-gnu",
+        };
+
+        let resolved = resolve_binary_path(
+            workspace.path(),
+            &spec,
+            &Some(OsString::from(DIST_PROFILE)),
+            true,
+            "oc-rsync",
+        )
+        .expect("fallback resolves binary path");
+
+        assert_eq!(resolved, expected_binary);
     }
 }
