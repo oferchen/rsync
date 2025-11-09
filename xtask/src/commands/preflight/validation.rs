@@ -13,10 +13,8 @@ use packaging::file_name;
 pub(crate) use packaging::validate_packaging_assets;
 
 pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
-    ensure(
-        branding.brand == "oc",
-        format!("workspace brand must be 'oc', found {:?}", branding.brand),
-    )?;
+    let brand = branding.brand.trim();
+    ensure(!brand.is_empty(), "workspace brand label must not be empty")?;
     ensure(
         branding.upstream_version == "3.4.1",
         format!(
@@ -35,17 +33,18 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         branding.protocol == 32,
         format!("Supported protocol must be 32; found {}", branding.protocol),
     )?;
+    let expected_client = format!("{brand}-rsync");
     ensure(
-        branding.client_bin.starts_with("oc-"),
+        branding.client_bin == expected_client,
         format!(
-            "client_bin must start with 'oc-'; found {:?}",
+            "client_bin must be '{expected_client}'; found {:?}",
             branding.client_bin
         ),
     )?;
     ensure(
-        branding.daemon_bin.starts_with("oc-"),
+        branding.daemon_bin == expected_client,
         format!(
-            "daemon_bin must start with 'oc-'; found {:?}",
+            "daemon_bin must match client binary '{expected_client}'; found {:?}",
             branding.daemon_bin
         ),
     )?;
@@ -75,7 +74,7 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         ),
     )?;
 
-    let expected_dir_suffix = format!("{}-rsyncd", branding.brand);
+    let expected_dir_suffix = format!("{brand}-rsyncd");
     ensure(
         config_dir.file_name().and_then(|name| name.to_str()) == Some(expected_dir_suffix.as_str()),
         format!(
@@ -87,20 +86,20 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
 
     ensure(
         file_name(branding.daemon_config.as_path(), "daemon_config")?
-            == PathBuf::from(format!("{}-rsyncd.conf", branding.brand)),
+            == PathBuf::from(format!("{brand}-rsyncd.conf")),
         format!(
             "daemon_config {} must be named {}-rsyncd.conf",
             branding.daemon_config.display(),
-            branding.brand
+            brand
         ),
     )?;
     ensure(
         file_name(branding.daemon_secrets.as_path(), "daemon_secrets")?
-            == PathBuf::from(format!("{}-rsyncd.secrets", branding.brand)),
+            == PathBuf::from(format!("{brand}-rsyncd.secrets")),
         format!(
             "daemon_secrets {} must be named {}-rsyncd.secrets",
             branding.daemon_secrets.display(),
-            branding.brand
+            brand
         ),
     )?;
     ensure(
