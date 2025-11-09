@@ -1,6 +1,6 @@
 use std::io::{self, Cursor, Read, Write};
 
-use protocol::ProtocolVersion;
+use protocol::{CompatibilityFlags, ProtocolVersion};
 
 #[derive(Clone, Debug)]
 pub(super) struct MemoryTransport {
@@ -128,4 +128,15 @@ impl Write for CountingTransport {
 #[must_use]
 pub(super) fn handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
     u32::from(version.as_u8()).to_be_bytes()
+}
+
+#[must_use]
+pub(super) fn handshake_payload(version: ProtocolVersion, flags: CompatibilityFlags) -> Vec<u8> {
+    let mut payload = handshake_bytes(version).to_vec();
+    if version.uses_binary_negotiation() {
+        flags
+            .encode_to_vec(&mut payload)
+            .expect("compatibility encoding succeeds");
+    }
+    payload
 }

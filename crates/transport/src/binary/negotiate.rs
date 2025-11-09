@@ -1,7 +1,9 @@
 use crate::negotiation::{
     NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
-use protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use protocol::{
+    CompatibilityFlags, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
+};
 use std::cmp;
 use std::io::{self, Read, Write};
 
@@ -101,11 +103,21 @@ where
         }
     };
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);
+    let remote_compatibility_flags = if negotiated_protocol.uses_binary_negotiation() {
+        match CompatibilityFlags::read_from(&mut stream) {
+            Ok(flags) => flags,
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => CompatibilityFlags::EMPTY,
+            Err(err) => return Err(err),
+        }
+    } else {
+        CompatibilityFlags::EMPTY
+    };
     Ok(BinaryHandshake::from_components(
         remote_advertised,
         remote_protocol,
         desired_protocol,
         negotiated_protocol,
+        remote_compatibility_flags,
         stream,
     ))
 }
