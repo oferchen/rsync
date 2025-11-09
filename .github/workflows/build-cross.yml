@@ -26,9 +26,9 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os-arch: linux-amd64
             linux: true
-          - target: aarch64-unknown-linux-gnu
-            os-arch: linux-aarch64
-            linux: true
+          # - target: aarch64-unknown-linux-gnu
+          #   os-arch: linux-aarch64
+          #   linux: true
 
           # Windows (gnu)
           # - target: x86_64-pc-windows-gnu
