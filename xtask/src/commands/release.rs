@@ -176,7 +176,7 @@ pub fn usage() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace;
+    // use crate::workspace;
 
     #[test]
     fn parse_args_accepts_default_configuration() {
