@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 
-use crate::frontend::arguments::ProgramName;
-use rsync_core::{message::Role, rsync_exit_code, version::VersionInfoReport};
+use crate::frontend::{arguments::ProgramName, render_help};
+use rsync_core::{message::Role, rsync_exit_code};
 use rsync_logging::MessageSink;
 use std::ffi::OsString;
 use std::io::Write;
@@ -34,29 +34,5 @@ where
 }
 
 pub(crate) fn render_missing_operands_stdout(program_name: ProgramName) -> String {
-    let mut rendered = VersionInfoReport::for_client_brand(program_name.brand()).human_readable();
-    rendered.push('\n');
-    rendered.push_str(&render_missing_operands_synopsis(program_name));
-    rendered
-}
-
-fn render_missing_operands_synopsis(program_name: ProgramName) -> String {
-    let program = program_name.as_str();
-    format!(
-        concat!(
-            "{program} is a file transfer program capable of efficient remote update\n",
-            "via a fast differencing algorithm.\n",
-            "\n",
-            "Usage: {program} [OPTION]... SRC [SRC]... DEST\n",
-            "  or   {program} [OPTION]... SRC [SRC]... [USER@]HOST:DEST\n",
-            "  or   {program} [OPTION]... SRC [SRC]... [USER@]HOST::DEST\n",
-            "  or   {program} [OPTION]... SRC [SRC]... rsync://[USER@]HOST[:PORT]/DEST\n",
-            "  or   {program} [OPTION]... [USER@]HOST:SRC [DEST]\n",
-            "  or   {program} [OPTION]... [USER@]HOST::SRC [DEST]\n",
-            "  or   {program} [OPTION]... rsync://[USER@]HOST[:PORT]/SRC [DEST]\n",
-            "The ':' usages connect via remote shell, while '::' & 'rsync://' usages connect\n",
-            "to an rsync daemon, and require SRC or DEST to start with a module name.\n",
-        ),
-        program = program,
-    )
+    render_help(program_name)
 }
