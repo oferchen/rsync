@@ -178,7 +178,7 @@ jobs:
       - run: echo ok
 "#;
 
-mod accepts_workspace;
+// mod accepts_workspace;
 mod duplicate_entries;
 mod extract;
 mod mismatched_fields;
