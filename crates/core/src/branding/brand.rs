@@ -3,6 +3,7 @@
 use core::str::FromStr;
 use std::fmt;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use super::constants::{
     OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
@@ -70,8 +71,7 @@ impl FromStr for Brand {
             return Ok(Self::Oc);
         }
 
-        const OC_LEGACY_DAEMON_ALIAS: &str = "oc-rsyncd";
-        if matches_program_alias(s, OC_LEGACY_DAEMON_ALIAS) {
+        if matches_program_alias(s, oc_daemon_alias()) {
             return Ok(Self::Oc);
         }
 
@@ -182,6 +182,13 @@ fn resolve_default_brand(label: &str) -> Brand {
     label.parse::<Brand>().unwrap_or_else(|_| {
         panic!("unsupported workspace brand '{label}'; expected 'oc' or 'upstream' aliases")
     })
+}
+
+fn oc_daemon_alias() -> &'static str {
+    static ALIAS: OnceLock<String> = OnceLock::new();
+    ALIAS
+        .get_or_init(|| format!("{}d", OC_CLIENT_PROGRAM_NAME))
+        .as_str()
 }
 
 /// Returns the brand configured for this workspace build.
