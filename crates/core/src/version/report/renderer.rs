@@ -92,8 +92,8 @@ impl VersionInfoReport {
     /// # Examples
     ///
     /// ```rust
-    /// use oc_rsync_core::branding::Brand;
-    /// use oc_rsync_core::version::VersionInfoReport;
+    /// use rsync_core::branding::Brand;
+    /// use rsync_core::version::VersionInfoReport;
     ///
     /// let report = VersionInfoReport::for_client_brand(Brand::Oc);
     /// assert!(report
@@ -112,8 +112,8 @@ impl VersionInfoReport {
     /// # Examples
     ///
     /// ```rust
-    /// use oc_rsync_core::branding::Brand;
-    /// use oc_rsync_core::version::VersionInfoReport;
+    /// use rsync_core::branding::Brand;
+    /// use rsync_core::version::VersionInfoReport;
     ///
     /// let report = VersionInfoReport::for_daemon_brand(Brand::Oc);
     /// assert!(report

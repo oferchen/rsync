@@ -11,7 +11,7 @@ mod validation;
 pub(crate) use validation::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
 mod workflow;
 
-use oc_rsync_logging::MessageSink;
+use rsync_logging::MessageSink;
 use std::io::Write;
 
 pub(crate) use workflow::execute;

@@ -41,7 +41,7 @@ impl WalkEntry {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_walk::WalkBuilder;
+    /// use rsync_walk::WalkBuilder;
     /// # fn demo() -> Result<(), Box<dyn std::error::Error>> {
     /// let temp = tempfile::tempdir()?;
     /// let root = temp.path().join("root");

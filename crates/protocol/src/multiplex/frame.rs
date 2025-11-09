@@ -38,7 +38,7 @@ impl MessageFrame {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_protocol::{MessageCode, MessageFrame};
+    /// use rsync_protocol::{MessageCode, MessageFrame};
     ///
     /// # fn example() -> std::io::Result<()> {
     /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;
@@ -126,7 +126,7 @@ impl MessageFrame {
     ///
     /// ```
     /// # use std::io;
-    /// use oc_rsync_protocol::{MessageCode, MessageFrame};
+    /// use rsync_protocol::{MessageCode, MessageFrame};
     ///
     /// # fn example() -> io::Result<()> {
     /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;
@@ -163,7 +163,7 @@ impl MessageFrame {
     ///
     /// ```
     /// # use std::io;
-    /// use oc_rsync_protocol::{MessageCode, MessageFrame};
+    /// use rsync_protocol::{MessageCode, MessageFrame};
     ///
     /// # fn example() -> io::Result<()> {
     /// let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec())?;

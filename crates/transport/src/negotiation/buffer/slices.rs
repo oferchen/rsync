@@ -19,7 +19,7 @@ use super::errors::CopyToSliceError;
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_transport::sniff_negotiation_stream;
+/// use rsync_transport::sniff_negotiation_stream;
 /// use std::io::Cursor;
 ///
 /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))
@@ -105,7 +105,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     ///
     /// ```
     /// # use std::collections::TryReserveError;
-    /// use oc_rsync_transport::sniff_negotiation_stream;
+    /// use rsync_transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// # fn demo() -> Result<(), TryReserveError> {
@@ -153,7 +153,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_transport::sniff_negotiation_stream;
+    /// use rsync_transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let stream =
@@ -189,7 +189,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_transport::sniff_negotiation_stream;
+    /// use rsync_transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let stream =
@@ -201,7 +201,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     ///
     /// assert_eq!(copied, stream.buffered().len());
     /// assert_eq!(&buffer[..copied], &stream.buffered()[..]);
-    /// # Ok::<(), oc_rsync_transport::CopyToSliceError>(())
+    /// # Ok::<(), rsync_transport::CopyToSliceError>(())
     /// ```
     #[must_use = "inspect the result to discover how many bytes were copied"]
     pub fn copy_to_slice(&self, dest: &mut [u8]) -> Result<usize, CopyToSliceError> {
@@ -238,7 +238,7 @@ impl<'a> NegotiationBufferedSlices<'a> {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_transport::sniff_negotiation_stream;
+    /// use rsync_transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let mut stream =

@@ -19,7 +19,7 @@
 //!   validation (`--dry-run`) and extraneous-destination cleanup (`--delete`).
 //! - [`run_client`](crate::client::run_client) executes the client flow. The helper
 //!   delegates to
-//!   [`oc_rsync_engine::local_copy`] to mirror a simplified subset of upstream
+//!   [`rsync_engine::local_copy`] to mirror a simplified subset of upstream
 //!   behaviour by copying files, directories, and symbolic links on the local
 //!   filesystem while preserving permissions, timestamps, optional
 //!   ownership/group metadata, and sparse regions when requested. Delta
@@ -60,7 +60,7 @@
 //! path. The helper currently operates entirely on the local filesystem.
 //!
 //! ```
-//! use oc_rsync_core::client::{run_client, ClientConfig};
+//! use rsync_core::client::{run_client, ClientConfig};
 //! use std::fs;
 //! use tempfile::tempdir;
 //!
@@ -83,7 +83,7 @@
 //! - [`crate::message`] for the formatting utilities reused by the client
 //!   orchestration.
 //! - [`crate::version`] for the canonical version banner shared with the CLI.
-//! - [`oc_rsync_engine::local_copy`] for the transfer plan executed by this module.
+//! - [`rsync_engine::local_copy`] for the transfer plan executed by this module.
 
 mod config;
 mod error;
@@ -116,8 +116,8 @@ pub use self::run::{run_client, run_client_or_fallback, run_client_with_observer
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
 };
-pub use oc_rsync_engine::SkipCompressList;
-pub use oc_rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
+pub use rsync_engine::SkipCompressList;
+pub use rsync_engine::local_copy::{DirMergeEnforcedKind, DirMergeOptions};
 
 use std::time::Duration;
 

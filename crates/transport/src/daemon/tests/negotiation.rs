@@ -1,7 +1,7 @@
 use super::super::*;
 use super::common::MemoryTransport;
 use crate::RemoteProtocolAdvertisement;
-use oc_rsync_protocol::{
+use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
     format_legacy_daemon_greeting,
 };

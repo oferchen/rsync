@@ -1,6 +1,6 @@
-use oc_rsync_core::client::FilterRuleSpec;
-use oc_rsync_core::message::{Message, Role};
-use oc_rsync_core::rsync_error;
+use rsync_core::client::FilterRuleSpec;
+use rsync_core::message::{Message, Role};
+use rsync_core::rsync_error;
 
 use super::super::directive::FilterDirective;
 use super::helpers::trim_short_rule_remainder;

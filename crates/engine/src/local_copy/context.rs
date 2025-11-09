@@ -30,12 +30,12 @@ use super::{
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
-use oc_rsync_bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
-use oc_rsync_checksums::RollingChecksum;
-use oc_rsync_compress::algorithm::CompressionAlgorithm;
-use oc_rsync_compress::zlib::CompressionLevel;
-use oc_rsync_filters::FilterRule;
-use oc_rsync_meta::{MetadataOptions, apply_file_metadata_with_options};
+use rsync_bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
+use rsync_checksums::RollingChecksum;
+use rsync_compress::algorithm::CompressionAlgorithm;
+use rsync_compress::zlib::CompressionLevel;
+use rsync_filters::FilterRule;
+use rsync_meta::{MetadataOptions, apply_file_metadata_with_options};
 
 pub(crate) struct CopyOutcome {
     summary: LocalCopySummary,

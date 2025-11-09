@@ -373,7 +373,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time monotonic")
             .as_nanos();
-        std::env::temp_dir().join(format!("oc_rsync_xtask_{now}_{suffix}"))
+        std::env::temp_dir().join(format!("rsync_xtask_{now}_{suffix}"))
     }
 
     #[test]

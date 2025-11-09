@@ -8,8 +8,8 @@ use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signatu
 use crate::local_copy::{COPY_BUFFER_SIZE, LocalCopyError};
 use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signature};
 
-use oc_rsync_checksums::strong::{Md4, Md5, Sha1, Xxh3, Xxh3_128, Xxh64};
-use oc_rsync_protocol::ProtocolVersion;
+use rsync_checksums::strong::{Md4, Md5, Sha1, Xxh3, Xxh3_128, Xxh64};
+use rsync_protocol::ProtocolVersion;
 
 pub(crate) fn destination_is_newer(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
     match (source.modified(), destination.modified()) {

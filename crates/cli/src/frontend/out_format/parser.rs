@@ -6,8 +6,8 @@ use std::ffi::OsStr;
 use std::iter::Peekable;
 use std::str::Chars;
 
-use oc_rsync_core::message::{Message, Role};
-use oc_rsync_core::rsync_error;
+use rsync_core::message::{Message, Role};
+use rsync_core::rsync_error;
 
 use super::tokens::{
     HumanizeMode, MAX_PLACEHOLDER_WIDTH, OutFormat, OutFormatPlaceholder, OutFormatToken,

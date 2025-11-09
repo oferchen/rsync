@@ -1,4 +1,4 @@
-use oc_rsync_filters::FilterSet;
+use rsync_filters::FilterSet;
 
 use super::types::LocalCopyOptions;
 use crate::local_copy::filter_program::FilterProgram;

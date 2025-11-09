@@ -3,11 +3,9 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
 
-use oc_rsync_core::client::{
-    DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec,
-};
-use oc_rsync_core::message::{Message, Role};
-use oc_rsync_core::rsync_error;
+use rsync_core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use rsync_core::message::{Message, Role};
+use rsync_core::rsync_error;
 
 use crate::frontend::defaults::CVS_EXCLUDE_PATTERNS;
 

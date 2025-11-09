@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync-apple-fs"
+name = "rsync-apple-fs"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true

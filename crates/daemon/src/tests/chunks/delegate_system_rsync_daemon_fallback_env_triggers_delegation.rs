@@ -1,6 +1,6 @@
 #[cfg(unix)]
 #[test]
-fn delegate_system_oc_rsync_daemon_fallback_env_triggers_delegation() {
+fn delegate_system_rsync_daemon_fallback_env_triggers_delegation() {
     let _lock = ENV_LOCK.lock().unwrap();
     let temp = tempdir().expect("tempdir");
     let script_path = temp.path().join("rsync-wrapper.sh");

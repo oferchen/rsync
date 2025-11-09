@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-use oc_rsync_core::{
+use rsync_core::{
     message::{Message, Role},
     rsync_error,
 };

@@ -1,6 +1,6 @@
 use std::io::{self, Cursor, Read, Write};
 
-use oc_rsync_protocol::ProtocolVersion;
+use rsync_protocol::ProtocolVersion;
 
 #[derive(Clone, Debug)]
 pub(super) struct MemoryTransport {

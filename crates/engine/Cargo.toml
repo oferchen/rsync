@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync-engine"
+name = "rsync-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,12 +15,12 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-oc-rsync-meta = { path = "../meta", default-features = false }
-oc-rsync-filters = { path = "../filters" }
-oc-rsync-checksums = { path = "../checksums" }
-oc-rsync-compress = { path = "../compress" }
-oc-rsync-protocol = { path = "../protocol" }
-oc-rsync-bandwidth = { path = "../bandwidth" }
+rsync-meta = { path = "../meta", default-features = false }
+rsync-filters = { path = "../filters" }
+rsync-checksums = { path = "../checksums" }
+rsync-compress = { path = "../compress" }
+rsync-protocol = { path = "../protocol" }
+rsync-bandwidth = { path = "../bandwidth" }
 globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
 libc = { version = "0.2", optional = true }
@@ -28,15 +28,15 @@ memchr = "2.7"
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr"]
-xattr = ["oc-rsync-meta/xattr"]
-acl = ["oc-rsync-meta/acl", "dep:libc"]
-zstd = ["oc-rsync-compress/zstd"]
-lz4 = ["oc-rsync-compress/lz4"]
+xattr = ["rsync-meta/xattr"]
+acl = ["rsync-meta/acl", "dep:libc"]
+zstd = ["rsync-compress/zstd"]
+lz4 = ["rsync-compress/lz4"]
 
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
 xattr = "1.3"
-oc-rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }
+rsync-bandwidth = { path = "../bandwidth", features = ["test-support"] }
 libc = "0.2"
-oc-rsync-apple-fs = { path = "../apple-fs" }
+rsync-apple-fs = { path = "../apple-fs" }

@@ -14,7 +14,7 @@ use crate::local_copy::{
     LocalCopyError, LocalCopyMetadata, LocalCopyRecord, copy_device, copy_fifo, copy_file,
     copy_symlink, delete_extraneous_entries, follow_symlink_metadata, map_metadata_error,
 };
-use oc_rsync_meta::apply_directory_metadata_with_options;
+use rsync_meta::apply_directory_metadata_with_options;
 
 use super::super::non_empty_path;
 use super::planner::{EntryAction, apply_pre_transfer_deletions, plan_directory_entries};

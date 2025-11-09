@@ -1,13 +1,13 @@
 use std::io;
 
-use oc_rsync_compress::algorithm::CompressionAlgorithm;
-use oc_rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
+use rsync_compress::algorithm::CompressionAlgorithm;
+use rsync_compress::zlib::{CompressionLevel, CountingZlibEncoder};
 
 #[cfg(feature = "lz4")]
-use oc_rsync_compress::lz4::CountingLz4Encoder;
+use rsync_compress::lz4::CountingLz4Encoder;
 
 #[cfg(feature = "zstd")]
-use oc_rsync_compress::zstd::CountingZstdEncoder;
+use rsync_compress::zstd::CountingZstdEncoder;
 
 /// Wrapper around the active compression encoder used during local copies.
 #[allow(clippy::large_enum_variant)]

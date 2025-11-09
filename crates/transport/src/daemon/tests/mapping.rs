@@ -1,6 +1,6 @@
 use super::super::*;
 use super::common::{InstrumentedTransport, MemoryTransport};
-use oc_rsync_protocol::ProtocolVersion;
+use rsync_protocol::ProtocolVersion;
 use std::io::{self, Write};
 
 #[test]

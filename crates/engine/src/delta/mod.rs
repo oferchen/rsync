@@ -46,8 +46,8 @@
 //!
 //! ```
 //! use std::num::{NonZeroU32, NonZeroU8};
-//! use oc_rsync_engine::delta::{calculate_signature_layout, SignatureLayoutParams};
-//! use oc_rsync_protocol::ProtocolVersion;
+//! use rsync_engine::delta::{calculate_signature_layout, SignatureLayoutParams};
+//! use rsync_protocol::ProtocolVersion;
 //!
 //! let params = SignatureLayoutParams::new(
 //!     10 * 1024 * 1024,
@@ -89,7 +89,7 @@ pub use script::{DeltaScript, DeltaToken, apply_delta};
 use core::fmt;
 use core::num::{NonZeroU8, NonZeroU32};
 
-use oc_rsync_protocol::ProtocolVersion;
+use rsync_protocol::ProtocolVersion;
 
 /// Default block length used by rsync when files are small.
 const BLOCK_SIZE: u32 = 700;

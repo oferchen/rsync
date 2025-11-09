@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync-filters"
+name = "rsync-filters"
 version.workspace = true
 edition = "2024"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]

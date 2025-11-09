@@ -69,7 +69,7 @@ fn module_list_username_prefix_legacy_syntax_is_accepted() {
 fn module_list_uses_password_file_for_authentication() {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD_NO_PAD;
-    use oc_rsync_checksums::strong::Sha512;
+    use rsync_checksums::strong::Sha512;
     use tempfile::tempdir;
 
     let challenge = "pw-test";
@@ -122,7 +122,7 @@ fn module_list_uses_password_file_for_authentication() {
 fn module_list_reads_password_from_stdin() {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD_NO_PAD;
-    use oc_rsync_checksums::strong::Sha512;
+    use rsync_checksums::strong::Sha512;
 
     let challenge = "stdin-test";
     let secret = b"stdin-secret";

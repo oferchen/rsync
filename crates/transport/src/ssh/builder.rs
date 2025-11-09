@@ -117,7 +117,7 @@ impl SshCommand {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_transport::ssh::SshCommand;
+    /// use rsync_transport::ssh::SshCommand;
     /// use std::ffi::OsStr;
     ///
     /// let mut builder = SshCommand::new("files.example.com");

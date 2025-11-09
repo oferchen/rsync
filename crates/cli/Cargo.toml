@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync-cli"
+name = "rsync-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,20 +14,20 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr"]
-xattr = ["oc-rsync-core/xattr"]
-acl = ["oc-rsync-core/acl"]
-zstd = ["oc-rsync-core/zstd", "oc-rsync-compress/zstd"]
-lz4 = ["oc-rsync-core/lz4", "oc-rsync-compress/lz4"]
+xattr = ["rsync-core/xattr"]
+acl = ["rsync-core/acl"]
+zstd = ["rsync-core/zstd", "rsync-compress/zstd"]
+lz4 = ["rsync-core/lz4", "rsync-compress/lz4"]
 
 [dependencies]
 clap = { version = "4.5.17", features = ["std"] }
-oc-rsync-core = { path = "../core" }
-oc-rsync-logging = { path = "../logging" }
-oc-rsync-daemon = { path = "../daemon" }
-oc-rsync-protocol = { path = "../protocol" }
-oc-rsync-compress = { path = "../compress" }
-oc-rsync-meta = { path = "../meta" }
-oc-rsync-checksums = { path = "../checksums" }
+rsync-core = { path = "../core" }
+rsync-logging = { path = "../logging" }
+rsync-daemon = { path = "../daemon" }
+rsync-protocol = { path = "../protocol" }
+rsync-compress = { path = "../compress" }
+rsync-meta = { path = "../meta" }
+rsync-checksums = { path = "../checksums" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = "3.10"
 
@@ -39,9 +39,9 @@ assert_cmd = "2.0"
 predicates = "3.1"
 filetime = "0.2"
 tempfile = "3.10"
-oc-rsync-filters = { path = "../filters" }
+rsync-filters = { path = "../filters" }
 xattr = "1.6"
 rustix = { version = "0.38", features = ["fs"] }
 base64 = "0.22"
 libc = "0.2"
-oc-rsync-apple-fs = { path = "../apple-fs" }
+rsync-apple-fs = { path = "../apple-fs" }

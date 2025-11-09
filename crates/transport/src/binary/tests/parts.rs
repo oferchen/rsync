@@ -1,6 +1,6 @@
 use super::helpers::{MemoryTransport, handshake_bytes};
 use crate::RemoteProtocolAdvertisement;
-use oc_rsync_protocol::ProtocolVersion;
+use rsync_protocol::ProtocolVersion;
 use std::io::Write;
 
 #[test]

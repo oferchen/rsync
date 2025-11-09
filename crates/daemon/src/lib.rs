@@ -5,7 +5,7 @@
 
 //! # Overview
 //!
-//! `oc_rsync_daemon` provides the thin command-line front-end for the Rust `rsyncd`
+//! `rsync_daemon` provides the thin command-line front-end for the Rust `rsyncd`
 //! binary. The crate now exposes a deterministic daemon loop capable of
 //! accepting sequential legacy (`@RSYNCD:`) TCP connections, greeting each peer
 //! with protocol `32`, serving `#list` requests from an in-memory module table,
@@ -58,12 +58,12 @@
 //!
 //! # Invariants
 //!
-//! - Diagnostics are routed through [`oc_rsync_core::message`] so trailers and
+//! - Diagnostics are routed through [`rsync_core::message`] so trailers and
 //!   source locations follow workspace conventions.
 //! - `run` never panics. I/O failures propagate as exit code `1` with the
 //!   original error rendered verbatim.
 //! - [`DaemonError::exit_code`] always matches the exit code embedded within the
-//!   associated [`oc_rsync_core::message::Message`].
+//!   associated [`rsync_core::message::Message`].
 //! - `run_daemon` configures read and write timeouts on accepted sockets so
 //!   handshake deadlocks are avoided, mirroring upstream rsync's timeout
 //!   handling expectations.
@@ -79,13 +79,13 @@
 //! Render the `--version` banner into an in-memory buffer.
 //!
 //! ```
-//! use oc_rsync_daemon::run;
+//! use rsync_daemon::run;
 //!
 //! let mut stdout = Vec::new();
 //! let mut stderr = Vec::new();
 //! let status = run(
 //!     [
-//!         oc_rsync_core::branding::daemon_program_name(),
+//!         rsync_core::branding::daemon_program_name(),
 //!         "--version",
 //!     ],
 //!     &mut stdout,
@@ -101,7 +101,7 @@
 //! accepts a legacy connection, and responds with an explanatory error.
 //!
 //! ```
-//! use oc_rsync_daemon::{run_daemon, DaemonConfig};
+//! use rsync_daemon::{run_daemon, DaemonConfig};
 //! use std::io::{BufRead, BufReader, Write};
 //! use std::net::{TcpListener, TcpStream};
 //! use std::thread;

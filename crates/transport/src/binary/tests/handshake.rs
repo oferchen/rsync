@@ -1,7 +1,7 @@
 use super::super::BinaryHandshake;
 use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes};
 use crate::RemoteProtocolAdvertisement;
-use oc_rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
+use rsync_protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::io::{Read, Write};
 
 #[test]
