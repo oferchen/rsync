@@ -94,18 +94,34 @@ mod tests {
 
         assert_eq!(exit, ExitCode::FAILURE);
 
-        let stdout_text = String::from_utf8(stdout).expect("stdout is UTF-8");
-        assert!(
-            stdout_text.starts_with(&format!("{PROGRAM_NAME}  version")),
-            "usage preamble should begin with the canonical version banner"
+        let mut expected_stdout = Vec::new();
+        let mut expected_stderr = Vec::new();
+        let help_exit = rsync_cli::run(
+            [PROGRAM_NAME, "--help"],
+            &mut expected_stdout,
+            &mut expected_stderr,
+        );
+        assert_eq!(
+            help_exit, 0,
+            "--help should succeed for the canonical program name"
         );
         assert!(
-            stdout_text.contains("\nCapabilities:\n"),
-            "version banner should include the capabilities section"
+            expected_stderr.is_empty(),
+            "--help must not write diagnostics to stderr"
+        );
+        assert_eq!(
+            stdout, expected_stdout,
+            "empty invocation should mirror --help output"
+        );
+
+        let stdout_text = String::from_utf8(stdout.clone()).expect("stdout is UTF-8");
+        assert!(
+            stdout_text.starts_with(&format!("{PROGRAM_NAME} ")),
+            "help output should begin with the program banner"
         );
         assert!(
-            stdout_text.contains(&format!("Usage: {PROGRAM_NAME} [OPTION]")),
-            "usage synopsis should list transfer forms for the canonical program name"
+            stdout_text.contains(&format!("Usage: {PROGRAM_NAME} [-h]")),
+            "help output should include the usage synopsis"
         );
 
         let stderr_text = String::from_utf8(stderr).expect("stderr is UTF-8");
@@ -147,10 +163,31 @@ mod tests {
             "diagnostic should include the branded role trailer"
         );
 
-        let stdout_text = String::from_utf8(stdout).expect("stdout is UTF-8");
+        let mut expected_stdout = Vec::new();
+        let mut expected_stderr = Vec::new();
+        let help_exit = rsync_cli::run(
+            [LEGACY_PROGRAM_NAME, "--help"],
+            &mut expected_stdout,
+            &mut expected_stderr,
+        );
+        assert_eq!(help_exit, 0, "--help should succeed for the legacy brand");
         assert!(
-            stdout_text.starts_with(&format!("{LEGACY_PROGRAM_NAME}  version")),
+            expected_stderr.is_empty(),
+            "--help must not report diagnostics for legacy brand"
+        );
+        assert_eq!(
+            stdout, expected_stdout,
+            "legacy binary should mirror --help output"
+        );
+
+        let stdout_text = String::from_utf8(stdout.clone()).expect("stdout is UTF-8");
+        assert!(
+            stdout_text.starts_with(&format!("{LEGACY_PROGRAM_NAME} ")),
             "legacy binary should render usage banner with upstream prefix"
+        );
+        assert!(
+            stdout_text.contains(&format!("Usage: {LEGACY_PROGRAM_NAME} [-h]")),
+            "legacy help output should include the usage synopsis"
         );
     }
 }
