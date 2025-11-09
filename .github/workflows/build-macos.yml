@@ -22,7 +22,7 @@ jobs:
         platform:
           - name: darwin-x86_64
             enabled: true
-            runner: macos-14
+            runner: macos-latest
             target: x86_64-apple-darwin
             build_command: zigbuild
             build_daemon: true
@@ -33,7 +33,7 @@ jobs:
             generate_sbom: true
           - name: darwin-aarch64
             enabled: true
-            runner: macos-14
+            runner: macos-latest
             target: aarch64-apple-darwin
             build_command: zigbuild
             build_daemon: true
