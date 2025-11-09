@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# - Defaults to Zig 0.13.0 (known published release)
+# - Defaults to Zig 0.14.2 (known published release)
 # - Allows override via env: ZIG_VERSION, ZIG_OS, ZIG_ARCH
 # - Fails fast if download is not an .xz tarball
 # - Adds extracted Zig to $GITHUB_PATH for subsequent steps
 set -euo pipefail
 
 # Allow overrides from workflow env if needed
-ZIG_VERSION="${ZIG_VERSION:-0.13.0}"
+ZIG_VERSION="${ZIG_VERSION:-0.14.2}"
 ZIG_OS="${ZIG_OS:-linux}"
 ZIG_ARCH="${ZIG_ARCH:-x86_64}"
 
