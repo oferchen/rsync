@@ -2,7 +2,7 @@ mod access;
 mod copy;
 mod transform;
 
-use rsync_protocol::NegotiationPrologue;
+use protocol::NegotiationPrologue;
 
 use super::super::{NegotiationBuffer, NegotiationBufferAccess};
 
@@ -14,8 +14,8 @@ use super::super::{NegotiationBuffer, NegotiationBufferAccess};
 /// inspection or wrapping is complete.
 ///
 /// ```
-/// use rsync_protocol::NegotiationPrologue;
-/// use rsync_transport::sniff_negotiation_stream;
+/// use protocol::NegotiationPrologue;
+/// use transport::sniff_negotiation_stream;
 /// use std::io::{Cursor, Read};
 ///
 /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nreply".to_vec()))

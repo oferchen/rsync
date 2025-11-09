@@ -44,7 +44,7 @@ pub struct BrandManifest {
 /// consistent human-readable descriptions without duplicating string literals.
 ///
 /// ```
-/// use rsync_branding::branding::{manifest, Brand};
+/// use branding::branding::{manifest, Brand};
 ///
 /// let manifest = manifest();
 /// let oc = manifest.summary_for(Brand::Oc);

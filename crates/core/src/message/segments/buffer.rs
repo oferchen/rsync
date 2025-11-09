@@ -24,7 +24,7 @@ impl<'a> MessageSegments<'a> {
     ///
     /// ```
     /// # use std::collections::TryReserveError;
-    /// use rsync_core::{
+    /// use core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };
@@ -101,7 +101,7 @@ impl<'a> MessageSegments<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::{
+    /// use core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };
@@ -117,7 +117,7 @@ impl<'a> MessageSegments<'a> {
     ///
     /// assert_eq!(copied, segments.len());
     /// assert_eq!(buffer, message.to_bytes().unwrap());
-    /// # Ok::<(), rsync_core::message::CopyToSliceError>(())
+    /// # Ok::<(), core::message::CopyToSliceError>(())
     /// ```
     #[must_use = "callers should handle the number of copied bytes or the returned error"]
     pub fn copy_to_slice(&self, dest: &mut [u8]) -> Result<usize, CopyToSliceError> {
@@ -147,7 +147,7 @@ impl<'a> MessageSegments<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::{
+    /// use core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };

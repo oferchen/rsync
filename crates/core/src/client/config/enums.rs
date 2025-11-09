@@ -7,8 +7,8 @@ use crate::{
     message::{Message, Role},
     rsync_error,
 };
-use rsync_compress::zlib::{CompressionLevel, CompressionLevelError};
-use rsync_engine::signature::SignatureAlgorithm;
+use compress::zlib::{CompressionLevel, CompressionLevelError};
+use engine::signature::SignatureAlgorithm;
 
 /// Describes the timeout configuration applied to network operations.
 ///

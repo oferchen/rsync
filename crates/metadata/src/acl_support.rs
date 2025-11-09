@@ -43,10 +43,10 @@
 //! ```rust,ignore
 //! # #[cfg(feature = "acl")]
 //! # {
-//! use rsync_meta::sync_acls;
+//! use ::metadata::sync_acls;
 //! use std::path::Path;
 //!
-//! # fn demo() -> Result<(), rsync_meta::MetadataError> {
+//! # fn demo() -> Result<(), ::metadata::MetadataError> {
 //! let source = Path::new("src");
 //! let destination = Path::new("dst");
 //! sync_acls(source, destination, true)?;
@@ -119,10 +119,10 @@ mod sys {
 /// ```rust,ignore
 /// # #[cfg(feature = "acl")]
 /// # {
-/// use rsync_meta::sync_acls;
+/// use ::metadata::sync_acls;
 /// use std::path::Path;
 ///
-/// # fn copy_acl() -> Result<(), rsync_meta::MetadataError> {
+/// # fn copy_acl() -> Result<(), ::metadata::MetadataError> {
 /// let source = Path::new("src");
 /// let destination = Path::new("dst");
 /// sync_acls(source, destination, true)?;

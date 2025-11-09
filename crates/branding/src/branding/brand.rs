@@ -1,6 +1,6 @@
 //! Brand enumeration and parsing utilities.
 
-use core::str::FromStr;
+use ::core::str::FromStr;
 use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;

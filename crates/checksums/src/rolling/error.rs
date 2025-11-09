@@ -1,4 +1,4 @@
-use core::fmt;
+use ::core::fmt;
 
 /// Errors that can occur while updating the rolling checksum state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -55,7 +55,7 @@ impl RollingSliceError {
     /// # Examples
     ///
     /// ```
-    /// use rsync_checksums::{RollingDigest, RollingSliceError};
+    /// use checksums::{RollingDigest, RollingSliceError};
     ///
     /// let err = RollingDigest::from_le_slice(&[], 0).unwrap_err();
     /// assert!(err.is_empty());

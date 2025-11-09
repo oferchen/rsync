@@ -3,12 +3,12 @@
 use crate::frontend::arguments::{StopRequest, StopRequestKind};
 use crate::frontend::execution::chown::ParsedChown;
 use crate::frontend::progress::ProgressSetting;
-use rsync_core::client::{
+use core::client::{
     AddressMode, BindAddress, DeleteMode, HumanReadableMode, IconvSetting, RemoteFallbackArgs,
     TransferTimeout,
 };
-use rsync_logging::MessageSink;
-use rsync_protocol::ProtocolVersion;
+use logging::MessageSink;
+use protocol::ProtocolVersion;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::PathBuf;

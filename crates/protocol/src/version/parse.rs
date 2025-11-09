@@ -1,6 +1,6 @@
 //! Error types produced when parsing protocol versions from text.
 
-use core::fmt;
+use ::core::fmt;
 
 /// Errors that can occur while parsing a protocol version from a string.
 #[doc(alias = "--protocol")]

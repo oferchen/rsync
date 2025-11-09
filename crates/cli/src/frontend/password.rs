@@ -8,7 +8,7 @@
 //! implementation details directly, which keeps the core file smaller and easier
 //! to audit.
 
-use rsync_core::{
+use core::{
     message::{Message, Role},
     rsync_error,
 };

@@ -16,7 +16,7 @@ macro_rules! message_source {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::{message::SourceLocation, message_source_from};
+/// use core::{message::SourceLocation, message_source_from};
 ///
 /// let caller = std::panic::Location::caller();
 /// let location: SourceLocation = message_source_from!(caller);
@@ -44,7 +44,7 @@ macro_rules! message_source_from {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::{message::SourceLocation, tracked_message_source};
+/// use core::{message::SourceLocation, tracked_message_source};
 ///
 /// #[track_caller]
 /// fn helper() -> SourceLocation {
@@ -74,7 +74,7 @@ macro_rules! tracked_message_source {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::{message::Role, rsync_error};
+/// use core::{message::Role, rsync_error};
 ///
 /// let rendered = rsync_error!(23, "delta-transfer failure")
 ///     .with_role(Role::Sender)
@@ -83,14 +83,14 @@ macro_rules! tracked_message_source {
 /// assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
 /// assert!(rendered.contains(&format!(
 ///     "[sender={}]",
-///     rsync_core::version::RUST_VERSION
+///     core::version::RUST_VERSION
 /// )));
 /// ```
 ///
 /// Formatting arguments are forwarded to [`format!`]:
 ///
 /// ```
-/// use rsync_core::rsync_error;
+/// use core::rsync_error;
 ///
 /// let path = "src/lib.rs";
 /// let rendered = rsync_error!(11, "failed to read {path}", path = path).to_string();
@@ -122,7 +122,7 @@ macro_rules! rsync_error {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::rsync_warning;
+/// use core::rsync_warning;
 ///
 /// let rendered = rsync_warning!("some files vanished")
 ///     .with_code(24)
@@ -158,7 +158,7 @@ macro_rules! rsync_warning {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::rsync_info;
+/// use core::rsync_info;
 ///
 /// let rendered = rsync_info!("negotiation complete").to_string();
 ///
@@ -198,9 +198,9 @@ macro_rules! rsync_info {
 /// and caller location:
 ///
 /// ```
-/// use rsync_core::{message::Role, rsync_exit_code};
+/// use core::{message::Role, rsync_exit_code};
 ///
-/// fn render() -> rsync_core::message::Message {
+/// fn render() -> core::message::Message {
 ///     rsync_exit_code!(23).expect("exit code 23 is defined").with_role(Role::Sender)
 /// }
 ///

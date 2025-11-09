@@ -58,7 +58,7 @@ impl<'a> BorrowedMessageFrame<'a> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::{BorrowedMessageFrame, MessageCode, MessageHeader};
+    /// use protocol::{BorrowedMessageFrame, MessageCode, MessageHeader};
     ///
     /// let header = MessageHeader::new(MessageCode::Info, 3).unwrap();
     /// let mut bytes = Vec::from(header.encode());
@@ -93,7 +93,7 @@ impl<'a> BorrowedMessageFrame<'a> {
 /// # Examples
 ///
 /// ```
-/// # use rsync_protocol::{BorrowedMessageFrames, MessageCode, MessageHeader};
+/// # use protocol::{BorrowedMessageFrames, MessageCode, MessageHeader};
 /// # fn example() -> std::io::Result<()> {
 /// let mut bytes = Vec::new();
 /// let header = MessageHeader::new(MessageCode::Info, 3).expect("payload fits in header");

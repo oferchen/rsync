@@ -1,5 +1,5 @@
 use super::*;
-use core::str::FromStr;
+use ::core::str::FromStr;
 
 #[test]
 fn secluded_args_mode_labels_round_trip() {

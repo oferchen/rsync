@@ -1,6 +1,6 @@
 use super::*;
-use rsync_core::fallback::DAEMON_AUTO_DELEGATE_ENV;
-use rsync_core::version::VersionInfoReport;
+use core::fallback::DAEMON_AUTO_DELEGATE_ENV;
+use core::version::VersionInfoReport;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -37,7 +37,7 @@ include!("tests/chunks/default_config_candidates_prefer_oc_branding.rs");
 include!("tests/chunks/default_secrets_path_falls_back_to_secondary_candidate.rs");
 include!("tests/chunks/default_secrets_path_prefers_primary_candidate.rs");
 include!("tests/chunks/default_secrets_path_returns_none_when_absent.rs");
-include!("tests/chunks/delegate_system_rsync_daemon_fallback_env_triggers_delegation.rs");
+include!("tests/chunks/delegate_system_daemon_fallback_env_triggers_delegation.rs");
 include!("tests/chunks/delegate_system_rsync_env_false_skips_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_env_triggers_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_fallback_env_triggers_delegation.rs");

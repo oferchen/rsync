@@ -3,7 +3,7 @@
 use super::super::LEGACY_DAEMON_PREFIX;
 use super::*;
 use crate::{NegotiationError, ProtocolVersion};
-use core::fmt;
+use ::core::fmt;
 
 #[test]
 fn parses_legacy_daemon_greeting_with_minor_version() {

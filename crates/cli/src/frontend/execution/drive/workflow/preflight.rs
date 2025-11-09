@@ -1,14 +1,14 @@
 #![deny(unsafe_code)]
 
 use crate::frontend::{arguments::ProgramName, render_help};
-use rsync_core::{
+use core::{
     client::{BindAddress, TransferTimeout},
     message::Role,
     rsync_error,
     version::VersionInfoReport,
 };
-use rsync_logging::MessageSink;
-use rsync_protocol::ProtocolVersion;
+use logging::MessageSink;
+use protocol::ProtocolVersion;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};

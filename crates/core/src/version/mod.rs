@@ -2,7 +2,7 @@
 
 //! # Overview
 //!
-//! `rsync_core::version` centralises the workspace version constants and
+//! `core::version` centralises the workspace version constants and
 //! feature-detection helpers that drive the `--version` output of the Rust
 //! `rsync` binaries. The module mirrors upstream rsync 3.4.1 by exposing the
 //! canonical base version while appending the `-rust` suffix that brands this
@@ -39,7 +39,7 @@
 //!   base release so diagnostics and CLI output remain aligned with rsync 3.4.1.
 //! - [`compiled_features`](crate::version::compiled_features) never invents
 //!   capabilities: it only reports flags that were explicitly enabled when
-//!   compiling `rsync-core`.
+//!   compiling `core`.
 //!
 //! # Errors
 //!
@@ -55,7 +55,7 @@
 //! compile time.
 //!
 //! ```
-//! use rsync_core::version::{compiled_features, CompiledFeature, RUST_VERSION};
+//! use core::version::{compiled_features, CompiledFeature, RUST_VERSION};
 //!
 //! assert_eq!(RUST_VERSION, env!("CARGO_PKG_VERSION"));
 //! let features = compiled_features();

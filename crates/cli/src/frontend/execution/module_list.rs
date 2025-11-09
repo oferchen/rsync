@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use rsync_core::client::ModuleList;
+use core::client::ModuleList;
 
 pub(crate) fn render_module_list<W: Write, E: Write>(
     stdout: &mut W,

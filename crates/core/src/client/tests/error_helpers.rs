@@ -7,7 +7,7 @@ mod error_helper_tests {
         socket_error,
     };
     use super::*;
-    use rsync_engine::local_copy::{LocalCopyArgumentError, LocalCopyError};
+    use engine::local_copy::{LocalCopyArgumentError, LocalCopyError};
     use std::io;
     use std::path::{Path, PathBuf};
     use std::time::Duration;

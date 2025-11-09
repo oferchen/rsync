@@ -2,7 +2,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{self, ErrorKind};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
-use rsync_core::{
+use core::{
     client::BindAddress,
     message::{Message, Role},
     rsync_error,

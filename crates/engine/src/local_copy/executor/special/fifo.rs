@@ -13,7 +13,7 @@ use crate::local_copy::{
     LocalCopyMetadata, LocalCopyRecord, map_metadata_error, overrides::create_hard_link,
     remove_source_entry_if_requested,
 };
-use rsync_meta::{MetadataOptions, apply_file_metadata_with_options, create_fifo};
+use ::metadata::{MetadataOptions, apply_file_metadata_with_options, create_fifo};
 
 pub(crate) fn copy_fifo(
     context: &mut CopyContext,

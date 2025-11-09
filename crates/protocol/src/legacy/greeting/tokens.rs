@@ -1,6 +1,6 @@
 //! Iterator types for legacy daemon greeting digest lists.
 
-use core::iter::FusedIterator;
+use ::core::iter::FusedIterator;
 use std::str::SplitAsciiWhitespace;
 
 /// Iterator over whitespace-separated digest tokens advertised by a legacy daemon.

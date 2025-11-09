@@ -1,6 +1,6 @@
 use super::*;
 use crate::{branding::Brand, workspace};
-use rsync_protocol::ProtocolVersion;
+use protocol::ProtocolVersion;
 
 #[test]
 fn version_metadata_matches_expected_constants() {

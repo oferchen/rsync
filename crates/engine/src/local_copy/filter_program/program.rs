@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
+use filters::{FilterAction, FilterRule};
 use globset::{GlobBuilder, GlobMatcher};
-use rsync_filters::{FilterAction, FilterRule};
 
 use super::super::LocalCopyError;
 use super::rules::{DirMergeRule, ExcludeIfPresentRule};

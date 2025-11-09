@@ -5,7 +5,7 @@ use super::{
     types::{FilterParseError, ParsedFilterDirective},
 };
 use crate::local_copy::filter_program::ExcludeIfPresentRule;
-use rsync_filters::FilterRule;
+use filters::FilterRule;
 use std::fmt;
 
 #[derive(Default)]
@@ -93,7 +93,7 @@ fn apply_rule_modifiers(
 
     if modifiers.xattr_only {
         match rule.action() {
-            rsync_filters::FilterAction::Include | rsync_filters::FilterAction::Exclude => {
+            filters::FilterAction::Include | filters::FilterAction::Exclude => {
                 rule = rule
                     .with_xattr_only(true)
                     .with_sender(true)

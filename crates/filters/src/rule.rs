@@ -82,7 +82,7 @@ impl FilterRule {
     ///
     /// # Examples
     /// ```
-    /// use rsync_filters::FilterRule;
+    /// use filters::FilterRule;
     /// let rule = FilterRule::show("logs/**");
     /// assert!(rule.applies_to_sender());
     /// assert!(!rule.applies_to_receiver());
@@ -103,7 +103,7 @@ impl FilterRule {
     ///
     /// # Examples
     /// ```
-    /// use rsync_filters::FilterRule;
+    /// use filters::FilterRule;
     /// let rule = FilterRule::hide("*.bak");
     /// assert!(rule.applies_to_sender());
     /// assert!(!rule.applies_to_receiver());

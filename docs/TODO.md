@@ -2,7 +2,7 @@
 
 - Compression now uses the system zlib backend so the encoder and decoder share
   the same implementation as upstream rsync, and checksum validation continues
-  to rely on the upstream algorithms provided by `rsync_checksums`.
+  to rely on the upstream algorithms provided by `checksums`.
 - Removed the `legacy-binaries` feature and the optional `oc-rsyncd`/`rsyncd`
   wrappers so the workspace now ships only the unified `oc-rsync` binary while
   leaving compatibility symlinks to downstream packaging.

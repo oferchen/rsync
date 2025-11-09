@@ -1,8 +1,8 @@
-use rsync_protocol::ProtocolVersion;
-use rsync_transport::{
+use protocol::ProtocolVersion;
+use std::io::Cursor;
+use transport::{
     BufferedCopyTooSmall, NegotiatedStreamParts, SessionHandshakeParts, local_cap_reduced_protocol,
 };
-use std::io::Cursor;
 
 fn assert_type_visible<T>() {}
 

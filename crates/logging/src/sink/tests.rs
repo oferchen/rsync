@@ -1,6 +1,6 @@
 use super::*;
 use crate::LineMode;
-use rsync_core::{
+use core::{
     branding::Brand,
     message::{Message, MessageScratch},
 };

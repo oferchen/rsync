@@ -1,4 +1,4 @@
-use core::fmt::{self, Write as FmtWrite};
+use ::core::fmt::{self, Write as FmtWrite};
 
 use crate::version::ProtocolVersion;
 

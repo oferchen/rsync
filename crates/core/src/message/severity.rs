@@ -24,7 +24,7 @@ impl Severity {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::message::Severity;
+    /// use core::message::Severity;
     ///
     /// assert_eq!(Severity::Info.as_str(), "info");
     /// assert_eq!(Severity::Warning.as_str(), "warning");
@@ -52,7 +52,7 @@ impl Severity {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::message::Severity;
+    /// use core::message::Severity;
     ///
     /// assert_eq!(Severity::Info.prefix(), "rsync info: ");
     /// assert_eq!(Severity::Warning.prefix(), "rsync warning: ");
@@ -72,7 +72,7 @@ impl Severity {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::message::Severity;
+    /// use core::message::Severity;
     ///
     /// assert!(Severity::Info.is_info());
     /// assert!(!Severity::Error.is_info());
@@ -87,7 +87,7 @@ impl Severity {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::message::Severity;
+    /// use core::message::Severity;
     ///
     /// assert!(Severity::Warning.is_warning());
     /// assert!(!Severity::Info.is_warning());
@@ -102,7 +102,7 @@ impl Severity {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::message::Severity;
+    /// use core::message::Severity;
     ///
     /// assert!(Severity::Error.is_error());
     /// assert!(!Severity::Warning.is_error());

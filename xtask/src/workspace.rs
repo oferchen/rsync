@@ -381,6 +381,6 @@ source = "https://github.com/oferchen/rsync"
     fn root_package_name_matches_manifest() {
         let workspace = super::workspace_root().expect("workspace root");
         let name = super::root_package_name(&workspace).expect("package name");
-        assert_eq!(name, "rsync-bin");
+        assert_eq!(name, "bin");
     }
 }

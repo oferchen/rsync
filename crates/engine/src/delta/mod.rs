@@ -46,8 +46,8 @@
 //!
 //! ```
 //! use std::num::{NonZeroU32, NonZeroU8};
-//! use rsync_engine::delta::{calculate_signature_layout, SignatureLayoutParams};
-//! use rsync_protocol::ProtocolVersion;
+//! use engine::delta::{calculate_signature_layout, SignatureLayoutParams};
+//! use protocol::ProtocolVersion;
 //!
 //! let params = SignatureLayoutParams::new(
 //!     10 * 1024 * 1024,
@@ -86,10 +86,10 @@ pub use generator::{DeltaGenerator, generate_delta};
 pub use index::DeltaSignatureIndex;
 pub use script::{DeltaScript, DeltaToken, apply_delta};
 
-use core::fmt;
-use core::num::{NonZeroU8, NonZeroU32};
+use ::core::fmt;
+use ::core::num::{NonZeroU8, NonZeroU32};
 
-use rsync_protocol::ProtocolVersion;
+use protocol::ProtocolVersion;
 
 /// Default block length used by rsync when files are small.
 const BLOCK_SIZE: u32 = 700;
@@ -365,7 +365,7 @@ fn derive_strong_sum_length(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::num::NonZeroU8;
+    use ::core::num::NonZeroU8;
     use std::convert::TryFrom;
 
     fn params(

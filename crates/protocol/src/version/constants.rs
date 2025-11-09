@@ -1,7 +1,7 @@
 //! Numeric constants describing the rsync protocol range supported by this
 //! implementation.
 
-use core::ops::RangeInclusive;
+use ::core::ops::RangeInclusive;
 
 /// Lowest protocol version supported by upstream rsync 3.4.1.
 pub(crate) const OLDEST_SUPPORTED_PROTOCOL: u8 = 28;

@@ -6,7 +6,7 @@ use crate::daemon::{
 };
 use crate::negotiation::{NEGOTIATION_PROLOGUE_UNDETERMINED_MSG, NegotiatedStream};
 use crate::sniff_negotiation_stream;
-use rsync_protocol::{
+use protocol::{
     NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion, format_legacy_daemon_greeting,
 };
 use std::convert::TryFrom;

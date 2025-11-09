@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use filters::{FilterAction, FilterRule};
 use globset::{GlobBuilder, GlobMatcher};
-use rsync_filters::{FilterAction, FilterRule};
 
 /// Compiled list of rules evaluated sequentially.
 #[derive(Clone, Debug, Default)]

@@ -64,7 +64,7 @@ and parity is verified by tests or goldens.
     and module orchestration described in the mission brief so negotiated
     sessions can progress beyond the initial diagnostic.
 - **Transfer engine integration incomplete**
-  - *Impact*: The `rsync_engine` crate provides deterministic local copies for
+  - *Impact*: The `engine` crate provides deterministic local copies for
     regular files, directories, symbolic links, device nodes, FIFOs, extended
     attributes, and (when enabled) POSIX ACLs. Delta-token generation and
     application are available via

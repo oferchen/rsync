@@ -19,7 +19,7 @@ mod scratch_render;
 /// # Examples
 ///
 /// ```
-/// use rsync_core::{message::{Message, Role}, message_source};
+/// use core::{message::{Message, Role}, message_source};
 ///
 /// let message = Message::error(23, "delta-transfer failure")
 ///     .with_role(Role::Sender)
@@ -29,7 +29,7 @@ mod scratch_render;
 /// assert!(rendered.contains("delta-transfer failure"));
 /// assert!(rendered.contains(&format!(
 ///     "[sender={}]",
-///     rsync_core::version::RUST_VERSION
+///     core::version::RUST_VERSION
 /// )));
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

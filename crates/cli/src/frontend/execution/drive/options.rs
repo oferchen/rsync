@@ -4,13 +4,13 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::num::NonZeroU32;
 
-use rsync_compress::algorithm::CompressionAlgorithm;
-use rsync_compress::zlib::CompressionLevel;
-use rsync_core::client::{
+use compress::algorithm::CompressionAlgorithm;
+use compress::zlib::CompressionLevel;
+use core::client::{
     BandwidthLimit, CompressionSetting, SkipCompressList, force_no_compress_from_env,
     parse_skip_compress_list, skip_compress_from_env,
 };
-use rsync_logging::MessageSink;
+use logging::MessageSink;
 
 use super::super::{
     parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice, parse_compress_level,

@@ -1,7 +1,7 @@
 //! Shared enumeration describing compression algorithms supported by the workspace.
 
-use core::fmt;
-use core::str::FromStr;
+use ::core::fmt;
+use ::core::str::FromStr;
 
 /// Compression algorithms recognised by the workspace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

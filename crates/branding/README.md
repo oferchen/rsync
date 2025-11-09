@@ -1,6 +1,6 @@
-# rsync-branding
+# branding
 
-The `rsync-branding` crate centralises branding, version, and workspace
+The `branding` crate centralises branding, version, and workspace
 metadata for the Rust-based rsync reimplementation. It exposes the canonical
 program names, daemon configuration paths, source URL, and build revision as
 compile-time constants derived from the workspace `Cargo.toml`. Higher-level
