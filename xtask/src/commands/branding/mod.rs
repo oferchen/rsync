@@ -32,33 +32,50 @@ mod tests {
     use super::*;
     use crate::error::TaskError;
     use crate::workspace::parse_workspace_branding;
+    use branding::workspace;
 
     fn sample_manifest() -> String {
-        String::from(
+        let metadata = workspace::metadata();
+        format!(
             r#"[workspace]
 members = []
 
 [workspace.metadata.oc_rsync]
-brand = "demo"
-upstream_version = "3.4.1"
-rust_version = "3.4.1-rust"
-protocol = 32
-client_bin = "demo-rsync"
-daemon_bin = "demo-rsync"
-legacy_client_bin = "rsync"
-legacy_daemon_bin = "rsyncd"
-daemon_config_dir = "/etc/demo-rsyncd"
-daemon_config = "/etc/demo-rsyncd/demo-rsyncd.conf"
-daemon_secrets = "/etc/demo-rsyncd/demo-rsyncd.secrets"
-legacy_daemon_config_dir = "/etc"
-legacy_daemon_config = "/etc/rsyncd.conf"
-legacy_daemon_secrets = "/etc/rsyncd.secrets"
-source = "https://example.invalid/demo"
+brand = "{brand}"
+upstream_version = "{upstream_version}"
+rust_version = "{rust_version}"
+protocol = {protocol}
+client_bin = "{client_bin}"
+daemon_bin = "{daemon_bin}"
+legacy_client_bin = "{legacy_client_bin}"
+legacy_daemon_bin = "{legacy_daemon_bin}"
+daemon_config_dir = "{daemon_config_dir}"
+daemon_config = "{daemon_config}"
+daemon_secrets = "{daemon_secrets}"
+legacy_daemon_config_dir = "{legacy_daemon_config_dir}"
+legacy_daemon_config = "{legacy_daemon_config}"
+legacy_daemon_secrets = "{legacy_daemon_secrets}"
+source = "{source}"
 [workspace.metadata.oc_rsync.cross_compile]
 linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]
 windows = ["x86_64", "aarch64"]
 "#,
+            brand = metadata.brand(),
+            upstream_version = metadata.upstream_version(),
+            rust_version = metadata.rust_version(),
+            protocol = metadata.protocol_version(),
+            client_bin = metadata.client_program_name(),
+            daemon_bin = metadata.daemon_program_name(),
+            legacy_client_bin = metadata.legacy_client_program_name(),
+            legacy_daemon_bin = metadata.legacy_daemon_program_name(),
+            daemon_config_dir = metadata.daemon_config_dir(),
+            daemon_config = metadata.daemon_config_path(),
+            daemon_secrets = metadata.daemon_secrets_path(),
+            legacy_daemon_config_dir = metadata.legacy_daemon_config_dir(),
+            legacy_daemon_config = metadata.legacy_daemon_config_path(),
+            legacy_daemon_secrets = metadata.legacy_daemon_secrets_path(),
+            source = metadata.source_url(),
         )
     }
 

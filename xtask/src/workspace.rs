@@ -1,4 +1,5 @@
 use crate::error::{TaskError, TaskResult};
+use branding::workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -142,45 +143,91 @@ pub fn parse_workspace_branding_from_value(value: &Value) -> TaskResult<Workspac
         .get("oc_rsync")
         .ok_or_else(|| metadata_error("missing [workspace.metadata.oc_rsync] table"))?;
 
+    let metadata = workspace::metadata();
+    ensure_metadata_string(oc, "brand", metadata.brand())?;
+    ensure_metadata_string(oc, "upstream_version", metadata.upstream_version())?;
+    ensure_metadata_string(oc, "rust_version", metadata.rust_version())?;
+    ensure_metadata_protocol(oc, metadata.protocol_version())?;
+    ensure_metadata_string(oc, "client_bin", metadata.client_program_name())?;
+    ensure_metadata_string(oc, "daemon_bin", metadata.daemon_program_name())?;
+    ensure_metadata_string(
+        oc,
+        "legacy_client_bin",
+        metadata.legacy_client_program_name(),
+    )?;
+    ensure_metadata_string(
+        oc,
+        "legacy_daemon_bin",
+        metadata.legacy_daemon_program_name(),
+    )?;
+    ensure_metadata_string(oc, "daemon_config_dir", metadata.daemon_config_dir())?;
+    ensure_metadata_string(oc, "daemon_config", metadata.daemon_config_path())?;
+    ensure_metadata_string(oc, "daemon_secrets", metadata.daemon_secrets_path())?;
+    ensure_metadata_string(
+        oc,
+        "legacy_daemon_config_dir",
+        metadata.legacy_daemon_config_dir(),
+    )?;
+    ensure_metadata_string(
+        oc,
+        "legacy_daemon_config",
+        metadata.legacy_daemon_config_path(),
+    )?;
+    ensure_metadata_string(
+        oc,
+        "legacy_daemon_secrets",
+        metadata.legacy_daemon_secrets_path(),
+    )?;
+    ensure_metadata_string(oc, "source", metadata.source_url())?;
+
+    let protocol = u16::try_from(metadata.protocol_version())
+        .map_err(|_| metadata_error("protocol value must fit into u16"))?;
+
     Ok(WorkspaceBranding {
-        brand: metadata_str(oc, "brand")?,
-        upstream_version: metadata_str(oc, "upstream_version")?,
-        rust_version: metadata_str(oc, "rust_version")?,
-        protocol: metadata_protocol(oc)?,
-        client_bin: metadata_str(oc, "client_bin")?,
-        daemon_bin: metadata_str(oc, "daemon_bin")?,
-        legacy_client_bin: metadata_str(oc, "legacy_client_bin")?,
-        legacy_daemon_bin: metadata_str(oc, "legacy_daemon_bin")?,
-        daemon_config_dir: metadata_path(oc, "daemon_config_dir")?,
-        daemon_config: metadata_path(oc, "daemon_config")?,
-        daemon_secrets: metadata_path(oc, "daemon_secrets")?,
-        legacy_daemon_config_dir: metadata_path(oc, "legacy_daemon_config_dir")?,
-        legacy_daemon_config: metadata_path(oc, "legacy_daemon_config")?,
-        legacy_daemon_secrets: metadata_path(oc, "legacy_daemon_secrets")?,
-        source: metadata_str(oc, "source")?,
+        brand: metadata.brand().to_owned(),
+        upstream_version: metadata.upstream_version().to_owned(),
+        rust_version: metadata.rust_version().to_owned(),
+        protocol,
+        client_bin: metadata.client_program_name().to_owned(),
+        daemon_bin: metadata.daemon_program_name().to_owned(),
+        legacy_client_bin: metadata.legacy_client_program_name().to_owned(),
+        legacy_daemon_bin: metadata.legacy_daemon_program_name().to_owned(),
+        daemon_config_dir: PathBuf::from(metadata.daemon_config_dir()),
+        daemon_config: PathBuf::from(metadata.daemon_config_path()),
+        daemon_secrets: PathBuf::from(metadata.daemon_secrets_path()),
+        legacy_daemon_config_dir: PathBuf::from(metadata.legacy_daemon_config_dir()),
+        legacy_daemon_config: PathBuf::from(metadata.legacy_daemon_config_path()),
+        legacy_daemon_secrets: PathBuf::from(metadata.legacy_daemon_secrets_path()),
+        source: metadata.source_url().to_owned(),
         cross_compile: metadata_cross_compile(oc)?,
         cross_compile_matrix: metadata_cross_compile_matrix(oc)?,
     })
 }
 
-fn metadata_str(table: &Value, key: &str) -> TaskResult<String> {
-    table
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| metadata_error(format!("missing or non-string metadata field '{key}'")))
+fn ensure_metadata_string(table: &Value, key: &str, expected: &str) -> TaskResult<()> {
+    match table.get(key) {
+        Some(Value::String(value)) if value == expected => Ok(()),
+        Some(Value::String(value)) => Err(metadata_error(format!(
+            "metadata field '{key}' must be '{expected}' but was '{value}'"
+        ))),
+        Some(_) => Err(metadata_error(format!(
+            "metadata field '{key}' must be a string"
+        ))),
+        None => Err(metadata_error(format!("missing metadata field '{key}'"))),
+    }
 }
 
-fn metadata_path(table: &Value, key: &str) -> TaskResult<PathBuf> {
-    Ok(PathBuf::from(metadata_str(table, key)?))
-}
-
-fn metadata_protocol(table: &Value) -> TaskResult<u16> {
-    let value = table
-        .get("protocol")
-        .and_then(Value::as_integer)
-        .ok_or_else(|| metadata_error("missing or non-integer metadata field 'protocol'"))?;
-    u16::try_from(value).map_err(|_| metadata_error("protocol value must fit into u16"))
+fn ensure_metadata_protocol(table: &Value, expected: u32) -> TaskResult<()> {
+    match table.get("protocol") {
+        Some(Value::Integer(value)) if *value == expected as i64 => Ok(()),
+        Some(Value::Integer(value)) => Err(metadata_error(format!(
+            "metadata field 'protocol' must be {expected} but was {value}"
+        ))),
+        Some(_) => Err(metadata_error(
+            "metadata field 'protocol' must be an integer",
+        )),
+        None => Err(metadata_error("missing metadata field 'protocol'")),
+    }
 }
 
 fn metadata_cross_compile(table: &Value) -> TaskResult<BTreeMap<String, Vec<String>>> {
@@ -272,32 +319,49 @@ fn metadata_error(message: impl Into<String>) -> TaskError {
 mod tests {
     use super::*;
     use crate::error::TaskError;
+    use branding::workspace;
 
     fn manifest_with_cross_compile(entries: &str) -> String {
+        let metadata = workspace::metadata();
         format!(
             r#"[workspace]
 members = []
 
 [workspace.metadata.oc_rsync]
-brand = "oc"
-upstream_version = "3.4.1"
-rust_version = "3.4.1-rust"
-protocol = 32
-client_bin = "oc-rsync"
-daemon_bin = "oc-rsync"
-legacy_client_bin = "rsync"
-legacy_daemon_bin = "rsyncd"
-daemon_config_dir = "/etc/oc-rsyncd"
-daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
-daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
-legacy_daemon_config_dir = "/etc"
-legacy_daemon_config = "/etc/rsyncd.conf"
-legacy_daemon_secrets = "/etc/rsyncd.secrets"
-source = "https://github.com/oferchen/rsync"
+brand = "{brand}"
+upstream_version = "{upstream_version}"
+rust_version = "{rust_version}"
+protocol = {protocol}
+client_bin = "{client_bin}"
+daemon_bin = "{daemon_bin}"
+legacy_client_bin = "{legacy_client_bin}"
+legacy_daemon_bin = "{legacy_daemon_bin}"
+daemon_config_dir = "{daemon_config_dir}"
+daemon_config = "{daemon_config}"
+daemon_secrets = "{daemon_secrets}"
+legacy_daemon_config_dir = "{legacy_daemon_config_dir}"
+legacy_daemon_config = "{legacy_daemon_config}"
+legacy_daemon_secrets = "{legacy_daemon_secrets}"
+source = "{source}"
 
 [workspace.metadata.oc_rsync.cross_compile]
 {entries}
-"#
+"#,
+            brand = metadata.brand(),
+            upstream_version = metadata.upstream_version(),
+            rust_version = metadata.rust_version(),
+            protocol = metadata.protocol_version(),
+            client_bin = metadata.client_program_name(),
+            daemon_bin = metadata.daemon_program_name(),
+            legacy_client_bin = metadata.legacy_client_program_name(),
+            legacy_daemon_bin = metadata.legacy_daemon_program_name(),
+            daemon_config_dir = metadata.daemon_config_dir(),
+            daemon_config = metadata.daemon_config_path(),
+            daemon_secrets = metadata.daemon_secrets_path(),
+            legacy_daemon_config_dir = metadata.legacy_daemon_config_dir(),
+            legacy_daemon_config = metadata.legacy_daemon_config_path(),
+            legacy_daemon_secrets = metadata.legacy_daemon_secrets_path(),
+            source = metadata.source_url(),
         )
     }
 
@@ -305,22 +369,23 @@ source = "https://github.com/oferchen/rsync"
     fn parse_workspace_branding_extracts_fields() {
         let manifest = include_str!("../../Cargo.toml");
         let branding = parse_workspace_branding(manifest).expect("parse succeeds");
+        let metadata = workspace::metadata();
         let expected = WorkspaceBranding {
-            brand: String::from("oc"),
-            upstream_version: String::from("3.4.1"),
-            rust_version: String::from("3.4.1-rust"),
-            protocol: 32,
-            client_bin: String::from("oc-rsync"),
-            daemon_bin: String::from("oc-rsync"),
-            legacy_client_bin: String::from("rsync"),
-            legacy_daemon_bin: String::from("rsyncd"),
-            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
-            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
-            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
-            legacy_daemon_config_dir: PathBuf::from("/etc"),
-            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
-            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
-            source: String::from("https://github.com/oferchen/rsync"),
+            brand: metadata.brand().to_owned(),
+            upstream_version: metadata.upstream_version().to_owned(),
+            rust_version: metadata.rust_version().to_owned(),
+            protocol: u16::try_from(metadata.protocol_version()).unwrap(),
+            client_bin: metadata.client_program_name().to_owned(),
+            daemon_bin: metadata.daemon_program_name().to_owned(),
+            legacy_client_bin: metadata.legacy_client_program_name().to_owned(),
+            legacy_daemon_bin: metadata.legacy_daemon_program_name().to_owned(),
+            daemon_config_dir: PathBuf::from(metadata.daemon_config_dir()),
+            daemon_config: PathBuf::from(metadata.daemon_config_path()),
+            daemon_secrets: PathBuf::from(metadata.daemon_secrets_path()),
+            legacy_daemon_config_dir: PathBuf::from(metadata.legacy_daemon_config_dir()),
+            legacy_daemon_config: PathBuf::from(metadata.legacy_daemon_config_path()),
+            legacy_daemon_secrets: PathBuf::from(metadata.legacy_daemon_secrets_path()),
+            source: metadata.source_url().to_owned(),
             cross_compile: BTreeMap::from([
                 (
                     String::from("linux"),
@@ -372,7 +437,7 @@ source = "https://github.com/oferchen/rsync"
 
     #[test]
     fn parse_workspace_branding_reports_missing_tables() {
-        let manifest = "[workspace]\n[workspace.metadata]\n";
+        let manifest = "[workspace]\\n[workspace.metadata]\\n";
         let error = parse_workspace_branding(manifest).unwrap_err();
         assert!(matches!(error, TaskError::Metadata(_)));
     }
