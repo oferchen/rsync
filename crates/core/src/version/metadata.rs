@@ -22,13 +22,13 @@ use super::constants::{
 /// # Examples
 ///
 /// ```
-/// use core::version::{version_metadata, RUST_VERSION, SOURCE_URL};
+/// use core::version::{version_metadata, PROGRAM_NAME, RUST_VERSION, SOURCE_URL};
 ///
 /// let metadata = version_metadata();
 /// let banner = metadata.standard_banner();
 ///
 /// assert!(banner.starts_with(&format!(
-///     "oc-rsync  version {} ",
+///     "{PROGRAM_NAME}  version {} ",
 ///     RUST_VERSION
 /// )));
 /// assert!(banner.contains("protocol version 32"));

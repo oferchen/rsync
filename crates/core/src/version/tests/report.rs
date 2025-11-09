@@ -16,7 +16,7 @@ fn version_info_report_renders_default_report() {
     let bit_inums = mem::size_of::<ino_t>() * 8;
     let bit_timestamps = mem::size_of::<time_t>() * 8;
     let bit_long_ints = mem::size_of::<i64>() * 8;
-    assert!(actual.starts_with(&format!("oc-rsync  version {RUST_VERSION}")));
+    assert!(actual.starts_with(&format!("{PROGRAM_NAME}  version {RUST_VERSION}")));
     assert!(actual.contains(&format!(
         "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
     )));
@@ -102,7 +102,7 @@ fn version_info_report_with_program_name_updates_banner() {
         .metadata()
         .standard_banner();
 
-    assert!(oc_banner.starts_with("oc-rsync  version"));
+    assert!(oc_banner.starts_with(&format!("{DAEMON_PROGRAM_NAME}  version")));
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn version_info_report_with_client_brand_updates_banner() {
     let report = VersionInfoReport::new(VersionInfoConfig::default()).with_client_brand(Brand::Oc);
     let banner = report.metadata().standard_banner();
 
-    assert!(banner.starts_with("oc-rsync  version"));
+    assert!(banner.starts_with(&format!("{PROGRAM_NAME}  version")));
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn version_info_report_with_daemon_brand_updates_banner() {
     let report = VersionInfoReport::new(VersionInfoConfig::default()).with_daemon_brand(Brand::Oc);
     let banner = report.metadata().standard_banner();
 
-    assert!(banner.starts_with("oc-rsync  version"));
+    assert!(banner.starts_with(&format!("{DAEMON_PROGRAM_NAME}  version")));
 }
 
 #[test]

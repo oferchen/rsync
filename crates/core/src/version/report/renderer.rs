@@ -93,13 +93,13 @@ impl VersionInfoReport {
     ///
     /// ```rust
     /// use core::branding::Brand;
-    /// use core::version::VersionInfoReport;
+    /// use core::version::{VersionInfoReport, PROGRAM_NAME};
     ///
     /// let report = VersionInfoReport::for_client_brand(Brand::Oc);
     /// assert!(report
     ///     .metadata()
     ///     .standard_banner()
-    ///     .starts_with("oc-rsync  version"));
+    ///     .starts_with(&format!("{PROGRAM_NAME}  version")));
     /// ```
     #[must_use]
     pub fn for_client_brand(brand: Brand) -> Self {
@@ -113,13 +113,13 @@ impl VersionInfoReport {
     ///
     /// ```rust
     /// use core::branding::Brand;
-    /// use core::version::VersionInfoReport;
+    /// use core::version::{VersionInfoReport, DAEMON_PROGRAM_NAME};
     ///
     /// let report = VersionInfoReport::for_daemon_brand(Brand::Oc);
     /// assert!(report
     ///     .metadata()
     ///     .standard_banner()
-    ///     .starts_with("oc-rsync  version"));
+    ///     .starts_with(&format!("{DAEMON_PROGRAM_NAME}  version")));
     /// ```
     #[must_use]
     pub fn for_daemon_brand(brand: Brand) -> Self {
