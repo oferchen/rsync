@@ -1,11 +1,11 @@
 use super::*;
 use crate::signature::SignatureAlgorithm;
 use filetime::{FileTime, set_file_mtime, set_file_times};
-use oc_rsync_bandwidth::BandwidthLimiter;
-use oc_rsync_compress::algorithm::CompressionAlgorithm;
-use oc_rsync_compress::zlib::CompressionLevel;
-use oc_rsync_filters::{FilterRule, FilterSet};
-use oc_rsync_meta::ChmodModifiers;
+use rsync_bandwidth::BandwidthLimiter;
+use rsync_compress::algorithm::CompressionAlgorithm;
+use rsync_compress::zlib::CompressionLevel;
+use rsync_filters::{FilterRule, FilterSet};
+use rsync_meta::ChmodModifiers;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{self, Seek, SeekFrom, Write};
@@ -53,7 +53,7 @@ fn mkfifo_for_tests(path: &Path, mode: u32) -> io::Result<()> {
     let bits: libc::mode_t = (mode & 0o177_777)
         .try_into()
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "mode out of range"))?;
-    oc_rsync_apple_fs::mkfifo(path, bits)
+    rsync_apple_fs::mkfifo(path, bits)
 }
 
 #[cfg(all(unix, feature = "acl"))]

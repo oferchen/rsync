@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::io::{self, BufWriter, LineWriter, Write};
 
-use oc_rsync_core::{
+use rsync_core::{
     message::{Message, Role},
     rsync_error,
 };

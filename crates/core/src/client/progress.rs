@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oc_rsync_engine::local_copy::{
+use rsync_engine::local_copy::{
     LocalCopyAction, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
     LocalCopyRecord, LocalCopyRecordHandler,
 };

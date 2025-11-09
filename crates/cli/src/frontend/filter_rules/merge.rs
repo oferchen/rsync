@@ -2,9 +2,9 @@ use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use oc_rsync_core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
-use oc_rsync_core::message::{Message, Role};
-use oc_rsync_core::rsync_error;
+use rsync_core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
+use rsync_core::message::{Message, Role};
+use rsync_core::rsync_error;
 
 use super::directive::{
     FilterDirective, MergeDirective, merge_directive_options, os_string_to_pattern,

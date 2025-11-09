@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `oc_rsync_meta` centralises metadata preservation helpers used by the Rust
+//! `rsync_meta` centralises metadata preservation helpers used by the Rust
 //! rsync workspace. The crate focuses on reproducing upstream `rsync`
 //! semantics for permission bits and timestamp propagation when copying files,
 //! directories, symbolic links, device nodes, and FIFOs on local filesystems.
@@ -45,7 +45,7 @@
 //! # Examples
 //!
 //! ```
-//! use oc_rsync_meta::{apply_file_metadata, MetadataError};
+//! use rsync_meta::{apply_file_metadata, MetadataError};
 //! use std::fs;
 //! use std::path::Path;
 //!
@@ -65,7 +65,7 @@
 //!
 //! # See also
 //!
-//! - `oc_rsync_core::client` integrates these helpers for local filesystem copies.
+//! - `rsync_core::client` integrates these helpers for local filesystem copies.
 //! - [`filetime`] for lower-level timestamp manipulation utilities.
 
 #[cfg(all(

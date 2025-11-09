@@ -1,6 +1,6 @@
-# oc_rsync_checksums
+# rsync_checksums
 
-`oc_rsync_checksums` provides the rolling and strong checksum primitives used by the
+`rsync_checksums` provides the rolling and strong checksum primitives used by the
 Rust `rsync` implementation. The algorithms are byte-for-byte compatible with
 upstream rsync 3.4.1 so delta-transfer heuristics and compatibility checks remain
 interchangeable with the C reference implementation.
@@ -46,7 +46,7 @@ layering while keeping checksum-specific optimisations in one place.
 Compute a rolling checksum for a block and then advance the window.
 
 ```rust
-use oc_rsync_checksums::RollingChecksum;
+use rsync_checksums::RollingChecksum;
 
 let mut rolling = RollingChecksum::new();
 rolling.update(b"abcd");
@@ -60,7 +60,7 @@ assert_eq!(rolling.len(), 4);
 Calculate a strong checksum using the MD5 wrapper.
 
 ```rust
-use oc_rsync_checksums::strong::Md5;
+use rsync_checksums::strong::Md5;
 
 let mut md5 = Md5::new();
 md5.update(b"hello");
@@ -76,7 +76,7 @@ assert_eq!(
 
 ## See also
 
-- [`oc_rsync_protocol`](https://docs.rs/oc-rsync-protocol) for the protocol version
+- [`rsync_protocol`](https://docs.rs/rsync-protocol) for the protocol version
   logic that selects the strong checksum variant used during negotiation.
-- [`oc_rsync_core`](https://docs.rs/oc-rsync-core) for message formatting utilities
+- [`rsync_core`](https://docs.rs/rsync-core) for message formatting utilities
   that surface checksum mismatches to the user.

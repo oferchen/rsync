@@ -1,5 +1,5 @@
 use super::*;
-use oc_rsync_checksums::strong::Md5;
+use rsync_checksums::strong::Md5;
 
 #[test]
 fn out_format_renders_full_checksum_for_files() {

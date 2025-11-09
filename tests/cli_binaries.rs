@@ -1,4 +1,4 @@
-use oc_rsync_core::version::{
+use rsync_core::version::{
     DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_PROGRAM_NAME, PROGRAM_NAME,
 };
 use std::collections::BTreeSet;
@@ -349,7 +349,7 @@ mod locate_binary_tests {
         let _guard = ENV_MUTEX.lock().expect("env mutex poisoned");
 
         let temp_dir = TempDir::create().expect("failed to create temporary directory");
-        let binary_name = "oc_rsync_locate_binary";
+        let binary_name = "rsync_locate_binary";
         let binary_path = temp_dir
             .path()
             .join(format!("{binary_name}{}", std::env::consts::EXE_SUFFIX));
@@ -412,7 +412,7 @@ mod locate_binary_tests {
     impl TempDir {
         fn create() -> io::Result<Self> {
             let mut base = env::temp_dir();
-            base.push("oc_rsync_locate_binary_tests");
+            base.push("rsync_locate_binary_tests");
             fs::create_dir_all(&base)?;
 
             for attempt in 0..100 {

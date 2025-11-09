@@ -1,6 +1,6 @@
 use super::common::*;
 use super::*;
-use oc_rsync_core::fallback::describe_missing_fallback_binary;
+use rsync_core::fallback::describe_missing_fallback_binary;
 
 #[test]
 fn remote_operand_reports_launch_failure_when_fallback_missing() {

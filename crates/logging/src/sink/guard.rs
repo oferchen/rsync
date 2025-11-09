@@ -42,8 +42,8 @@ impl<'a, W> LineModeGuard<'a, W> {
     /// Permanently adopt a newline-free mode after performing some initial writes:
     ///
     /// ```
-    /// use oc_rsync_core::message::Message;
-    /// use oc_rsync_logging::{LineMode, MessageSink};
+    /// use rsync_core::message::Message;
+    /// use rsync_logging::{LineMode, MessageSink};
     ///
     /// let mut sink = MessageSink::new(Vec::new());
     /// {

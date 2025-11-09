@@ -1,6 +1,6 @@
 use crate::handshake_util::{RemoteProtocolAdvertisement, local_cap_reduced_protocol};
 use crate::negotiation::{NegotiatedStreamParts, TryMapInnerError};
-use oc_rsync_protocol::ProtocolVersion;
+use rsync_protocol::ProtocolVersion;
 
 use super::BinaryHandshake;
 
@@ -13,8 +13,8 @@ use super::BinaryHandshake;
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_protocol::ProtocolVersion;
-/// use oc_rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
+/// use rsync_protocol::ProtocolVersion;
+/// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
 /// use std::io::{Cursor, Read, Write};
 ///
 /// #[derive(Debug)]
@@ -177,8 +177,8 @@ impl<R> BinaryHandshakeParts<R> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use oc_rsync_protocol::ProtocolVersion;
-    /// use oc_rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
     /// use std::io::{self, Cursor, Read, Write};
     ///
     /// #[derive(Debug)]
@@ -247,8 +247,8 @@ impl<R> BinaryHandshakeParts<R> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use oc_rsync_protocol::ProtocolVersion;
-    /// use oc_rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::{negotiate_binary_session, BinaryHandshakeParts};
     /// use std::io::{self, Read, Write};
     ///
     /// #[derive(Debug)]
@@ -346,8 +346,8 @@ impl<R> BinaryHandshakeParts<R> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use oc_rsync_protocol::ProtocolVersion;
-    /// use oc_rsync_transport::negotiate_binary_session;
+    /// use rsync_protocol::ProtocolVersion;
+    /// use rsync_transport::negotiate_binary_session;
     /// use std::io::{self, Cursor};
     ///
     /// fn main() -> io::Result<()> {
@@ -374,7 +374,7 @@ impl<R> BinaryHandshakeParts<R> {
     ///     assert_eq!(negotiated_protocol, expected_negotiated);
     ///     assert_eq!(
     ///         stream_parts.decision(),
-    ///         oc_rsync_protocol::NegotiationPrologue::Binary
+    ///         rsync_protocol::NegotiationPrologue::Binary
     ///     );
     ///     assert!(stream_parts.buffered().is_empty());
     ///     Ok(())

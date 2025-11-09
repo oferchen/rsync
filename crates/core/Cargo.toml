@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync-core"
+name = "rsync-core"
 version.workspace = true
 edition = "2024"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
@@ -15,28 +15,28 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-oc-rsync-protocol = { path = "../protocol" }
-oc-rsync-meta = { path = "../meta", default-features = false }
-oc-rsync-engine = { path = "../engine", default-features = false }
-oc-rsync-bandwidth = { path = "../bandwidth" }
-oc-rsync-transport = { path = "../transport" }
-oc-rsync-filters = { path = "../filters" }
-oc-rsync-compress = { path = "../compress" }
+rsync-protocol = { path = "../protocol" }
+rsync-meta = { path = "../meta", default-features = false }
+rsync-engine = { path = "../engine", default-features = false }
+rsync-bandwidth = { path = "../bandwidth" }
+rsync-transport = { path = "../transport" }
+rsync-filters = { path = "../filters" }
+rsync-compress = { path = "../compress" }
 libc = "0.2"
 nix = { version = "0.29", default-features = false, features = ["user"] }
 rustix = { version = "0.38", features = ["process"] }
 base64 = "0.22"
-oc-rsync-checksums = { path = "../checksums" }
+rsync-checksums = { path = "../checksums" }
 tempfile = "3.10"
 socket2 = "0.4"
 rsync_branding = { path = "../branding", package = "rsync-branding" }
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
-acl = ["oc-rsync-meta/acl", "oc-rsync-engine/acl"]
-xattr = ["oc-rsync-meta/xattr", "oc-rsync-engine/xattr"]
-zstd = ["oc-rsync-engine/zstd", "oc-rsync-compress/zstd"]
-lz4 = ["oc-rsync-engine/lz4", "oc-rsync-compress/lz4"]
+acl = ["rsync-meta/acl", "rsync-engine/acl"]
+xattr = ["rsync-meta/xattr", "rsync-engine/xattr"]
+zstd = ["rsync-engine/zstd", "rsync-compress/zstd"]
+lz4 = ["rsync-engine/lz4", "rsync-compress/lz4"]
 iconv = []
 sd-notify = []
 

@@ -4,11 +4,11 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use oc_rsync_core::client::{
+use rsync_core::client::{
     AddressMode, DeleteMode, HumanReadableMode, IconvSetting, RemoteFallbackArgs, TransferTimeout,
 };
-use oc_rsync_logging::MessageSink;
-use oc_rsync_protocol::ProtocolVersion;
+use rsync_logging::MessageSink;
+use rsync_protocol::ProtocolVersion;
 
 use crate::frontend::execution::info_flags_include_progress;
 use crate::frontend::password::load_password_file;
@@ -34,7 +34,7 @@ pub(crate) struct FallbackInputs {
     pub(crate) remote_options: Vec<OsString>,
     pub(crate) connect_program: Option<OsString>,
     pub(crate) daemon_port: Option<u16>,
-    pub(crate) bind_address: Option<oc_rsync_core::client::BindAddress>,
+    pub(crate) bind_address: Option<rsync_core::client::BindAddress>,
     pub(crate) sockopts: Option<OsString>,
     pub(crate) blocking_io: Option<bool>,
     pub(crate) human_readable: Option<HumanReadableMode>,

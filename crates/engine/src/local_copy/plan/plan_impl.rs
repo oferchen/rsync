@@ -40,7 +40,7 @@ impl LocalCopyPlan {
     /// # Examples
     ///
     /// ```
-    /// use oc_rsync_engine::local_copy::LocalCopyPlan;
+    /// use rsync_engine::local_copy::LocalCopyPlan;
     /// use std::ffi::OsString;
     ///
     /// let operands = vec![OsString::from("src"), OsString::from("dst")];

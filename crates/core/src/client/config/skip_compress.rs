@@ -5,7 +5,7 @@ use crate::{
     message::{Message, Role},
     rsync_error,
 };
-use oc_rsync_engine::SkipCompressList;
+use rsync_engine::SkipCompressList;
 
 /// Parses a `--skip-compress` specification into a [`SkipCompressList`].
 pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Message> {

@@ -2,13 +2,13 @@ use std::ffi::OsStr;
 use std::io::{self, Write};
 use std::time::Duration;
 
-use oc_rsync_engine::local_copy::{
+use rsync_engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyArgumentError,
     LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
     ReferenceDirectory as EngineReferenceDirectory,
     ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
-use oc_rsync_filters::FilterRule as EngineFilterRule;
+use rsync_filters::FilterRule as EngineFilterRule;
 
 use super::config::{
     ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,

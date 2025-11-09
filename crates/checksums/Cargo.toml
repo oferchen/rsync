@@ -1,5 +1,5 @@
 [package]
-name = "oc-rsync-checksums"
+name = "rsync-checksums"
 version.workspace = true
 edition = "2024"
 license = "GPL-3.0-or-later"

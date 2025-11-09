@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oc_rsync_core::client::{
+use rsync_core::client::{
     ClientConfig, ClientEventKind, ClientProgressObserver, ClientProgressUpdate, FilterRuleSpec,
     run_client, run_client_with_observer,
 };

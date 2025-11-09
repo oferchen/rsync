@@ -2,7 +2,7 @@ use std::io::{self, BufRead};
 
 use crate::client::module_list::parsing::strip_prefix_ignore_ascii_case;
 
-use oc_rsync_protocol::{NegotiationError, parse_legacy_error_message};
+use rsync_protocol::{NegotiationError, parse_legacy_error_message};
 
 use super::super::{
     ClientError, PARTIAL_TRANSFER_EXIT_CODE, daemon_error, daemon_protocol_error, socket_error,

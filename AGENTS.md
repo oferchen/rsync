@@ -30,8 +30,8 @@ This document defines the internal actors (“agents”), their responsibilities
   (or via explicit overrides) and is executable, surfacing a branded
   diagnostic when the check fails so operators can install upstream `rsync` or
   set `OC_RSYNC_FALLBACK` appropriately. Use the shared
-  `oc_rsync_core::fallback::fallback_binary_available` and
-  `oc_rsync_core::fallback::describe_missing_fallback_binary` helpers to keep the
+  `rsync_core::fallback::fallback_binary_available` and
+  `rsync_core::fallback::describe_missing_fallback_binary` helpers to keep the
   guard rails consistent across binaries. The availability helper memoises the
   lookup for each `(binary, PATH[, PATHEXT])` tuple while storing the resolved
   executable path so cached hits are revalidated when the file disappears, and
@@ -96,7 +96,7 @@ This document defines the internal actors (“agents”), their responsibilities
   test (`roll_many_matches_single_rolls_for_long_sequences`) so both code paths
   remain in parity. The `VersionInfoConfig::with_runtime_capabilities` helper
   surfaces the SIMD detection result (via
-  `oc_rsync_checksums::simd_acceleration_available`) so `--version` output tracks
+  `rsync_checksums::simd_acceleration_available`) so `--version` output tracks
   the acceleration active at runtime; update the helper whenever new
   architecture-specific paths are introduced.
 - **Environment guardrails for tests**: When exercising fallback overrides or

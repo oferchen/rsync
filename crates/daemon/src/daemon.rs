@@ -39,8 +39,8 @@ use fs2::FileExt;
 use std::os::unix::fs::PermissionsExt;
 
 use clap::{Arg, ArgAction, Command, builder::OsStringValueParser};
-use oc_rsync_checksums::strong::Md5;
-use oc_rsync_core::{
+use rsync_checksums::strong::Md5;
+use rsync_core::{
     auth::{SUPPORTED_DAEMON_DIGESTS, verify_daemon_auth_response},
     bandwidth::{
         BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, LimiterChange,
@@ -54,8 +54,8 @@ use oc_rsync_core::{
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
 };
-use oc_rsync_logging::MessageSink;
-use oc_rsync_protocol::{
+use rsync_logging::MessageSink;
+use rsync_protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
     format_legacy_daemon_message, parse_legacy_daemon_message,
 };

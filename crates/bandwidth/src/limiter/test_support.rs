@@ -90,7 +90,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// ```
     /// # #[cfg(feature = "test-support")]
     /// # {
-    /// use oc_rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
     /// use std::num::NonZeroU64;
     ///
     /// let mut session = recorded_sleep_session();
@@ -122,7 +122,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// ```
     /// # #[cfg(feature = "test-support")]
     /// # {
-    /// use oc_rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
     /// use std::num::NonZeroU64;
     ///
     /// let mut session = recorded_sleep_session();
@@ -155,7 +155,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// # #[cfg(feature = "test-support")]
     /// # {
     /// # use std::time::Duration;
-    /// use oc_rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
     /// use std::num::NonZeroU64;
     ///
     /// let mut session = recorded_sleep_session();
@@ -214,7 +214,7 @@ impl<'a> RecordedSleepSession<'a> {
     /// ```
     /// # #[cfg(feature = "test-support")]
     /// # {
-    /// use oc_rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+    /// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
     /// use std::num::NonZeroU64;
     ///
     /// let mut session = recorded_sleep_session();
@@ -254,7 +254,7 @@ impl<'a> RecordedSleepSession<'a> {
 /// ```
 /// # #[cfg(feature = "test-support")]
 /// # {
-/// use oc_rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
+/// use rsync_bandwidth::{recorded_sleep_session, BandwidthLimiter};
 /// use std::num::NonZeroU64;
 ///
 /// let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());

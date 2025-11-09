@@ -6,14 +6,14 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-use oc_rsync_core::branding::Brand;
-use oc_rsync_core::fallback::{
+use rsync_core::branding::Brand;
+use rsync_core::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
     fallback_binary_available, fallback_override,
 };
-use oc_rsync_core::message::Role;
-use oc_rsync_core::rsync_error;
-use oc_rsync_logging::MessageSink;
+use rsync_core::message::Role;
+use rsync_core::rsync_error;
+use rsync_logging::MessageSink;
 
 /// Returns the daemon argument vector when `--daemon` is present.
 pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
@@ -66,7 +66,7 @@ where
     Out: Write,
     Err: Write,
 {
-    oc_rsync_daemon::run(args, stdout, stderr)
+    rsync_daemon::run(args, stdout, stderr)
 }
 
 /// Delegates execution to the system rsync binary when `--server` is requested.

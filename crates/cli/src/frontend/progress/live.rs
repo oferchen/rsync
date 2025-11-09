@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-use oc_rsync_core::client::{ClientProgressObserver, ClientProgressUpdate, HumanReadableMode};
+use rsync_core::client::{ClientProgressObserver, ClientProgressUpdate, HumanReadableMode};
 
 use super::format::{
     format_progress_bytes, format_progress_elapsed, format_progress_percent, format_progress_rate,
@@ -9,7 +9,7 @@ use super::format::{
 use super::mode::ProgressMode;
 
 /// Emits verbose, statistics, and progress-oriented output derived from a
-/// [`oc_rsync_core::client::ClientSummary`].
+/// [`rsync_core::client::ClientSummary`].
 pub(crate) struct LiveProgress<'a> {
     writer: &'a mut dyn Write,
     rendered: bool,

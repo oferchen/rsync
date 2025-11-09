@@ -1,6 +1,6 @@
 use crate::handshake_util::RemoteProtocolAdvertisement;
 use crate::negotiation::NegotiatedStreamParts;
-use oc_rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationPrologue, ProtocolVersion};
+use rsync_protocol::{LegacyDaemonGreetingOwned, NegotiationPrologue, ProtocolVersion};
 
 use super::SessionHandshakeParts;
 

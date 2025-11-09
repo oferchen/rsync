@@ -631,197 +631,11 @@ version = "3.4.1-rust"
 dependencies = [
  "assert_cmd",
  "libc",
- "oc-rsync-cli",
- "oc-rsync-core",
- "oc-rsync-daemon",
- "oc-rsync-windows-gnu-eh",
+ "rsync-cli",
+ "rsync-core",
+ "rsync-daemon",
+ "rsync-windows-gnu-eh",
 ]
-
-[[package]]
-name = "oc-rsync-apple-fs"
-version = "3.4.1-rust"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "oc-rsync-bandwidth"
-version = "3.4.1-rust"
-dependencies = [
- "memchr",
- "proptest",
-]
-
-[[package]]
-name = "oc-rsync-checksums"
-version = "3.4.1-rust"
-dependencies = [
- "digest",
- "md-5",
- "md4",
- "openssl",
- "proptest",
- "sha1",
- "sha2",
- "xxhash-rust",
-]
-
-[[package]]
-name = "oc-rsync-cli"
-version = "3.4.1-rust"
-dependencies = [
- "assert_cmd",
- "base64",
- "clap",
- "filetime",
- "libc",
- "oc-rsync-apple-fs",
- "oc-rsync-checksums",
- "oc-rsync-compress",
- "oc-rsync-core",
- "oc-rsync-daemon",
- "oc-rsync-filters",
- "oc-rsync-logging",
- "oc-rsync-meta",
- "oc-rsync-protocol",
- "predicates",
- "rustix 0.38.44",
- "tempfile",
- "time",
- "users",
- "xattr",
-]
-
-[[package]]
-name = "oc-rsync-compress"
-version = "3.4.1-rust"
-dependencies = [
- "flate2",
- "lz4_flex",
- "zstd",
-]
-
-[[package]]
-name = "oc-rsync-core"
-version = "3.4.1-rust"
-dependencies = [
- "base64",
- "filetime",
- "libc",
- "nix",
- "oc-rsync-bandwidth",
- "oc-rsync-checksums",
- "oc-rsync-compress",
- "oc-rsync-engine",
- "oc-rsync-filters",
- "oc-rsync-meta",
- "oc-rsync-protocol",
- "oc-rsync-transport",
- "rsync-branding",
- "rustix 0.38.44",
- "socket2",
- "tempfile",
-]
-
-[[package]]
-name = "oc-rsync-daemon"
-version = "3.4.1-rust"
-dependencies = [
- "base64",
- "clap",
- "dns-lookup",
- "fs2",
- "oc-rsync-bandwidth",
- "oc-rsync-checksums",
- "oc-rsync-core",
- "oc-rsync-logging",
- "oc-rsync-protocol",
- "sd-notify",
- "tempfile",
-]
-
-[[package]]
-name = "oc-rsync-embedding"
-version = "3.4.1-rust"
-dependencies = [
- "oc-rsync-cli",
- "oc-rsync-core",
- "oc-rsync-daemon",
-]
-
-[[package]]
-name = "oc-rsync-engine"
-version = "3.4.1-rust"
-dependencies = [
- "filetime",
- "globset",
- "libc",
- "memchr",
- "oc-rsync-apple-fs",
- "oc-rsync-bandwidth",
- "oc-rsync-checksums",
- "oc-rsync-compress",
- "oc-rsync-filters",
- "oc-rsync-meta",
- "oc-rsync-protocol",
- "rustix 0.38.44",
- "tempfile",
- "xattr",
-]
-
-[[package]]
-name = "oc-rsync-filters"
-version = "3.4.1-rust"
-dependencies = [
- "globset",
-]
-
-[[package]]
-name = "oc-rsync-logging"
-version = "3.4.1-rust"
-dependencies = [
- "oc-rsync-core",
-]
-
-[[package]]
-name = "oc-rsync-meta"
-version = "3.4.1-rust"
-dependencies = [
- "filetime",
- "libc",
- "oc-rsync-apple-fs",
- "rustix 0.38.44",
- "tempfile",
- "xattr",
-]
-
-[[package]]
-name = "oc-rsync-protocol"
-version = "3.4.1-rust"
-dependencies = [
- "memchr",
- "proptest",
-]
-
-[[package]]
-name = "oc-rsync-transport"
-version = "3.4.1-rust"
-dependencies = [
- "memchr",
- "oc-rsync-protocol",
- "proptest",
-]
-
-[[package]]
-name = "oc-rsync-walk"
-version = "3.4.1-rust"
-dependencies = [
- "tempfile",
-]
-
-[[package]]
-name = "oc-rsync-windows-gnu-eh"
-version = "3.4.1-rust"
 
 [[package]]
 name = "once_cell"
@@ -1060,6 +874,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "rsync-apple-fs"
+version = "3.4.1-rust"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "rsync-bandwidth"
+version = "3.4.1-rust"
+dependencies = [
+ "memchr",
+ "proptest",
+]
+
+[[package]]
 name = "rsync-branding"
 version = "3.4.1-rust"
 dependencies = [
@@ -1067,6 +896,177 @@ dependencies = [
  "serde_json",
  "toml",
 ]
+
+[[package]]
+name = "rsync-checksums"
+version = "3.4.1-rust"
+dependencies = [
+ "digest",
+ "md-5",
+ "md4",
+ "openssl",
+ "proptest",
+ "sha1",
+ "sha2",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "rsync-cli"
+version = "3.4.1-rust"
+dependencies = [
+ "assert_cmd",
+ "base64",
+ "clap",
+ "filetime",
+ "libc",
+ "predicates",
+ "rsync-apple-fs",
+ "rsync-checksums",
+ "rsync-compress",
+ "rsync-core",
+ "rsync-daemon",
+ "rsync-filters",
+ "rsync-logging",
+ "rsync-meta",
+ "rsync-protocol",
+ "rustix 0.38.44",
+ "tempfile",
+ "time",
+ "users",
+ "xattr",
+]
+
+[[package]]
+name = "rsync-compress"
+version = "3.4.1-rust"
+dependencies = [
+ "flate2",
+ "lz4_flex",
+ "zstd",
+]
+
+[[package]]
+name = "rsync-core"
+version = "3.4.1-rust"
+dependencies = [
+ "base64",
+ "filetime",
+ "libc",
+ "nix",
+ "rsync-bandwidth",
+ "rsync-branding",
+ "rsync-checksums",
+ "rsync-compress",
+ "rsync-engine",
+ "rsync-filters",
+ "rsync-meta",
+ "rsync-protocol",
+ "rsync-transport",
+ "rustix 0.38.44",
+ "socket2",
+ "tempfile",
+]
+
+[[package]]
+name = "rsync-daemon"
+version = "3.4.1-rust"
+dependencies = [
+ "base64",
+ "clap",
+ "dns-lookup",
+ "fs2",
+ "rsync-bandwidth",
+ "rsync-checksums",
+ "rsync-core",
+ "rsync-logging",
+ "rsync-protocol",
+ "sd-notify",
+ "tempfile",
+]
+
+[[package]]
+name = "rsync-embedding"
+version = "3.4.1-rust"
+dependencies = [
+ "rsync-cli",
+ "rsync-core",
+ "rsync-daemon",
+]
+
+[[package]]
+name = "rsync-engine"
+version = "3.4.1-rust"
+dependencies = [
+ "filetime",
+ "globset",
+ "libc",
+ "memchr",
+ "rsync-apple-fs",
+ "rsync-bandwidth",
+ "rsync-checksums",
+ "rsync-compress",
+ "rsync-filters",
+ "rsync-meta",
+ "rsync-protocol",
+ "rustix 0.38.44",
+ "tempfile",
+ "xattr",
+]
+
+[[package]]
+name = "rsync-filters"
+version = "3.4.1-rust"
+dependencies = [
+ "globset",
+]
+
+[[package]]
+name = "rsync-logging"
+version = "3.4.1-rust"
+dependencies = [
+ "rsync-core",
+]
+
+[[package]]
+name = "rsync-meta"
+version = "3.4.1-rust"
+dependencies = [
+ "filetime",
+ "libc",
+ "rsync-apple-fs",
+ "rustix 0.38.44",
+ "tempfile",
+ "xattr",
+]
+
+[[package]]
+name = "rsync-protocol"
+version = "3.4.1-rust"
+dependencies = [
+ "memchr",
+ "proptest",
+]
+
+[[package]]
+name = "rsync-transport"
+version = "3.4.1-rust"
+dependencies = [
+ "memchr",
+ "proptest",
+ "rsync-protocol",
+]
+
+[[package]]
+name = "rsync-walk"
+version = "3.4.1-rust"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
+name = "rsync-windows-gnu-eh"
+version = "3.4.1-rust"
 
 [[package]]
 name = "rustix"

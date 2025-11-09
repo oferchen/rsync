@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use oc_rsync_core::client::{
+use rsync_core::client::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, HumanReadableMode,
 };
 use time::OffsetDateTime;

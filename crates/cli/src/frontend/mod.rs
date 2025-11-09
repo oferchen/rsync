@@ -1,6 +1,6 @@
 //! # Overview
 //!
-//! `oc_rsync_cli` implements the thin command-line front-end for the Rust `rsync`
+//! `rsync_cli` implements the thin command-line front-end for the Rust `rsync`
 //! workspace. The crate is intentionally small: it recognises the subset of
 //! command-line switches that are currently supported (`--help`/`-h`,
 //! `--version`/`-V`, `--daemon`, `--server`, `--dry-run`/`-n`, `--list-only`,
@@ -8,8 +8,8 @@
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
 //! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
 //! `--append`/`--append-verify`, `--remote-option`, `--connect-program`, and `--sparse`) and delegates local copy operations to
-//! [`oc_rsync_core::client::run_client`]. Daemon invocations are forwarded to
-//! [`oc_rsync_daemon::run`], while `--server` sessions immediately spawn the
+//! [`rsync_core::client::run_client`]. Daemon invocations are forwarded to
+//! [`rsync_daemon::run`], while `--server` sessions immediately spawn the
 //! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
 //! variable) so remote-shell transports keep functioning while the native
 //! server implementation is completed. Higher layers will eventually extend the
@@ -28,20 +28,20 @@
 //! `--delete-excluded`, `--compare-dest`, `--copy-dest`, `--link-dest`,
 //! `--filter`, `--files-from`, `--from0`, and `--bwlimit` flags while treating all other
 //! tokens as transfer arguments. When a transfer is requested, the function
-//! delegates to [`oc_rsync_core::client::run_client`], which currently implements a
+//! delegates to [`rsync_core::client::run_client`], which currently implements a
 //! deterministic local copy pipeline with optional bandwidth pacing.
 //!
 //! # Invariants
 //!
 //! - `run` never panics; unexpected I/O failures surface as non-zero exit codes.
-//! - Version output is delegated to [`oc_rsync_core::version::VersionInfoReport`]
+//! - Version output is delegated to [`rsync_core::version::VersionInfoReport`]
 //!   so the CLI remains byte-identical with the canonical banner used by other
 //!   workspace components.
 //! - Help output is rendered by a dedicated helper using a static snapshot that
 //!   documents the currently supported subset. The helper substitutes the
 //!   invoked program name so wrappers like `oc-rsync` display branded banners
 //!   while the full upstream-compatible renderer is implemented.
-//! - Transfer attempts are forwarded to [`oc_rsync_core::client::run_client`] so
+//! - Transfer attempts are forwarded to [`rsync_core::client::run_client`] so
 //!   diagnostics and success cases remain centralised while higher-fidelity
 //!   engines are developed.
 //!
@@ -49,19 +49,19 @@
 //!
 //! The parser returns a diagnostic message with exit code `1` when argument
 //! processing fails. Transfer attempts surface their exit codes from
-//! [`oc_rsync_core::client::run_client`], preserving the structured diagnostics
+//! [`rsync_core::client::run_client`], preserving the structured diagnostics
 //! emitted by the core crate.
 //!
 //! # Examples
 //!
 //! ```
-//! use oc_rsync_cli::run;
+//! use rsync_cli::run;
 //!
 //! let mut stdout = Vec::new();
 //! let mut stderr = Vec::new();
 //! let exit_code = run(
 //!     [
-//!         oc_rsync_core::branding::client_program_name(),
+//!         rsync_core::branding::client_program_name(),
 //!         "--version",
 //!     ],
 //!     &mut stdout,
@@ -75,7 +75,7 @@
 //!
 //! # See also
 //!
-//! - [`oc_rsync_core::version`] for the underlying banner rendering helpers.
+//! - [`rsync_core::version`] for the underlying banner rendering helpers.
 //! - `src/bin/oc-rsync.rs` for the binary that wires [`run`] into `main`.
 
 use std::ffi::OsString;
@@ -88,19 +88,19 @@ mod outbuf;
 #[cfg(test)]
 pub(crate) use command_builder::clap_command;
 use execution::execute;
+use outbuf::{OutbufAdapter, parse_outbuf_mode};
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use oc_rsync_core::client::*;
+pub(crate) use rsync_core::client::*;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use oc_rsync_core::version::VersionInfoReport;
-use oc_rsync_core::{
+pub(crate) use rsync_core::version::VersionInfoReport;
+use rsync_core::{
     branding::Brand,
     message::{Message, Role},
     rsync_error,
 };
-use oc_rsync_logging::MessageSink;
-use outbuf::{OutbufAdapter, parse_outbuf_mode};
+use rsync_logging::MessageSink;
 #[cfg(test)]
 use std::collections::HashSet;
 #[cfg(test)]
@@ -144,14 +144,14 @@ pub(crate) use filter_rules::{
     merge_directive_options, os_string_to_pattern, parse_filter_directive,
 };
 use help::help_text;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use oc_rsync_core::branding::{self as branding};
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use oc_rsync_core::client::{AddressMode, StrongChecksumChoice, TransferTimeout};
 pub(crate) use out_format::{OutFormat, OutFormatContext, emit_out_format, parse_out_format};
 pub(crate) use progress::*;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use rsync_core::branding::{self as branding};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use rsync_core::client::{AddressMode, StrongChecksumChoice, TransferTimeout};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use std::num::NonZeroU64;
@@ -234,7 +234,7 @@ fn daemon_mode_arguments_for_alias(args: &[OsString], brand: Brand) -> Option<Ve
 
 /// The function returns the process exit code that should be used by the caller.
 /// On success, `0` is returned. All diagnostics are rendered using the central
-/// [`oc_rsync_core::message`] utilities to preserve formatting and trailers.
+/// [`rsync_core::message`] utilities to preserve formatting and trailers.
 #[allow(clippy::module_name_repetitions)]
 pub fn run<I, S, Out, Err>(arguments: I, stdout: &mut Out, stderr: &mut Err) -> i32
 where
