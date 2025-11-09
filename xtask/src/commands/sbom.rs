@@ -1,5 +1,6 @@
 use crate::error::{TaskError, TaskResult};
 use crate::util::is_help_flag;
+use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use cargo_metadata::{CargoOpt, Metadata, MetadataCommand, Package};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -71,7 +72,8 @@ pub fn execute(workspace: &Path, options: SbomOptions) -> TaskResult<()> {
 
     let manifest_path = workspace.join("Cargo.toml");
     let metadata = load_metadata(&manifest_path)?;
-    let bom = build_bom(&metadata)?;
+    let branding = load_workspace_branding(workspace)?;
+    let bom = build_bom(&branding, &metadata)?;
     let document = serde_json::to_vec_pretty(&bom)
         .map_err(|error| TaskError::Metadata(format!("failed to encode SBOM JSON: {error}")))?;
     fs::write(output_path, document)?;
@@ -97,7 +99,7 @@ fn load_metadata(manifest_path: &Path) -> TaskResult<Metadata> {
         .map_err(|error| TaskError::Metadata(format!("failed to load cargo metadata: {error}")))
 }
 
-fn build_bom(metadata: &Metadata) -> TaskResult<Bom> {
+fn build_bom(branding: &WorkspaceBranding, metadata: &Metadata) -> TaskResult<Bom> {
     let workspace_members: HashSet<_> = metadata.workspace_members.iter().cloned().collect();
     let mut components_by_id = HashMap::new();
 
@@ -155,7 +157,7 @@ fn build_bom(metadata: &Metadata) -> TaskResult<Bom> {
         metadata: MetadataSection {
             component: root_component.clone(),
             tools: vec![Tool {
-                vendor: Some(String::from("oc-rsync")),
+                vendor: Some(branding.client_bin.clone()),
                 name: String::from("xtask sbom"),
                 version: Some(String::from(env!("CARGO_PKG_VERSION"))),
             }],
@@ -307,6 +309,16 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&data).expect("parse sbom json");
         assert_eq!(value.get("bomFormat").unwrap(), "CycloneDX");
         assert!(value.get("components").is_some());
+
+        let branding = load_workspace_branding(workspace_root()).expect("load branding");
+        let vendor = value
+            .get("metadata")
+            .and_then(|meta| meta.get("tools"))
+            .and_then(|tools| tools.get(0))
+            .and_then(|tool| tool.get("vendor"))
+            .and_then(|vendor| vendor.as_str())
+            .expect("vendor string");
+        assert_eq!(vendor, branding.client_bin);
     }
 
     #[test]
@@ -316,7 +328,9 @@ mod tests {
         metadata.resolve = None;
         metadata.workspace_members.clear();
 
-        let error = match build_bom(&metadata) {
+        let branding = load_workspace_branding(workspace_root()).expect("load branding");
+
+        let error = match build_bom(&branding, &metadata) {
             Ok(_) => panic!("expected build_bom to fail"),
             Err(error) => error,
         };
