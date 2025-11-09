@@ -12,8 +12,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # adjust to your actual bin names in the repo:
-  BINARIES: "oc-rsync oc-rsyncd"
+  BINARIES: "oc-rsync"
 
 jobs:
   build:
