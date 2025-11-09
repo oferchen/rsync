@@ -334,30 +334,16 @@ fn rpm_assets_include(table: &TomlTable, destination: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support;
     use std::collections::BTreeMap;
     use std::fs;
     use tempfile::tempdir;
 
     fn sample_branding() -> WorkspaceBranding {
-        WorkspaceBranding {
-            brand: String::from("oc"),
-            upstream_version: String::from("3.4.1"),
-            rust_version: String::from("3.4.1-rust"),
-            protocol: 32,
-            client_bin: String::from("oc-rsync"),
-            daemon_bin: String::from("oc-rsync"),
-            legacy_client_bin: String::from("rsync"),
-            legacy_daemon_bin: String::from("rsyncd"),
-            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
-            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
-            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
-            legacy_daemon_config_dir: PathBuf::from("/etc"),
-            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
-            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
-            source: String::from("https://example.invalid/oc-rsync"),
-            cross_compile: BTreeMap::new(),
-            cross_compile_matrix: BTreeMap::new(),
-        }
+        let mut branding = test_support::workspace_branding_snapshot();
+        branding.cross_compile = BTreeMap::new();
+        branding.cross_compile_matrix = BTreeMap::new();
+        branding
     }
 
     fn write_unit_file(root: &Path, branding: &WorkspaceBranding, documentation: &str) {

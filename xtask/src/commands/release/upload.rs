@@ -374,7 +374,7 @@ fn resolve_command() -> TaskResult<CommandLocation> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+    use crate::test_support;
     use std::ffi::OsString;
     use std::io::Write;
     use tempfile::TempDir;
@@ -419,40 +419,18 @@ mod tests {
     }
 
     fn sample_branding() -> WorkspaceBranding {
-        WorkspaceBranding {
-            brand: String::from("oc"),
-            upstream_version: String::from("3.4.1"),
-            rust_version: String::from("3.4.1-rust"),
-            protocol: 32,
-            client_bin: String::from("oc-rsync"),
-            daemon_bin: String::from("oc-rsync"),
-            legacy_client_bin: String::from("rsync"),
-            legacy_daemon_bin: String::from("rsyncd"),
-            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
-            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
-            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
-            legacy_daemon_config_dir: PathBuf::from("/etc"),
-            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
-            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
-            source: String::from("https://github.com/example/rsync"),
-            cross_compile: BTreeMap::from([
-                (String::from("linux"), vec![String::from("x86_64")]),
-                (String::from("macos"), vec![String::from("x86_64")]),
-                (String::from("windows"), vec![String::from("x86_64")]),
-            ]),
-            cross_compile_matrix: BTreeMap::from([
-                (String::from("linux-x86_64"), true),
-                (String::from("darwin-x86_64"), true),
-                (String::from("windows-x86_64"), true),
-            ]),
-        }
+        test_support::workspace_branding_snapshot()
     }
 
     #[test]
     fn resolve_repository_defaults_to_branding_source() {
         let branding = sample_branding();
         let repository = resolve_repository(&branding).expect("repository parsed");
-        assert_eq!(repository, "example/rsync");
+        let expected = branding
+            .source
+            .strip_prefix(GITHUB_PREFIX)
+            .unwrap_or(&branding.source);
+        assert_eq!(repository, expected);
     }
 
     #[test]
@@ -468,42 +446,66 @@ mod tests {
     fn resolve_tag_defaults_to_rust_version() {
         let branding = sample_branding();
         let tag = resolve_tag(&branding).expect("tag parsed");
-        assert_eq!(tag, "v3.4.1-rust");
+        assert_eq!(tag, format!("v{}", branding.rust_version));
     }
 
     #[test]
     fn gather_release_artifacts_collects_known_outputs() {
         let temp = TempDir::new().expect("temp workspace");
         let workspace = temp.path();
-        let branding = sample_branding();
+        let mut branding = sample_branding();
+        branding
+            .cross_compile
+            .insert(String::from("linux"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("macos"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("windows"), vec![String::from("x86_64")]);
+        branding.cross_compile_matrix.clear();
+        branding
+            .cross_compile_matrix
+            .insert(String::from("linux-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("darwin-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("windows-x86_64"), true);
 
-        let tarball = workspace
-            .join("target/dist")
-            .join("oc-rsync-3.4.1-rust-x86_64-unknown-linux-gnu.tar.gz");
-        let deb = workspace
-            .join("target/debian")
-            .join("oc-rsync_3.4.1-rust_amd64.deb");
+        let tarball = workspace.join("target/dist").join(format!(
+            "{}-{}-x86_64-unknown-linux-gnu.tar.gz",
+            branding.client_bin, branding.rust_version
+        ));
+        let deb = workspace.join("target/debian").join(format!(
+            "{}_{}_amd64.deb",
+            branding.client_bin, branding.rust_version
+        ));
         let rpm = workspace
             .join("target")
             .join("x86_64-unknown-linux-gnu")
             .join(DIST_PROFILE)
             .join("rpmbuild/RPMS/x86_64")
-            .join("oc-rsync-3.4.1-1.x86_64.rpm");
+            .join(format!(
+                "{}-{}-1.x86_64.rpm",
+                branding.client_bin, branding.upstream_version
+            ));
         let linux_binary = workspace
             .join("target")
             .join("x86_64-unknown-linux-gnu")
             .join("release")
-            .join("oc-rsync");
+            .join(&branding.client_bin);
         let mac_binary = workspace
             .join("target")
             .join("x86_64-apple-darwin")
             .join("release")
-            .join("oc-rsync");
+            .join(&branding.client_bin);
         let windows_binary = workspace
             .join("target")
             .join("x86_64-pc-windows-gnu")
             .join("release")
-            .join("oc-rsync.exe");
+            .join(format!("{}.exe", branding.client_bin));
 
         for path in [
             &tarball,
@@ -530,33 +532,57 @@ mod tests {
         let temp = TempDir::new().expect("temp workspace");
         let workspace = temp.path();
 
-        let branding = sample_branding();
-        let tarball = workspace
-            .join("target/dist")
-            .join("oc-rsync-3.4.1-rust-x86_64-unknown-linux-gnu.tar.gz");
-        let deb = workspace
-            .join("target/debian")
-            .join("oc-rsync_3.4.1-rust_amd64.deb");
+        let mut branding = sample_branding();
+        branding
+            .cross_compile
+            .insert(String::from("linux"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("macos"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("windows"), vec![String::from("x86_64")]);
+        branding.cross_compile_matrix.clear();
+        branding
+            .cross_compile_matrix
+            .insert(String::from("linux-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("darwin-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("windows-x86_64"), true);
+        let tarball = workspace.join("target/dist").join(format!(
+            "{}-{}-x86_64-unknown-linux-gnu.tar.gz",
+            branding.client_bin, branding.rust_version
+        ));
+        let deb = workspace.join("target/debian").join(format!(
+            "{}_{}_amd64.deb",
+            branding.client_bin, branding.rust_version
+        ));
         let rpm = workspace
             .join("target")
             .join(DIST_PROFILE)
             .join("rpmbuild/RPMS/x86_64")
-            .join("oc-rsync-3.4.1-1.x86_64.rpm");
+            .join(format!(
+                "{}-{}-1.x86_64.rpm",
+                branding.client_bin, branding.upstream_version
+            ));
         let linux_binary = workspace
             .join("target")
             .join("x86_64-unknown-linux-gnu")
             .join("release")
-            .join("oc-rsync");
+            .join(&branding.client_bin);
         let mac_binary = workspace
             .join("target")
             .join("x86_64-apple-darwin")
             .join("release")
-            .join("oc-rsync");
+            .join(&branding.client_bin);
         let windows_binary = workspace
             .join("target")
             .join("x86_64-pc-windows-gnu")
             .join("release")
-            .join("oc-rsync.exe");
+            .join(format!("{}.exe", branding.client_bin));
 
         for path in [
             &tarball,
