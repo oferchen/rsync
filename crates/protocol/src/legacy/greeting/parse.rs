@@ -112,8 +112,7 @@ pub fn parse_legacy_daemon_greeting_details(
         Some(digest_list)
     };
 
-    let negotiated = advertised_protocol.min(u32::from(u8::MAX)) as u8;
-    let protocol = ProtocolVersion::from_peer_advertisement(negotiated)?;
+    let protocol = ProtocolVersion::from_peer_advertisement(advertised_protocol)?;
 
     Ok(LegacyDaemonGreeting::new(
         protocol,

@@ -12,8 +12,9 @@ use ::core::str::FromStr;
 use crate::error::NegotiationError;
 
 use super::constants::{
-    FIRST_BINARY_NEGOTIATION_PROTOCOL, NEWEST_SUPPORTED_PROTOCOL, OLDEST_SUPPORTED_PROTOCOL,
-    SUPPORTED_PROTOCOL_BOUNDS, SUPPORTED_PROTOCOL_RANGE, UPSTREAM_PROTOCOL_RANGE,
+    FIRST_BINARY_NEGOTIATION_PROTOCOL, MAXIMUM_PROTOCOL_ADVERTISEMENT, NEWEST_SUPPORTED_PROTOCOL,
+    OLDEST_SUPPORTED_PROTOCOL, SUPPORTED_PROTOCOL_BOUNDS, SUPPORTED_PROTOCOL_RANGE,
+    UPSTREAM_PROTOCOL_RANGE,
 };
 use super::iter::{SupportedProtocolNumbersIter, SupportedVersionsIter};
 use super::parse::{ParseProtocolVersionError, ParseProtocolVersionErrorKind};
@@ -318,16 +319,24 @@ impl ProtocolVersion {
     /// Converts a peer-advertised version into the negotiated protocol version.
     #[must_use = "the negotiated protocol version must be handled"]
     #[inline]
-    pub fn from_peer_advertisement(value: u8) -> Result<Self, NegotiationError> {
-        if value < Self::OLDEST.as_u8() {
+    pub fn from_peer_advertisement(value: u32) -> Result<Self, NegotiationError> {
+        if value == 0 {
             return Err(NegotiationError::UnsupportedVersion(value));
         }
 
-        let clamped = if value > Self::NEWEST.as_u8() {
+        if value > u32::from(MAXIMUM_PROTOCOL_ADVERTISEMENT) {
+            return Err(NegotiationError::UnsupportedVersion(value));
+        }
+
+        let clamped = if value > u32::from(Self::NEWEST.as_u8()) {
             Self::NEWEST.as_u8()
         } else {
-            value
+            value as u8
         };
+
+        if clamped < Self::OLDEST.as_u8() {
+            return Err(NegotiationError::UnsupportedVersion(value));
+        }
 
         match NonZeroU8::new(clamped) {
             Some(non_zero) => Ok(Self(non_zero)),
@@ -444,7 +453,7 @@ impl TryFrom<u8> for ProtocolVersion {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         if !UPSTREAM_PROTOCOL_RANGE.contains(&value) {
-            return Err(NegotiationError::UnsupportedVersion(value));
+            return Err(NegotiationError::UnsupportedVersion(u32::from(value)));
         }
 
         Ok(Self::from_supported(value).expect("values within the upstream range are supported"))

@@ -6,7 +6,8 @@ use super::select_highest_mutual;
 proptest! {
     #[test]
     fn select_highest_mutual_matches_reference(peer_versions in proptest::collection::vec(0u8..=255, 0..=16)) {
-        let expected = reference_negotiation(&peer_versions);
+        let advertised = collect_advertised(peer_versions.iter().copied());
+        let expected = reference_negotiation(&advertised);
         let actual = select_highest_mutual(peer_versions.iter().copied());
         prop_assert_eq!(actual, expected);
     }

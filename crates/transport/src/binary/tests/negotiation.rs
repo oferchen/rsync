@@ -73,36 +73,18 @@ fn negotiate_binary_session_clamps_protocols_beyond_u8_range() {
     let future_version = 0x0001_0200u32;
     let transport = MemoryTransport::new(&future_version.to_be_bytes());
 
-    let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
-        .expect("future advertisements beyond u8 clamp to newest");
-
-    assert_eq!(handshake.remote_advertised_protocol(), future_version);
-    assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
-    assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
-    assert!(handshake.remote_protocol_was_clamped());
-    assert!(!handshake.local_protocol_was_capped());
-    assert_eq!(
-        handshake.remote_advertisement(),
-        RemoteProtocolAdvertisement::from_raw(future_version, ProtocolVersion::NEWEST)
-    );
+    let err = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+        .expect_err("future advertisements beyond upstream cap must error");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]
 fn negotiate_binary_session_clamps_u32_max_advertisement() {
     let transport = MemoryTransport::new(&u32::MAX.to_be_bytes());
 
-    let handshake = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
-        .expect("maximum u32 advertisement clamps to newest");
-
-    assert_eq!(handshake.remote_advertised_protocol(), u32::MAX);
-    assert_eq!(handshake.remote_protocol(), ProtocolVersion::NEWEST);
-    assert_eq!(handshake.negotiated_protocol(), ProtocolVersion::NEWEST);
-    assert!(handshake.remote_protocol_was_clamped());
-    assert!(!handshake.local_protocol_was_capped());
-    assert_eq!(
-        handshake.remote_advertisement(),
-        RemoteProtocolAdvertisement::from_raw(u32::MAX, ProtocolVersion::NEWEST)
-    );
+    let err = super::negotiate_binary_session(transport, ProtocolVersion::NEWEST)
+        .expect_err("maximum u32 advertisement must exceed upstream cap");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]

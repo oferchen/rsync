@@ -243,13 +243,19 @@ fn from_parts_requires_subprotocol_for_newer_versions() {
 }
 
 #[test]
-fn from_parts_clamps_future_versions() {
-    let constructed = LegacyDaemonGreetingOwned::from_parts(999, Some(1), None)
-        .expect("future advertisement clamps");
+fn from_parts_accepts_cap_future_versions() {
+    let constructed = LegacyDaemonGreetingOwned::from_parts(40, Some(1), None)
+        .expect("future advertisement at upstream cap should clamp");
 
     assert_eq!(constructed.protocol(), ProtocolVersion::NEWEST);
-    assert_eq!(constructed.advertised_protocol(), 999);
+    assert_eq!(constructed.advertised_protocol(), 40);
     assert_eq!(constructed.subprotocol_raw(), Some(1));
+}
+
+#[test]
+fn from_parts_rejects_advertisements_beyond_cap() {
+    let err = LegacyDaemonGreetingOwned::from_parts(999, Some(1), None).unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(999));
 }
 
 #[test]
@@ -264,11 +270,17 @@ fn greeting_details_rejects_missing_subprotocol_for_newer_versions() {
 #[test]
 fn greeting_details_clamps_future_versions_but_retains_advertisement() {
     let greeting =
-        parse_legacy_daemon_greeting_details("@RSYNCD: 999.1\n").expect("future versions clamp");
+        parse_legacy_daemon_greeting_details("@RSYNCD: 40.1\n").expect("cap future versions clamp");
 
     assert_eq!(greeting.protocol(), ProtocolVersion::NEWEST);
-    assert_eq!(greeting.advertised_protocol(), 999);
+    assert_eq!(greeting.advertised_protocol(), 40);
     assert_eq!(greeting.subprotocol(), 1);
+}
+
+#[test]
+fn greeting_details_rejects_versions_beyond_cap() {
+    let err = parse_legacy_daemon_greeting_details("@RSYNCD: 999.1\n").unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(999));
 }
 
 #[test]
@@ -291,8 +303,14 @@ fn clamps_future_versions_in_legacy_greeting() {
 
 #[test]
 fn parses_large_future_version_numbers_by_clamping() {
-    let parsed = parse_legacy_daemon_greeting("@RSYNCD: 999999999999.0\n").expect("must clamp");
+    let parsed = parse_legacy_daemon_greeting("@RSYNCD: 40.1\n").expect("must clamp at cap");
     assert_eq!(parsed, ProtocolVersion::NEWEST);
+}
+
+#[test]
+fn rejects_future_versions_beyond_cap() {
+    let err = parse_legacy_daemon_greeting("@RSYNCD: 999999999999.0\n").unwrap_err();
+    assert_eq!(err, NegotiationError::UnsupportedVersion(999999999999));
 }
 
 #[test]
