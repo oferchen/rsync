@@ -3,7 +3,7 @@ use std::num::NonZeroU8;
 use super::metadata;
 
 /// Highest protocol version supported by the workspace.
-pub const PROTOCOL_VERSION: u32 = parse_u32(env!("OC_RSYNC_WORKSPACE_PROTOCOL"));
+pub const PROTOCOL_VERSION: u32 = crate::generated::PROTOCOL_VERSION;
 
 /// Returns the configured protocol version as an 8-bit integer.
 ///
@@ -18,7 +18,7 @@ pub const PROTOCOL_VERSION: u32 = parse_u32(env!("OC_RSYNC_WORKSPACE_PROTOCOL"))
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_core::workspace;
+/// use rsync_branding::workspace;
 ///
 /// assert_eq!(
 ///     workspace::protocol_version_u8() as u32,
@@ -44,7 +44,7 @@ pub const fn protocol_version_u8() -> u8 {
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_core::workspace;
+/// use rsync_branding::workspace;
 ///
 /// assert_eq!(workspace::protocol_version_nonzero_u8().get(), 32);
 /// ```
@@ -56,47 +56,9 @@ pub const fn protocol_version_nonzero_u8() -> NonZeroU8 {
     }
 }
 
-const fn parse_u32(input: &str) -> u32 {
-    let bytes = input.as_bytes();
-    let mut value = 0u32;
-    let mut index = 0;
-    if bytes.is_empty() {
-        panic!("protocol must not be empty");
-    }
-    while index < bytes.len() {
-        let digit = bytes[index];
-        if !digit.is_ascii_digit() {
-            panic!("protocol must be an ASCII integer");
-        }
-        value = value * 10 + (digit - b'0') as u32;
-        index += 1;
-    }
-    value
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::panic;
-
-    #[test]
-    fn parse_u32_accepts_decimal_digits() {
-        assert_eq!(parse_u32("0"), 0);
-        assert_eq!(parse_u32("32"), 32);
-        assert_eq!(parse_u32("0010"), 10);
-    }
-
-    #[test]
-    fn parse_u32_rejects_empty_strings() {
-        let result = panic::catch_unwind(|| parse_u32(""));
-        assert!(result.is_err(), "empty input must trigger a panic");
-    }
-
-    #[test]
-    fn parse_u32_rejects_non_ascii_digits() {
-        let result = panic::catch_unwind(|| parse_u32("3a"));
-        assert!(result.is_err(), "non-digit input must trigger a panic");
-    }
 
     #[test]
     fn protocol_accessors_match_metadata_protocol() {

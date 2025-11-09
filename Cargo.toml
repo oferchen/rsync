@@ -40,6 +40,7 @@ oc-rsync-windows-gnu-eh = { path = "crates/windows-gnu-eh" }
 members = [
     "crates/cli",
     "crates/bandwidth",
+    "crates/branding",
     "crates/checksums",
     "crates/core",
     "crates/daemon",

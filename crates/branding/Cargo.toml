@@ -1,0 +1,22 @@
+[package]
+name = "rsync-branding"
+version.workspace = true
+edition = "2024"
+authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
+license = "GPL-3.0-or-later"
+description = "Centralised branding and workspace metadata for the Rust rsync implementation"
+repository.workspace = true
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+toml = "0.8"
+
+[build-dependencies]
+toml = "0.8"

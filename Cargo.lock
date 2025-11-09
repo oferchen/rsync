@@ -717,12 +717,10 @@ dependencies = [
  "oc-rsync-meta",
  "oc-rsync-protocol",
  "oc-rsync-transport",
+ "rsync-branding",
  "rustix 0.38.44",
- "serde",
- "serde_json",
  "socket2",
  "tempfile",
- "toml",
 ]
 
 [[package]]
@@ -1060,6 +1058,15 @@ name = "regex-syntax"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
+
+[[package]]
+name = "rsync-branding"
+version = "3.4.1-rust"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "rustix"
