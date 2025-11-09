@@ -438,8 +438,8 @@ fn append_file_entry<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support;
     use std::collections::BTreeMap;
-    use std::path::PathBuf;
 
     fn branding_with_cross_compile(
         linux_arches: &[&str],
@@ -460,25 +460,10 @@ mod tests {
             windows_arches.iter().map(|arch| arch.to_string()).collect(),
         );
 
-        WorkspaceBranding {
-            brand: String::from("oc"),
-            upstream_version: String::from("3.4.1"),
-            rust_version: String::from("3.4.1-rust"),
-            protocol: 32,
-            client_bin: String::from("oc-rsync"),
-            daemon_bin: String::from("oc-rsync"),
-            legacy_client_bin: String::from("rsync"),
-            legacy_daemon_bin: String::from("rsyncd"),
-            daemon_config_dir: PathBuf::from("/etc/oc-rsyncd"),
-            daemon_config: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.conf"),
-            daemon_secrets: PathBuf::from("/etc/oc-rsyncd/oc-rsyncd.secrets"),
-            legacy_daemon_config_dir: PathBuf::from("/etc"),
-            legacy_daemon_config: PathBuf::from("/etc/rsyncd.conf"),
-            legacy_daemon_secrets: PathBuf::from("/etc/rsyncd.secrets"),
-            source: String::from("https://example.invalid"),
-            cross_compile,
-            cross_compile_matrix: BTreeMap::new(),
-        }
+        let mut branding = test_support::workspace_branding_snapshot();
+        branding.cross_compile = cross_compile;
+        branding.cross_compile_matrix = BTreeMap::new();
+        branding
     }
 
     #[test]

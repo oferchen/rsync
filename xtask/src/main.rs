@@ -50,6 +50,8 @@
 
 mod commands;
 mod error;
+#[cfg(test)]
+mod test_support;
 mod util;
 mod workspace;
 
