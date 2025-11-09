@@ -52,7 +52,8 @@ impl SourceLocation {
             manifest_path.join(file_path)
         };
 
-        let normalized = normalize_path(&absolute);
+        let canonical = canonicalize_or_fallback(&absolute);
+        let normalized = normalize_path(&canonical);
         let repo_relative =
             canonicalize_virtual_test_path(strip_workspace_prefix_owned(normalized));
 
@@ -380,6 +381,30 @@ mod tests {
         assert!(!location.is_workspace_relative());
         assert_eq!(location.path(), expected);
         assert_eq!(location.line(), 7);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn source_location_handles_manifest_case_mismatch() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let toggled: String = manifest
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_lowercase() {
+                    ch.to_ascii_uppercase()
+                } else if ch.is_ascii_uppercase() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    ch
+                }
+            })
+            .collect();
+        let leaked: &'static str = Box::leak(toggled.into_boxed_str());
+
+        let location = SourceLocation::from_parts(leaked, "src/lib.rs", 11);
+
+        assert!(location.is_workspace_relative());
+        assert_eq!(location.path(), "crates/core/src/lib.rs");
     }
 
     #[test]
