@@ -18,8 +18,7 @@ use std::sync::OnceLock;
 
 use super::brand::{self, Brand};
 use super::profile::{BrandProfile, oc_profile, upstream_profile};
-use crate::version::{self, BUILD_TOOLCHAIN};
-use crate::workspace;
+use crate::{build_revision, build_toolchain, workspace};
 
 /// Cached branding snapshot derived from the workspace manifest.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -45,7 +44,7 @@ pub struct BrandManifest {
 /// consistent human-readable descriptions without duplicating string literals.
 ///
 /// ```
-/// use oc_rsync_core::branding::{manifest, Brand};
+/// use rsync_branding::branding::{manifest, Brand};
 ///
 /// let manifest = manifest();
 /// let oc = manifest.summary_for(Brand::Oc);
@@ -204,8 +203,8 @@ fn build_manifest() -> BrandManifest {
         upstream_version: metadata.upstream_version(),
         protocol_version: metadata.protocol_version(),
         source_url: metadata.source_url(),
-        build_revision: version::build_revision(),
-        build_toolchain: BUILD_TOOLCHAIN,
+        build_revision: build_revision(),
+        build_toolchain: build_toolchain(),
     }
 }
 
@@ -368,8 +367,8 @@ mod tests {
         assert_eq!(manifest.upstream_version(), metadata.upstream_version());
         assert_eq!(manifest.protocol_version(), metadata.protocol_version());
         assert_eq!(manifest.source_url(), metadata.source_url());
-        assert_eq!(manifest.build_revision(), version::build_revision());
-        assert_eq!(manifest.build_toolchain(), BUILD_TOOLCHAIN);
+        assert_eq!(manifest.build_revision(), build_revision());
+        assert_eq!(manifest.build_toolchain(), build_toolchain());
         assert_eq!(manifest.oc_summary(), manifest.summary_for(Brand::Oc));
         assert_eq!(
             manifest.upstream_summary(),

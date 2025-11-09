@@ -1,5 +1,8 @@
 use crate::{branding, workspace};
 use oc_rsync_protocol::ProtocolVersion;
+use rsync_branding::{
+    build_revision as branding_build_revision, build_toolchain as branding_build_toolchain,
+};
 
 const _: () = {
     let workspace_version = workspace::metadata().protocol_version();
@@ -42,7 +45,7 @@ pub const COPYRIGHT_NOTICE: &str = "(C) 2025 by Ofer Chen.";
 pub const SOURCE_URL: &str = workspace::SOURCE_URL;
 
 /// Human-readable toolchain description rendered in `--version` output.
-pub const BUILD_TOOLCHAIN: &str = "Built in Rust 2024";
+pub const BUILD_TOOLCHAIN: &str = branding_build_toolchain();
 
 /// Subprotocol version appended to the negotiated protocol when non-zero.
 pub const SUBPROTOCOL_VERSION: u8 = 0;
@@ -58,26 +61,6 @@ pub const RUST_VERSION: &str = workspace::RUST_VERSION;
 /// Highest protocol version supported by this build.
 pub const HIGHEST_PROTOCOL_VERSION: u8 = workspace::protocol_version_u8();
 
-pub(crate) fn sanitize_build_revision(raw: Option<&'static str>) -> &'static str {
-    let Some(value) = raw else {
-        return "unknown";
-    };
-
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return "unknown";
-    }
-
-    let head = trimmed.split(['\r', '\n']).next().unwrap_or("");
-    let cleaned = head.trim();
-
-    if cleaned.is_empty() || cleaned.chars().any(char::is_control) {
-        "unknown"
-    } else {
-        cleaned
-    }
-}
-
 /// Returns the Git revision baked into the build, if available.
 ///
 /// Whitespace surrounding the revision string is trimmed so the value can be embedded in version
@@ -88,5 +71,5 @@ pub(crate) fn sanitize_build_revision(raw: Option<&'static str>) -> &'static str
 /// `"unknown"` to avoid rendering artifacts in version banners.
 #[must_use]
 pub fn build_revision() -> &'static str {
-    sanitize_build_revision(option_env!("OC_RSYNC_BUILD_REV"))
+    branding_build_revision()
 }

@@ -36,7 +36,7 @@ pub fn daemon_secrets_path() -> &'static Path {
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_core::workspace;
+/// use rsync_branding::workspace;
 ///
 /// assert_eq!(
 ///     workspace::legacy_daemon_config_dir(),
@@ -58,7 +58,7 @@ pub fn legacy_daemon_config_dir() -> &'static Path {
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_core::workspace;
+/// use rsync_branding::workspace;
 ///
 /// assert_eq!(
 ///     workspace::legacy_daemon_config_path(),
@@ -80,7 +80,7 @@ pub fn legacy_daemon_config_path() -> &'static Path {
 /// # Examples
 ///
 /// ```
-/// use oc_rsync_core::workspace;
+/// use rsync_branding::workspace;
 ///
 /// assert_eq!(
 ///     workspace::legacy_daemon_secrets_path(),
