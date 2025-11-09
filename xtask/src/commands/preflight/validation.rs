@@ -1,6 +1,6 @@
 use crate::error::{TaskError, TaskResult};
 use crate::util::{cargo_metadata_json, ensure, validation_error};
-use crate::workspace::WorkspaceBranding;
+use crate::workspace::{self, WorkspaceBranding};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fs;
@@ -169,8 +169,8 @@ pub(crate) fn validate_package_versions(
         versions.insert(name.to_string(), version.to_string());
     }
 
-    let crate_name = "oc-rsync";
-    let version = versions.get(crate_name).ok_or_else(|| {
+    let crate_name = workspace::root_package_name(workspace)?;
+    let version = versions.get(&crate_name).ok_or_else(|| {
         validation_error(format!("crate {crate_name} missing from cargo metadata"))
     })?;
     ensure(

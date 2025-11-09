@@ -10,7 +10,7 @@ pub(crate) fn should_simulate_missing_tool(display: &str) -> bool {
     };
 
     entries
-        .split(|ch| matches!(ch, ',' | ';' | '|'))
+        .split([',', ';', '|'])
         .map(str::trim)
         .any(|value| !value.is_empty() && value == display)
 }

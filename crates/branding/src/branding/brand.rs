@@ -187,7 +187,7 @@ fn resolve_default_brand(label: &str) -> Brand {
 fn oc_daemon_alias() -> &'static str {
     static ALIAS: OnceLock<String> = OnceLock::new();
     ALIAS
-        .get_or_init(|| format!("{}d", OC_CLIENT_PROGRAM_NAME))
+        .get_or_init(|| format!("{OC_CLIENT_PROGRAM_NAME}d"))
         .as_str()
 }
 

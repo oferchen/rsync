@@ -626,18 +626,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oc-rsync"
-version = "3.4.1-rust"
-dependencies = [
- "assert_cmd",
- "libc",
- "rsync-cli",
- "rsync-core",
- "rsync-daemon",
- "rsync-windows-gnu-eh",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -886,6 +874,18 @@ version = "3.4.1-rust"
 dependencies = [
  "memchr",
  "proptest",
+]
+
+[[package]]
+name = "rsync-bin"
+version = "3.4.1-rust"
+dependencies = [
+ "assert_cmd",
+ "libc",
+ "rsync-cli",
+ "rsync-core",
+ "rsync-daemon",
+ "rsync-windows-gnu-eh",
 ]
 
 [[package]]
