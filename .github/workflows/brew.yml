@@ -1,4 +1,4 @@
-name: brew-formula
+name: Brew-formula
 
 on:
   workflow_dispatch:
@@ -27,29 +27,63 @@ jobs:
           TAG="${GITHUB_REF##*/}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Generate formula
+      - name: Generate Homebrew formula
+        shell: bash
+        env:
+          FORMULA_PATH: Formula/oc-rsync.rb
         run: |
+          set -euo pipefail
+
           VERSION="${{ steps.vars.outputs.tag }}"
+          REPO="https://github.com/oferchen/rsync/releases/download/${VERSION}"
+
           mkdir -p Formula
-          cat > "${FORMULA_PATH}" <<EOF
-class OcRsync < Formula
-  desc "Pure-Rust rsync 3.4.1-compatible implementation"
-  homepage "https://github.com/oferchen/rsync"
-  version "${VERSION}"
-  url "https://github.com/oferchen/rsync/releases/download/${VERSION}/oc-rsync-macos-amd64.tar.gz"
-  sha256 "CHANGE_ME"
-  license "GPL-3.0-or-later"
 
-  def install
-    bin.install "oc-rsync"
-    bin.install "oc-rsyncd"
-  end
+          # temp dir for downloads
+          WORKDIR="$(mktemp -d)"
+          trap 'rm -rf "$WORKDIR"' EXIT
 
-  test do
-    system "#{bin}/oc-rsync", "--version"
-  end
-end
-EOF
+          AMD64_TARBALL="oc-rsync-macos-amd64.tar.gz"
+          ARM64_TARBALL="oc-rsync-macos-arm64.tar.gz"
+
+          # download release assets (must exist in the release)
+          curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
+          curl -fsSL "${REPO}/${ARM64_TARBALL}" -o "${WORKDIR}/${ARM64_TARBALL}"
+
+          AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
+          ARM64_SHA256="$(shasum -a 256 "${WORKDIR}/${ARM64_TARBALL}" | awk '{print $1}')"
+
+          {
+            echo "class OcRsync < Formula"
+            echo '  desc "Pure-Rust rsync 3.4.1-compatible implementation"'
+            echo '  homepage "https://github.com/oferchen/rsync"'
+            echo '  license "GPL-3.0-or-later"'
+            echo "  version \"${VERSION}\""
+            echo
+            echo "  on_macos do"
+            echo "    on_intel do"
+            echo "      url \"${REPO}/${AMD64_TARBALL}\""
+            echo "      sha256 \"${AMD64_SHA256}\""
+            echo "    end"
+            echo
+            echo "    on_arm do"
+            echo "      url \"${REPO}/${ARM64_TARBALL}\""
+            echo "      sha256 \"${ARM64_SHA256}\""
+            echo "    end"
+            echo "  end"
+            echo
+            echo "  def install"
+            echo "    bin.install \"oc-rsync\""
+            echo "    bin.install \"oc-rsyncd\""
+            echo "  end"
+            echo
+            echo "  test do"
+            echo "    system \"#{bin}/oc-rsync\", \"--version\""
+            echo "  end"
+            echo "end"
+          } > "${FORMULA_PATH}"
+
+          echo "Formula generated at ${FORMULA_PATH}"
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
