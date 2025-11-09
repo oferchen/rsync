@@ -1,4 +1,4 @@
-use core::fmt;
+use ::core::fmt;
 
 use super::constants::{HEADER_LEN, MAX_PAYLOAD_LENGTH};
 

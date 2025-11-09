@@ -23,7 +23,7 @@ impl ClientOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsync_engine::LocalCopySummary;
+    use engine::LocalCopySummary;
 
     fn empty_summary() -> ClientSummary {
         ClientSummary::from_summary(LocalCopySummary::default())

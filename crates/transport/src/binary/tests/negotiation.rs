@@ -1,6 +1,6 @@
 use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes};
 use crate::RemoteProtocolAdvertisement;
-use rsync_protocol::{NegotiationPrologueSniffer, ProtocolVersion};
+use protocol::{NegotiationPrologueSniffer, ProtocolVersion};
 use std::io;
 
 #[test]

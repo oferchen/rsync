@@ -2,8 +2,8 @@
 
 use std::ffi::OsString;
 
-use rsync_meta::ChmodModifiers;
-use rsync_meta::{GroupMapping, MappingKind, NameMapping, UserMapping};
+use ::metadata::ChmodModifiers;
+use ::metadata::{GroupMapping, MappingKind, NameMapping, UserMapping};
 
 use crate::frontend::execution::chown::ParsedChown;
 
@@ -56,7 +56,7 @@ pub(crate) struct MetadataInputs<'a> {
 /// Computes metadata preservation flags according to upstream semantics.
 pub(crate) fn compute_metadata_settings(
     inputs: MetadataInputs<'_>,
-) -> Result<MetadataSettings, rsync_core::message::Message> {
+) -> Result<MetadataSettings, core::message::Message> {
     let MetadataInputs {
         archive,
         parsed_chown,
@@ -146,8 +146,7 @@ pub(crate) fn compute_metadata_settings(
             Err(error) => {
                 let formatted =
                     format!("failed to parse --chmod specification '{spec_text}': {error}");
-                return Err(rsync_core::rsync_error!(1, formatted)
-                    .with_role(rsync_core::message::Role::Client));
+                return Err(core::rsync_error!(1, formatted).with_role(core::message::Role::Client));
             }
         }
     }
@@ -177,13 +176,13 @@ pub(crate) fn compute_metadata_settings(
 fn parse_user_mapping(
     value: &OsString,
     parsed_chown: Option<&ParsedChown>,
-) -> Result<UserMapping, rsync_core::message::Message> {
+) -> Result<UserMapping, core::message::Message> {
     if parsed_chown.and_then(|parsed| parsed.owner()).is_some() {
-        return Err(rsync_core::rsync_error!(
+        return Err(core::rsync_error!(
             1,
             "--usermap conflicts with prior --chown user specification"
         )
-        .with_role(rsync_core::message::Role::Client));
+        .with_role(core::message::Role::Client));
     }
 
     parse_mapping(value, MappingKind::User)
@@ -192,35 +191,36 @@ fn parse_user_mapping(
 fn parse_group_mapping(
     value: &OsString,
     parsed_chown: Option<&ParsedChown>,
-) -> Result<GroupMapping, rsync_core::message::Message> {
+) -> Result<GroupMapping, core::message::Message> {
     if parsed_chown.and_then(|parsed| parsed.group()).is_some() {
-        return Err(rsync_core::rsync_error!(
+        return Err(core::rsync_error!(
             1,
             "--groupmap conflicts with prior --chown group specification"
         )
-        .with_role(rsync_core::message::Role::Client));
+        .with_role(core::message::Role::Client));
     }
 
     parse_mapping(value, MappingKind::Group)
 }
 
-fn parse_mapping<M>(value: &OsString, kind: MappingKind) -> Result<M, rsync_core::message::Message>
+fn parse_mapping<M>(value: &OsString, kind: MappingKind) -> Result<M, core::message::Message>
 where
     M: From<NameMapping>,
 {
     let spec = value.to_string_lossy();
     let trimmed = spec.trim();
     if trimmed.is_empty() {
-        return Err(rsync_core::rsync_error!(
+        return Err(core::rsync_error!(
             1,
             format!("{} requires a non-empty mapping specification", kind.flag())
         )
-        .with_role(rsync_core::message::Role::Client));
+        .with_role(core::message::Role::Client));
     }
 
     match NameMapping::parse(kind, trimmed) {
         Ok(mapping) => Ok(M::from(mapping)),
-        Err(error) => Err(rsync_core::rsync_error!(1, error.to_string())
-            .with_role(rsync_core::message::Role::Client)),
+        Err(error) => {
+            Err(core::rsync_error!(1, error.to_string()).with_role(core::message::Role::Client))
+        }
     }
 }

@@ -1,7 +1,7 @@
 use super::super::super::NegotiatedStream;
 use super::super::try_map_error::TryMapInnerError;
 use super::NegotiatedStreamParts as Parts;
-use rsync_protocol::NegotiationPrologue;
+use protocol::NegotiationPrologue;
 
 impl<R> Parts<R> {
     /// Returns the inner reader.
@@ -92,7 +92,7 @@ impl<R> Parts<R> {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::{Cursor, Read};
     ///
     /// let parts = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 30.0\nhello".to_vec()))

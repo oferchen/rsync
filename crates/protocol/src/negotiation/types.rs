@@ -1,5 +1,5 @@
-use core::fmt;
-use core::str::FromStr;
+use ::core::fmt;
+use ::core::str::FromStr;
 use std::io;
 
 /// Error returned when the caller-provided slice cannot hold the buffered negotiation prefix.
@@ -128,7 +128,7 @@ impl From<BufferedPrefixTooSmall> for io::Error {
 ///
 /// ```
 /// use std::str::FromStr;
-/// use rsync_protocol::{NegotiationPrologue, ParseNegotiationPrologueError};
+/// use protocol::{NegotiationPrologue, ParseNegotiationPrologueError};
 ///
 /// let legacy = NegotiationPrologue::from_str(" legacy-ascii ")?;
 /// assert!(legacy.is_legacy());

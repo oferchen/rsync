@@ -73,7 +73,7 @@ impl From<CopyToSliceError> for io::Error {
 /// Convert the error into an [`io::Error`] when a scratch buffer is too small:
 ///
 /// ```
-/// use rsync_transport::sniff_negotiation_stream;
+/// use transport::sniff_negotiation_stream;
 /// use std::io::{self, Cursor};
 ///
 /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nrest".to_vec()))
@@ -120,7 +120,7 @@ impl BufferedCopyTooSmall {
     /// # Examples
     ///
     /// ```
-    /// use rsync_transport::sniff_negotiation_stream;
+    /// use transport::sniff_negotiation_stream;
     /// use std::io::Cursor;
     ///
     /// let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\nrest".to_vec()))

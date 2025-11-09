@@ -193,7 +193,7 @@ impl CompatibilityFlags {
     /// # Examples
     ///
     /// ```
-    /// use rsync_protocol::CompatibilityFlags;
+    /// use protocol::CompatibilityFlags;
     ///
     /// let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
     /// let mut encoded = Vec::new();

@@ -1,6 +1,6 @@
 //! Iterators over the supported protocol versions.
 
-use core::iter::FusedIterator;
+use ::core::iter::FusedIterator;
 
 use super::ProtocolVersion;
 

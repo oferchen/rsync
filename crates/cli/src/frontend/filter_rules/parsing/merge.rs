@@ -1,8 +1,8 @@
 use std::ffi::OsString;
 
-use rsync_core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
-use rsync_core::message::{Message, Role};
-use rsync_core::rsync_error;
+use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use core::message::{Message, Role};
+use core::rsync_error;
 
 use super::super::directive::{FilterDirective, MergeDirective};
 use super::helpers::split_short_merge_modifiers;

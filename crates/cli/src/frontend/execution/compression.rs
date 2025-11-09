@@ -1,9 +1,9 @@
 use std::ffi::OsStr;
 use std::num::NonZeroU8;
 
-use rsync_compress::algorithm::{CompressionAlgorithm, CompressionAlgorithmParseError};
-use rsync_compress::zlib::CompressionLevel;
-use rsync_core::{
+use compress::algorithm::{CompressionAlgorithm, CompressionAlgorithmParseError};
+use compress::zlib::CompressionLevel;
+use core::{
     bandwidth::BandwidthParseError,
     client::{BandwidthLimit, CompressionSetting},
     message::{Message, Role},

@@ -112,7 +112,7 @@ pub(super) fn allocate_test_port() -> u16 {
     const STATE_SIZE: u64 = 4;
 
     let mut path = std::env::temp_dir();
-    path.push("rsync-daemon-test-port.lock");
+    path.push("daemon-test-port.lock");
 
     let mut file = OpenOptions::new()
         .read(true)

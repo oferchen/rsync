@@ -1,8 +1,8 @@
 use std::ffi::OsStr;
 use std::time::{Duration, SystemTime};
 
-use rsync_core::message::{Message, Role};
-use rsync_core::rsync_error;
+use core::message::{Message, Role};
+use core::rsync_error;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
 pub(crate) fn parse_stop_after_argument(value: &OsStr) -> Result<SystemTime, Message> {

@@ -1,6 +1,6 @@
 use crate::error::NegotiationError;
-use core::convert::TryFrom;
-use core::num::{
+use ::core::convert::TryFrom;
+use ::core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
 };

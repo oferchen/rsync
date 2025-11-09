@@ -19,19 +19,13 @@ where
     Out: Write,
     Err: Write,
 {
-    support::dispatch(
-        args,
-        stdout,
-        stderr,
-        rsync_cli::run,
-        rsync_cli::exit_code_from,
-    )
+    support::dispatch(args, stdout, stderr, cli::run, cli::exit_code_from)
 }
 
 #[cfg(test)]
 mod tests {
     use super::run_with;
-    use rsync_core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME};
+    use core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME};
     use std::ffi::OsString;
     use std::process::ExitCode;
 
@@ -96,7 +90,7 @@ mod tests {
 
         let mut expected_stdout = Vec::new();
         let mut expected_stderr = Vec::new();
-        let help_exit = rsync_cli::run(
+        let help_exit = cli::run(
             [PROGRAM_NAME, "--help"],
             &mut expected_stdout,
             &mut expected_stderr,
@@ -165,7 +159,7 @@ mod tests {
 
         let mut expected_stdout = Vec::new();
         let mut expected_stderr = Vec::new();
-        let help_exit = rsync_cli::run(
+        let help_exit = cli::run(
             [LEGACY_PROGRAM_NAME, "--help"],
             &mut expected_stdout,
             &mut expected_stderr,

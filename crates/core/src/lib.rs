@@ -9,7 +9,7 @@ pub mod auth;
 /// Bandwidth parsing utilities shared by CLI and daemon entry points.
 pub mod bandwidth;
 /// Branding constants shared across binaries and packaging layers.
-pub use rsync_branding::branding;
+pub use ::branding::branding;
 /// Client orchestration helpers consumed by the CLI binary.
 pub mod client;
 /// Helpers for interpreting fallback environment overrides shared across crates.
@@ -19,4 +19,4 @@ pub mod message;
 /// Version constants and capability helpers used by CLI and daemon entry points.
 pub mod version;
 /// Workspace metadata derived from the repository `Cargo.toml`.
-pub use rsync_branding::workspace;
+pub use ::branding::workspace;

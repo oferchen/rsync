@@ -1,6 +1,6 @@
 use super::brand::matches_program_alias;
 use super::*;
-use core::str::FromStr;
+use ::core::str::FromStr;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;

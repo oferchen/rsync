@@ -4,7 +4,7 @@
 //! `rsync` development snapshot. The module constructs
 //! [`LocalCopyPlan`] values from CLI-style operands and executes them while
 //! preserving permissions, timestamps, and optional ownership metadata via
-//! [`rsync_meta`].
+//! [`metadata`].
 //!
 //! # Design
 //!
@@ -33,7 +33,7 @@
 //! # Examples
 //!
 //! ```
-//! use rsync_engine::local_copy::LocalCopyPlan;
+//! use engine::local_copy::LocalCopyPlan;
 //! use std::ffi::OsString;
 //!
 //! # let temp = tempfile::tempdir().unwrap();

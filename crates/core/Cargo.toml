@@ -1,5 +1,5 @@
 [package]
-name = "rsync-core"
+name = "core"
 version.workspace = true
 edition = "2024"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
@@ -15,28 +15,28 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-rsync-protocol = { path = "../protocol" }
-rsync-meta = { path = "../meta", default-features = false }
-rsync-engine = { path = "../engine", default-features = false }
-rsync-bandwidth = { path = "../bandwidth" }
-rsync-transport = { path = "../transport" }
-rsync-filters = { path = "../filters" }
-rsync-compress = { path = "../compress" }
+protocol = { path = "../protocol" }
+metadata = { path = "../metadata", default-features = false }
+engine = { path = "../engine", default-features = false }
+bandwidth = { path = "../bandwidth" }
+transport = { path = "../transport" }
+filters = { path = "../filters" }
+compress = { path = "../compress" }
 libc = "0.2"
 nix = { version = "0.29", default-features = false, features = ["user"] }
 rustix = { version = "0.38", features = ["process"] }
 base64 = "0.22"
-rsync-checksums = { path = "../checksums" }
+checksums = { path = "../checksums" }
 tempfile = "3.10"
 socket2 = "0.4"
-rsync_branding = { path = "../branding", package = "rsync-branding" }
+branding = { path = "../branding" }
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
-acl = ["rsync-meta/acl", "rsync-engine/acl"]
-xattr = ["rsync-meta/xattr", "rsync-engine/xattr"]
-zstd = ["rsync-engine/zstd", "rsync-compress/zstd"]
-lz4 = ["rsync-engine/lz4", "rsync-compress/lz4"]
+acl = ["metadata/acl", "engine/acl"]
+xattr = ["metadata/xattr", "engine/xattr"]
+zstd = ["engine/zstd", "compress/zstd"]
+lz4 = ["engine/lz4", "compress/lz4"]
 iconv = []
 sd-notify = []
 

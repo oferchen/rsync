@@ -179,7 +179,7 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    run_with_capture(CommandKind::Client, args, rsync_cli::run)
+    run_with_capture(CommandKind::Client, args, cli::run)
 }
 
 /// Executes the client entry point using caller-provided writers.
@@ -194,7 +194,7 @@ where
     Out: Write,
     Err: Write,
 {
-    run_with_streams(CommandKind::Client, args, stdout, stderr, rsync_cli::run)
+    run_with_streams(CommandKind::Client, args, stdout, stderr, cli::run)
 }
 
 /// Executes the hidden server entry point (invoked via `--server`).
@@ -203,7 +203,7 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    run_with_capture(CommandKind::Server, args, rsync_cli::run)
+    run_with_capture(CommandKind::Server, args, cli::run)
 }
 
 /// Executes the hidden server entry point using caller-provided writers.
@@ -218,7 +218,7 @@ where
     Out: Write,
     Err: Write,
 {
-    run_with_streams(CommandKind::Server, args, stdout, stderr, rsync_cli::run)
+    run_with_streams(CommandKind::Server, args, stdout, stderr, cli::run)
 }
 
 /// Executes the daemon CLI front-end and captures its output.
@@ -227,7 +227,7 @@ where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
 {
-    run_with_capture(CommandKind::Daemon, args, rsync_daemon::run)
+    run_with_capture(CommandKind::Daemon, args, daemon::run)
 }
 
 /// Executes the daemon CLI front-end using caller-provided writers.
@@ -242,15 +242,15 @@ where
     Out: Write,
     Err: Write,
 {
-    run_with_streams(CommandKind::Daemon, args, stdout, stderr, rsync_daemon::run)
+    run_with_streams(CommandKind::Daemon, args, stdout, stderr, daemon::run)
 }
 
 /// Re-export the daemon configuration builder so embedders can construct
 /// long-running daemons without assembling a command-line argument list first.
-pub use rsync_daemon::{DaemonConfig, DaemonConfigBuilder, DaemonError};
+pub use daemon::{DaemonConfig, DaemonConfigBuilder, DaemonError};
 
 /// Re-export the native daemon loop for direct embedding.
-pub use rsync_daemon::run_daemon as run_daemon_config;
+pub use daemon::run_daemon as run_daemon_config;
 
 fn run_with_capture<I, S, Runner>(
     kind: CommandKind,
@@ -302,7 +302,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rsync_core::branding::{client_program_name, daemon_program_name, oc_client_program_name};
+    use core::branding::{client_program_name, daemon_program_name, oc_client_program_name};
     use std::ffi::OsString;
 
     fn cli_invocation<I, S>(args: I) -> CommandOutput
@@ -313,7 +313,7 @@ mod tests {
         let argv: Vec<OsString> = args.into_iter().map(Into::into).collect();
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let status = rsync_cli::run(argv, &mut stdout, &mut stderr);
+        let status = cli::run(argv, &mut stdout, &mut stderr);
         assert_eq!(status, 0, "cli invocation should succeed");
         CommandOutput::new(stdout, stderr)
     }
@@ -362,7 +362,7 @@ mod tests {
         let args = [daemon_program_name(), "--help"];
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let direct_status = rsync_daemon::run(args, &mut stdout, &mut stderr);
+        let direct_status = daemon::run(args, &mut stdout, &mut stderr);
         assert_eq!(direct_status, 0);
         let direct = CommandOutput::new(stdout, stderr);
 

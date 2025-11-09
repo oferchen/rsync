@@ -1,5 +1,5 @@
 [package]
-name = "rsync-walk"
+name = "walk"
 version.workspace = true
 edition = "2024"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]

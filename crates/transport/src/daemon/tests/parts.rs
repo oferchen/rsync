@@ -1,7 +1,7 @@
 use super::super::*;
 use super::common::MemoryTransport;
 use crate::RemoteProtocolAdvertisement;
-use rsync_protocol::ProtocolVersion;
+use protocol::ProtocolVersion;
 use std::io::Write;
 
 #[test]

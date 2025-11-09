@@ -1,4 +1,4 @@
-use core::convert::TryFrom;
+use ::core::convert::TryFrom;
 
 use super::PAYLOAD_MASK;
 use super::constants::{HEADER_LEN, MAX_PAYLOAD_LENGTH, MPLEX_BASE};

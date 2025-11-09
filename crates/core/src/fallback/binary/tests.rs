@@ -175,7 +175,7 @@ fn fallback_binary_available_detects_removal() {
 
 #[test]
 fn fallback_binary_available_rejects_missing_file() {
-    let missing = Path::new("/nonexistent/path/to/rsync-binary");
+    let missing = Path::new("/nonexistent/path/to/binary");
     assert!(!fallback_binary_available(missing.as_os_str()));
 }
 

@@ -1,8 +1,8 @@
 use crate::{branding, workspace};
-use rsync_branding::{
+use ::branding::{
     build_revision as branding_build_revision, build_toolchain as branding_build_toolchain,
 };
-use rsync_protocol::ProtocolVersion;
+use protocol::ProtocolVersion;
 
 const _: () = {
     let workspace_version = workspace::metadata().protocol_version();

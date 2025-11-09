@@ -1,13 +1,13 @@
 //! Strongly typed rsync protocol version representation and helpers.
 
-use core::convert::TryFrom;
-use core::fmt;
-use core::num::{
+use ::core::convert::TryFrom;
+use ::core::fmt;
+use ::core::num::{
     NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
     NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
 };
-use core::ops::RangeInclusive;
-use core::str::FromStr;
+use ::core::ops::RangeInclusive;
+use ::core::str::FromStr;
 
 use crate::error::NegotiationError;
 

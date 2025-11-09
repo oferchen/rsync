@@ -18,7 +18,7 @@ fn delete_respects_exclude_filters() {
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
         .expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
@@ -56,7 +56,7 @@ fn delete_excluded_removes_excluded_entries() {
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
         .expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)
@@ -92,7 +92,7 @@ fn delete_excluded_removes_matching_source_files() {
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let filters = FilterSet::from_rules([rsync_filters::FilterRule::exclude("*.tmp")])
+    let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
         .expect("compile filters");
     let options = LocalCopyOptions::default()
         .delete(true)

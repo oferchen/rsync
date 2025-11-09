@@ -1,5 +1,5 @@
 use super::super::{ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion};
-use core::str::FromStr;
+use ::core::str::FromStr;
 
 #[test]
 fn protocol_version_from_str_accepts_supported_values() {

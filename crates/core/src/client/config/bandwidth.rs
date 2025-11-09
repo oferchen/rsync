@@ -7,7 +7,7 @@ use crate::bandwidth::{self, BandwidthLimiter, BandwidthParseError};
 ///
 /// # Examples
 /// ```
-/// use rsync_core::client::BandwidthLimit;
+/// use core::client::BandwidthLimit;
 /// use std::num::NonZeroU64;
 ///
 /// let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());

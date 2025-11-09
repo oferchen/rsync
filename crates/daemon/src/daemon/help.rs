@@ -1,4 +1,4 @@
-use rsync_core::branding::{Brand, manifest, source_line};
+use core::branding::{Brand, manifest, source_line};
 
 /// Renders the deterministic daemon help text for the supplied branding profile.
 pub(crate) fn help_text(brand: Brand) -> String {

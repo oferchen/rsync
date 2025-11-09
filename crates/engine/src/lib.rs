@@ -4,7 +4,7 @@
 
 //! # Overview
 //!
-//! `rsync_engine` hosts transfer-oriented building blocks that power the Rust
+//! `engine` hosts transfer-oriented building blocks that power the Rust
 //! rsync implementation. The crate currently focuses on deterministic local
 //! filesystem copies so higher layers can provide observable behaviour while the
 //! full delta-transfer pipeline is under construction.
@@ -14,7 +14,7 @@
 //! Functionality is decomposed into focused modules. The [`local_copy`] module
 //! exposes [`local_copy::LocalCopyPlan`] which performs
 //! recursive copies of regular files, directories, symbolic links, and FIFOs
-//! while preserving permissions and timestamps through the [`rsync_meta`]
+//! while preserving permissions and timestamps through the [`metadata`]
 //! helpers. The [`delta`] module mirrors upstream rsync's signature layout
 //! heuristics so the delta-transfer pipeline can reuse byte-identical block
 //! sizing when it lands, while [`signature`] turns those layouts into
@@ -43,7 +43,7 @@
 //! Construct a plan from CLI-style operands and execute it to copy a file:
 //!
 //! ```
-//! use rsync_engine::local_copy::LocalCopyPlan;
+//! use engine::local_copy::LocalCopyPlan;
 //! use std::ffi::OsString;
 //!
 //! let operands = vec![OsString::from("src.txt"), OsString::from("dst.txt")];
@@ -64,7 +64,7 @@
 //!
 //! # See also
 //!
-//! - `rsync_core::client` integrates the plan builder to power the `rsync`
+//! - `core::client` integrates the plan builder to power the `rsync`
 //!   binary's local copy mode.
 //! - [`delta`] exposes block-size and checksum heuristics that will be wired into
 //!   the delta-transfer engine.

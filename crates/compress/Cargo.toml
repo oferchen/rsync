@@ -1,5 +1,5 @@
 [package]
-name = "rsync-compress"
+name = "compress"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
