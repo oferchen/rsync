@@ -82,7 +82,7 @@ pub(crate) fn manifest_snippet_from_branding(branding: &WorkspaceBranding) -> St
         )
         .expect("write cross compile matrix header");
         for (platform, enabled) in &branding.cross_compile_matrix {
-            writeln!(&mut snippet, "\"{platform}\" = {}", enabled).expect("write matrix entry");
+            writeln!(&mut snippet, "\"{platform}\" = {enabled}").expect("write matrix entry");
         }
     }
 
