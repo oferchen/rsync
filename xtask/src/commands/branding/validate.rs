@@ -9,8 +9,6 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
-    let expected_prefix = format!("{}-", branding.brand);
-
     if !(28..=32).contains(&branding.protocol) {
         return Err(TaskError::Validation(format!(
             "protocol version {} must be between 28 and 32",
@@ -18,19 +16,8 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
-    if !branding.client_bin.starts_with(&expected_prefix) {
-        return Err(TaskError::Validation(format!(
-            "client binary '{}' must use '{}' prefix",
-            branding.client_bin, expected_prefix
-        )));
-    }
-
-    if !branding.daemon_bin.starts_with(&expected_prefix) {
-        return Err(TaskError::Validation(format!(
-            "daemon binary '{}' must use '{}' prefix",
-            branding.daemon_bin, expected_prefix
-        )));
-    }
+    ensure_binary_name(&branding.client_bin, "client_bin")?;
+    ensure_binary_name(&branding.daemon_bin, "daemon_bin")?;
 
     if branding.daemon_bin != branding.client_bin {
         return Err(TaskError::Validation(format!(
@@ -39,31 +26,8 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
-    let expected_dir_suffix = format!("{}-rsyncd", branding.brand);
-    if branding
-        .daemon_config_dir
-        .as_path()
-        .file_name()
-        .and_then(|name| name.to_str())
-        != Some(expected_dir_suffix.as_str())
-    {
-        return Err(TaskError::Validation(format!(
-            "daemon_config_dir '{}' must end with '{}'",
-            branding.daemon_config_dir.display(),
-            expected_dir_suffix
-        )));
-    }
-
-    ensure_named_file(
-        branding.daemon_config.as_path(),
-        &format!("{}-rsyncd.conf", branding.brand),
-        "daemon_config",
-    )?;
-    ensure_named_file(
-        branding.daemon_secrets.as_path(),
-        &format!("{}-rsyncd.secrets", branding.brand),
-        "daemon_secrets",
-    )?;
+    ensure_has_file_name(branding.daemon_config.as_path(), "daemon_config")?;
+    ensure_has_file_name(branding.daemon_secrets.as_path(), "daemon_secrets")?;
     ensure_named_file(
         branding.legacy_daemon_config.as_path(),
         "rsyncd.conf",
@@ -167,19 +131,30 @@ fn ensure_under_dir(
     path_label: &str,
     dir_label: &str,
 ) -> TaskResult<()> {
-    let parent = path.parent().ok_or_else(|| {
-        TaskError::Validation(format!(
-            "{path_label} '{}' must reside under {dir_label} '{}'",
-            path.display(),
-            expected_dir.display()
-        ))
-    })?;
-
-    if parent != expected_dir {
+    if !path.starts_with(expected_dir) {
         return Err(TaskError::Validation(format!(
             "{path_label} '{}' must reside under {dir_label} '{}'",
             path.display(),
             expected_dir.display()
+        )));
+    }
+
+    if path == expected_dir {
+        return Err(TaskError::Validation(format!(
+            "{path_label} '{}' must not be identical to {dir_label} '{}'",
+            path.display(),
+            expected_dir.display()
+        )));
+    }
+
+    Ok(())
+}
+
+fn ensure_has_file_name(path: &Path, label: &str) -> TaskResult<()> {
+    if path.file_name().is_none() {
+        return Err(TaskError::Validation(format!(
+            "{label} '{}' must include a file name",
+            path.display()
         )));
     }
 
@@ -201,6 +176,28 @@ fn ensure_named_file(path: &Path, expected: &str, label: &str) -> TaskResult<()>
         return Err(TaskError::Validation(format!(
             "{label} '{}' must be named '{expected}'",
             path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+fn ensure_binary_name(name: &str, label: &str) -> TaskResult<()> {
+    if name.trim().is_empty() {
+        return Err(TaskError::Validation(format!("{label} must not be empty")));
+    }
+
+    if name.chars().any(char::is_whitespace) {
+        return Err(TaskError::Validation(format!(
+            "{label} '{}' must not contain whitespace",
+            name
+        )));
+    }
+
+    if name.chars().any(std::path::is_separator) {
+        return Err(TaskError::Validation(format!(
+            "{label} '{}' must not include path separators",
+            name
         )));
     }
 
@@ -247,24 +244,26 @@ mod tests {
     }
 
     #[test]
-    fn validate_branding_rejects_missing_client_prefix() {
+    fn validate_branding_rejects_client_whitespace() {
         let mut branding = sample_branding();
-        branding.client_bin = String::from("rsync");
+        branding.client_bin = String::from("oc rsync");
         let error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             error,
-            TaskError::Validation(message) if message.contains("client binary")
+            TaskError::Validation(message)
+                if message.contains("client_bin") && message.contains("whitespace")
         ));
     }
 
     #[test]
-    fn validate_branding_rejects_missing_daemon_prefix() {
+    fn validate_branding_rejects_daemon_with_separator() {
         let mut branding = sample_branding();
-        branding.daemon_bin = String::from("rsyncd");
+        branding.daemon_bin = String::from("bin/oc-rsync");
         let error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             error,
-            TaskError::Validation(message) if message.contains("daemon binary")
+            TaskError::Validation(message)
+                if message.contains("daemon_bin") && message.contains("path separators")
         ));
     }
 
@@ -391,33 +390,59 @@ mod tests {
     }
 
     #[test]
-    fn validate_branding_requires_daemon_directory_suffix() {
+    fn validate_branding_rejects_relative_daemon_directory() {
         let mut branding = sample_branding();
-        branding.daemon_config_dir = PathBuf::from("/etc/oc-rsync");
+        branding.daemon_config_dir = PathBuf::from("etc/oc-rsyncd");
         let error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             error,
-            TaskError::Validation(message) if message.contains("daemon_config_dir")
+            TaskError::Validation(message)
+                if message.contains("daemon_config_dir") && message.contains("absolute path")
         ));
     }
 
     #[test]
     fn validate_branding_requires_daemon_file_names() {
         let mut branding = sample_branding();
-        branding.daemon_config = PathBuf::from("/etc/oc-rsyncd/custom.conf");
+        branding.daemon_config = PathBuf::from("/etc/oc-rsyncd");
         let config_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             config_error,
             TaskError::Validation(message)
-                if message.contains("daemon_config '/etc/oc-rsyncd/custom.conf' must be named")
+                if message.contains("daemon_config") && message.contains("must not be identical")
         ));
 
         let mut branding = sample_branding();
-        branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd/rsyncd.secret");
+        branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd");
         let secrets_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
             secrets_error,
-            TaskError::Validation(message) if message.contains("daemon_secrets")
+            TaskError::Validation(message)
+                if message.contains("daemon_secrets") && message.contains("must not be identical")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_rejects_binary_with_path_separator() {
+        let mut branding = sample_branding();
+        branding.client_bin = String::from("bin/oc-rsync");
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message)
+                if message.contains("client_bin") && message.contains("path separators")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_rejects_binary_with_whitespace() {
+        let mut branding = sample_branding();
+        branding.daemon_bin = String::from("oc rsync");
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message)
+                if message.contains("daemon_bin") && message.contains("whitespace")
         ));
     }
 

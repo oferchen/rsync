@@ -157,19 +157,27 @@ fn validate_branding_rejects_protocol_outside_supported_range() {
 }
 
 #[test]
-fn validate_branding_rejects_missing_client_prefix() {
+fn validate_branding_rejects_client_whitespace() {
     let mut branding = sample_branding();
-    branding.client_bin = String::from("rsync");
+    branding.client_bin = String::from("oc rsync");
     let error = validate_branding(&branding).unwrap_err();
-    assert!(matches!(error, TaskError::Validation(message) if message.contains("client binary")));
+    assert!(matches!(
+        error,
+        TaskError::Validation(message)
+            if message.contains("client_bin") && message.contains("whitespace")
+    ));
 }
 
 #[test]
-fn validate_branding_rejects_missing_daemon_prefix() {
+fn validate_branding_rejects_daemon_with_separator() {
     let mut branding = sample_branding();
-    branding.daemon_bin = String::from("rsyncd");
+    branding.daemon_bin = String::from("bin/oc-rsync");
     let error = validate_branding(&branding).unwrap_err();
-    assert!(matches!(error, TaskError::Validation(message) if message.contains("daemon binary")));
+    assert!(matches!(
+        error,
+        TaskError::Validation(message)
+            if message.contains("daemon_bin") && message.contains("path separators")
+    ));
 }
 
 #[test]
@@ -276,33 +284,35 @@ fn validate_branding_requires_paths_to_match_directories() {
 }
 
 #[test]
-fn validate_branding_requires_daemon_directory_suffix() {
+fn validate_branding_rejects_relative_daemon_directory() {
     let mut branding = sample_branding();
-    branding.daemon_config_dir = PathBuf::from("/etc/oc-rsync");
+    branding.daemon_config_dir = PathBuf::from("etc/oc-rsyncd");
     let error = validate_branding(&branding).unwrap_err();
     assert!(matches!(
         error,
-        TaskError::Validation(message) if message.contains("daemon_config_dir")
+        TaskError::Validation(message)
+            if message.contains("daemon_config_dir") && message.contains("absolute path")
     ));
 }
 
 #[test]
 fn validate_branding_requires_daemon_file_names() {
     let mut branding = sample_branding();
-    branding.daemon_config = PathBuf::from("/etc/oc-rsyncd/custom.conf");
+    branding.daemon_config = PathBuf::from("/etc/oc-rsyncd");
     let config_error = validate_branding(&branding).unwrap_err();
     assert!(matches!(
         config_error,
         TaskError::Validation(message)
-            if message.contains("daemon_config '/etc/oc-rsyncd/custom.conf' must be named")
+            if message.contains("daemon_config") && message.contains("must not be identical")
     ));
 
     let mut branding = sample_branding();
-    branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd/rsyncd.secret");
+    branding.daemon_secrets = PathBuf::from("/etc/oc-rsyncd");
     let secrets_error = validate_branding(&branding).unwrap_err();
     assert!(matches!(
         secrets_error,
-        TaskError::Validation(message) if message.contains("daemon_secrets")
+        TaskError::Validation(message)
+            if message.contains("daemon_secrets") && message.contains("must not be identical")
     ));
 }
 
@@ -322,6 +332,30 @@ fn validate_branding_requires_legacy_file_names() {
     assert!(matches!(
         secrets_error,
         TaskError::Validation(message) if message.contains("legacy_daemon_secrets")
+    ));
+}
+
+#[test]
+fn validate_branding_rejects_binary_with_path_separator() {
+    let mut branding = sample_branding();
+    branding.client_bin = String::from("bin/oc-rsync");
+    let error = validate_branding(&branding).unwrap_err();
+    assert!(matches!(
+        error,
+        TaskError::Validation(message)
+            if message.contains("client_bin") && message.contains("path separators")
+    ));
+}
+
+#[test]
+fn validate_branding_rejects_binary_with_whitespace() {
+    let mut branding = sample_branding();
+    branding.daemon_bin = String::from("oc rsync");
+    let error = validate_branding(&branding).unwrap_err();
+    assert!(matches!(
+        error,
+        TaskError::Validation(message)
+            if message.contains("daemon_bin") && message.contains("whitespace")
     ));
 }
 

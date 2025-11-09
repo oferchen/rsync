@@ -192,55 +192,46 @@ impl WorkspaceMetadata {
 
     fn validate_branding(&self, manifest_path: &Path) {
         match self.brand.as_str() {
-            "oc" => {
-                expect_eq(&self.client_bin, "oc-rsync", manifest_path, "client_bin");
-                expect_eq(&self.daemon_bin, "oc-rsync", manifest_path, "daemon_bin");
-                expect_eq(
-                    &self.daemon_config_dir,
-                    "/etc/oc-rsyncd",
-                    manifest_path,
-                    "daemon_config_dir",
-                );
-                expect_eq(
-                    &self.daemon_config,
-                    "/etc/oc-rsyncd/oc-rsyncd.conf",
-                    manifest_path,
-                    "daemon_config",
-                );
-                expect_eq(
-                    &self.daemon_secrets,
-                    "/etc/oc-rsyncd/oc-rsyncd.secrets",
-                    manifest_path,
-                    "daemon_secrets",
-                );
-            }
-            "upstream" => {
-                expect_eq(&self.client_bin, "rsync", manifest_path, "client_bin");
-                expect_eq(&self.daemon_bin, "rsyncd", manifest_path, "daemon_bin");
-                expect_eq(
-                    &self.daemon_config_dir,
-                    "/etc",
-                    manifest_path,
-                    "daemon_config_dir",
-                );
-                expect_eq(
-                    &self.daemon_config,
-                    "/etc/rsyncd.conf",
-                    manifest_path,
-                    "daemon_config",
-                );
-                expect_eq(
-                    &self.daemon_secrets,
-                    "/etc/rsyncd.secrets",
-                    manifest_path,
-                    "daemon_secrets",
-                );
-            }
+            "oc" | "upstream" => {}
             other => panic!(
                 "unsupported workspace brand '{other}' in {}",
                 manifest_path.display()
             ),
         }
+
+        ensure_binary_name(&self.client_bin, manifest_path, "client_bin");
+        ensure_binary_name(&self.daemon_bin, manifest_path, "daemon_bin");
+
+        if self.client_bin != self.daemon_bin {
+            panic!(
+                "workspace.metadata.oc_rsync.client_bin ('{}') and daemon_bin ('{}') must match so a single binary handles both roles in {}",
+                self.client_bin,
+                self.daemon_bin,
+                manifest_path.display()
+            );
+        }
+
+        ensure_absolute_path(&self.daemon_config_dir, manifest_path, "daemon_config_dir");
+        ensure_absolute_path(&self.daemon_config, manifest_path, "daemon_config");
+        ensure_absolute_path(&self.daemon_secrets, manifest_path, "daemon_secrets");
+
+        ensure_has_file_name(&self.daemon_config, manifest_path, "daemon_config");
+        ensure_has_file_name(&self.daemon_secrets, manifest_path, "daemon_secrets");
+
+        ensure_under_dir(
+            &self.daemon_config,
+            &self.daemon_config_dir,
+            manifest_path,
+            "daemon_config",
+            "daemon_config_dir",
+        );
+        ensure_under_dir(
+            &self.daemon_secrets,
+            &self.daemon_config_dir,
+            manifest_path,
+            "daemon_secrets",
+            "daemon_config_dir",
+        );
     }
 
     fn validate_versions(&self, manifest_path: &Path) {
@@ -360,6 +351,80 @@ fn expect_eq(actual: &str, expected: &str, manifest_path: &Path, field: &str) {
     if actual != expected {
         panic!(
             "workspace.metadata.oc_rsync.{field} must be '{expected}' in {} but was '{actual}'",
+            manifest_path.display()
+        );
+    }
+}
+
+fn ensure_binary_name(value: &str, manifest_path: &Path, field: &str) {
+    if value.trim().is_empty() {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} must not be empty in {}",
+            manifest_path.display()
+        );
+    }
+
+    if value.chars().any(char::is_whitespace) {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} must not contain whitespace in {}",
+            manifest_path.display()
+        );
+    }
+
+    if value.chars().any(std::path::is_separator) {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} must be a binary name without path separators in {}",
+            manifest_path.display()
+        );
+    }
+}
+
+fn ensure_absolute_path(value: &str, manifest_path: &Path, field: &str) {
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} ('{}') must be an absolute path in {}",
+            value,
+            manifest_path.display()
+        );
+    }
+}
+
+fn ensure_has_file_name(value: &str, manifest_path: &Path, field: &str) {
+    let path = Path::new(value);
+    if path.file_name().is_none() {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} ('{}') must include a file name in {}",
+            value,
+            manifest_path.display()
+        );
+    }
+}
+
+fn ensure_under_dir(
+    child: &str,
+    parent: &str,
+    manifest_path: &Path,
+    child_field: &str,
+    parent_field: &str,
+) {
+    let child_path = Path::new(child);
+    let parent_path = Path::new(parent);
+
+    if !child_path.starts_with(parent_path) {
+        panic!(
+            "workspace.metadata.oc_rsync.{child_field} ('{}') must reside under workspace.metadata.oc_rsync.{parent_field} ('{}') in {}",
+            child,
+            parent,
+            manifest_path.display()
+        );
+    }
+
+    if child_path == parent_path {
+        panic!(
+            "workspace.metadata.oc_rsync.{child_field} ('{}') must not be identical to workspace.metadata.oc_rsync.{parent_field} ('{}'); specify a file name in {}",
+            child,
+            parent,
             manifest_path.display()
         );
     }
