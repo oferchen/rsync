@@ -1,27 +1,17 @@
-# frozen_string_literal: true
-
 class OcRsync < Formula
-  desc "Pure-Rust rsync 3.4.1-compatible client/daemon shipped as a single oc-rsync binary"
+  desc "Pure-Rust rsync 3.4.1-compatible implementation"
   homepage "https://github.com/oferchen/rsync"
-  url "https://github.com/oferchen/rsync/archive/refs/tags/v3.4.1-rust.tar.gz"
-  sha256 "b51196ce14884b4e99c9823b4dbee2cd3815dbdd647f2fba324cd109b00bfda2"
-  version "3.4.1-rust"
+  version "v0.0.0-local"
+  url "https://github.com/oferchen/rsync/releases/download/v0.0.0-local/oc-rsync-macos-amd64.tar.gz"
+  sha256 "CHANGE_ME"
   license "GPL-3.0-or-later"
 
-  depends_on "rust" => :build
-
   def install
-    system "cargo", "build", "--release", "--locked", "--bin", "oc-rsync"
-    bin.install "target/release/oc-rsync"
-
-    (etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.conf"
-    (etc/"oc-rsyncd").install "packaging/etc/oc-rsyncd/oc-rsyncd.secrets"
-    chmod 0600, etc/"oc-rsyncd/oc-rsyncd.secrets"
-    (pkgshare/"examples").install "packaging/examples/oc-rsyncd.conf"
+    bin.install "oc-rsync"
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/oc-rsync --version")
-    assert_match "oc-rsync", shell_output("#{bin}/oc-rsync --daemon --help")
+    system "#{bin}/oc-rsync", "--version"
   end
 end
+

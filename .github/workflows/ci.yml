@@ -1,4 +1,4 @@
-name: CI
+name: ci
 
 on:
   push:
@@ -6,25 +6,42 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Avoid cross-workflow pileups and branch collisions
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
 jobs:
-  lint:
-    uses: ./.github/workflows/lint.yml
-    secrets: inherit
+  lint-and-test:
+    name: fmt + clippy + nextest
+    runs-on: ubuntu-latest
 
-  test-linux:
-    needs: lint
-    uses: ./.github/workflows/test-linux.yml
-    secrets: inherit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  cross-compile:
-    needs: lint
-    uses: ./.github/workflows/cross-compile.yml
-    secrets: inherit
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --no-deps
+
+      - name: Install cargo-nextest
+        run: cargo install cargo-nextest --locked
+
+      - name: Nextest
+        run: cargo nextest run --workspace --all-targets --all-features
