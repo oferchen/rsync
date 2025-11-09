@@ -162,6 +162,7 @@ fn negotiate_session_parts_exposes_binary_metadata() {
         remote_protocol,
         local_advertised,
         negotiated_protocol,
+        _remote_flags,
         _stream_parts_tuple,
     ) = tuple_parts;
     assert_eq!(remote_advertised, u32::from(remote_version.as_u8()));
@@ -418,7 +419,14 @@ fn negotiate_session_parts_with_sniffer_supports_reuse() {
     assert_eq!(parts1.decision(), NegotiationPrologue::Binary);
     assert_eq!(parts1.remote_protocol(), remote_version);
 
-    let (_remote_advertised, _remote_protocol, _local_advertised, _negotiated, stream_parts) =
+    let (
+        _remote_advertised,
+        _remote_protocol,
+        _local_advertised,
+        _negotiated,
+        _remote_flags,
+        stream_parts,
+    ) =
         parts1.into_binary().expect("binary parts");
     let transport1 = stream_parts.into_stream().into_inner();
     assert_eq!(

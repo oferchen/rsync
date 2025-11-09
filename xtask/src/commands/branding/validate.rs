@@ -189,15 +189,13 @@ fn ensure_binary_name(name: &str, label: &str) -> TaskResult<()> {
 
     if name.chars().any(char::is_whitespace) {
         return Err(TaskError::Validation(format!(
-            "{label} '{}' must not contain whitespace",
-            name
+            "{label} '{name}' must not contain whitespace"
         )));
     }
 
     if name.chars().any(std::path::is_separator) {
         return Err(TaskError::Validation(format!(
-            "{label} '{}' must not include path separators",
-            name
+            "{label} '{name}' must not include path separators"
         )));
     }
 
