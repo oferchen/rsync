@@ -114,7 +114,7 @@ jobs:
         if: ${{ matrix.platform.enabled }}
         shell: bash
         run: |
-          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --features legacy-binaries --bin rsync
+          cargo --locked ${{ matrix.platform.build_command }} --profile dist --target ${{ matrix.platform.target }} --all-features --bin rsync
 
       - name: Build .deb (cargo-deb)
         if: ${{ matrix.platform.enabled && matrix.platform.package_linux }}
