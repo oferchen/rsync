@@ -1,4 +1,4 @@
-use super::{constants::sanitize_build_revision, *};
+use super::*;
 use crate::{branding::Brand, workspace};
 use oc_rsync_protocol::ProtocolVersion;
 
@@ -27,17 +27,6 @@ fn workspace_protocol_matches_latest() {
         workspace::PROTOCOL_VERSION,
         u32::from(ProtocolVersion::NEWEST.as_u8())
     );
-}
-
-#[test]
-fn sanitize_build_revision_trims_and_filters_values() {
-    assert_eq!(sanitize_build_revision(Some(" 1a2b3c ")), "1a2b3c");
-    assert_eq!(sanitize_build_revision(Some("\n\t")), "unknown");
-    assert_eq!(sanitize_build_revision(Some("rev\nnext")), "rev");
-    assert_eq!(sanitize_build_revision(Some("rev\r\nnext")), "rev");
-    assert_eq!(sanitize_build_revision(Some("rev\u{7f}")), "unknown");
-    assert_eq!(sanitize_build_revision(Some("rev\0")), "unknown");
-    assert_eq!(sanitize_build_revision(None), "unknown");
 }
 
 #[test]

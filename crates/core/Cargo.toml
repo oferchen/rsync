@@ -29,8 +29,7 @@ base64 = "0.22"
 oc-rsync-checksums = { path = "../checksums" }
 tempfile = "3.10"
 socket2 = "0.4"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+rsync_branding = { path = "../branding", package = "rsync-branding" }
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
@@ -44,7 +43,3 @@ sd-notify = []
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
-toml = "0.8"
-
-[build-dependencies]
-toml = "0.8"
