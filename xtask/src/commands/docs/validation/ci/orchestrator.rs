@@ -181,33 +181,9 @@ fn display_path(workspace: &Path, path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    const MANIFEST_SNIPPET: &str = r#"[workspace]
-members = []
-[workspace.metadata]
-[workspace.metadata.oc_rsync]
-brand = "oc"
-upstream_version = "3.4.1"
-rust_version = "3.4.1-rust"
-protocol = 32
-client_bin = "oc-rsync"
-daemon_bin = "oc-rsync"
-legacy_client_bin = "rsync"
-legacy_daemon_bin = "rsyncd"
-daemon_config_dir = "/etc/oc-rsyncd"
-daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
-daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
-legacy_daemon_config_dir = "/etc"
-legacy_daemon_config = "/etc/rsyncd.conf"
-legacy_daemon_secrets = "/etc/rsyncd.secrets"
-source = "https://github.com/oferchen/rsync"
-[workspace.metadata.oc_rsync.cross_compile]
-linux = ["x86_64", "aarch64"]
-macos = ["x86_64", "aarch64"]
-windows = ["x86_64", "aarch64"]
-"#;
 
     fn unique_workspace(prefix: &str) -> PathBuf {
         let suffix = SystemTime::now()
@@ -221,7 +197,8 @@ windows = ["x86_64", "aarch64"]
         if !workspace.exists() {
             fs::create_dir_all(workspace).expect("create workspace root");
         }
-        fs::write(workspace.join("Cargo.toml"), MANIFEST_SNIPPET).expect("write manifest");
+        let manifest = test_support::manifest_snippet();
+        fs::write(workspace.join("Cargo.toml"), manifest).expect("write manifest");
     }
 
     fn write_ci_file(workspace: &Path, contents: &str) {

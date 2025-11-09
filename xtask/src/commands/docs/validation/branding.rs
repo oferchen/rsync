@@ -181,34 +181,10 @@ fn display_os_name(os: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support;
     use crate::workspace::load_workspace_branding;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    const MANIFEST_SNIPPET: &str = r#"[workspace]
-members = []
-[workspace.metadata]
-[workspace.metadata.oc_rsync]
-brand = "oc"
-upstream_version = "3.4.1"
-rust_version = "3.4.1-rust"
-protocol = 32
-client_bin = "oc-rsync"
-daemon_bin = "oc-rsync"
-legacy_client_bin = "rsync"
-legacy_daemon_bin = "rsyncd"
-daemon_config_dir = "/etc/oc-rsyncd"
-daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
-daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
-legacy_daemon_config_dir = "/etc"
-legacy_daemon_config = "/etc/rsyncd.conf"
-legacy_daemon_secrets = "/etc/rsyncd.secrets"
-source = "https://github.com/oferchen/rsync"
-[workspace.metadata.oc_rsync.cross_compile]
-linux = ["x86_64", "aarch64"]
-macos = ["x86_64", "aarch64"]
-windows = ["x86_64", "aarch64"]
-"#;
 
     #[test]
     fn validate_branding_documents_reports_missing_content() {
@@ -223,7 +199,8 @@ windows = ["x86_64", "aarch64"]
         fs::create_dir(&workspace).expect("create workspace");
         fs::create_dir(workspace.join("docs")).expect("create docs directory");
 
-        fs::write(workspace.join("Cargo.toml"), MANIFEST_SNIPPET).expect("write manifest");
+        let manifest = test_support::manifest_snippet();
+        fs::write(workspace.join("Cargo.toml"), manifest).expect("write manifest");
         fs::write(workspace.join("README.md"), "placeholder").expect("write README");
         fs::write(
             workspace.join("docs").join("production_scope_p1.md"),
