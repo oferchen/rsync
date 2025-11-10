@@ -36,10 +36,20 @@ checksums = { path = "../checksums" }
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
 
+[target.'cfg(unix)'.dependencies.metadata]
+path = "../metadata"
+default-features = false
+features = ["xattr"]
+
+[target.'cfg(unix)'.dependencies.engine]
+path = "../engine"
+default-features = false
+features = ["xattr"]
+
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
 acl = ["metadata/acl", "engine/acl"]
-xattr = ["metadata/xattr", "engine/xattr"]
+xattr = []
 zstd = ["engine/zstd", "compress/zstd"]
 lz4 = ["engine/lz4", "compress/lz4"]
 iconv = []

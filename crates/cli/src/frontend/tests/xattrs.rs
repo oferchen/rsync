@@ -1,5 +1,6 @@
 use super::common::*;
 use super::*;
+use std::ffi::OsString;
 
 #[cfg(not(feature = "xattr"))]
 #[test]
@@ -25,7 +26,7 @@ fn xattrs_option_reports_unsupported_when_feature_disabled() {
     assert_contains_client_trailer(&rendered);
 }
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn xattrs_option_preserves_attributes() {
     use tempfile::tempdir;
@@ -34,6 +35,7 @@ fn xattrs_option_preserves_attributes() {
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
     std::fs::write(&source, b"attr data").expect("write source");
+
     xattr::set(&source, "user.test", b"value").expect("set xattr");
 
     let (code, stdout, stderr) = run_with_args([
