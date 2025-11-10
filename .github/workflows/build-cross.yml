@@ -17,11 +17,11 @@ env:
 
 jobs:
   # --------------------------------------------------
-  # Linux builds on ubuntu-latest
+  # Linux builds on ubuntu-noble
   # --------------------------------------------------
   build-linux:
     name: linux ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-noble
     strategy:
       fail-fast: false
       matrix:
