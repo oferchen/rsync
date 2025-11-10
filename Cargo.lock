@@ -124,6 +124,7 @@ dependencies = [
  "core",
  "daemon",
  "libc",
+ "openssl",
  "windows-gnu-eh",
 ]
 
