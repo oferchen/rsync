@@ -33,6 +33,11 @@ assert_cmd = "2.0"
 core = { path = "crates/core" }
 libc = "0.2"
 
+# Windows-wide deps (applies to MSVC and GNU toolchains)
+[target.'cfg(windows)'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
+# Extra deps only for Windows + GNU
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
 windows-gnu-eh = { path = "crates/windows-gnu-eh" }
 
@@ -79,9 +84,9 @@ upstream_version = "3.4.1"
 rust_version = "3.4.1-rust"
 protocol = 32
 client_bin = "oc-rsync"
-    daemon_bin = "oc-rsync"
-    legacy_client_bin = "rsync"
-    legacy_daemon_bin = "rsync"
+daemon_bin = "oc-rsync"
+legacy_client_bin = "rsync"
+legacy_daemon_bin = "rsync"
 daemon_config_dir = "/etc/oc-rsyncd"
 daemon_config = "/etc/oc-rsyncd/oc-rsyncd.conf"
 daemon_secrets = "/etc/oc-rsyncd/oc-rsyncd.secrets"
@@ -153,11 +158,6 @@ mode = "0644"
 [package.metadata.rpm.files."../packaging/etc/oc-rsyncd/oc-rsyncd.secrets"]
 path = "/etc/oc-rsyncd/oc-rsyncd.secrets"
 mode = "0600"
-
-# [package.metadata.rpm.files."../packaging/default/oc-rsyncd"]
-# path = "/etc/default/oc-rsyncd"
-# mode = "0644"
-
 
 [package.metadata.rpm.scripts]
 post = '''
