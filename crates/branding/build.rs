@@ -257,7 +257,7 @@ impl WorkspaceMetadata {
         );
         expect_eq(
             &self.legacy_daemon_bin,
-            "rsyncd",
+            "rsync",
             manifest_path,
             "legacy_daemon_bin",
         );

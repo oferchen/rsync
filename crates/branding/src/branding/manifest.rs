@@ -412,7 +412,7 @@ mod tests {
 
         assert_eq!(summary.brand(), Brand::Upstream);
         assert_eq!(summary.client_program_name(), "rsync");
-        assert_eq!(summary.daemon_program_name(), "rsyncd");
+        assert_eq!(summary.daemon_program_name(), "rsync");
         assert_eq!(summary.daemon_config_path(), "/etc/rsyncd.conf");
         assert_eq!(summary.daemon_secrets_path(), "/etc/rsyncd.secrets");
         assert_eq!(summary.rust_version(), manifest.rust_version());
