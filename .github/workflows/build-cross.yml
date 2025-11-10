@@ -12,7 +12,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  #  BINARIES: "oc-rsync oc-rsyncd"
+#  BINARIES: "oc-rsync oc-rsyncd"
   BINARIES: "oc-rsync"
 
 jobs:
@@ -148,7 +148,7 @@ jobs:
 
   # --------------------------------------------------
   # Windows builds on windows-latest
-  # (fixed to not call tools/cross/rustc-with-zig.sh)
+  # (fixed to write valid TOML for .cargo/config.toml)
   # --------------------------------------------------
   build-windows:
     name: windows ${{ matrix.target }}
@@ -178,8 +178,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-          # write a minimal Cargo config that unsets rustc-wrapper
-          Set-Content -Path .cargo/config.toml -Encoding UTF8 -Value "[build]`nrustc-wrapper = ``"
+          # first line
+          Set-Content -Path .cargo/config.toml -Encoding UTF8 -Value "[build]"
+          # second line
+          Add-Content -Path .cargo/config.toml -Encoding UTF8 -Value 'rustc-wrapper = ""'
           # also clear env-based wrappers if they exist
           Remove-Item Env:CARGO_BUILD_RUSTC_WRAPPER -ErrorAction SilentlyContinue
           Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
