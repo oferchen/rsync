@@ -16,8 +16,8 @@ pub const fn brand_override_env_var() -> &'static str {
 #[doc(alias = "rsync")]
 pub const UPSTREAM_CLIENT_PROGRAM_NAME: &str = workspace::metadata().legacy_client_program_name();
 
-/// Canonical program name used by upstream `rsyncd` daemon releases.
-#[doc(alias = "rsyncd")]
+/// Canonical program name used by upstream `rsync` daemon releases.
+#[doc(alias = "rsync")]
 pub const UPSTREAM_DAEMON_PROGRAM_NAME: &str = workspace::metadata().legacy_daemon_program_name();
 
 /// Canonical binary name exposed by the client wrapper packaged as `oc-rsync`.

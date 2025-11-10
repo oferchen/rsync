@@ -147,9 +147,9 @@ fn oc_brand_uses_single_binary() {
 #[test]
 fn brand_profile_alias_detection_handles_client_and_daemon_programs() {
     let upstream = Brand::Upstream.profile();
-    assert!(upstream.matches_daemon_program_alias(OsStr::new("rsyncd")));
-    assert!(upstream.matches_daemon_program_alias(OsStr::new("/usr/bin/RSYNCD.EXE")));
-    assert!(!upstream.matches_daemon_program_alias(OsStr::new("rsync")));
+    assert!(upstream.matches_daemon_program_alias(OsStr::new("rsync")));
+    assert!(upstream.matches_daemon_program_alias(OsStr::new("/usr/bin/RSYNC.EXE")));
+    assert!(upstream.matches_daemon_program_alias(OsStr::new("rsync")));
     assert!(upstream.matches_client_program_alias(OsStr::new("rsync")));
     assert!(upstream.matches_client_program_alias(OsStr::new("/usr/local/bin/rsync-3.4.1")));
 
@@ -180,7 +180,7 @@ fn detect_brand_matches_invocation_argument() {
 fn detect_brand_supports_windows_extensions() {
     let _guard = EnvGuard::remove(BRAND_OVERRIDE_ENV);
     assert_eq!(detect_brand(Some(OsStr::new("oc-rsync.exe"))), Brand::Oc);
-    let upstream = detect_brand(Some(OsStr::new("RSYNCD.EXE")));
+    let upstream = detect_brand(Some(OsStr::new("RSYNC.EXE")));
     assert_eq!(upstream, Brand::Upstream);
     assert_eq!(
         detect_brand(Some(OsStr::new("/opt/tools/oc-rsync-3.4.1.EXE"))),
@@ -208,12 +208,12 @@ fn detect_brand_recognises_debug_suffixes_without_digits() {
 
 #[test]
 fn matches_program_alias_accepts_windows_extensions() {
-    let alias = format!("{}d", oc_client_program_name());
+    let alias = format!("{}", oc_client_program_name());
     assert!(matches_program_alias("rsync.exe", "rsync"));
-    assert!(matches_program_alias("RSYNCD.EXE", "rsyncd"));
+    assert!(matches_program_alias("RSYNC.EXE", "rsync"));
     assert!(matches_program_alias("oc-rsync.EXE", "oc-rsync"));
-    assert!(matches_program_alias("OC-RSYNCD.EXE", &alias));
-    assert!(!matches_program_alias("rsyncd.exe", &alias));
+    assert!(matches_program_alias("OC-RSYNC.EXE", &alias));
+    assert!(!matches_program_alias("rsync.exe", &alias));
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn detect_brand_ignores_invalid_override_environment_variable() {
 
 #[test]
 fn brand_from_str_accepts_aliases() {
-    let daemon_alias = format!("{}d", oc_client_program_name());
+    let daemon_alias = format!("{}", oc_client_program_name());
     let upper_daemon_alias = daemon_alias.to_ascii_uppercase();
     assert_eq!(Brand::from_str("oc").unwrap(), Brand::Oc);
     assert_eq!(Brand::from_str(&upper_daemon_alias).unwrap(), Brand::Oc);
@@ -382,7 +382,7 @@ fn brand_from_str_accepts_aliases() {
     assert_eq!(Brand::from_str(" rsync-3.4.1 ").unwrap(), Brand::Upstream);
     assert_eq!(Brand::from_str("rsync_3.4.1").unwrap(), Brand::Upstream);
     assert_eq!(Brand::from_str("RSYNC.3.4.1").unwrap(), Brand::Upstream);
-    assert_eq!(Brand::from_str("RSYNCD").unwrap(), Brand::Upstream);
+    assert_eq!(Brand::from_str("RSYNC").unwrap(), Brand::Upstream);
 }
 
 #[test]
