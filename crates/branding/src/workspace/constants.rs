@@ -128,7 +128,7 @@ pub const fn legacy_client_program_name() -> &'static str {
 }
 
 /// Upstream-compatible daemon binary name used for compatibility symlinks.
-#[doc(alias = "rsyncd")]
+#[doc(alias = "rsync")]
 pub const LEGACY_DAEMON_PROGRAM_NAME: &str = crate::generated::LEGACY_DAEMON_PROGRAM_NAME;
 
 /// Returns the upstream-compatible daemon binary name used for compatibility symlinks.
@@ -146,7 +146,7 @@ pub const fn legacy_daemon_program_name() -> &'static str {
 }
 
 /// Configuration directory installed alongside the branded daemon.
-#[doc(alias = "/etc/oc-rsyncd")]
+#[doc(alias = "/etc/oc-rsync")]
 pub const DAEMON_CONFIG_DIR: &str = crate::generated::DAEMON_CONFIG_DIR;
 
 /// Default daemon configuration file path for the branded binary.
