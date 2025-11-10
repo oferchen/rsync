@@ -12,39 +12,25 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  BINARIES: "oc-rsync"
+  BINARIES: "oc-rsync oc-rsyncd"
 
 jobs:
-  build:
-    name: build ${{ matrix.target }}
+  # --------------------------------------------------
+  # Linux builds on ubuntu-latest
+  # --------------------------------------------------
+  build-linux:
+    name: linux ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Linux
           - target: x86_64-unknown-linux-gnu
             os-arch: linux-amd64
-            linux: true
+            cross: false
           - target: aarch64-unknown-linux-gnu
             os-arch: linux-aarch64
-            linux: true
-
-          # Windows (gnu)
-          - target: x86_64-pc-windows-gnu
-            os-arch: windows-amd64
-            linux: false
-          - target: aarch64-pc-windows-gnu
-            os-arch: windows-aarch64
-            linux: false
-
-          # macOS (Darwin)
-          - target: x86_64-apple-darwin
-            os-arch: macos-amd64
-            linux: false
-          - target: aarch64-apple-darwin
-            os-arch: macos-aarch64
-            linux: false
+            cross: true
 
     steps:
       - name: Checkout
@@ -52,29 +38,43 @@ jobs:
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
           key: build-${{ matrix.target }}
 
-      - name: Install zig
-        run: .github/scripts/install-zig.sh
+      - name: Install system deps (OpenSSL, ACL, cross toolchain)
+        run: |
+          set -euo pipefail
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libacl1-dev
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            sudo apt-get install -y \
+              gcc-aarch64-linux-gnu \
+              libssl-dev:arm64 \
+              libacl1-dev:arm64
+          fi
 
-      - name: Install cargo-zigbuild
-        run: cargo install cargo-zigbuild --locked
+      - name: Configure env for cross
+        if: matrix.cross == true
+        run: |
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
 
-      - name: Build (release) with zig
+      - name: Build (release)
         run: |
           for bin in $BINARIES; do
-            cargo zigbuild --release --target ${{ matrix.target }} --bin "$bin"
+            cargo build --release --target ${{ matrix.target }} --bin "$bin"
           done
 
       - name: Make tarball
         run: .github/scripts/make-tarball.sh ${{ matrix.target }} oc-rsync-${{ matrix.os-arch }}.tar.gz "$BINARIES"
 
       - name: Package Linux (.deb, .rpm)
-        if: matrix.linux
         run: .github/scripts/package-linux.sh ${{ matrix.target }}
 
       - name: Upload artifact (tar.gz)
@@ -84,15 +84,112 @@ jobs:
           path: oc-rsync-${{ matrix.os-arch }}.tar.gz
 
       - name: Upload .deb
-        if: matrix.linux
         uses: actions/upload-artifact@v4
         with:
           name: deb-${{ matrix.os-arch }}
           path: target/${{ matrix.target }}/debian/*.deb
 
       - name: Upload .rpm
-        if: matrix.linux
         uses: actions/upload-artifact@v4
         with:
           name: rpm-${{ matrix.os-arch }}
           path: target/${{ matrix.target }}/generate-rpm/*.rpm
+
+  # --------------------------------------------------
+  # macOS builds on macos-latest
+  # --------------------------------------------------
+  build-macos:
+    name: macos ${{ matrix.target }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os-arch: macos-amd64
+          - target: aarch64-apple-darwin
+            os-arch: macos-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install OpenSSL via Homebrew
+        run: |
+          brew update
+          brew install openssl@3 || true
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ matrix.target }}
+
+      - name: Build (release)
+        run: |
+          for bin in $BINARIES; do
+            cargo build --release --target ${{ matrix.target }} --bin "$bin"
+          done
+
+      - name: Make tarball
+        run: .github/scripts/make-tarball.sh ${{ matrix.target }} oc-rsync-${{ matrix.os-arch }}.tar.gz "$BINARIES"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsync-${{ matrix.os-arch }}.tar.gz
+          path: oc-rsync-${{ matrix.os-arch }}.tar.gz
+
+  # --------------------------------------------------
+  # Windows builds on windows-latest
+  # --------------------------------------------------
+  build-windows:
+    name: windows ${{ matrix.target }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os-arch: windows-amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ matrix.target }}
+
+      # recommended: in Cargo.toml use:
+      # openssl = { version = "0.10", features = ["vendored"] }
+      # so the windows job doesn't have to install OpenSSL.
+
+      - name: Build
+        run: |
+          cargo build --release --target ${{ matrix.target }} --bin oc-rsync
+          cargo build --release --target ${{ matrix.target }} --bin oc-rsyncd || true
+
+      - name: Package
+        run: |
+          mkdir dist
+          copy target\${{ matrix.target }}\release\oc-rsync.exe dist\
+          if exist target\${{ matrix.target }}\release\oc-rsyncd.exe copy target\${{ matrix.target }}\release\oc-rsyncd.exe dist\
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oc-rsync-${{ matrix.os-arch }}.zip
+          path: dist\
+          
