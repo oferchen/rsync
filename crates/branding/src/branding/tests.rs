@@ -208,12 +208,12 @@ fn detect_brand_recognises_debug_suffixes_without_digits() {
 
 #[test]
 fn matches_program_alias_accepts_windows_extensions() {
-    let alias = format!("{}", oc_client_program_name());
+    let alias = oc_client_program_name();
     assert!(matches_program_alias("rsync.exe", "rsync"));
     assert!(matches_program_alias("RSYNC.EXE", "rsync"));
     assert!(matches_program_alias("oc-rsync.EXE", "oc-rsync"));
-    assert!(matches_program_alias("OC-RSYNC.EXE", &alias));
-    assert!(!matches_program_alias("rsync.exe", &alias));
+    assert!(matches_program_alias("OC-RSYNC.EXE", alias));
+    assert!(!matches_program_alias("rsync.exe", alias));
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn detect_brand_ignores_invalid_override_environment_variable() {
 
 #[test]
 fn brand_from_str_accepts_aliases() {
-    let daemon_alias = format!("{}", oc_client_program_name());
+    let daemon_alias = oc_client_program_name();
     let upper_daemon_alias = daemon_alias.to_ascii_uppercase();
     assert_eq!(Brand::from_str("oc").unwrap(), Brand::Oc);
     assert_eq!(Brand::from_str(&upper_daemon_alias).unwrap(), Brand::Oc);
