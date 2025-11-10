@@ -12,11 +12,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  #  BINARIES: "oc-rsync oc-rsyncd"
   BINARIES: "oc-rsync"
 
 jobs:
   # --------------------------------------------------
-  # Linux builds
+  # Linux builds on ubuntu-noble
   # --------------------------------------------------
   build-linux:
     name: linux ${{ matrix.target }}
@@ -27,10 +28,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os-arch: linux-amd64
-            cross: "false"
+            cross: false
           - target: aarch64-unknown-linux-gnu
             os-arch: linux-aarch64
-            cross: "true"
+            cross: true
 
     steps:
       - name: Checkout
@@ -60,7 +61,7 @@ jobs:
           fi
 
       - name: Configure env for cross
-        if: ${{ matrix.cross == 'true' }}
+        if: matrix.cross == true
         run: |
           echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
@@ -96,7 +97,7 @@ jobs:
           path: target/${{ matrix.target }}/generate-rpm/*.rpm
 
   # --------------------------------------------------
-  # macOS builds
+  # macOS builds on macos-latest
   # --------------------------------------------------
   build-macos:
     name: macos ${{ matrix.target }}
@@ -146,7 +147,8 @@ jobs:
           path: oc-rsync-${{ matrix.os-arch }}.tar.gz
 
   # --------------------------------------------------
-  # Windows builds
+  # Windows builds on windows-latest
+  # (fixed to not call tools/cross/rustc-with-zig.sh)
   # --------------------------------------------------
   build-windows:
     name: windows ${{ matrix.target }}
@@ -172,15 +174,13 @@ jobs:
         with:
           key: build-${{ matrix.target }}
 
-      # override any repo-level rustc wrapper that points to tools/cross/rustc-with-zig.sh
-      - name: Disable cross rustc wrapper on Windows
+      - name: Disable rustc wrapper on Windows
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path ".cargo" | Out-Null
-          @"
-[build]
-rustc-wrapper = ""
-"@ | Set-Content -Encoding UTF8 .cargo/config.toml
+          New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+          # write a minimal Cargo config that unsets rustc-wrapper
+          Set-Content -Path .cargo/config.toml -Encoding UTF8 -Value "[build]`nrustc-wrapper = ``"
+          # also clear env-based wrappers if they exist
           Remove-Item Env:CARGO_BUILD_RUSTC_WRAPPER -ErrorAction SilentlyContinue
           Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
 
