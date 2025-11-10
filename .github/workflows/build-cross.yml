@@ -12,7 +12,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-#  BINARIES: "oc-rsync oc-rsyncd"
+  #  BINARIES: "oc-rsync oc-rsyncd"
   BINARIES: "oc-rsync"
 
 jobs:
@@ -173,20 +173,30 @@ jobs:
         with:
           key: build-${{ matrix.target }}
 
-      # recommended: in Cargo.toml use:
-      # openssl = { version = "0.10", features = ["vendored"] }
-      # so the windows job doesn't have to install OpenSSL.
+      # override any repo-level rustc-wrapper (like tools/cross/rustc-with-zig.sh)
+      # which cannot run on Windows
+      - name: Disable cross rustc wrapper on Windows
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ".cargo" | Out-Null
+          @"
+[build]
+rustc-wrapper = ""
+"@ | Set-Content -Encoding UTF8 .cargo/config.toml
+          # also clear env-based wrappers if present
+          Remove-Item Env:CARGO_BUILD_RUSTC_WRAPPER -ErrorAction SilentlyContinue
+          Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
 
       - name: Build
+        shell: pwsh
         run: |
           cargo build --release --target ${{ matrix.target }} --bin oc-rsync
-#          cargo build --release --target ${{ matrix.target }} --bin oc-rsyncd || true
 
       - name: Package
+        shell: pwsh
         run: |
-          mkdir dist
-          copy target\${{ matrix.target }}\release\oc-rsync.exe dist\
-#          if exist target\${{ matrix.target }}\release\oc-rsyncd.exe copy target\${{ matrix.target }}\release\oc-rsyncd.exe dist\
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target\${{ matrix.target }}\release\oc-rsync.exe" dist\
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
