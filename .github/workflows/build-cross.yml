@@ -12,7 +12,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  BINARIES: "oc-rsync oc-rsyncd"
+#  BINARIES: "oc-rsync oc-rsyncd"
+  BINARIES: "oc-rsync"
 
 jobs:
   # --------------------------------------------------
@@ -179,17 +180,16 @@ jobs:
       - name: Build
         run: |
           cargo build --release --target ${{ matrix.target }} --bin oc-rsync
-          cargo build --release --target ${{ matrix.target }} --bin oc-rsyncd || true
+#          cargo build --release --target ${{ matrix.target }} --bin oc-rsyncd || true
 
       - name: Package
         run: |
           mkdir dist
           copy target\${{ matrix.target }}\release\oc-rsync.exe dist\
-          if exist target\${{ matrix.target }}\release\oc-rsyncd.exe copy target\${{ matrix.target }}\release\oc-rsyncd.exe dist\
+#          if exist target\${{ matrix.target }}\release\oc-rsyncd.exe copy target\${{ matrix.target }}\release\oc-rsyncd.exe dist\
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.os-arch }}.zip
           path: dist\
-          
