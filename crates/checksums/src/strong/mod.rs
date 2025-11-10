@@ -16,13 +16,21 @@ mod xxhash;
 
 pub use md4::Md4;
 pub use md5::Md5;
+
 #[cfg(feature = "openssl")]
 pub use openssl_support::openssl_acceleration_available;
+
 #[cfg(not(feature = "openssl"))]
 #[inline]
+/// Returns `false` when the `openssl` feature is not enabled, indicating that
+/// OpenSSL-backed strong checksum acceleration is unavailable on this build.
+///
+/// This keeps the public API identical across platforms and feature sets so
+/// callers can unconditionally query for OpenSSL support.
 pub const fn openssl_acceleration_available() -> bool {
     false
 }
+
 pub use sha1::Sha1;
 pub use sha256::Sha256;
 pub use sha512::Sha512;

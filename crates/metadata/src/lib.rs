@@ -13,7 +13,7 @@
 //!
 //! # Design
 //!
-//! The crate exposes three primary entry points:
+//! The crate exposes these primary entry points:
 //! - [`apply_file_metadata`] sets permissions and timestamps on regular files.
 //! - [`apply_directory_metadata`] mirrors metadata for directories.
 //! - [`apply_symlink_metadata`] applies timestamp changes to symbolic links
@@ -78,6 +78,7 @@
     )
 ))]
 mod acl_stub;
+
 #[cfg(all(
     feature = "acl",
     not(any(
@@ -88,17 +89,28 @@ mod acl_stub;
     ))
 ))]
 mod acl_support;
+
 mod apply;
 mod chmod;
 mod error;
+
 #[cfg(unix)]
 mod id_lookup;
+
+#[cfg(unix)]
 mod mapping;
+
+#[cfg(not(unix))]
+mod mapping_win;
+
 mod options;
+
 #[cfg(unix)]
 mod ownership;
+
 mod special;
-#[cfg(feature = "xattr")]
+
+#[cfg(all(unix, feature = "xattr"))]
 mod xattr;
 
 #[cfg(all(
@@ -111,6 +123,7 @@ mod xattr;
     )
 ))]
 pub use acl_stub::sync_acls;
+
 #[cfg(all(
     feature = "acl",
     not(any(
@@ -121,14 +134,25 @@ pub use acl_stub::sync_acls;
     ))
 ))]
 pub use acl_support::sync_acls;
+
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
     apply_file_metadata_with_options, apply_symlink_metadata, apply_symlink_metadata_with_options,
 };
+
 pub use chmod::{ChmodError, ChmodModifiers};
+
 pub use error::MetadataError;
+
+#[cfg(unix)]
 pub use mapping::{GroupMapping, MappingKind, MappingParseError, NameMapping, UserMapping};
+
+#[cfg(not(unix))]
+pub use mapping_win::{GroupMapping, MappingKind, MappingParseError, NameMapping, UserMapping};
+
 pub use options::MetadataOptions;
+
 pub use special::{create_device_node, create_fifo};
-#[cfg(feature = "xattr")]
+
+#[cfg(all(unix, feature = "xattr"))]
 pub use xattr::sync_xattrs;
