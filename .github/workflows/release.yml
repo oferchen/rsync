@@ -1,30 +1,45 @@
 name: Release-artifacts
 
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Build-cross"]
+    types:
+      - completed
 
 permissions:
   contents: write
 
 jobs:
-  gather-and-upload:
+  upload-to-release:
+    name: Upload build artifacts to release
     runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
 
-      - name: List artifacts
+    steps:
+      - name: Check workflow conclusion
+        if: ${{ github.event.workflow_run.conclusion != 'success' }}
+        run: |
+          echo "Build-cross did not succeed, skipping release upload."
+          exit 1
+
+      - name: Download artifacts from Build-cross
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          run_id: ${{ github.event.workflow_run.id }}
+          path: dist
+          # we want all artifacts: tar.gz, deb, rpm, zip
+          name: ""
+
+      - name: List downloaded artifacts
         run: ls -R dist
 
-      - name: Upload to release
+      - name: Create or update GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/**/*.tar.gz
             dist/**/*.deb
             dist/**/*.rpm
+            dist/**/*.zip
         env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
