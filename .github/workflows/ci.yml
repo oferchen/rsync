@@ -45,3 +45,4 @@ jobs:
 
       - name: Nextest
         run: cargo nextest run --workspace --all-targets --all-features
+        
