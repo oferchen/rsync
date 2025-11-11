@@ -1,7 +1,7 @@
 //! Helpers for synchronizing extended attributes and ACLs.
 
-use ::metadata::MetadataError;
 use super::LocalCopyError;
+use ::metadata::MetadataError;
 
 #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
 use std::path::Path;
