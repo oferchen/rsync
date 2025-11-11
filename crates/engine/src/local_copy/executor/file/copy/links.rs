@@ -4,18 +4,18 @@ use std::time::Duration;
 
 use crate::local_copy::overrides::create_hard_link;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
-    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery,
-    find_reference_action, map_metadata_error, remove_source_entry_if_requested,
+    find_reference_action, map_metadata_error, remove_source_entry_if_requested, CopyContext,
+    CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError, LocalCopyExecution,
+    LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery,
 };
 
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 
-use ::metadata::MetadataOptions;
 use ::metadata::apply_file_metadata_with_options;
+use ::metadata::MetadataOptions;
 
 use super::super::super::super::CROSS_DEVICE_ERROR_CODE;
 use super::super::guard::remove_existing_destination;
@@ -41,13 +41,16 @@ pub(super) fn process_links(
     ignore_times_enabled: bool,
     checksum_enabled: bool,
     mode: LocalCopyExecution,
-    #[cfg(feature = "xattr")] preserve_xattrs: bool,
-    #[cfg(feature = "acl")] preserve_acls: bool,
+    #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
+    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
 ) -> Result<LinkOutcome, LocalCopyError> {
-    #[cfg(not(any(feature = "xattr", feature = "acl")))]
+    // keep the param used on non-unix builds to avoid warnings
+    #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
+
     let mut copy_source_override: Option<PathBuf> = None;
 
+    // 1. --link-dest style linking
     if let Some(link_target) = context.link_dest_target(
         relative_for_link,
         source,
@@ -114,6 +117,7 @@ pub(super) fn process_links(
         });
     }
 
+    // 2. link to an already-copied inode we cached
     if let Some(existing_target) = context.existing_hard_link_target(metadata) {
         let mut attempted_commit = false;
         loop {
@@ -173,6 +177,7 @@ pub(super) fn process_links(
         });
     }
 
+    // 3. reference directory lookup
     if !context.reference_directories().is_empty() && !record_path.as_os_str().is_empty() {
         if let Some(decision) = find_reference_action(
             context,
@@ -192,21 +197,21 @@ pub(super) fn process_links(
                     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                     let total_bytes = Some(metadata_snapshot.len());
                     let xattrs_enabled = {
-                        #[cfg(feature = "xattr")]
+                        #[cfg(all(unix, feature = "xattr"))]
                         {
                             preserve_xattrs
                         }
-                        #[cfg(not(feature = "xattr"))]
+                        #[cfg(not(all(unix, feature = "xattr")))]
                         {
                             false
                         }
                     };
                     let acls_enabled = {
-                        #[cfg(feature = "acl")]
+                        #[cfg(all(unix, feature = "acl"))]
                         {
                             preserve_acls
                         }
-                        #[cfg(not(feature = "acl"))]
+                        #[cfg(not(all(unix, feature = "acl")))]
                         {
                             false
                         }
@@ -232,12 +237,7 @@ pub(super) fn process_links(
                         .with_change_set(change_set),
                     );
                     context.register_progress();
-                    remove_source_entry_if_requested(
-                        context,
-                        source,
-                        Some(record_path),
-                        file_type,
-                    )?;
+                    remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
                     return Ok(LinkOutcome {
                         copy_source_override: None,
                         completed: true,
@@ -291,7 +291,7 @@ pub(super) fn process_links(
                             metadata_options.clone(),
                         )
                         .map_err(map_metadata_error)?;
-                        #[cfg(feature = "xattr")]
+                        #[cfg(all(unix, feature = "xattr"))]
                         sync_xattrs_if_requested(
                             preserve_xattrs,
                             mode,
@@ -300,8 +300,14 @@ pub(super) fn process_links(
                             true,
                             context.filter_program(),
                         )?;
-                        #[cfg(feature = "acl")]
-                        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+                        #[cfg(all(unix, feature = "acl"))]
+                        sync_acls_if_requested(
+                            preserve_acls,
+                            mode,
+                            source,
+                            destination,
+                            true,
+                        )?;
                         context.record_hard_link(metadata, destination);
                         context.summary_mut().record_hard_link();
                         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);

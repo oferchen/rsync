@@ -4,17 +4,16 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use crate::local_copy::remove_existing_destination;
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyMetadata, LocalCopyRecord, copy_directory_recursive, copy_file,
-    follow_symlink_metadata, map_metadata_error, overrides::create_hard_link,
-    remove_source_entry_if_requested,
+    copy_directory_recursive, copy_file, follow_symlink_metadata, map_metadata_error,
+    overrides::create_hard_link, remove_source_entry_if_requested, CopyContext, CreatedEntryKind,
+    LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
 };
-use ::metadata::{MetadataOptions, apply_symlink_metadata_with_options};
+use ::metadata::{apply_symlink_metadata_with_options, MetadataOptions};
 
 use super::super::{is_device, is_fifo};
 use super::{device::copy_device, fifo::copy_fifo};
@@ -91,14 +90,22 @@ pub(crate) fn copy_symlink(
     context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
-    #[cfg(feature = "xattr")]
+
+    #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     let preserve_acls = context.acls_enabled();
+
+    #[cfg(not(all(unix, feature = "xattr")))]
+    let _ = context;
+    #[cfg(not(all(unix, feature = "acl")))]
+    let _ = mode;
+
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
     context.summary_mut().record_symlink_total();
+
     let target = fs::read_link(source)
         .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
 
@@ -114,6 +121,7 @@ pub(crate) fn copy_symlink(
         }
     };
 
+    // --existing handling
     if context.existing_only_enabled() && destination_metadata.is_none() {
         if let Some(relative_path) = record_path.as_ref() {
             let metadata_snapshot =
@@ -130,6 +138,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
+    // build a "relative" path to check symlink safety
     let safety_relative = relative
         .map(Path::to_path_buf)
         .or_else(|| {
@@ -144,6 +153,7 @@ pub(crate) fn copy_symlink(
     let unsafe_target =
         context.safe_links_enabled() && !symlink_target_is_safe(&target, &safety_relative);
 
+    // If the link is unsafe but we were told to copy what it points to, do that.
     if unsafe_target {
         if context.copy_unsafe_links_enabled() {
             let target_metadata = follow_symlink_metadata(source)?;
@@ -205,11 +215,13 @@ pub(crate) fn copy_symlink(
             ));
         }
 
+        // otherwise we just record that we skipped it
         context.record_skipped_unsafe_symlink(record_path.as_deref(), metadata, target);
         context.register_progress();
         return Ok(());
     }
 
+    // ensure parent exists
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -238,6 +250,7 @@ pub(crate) fn copy_symlink(
         }
     }
 
+    // see what is already there
     let mut destination_previously_existed = false;
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
@@ -264,6 +277,7 @@ pub(crate) fn copy_symlink(
         }
     }
 
+    // dedupe via hard links if we saw an identical symlink before
     if let Some(existing_target) = context.existing_hard_link_target(metadata) {
         if mode.is_dry_run() {
             context.summary_mut().record_symlink();
@@ -346,6 +360,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
+    // dry-run: just record
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
@@ -366,6 +381,7 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
+    // actually create it
     create_symlink(&target, source, destination).map_err(|error| {
         LocalCopyError::io("create symbolic link", destination.to_path_buf(), error)
     })?;
@@ -383,7 +399,8 @@ pub(crate) fn copy_symlink(
     };
     apply_symlink_metadata_with_options(destination, metadata, symlink_options)
         .map_err(map_metadata_error)?;
-    #[cfg(feature = "xattr")]
+
+    #[cfg(all(unix, feature = "xattr"))]
     sync_xattrs_if_requested(
         preserve_xattrs,
         mode,
@@ -392,7 +409,7 @@ pub(crate) fn copy_symlink(
         false,
         context.filter_program(),
     )?;
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     sync_acls_if_requested(preserve_acls, mode, source, destination, false)?;
 
     context.record_hard_link(metadata, destination);
@@ -417,7 +434,6 @@ pub(crate) fn copy_symlink(
 #[cfg(unix)]
 pub(crate) fn create_symlink(target: &Path, _source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::unix::fs::symlink;
-
     symlink(target, destination)
 }
 

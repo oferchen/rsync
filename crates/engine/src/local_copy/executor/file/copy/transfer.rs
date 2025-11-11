@@ -20,9 +20,9 @@ use crate::local_copy::{
 #[cfg(test)]
 static FSYNC_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 
 use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
@@ -58,12 +58,17 @@ pub(super) fn execute_transfer(
     ignore_times_enabled: bool,
     checksum_enabled: bool,
     mode: LocalCopyExecution,
-    #[cfg(feature = "xattr")] preserve_xattrs: bool,
-    #[cfg(feature = "acl")] preserve_acls: bool,
+    #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
+    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
     copy_source_override: Option<PathBuf>,
 ) -> Result<(), LocalCopyError> {
+    // keep the param used on non-unix builds to avoid warnings
+    #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
+    let _ = mode;
+
     let file_size = metadata.len();
 
+    // fast-path: see if destination is already in-sync
     if let Some(existing) = existing_metadata {
         let mut skip = should_skip_copy(CopyComparison {
             source_path: source,
@@ -78,6 +83,7 @@ pub(super) fn execute_transfer(
         });
 
         if skip {
+            // sometimes we still need to re-verify
             let requires_content_verification = existing.is_file()
                 && !checksum_enabled
                 && (context.options().backup_enabled() || context.delete_timing().is_some());
@@ -103,7 +109,7 @@ pub(super) fn execute_transfer(
         if skip {
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(crate::local_copy::map_metadata_error)?;
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
@@ -112,28 +118,28 @@ pub(super) fn execute_transfer(
                 true,
                 context.filter_program(),
             )?;
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_regular_file_matched();
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             let total_bytes = Some(metadata_snapshot.len());
             let xattrs_enabled = {
-                #[cfg(feature = "xattr")]
+                #[cfg(all(unix, feature = "xattr"))]
                 {
                     preserve_xattrs
                 }
-                #[cfg(not(feature = "xattr"))]
+                #[cfg(not(all(unix, feature = "xattr")))]
                 {
                     false
                 }
             };
             let acls_enabled = {
-                #[cfg(feature = "acl")]
+                #[cfg(all(unix, feature = "acl"))]
                 {
                     preserve_acls
                 }
-                #[cfg(not(feature = "acl"))]
+                #[cfg(not(all(unix, feature = "acl")))]
                 {
                     false
                 }
@@ -162,10 +168,12 @@ pub(super) fn execute_transfer(
         }
     }
 
+    // we are going to overwrite / rewrite — back up if needed
     if let Some(existing) = existing_metadata {
         context.backup_existing_entry(destination, relative, existing.file_type())?;
     }
 
+    // non-regular files get the small-path
     if !file_type.is_file() {
         return copy_special_as_regular_file(
             context,
@@ -179,13 +187,14 @@ pub(super) fn execute_transfer(
             file_type,
             relative,
             mode,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         );
     }
 
+    // regular file copy
     let mut reader = open_source_file(source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
     let append_mode = determine_append_mode(
@@ -204,6 +213,8 @@ pub(super) fn execute_transfer(
     reader
         .seek(SeekFrom::Start(append_offset))
         .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+
+    // delta signature if we can
     let delta_signature = if append_offset == 0 && !whole_file_enabled && !inplace_enabled {
         match existing_metadata {
             Some(existing) if existing.is_file() => {
@@ -215,6 +226,7 @@ pub(super) fn execute_transfer(
         None
     };
 
+    // re-open in case we’re copying from a reference path
     let copy_source = copy_source_override.as_deref().unwrap_or(source);
     let mut reader = open_source_file(copy_source, context.open_noatime_enabled())
         .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
@@ -223,6 +235,8 @@ pub(super) fn execute_transfer(
             .seek(SeekFrom::Start(append_offset))
             .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
     }
+
+    // choose write strategy
     let mut guard = None;
     let mut staging_path: Option<PathBuf> = None;
 
@@ -254,6 +268,7 @@ pub(super) fn execute_transfer(
         guard = Some(new_guard);
         file
     };
+
     let preallocate_target = guard
         .as_ref()
         .map(|existing_guard| existing_guard.staging_path())
@@ -265,8 +280,8 @@ pub(super) fn execute_transfer(
         append_offset,
         context.preallocate_enabled(),
     )?;
-    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
 
+    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
     let start = Instant::now();
 
     let copy_result = context.copy_file_contents(
@@ -324,42 +339,46 @@ pub(super) fn execute_transfer(
         }
     };
 
+    // record created path
     context.register_created_path(
         destination,
         CreatedEntryKind::File,
         destination_previously_existed,
     );
 
+    // track as potential hard-link source
     let hard_link_path = if delay_updates_enabled {
         staging_path_for_links.as_deref().unwrap_or(destination)
     } else {
         destination
     };
     context.record_hard_link(metadata, hard_link_path);
+
     let elapsed = start.elapsed();
     let compressed_bytes = outcome.compressed_bytes();
     context
         .summary_mut()
         .record_file(file_size, outcome.literal_bytes(), compressed_bytes);
     context.summary_mut().record_elapsed(elapsed);
+
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
     let xattrs_enabled = {
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         {
             preserve_xattrs
         }
-        #[cfg(not(feature = "xattr"))]
+        #[cfg(not(all(unix, feature = "xattr")))]
         {
             false
         }
     };
     let acls_enabled = {
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         {
             preserve_acls
         }
-        #[cfg(not(feature = "acl"))]
+        #[cfg(not(all(unix, feature = "acl")))]
         {
             false
         }
@@ -409,9 +428,9 @@ pub(super) fn execute_transfer(
                 destination_path,
                 file_type,
                 destination_previously_existed,
-                #[cfg(feature = "xattr")]
+                #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(feature = "acl")]
+                #[cfg(all(unix, feature = "acl"))]
                 preserve_acls,
             );
             context.register_deferred_update(update);
@@ -428,9 +447,9 @@ pub(super) fn execute_transfer(
                     relative_for_removal.as_deref(),
                     file_type,
                     destination_previously_existed,
-                    #[cfg(feature = "xattr")]
+                    #[cfg(all(unix, feature = "xattr"))]
                     preserve_xattrs,
-                    #[cfg(feature = "acl")]
+                    #[cfg(all(unix, feature = "acl"))]
                     preserve_acls,
                 ),
             )?;
@@ -446,9 +465,9 @@ pub(super) fn execute_transfer(
                 relative,
                 file_type,
                 destination_previously_existed,
-                #[cfg(feature = "xattr")]
+                #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(feature = "acl")]
+                #[cfg(all(unix, feature = "acl"))]
                 preserve_acls,
             ),
         )?;
@@ -470,9 +489,12 @@ fn copy_special_as_regular_file(
     file_type: fs::FileType,
     relative: Option<&Path>,
     mode: LocalCopyExecution,
-    #[cfg(feature = "xattr")] preserve_xattrs: bool,
-    #[cfg(feature = "acl")] preserve_acls: bool,
+    #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
+    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {
+    #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
+    let _ = mode;
+
     let start = Instant::now();
     let partial_enabled = context.partial_enabled();
     let inplace_enabled = context.inplace_enabled();
@@ -525,21 +547,21 @@ fn copy_special_as_regular_file(
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
     let xattrs_enabled = {
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         {
             preserve_xattrs
         }
-        #[cfg(not(feature = "xattr"))]
+        #[cfg(not(all(unix, feature = "xattr")))]
         {
             false
         }
     };
     let acls_enabled = {
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         {
             preserve_acls
         }
-        #[cfg(not(feature = "acl"))]
+        #[cfg(not(all(unix, feature = "acl")))]
         {
             false
         }
@@ -592,9 +614,9 @@ fn copy_special_as_regular_file(
                 destination_path,
                 file_type,
                 destination_previously_existed,
-                #[cfg(feature = "xattr")]
+                #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(feature = "acl")]
+                #[cfg(all(unix, feature = "acl"))]
                 preserve_acls,
             );
             context.register_deferred_update(update);
@@ -611,9 +633,9 @@ fn copy_special_as_regular_file(
                     relative_for_removal.as_deref(),
                     file_type,
                     destination_previously_existed,
-                    #[cfg(feature = "xattr")]
+                    #[cfg(all(unix, feature = "xattr"))]
                     preserve_xattrs,
-                    #[cfg(feature = "acl")]
+                    #[cfg(all(unix, feature = "acl"))]
                     preserve_acls,
                 ),
             )?;
@@ -629,9 +651,9 @@ fn copy_special_as_regular_file(
                 relative,
                 file_type,
                 destination_previously_existed,
-                #[cfg(feature = "xattr")]
+                #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(feature = "acl")]
+                #[cfg(all(unix, feature = "acl"))]
                 preserve_acls,
             ),
         )?;

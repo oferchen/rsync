@@ -11,26 +11,27 @@ use std::time::{Duration, Instant, SystemTime};
 
 use super::ActiveCompressor;
 use super::filter_program::{
-    ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
-    FilterSegmentLayers, FilterSegmentStack, directory_has_marker,
+    directory_has_marker, ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext,
+    FilterProgram, FilterSegment, FilterSegmentLayers, FilterSegmentStack,
 };
-#[cfg(feature = "acl")]
+
+#[cfg(all(unix, feature = "acl"))]
 use super::sync_acls_if_requested;
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 use super::sync_xattrs_if_requested;
+
 use super::{
+    compute_backup_path, copy_entry_to_backup, delete_extraneous_entries, filter_program_local_error,
+    follow_symlink_metadata, load_dir_merge_rules_recursive, map_metadata_error,
+    remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy, write_sparse_chunk,
     CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker, LocalCopyAction,
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
-    LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
-    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, ReferenceDirectory,
-    compute_backup_path, copy_entry_to_backup, delete_extraneous_entries,
-    filter_program_local_error, follow_symlink_metadata, load_dir_merge_rules_recursive,
-    map_metadata_error, remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy,
-    write_sparse_chunk,
+    LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler,
+    LocalCopyReport, LocalCopySummary, ReferenceDirectory,
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
-use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
+use ::metadata::{apply_file_metadata_with_options, MetadataOptions};
 use bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
@@ -89,9 +90,11 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     relative: Option<&'a Path>,
     file_type: fs::FileType,
     destination_previously_existed: bool,
-    #[cfg(feature = "xattr")]
+
+    #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
-    #[cfg(feature = "acl")]
+
+    #[cfg(all(unix, feature = "acl"))]
     preserve_acls: bool,
 }
 
@@ -105,8 +108,8 @@ impl<'a> FinalizeMetadataParams<'a> {
         relative: Option<&'a Path>,
         file_type: fs::FileType,
         destination_previously_existed: bool,
-        #[cfg(feature = "xattr")] preserve_xattrs: bool,
-        #[cfg(feature = "acl")] preserve_acls: bool,
+        #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
+        #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
     ) -> Self {
         Self {
             metadata,
@@ -116,9 +119,9 @@ impl<'a> FinalizeMetadataParams<'a> {
             relative,
             file_type,
             destination_previously_existed,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         }
     }
@@ -192,9 +195,9 @@ pub(crate) struct DeferredUpdate {
     destination: PathBuf,
     file_type: fs::FileType,
     destination_previously_existed: bool,
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     preserve_acls: bool,
 }
 
@@ -210,8 +213,8 @@ impl DeferredUpdate {
         destination: PathBuf,
         file_type: fs::FileType,
         destination_previously_existed: bool,
-        #[cfg(feature = "xattr")] preserve_xattrs: bool,
-        #[cfg(feature = "acl")] preserve_acls: bool,
+        #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
+        #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
     ) -> Self {
         Self {
             guard,
@@ -223,9 +226,9 @@ impl DeferredUpdate {
             destination,
             file_type,
             destination_previously_existed,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         }
     }
