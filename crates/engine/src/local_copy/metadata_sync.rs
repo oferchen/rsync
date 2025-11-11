@@ -1,21 +1,24 @@
 //! Helpers for synchronizing extended attributes and ACLs.
 
-#[cfg(any(feature = "acl", feature = "xattr"))]
+use ::metadata::MetadataError;
+use super::LocalCopyError;
+
+#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
 use std::path::Path;
 
-use ::metadata::MetadataError;
-
-use super::{FilterProgram, LocalCopyError};
-
-#[cfg(any(feature = "acl", feature = "xattr"))]
+#[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
 use super::LocalCopyExecution;
 
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "xattr"))]
+use super::FilterProgram;
+
+#[cfg(all(unix, feature = "acl"))]
 use ::metadata::sync_acls;
-#[cfg(feature = "xattr")]
+
+#[cfg(all(unix, feature = "xattr"))]
 use ::metadata::sync_xattrs;
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 pub(crate) fn sync_xattrs_if_requested(
     preserve_xattrs: bool,
     mode: LocalCopyExecution,
@@ -41,7 +44,7 @@ pub(crate) fn sync_xattrs_if_requested(
     Ok(())
 }
 
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "acl"))]
 pub(crate) fn sync_acls_if_requested(
     preserve_acls: bool,
     mode: LocalCopyExecution,
