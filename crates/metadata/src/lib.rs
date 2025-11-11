@@ -126,6 +126,7 @@ mod xattr;
 pub use acl_stub::sync_acls;
 
 #[cfg(all(
+    unix,
     feature = "acl",
     not(any(
         target_os = "macos",
