@@ -85,9 +85,8 @@ pub(crate) use context::{
 
 #[allow(unused_imports)]
 pub(crate) use dir_merge::{
-    FilterParseError, ParsedFilterDirective, apply_dir_merge_rule_defaults,
-    filter_program_local_error, load_dir_merge_rules_recursive, parse_filter_directive_line,
-    resolve_dir_merge_path,
+    apply_dir_merge_rule_defaults, filter_program_local_error, load_dir_merge_rules_recursive,
+    parse_filter_directive_line, resolve_dir_merge_path, FilterParseError, ParsedFilterDirective,
 };
 
 pub(crate) use executor::*;
@@ -95,17 +94,20 @@ pub(crate) use executor::*;
 pub(crate) use hard_links::HardLinkTracker;
 
 pub(crate) use metadata_sync::map_metadata_error;
-#[cfg(feature = "acl")]
+
+#[cfg(all(unix, feature = "acl"))]
 pub(crate) use metadata_sync::sync_acls_if_requested;
-#[cfg(feature = "xattr")]
+
+#[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_xattrs_if_requested;
 
-pub(crate) use operands::{DestinationSpec, SourceSpec, operand_is_remote};
+pub(crate) use operands::{operand_is_remote, DestinationSpec, SourceSpec};
 
 pub use filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeRule, ExcludeIfPresentRule, FilterProgram,
     FilterProgramEntry, FilterProgramError,
 };
+
 #[cfg(test)]
 pub(crate) use filter_program::{FilterContext, FilterSegment};
 
