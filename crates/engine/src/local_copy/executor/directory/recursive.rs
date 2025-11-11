@@ -5,19 +5,19 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyArgumentError,
-    LocalCopyError, LocalCopyMetadata, LocalCopyRecord, copy_device, copy_fifo, copy_file,
-    copy_symlink, delete_extraneous_entries, follow_symlink_metadata, map_metadata_error,
+    copy_device, copy_fifo, copy_file, copy_symlink, delete_extraneous_entries,
+    follow_symlink_metadata, map_metadata_error, CopyContext, CreatedEntryKind, DeleteTiming,
+    LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
 };
 use ::metadata::apply_directory_metadata_with_options;
 
 use super::super::non_empty_path;
-use super::planner::{EntryAction, apply_pre_transfer_deletions, plan_directory_entries};
+use super::planner::{apply_pre_transfer_deletions, plan_directory_entries, EntryAction};
 use super::support::read_directory_entries_sorted;
 
 pub(crate) fn copy_directory_recursive(
@@ -28,14 +28,17 @@ pub(crate) fn copy_directory_recursive(
     relative: Option<&Path>,
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
-    #[cfg(any(feature = "acl", feature = "xattr"))]
+
+    #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
     let mode = context.mode();
-    #[cfg(not(any(feature = "acl", feature = "xattr")))]
+    #[cfg(not(all(unix, any(feature = "acl", feature = "xattr"))))]
     let _mode = context.mode();
-    #[cfg(feature = "xattr")]
+
+    #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     let preserve_acls = context.acls_enabled();
+
     let prune_enabled = context.prune_empty_dirs_enabled();
 
     let root_device = if context.one_file_system_enabled() {
@@ -182,7 +185,7 @@ pub(crate) fn copy_directory_recursive(
             };
             apply_directory_metadata_with_options(destination, metadata, metadata_options)
                 .map_err(map_metadata_error)?;
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
@@ -191,7 +194,7 @@ pub(crate) fn copy_directory_recursive(
                 true,
                 context.filter_program(),
             )?;
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
         }
         return Ok(true);
@@ -340,7 +343,7 @@ pub(crate) fn copy_directory_recursive(
         };
         apply_directory_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         sync_xattrs_if_requested(
             preserve_xattrs,
             mode,
@@ -349,7 +352,7 @@ pub(crate) fn copy_directory_recursive(
             true,
             context.filter_program(),
         )?;
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     }
 

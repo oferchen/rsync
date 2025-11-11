@@ -4,16 +4,18 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::local_copy::remove_existing_destination;
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyMetadata, LocalCopyRecord, map_metadata_error, overrides::create_hard_link,
-    remove_source_entry_if_requested,
+    map_metadata_error, overrides::create_hard_link, remove_source_entry_if_requested, CopyContext,
+    CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata,
+    LocalCopyRecord,
 };
-use ::metadata::{MetadataOptions, apply_file_metadata_with_options, create_fifo};
+use ::metadata::{apply_file_metadata_with_options, MetadataOptions};
+#[cfg(unix)]
+use ::metadata::create_fifo;
 
 pub(crate) fn copy_fifo(
     context: &mut CopyContext,
@@ -26,14 +28,24 @@ pub(crate) fn copy_fifo(
     context.enforce_timeout()?;
     let mode = context.mode();
     let file_type = metadata.file_type();
-    #[cfg(feature = "xattr")]
+
+    #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     let preserve_acls = context.acls_enabled();
+
+    #[cfg(not(all(unix, feature = "xattr")))]
+    let _ = context;
+    #[cfg(not(all(unix, feature = "acl")))]
+    let _ = mode;
+
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| destination.file_name().map(PathBuf::from));
+
     context.summary_mut().record_fifo_total();
+
+    // --existing / --ignore-non-existing
     if context.existing_only_enabled() {
         match fs::symlink_metadata(destination) {
             Ok(_) => {}
@@ -60,7 +72,11 @@ pub(crate) fn copy_fifo(
             }
         }
     }
+
+    // could be deduped to an earlier FIFO we created
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
+
+    // ensure parent exists
     if let Some(parent) = destination.parent() {
         if !parent.as_os_str().is_empty() {
             if mode.is_dry_run() {
@@ -89,6 +105,7 @@ pub(crate) fn copy_fifo(
         }
     }
 
+    // dry-run path: just validate and record
     if mode.is_dry_run() {
         match fs::symlink_metadata(destination) {
             Ok(existing) => {
@@ -113,6 +130,7 @@ pub(crate) fn copy_fifo(
         } else {
             context.summary_mut().record_fifo();
         }
+
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             let total_bytes = Some(metadata_snapshot.len());
@@ -130,11 +148,13 @@ pub(crate) fn copy_fifo(
                 Some(metadata_snapshot),
             ));
         }
+
         context.register_progress();
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
         return Ok(());
     }
 
+    // real copy
     let mut destination_previously_existed = false;
     match fs::symlink_metadata(destination) {
         Ok(existing) => {
@@ -158,6 +178,7 @@ pub(crate) fn copy_fifo(
         }
     }
 
+    // try to hard-link to an earlier FIFO we made
     if let Some(link_source) = existing_hard_link_target.take() {
         match create_hard_link(&link_source, destination) {
             Ok(()) => {}
@@ -173,6 +194,7 @@ pub(crate) fn copy_fifo(
                     Some(code) if code == crate::local_copy::CROSS_DEVICE_ERROR_CODE
                 ) =>
             {
+                // degrade to "recreate fifo" below
                 existing_hard_link_target = Some(link_source);
             }
             Err(error) => {
@@ -187,7 +209,7 @@ pub(crate) fn copy_fifo(
         if existing_hard_link_target.is_none() {
             apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
                 .map_err(map_metadata_error)?;
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             sync_xattrs_if_requested(
                 preserve_xattrs,
                 mode,
@@ -196,10 +218,12 @@ pub(crate) fn copy_fifo(
                 true,
                 context.filter_program(),
             )?;
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_hard_link();
+
             if let Some(path) = &record_path {
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                 let total_bytes = Some(metadata_snapshot.len());
@@ -212,6 +236,7 @@ pub(crate) fn copy_fifo(
                     Some(metadata_snapshot),
                 ));
             }
+
             context.register_created_path(
                 destination,
                 CreatedEntryKind::HardLink,
@@ -223,15 +248,31 @@ pub(crate) fn copy_fifo(
         }
     }
 
-    create_fifo(destination, metadata).map_err(map_metadata_error)?;
+    // actually create a FIFO
+    #[cfg(unix)]
+    {
+        create_fifo(destination, metadata).map_err(map_metadata_error)?;
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows / non-Unix: no FIFO support in this crate path.
+        // Create an empty file so the caller sees a tangible result and the rest of the
+        // metadata application doesn’t fail.
+        fs::File::create(destination).map_err(|error| {
+            LocalCopyError::io("create fifo placeholder", destination.to_path_buf(), error)
+        })?;
+    }
+
     context.register_created_path(
         destination,
         CreatedEntryKind::Fifo,
         destination_previously_existed,
     );
+
     apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
         .map_err(map_metadata_error)?;
-    #[cfg(feature = "xattr")]
+
+    #[cfg(all(unix, feature = "xattr"))]
     sync_xattrs_if_requested(
         preserve_xattrs,
         mode,
@@ -240,10 +281,12 @@ pub(crate) fn copy_fifo(
         true,
         context.filter_program(),
     )?;
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_fifo();
+
     if let Some(path) = &record_path {
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
@@ -256,6 +299,7 @@ pub(crate) fn copy_fifo(
             Some(metadata_snapshot),
         ));
     }
+
     context.register_progress();
     remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
