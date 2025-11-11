@@ -381,7 +381,10 @@ fn ensure_binary_name(value: &str, manifest_path: &Path, field: &str) {
 
 fn ensure_absolute_path(value: &str, manifest_path: &Path, field: &str) {
     let path = Path::new(value);
-    if !path.is_absolute() {
+    let is_native_abs = path.is_absolute();
+    let is_unix_abs = value.starts_with('/');
+
+    if !(is_native_abs || is_unix_abs) {
         panic!(
             "workspace.metadata.oc_rsync.{field} ('{}') must be an absolute path in {}",
             value,
