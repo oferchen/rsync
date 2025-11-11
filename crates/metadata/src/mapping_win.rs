@@ -26,21 +26,25 @@ pub struct GroupMapping;
 pub struct NameMapping;
 
 /// Parse a user mapping string — unsupported on Windows.
+#[allow(dead_code)]
 pub fn parse_user_mapping(_s: &str) -> Result<UserMapping, MappingParseError> {
     Err(MappingParseError)
 }
 
 /// Parse a group mapping string — unsupported on Windows.
+#[allow(dead_code)]
 pub fn parse_group_mapping(_s: &str) -> Result<GroupMapping, MappingParseError> {
     Err(MappingParseError)
 }
 
 /// Parse a name mapping string — unsupported on Windows.
+#[allow(dead_code)]
 pub fn parse_name_mapping(_s: &str) -> Result<NameMapping, MappingParseError> {
     Err(MappingParseError)
 }
 
 /// On Windows we don’t read xattrs here, so always return `None`.
+#[allow(dead_code)]
 pub fn read_xattr_as_string(_path: &Path, _name: &str) -> Option<String> {
     None
 }
