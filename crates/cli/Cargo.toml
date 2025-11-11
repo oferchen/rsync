@@ -23,7 +23,6 @@ lz4 = ["core/lz4", "compress/lz4"]
 clap = { version = "4.5.17", features = ["std"] }
 core = { path = "../core" }
 logging = { path = "../logging" }
-daemon = { path = "../daemon" }
 protocol = { path = "../protocol" }
 compress = { path = "../compress" }
 metadata = { path = "../metadata" }
@@ -33,6 +32,7 @@ tempfile = "3.10"
 [target.'cfg(unix)'.dependencies]
 users = "0.11"
 xattr = "1.6"
+daemon = { path = "../daemon" }
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
