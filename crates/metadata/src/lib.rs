@@ -80,6 +80,7 @@
 mod acl_stub;
 
 #[cfg(all(
+    unix,
     feature = "acl",
     not(any(
         target_os = "macos",

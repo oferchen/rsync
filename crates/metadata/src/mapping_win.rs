@@ -10,16 +10,20 @@ pub enum MappingKind {
 }
 
 /// Error returned when a mapping string cannot be parsed (always on Windows).
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MappingParseError;
 
 /// User mapping placeholder for Windows.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserMapping;
 
 /// Group mapping placeholder for Windows.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupMapping;
+
+/// Name mapping placeholder for Windows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameMapping;
 
 /// Parse a user mapping string — unsupported on Windows.
 pub fn parse_user_mapping(_s: &str) -> Result<UserMapping, MappingParseError> {
@@ -28,6 +32,11 @@ pub fn parse_user_mapping(_s: &str) -> Result<UserMapping, MappingParseError> {
 
 /// Parse a group mapping string — unsupported on Windows.
 pub fn parse_group_mapping(_s: &str) -> Result<GroupMapping, MappingParseError> {
+    Err(MappingParseError)
+}
+
+/// Parse a name mapping string — unsupported on Windows.
+pub fn parse_name_mapping(_s: &str) -> Result<NameMapping, MappingParseError> {
     Err(MappingParseError)
 }
 
