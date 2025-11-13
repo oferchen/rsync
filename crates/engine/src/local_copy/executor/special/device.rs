@@ -9,13 +9,13 @@ use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    map_metadata_error, overrides::create_hard_link, remove_source_entry_if_requested,
     CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyMetadata, LocalCopyRecord,
+    LocalCopyMetadata, LocalCopyRecord, map_metadata_error, overrides::create_hard_link,
+    remove_source_entry_if_requested,
 };
-use ::metadata::{apply_file_metadata_with_options, MetadataOptions};
 #[cfg(unix)]
 use ::metadata::create_device_node;
+use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
 pub(crate) fn copy_device(
     context: &mut CopyContext,

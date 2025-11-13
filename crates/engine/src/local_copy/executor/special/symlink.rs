@@ -9,11 +9,12 @@ use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    copy_directory_recursive, copy_file, follow_symlink_metadata, map_metadata_error,
-    overrides::create_hard_link, remove_source_entry_if_requested, CopyContext, CreatedEntryKind,
-    LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
+    LocalCopyMetadata, LocalCopyRecord, copy_directory_recursive, copy_file,
+    follow_symlink_metadata, map_metadata_error, overrides::create_hard_link,
+    remove_source_entry_if_requested,
 };
-use ::metadata::{apply_symlink_metadata_with_options, MetadataOptions};
+use ::metadata::{MetadataOptions, apply_symlink_metadata_with_options};
 
 use super::super::{is_device, is_fifo};
 use super::{device::copy_device, fifo::copy_fifo};

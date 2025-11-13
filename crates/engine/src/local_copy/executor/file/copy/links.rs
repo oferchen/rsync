@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use crate::local_copy::overrides::create_hard_link;
 use crate::local_copy::{
-    find_reference_action, map_metadata_error, remove_source_entry_if_requested, CopyContext,
-    CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError, LocalCopyExecution,
-    LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
+    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, ReferenceDecision, ReferenceQuery,
+    find_reference_action, map_metadata_error, remove_source_entry_if_requested,
 };
 
 #[cfg(all(unix, feature = "acl"))]
@@ -14,8 +14,8 @@ use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 
-use ::metadata::apply_file_metadata_with_options;
 use ::metadata::MetadataOptions;
+use ::metadata::apply_file_metadata_with_options;
 
 use super::super::super::super::CROSS_DEVICE_ERROR_CODE;
 use super::super::guard::remove_existing_destination;
@@ -237,7 +237,12 @@ pub(super) fn process_links(
                         .with_change_set(change_set),
                     );
                     context.register_progress();
-                    remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+                    remove_source_entry_if_requested(
+                        context,
+                        source,
+                        Some(record_path),
+                        file_type,
+                    )?;
                     return Ok(LinkOutcome {
                         copy_source_override: None,
                         completed: true,
@@ -301,13 +306,7 @@ pub(super) fn process_links(
                             context.filter_program(),
                         )?;
                         #[cfg(all(unix, feature = "acl"))]
-                        sync_acls_if_requested(
-                            preserve_acls,
-                            mode,
-                            source,
-                            destination,
-                            true,
-                        )?;
+                        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
                         context.record_hard_link(metadata, destination);
                         context.summary_mut().record_hard_link();
                         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
