@@ -1,10 +1,10 @@
-use super::{DIST_PROFILE, PackageOptions, tarball};
+use super::{tarball, PackageOptions, DIST_PROFILE};
 use crate::error::{TaskError, TaskResult};
 use crate::util::{
     ensure_command_available, ensure_rust_target_installed, probe_cargo_tool, run_cargo_tool,
     run_cargo_tool_with_env,
 };
-use crate::workspace::{WorkspaceBranding, load_workspace_branding};
+use crate::workspace::{load_workspace_branding, WorkspaceBranding};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
@@ -151,12 +151,12 @@ pub(super) fn build_workspace_binaries(
     }
 
     println!("Ensuring workspace binaries are built with cargo build");
-    let (args, env_overrides) = workspace_build_command(profile, target, linker_override)?;
+    let command = workspace_build_command(profile, target, linker_override)?;
 
     run_cargo_tool_with_env(
         workspace,
-        args,
-        &env_overrides,
+        command.args,
+        &command.env_overrides,
         "cargo build",
         "use `cargo build` to compile the workspace binaries",
     )?;
@@ -173,6 +173,16 @@ fn linker_env_var_name(target: &str) -> OsString {
     normalized.make_ascii_uppercase();
     OsString::from(format!("CARGO_TARGET_{normalized}_LINKER"))
 }
+
+/// Command object describing how to invoke `cargo build` for the workspace.
+#[derive(Clone, Debug)]
+pub(super) struct WorkspaceBuildCommand {
+    pub args: Vec<OsString>,
+    pub env_overrides: EnvOverrides,
+}
+
+/// Environment override list for the build command.
+pub(super) type EnvOverrides = Vec<(OsString, OsString)>;
 
 #[derive(Clone, Debug)]
 pub(super) struct LinkerOverride {
@@ -230,35 +240,75 @@ fn resolve_cross_compiler(
     ))
 }
 
+/// Builder pattern for constructing `WorkspaceBuildCommand` instances.
+///
+/// This keeps argument construction composable and explicit, while satisfying
+/// clippy's type-complexity constraints.
+#[derive(Debug)]
+struct WorkspaceBuildCommandBuilder {
+    args: Vec<OsString>,
+    env_overrides: EnvOverrides,
+}
+
+impl WorkspaceBuildCommandBuilder {
+    fn new() -> Self {
+        Self {
+            args: vec![
+                OsString::from("build"),
+                OsString::from("--workspace"),
+                OsString::from("--bins"),
+                OsString::from("--locked"),
+            ],
+            env_overrides: Vec::new(),
+        }
+    }
+
+    fn with_target(mut self, target: &str, linker_override: Option<&LinkerOverride>) -> Self {
+        self.args.push(OsString::from("--target"));
+        self.args.push(OsString::from(target));
+        if let Some(linker) = linker_override {
+            self.env_overrides
+                .push((linker.env_var.clone(), linker.value.clone()));
+        }
+        self
+    }
+
+    fn with_profile(mut self, profile: &OsString) -> Self {
+        self.args.push(OsString::from("--profile"));
+        self.args.push(profile.clone());
+        self
+    }
+
+    fn with_features_from_env(mut self) -> TaskResult<Self> {
+        configure_feature_args(&mut self.args)?;
+        Ok(self)
+    }
+
+    fn build(self) -> WorkspaceBuildCommand {
+        WorkspaceBuildCommand {
+            args: self.args,
+            env_overrides: self.env_overrides,
+        }
+    }
+}
+
 fn workspace_build_command(
     profile: &Option<OsString>,
     target: Option<&str>,
     linker_override: Option<&LinkerOverride>,
-) -> TaskResult<(Vec<OsString>, Vec<(OsString, OsString)>)> {
-    let mut args = vec![
-        OsString::from("build"),
-        OsString::from("--workspace"),
-        OsString::from("--bins"),
-        OsString::from("--locked"),
-    ];
-    let mut env_overrides: Vec<(OsString, OsString)> = Vec::new();
+) -> TaskResult<WorkspaceBuildCommand> {
+    let mut builder = WorkspaceBuildCommandBuilder::new();
 
     if let Some(target) = target {
-        args.push(OsString::from("--target"));
-        args.push(OsString::from(target));
-        if let Some(linker) = linker_override {
-            env_overrides.push((linker.env_var.clone(), linker.value.clone()));
-        }
+        builder = builder.with_target(target, linker_override);
     }
 
     if let Some(profile) = profile {
-        args.push(OsString::from("--profile"));
-        args.push(profile.clone());
+        builder = builder.with_profile(profile);
     }
 
-    configure_feature_args(&mut args)?;
-
-    Ok((args, env_overrides))
+    let builder = builder.with_features_from_env()?;
+    Ok(builder.build())
 }
 
 fn configure_feature_args(args: &mut Vec<OsString>) -> TaskResult<()> {
@@ -499,6 +549,37 @@ fn create_zig_linker_shim(
 
 #[cfg(test)]
 #[allow(unsafe_code)]
+pub(super) fn resolve_cross_compiler_for_tests(
+    workspace: &Path,
+    target: &str,
+) -> TaskResult<Option<(OsString, OsString)>> {
+    let spec = match target {
+        "x86_64-unknown-linux-gnu" => tarball::TarballSpec {
+            platform: tarball::TarballPlatform::Linux,
+            arch: "amd64",
+            metadata_arch: "x86_64",
+            target_triple: "x86_64-unknown-linux-gnu",
+        },
+        "aarch64-unknown-linux-gnu" => tarball::TarballSpec {
+            platform: tarball::TarballPlatform::Linux,
+            arch: "aarch64",
+            metadata_arch: "aarch64",
+            target_triple: "aarch64-unknown-linux-gnu",
+        },
+        other => {
+            return Err(TaskError::Validation(format!(
+                "unsupported test target '{other}'"
+            )));
+        }
+    };
+
+    resolve_cross_compiler(workspace, &spec).map(|override_opt| {
+        override_opt.map(|override_value| (override_value.env_var, override_value.value))
+    })
+}
+
+#[cfg(test)]
+#[allow(unsafe_code)]
 mod build_command_tests {
     use super::{
         configure_feature_args, ensure_legacy_launchers, parse_env_bool, workspace_build_command,
@@ -580,9 +661,10 @@ mod build_command_tests {
         guard.set("OC_RSYNC_PACKAGE_DEFAULT_FEATURES", "0");
         guard.set("OC_RSYNC_PACKAGE_FEATURES", "zstd lz4 iconv");
 
-        let (args, _env) = workspace_build_command(&Some(OsString::from("dist")), None, None)
-            .expect("command builds");
-        let args: Vec<String> = args
+        let command =
+            workspace_build_command(&Some(OsString::from("dist")), None, None).expect("command builds");
+        let args: Vec<String> = command
+            .args
             .iter()
             .map(|value| value.to_string_lossy().into())
             .collect();
@@ -635,34 +717,4 @@ mod build_command_tests {
                 .into()
         })
     }
-}
-
-#[cfg(test)]
-pub(super) fn resolve_cross_compiler_for_tests(
-    workspace: &Path,
-    target: &str,
-) -> TaskResult<Option<(OsString, OsString)>> {
-    let spec = match target {
-        "x86_64-unknown-linux-gnu" => tarball::TarballSpec {
-            platform: tarball::TarballPlatform::Linux,
-            arch: "amd64",
-            metadata_arch: "x86_64",
-            target_triple: "x86_64-unknown-linux-gnu",
-        },
-        "aarch64-unknown-linux-gnu" => tarball::TarballSpec {
-            platform: tarball::TarballPlatform::Linux,
-            arch: "aarch64",
-            metadata_arch: "aarch64",
-            target_triple: "aarch64-unknown-linux-gnu",
-        },
-        other => {
-            return Err(TaskError::Validation(format!(
-                "unsupported test target '{other}'"
-            )));
-        }
-    };
-
-    resolve_cross_compiler(workspace, &spec).map(|override_opt| {
-        override_opt.map(|override_value| (override_value.env_var, override_value.value))
-    })
 }
