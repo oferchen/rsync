@@ -6,7 +6,81 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
+
+/// Command-object wrapper for invoking `cargo` in a given workspace.
+///
+/// This encapsulates the common setup for cargo invocations (workspace, args,
+/// env overrides, display string, install hint) so higher-level helpers can
+/// focus on interpreting the result instead of wiring up `Command` every time.
+struct CargoCommand<'a> {
+    workspace: &'a Path,
+    args: Vec<OsString>,
+    env_overrides: Vec<(OsString, OsString)>,
+    display: &'a str,
+    install_hint: &'a str,
+}
+
+impl<'a> CargoCommand<'a> {
+    fn new(workspace: &'a Path, display: &'a str, install_hint: &'a str) -> Self {
+        Self {
+            workspace,
+            args: Vec::new(),
+            env_overrides: Vec::new(),
+            display,
+            install_hint,
+        }
+    }
+
+    fn with_args(mut self, args: Vec<OsString>) -> Self {
+        self.args = args;
+        self
+    }
+
+    fn with_env_overrides(mut self, env_overrides: &[(OsString, OsString)]) -> Self {
+        self.env_overrides = env_overrides.to_vec();
+        self
+    }
+
+    fn execute(self) -> TaskResult<Output> {
+        if should_simulate_missing_tool(self.display) {
+            return Err(tool_missing_error(self.display, self.install_hint));
+        }
+
+        let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+        Command::new(cargo)
+            .current_dir(self.workspace)
+            .args(&self.args)
+            .envs(
+                self.env_overrides
+                    .iter()
+                    .map(|(key, value)| (key.as_os_str(), value.as_os_str())),
+            )
+            .output()
+            .map_err(|error| map_command_error(error, self.display, self.install_hint))
+    }
+}
+
+/// Shared mapper for failed cargo invocations.
+///
+/// This centralizes the "no such subcommand" translation into `ToolMissing` and
+/// otherwise returns a `CommandFailed` error.
+fn map_cargo_failure(
+    display: &str,
+    install_hint: &str,
+    output: Output,
+    program_label: Option<String>,
+) -> TaskError {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("no such subcommand") || stderr.contains("no such command") {
+        tool_missing_error(display, install_hint)
+    } else {
+        TaskError::CommandFailed {
+            program: program_label.unwrap_or_else(|| display.to_string()),
+            status: output.status,
+        }
+    }
+}
 
 /// Ensures that the provided command is present in `PATH`.
 pub fn ensure_command_available(program: &str, install_hint: &str) -> TaskResult<()> {
@@ -111,38 +185,34 @@ pub fn run_cargo_tool(
 pub fn run_cargo_tool_with_env(
     workspace: &Path,
     args: Vec<OsString>,
-    env: &[(OsString, OsString)],
+    env_overrides: &[(OsString, OsString)],
     display: &str,
     install_hint: &str,
 ) -> TaskResult<()> {
-    if should_simulate_missing_tool(display) {
-        return Err(tool_missing_error(display, install_hint));
-    }
-
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let output = Command::new(cargo)
-        .current_dir(workspace)
-        .args(&args)
-        .envs(
-            env.iter()
-                .map(|(key, value)| (key.as_os_str(), value.as_os_str())),
-        )
-        .output()
-        .map_err(|error| map_command_error(error, display, install_hint))?;
+    let output = CargoCommand::new(workspace, display, install_hint)
+        .with_args(args)
+        .with_env_overrides(env_overrides)
+        .execute()?;
 
     if output.status.success() {
         return Ok(());
     }
 
+    // Surface stdout/stderr for diagnostics (especially useful in CI on Windows).
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("no such subcommand") || stderr.contains("no such command") {
-        return Err(tool_missing_error(display, install_hint));
+
+    eprintln!("{display} failed with status {}", output.status);
+    if !stdout.trim().is_empty() {
+        eprintln!("----- {display} stdout -----");
+        eprintln!("{stdout}");
+    }
+    if !stderr.trim().is_empty() {
+        eprintln!("----- {display} stderr -----");
+        eprintln!("{stderr}");
     }
 
-    Err(TaskError::CommandFailed {
-        program: display.to_string(),
-        status: output.status,
-    })
+    Err(map_cargo_failure(display, install_hint, output, None))
 }
 
 /// Probes a cargo subcommand without executing the full task, returning a
@@ -153,30 +223,20 @@ pub fn probe_cargo_tool(
     display: &str,
     install_hint: &str,
 ) -> TaskResult<()> {
-    if should_simulate_missing_tool(display) {
-        return Err(tool_missing_error(display, install_hint));
-    }
+    // Reuse the same Command Object for probing; only the failure mapping differs.
+    let args_os: Vec<OsString> = args.iter().map(|arg| OsString::from(*arg)).collect();
 
-    let cargo = env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let output = Command::new(cargo)
-        .current_dir(workspace)
-        .args(args)
-        .output()
-        .map_err(|error| map_command_error(error, display, install_hint))?;
+    let output = CargoCommand::new(workspace, display, install_hint)
+        .with_args(args_os)
+        .execute()?;
 
     if output.status.success() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("no such subcommand") || stderr.contains("no such command") {
-        Err(tool_missing_error(display, install_hint))
-    } else {
-        Err(TaskError::CommandFailed {
-            program: format!("{display} (probe)"),
-            status: output.status,
-        })
-    }
+    // For probes, keep the slightly different label used in existing tests.
+    let program_label = Some(format!("{display} (probe)"));
+    Err(map_cargo_failure(display, install_hint, output, program_label))
 }
 
 #[cfg(test)]
