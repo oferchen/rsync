@@ -112,6 +112,11 @@ impl<'a> CopyContext<'a> {
         &self.destination_root
     }
 
+    /// Finalization template:
+    /// 1. Register newly created path.
+    /// 2. Apply POSIX/stat metadata.
+    /// 3. Conditionally sync xattrs/ACLs (Strategy-style via feature flags).
+    /// 4. Record as hard-link source and remove the original if requested.
     pub(super) fn apply_metadata_and_finalize(
         &mut self,
         destination: &Path,
@@ -125,19 +130,22 @@ impl<'a> CopyContext<'a> {
             relative,
             file_type,
             destination_previously_existed,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         } = params;
+
         self.register_created_path(
             destination,
             CreatedEntryKind::File,
             destination_previously_existed,
         );
+
         apply_file_metadata_with_options(destination, metadata, metadata_options)
             .map_err(map_metadata_error)?;
-        #[cfg(feature = "xattr")]
+
+        #[cfg(all(unix, feature = "xattr"))]
         {
             sync_xattrs_if_requested(
                 preserve_xattrs,
@@ -148,12 +156,18 @@ impl<'a> CopyContext<'a> {
                 self.filter_program.as_ref(),
             )?;
         }
-        #[cfg(feature = "acl")]
+
+        #[cfg(all(unix, feature = "acl"))]
         {
             sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
         }
-        #[cfg(not(any(feature = "xattr", feature = "acl")))]
+
+        #[cfg(not(any(
+            all(unix, feature = "xattr"),
+            all(unix, feature = "acl")
+        )))]
         let _ = mode;
+
         self.record_hard_link(metadata, destination);
         remove_source_entry_if_requested(self, source, relative, file_type)?;
         Ok(())
@@ -322,13 +336,16 @@ impl<'a> CopyContext<'a> {
             destination,
             file_type,
             destination_previously_existed,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             preserve_acls,
         } = update;
 
-        #[cfg(not(any(feature = "xattr", feature = "acl")))]
+        #[cfg(not(any(
+            all(unix, feature = "xattr"),
+            all(unix, feature = "acl")
+        )))]
         let _ = &source;
 
         guard.commit()?;
@@ -343,9 +360,9 @@ impl<'a> CopyContext<'a> {
                 relative: relative.as_deref(),
                 file_type,
                 destination_previously_existed,
-                #[cfg(feature = "xattr")]
+                #[cfg(all(unix, feature = "xattr"))]
                 preserve_xattrs,
-                #[cfg(feature = "acl")]
+                #[cfg(all(unix, feature = "acl"))]
                 preserve_acls,
             },
         )
@@ -362,5 +379,4 @@ impl<'a> CopyContext<'a> {
     pub(super) fn max_file_size_limit(&self) -> Option<u64> {
         self.options.max_file_size_limit()
     }
-
 }
