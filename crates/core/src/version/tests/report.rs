@@ -16,7 +16,7 @@ fn version_info_report_renders_default_report() {
     let bit_inums = mem::size_of::<ino_t>() * 8;
     let bit_timestamps = mem::size_of::<time_t>() * 8;
     let bit_long_ints = mem::size_of::<i64>() * 8;
-    assert!(actual.starts_with(&format!("{PROGRAM_NAME}  version {RUST_VERSION}")));
+    assert!(actual.starts_with(&format!("{PROGRAM_NAME} v{RUST_VERSION}")));
     assert!(actual.contains(&format!(
         "    {bit_files}-bit files, {bit_inums}-bit inums, {bit_timestamps}-bit timestamps, {bit_long_ints}-bit long ints,"
     )));
@@ -69,7 +69,7 @@ fn version_info_report_renders_default_report() {
         "Daemon auth list:\n    {daemon_auth_algorithms}\n"
     )));
     assert!(actual.ends_with(
-        "rsync comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\nare welcome to redistribute it under certain conditions.  See the GNU\nGeneral Public Licence for details.\n"
+        "oc-rsync comes with ABSOLUTELY NO WARRANTY.\nThis is free software, and you are welcome to redistribute it under certain conditions.\nSee the GNU General Public License for details.\n"
     ));
 }
 
@@ -110,7 +110,7 @@ fn version_info_report_with_client_brand_updates_banner() {
     let report = VersionInfoReport::new(VersionInfoConfig::default()).with_client_brand(Brand::Oc);
     let banner = report.metadata().standard_banner();
 
-    assert!(banner.starts_with(&format!("{PROGRAM_NAME}  version")));
+    assert!(banner.starts_with(&format!("{PROGRAM_NAME} v")));
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn version_info_report_with_daemon_brand_updates_banner() {
     let report = VersionInfoReport::new(VersionInfoConfig::default()).with_daemon_brand(Brand::Oc);
     let banner = report.metadata().standard_banner();
 
-    assert!(banner.starts_with(&format!("{DAEMON_PROGRAM_NAME}  version")));
+    assert!(banner.starts_with(&format!("{DAEMON_PROGRAM_NAME} v")));
 }
 
 #[test]
