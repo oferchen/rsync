@@ -215,6 +215,9 @@ pub(crate) fn copy_directory_recursive(
         match planned.action {
             EntryAction::SkipExcluded => {}
             EntryAction::SkipNonRegular => {
+                if entry_metadata.file_type().is_symlink() {
+                    context.summary_mut().record_symlink_total();
+                }
                 context.record_skipped_non_regular(record_relative);
             }
             EntryAction::SkipMountPoint => {

@@ -151,6 +151,7 @@ fn run_client_copies_symbolic_link() {
     let destination_link = tmp.path().join("dest-link");
     let config = ClientConfig::builder()
         .transfer_args([source_link.clone(), destination_link.clone()])
+        .links(true)
         .force_event_collection(true)
         .build();
 
@@ -190,6 +191,7 @@ fn run_client_preserves_symbolic_links_in_directories() {
     let dest_root = tmp.path().join("destination");
     let config = ClientConfig::builder()
         .transfer_args([source_root.clone(), dest_root.clone()])
+        .links(true)
         .force_event_collection(true)
         .build();
 

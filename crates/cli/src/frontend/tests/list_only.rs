@@ -24,6 +24,7 @@ fn list_only_lists_entries_without_copying() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--links"),
         source_dir.clone().into_os_string(),
         destination_dir.clone().into_os_string(),
     ]);

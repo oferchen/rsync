@@ -223,6 +223,7 @@ pub fn build_local_copy_options(
         .preallocate(config.preallocate())
         .fsync(config.fsync())
         .hard_links(config.preserve_hard_links())
+        .links(config.links())
         .sparse(config.sparse())
         .copy_links(config.copy_links())
         .copy_dirlinks(config.copy_dirlinks())

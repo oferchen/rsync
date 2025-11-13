@@ -18,6 +18,7 @@ pub(crate) struct MetadataSettings {
     pub(crate) preserve_devices: bool,
     pub(crate) preserve_specials: bool,
     pub(crate) preserve_hard_links: bool,
+    pub(crate) preserve_symlinks: bool,
     pub(crate) sparse: bool,
     pub(crate) copy_links: bool,
     pub(crate) copy_unsafe_links: bool,
@@ -44,6 +45,7 @@ pub(crate) struct MetadataInputs<'a> {
     pub(crate) devices: Option<bool>,
     pub(crate) specials: Option<bool>,
     pub(crate) hard_links: Option<bool>,
+    pub(crate) links: Option<bool>,
     pub(crate) sparse: Option<bool>,
     pub(crate) copy_links: Option<bool>,
     pub(crate) copy_unsafe_links: Option<bool>,
@@ -72,6 +74,7 @@ pub(crate) fn compute_metadata_settings(
         devices,
         specials,
         hard_links,
+        links,
         sparse,
         copy_links,
         copy_unsafe_links,
@@ -124,6 +127,11 @@ pub(crate) fn compute_metadata_settings(
     let preserve_devices = devices.unwrap_or(archive);
     let preserve_specials = specials.unwrap_or(archive);
     let preserve_hard_links = hard_links.unwrap_or(false);
+    let preserve_symlinks = if let Some(value) = links {
+        value
+    } else {
+        archive
+    };
     let sparse_setting = sparse.unwrap_or(false);
     let copy_links_setting = copy_links.unwrap_or(false);
     let copy_unsafe_links_setting = copy_unsafe_links.unwrap_or(false);
@@ -161,6 +169,7 @@ pub(crate) fn compute_metadata_settings(
         preserve_devices,
         preserve_specials,
         preserve_hard_links,
+        preserve_symlinks,
         sparse: sparse_setting,
         copy_links: copy_links_setting,
         copy_unsafe_links: copy_unsafe_links_setting,

@@ -206,6 +206,7 @@ where
     let xattrs = tri_state_flag_positive_first(&matches, "xattrs", "no-xattrs");
     let numeric_ids = tri_state_flag_positive_first(&matches, "numeric-ids", "no-numeric-ids");
     let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
+    let links = tri_state_flag_positive_first(&matches, "links", "no-links");
     let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
     let copy_links = tri_state_flag_positive_first(&matches, "copy-links", "no-copy-links");
     let copy_dirlinks = matches.get_flag("copy-dirlinks");
@@ -481,6 +482,7 @@ where
         acls,
         numeric_ids,
         hard_links,
+        links,
         sparse,
         copy_links,
         copy_dirlinks,

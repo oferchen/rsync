@@ -22,6 +22,7 @@ fn out_format_renders_symlink_target_placeholder() {
             dest_dir.as_os_str().to_os_string(),
         ])
         .recursive(true)
+        .links(true)
         .force_event_collection(true)
         .build();
 
@@ -65,6 +66,7 @@ fn out_format_renders_combined_name_and_target_placeholder() {
             dest_dir.as_os_str().to_os_string(),
         ])
         .recursive(true)
+        .links(true)
         .force_event_collection(true)
         .build();
 
