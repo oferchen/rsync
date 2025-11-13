@@ -3,7 +3,7 @@ set -euo pipefail
 
 TARGET="$1"
 OUTNAME="$2"
-BINARIES="${3:-oc-rsync oc-rsyncd}"
+BINARIES="${3:-oc-rsync}"
 
 OUTDIR="dist/${TARGET}"
 mkdir -p "${OUTDIR}"
