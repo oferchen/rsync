@@ -111,14 +111,14 @@ impl FilterProgram {
     /// Reports whether the program contains no rules.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        let filters_empty = self
-            .instructions
-            .iter()
-            .all(|instruction| match instruction {
-                FilterInstruction::Segment(segment) => segment.is_empty(),
-                FilterInstruction::DirMerge { .. }
-                | FilterInstruction::ExcludeIfPresent { .. } => false,
-            });
+        let filters_empty =
+            self.instructions
+                .iter()
+                .all(|instruction| match instruction {
+                    FilterInstruction::Segment(segment) => segment.is_empty(),
+                    FilterInstruction::DirMerge { .. }
+                    | FilterInstruction::ExcludeIfPresent { .. } => false,
+                });
 
         #[cfg(all(unix, feature = "xattr"))]
         {
