@@ -1,7 +1,7 @@
 //! Rendering helpers for `--help` output.
 
-use core::branding::{manifest, rust_version, build_revision};
 use super::ProgramName;
+use core::branding::{build_revision, manifest, rust_version};
 
 /// Renders deterministic help text describing the CLI surface supported by this build for `program_name`.
 pub(super) fn help_text(program_name: ProgramName) -> String {
