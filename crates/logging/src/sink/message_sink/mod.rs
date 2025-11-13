@@ -23,12 +23,13 @@ use core::{branding::Brand, message::MessageScratch};
 ///
 /// let mut sink = MessageSink::new(Vec::new());
 ///
-/// sink.write(Message::warning("vanished"))?;
-/// sink.write(Message::error(23, "partial"))?;
+/// sink.write(Message::warning("vanished")).expect("write warning");
+/// sink
+///     .write(Message::error(23, "partial"))
+///     .expect("write error");
 ///
 /// let output = String::from_utf8(sink.into_inner()).unwrap();
 /// assert!(output.ends_with('\n'));
-/// # Ok::<(), std::io::Error>(())
 /// ```
 ///
 /// Render a message without appending a newline:
@@ -38,10 +39,11 @@ use core::{branding::Brand, message::MessageScratch};
 /// use logging::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-/// sink.write(Message::info("ready"))?;
+/// sink
+///     .write(Message::info("ready"))
+///     .expect("write info");
 ///
 /// assert_eq!(sink.into_inner(), b"rsync info: ready".to_vec());
-/// # Ok::<(), std::io::Error>(())
 /// ```
 ///
 /// Reuse an existing [`MessageScratch`] when constructing a new sink:
@@ -51,16 +53,19 @@ use core::{branding::Brand, message::MessageScratch};
 /// use logging::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
-/// sink.write(Message::info("phase one"))?;
+/// sink
+///     .write(Message::info("phase one"))
+///     .expect("write phase one");
 /// let (writer, scratch, mode, brand) = sink.into_parts();
 /// assert_eq!(brand, core::branding::Brand::Upstream);
 /// assert_eq!(mode, LineMode::WithoutNewline);
 ///
 /// let mut sink = MessageSink::with_parts(writer, scratch, LineMode::WithNewline);
-/// sink.write(Message::warning("phase two"))?;
+/// sink
+///     .write(Message::warning("phase two"))
+///     .expect("write phase two");
 /// let output = String::from_utf8(sink.into_inner()).unwrap();
 /// assert!(output.contains("phase two"));
-/// # Ok::<(), std::io::Error>(())
 /// ```
 #[doc(alias = "--msgs2stderr")]
 #[derive(Clone)]
