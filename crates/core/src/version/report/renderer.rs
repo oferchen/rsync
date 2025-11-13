@@ -99,7 +99,7 @@ impl VersionInfoReport {
     /// assert!(report
     ///     .metadata()
     ///     .standard_banner()
-    ///     .starts_with(&format!("{PROGRAM_NAME}  version")));
+    ///     .starts_with(&format!("{PROGRAM_NAME} v")));
     /// ```
     #[must_use]
     pub fn for_client_brand(brand: Brand) -> Self {
@@ -119,7 +119,7 @@ impl VersionInfoReport {
     /// assert!(report
     ///     .metadata()
     ///     .standard_banner()
-    ///     .starts_with(&format!("{DAEMON_PROGRAM_NAME}  version")));
+    ///     .starts_with(&format!("{DAEMON_PROGRAM_NAME} v")));
     /// ```
     #[must_use]
     pub fn for_daemon_brand(brand: Brand) -> Self {

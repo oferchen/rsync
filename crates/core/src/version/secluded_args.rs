@@ -1,5 +1,5 @@
-use ::core::fmt;
-use ::core::str::FromStr;
+use std::fmt;
+use std::str::FromStr;
 
 /// Describes how secluded argument mode is advertised in `--version` output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
