@@ -287,16 +287,7 @@ pub(crate) fn copy_sources(
                             root_device,
                         )?;
                     } else if file_type.is_symlink() {
-                        if context.links_enabled() && !context.copy_links_enabled() {
-                            copy_symlink(
-                                context,
-                                source_path,
-                                &target,
-                                &metadata,
-                                &metadata_options,
-                                record_path,
-                            )?;
-                        } else if context.links_enabled() {
+                        if context.links_enabled() {
                             copy_symlink(
                                 context,
                                 source_path,
