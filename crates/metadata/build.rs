@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    if !cfg!(unix) {
+        return;
+    }
+
     if env::var_os("CARGO_FEATURE_ACL").is_none() {
         return;
     }
