@@ -192,10 +192,7 @@ impl VersionInfoReport {
         // Derive the program name from the standard banner to avoid hardcoding.
         // If you ever expose `VersionMetadata::program_name()`, use that instead.
         let banner = self.metadata.standard_banner();
-        let program_name = banner
-            .split_whitespace()
-            .next()
-            .unwrap_or("This program");
+        let program_name = banner.split_whitespace().next().unwrap_or("This program");
 
         writer.write_fmt(format_args!(
             "{name} comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details.\n",
