@@ -183,12 +183,26 @@ impl VersionInfoReport {
         self.write_named_list(writer, "Compress list", &self.compress_algorithms)?;
         self.write_named_list(writer, "Daemon auth list", &self.daemon_auth_algorithms)?;
         writer.write_char('\n')?;
-        writer.write_str(
-            "rsync comes with ABSOLUTELY NO WARRANTY.  This is free software, and you\n",
-        )?;
-        writer
-            .write_str("are welcome to redistribute it under certain conditions.  See the GNU\n")?;
-        writer.write_str("General Public Licence for details.\n")
+
+        self.write_gpl_footer(writer)
+    }
+
+    /// Internal helper for the GPL footer. Single fmt call, no allocations.
+    fn write_gpl_footer<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        // Derive the program name from the standard banner to avoid hardcoding.
+        // If you ever expose `VersionMetadata::program_name()`, use that instead.
+        let banner = self.metadata.standard_banner();
+        let program_name = banner
+            .split_whitespace()
+            .next()
+            .unwrap_or("This program");
+
+        writer.write_fmt(format_args!(
+            "{name} comes with ABSOLUTELY NO WARRANTY.\n\
+             This is free software, and you are welcome to redistribute it under certain conditions.\n\
+             See the GNU General Public License for details.\n",
+            name = program_name,
+        ))
     }
 
     /// Returns the rendered report as an owned string.
