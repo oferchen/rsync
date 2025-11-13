@@ -1,10 +1,10 @@
-use super::{tarball, PackageOptions, DIST_PROFILE};
+use super::{DIST_PROFILE, PackageOptions, tarball};
 use crate::error::{TaskError, TaskResult};
 use crate::util::{
     ensure_command_available, ensure_rust_target_installed, probe_cargo_tool, run_cargo_tool,
     run_cargo_tool_with_env,
 };
-use crate::workspace::{load_workspace_branding, WorkspaceBranding};
+use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
@@ -661,8 +661,8 @@ mod build_command_tests {
         guard.set("OC_RSYNC_PACKAGE_DEFAULT_FEATURES", "0");
         guard.set("OC_RSYNC_PACKAGE_FEATURES", "zstd lz4 iconv");
 
-        let command =
-            workspace_build_command(&Some(OsString::from("dist")), None, None).expect("command builds");
+        let command = workspace_build_command(&Some(OsString::from("dist")), None, None)
+            .expect("command builds");
         let args: Vec<String> = command
             .args
             .iter()

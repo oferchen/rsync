@@ -1,6 +1,6 @@
 use crate::auth::SUPPORTED_DAEMON_DIGESTS;
 use crate::branding::Brand;
-use crate::version::{version_metadata, version_metadata_for_program, VersionMetadata};
+use crate::version::{VersionMetadata, version_metadata, version_metadata_for_program};
 use libc::{ino_t, off_t, time_t};
 use std::borrow::Cow;
 use std::fmt::{self, Write as FmtWrite};
