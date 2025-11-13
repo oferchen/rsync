@@ -198,9 +198,7 @@ impl VersionInfoReport {
             .unwrap_or("This program");
 
         writer.write_fmt(format_args!(
-            "{name} comes with ABSOLUTELY NO WARRANTY.\n\
-             This is free software, and you are welcome to redistribute it under certain conditions.\n\
-             See the GNU General Public License for details.\n",
+            "{name} comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details.\n",
             name = program_name,
         ))
     }
