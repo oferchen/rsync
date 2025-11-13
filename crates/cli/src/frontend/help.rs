@@ -1,6 +1,6 @@
 //! Rendering helpers for `--help` output.
 
-use core::branding::{manifest, rust_version, source_line};
+use core::branding::{manifest, rust_version};
 
 use super::ProgramName;
 
@@ -16,14 +16,10 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
 
     format!(
         concat!(
-            "{program} {version}\n",
-            "{source_line}\n",
-            "\n",
+            "{program} v{version}\n",
             "Usage: {program} [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE[:BURST]] SOURCE... DEST\n",
             "\n",
-            "This development snapshot implements deterministic local filesystem\n",
-            "copies for regular files, directories, and symbolic links. The\n",
-            "following options are recognised:\n",
+            "Options:\n",
             "      --help       Show this help message and exit.\n",
             "  -V, --version    Output version information and exit.\n",
             "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
@@ -192,7 +188,6 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
         ),
         program = program,
         version = rust_version(),
-        source_line = source_line(),
         daemon = daemon,
     )
 }
