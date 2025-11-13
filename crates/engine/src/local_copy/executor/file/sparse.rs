@@ -3,7 +3,6 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::local_copy::LocalCopyError;
-use memchr::memchr;
 
 #[derive(Default)]
 pub(crate) struct SparseWriteState {
@@ -35,6 +34,10 @@ impl SparseWriteState {
         Ok(())
     }
 
+    fn replace(&mut self, next_run: usize) {
+        self.pending_zero_run = next_run as u64;
+    }
+
     pub(crate) fn finish(
         &mut self,
         writer: &mut fs::File,
@@ -54,41 +57,31 @@ pub(crate) fn write_sparse_chunk(
         return Ok(0);
     }
 
-    let mut offset = 0usize;
+    let leading = leading_zero_run(chunk);
+    state.accumulate(leading);
 
-    while offset < chunk.len() {
-        match memchr(0, &chunk[offset..]) {
-            Some(rel_zero) => {
-                let zero_index = offset + rel_zero;
-
-                if zero_index > offset {
-                    state.flush(writer, destination)?;
-                    writer
-                        .write_all(&chunk[offset..zero_index])
-                        .map_err(|error| {
-                            LocalCopyError::io("copy file", destination.to_path_buf(), error)
-                        })?;
-                }
-
-                let zero_run = zero_run_length(&chunk[zero_index..]);
-                state.accumulate(zero_run);
-                offset = zero_index + zero_run;
-            }
-            None => {
-                state.flush(writer, destination)?;
-                writer.write_all(&chunk[offset..]).map_err(|error| {
-                    LocalCopyError::io("copy file", destination.to_path_buf(), error)
-                })?;
-                break;
-            }
-        }
+    if leading == chunk.len() {
+        return Ok(chunk.len());
     }
+
+    let trailing = trailing_zero_run(&chunk[leading..]);
+    let data_start = leading;
+    let data_end = chunk.len() - trailing;
+
+    if data_end > data_start {
+        state.flush(writer, destination)?;
+        writer
+            .write_all(&chunk[data_start..data_end])
+            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+    }
+
+    state.replace(trailing);
 
     Ok(chunk.len())
 }
 
 #[inline]
-fn zero_run_length(bytes: &[u8]) -> usize {
+fn leading_zero_run(bytes: &[u8]) -> usize {
     let mut offset = 0usize;
     let mut buffer = [0u8; 16];
     let mut iter = bytes.chunks_exact(16);
@@ -104,22 +97,50 @@ fn zero_run_length(bytes: &[u8]) -> usize {
         return offset + position;
     }
 
-    offset + zero_run_length_scalar(iter.remainder())
+    offset + leading_zero_run_scalar(iter.remainder())
 }
 
 #[inline]
-fn zero_run_length_scalar(bytes: &[u8]) -> usize {
+fn leading_zero_run_scalar(bytes: &[u8]) -> usize {
     bytes.iter().take_while(|&&byte| byte == 0).count()
+}
+
+#[inline]
+fn trailing_zero_run(bytes: &[u8]) -> usize {
+    let mut offset = 0usize;
+    let mut buffer = [0u8; 16];
+    let mut iter = bytes.rchunks_exact(16);
+
+    for chunk in &mut iter {
+        buffer.copy_from_slice(chunk);
+        if u128::from_ne_bytes(buffer) == 0 {
+            offset += 16;
+            continue;
+        }
+
+        let trailing = chunk.iter().rev().take_while(|&&byte| byte == 0).count();
+        return offset + trailing;
+    }
+
+    offset + trailing_zero_run_scalar(iter.remainder())
+}
+
+#[inline]
+fn trailing_zero_run_scalar(bytes: &[u8]) -> usize {
+    bytes.iter().rev().take_while(|&&byte| byte == 0).count()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SparseWriteState, write_sparse_chunk, zero_run_length, zero_run_length_scalar};
+    use super::{
+        SparseWriteState, leading_zero_run, leading_zero_run_scalar, trailing_zero_run,
+        trailing_zero_run_scalar, write_sparse_chunk,
+    };
     use std::io::{Read, Seek, SeekFrom};
     use tempfile::NamedTempFile;
 
     #[test]
-    fn zero_run_length_matches_scalar_reference() {
+    fn leading_zero_run_matches_scalar_reference() {
         let cases: &[&[u8]] = &[
             &[],
             &[0],
@@ -133,19 +154,50 @@ mod tests {
 
         for case in cases {
             assert_eq!(
-                zero_run_length(case),
-                zero_run_length_scalar(case),
-                "zero-run length mismatch for {case:?}"
+                leading_zero_run(case),
+                leading_zero_run_scalar(case),
+                "leading zero-run length mismatch for {case:?}"
             );
         }
 
         let mut long = vec![0u8; 512];
-        assert_eq!(zero_run_length(&long), long.len());
+        assert_eq!(leading_zero_run(&long), long.len());
         long[511] = 42;
-        assert_eq!(zero_run_length(&long), 511);
+        assert_eq!(leading_zero_run(&long), 511);
         long.push(0);
-        assert_eq!(zero_run_length(&long[511..]), 0);
-        assert_eq!(zero_run_length(&long[512..]), 1);
+        assert_eq!(leading_zero_run(&long[511..]), 0);
+        assert_eq!(leading_zero_run(&long[512..]), 1);
+    }
+
+    #[test]
+    fn trailing_zero_run_matches_scalar_reference() {
+        let cases: &[&[u8]] = &[
+            &[],
+            &[0],
+            &[0, 0, 0],
+            &[0, 0, 1, 0, 0],
+            &[0, 7, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &[0, 1],
+            &[1, 0],
+            &[1, 2, 3, 0, 0, 0],
+        ];
+
+        for case in cases {
+            assert_eq!(
+                trailing_zero_run(case),
+                trailing_zero_run_scalar(case),
+                "trailing zero-run length mismatch for {case:?}"
+            );
+        }
+
+        let mut long = vec![0u8; 512];
+        assert_eq!(trailing_zero_run(&long), long.len());
+        long[0] = 42;
+        assert_eq!(trailing_zero_run(&long), 511);
+        long.insert(0, 0);
+        assert_eq!(trailing_zero_run(&long[..512]), 510);
     }
 
     #[test]
