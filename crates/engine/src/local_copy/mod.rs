@@ -85,8 +85,9 @@ pub(crate) use context::{
 
 #[allow(unused_imports)]
 pub(crate) use dir_merge::{
-    apply_dir_merge_rule_defaults, filter_program_local_error, load_dir_merge_rules_recursive,
-    parse_filter_directive_line, resolve_dir_merge_path, FilterParseError, ParsedFilterDirective,
+    FilterParseError, ParsedFilterDirective, apply_dir_merge_rule_defaults,
+    filter_program_local_error, load_dir_merge_rules_recursive, parse_filter_directive_line,
+    resolve_dir_merge_path,
 };
 
 pub(crate) use executor::*;
@@ -101,7 +102,7 @@ pub(crate) use metadata_sync::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_xattrs_if_requested;
 
-pub(crate) use operands::{operand_is_remote, DestinationSpec, SourceSpec};
+pub(crate) use operands::{DestinationSpec, SourceSpec, operand_is_remote};
 
 pub use filter_program::{
     DirMergeEnforcedKind, DirMergeOptions, DirMergeRule, ExcludeIfPresentRule, FilterProgram,

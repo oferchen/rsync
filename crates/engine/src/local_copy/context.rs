@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use super::ActiveCompressor;
 use super::filter_program::{
-    directory_has_marker, ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext,
-    FilterProgram, FilterSegment, FilterSegmentLayers, FilterSegmentStack,
+    ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
+    FilterSegmentLayers, FilterSegmentStack, directory_has_marker,
 };
 
 #[cfg(all(unix, feature = "acl"))]
@@ -21,17 +21,18 @@ use super::sync_acls_if_requested;
 use super::sync_xattrs_if_requested;
 
 use super::{
-    compute_backup_path, copy_entry_to_backup, delete_extraneous_entries, filter_program_local_error,
-    follow_symlink_metadata, load_dir_merge_rules_recursive, map_metadata_error,
-    remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy, write_sparse_chunk,
     CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker, LocalCopyAction,
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
-    LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord, LocalCopyRecordHandler,
-    LocalCopyReport, LocalCopySummary, ReferenceDirectory,
+    LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
+    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, ReferenceDirectory,
+    compute_backup_path, copy_entry_to_backup, delete_extraneous_entries,
+    filter_program_local_error, follow_symlink_metadata, load_dir_merge_rules_recursive,
+    map_metadata_error, remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy,
+    write_sparse_chunk,
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
-use ::metadata::{apply_file_metadata_with_options, MetadataOptions};
+use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 use bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
