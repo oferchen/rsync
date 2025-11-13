@@ -12,7 +12,6 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-#  BINARIES: "oc-rsync oc-rsyncd"
   BINARIES: "oc-rsync"
 
 jobs:
@@ -50,10 +49,11 @@ jobs:
       - name: Install system deps (OpenSSL, ACL, cross toolchain)
         run: |
           set -euo pipefail
-          sudo dpkg --add-architecture arm64
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev libacl1-dev
           if [ "${{ matrix.cross }}" = "true" ]; then
+            sudo dpkg --add-architecture arm64
+            sudo apt-get update
             sudo apt-get install -y \
               gcc-aarch64-linux-gnu \
               libssl-dev:arm64 \
@@ -76,6 +76,7 @@ jobs:
         run: .github/scripts/make-tarball.sh ${{ matrix.target }} oc-rsync-${{ matrix.os-arch }}.tar.gz "$BINARIES"
 
       - name: Package Linux (.deb, .rpm)
+        if: matrix.cross == false
         run: .github/scripts/package-linux.sh ${{ matrix.target }}
 
       - name: Upload artifact (tar.gz)
@@ -85,12 +86,14 @@ jobs:
           path: oc-rsync-${{ matrix.os-arch }}.tar.gz
 
       - name: Upload .deb
+        if: matrix.cross == false
         uses: actions/upload-artifact@v4
         with:
           name: deb-${{ matrix.os-arch }}
           path: target/${{ matrix.target }}/debian/*.deb
 
       - name: Upload .rpm
+        if: matrix.cross == false
         uses: actions/upload-artifact@v4
         with:
           name: rpm-${{ matrix.os-arch }}

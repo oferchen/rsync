@@ -11,15 +11,17 @@ permissions:
 
 jobs:
   upload-to-release:
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     name: Upload build artifacts to release
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check workflow conclusion
-        if: ${{ github.event.workflow_run.conclusion != 'success' }}
-        run: |
-          echo "Build-cross did not succeed, skipping release upload."
-          exit 1
+      - name: Capture release tag
+        id: release
+        run: echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts from Build-cross
         uses: dawidd6/action-download-artifact@v6
@@ -40,6 +42,8 @@ jobs:
             dist/**/*.deb
             dist/**/*.rpm
             dist/**/*.zip
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: ${{ steps.release.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
