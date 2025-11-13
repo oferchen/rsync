@@ -70,7 +70,7 @@ fn version_metadata_renders_standard_banner() {
         .expect("writing to String cannot fail");
 
     let expected = format!(
-        "{program}  version {rust_version} (revision/build #{build_revision})  protocol version {protocol}\n\
+        "{program} v{rust_version} (revision #{build_revision})  protocol version {protocol}\n\
 Copyright {copyright}\n\
 Source: {source_url}\n",
         program = PROGRAM_NAME,
