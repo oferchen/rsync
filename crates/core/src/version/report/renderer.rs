@@ -1,6 +1,6 @@
 use crate::auth::SUPPORTED_DAEMON_DIGESTS;
 use crate::branding::Brand;
-use crate::version::{VersionMetadata, version_metadata, version_metadata_for_program};
+use crate::version::{version_metadata, version_metadata_for_program, VersionMetadata};
 use libc::{ino_t, off_t, time_t};
 use std::borrow::Cow;
 use std::fmt::{self, Write as FmtWrite};
@@ -194,10 +194,10 @@ impl VersionInfoReport {
         let banner = self.metadata.standard_banner();
         let program_name = banner.split_whitespace().next().unwrap_or("This program");
 
-        writer.write_fmt(format_args!(
-            "{name} comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details.\n",
-            name = program_name,
-        ))
+        writeln!(
+            writer,
+            "{program_name} comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details."
+        )
     }
 
     /// Returns the rendered report as an owned string.
