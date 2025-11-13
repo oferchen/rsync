@@ -460,7 +460,6 @@ dependencies = [
  "filters",
  "globset",
  "libc",
- "memchr",
  "metadata",
  "protocol",
  "rustix 0.38.44",
