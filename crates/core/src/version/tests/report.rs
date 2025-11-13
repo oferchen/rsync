@@ -69,7 +69,7 @@ fn version_info_report_renders_default_report() {
         "Daemon auth list:\n    {daemon_auth_algorithms}\n"
     )));
     assert!(actual.ends_with(
-        "oc-rsync comes with ABSOLUTELY NO WARRANTY.\nThis is free software, and you are welcome to redistribute it under certain conditions.\nSee the GNU General Public License for details.\n"
+        "oc-rsync comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details.\n"
     ));
 }
 
