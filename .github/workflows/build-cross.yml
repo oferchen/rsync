@@ -12,202 +12,163 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  BINARIES: "oc-rsync"
 
 jobs:
-  # --------------------------------------------------
-  # Linux builds on ubuntu-noble
-  # --------------------------------------------------
-  build-linux:
-    name: linux ${{ matrix.target }}
+  linux:
+    name: linux release artifacts
     runs-on: ubuntu-noble
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os-arch: linux-amd64
-            cross: false
-          - target: aarch64-unknown-linux-gnu
-            os-arch: linux-aarch64
-            cross: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (stable)
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
 
-      - name: Rust cache
+      - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-${{ matrix.target }}
+          key: build-linux
 
-      - name: Install system deps (OpenSSL, ACL, cross toolchain)
+      - name: Install system dependencies
         run: |
           set -euo pipefail
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev libacl1-dev
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            sudo dpkg --add-architecture arm64
-            sudo apt-get update
-            sudo apt-get install -y \
-              gcc-aarch64-linux-gnu \
-              libssl-dev:arm64 \
-              libacl1-dev:arm64
-          fi
+          sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            libacl1-dev \
+            libattr1-dev \
+            libzstd-dev \
+            zlib1g-dev \
+            libxxhash-dev \
+            gcc-aarch64-linux-gnu \
+            libssl-dev:arm64 \
+            libacl1-dev:arm64 \
+            libattr1-dev:arm64 \
+            libzstd-dev:arm64 \
+            zlib1g-dev:arm64 \
+            libxxhash-dev:arm64
 
-      - name: Configure env for cross
-        if: matrix.cross == true
-        run: |
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
+      - name: Build Linux x86_64 packages
+        run: cargo xtask package --deb --rpm --tarball --tarball-target x86_64-unknown-linux-gnu --release
 
-      - name: Build (release)
-        run: |
-          for bin in $BINARIES; do
-            cargo build --release --target ${{ matrix.target }} --bin "$bin"
-          done
+      - name: Build Linux aarch64 tarball
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
+        run: cargo xtask package --tarball --tarball-target aarch64-unknown-linux-gnu --release
 
-      - name: Make tarball
-        run: .github/scripts/make-tarball.sh ${{ matrix.target }} oc-rsync-${{ matrix.os-arch }}.tar.gz "$BINARIES"
-
-      - name: Package Linux (.deb, .rpm)
-        if: matrix.cross == false
-        run: .github/scripts/package-linux.sh ${{ matrix.target }}
-
-      - name: Upload artifact (tar.gz)
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsync-${{ matrix.os-arch }}.tar.gz
-          path: dist/oc-rsync-${{ matrix.os-arch }}.tar.gz
+          name: dist-linux
+          path: |
+            target/dist/oc-rsync-*-linux-*.tar.gz
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
 
-      - name: Upload .deb
-        if: matrix.cross == false
-        uses: actions/upload-artifact@v4
-        with:
-          name: deb-${{ matrix.os-arch }}
-          path: target/${{ matrix.target }}/debian/*.deb
-
-      - name: Upload .rpm
-        if: matrix.cross == false
-        uses: actions/upload-artifact@v4
-        with:
-          name: rpm-${{ matrix.os-arch }}
-          path: target/${{ matrix.target }}/generate-rpm/*.rpm
-
-  # --------------------------------------------------
-  # macOS builds on macos-latest
-  # --------------------------------------------------
-  build-macos:
-    name: macos ${{ matrix.target }}
+  macos:
+    name: macOS release artifacts
     runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-apple-darwin
-            os-arch: macos-amd64
-          - target: aarch64-apple-darwin
-            os-arch: macos-arm64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
 
-      - name: Install OpenSSL via Homebrew
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-macos
+
+      - name: Install OpenSSL
         run: |
           brew update
           brew install openssl@3 || true
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: build-${{ matrix.target }}
+      - name: Build macOS aarch64 tarball
+        run: cargo xtask package --tarball --tarball-target aarch64-apple-darwin --release
 
-      - name: Build (release)
-        run: |
-          for bin in $BINARIES; do
-            cargo build --release --target ${{ matrix.target }} --bin "$bin"
-          done
+      - name: Build macOS x86_64 tarball
+        run: cargo xtask package --tarball --tarball-target x86_64-apple-darwin --release
 
-      - name: Make tarball
-        run: .github/scripts/make-tarball.sh ${{ matrix.target }} oc-rsync-${{ matrix.os-arch }}.tar.gz "$BINARIES"
-
-      - name: Upload artifact
+      - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsync-${{ matrix.os-arch }}.tar.gz
-          path: dist/oc-rsync-${{ matrix.os-arch }}.tar.gz
+          name: dist-macos
+          path: target/dist/oc-rsync-*-darwin-*.tar.gz
 
-  # --------------------------------------------------
-  # Windows builds on windows-latest
-  # (fixed to write valid TOML for .cargo/config.toml)
-  # --------------------------------------------------
-  build-windows:
-    name: windows ${{ matrix.target }}
+  windows:
+    name: windows release artifacts
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-pc-windows-msvc
-            os-arch: windows-amd64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-pc-windows-msvc
 
-      - name: Rust cache
+      - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-${{ matrix.target }}
+          key: build-windows
 
-      - name: Disable rustc wrapper on Windows
+      - name: Disable rustc wrapper if configured
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path .cargo | Out-Null
-          # first line
           Set-Content -Path .cargo/config.toml -Encoding UTF8 -Value "[build]"
-          # second line
           Add-Content -Path .cargo/config.toml -Encoding UTF8 -Value 'rustc-wrapper = ""'
-          # also clear env-based wrappers if they exist
           Remove-Item Env:CARGO_BUILD_RUSTC_WRAPPER -ErrorAction SilentlyContinue
           Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
 
-      - name: Build
+      - name: Build Windows tarball
         shell: pwsh
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin oc-rsync --no-default-features --features "zstd lz4 iconv"
+          $env:OC_RSYNC_PACKAGE_DEFAULT_FEATURES = "0"
+          $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv"
+          cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --release
 
-      - name: Package
+      - name: Create Windows zip archive
         shell: pwsh
         run: |
-          $dist = Join-Path (Get-Location) "dist"
-          New-Item -ItemType Directory -Force -Path $dist | Out-Null
-          $artifact = Join-Path $dist "oc-rsync-${{ matrix.os-arch }}.zip"
-          $binary = "target\${{ matrix.target }}\release\oc-rsync.exe"
-          if (-not (Test-Path $binary)) {
-            Write-Error "expected binary '$binary' to exist"
+          $distDir = Join-Path (Get-Location) "dist"
+          if (-not (Test-Path $distDir)) {
+            New-Item -ItemType Directory -Force -Path $distDir | Out-Null
           }
-          Compress-Archive -Path $binary -DestinationPath $artifact -Force
+          $tarball = Get-ChildItem -Path (Join-Path (Get-Location) "target\dist") -Filter "oc-rsync-*-windows-*.tar.gz" | Select-Object -First 1
+          if ($null -eq $tarball) {
+            throw "expected windows tarball to exist"
+          }
+          $profileDir = Join-Path (Get-Location) "target\x86_64-pc-windows-msvc\dist"
+          $binaries = Get-ChildItem -Path $profileDir -Filter "*.exe" | Where-Object { $_.Name -match '^(oc-rsync|rsync)' }
+          if ($binaries.Count -eq 0) {
+            throw "no Windows binaries found for zip packaging"
+          }
+          $zipPath = Join-Path $distDir ($tarball.BaseName + ".zip")
+          Compress-Archive -Path $binaries.FullName -DestinationPath $zipPath -Force
 
-      - name: Upload artifact
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: oc-rsync-${{ matrix.os-arch }}.zip
-          path: dist\oc-rsync-${{ matrix.os-arch }}.zip
+          name: dist-windows
+          path: target/dist/oc-rsync-*-windows-*.tar.gz
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows-zip
+          path: dist/*.zip
