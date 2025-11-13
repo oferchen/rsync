@@ -267,6 +267,7 @@ impl<'a> CopyContext<'a> {
 
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
+        let mut sparse_state = SparseWriteState::default();
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
         let expected_remaining = total_size.saturating_sub(initial_bytes);
@@ -290,7 +291,7 @@ impl<'a> CopyContext<'a> {
             }
 
             let written = if sparse {
-                write_sparse_chunk(writer, &buffer[..read], destination)?
+                write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?
             } else {
                 writer.write_all(&buffer[..read]).map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
@@ -324,6 +325,7 @@ impl<'a> CopyContext<'a> {
         }
 
         if sparse {
+            sparse_state.finish(writer, destination)?;
             let final_len = initial_bytes.saturating_add(total_bytes);
             writer.set_len(final_len).map_err(|error| {
                 LocalCopyError::io(
