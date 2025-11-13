@@ -73,6 +73,20 @@ fn parse_args_sets_from0_flag() {
 }
 
 #[test]
+fn parse_args_resets_from0_with_no_from0_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--from0"),
+        OsString::from("--no-from0"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(!parsed.from0);
+}
+
+#[test]
 fn parse_args_sets_compress_flag() {
     let parsed = parse_args([
         OsString::from(RSYNC),

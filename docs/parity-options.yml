@@ -1182,11 +1182,11 @@ options:
     status: implemented
     notes: ""
   - option: --no-from0
-    short: 
+    short:
     category: filters
     upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
+    status: implemented
+    notes: ""
   - option: --old-args
     short: 
     category: general

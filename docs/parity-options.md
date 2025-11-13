@@ -22,8 +22,8 @@ workspace.
 
 | status | count |
 |---|---:|
-| implemented | 155 |
-| missing | 96 |
+| implemented | 156 |
+| missing | 95 |
 
 `missing` entries denote upstream flags that are absent from the current
 `oc-rsync` help surface. Many of these are `--no-*` aliases that suppress a
@@ -37,7 +37,7 @@ must be closed before we can claim full compatibility.
 | connection | 12 | 3 |
 | daemon | 3 | 2 |
 | deletion | 13 | 0 |
-| filters | 8 | 1 |
+| filters | 9 | 0 |
 | general | 48 | 74 |
 | logging | 7 | 3 |
 | metadata | 23 | 4 |
@@ -55,8 +55,7 @@ options such as `--config`, etc.).
   --address, --no-contimeout, --no-timeout
 - **daemon** (2):
   --config, --motd
-- **filters** (1):
-  --no-from0
+- **filters** (0): (none)
 - **general** (74):
   --8-bit-output, --cc, --copy-as, --detach, --dparam, --early-input, --executability,
   --fake-super, --force, --fuzzy, --i-d, --i-r, --ignore-errors, --ignore-non-existing,

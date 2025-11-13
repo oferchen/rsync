@@ -364,7 +364,15 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("from0")
                     .long("from0")
                     .help("Treat file list entries as NUL-terminated records.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-from0"),
+            )
+            .arg(
+                Arg::new("no-from0")
+                    .long("no-from0")
+                    .help("Disable NUL-terminated file list handling.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("from0"),
             )
             .arg(
                 Arg::new("owner")
