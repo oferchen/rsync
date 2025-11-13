@@ -111,3 +111,45 @@ fn stats_transfer_renders_summary_block() {
         payload
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn stats_sparse_transfer_reports_literal_data() {
+    use tempfile::tempdir;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+    let _rsh_guard = clear_rsync_rsh();
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("sparse.bin");
+    let file = std::fs::File::create(&source).expect("create source");
+    let sparse_len: u64 = 1_048_576;
+    file.set_len(sparse_len).expect("extend sparse source");
+
+    let destination = tmp.path().join("sparse.out");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--stats"),
+        OsString::from("--sparse"),
+        source.into_os_string(),
+        destination.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("stats output utf8");
+    let literal_line = rendered
+        .lines()
+        .find(|line| line.starts_with("Literal data: "))
+        .expect("literal data line present");
+    let numeric_only: String = literal_line
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect();
+    assert_eq!(
+        numeric_only,
+        sparse_len.to_string(),
+        "expected literal data line to report {sparse_len} bytes, got {literal_line:?}"
+    );
+}
