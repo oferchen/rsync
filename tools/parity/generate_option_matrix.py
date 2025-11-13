@@ -171,8 +171,31 @@ def main() -> None:
             "notes": extra_notes,
         })
 
+    upstream_longs = {entry.long for entry in entries if entry.long}
+    upstream_shorts = {entry.short for entry in entries if entry.short}
+
+    oc_only: list[dict[str, str]] = []
+    for long_option in sorted(implemented_longs - upstream_longs):
+        oc_only.append(
+            {
+                "option": f"--{long_option}",
+                "short": "",
+                "notes": "Specific to oc-rsync; upstream rsync does not expose this flag.",
+            }
+        )
+    for short_option in sorted(implemented_shorts - upstream_shorts):
+        oc_only.append(
+            {
+                "option": f"-{short_option}",
+                "short": short_option,
+                "notes": "Specific to oc-rsync; upstream rsync does not expose this flag.",
+            }
+        )
+
+    payload = {"options": matrix, "oc_only_options": oc_only}
+
     if args.format == "json":
-        print(json.dumps(matrix, indent=2))
+        print(json.dumps(payload, indent=2))
     else:
         print("options:")
         for item in matrix:
@@ -186,6 +209,14 @@ def main() -> None:
                 print(f"    notes: {notes}")
             else:
                 print("    notes: \"\"")
+        print("oc_only_options:")
+        if oc_only:
+            for item in oc_only:
+                print(f"  - option: {item['option']}")
+                print(f"    short: {item['short']}")
+                print(f"    notes: {item['notes']}")
+        else:
+            print("  []")
 
 if __name__ == "__main__":
     main()
