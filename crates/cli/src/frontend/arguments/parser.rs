@@ -393,6 +393,8 @@ where
         .map(|values| values.collect())
         .unwrap_or_default();
     let from0 = matches.get_flag("from0");
+    let disable_from0 = matches.get_flag("no-from0");
+    let from0 = from0 && !disable_from0;
     let info = matches
         .remove_many::<OsString>("info")
         .map(|values| values.collect())

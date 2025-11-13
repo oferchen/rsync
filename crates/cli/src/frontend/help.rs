@@ -80,6 +80,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
             "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
             "      --from0      Treat file list entries as NUL-terminated records.\n",
+            "      --no-from0  Disable NUL-terminated file list handling.\n",
             "      --bwlimit=RATE[:BURST]  Limit I/O bandwidth (supports decimal, binary,\n",
             "                              and IEC units; optional :BURST caps the token\n",
             "                              bucket; 0 disables the limit).\n",
