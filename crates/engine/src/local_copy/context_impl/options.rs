@@ -79,12 +79,17 @@ impl<'a> CopyContext<'a> {
         self.options.specials_enabled()
     }
 
+    // Filter program accessor used by the xattr sync “strategy”.
+    // Only compiled where xattrs are supported and enabled.
+    #[cfg(all(unix, feature = "xattr"))]
     pub(super) fn filter_program(
         &self,
     ) -> Option<&crate::local_copy::filter_program::FilterProgram> {
         self.filter_program.as_ref()
     }
 
+    // ACL flag accessor used by the ACL sync “strategy”.
+    // Only compiled when ACL support is enabled.
     #[cfg(feature = "acl")]
     pub(super) fn acls_enabled(&self) -> bool {
         self.options.acls_enabled()
@@ -360,5 +365,4 @@ impl<'a> CopyContext<'a> {
             true
         }
     }
-
 }

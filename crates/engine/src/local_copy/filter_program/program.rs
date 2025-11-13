@@ -24,6 +24,9 @@ pub struct FilterProgram {
     instructions: Vec<FilterInstruction>,
     dir_merge_rules: Vec<DirMergeRule>,
     exclude_if_present_rules: Vec<ExcludeIfPresentRule>,
+
+    // XAttr filter strategy – only present where it is meaningful.
+    #[cfg(all(unix, feature = "xattr"))]
     xattr_rules: Vec<XattrRule>,
 }
 
@@ -37,16 +40,22 @@ impl FilterProgram {
         let mut dir_merge_rules = Vec::new();
         let mut exclude_if_present_rules = Vec::new();
         let mut current_segment = FilterSegment::default();
+
+        #[cfg(all(unix, feature = "xattr"))]
         let mut xattr_rules = Vec::new();
 
         for entry in entries {
             match entry {
                 FilterProgramEntry::Rule(rule) => {
-                    if rule.is_xattr_only() {
-                        let compiled = XattrRule::new(&rule)?;
-                        xattr_rules.push(compiled);
-                        continue;
+                    #[cfg(all(unix, feature = "xattr"))]
+                    {
+                        if rule.is_xattr_only() {
+                            let compiled = XattrRule::new(&rule)?;
+                            xattr_rules.push(compiled);
+                            continue;
+                        }
                     }
+
                     current_segment.push_rule(rule)?;
                 }
                 FilterProgramEntry::Clear => {
@@ -54,7 +63,10 @@ impl FilterProgram {
                     instructions.clear();
                     dir_merge_rules.clear();
                     exclude_if_present_rules.clear();
-                    xattr_rules.clear();
+                    #[cfg(all(unix, feature = "xattr"))]
+                    {
+                        xattr_rules.clear();
+                    }
                 }
                 FilterProgramEntry::DirMerge(rule) => {
                     if !current_segment.is_empty() || instructions.is_empty() {
@@ -85,6 +97,7 @@ impl FilterProgram {
             instructions,
             dir_merge_rules,
             exclude_if_present_rules,
+            #[cfg(all(unix, feature = "xattr"))]
             xattr_rules,
         })
     }
@@ -98,15 +111,23 @@ impl FilterProgram {
     /// Reports whether the program contains no rules.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.xattr_rules.is_empty()
-            && self
-                .instructions
-                .iter()
-                .all(|instruction| match instruction {
-                    FilterInstruction::Segment(segment) => segment.is_empty(),
-                    FilterInstruction::DirMerge { .. }
-                    | FilterInstruction::ExcludeIfPresent { .. } => false,
-                })
+        let filters_empty = self
+            .instructions
+            .iter()
+            .all(|instruction| match instruction {
+                FilterInstruction::Segment(segment) => segment.is_empty(),
+                FilterInstruction::DirMerge { .. }
+                | FilterInstruction::ExcludeIfPresent { .. } => false,
+            });
+
+        #[cfg(all(unix, feature = "xattr"))]
+        {
+            filters_empty && self.xattr_rules.is_empty()
+        }
+        #[cfg(not(all(unix, feature = "xattr")))]
+        {
+            filters_empty
+        }
     }
 
     /// Evaluates the program for the provided path.
@@ -171,10 +192,13 @@ impl FilterProgram {
         Ok(false)
     }
 
+    // XAttr filtering “strategy” – only compiled where xattrs are supported.
+    #[cfg(all(unix, feature = "xattr"))]
     pub(crate) fn has_xattr_rules(&self) -> bool {
         !self.xattr_rules.is_empty()
     }
 
+    #[cfg(all(unix, feature = "xattr"))]
     pub(crate) fn allows_xattr(&self, name: &str) -> bool {
         if self.xattr_rules.is_empty() {
             return true;
@@ -237,12 +261,14 @@ impl fmt::Display for FilterProgramError {
     }
 }
 
+#[cfg(all(unix, feature = "xattr"))]
 #[derive(Clone, Debug)]
 struct XattrRule {
     action: FilterAction,
     matcher: GlobMatcher,
 }
 
+#[cfg(all(unix, feature = "xattr"))]
 impl XattrRule {
     fn new(rule: &FilterRule) -> Result<Self, FilterProgramError> {
         debug_assert!(rule.is_xattr_only());
