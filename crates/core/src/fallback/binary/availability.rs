@@ -65,33 +65,38 @@ pub(super) const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(1);
 #[must_use]
 pub fn fallback_binary_available(binary: &OsStr) -> bool {
     let key = CacheKey::new(binary);
+    let cache = availability_cache();
 
-    {
-        let mut cache = availability_cache()
+    let cached_entry = {
+        let guard = cache
             .lock()
             .expect("fallback availability cache lock poisoned");
+        guard.get(&key).cloned()
+    };
 
-        if let Some(entry) = cache.get(&key) {
-            if entry.result {
-                if let Some(path) = entry.matched_path.as_ref() {
-                    if candidate_is_executable(path) {
-                        return true;
-                    }
+    if let Some(entry) = cached_entry {
+        if entry.result {
+            if let Some(path) = entry.matched_path {
+                if candidate_is_executable(&path) {
+                    return true;
                 }
-            } else if entry.recorded_at.elapsed() < NEGATIVE_CACHE_TTL {
-                return false;
             }
-
-            cache.remove(&key);
+        } else if entry.recorded_at.elapsed() < NEGATIVE_CACHE_TTL {
+            return false;
         }
+
+        cache
+            .lock()
+            .expect("fallback availability cache lock poisoned")
+            .remove(&key);
     }
 
     let (available, matched_path) = evaluate_availability(binary);
 
-    let mut cache = availability_cache()
+    cache
         .lock()
-        .expect("fallback availability cache lock poisoned");
-    cache.insert(key, AvailabilityEntry::new(available, matched_path));
+        .expect("fallback availability cache lock poisoned")
+        .insert(key, AvailabilityEntry::new(available, matched_path));
     available
 }
 
