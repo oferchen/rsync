@@ -13,7 +13,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--ignore-missing-args, --delete-missing-args, --update/-u, --modify-window, --exclude, --exclude-from, ",
     "--include, --include-from, --compare-dest, --copy-dest, --link-dest, --hard-links/-H, --no-hard-links, ",
     "--cvs-exclude/-C, --filter/-F (including exclude-if-present=FILE), --files-from, --password-file, --no-motd, ",
-    "--from0, --bwlimit, --no-bwlimit, --timeout, --contimeout, --stop-after/--time-limit, --stop-at, --sockopts, ",
+    "--from0, --no-from0, --bwlimit, --no-bwlimit, --timeout, --contimeout, --stop-after/--time-limit, --stop-at, --sockopts, ",
     "--blocking-io, --no-blocking-io, --protocol, --compress/-z, --no-compress, --compress-level, --compress-choice, ",
     "--skip-compress, --open-noatime, --no-open-noatime, --iconv, --no-iconv, --info, --debug, --verbose/-v, ",
     "--relative/-R, --no-relative, --one-file-system/-x, --no-one-file-system, --implied-dirs, --no-implied-dirs, ",
