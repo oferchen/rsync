@@ -94,7 +94,7 @@ impl VersionMetadata {
     pub fn write_standard_banner<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         write!(
             writer,
-            "{} v{} (revision #{})  protocol version {}",
+            "{} v{} (revision #{}) protocol version {}",
             self.program_name(),
             self.rust_version(),
             build_revision(),
