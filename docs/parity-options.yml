@@ -1,1520 +1,1352 @@
 options:
-  - option: --help
-    short: 
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --version
-    short: V
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
   - option: --verbose
-    short: v
-    category: logging
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-verbose
-    short: 
-    category: logging
-    upstream_default: n/a
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-v
-    short: 
+    short: -v
+    long: --verbose
     category: general
-    upstream_default: n/a
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --info
-    short: 
-    category: logging
-    upstream_default: n/a
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --debug
-    short: 
-    category: logging
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --stderr
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --info=FLAGS
+    short: ''
+    long: --info=FLAGS
     category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --msgs2stderr
-    short: 
-    category: logging
-    upstream_default: default 2
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --no-msgs2stderr
-    short: 
-    category: logging
-    upstream_default: enabled by default (2)
+    notes: "Available in oc-rsync CLI help output."
+  - option: --debug=FLAGS
+    short: ''
+    long: --debug=FLAGS
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --stderr=e|a|c
+    short: ''
+    long: --stderr=e|a|c
+    category: reporting
+    upstream_default: off
     status: missing
-    notes: Negates the corresponding positive option.
+    notes: "Not present in oc-rsync CLI help output."
   - option: --quiet
-    short: q
+    short: -q
+    long: --quiet
     category: general
-    upstream_default: n/a
+    upstream_default: off
     status: missing
-    notes: ""
-  - option: --motd
-    short: 
-    category: daemon
-    upstream_default: default 1
-    status: missing
-    notes: ""
+    notes: "Not present in oc-rsync CLI help output."
   - option: --no-motd
-    short: 
-    category: daemon
-    upstream_default: enabled by default (1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --stats
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --human-readable
-    short: h
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-human-readable
-    short: 
-    category: general
-    upstream_default: enabled by default (1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-h
-    short: 
-    category: general
-    upstream_default: enabled by default (1)
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --dry-run
-    short: n
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --archive
-    short: a
-    category: traversal
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --recursive
-    short: r
-    category: traversal
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-recursive
-    short: 
-    category: traversal
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-r
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
-  - option: --inc-recursive
-    short: 
-    category: traversal
-    upstream_default: default 1
-    status: missing
-    notes: ""
-  - option: --no-inc-recursive
-    short: 
-    category: traversal
-    upstream_default: enabled by default (1)
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --i-r
-    short: 
-    category: general
-    upstream_default: default 1
-    status: missing
-    notes: ""
-  - option: --no-i-r
-    short: 
-    category: general
-    upstream_default: enabled by default (1)
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --dirs
-    short: d
-    category: traversal
-    upstream_default: default -1
-    status: implemented
-    notes: ""
-  - option: --no-dirs
-    short: 
-    category: traversal
-    upstream_default: enabled by default (-1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-d
-    short: 
-    category: general
-    upstream_default: enabled by default (-1)
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
-  - option: --old-dirs
-    short: 
-    category: traversal
-    upstream_default: default -1
-    status: missing
-    notes: ""
-  - option: --old-d
-    short: 
-    category: general
-    upstream_default: default -1
-    status: missing
-    notes: ""
-  - option: --perms
-    short: p
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-perms
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-p
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
-  - option: --executability
-    short: E
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --acls
-    short: A
-    category: metadata
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-acls
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-A
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --xattrs
-    short: X
-    category: metadata
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-xattrs
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-X
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --times
-    short: t
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-times
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-t
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --atimes
-    short: U
-    category: metadata
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --no-atimes
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-U
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --open-noatime
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-open-noatime
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --crtimes
-    short: N
-    category: metadata
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --no-crtimes
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-N
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --omit-dir-times
-    short: O
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-omit-dir-times
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-O
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --omit-link-times
-    short: J
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-omit-link-times
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-J
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --modify-window
-    short: @
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --super
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-super
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --fake-super
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --owner
-    short: o
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-owner
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-o
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
-  - option: --group
-    short: g
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-group
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-g
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
-  - option: -D (short-only)
-    short: D
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-D
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --devices
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-devices
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --copy-devices
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --write-devices
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --no-write-devices
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --specials
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-specials
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --links
-    short: l
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --no-links
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-l
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --copy-links
-    short: L
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --copy-unsafe-links
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --safe-links
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --munge-links
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --no-munge-links
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --copy-dirlinks
-    short: k
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --keep-dirlinks
-    short: K
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --hard-links
-    short: H
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-hard-links
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-H
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --relative
-    short: R
-    category: traversal
-    upstream_default: default -1
-    status: implemented
-    notes: ""
-  - option: --no-relative
-    short: 
-    category: traversal
-    upstream_default: enabled by default (-1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-R
-    short: 
-    category: general
-    upstream_default: enabled by default (-1)
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --implied-dirs
-    short: 
-    category: traversal
-    upstream_default: default 1
-    status: implemented
-    notes: ""
-  - option: --no-implied-dirs
-    short: 
-    category: traversal
-    upstream_default: enabled by default (1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --i-d
-    short: 
-    category: general
-    upstream_default: default 1
-    status: missing
-    notes: ""
-  - option: --no-i-d
-    short: 
-    category: general
-    upstream_default: enabled by default (1)
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --chmod
-    short: 
-    category: metadata
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --ignore-times
-    short: I
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --size-only
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --one-file-system
-    short: x
-    category: traversal
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-one-file-system
-    short: 
-    category: traversal
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-x
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --update
-    short: u
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --existing
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --ignore-non-existing
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --ignore-existing
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --max-size
-    short: 
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --min-size
-    short: 
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --max-alloc
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --sparse
-    short: S
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-sparse
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-S
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --preallocate
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --inplace
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-inplace
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --append
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --append-verify
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-append
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --del
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: Alias maintained for compatibility.
-  - option: --delete
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --delete-before
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --delete-during
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --delete-delay
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --delete-after
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --delete-excluded
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --delete-missing-args
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --ignore-missing-args
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --remove-sent-files
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --remove-source-files
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --force
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --no-force
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --ignore-errors
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --no-ignore-errors
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --max-delete
-    short: 
-    category: deletion
-    upstream_default: enabled by default (INT_MIN)
-    status: implemented
-    notes: ""
-  - option: -F (short-only)
-    short: F
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --filter
-    short: f
-    category: filters
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --exclude
-    short: 
-    category: filters
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --include
-    short: 
-    category: filters
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --exclude-from
-    short: 
-    category: filters
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --include-from
-    short: 
-    category: filters
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --cvs-exclude
-    short: C
-    category: filters
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --whole-file
-    short: W
-    category: transfer
-    upstream_default: default -1
-    status: implemented
-    notes: ""
-  - option: --no-whole-file
-    short: 
-    category: transfer
-    upstream_default: enabled by default (-1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-W
-    short: 
-    category: general
-    upstream_default: enabled by default (-1)
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+    short: ''
+    long: --no-motd
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
   - option: --checksum
-    short: c
-    category: transfer
-    upstream_default: disabled by default
+    short: -c
+    long: --checksum
+    category: checksums
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --no-checksum
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-c
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --archive
+    short: -a
+    long: --archive
     category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
-  - option: --checksum-choice
-    short: 
-    category: transfer
-    upstream_default: n/a
+    upstream_default: enabled via -a
     status: implemented
-    notes: ""
-  - option: --cc
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --no-OPTION
+    short: ''
+    long: --no-OPTION
     category: general
-    upstream_default: n/a
+    upstream_default: off
     status: missing
-    notes: ""
-  - option: --block-size
-    short: B
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --compare-dest
-    short: 
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --recursive
+    short: -r
+    long: --recursive
     category: general
-    upstream_default: n/a
+    upstream_default: enabled via -a
     status: implemented
-    notes: ""
-  - option: --copy-dest
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --relative
+    short: -R
+    long: --relative
     category: general
-    upstream_default: n/a
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --link-dest
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --no-implied-dirs
+    short: ''
+    long: --no-implied-dirs
     category: general
-    upstream_default: n/a
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --fuzzy
-    short: y
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --no-fuzzy
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-y
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --compress
-    short: z
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --old-compress
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --new-compress
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --no-compress
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-z
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --compress-choice
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --zc
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --skip-compress
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --compress-level
-    short: 
-    category: transfer
-    upstream_default: enabled by default (CLVL_NOT_SPECIFIED)
-    status: implemented
-    notes: ""
-  - option: --zl
-    short: 
-    category: general
-    upstream_default: enabled by default (CLVL_NOT_SPECIFIED)
-    status: missing
-    notes: ""
-  - option: -P (short-only)
-    short: P
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --progress
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-progress
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --partial
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-partial
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --partial-dir
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --delay-updates
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-delay-updates
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --prune-empty-dirs
-    short: m
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-prune-empty-dirs
-    short: 
-    category: deletion
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-m
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --log-file
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --log-file-format
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --out-format
-    short: 
-    category: logging
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --log-format
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --itemize-changes
-    short: i
-    category: logging
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-itemize-changes
-    short: 
-    category: logging
-    upstream_default: n/a
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-i
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
-  - option: --bwlimit
-    short: 
-    category: transfer
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-bwlimit
-    short: 
-    category: transfer
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
+    notes: "Available in oc-rsync CLI help output."
   - option: --backup
-    short: b
+    short: -b
+    long: --backup
     category: general
-    upstream_default: disabled by default
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --no-backup
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --backup-dir=DIR
+    short: ''
+    long: --backup-dir=DIR
     category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --backup-dir
-    short: 
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --suffix=SUFFIX
+    short: ''
+    long: --suffix=SUFFIX
     category: general
-    upstream_default: n/a
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --suffix
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --update
+    short: -u
+    long: --update
     category: general
-    upstream_default: n/a
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --list-only
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --inplace
+    short: ''
+    long: --inplace
     category: general
-    upstream_default: disabled by default
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --read-batch
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --write-batch
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --only-write-batch
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --files-from
-    short: 
-    category: filters
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --from0
-    short: 0
-    category: filters
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-from0
-    short: 
-    category: filters
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --old-args
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --no-old-args
-    short: 
-    category: general
-    upstream_default: enabled by default (-1)
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --secluded-args
-    short: s
-    category: general
-    upstream_default: default -1
-    status: implemented
-    notes: ""
-  - option: --no-secluded-args
-    short: 
-    category: general
-    upstream_default: enabled by default (-1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --protect-args
-    short: 
-    category: general
-    upstream_default: default -1
-    status: implemented
-    notes: ""
-  - option: --no-protect-args
-    short: 
-    category: general
-    upstream_default: enabled by default (-1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --no-s
-    short: 
-    category: general
-    upstream_default: enabled by default (-1)
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --trust-sender
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --numeric-ids
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-numeric-ids
-    short: 
-    category: metadata
-    upstream_default: disabled by default
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --usermap
-    short: 
-    category: metadata
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --groupmap
-    short: 
-    category: metadata
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --chown
-    short: 
-    category: metadata
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --timeout
-    short: 
-    category: connection
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-timeout
-    short: 
-    category: connection
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --contimeout
-    short: 
-    category: connection
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-contimeout
-    short: 
-    category: connection
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --fsync
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --append
+    short: ''
+    long: --append
     category: transfer
-    upstream_default: disabled by default
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --stop-after
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --append-verify
+    short: ''
+    long: --append-verify
+    category: checksums
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --dirs
+    short: -d
+    long: --dirs
     category: general
-    upstream_default: n/a
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --old-dirs
+    short: --old-d
+    long: --old-dirs
+    category: general
+    upstream_default: off
     status: missing
-    notes: ""
-  - option: --time-limit
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --stop-at
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --rsh
-    short: e
-    category: connection
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --rsync-path
-    short: 
-    category: connection
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --temp-dir
-    short: T
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --iconv
-    short: 
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --no-iconv
-    short: 
-    category: general
-    upstream_default: n/a
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --ipv4
-    short: 4
-    category: connection
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --ipv6
-    short: 6
-    category: connection
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --8-bit-output
-    short: 8
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: ""
-  - option: --no-8-bit-output
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --no-8
-    short: 
-    category: general
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
+    notes: "Not present in oc-rsync CLI help output."
   - option: --mkpath
-    short: 
-    category: traversal
-    upstream_default: disabled by default
-    status: implemented
-    notes: ""
-  - option: --no-mkpath
-    short: 
-    category: traversal
-    upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
-  - option: --qsort
-    short: 
+    short: ''
+    long: --mkpath
     category: general
-    upstream_default: disabled by default
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --links
+    short: -l
+    long: --links
+    category: metadata
+    upstream_default: enabled via -a
     status: missing
-    notes: ""
-  - option: --copy-as
-    short: 
-    category: general
-    upstream_default: n/a
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --copy-links
+    short: -L
+    long: --copy-links
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --copy-unsafe-links
+    short: ''
+    long: --copy-unsafe-links
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --safe-links
+    short: ''
+    long: --safe-links
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --munge-links
+    short: ''
+    long: --munge-links
+    category: metadata
+    upstream_default: off
     status: missing
-    notes: ""
-  - option: --address
-    short: 
-    category: connection
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --port
-    short: 
-    category: connection
-    upstream_default: disabled by default
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --copy-dirlinks
+    short: -k
+    long: --copy-dirlinks
+    category: metadata
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --sockopts
-    short: 
-    category: connection
-    upstream_default: n/a
+    notes: "Available in oc-rsync CLI help output."
+  - option: --keep-dirlinks
+    short: -K
+    long: --keep-dirlinks
+    category: metadata
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --password-file
-    short: 
-    category: daemon
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --early-input
-    short: 
-    category: general
-    upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --blocking-io
-    short: 
-    category: connection
-    upstream_default: default -1
-    status: implemented
-    notes: ""
-  - option: --no-blocking-io
-    short: 
-    category: connection
-    upstream_default: enabled by default (-1)
-    status: implemented
-    notes: Negates the corresponding positive option.
-  - option: --outbuf
-    short: 
-    category: logging
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --remote-option
-    short: M
-    category: connection
-    upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --protocol
-    short: 
-    category: connection
-    upstream_default: enabled by default (PROTOCOL_VERSION)
-    status: implemented
-    notes: ""
-  - option: --checksum-seed
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --hard-links
+    short: -H
+    long: --hard-links
     category: transfer
-    upstream_default: disabled by default
+    upstream_default: off
     status: implemented
-    notes: ""
-  - option: --server
-    short: 
+    notes: "Available in oc-rsync CLI help output."
+  - option: --perms
+    short: -p
+    long: --perms
+    category: metadata
+    upstream_default: enabled via -a
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --executability
+    short: -E
+    long: --executability
     category: general
-    upstream_default: n/a
+    upstream_default: off
     status: missing
-    notes: ""
-  - option: --sender
-    short: 
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --chmod=CHMOD
+    short: ''
+    long: --chmod=CHMOD
+    category: metadata
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --acls
+    short: -A
+    long: --acls
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --xattrs
+    short: -X
+    long: --xattrs
     category: general
-    upstream_default: n/a
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --owner
+    short: -o
+    long: --owner
+    category: metadata
+    upstream_default: enabled via -a
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --group
+    short: -g
+    long: --group
+    category: metadata
+    upstream_default: enabled via -a
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --devices
+    short: ''
+    long: --devices
+    category: general
+    upstream_default: enabled via -a
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --copy-devices
+    short: ''
+    long: --copy-devices
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --write-devices
+    short: ''
+    long: --write-devices
+    category: metadata
+    upstream_default: off
     status: missing
-    notes: ""
-  - option: --config
-    short: 
-    category: daemon
-    upstream_default: n/a
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --specials
+    short: ''
+    long: --specials
+    category: metadata
+    upstream_default: enabled via -a
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: -D
+    short: -D
+    long: ''
+    category: metadata
+    upstream_default: enabled via -a
+    status: implemented
+    notes: "Available in oc-rsync CLI help output (short flag only)."
+  - option: --times
+    short: -t
+    long: --times
+    category: metadata
+    upstream_default: enabled via -a
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --atimes
+    short: -U
+    long: --atimes
+    category: metadata
+    upstream_default: off
     status: missing
-    notes: ""
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --open-noatime
+    short: ''
+    long: --open-noatime
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --crtimes
+    short: -N
+    long: --crtimes
+    category: metadata
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --omit-dir-times
+    short: -O
+    long: --omit-dir-times
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --omit-link-times
+    short: -J
+    long: --omit-link-times
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --super
+    short: ''
+    long: --super
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --fake-super
+    short: ''
+    long: --fake-super
+    category: metadata
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --sparse
+    short: -S
+    long: --sparse
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --preallocate
+    short: ''
+    long: --preallocate
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --dry-run
+    short: -n
+    long: --dry-run
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --whole-file
+    short: -W
+    long: --whole-file
+    category: checksums
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --checksum-choice=STR
+    short: ''
+    long: --checksum-choice=STR
+    category: checksums
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --one-file-system
+    short: -x
+    long: --one-file-system
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --block-size=SIZE
+    short: -B
+    long: --block-size=SIZE
+    category: checksums
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --rsh=COMMAND
+    short: -e
+    long: --rsh=COMMAND
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --rsync-path=PROGRAM
+    short: ''
+    long: --rsync-path=PROGRAM
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --existing
+    short: ''
+    long: --existing
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --ignore-existing
+    short: ''
+    long: --ignore-existing
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --remove-source-files
+    short: ''
+    long: --remove-source-files
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --del
+    short: ''
+    long: --del
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --delete
+    short: ''
+    long: --delete
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --delete-before
+    short: ''
+    long: --delete-before
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --delete-during
+    short: ''
+    long: --delete-during
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --delete-delay
+    short: ''
+    long: --delete-delay
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --delete-after
+    short: ''
+    long: --delete-after
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --delete-excluded
+    short: ''
+    long: --delete-excluded
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --ignore-missing-args
+    short: ''
+    long: --ignore-missing-args
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --delete-missing-args
+    short: ''
+    long: --delete-missing-args
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --ignore-errors
+    short: ''
+    long: --ignore-errors
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --force
+    short: ''
+    long: --force
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --max-delete=NUM
+    short: ''
+    long: --max-delete=NUM
+    category: deletion
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --max-size=SIZE
+    short: ''
+    long: --max-size=SIZE
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --min-size=SIZE
+    short: ''
+    long: --min-size=SIZE
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --max-alloc=SIZE
+    short: ''
+    long: --max-alloc=SIZE
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --partial
+    short: ''
+    long: --partial
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --partial-dir=DIR
+    short: ''
+    long: --partial-dir=DIR
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --delay-updates
+    short: ''
+    long: --delay-updates
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --prune-empty-dirs
+    short: -m
+    long: --prune-empty-dirs
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --numeric-ids
+    short: ''
+    long: --numeric-ids
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --usermap=STRING
+    short: ''
+    long: --usermap=STRING
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --groupmap=STRING
+    short: ''
+    long: --groupmap=STRING
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --chown=USER:GROUP
+    short: ''
+    long: --chown=USER:GROUP
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --timeout=SECONDS
+    short: ''
+    long: --timeout=SECONDS
+    category: transfer
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --contimeout=SECONDS
+    short: ''
+    long: --contimeout=SECONDS
+    category: connection
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --ignore-times
+    short: -I
+    long: --ignore-times
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --size-only
+    short: ''
+    long: --size-only
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --modify-window=NUM
+    short: -@
+    long: --modify-window=NUM
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --temp-dir=DIR
+    short: -T
+    long: --temp-dir=DIR
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --fuzzy
+    short: -y
+    long: --fuzzy
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --compare-dest=DIR
+    short: ''
+    long: --compare-dest=DIR
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --copy-dest=DIR
+    short: ''
+    long: --copy-dest=DIR
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --link-dest=DIR
+    short: ''
+    long: --link-dest=DIR
+    category: metadata
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --compress
+    short: -z
+    long: --compress
+    category: compression
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --compress-choice=STR
+    short: ''
+    long: --compress-choice=STR
+    category: compression
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --compress-level=NUM
+    short: ''
+    long: --compress-level=NUM
+    category: compression
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --skip-compress=LIST
+    short: ''
+    long: --skip-compress=LIST
+    category: compression
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --cvs-exclude
+    short: -C
+    long: --cvs-exclude
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --filter=RULE
+    short: -f
+    long: --filter=RULE
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: -F
+    short: -F
+    long: ''
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output (short flag only)."
+  - option: --exclude=PATTERN
+    short: ''
+    long: --exclude=PATTERN
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --exclude-from=FILE
+    short: ''
+    long: --exclude-from=FILE
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --include=PATTERN
+    short: ''
+    long: --include=PATTERN
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --include-from=FILE
+    short: ''
+    long: --include-from=FILE
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --files-from=FILE
+    short: ''
+    long: --files-from=FILE
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --from0
+    short: -0
+    long: --from0
+    category: filtering
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --old-args
+    short: ''
+    long: --old-args
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --secluded-args
+    short: -s
+    long: --secluded-args
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --trust-sender
+    short: ''
+    long: --trust-sender
+    category: connection
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --copy-as=USER[:GROUP]
+    short: ''
+    long: --copy-as=USER[:GROUP]
+    category: metadata
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --address=ADDRESS
+    short: ''
+    long: --address=ADDRESS
+    category: connection
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --port=PORT
+    short: ''
+    long: --port=PORT
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --sockopts=OPTIONS
+    short: ''
+    long: --sockopts=OPTIONS
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --blocking-io
+    short: ''
+    long: --blocking-io
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --outbuf=N|L|B
+    short: ''
+    long: --outbuf=N|L|B
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --stats
+    short: ''
+    long: --stats
+    category: reporting
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --8-bit-output
+    short: -8
+    long: --8-bit-output
+    category: reporting
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --human-readable
+    short: -h
+    long: --human-readable
+    category: reporting
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --progress
+    short: ''
+    long: --progress
+    category: reporting
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: -P
+    short: -P
+    long: ''
+    category: reporting
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output (short flag only)."
+  - option: --itemize-changes
+    short: -i
+    long: --itemize-changes
+    category: reporting
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --remote-option=OPT
+    short: -M
+    long: --remote-option=OPT
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output (short flag only)."
+  - option: --out-format=FORMAT
+    short: ''
+    long: --out-format=FORMAT
+    category: reporting
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --log-file=FILE
+    short: ''
+    long: --log-file=FILE
+    category: reporting
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --log-file-format=FMT
+    short: ''
+    long: --log-file-format=FMT
+    category: reporting
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --password-file=FILE
+    short: ''
+    long: --password-file=FILE
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --early-input=FILE
+    short: ''
+    long: --early-input=FILE
+    category: connection
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --list-only
+    short: ''
+    long: --list-only
+    category: transfer
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --bwlimit=RATE
+    short: ''
+    long: --bwlimit=RATE
+    category: connection
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --stop-after=MINS
+    short: ''
+    long: --stop-after=MINS
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --stop-at=y-m-dTh:m
+    short: ''
+    long: --stop-at=y-m-dTh:m
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --fsync
+    short: ''
+    long: --fsync
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --write-batch=FILE
+    short: ''
+    long: --write-batch=FILE
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --only-write-batch=FILE
+    short: ''
+    long: --only-write-batch=FILE
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --read-batch=FILE
+    short: ''
+    long: --read-batch=FILE
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --protocol=NUM
+    short: ''
+    long: --protocol=NUM
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --iconv=CONVERT_SPEC
+    short: ''
+    long: --iconv=CONVERT_SPEC
+    category: general
+    upstream_default: off
+    status: missing
+    notes: "Not present in oc-rsync CLI help output."
+  - option: --checksum-seed=NUM
+    short: ''
+    long: --checksum-seed=NUM
+    category: checksums
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --ipv4
+    short: -4
+    long: --ipv4
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --ipv6
+    short: -6
+    long: --ipv6
+    category: connection
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --version
+    short: -V
+    long: --version
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --help
+    short: -h (*)
+    long: --help
+    category: general
+    upstream_default: off
+    status: implemented
+    notes: "Available in oc-rsync CLI help output."
+  - option: --connect-program=COMMAND
+    short: ''
+    long: --connect-program=COMMAND
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --remote-option=OPTION
+    short: -M
+    long: --remote-option=OPTION
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --protect-args
+    short: -s
+    long: --protect-args
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-protect-args
+    short: ''
+    long: --no-protect-args
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-secluded-args
+    short: ''
+    long: --no-secluded-args
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
   - option: --daemon
-    short: 
-    category: daemon
+    short: ''
+    long: --daemon
+    category: oc-rsync-only
     upstream_default: n/a
-    status: implemented
-    notes: ""
-  - option: --dparam
-    short: 
-    category: general
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-recursive
+    short: ''
+    long: --no-recursive
+    category: oc-rsync-only
     upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --detach
-    short: 
-    category: general
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-dirs
+    short: ''
+    long: --no-dirs
+    category: oc-rsync-only
     upstream_default: n/a
-    status: missing
-    notes: ""
-  - option: --no-detach
-    short: 
-    category: general
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --checksum-choice=ALGO
+    short: ''
+    long: --checksum-choice=ALGO
+    category: oc-rsync-only
     upstream_default: n/a
-    status: missing
-    notes: Negates the corresponding positive option.
-oc_only_options:
-  - option: --connect-program
-    short: 
-    notes: Specific to oc-rsync; upstream rsync does not expose this flag.
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --modify-window=SECS
+    short: ''
+    long: --modify-window=SECS
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-hard-links
+    short: ''
+    long: --no-hard-links
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --bwlimit=RATE[:BURST]
+    short: ''
+    long: --bwlimit=RATE[:BURST]
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-bwlimit
+    short: ''
+    long: --no-bwlimit
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --timeout=SECS
+    short: ''
+    long: --timeout=SECS
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --contimeout=SECS
+    short: ''
+    long: --contimeout=SECS
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --sockopts=LIST
+    short: ''
+    long: --sockopts=LIST
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-blocking-io
+    short: ''
+    long: --no-blocking-io
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-compress
+    short: ''
+    long: --no-compress
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-open-noatime
+    short: ''
+    long: --no-open-noatime
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --iconv=SPEC
+    short: ''
+    long: --iconv=SPEC
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-iconv
+    short: ''
+    long: --no-iconv
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-relative
+    short: ''
+    long: --no-relative
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-one-file-system
+    short: ''
+    long: --no-one-file-system
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --implied-dirs
+    short: ''
+    long: --implied-dirs
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-prune-empty-dirs
+    short: ''
+    long: --no-prune-empty-dirs
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-progress
+    short: ''
+    long: --no-progress
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --msgs2stderr
+    short: ''
+    long: --msgs2stderr
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --log-file-format=FORMAT
+    short: ''
+    long: --log-file-format=FORMAT
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-delay-updates
+    short: ''
+    long: --no-delay-updates
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-whole-file
+    short: ''
+    long: --no-whole-file
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --remove-sent-files
+    short: ''
+    long: --remove-sent-files
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-append
+    short: ''
+    long: --no-append
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-human-readable
+    short: ''
+    long: --no-human-readable
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
   - option: --no-copy-links
-    short: 
-    notes: Specific to oc-rsync; upstream rsync does not expose this flag.
+    short: ''
+    long: --no-copy-links
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
   - option: --no-copy-unsafe-links
-    short: 
-    notes: Specific to oc-rsync; upstream rsync does not expose this flag.
+    short: ''
+    long: --no-copy-unsafe-links
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
   - option: --no-keep-dirlinks
-    short: 
-    notes: Specific to oc-rsync; upstream rsync does not expose this flag.
+    short: ''
+    long: --no-keep-dirlinks
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-devices
+    short: ''
+    long: --no-devices
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-specials
+    short: ''
+    long: --no-specials
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-super
+    short: ''
+    long: --no-super
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-owner
+    short: ''
+    long: --no-owner
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-group
+    short: ''
+    long: --no-group
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --chmod=SPEC
+    short: ''
+    long: --chmod=SPEC
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-perms
+    short: ''
+    long: --no-perms
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-times
+    short: ''
+    long: --no-times
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-omit-dir-times
+    short: ''
+    long: --no-omit-dir-times
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-omit-link-times
+    short: ''
+    long: --no-omit-link-times
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-acls
+    short: ''
+    long: --no-acls
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-xattrs
+    short: ''
+    long: --no-xattrs
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
+  - option: --no-numeric-ids
+    short: ''
+    long: --no-numeric-ids
+    category: oc-rsync-only
+    upstream_default: n/a
+    status: divergent
+    notes: "Present in oc-rsync CLI but not listed in upstream rsync --help output."
