@@ -27,6 +27,7 @@ fn execute_with_copy_unsafe_links_materialises_file_target() {
         .execute_with_options(
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
+                .links(true)
                 .safe_links(true)
                 .copy_unsafe_links(true),
         )
@@ -74,6 +75,7 @@ fn execute_with_copy_unsafe_links_materialises_directory_target() {
         .execute_with_options(
             LocalCopyExecution::Apply,
             LocalCopyOptions::default()
+                .links(true)
                 .safe_links(true)
                 .copy_unsafe_links(true),
         )

@@ -46,6 +46,7 @@ fn run_client_copies_with_delete_and_filters() {
         .add_filter_rule(FilterRuleSpec::exclude("*.tmp"))
         .add_filter_rule(FilterRuleSpec::protect("protected.txt"))
         .permissions(true)
+        .links(true)
         .times(true)
         .progress(true)
         .stats(true)

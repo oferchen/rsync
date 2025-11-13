@@ -60,6 +60,7 @@ pub struct ClientConfig {
     pub(super) numeric_ids: bool,
     pub(super) preallocate: bool,
     pub(super) preserve_hard_links: bool,
+    pub(super) preserve_symlinks: bool,
     pub(super) filter_rules: Vec<FilterRuleSpec>,
     pub(super) debug_flags: Vec<OsString>,
     pub(super) sparse: bool,
@@ -158,6 +159,7 @@ impl Default for ClientConfig {
             numeric_ids: false,
             preallocate: false,
             preserve_hard_links: false,
+            preserve_symlinks: false,
             filter_rules: Vec::new(),
             debug_flags: Vec::new(),
             sparse: false,
@@ -230,6 +232,14 @@ impl ClientConfig {
     #[doc(alias = "-r")]
     pub const fn recursive(&self) -> bool {
         self.recursive
+    }
+
+    /// Reports whether symlinks should be copied as symlinks.
+    #[must_use]
+    #[doc(alias = "--links")]
+    #[doc(alias = "-l")]
+    pub const fn links(&self) -> bool {
+        self.preserve_symlinks
     }
 
     /// Reports whether directory entries should be copied when recursion is disabled.

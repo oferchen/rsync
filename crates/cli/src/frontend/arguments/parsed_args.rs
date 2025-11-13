@@ -74,6 +74,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) acls: Option<bool>,
     pub(crate) numeric_ids: Option<bool>,
     pub(crate) hard_links: Option<bool>,
+    pub(crate) links: Option<bool>,
     pub(crate) sparse: Option<bool>,
     pub(crate) copy_links: Option<bool>,
     pub(crate) copy_dirlinks: bool,

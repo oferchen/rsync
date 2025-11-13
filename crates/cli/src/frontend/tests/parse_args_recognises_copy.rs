@@ -35,6 +35,49 @@ fn parse_args_recognises_copy_links_flags() {
 }
 
 #[test]
+fn parse_args_recognises_links_flags() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--links"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.links, Some(true));
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-links"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.links, Some(false));
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-l"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.links, Some(false));
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("-l"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.links, Some(true));
+}
+
+#[test]
 fn parse_args_recognises_copy_unsafe_links_flags() {
     let parsed = parse_args([
         OsString::from(RSYNC),

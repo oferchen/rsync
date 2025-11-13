@@ -127,6 +127,8 @@ pub struct RemoteFallbackArgs {
     pub numeric_ids: Option<bool>,
     /// Optional `--hard-links`/`--no-hard-links` toggle.
     pub hard_links: Option<bool>,
+    /// Optional `--links`/`--no-links` toggle.
+    pub links: Option<bool>,
     /// Optional `--copy-links`/`--no-copy-links` toggle.
     pub copy_links: Option<bool>,
     /// Enables `--copy-dirlinks` when `true`.
