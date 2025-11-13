@@ -83,7 +83,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.os-arch }}.tar.gz
-          path: oc-rsync-${{ matrix.os-arch }}.tar.gz
+          path: dist/oc-rsync-${{ matrix.os-arch }}.tar.gz
 
       - name: Upload .deb
         if: matrix.cross == false
@@ -147,7 +147,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.os-arch }}.tar.gz
-          path: oc-rsync-${{ matrix.os-arch }}.tar.gz
+          path: dist/oc-rsync-${{ matrix.os-arch }}.tar.gz
 
   # --------------------------------------------------
   # Windows builds on windows-latest
@@ -192,16 +192,22 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          cargo build --release --target ${{ matrix.target }} --bin oc-rsync
+          cargo build --release --target ${{ matrix.target }} --bin oc-rsync --no-default-features --features "zstd lz4 iconv"
 
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item "target\${{ matrix.target }}\release\oc-rsync.exe" dist\
+          $dist = Join-Path (Get-Location) "dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $artifact = Join-Path $dist "oc-rsync-${{ matrix.os-arch }}.zip"
+          $binary = "target\${{ matrix.target }}\release\oc-rsync.exe"
+          if (-not (Test-Path $binary)) {
+            Write-Error "expected binary '$binary' to exist"
+          }
+          Compress-Archive -Path $binary -DestinationPath $artifact -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: oc-rsync-${{ matrix.os-arch }}.zip
-          path: dist\
+          path: dist\oc-rsync-${{ matrix.os-arch }}.zip
