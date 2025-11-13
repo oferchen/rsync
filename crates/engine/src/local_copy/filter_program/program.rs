@@ -2,7 +2,10 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
-use filters::{FilterAction, FilterRule};
+#[cfg(all(unix, feature = "xattr"))]
+use filters::FilterAction;
+use filters::FilterRule;
+#[cfg(all(unix, feature = "xattr"))]
 use globset::{GlobBuilder, GlobMatcher};
 
 use super::super::LocalCopyError;
@@ -25,7 +28,7 @@ pub struct FilterProgram {
     dir_merge_rules: Vec<DirMergeRule>,
     exclude_if_present_rules: Vec<ExcludeIfPresentRule>,
 
-    // XAttr filter strategy – only present where it is meaningful.
+    // XAttr filter strategy – present only where meaningful.
     #[cfg(all(unix, feature = "xattr"))]
     xattr_rules: Vec<XattrRule>,
 }
@@ -192,7 +195,7 @@ impl FilterProgram {
         Ok(false)
     }
 
-    // XAttr filtering “strategy” – only compiled where xattrs are supported.
+    // XAttr filtering strategy – only compiled where supported.
     #[cfg(all(unix, feature = "xattr"))]
     pub(crate) fn has_xattr_rules(&self) -> bool {
         !self.xattr_rules.is_empty()
