@@ -236,7 +236,12 @@ pub fn probe_cargo_tool(
 
     // For probes, keep the slightly different label used in existing tests.
     let program_label = Some(format!("{display} (probe)"));
-    Err(map_cargo_failure(display, install_hint, output, program_label))
+    Err(map_cargo_failure(
+        display,
+        install_hint,
+        output,
+        program_label,
+    ))
 }
 
 #[cfg(test)]
