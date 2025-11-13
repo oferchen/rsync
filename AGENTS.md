@@ -1,3 +1,4 @@
+````markdown
 # AGENTS.md — Roles, Responsibilities, APIs, and Error/Message Conventions
 
 This document defines the internal actors (“agents”), their responsibilities, APIs, invariants, and how user-visible messages (including Rust source file remapping) are produced. All binaries must route user-visible behavior through these agents via the `core` facade.
@@ -9,263 +10,390 @@ This document defines the internal actors (“agents”), their responsibilities
 - **Canonical branding metadata** is sourced from `[workspace.metadata.oc_rsync]`
   in `Cargo.toml`. The branded entrypoint is the single binary **`oc-rsync`**
   that covers both client and daemon modes. Downstream packaging may provide
-  compatibility symlinks if needed, but the workspace no longer builds
-  separate wrapper binaries. The daemon configuration lives under `/etc/oc-rsyncd/` (for example
-  `/etc/oc-rsyncd/oc-rsyncd.conf` and `/etc/oc-rsyncd/oc-rsyncd.secrets`), the
-  published version string is `3.4.1-rust`, and the authoritative source
-  repository URL is <https://github.com/oferchen/rsync>. Any user-facing surface
-  (rustdoc examples, CLI help, documentation, packaging manifests, CI logs) must
-  derive these values from the shared metadata via the `xtask branding` helpers
-  or equivalent library APIs rather than hard-coding constants.
-- **Error Message Suffix (C→Rust remap)**:
-  Format: `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`
+  compatibility symlinks if needed, but the workspace does **not** build
+  separate wrapper binaries. The daemon configuration lives under
+  `/etc/oc-rsyncd/` (for example `/etc/oc-rsyncd/oc-rsyncd.conf` and
+  `/etc/oc-rsyncd/oc-rsyncd.secrets`), the published version string is
+  `3.4.1-rust`, and the authoritative source repository URL is
+  <https://github.com/oferchen/rsync>. Any user-facing surface
+  (rustdoc examples, CLI help, documentation, packaging manifests, CI logs)
+  must derive these values from the shared metadata via the `xtask branding`
+  helpers or equivalent library APIs rather than hard-coding constants.
+
+- **Error Message Suffix (C→Rust remap)**  
+  Format:  
+  `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`  
   Implemented in `crates/core/src/message.rs` via:
-  - `role: Role` enum (`Sender/Receiver/Generator/Server/Client/Daemon`) chosen at call-site.  
-  - `source_path: &'static str = file!()`; `source_line: u32 = line!()`; normalized to repo-relative.  
-  - Central constructor: `Message::error(code, text).with_role(role).with_source(file!(), line!())`.
-- **Roles in trailers** mirror upstream semantics exactly.  
-- **All info/warn/error/progress strings** are centralized in `core::message::strings` for snapshot tests.
-- **Remote fallback guardrails**: before spawning upstream helpers, the client
-  and daemon must confirm that the selected fallback binary exists on `PATH`
-  (or via explicit overrides) and is executable, surfacing a branded
-  diagnostic when the check fails so operators can install upstream `rsync` or
-  set `OC_RSYNC_FALLBACK` appropriately. Use the shared
-  `core::fallback::fallback_binary_available` and
-  `core::fallback::describe_missing_fallback_binary` helpers to keep the
-  guard rails consistent across binaries. The availability helper memoises the
-  lookup for each `(binary, PATH[, PATHEXT])` tuple while storing the resolved
-  executable path so cached hits are revalidated when the file disappears, and
-  negative entries expire after a short TTL to pick up newly installed
-  binaries. Any updates must preserve this behaviour and ensure tests adjust
-  environment variables via the existing `EnvGuard` utilities so cache entries
-  stay coherent.
-- **Workspace-wide nextest configuration**: `.config/nextest.toml` pins
-  `[profile.default.package] graph = "workspace"` so a bare
-  `cargo nextest run` executes the entire workspace without additional flags.
-  Contributors must keep this file in sync with any future profile
-  adjustments so local invocations match CI coverage.
-- **Standard-library-first implementations**: Prefer the Rust standard
-  library and well-supported crates that are actively maintained. Avoid
-  deprecated APIs, pseudo-code, or placeholder logic; every change must ship
-  production-ready behaviour with comprehensive tests or parity checks.
-- **CPU-accelerated hot paths**: The rolling checksum pipeline uses
-  architecture-specific SIMD fast paths (AVX2 and SSE2 on `x86`/`x86_64`, NEON on
-  `aarch64`) that fall back to the scalar implementation for other targets.
-  Runtime feature detection is cached via `OnceLock` so repeated checksum calls
-  avoid the overhead of re-querying `is_x86_feature_detected!`/
-  `is_aarch64_feature_detected!`, and any updates
-  must preserve that memoisation alongside the scalar fallback. Any updates to
-  `crates/checksums`—especially `rolling::checksum::accumulate_chunk`—must keep
-  the SIMD and scalar implementations in lockstep, reuse the shared scalar
-  helper for edge cases, and extend the parity tests
-  (`avx2_accumulate_matches_scalar_reference`,
-  `sse2_accumulate_matches_scalar_reference`, and
-  `neon_accumulate_matches_scalar_reference`) whenever new optimisations are
-  introduced. The SIMD reducers rely on `horizontal_sum_epi64` to collapse
-  64-bit partial sums without spilling to the stack; any future changes to the
-  AVX2/SSE2 accumulation paths should reuse that helper so the scalar and SIMD
-  implementations remain identical. The sparse-writer fast path in
-  `crates/engine/src/local_copy/executor/file/sparse.rs` now batches zero-run
-  detection into 16-byte `u128` comparisons before falling back to the scalar
-  prefix scan; `zero_run_length_matches_scalar_reference` keeps the vectorised
-  path and scalar reference in lockstep. Updates must preserve the single
-  seek-per-zero-run invariant and keep those tests (and the sparse copy
-  integrations) green. The bandwidth parser in `crates/bandwidth`
-  likewise leans on `memchr` to locate decimal separators and exponent markers
-  so ASCII scans stay vectorised; updates must keep the byte-oriented fast path
-  aligned with the exhaustive parser tests. The legacy negotiation readers in
-  `crates/protocol::negotiation::sniffer::legacy` and
-  `crates/transport::negotiation::stream::legacy` now route newline detection
-  through `memchr` so ASCII scanning benefits from the same SIMD acceleration
-  across buffered prefixes and streaming reads. Future changes must preserve
-  the vectorised newline lookup while keeping the replay buffer invariants and
-  associated negotiation tests green. Additional CPU offloading should
-  follow the same
-  pattern of runtime feature detection (where applicable) paired with
-  deterministic tests that compare against the scalar reference implementation.
-  The vectored rolling checksum updater coalesces small `IoSlice` buffers into
-  a 128-byte stack scratch space before dispatching so SIMD back-ends can run on
-  aggregated input; any regression must keep that scratch path and its
-  associated unit test (`update_vectored_coalesces_small_slices`) intact.
-  Multi-byte rolling updates (`RollingChecksum::roll_many`) now rely on the
-  weighted-delta aggregation introduced in
-  `crates/checksums/src/rolling/checksum.rs`, which collapses per-byte loops
-  into a handful of arithmetic reductions while retaining an escape hatch to
-  the scalar `roll` path for exotic slice lengths. Future optimisations must
-  preserve the aggregated arithmetic and extend the long-sequence regression
-  test (`roll_many_matches_single_rolls_for_long_sequences`) so both code paths
-  remain in parity. The `VersionInfoConfig::with_runtime_capabilities` helper
-  surfaces the SIMD detection result (via
-  `checksums::simd_acceleration_available`) so `--version` output tracks
-  the acceleration active at runtime; update the helper whenever new
-  architecture-specific paths are introduced.
-- **Environment guardrails for tests**: When exercising fallback overrides or
-  other environment-sensitive logic in unit tests, use the existing
-  `EnvGuard` helpers (for example, `crates/daemon/src/tests/support.rs` or the
-  scoped guard in `crates/daemon/src/daemon/sections/tests.rs`) so variables
-  are restored even if the test panics.
-- **CI workflow contract**: `.github/workflows/ci.yml`
-  `.github/workflows/build-cross.yml`. The cross-compile dispatcher
-  defines the matrix for multiple operating systems and architectures build and cross compile.
-  Automation inside CI steps must rely on Rust tooling (`cargo`, `cargo xtask`) rather than ad-hoc shell or Python scripts,
-  and additional validation/packaging logic should be surfaced via `xtask` subcommands so both local and CI runs stay in sync.
-- **`xtask docs` decomposition**: the former monolithic `docs.rs` command
-  handler now lives in `xtask/src/commands/docs/` with dedicated modules for
-  argument parsing (`cli.rs`), command execution (`executor.rs`), and
-  validation (`validation/`). Keep new helpers scoped to these purpose-built
-  modules so the hygiene guard continues to pass and future contributors can
-  extend validation logic without regressing the line-count cap.
-- **`xtask package` decomposition**: the packaging command resides in
-  `xtask/src/commands/package/` split across `args.rs`, `build.rs`,
-  `tarball.rs`, and `tests.rs`. Extend argument handling or packaging logic in
-  those focused modules rather than introducing a monolithic
-  `package.rs`, and keep each file below the hygiene thresholds.
-- **CLI execution decomposition**: The `crates/cli/src/frontend/execution`
-  module is being split into dedicated submodules (`options`, `module_listing`,
-  `validation`, etc.) so the formerly monolithic `execution.rs` file can be
-  reduced below the hygiene thresholds. New helpers should continue to live in
-  those purpose-specific modules (or additional siblings) instead of returning
-  to `drive/mod.rs`, and future iterations should keep migrating logical
-  segments (for example, fallback handling and config assembly) until every
-  file stays under the 600-line cap. The `drive/` directory now owns the
-  high-level orchestration flow through dedicated helpers (`options.rs`
-  handles info/debug/bandwidth/compress parsing, `config.rs` assembles the
-  client builder, `filters.rs` wires include/exclude rules, `summary.rs`
-  renders progress/output, `fallback.rs` prepares remote invocation arguments,
-  and `metadata.rs` derives preservation flags). Extend these modules directly
-  instead of inflating `mod.rs` again.
-- **Drive workflow layering**: The orchestrator now lives under
-  `crates/cli/src/frontend/execution/drive/workflow/` with
-  `preflight.rs`, `fallback_plan.rs`, and `operands.rs` hosting the
-  argument validation, remote-fallback assembly, and usage rendering logic,
-  respectively. Keep new flow-control helpers in these focused modules (or
-  additional siblings) so `workflow/mod.rs` remains under the hygiene cap and
-  primarily coordinates the sequence rather than re-implementing the details.
-- **CLI argument parser decomposition**: `crates/cli/src/frontend/arguments`
-  has been converted into a module tree (`program_name.rs`, `bandwidth.rs`,
-  `parsed_args.rs`, `env.rs`, and `parser.rs`) to keep every file below the
-  hygiene ceiling. New parsing helpers or data structures must join the
-  appropriate submodule (or an additional sibling) so `parser.rs` stays focused
-  on orchestration while data types and environment glue remain isolated.
-- **Filter rule decomposition**: The CLI filter utilities now live in
-  `crates/cli/src/frontend/filter_rules/` with focused modules for arguments,
-  CVS exclusions, directive parsing, merge handling, and source loading. New
-  helpers must join the appropriate submodule rather than reintroducing a
-  monolithic `filter_rules.rs`; keep each file below the hygiene threshold and
-  follow the existing layering when extending filter behaviour.
-- **Local copy file executor decomposition**: The massive
-  `crates/engine/src/local_copy/executor/file.rs` implementation has been
-  reorganized into the `file/` module tree (`copy/`, `links`, `transfer`, etc.)
-  so each responsibility stays below the hygiene limit. Future changes to file
-  transfer behaviour must extend the appropriate helper module rather than
-  reintroducing monolithic logic in a single file.
-- **Bandwidth limiter decomposition**: The throttling implementation now lives
-  in `crates/bandwidth/src/limiter/` with dedicated modules for configuration
-  (`change.rs`), runtime behaviour (`core.rs`), and sleep utilities
-  (`sleep.rs`). New pacing logic or helpers must integrate with these modules
-  instead of growing a single large source file.
-- **Dir-merge parser decomposition**: The former
-  `crates/engine/src/local_copy/dir_merge/parse.rs` has been split into the
-  `parse/` module directory (`types.rs`, `line.rs`, `merge.rs`,
-  `dir_merge.rs`, `modifiers.rs`) so no single file exceeds the hygiene cap.
-  When extending dir-merge parsing, add helpers to the relevant focused module
-  instead of reassembling the original monolithic file.
+  - `role: Role` enum (`Sender`, `Receiver`, `Generator`, `Server`, `Client`,
+    `Daemon`) chosen at call-site.
+  - `source_path: &'static str = file!()` and `source_line: u32 = line!()`,
+    normalized to a repo-relative path.
+  - Central constructor:
+    `Message::error(code, text).with_role(role).with_source(file!(), line!())`.
+
+  Roles in trailers **must** mirror upstream semantics exactly, with Rust-specific
+  metadata only in the suffix trailer.
+
+- **Centralized message strings**  
+  All info/warn/error/progress strings are centralized in
+  `core::message::strings`. Snapshot tests assert that the shape and content of
+  messages remains stable, except for the Rust source suffix and minor
+  whitespace.
+
+- **Remote fallback guardrails**  
+  Before spawning upstream helpers (`rsync` from the system), the client and
+  daemon paths must:
+  - Confirm that the selected fallback binary exists on `PATH` (or via explicit
+    overrides such as `OC_RSYNC_FALLBACK`).
+  - Confirm that it is executable.
+  - Surface a branded diagnostic when the check fails so operators can install
+    upstream `rsync` or adjust `OC_RSYNC_FALLBACK`.
+
+  Shared helpers:
+  - `core::fallback::fallback_binary_available`
+  - `core::fallback::describe_missing_fallback_binary`
+
+  The availability helper memoizes lookups for each `(binary, PATH[, PATHEXT])`
+  tuple while storing the resolved executable path. Cached hits are revalidated
+  when the file disappears, and negative entries expire after a short TTL so
+  newly installed binaries are picked up. Tests adjust environment variables via
+  `EnvGuard` utilities so cache entries stay coherent.
+
+- **Workspace-wide nextest configuration**  
+  The repository uses `cargo nextest` as the primary test runner. A
+  `.config/nextest.toml` file configures the **default** profile so that:
+
+  - A bare `cargo nextest run` behaves sensibly for local development.
+  - CI invokes `cargo nextest run --all-features --workspace` to guarantee the
+    entire workspace is exercised.
+
+  Any changes to `.config/nextest.toml` must preserve this contract: CI and
+  local developers should not need to remember crate lists or non-obvious
+  arguments just to run the full suite.
+
+- **Standard-library-first**  
+  Prefer the Rust standard library and well-supported, actively maintained
+  crates. Avoid deprecated APIs, pseudo-code, or placeholder logic; every change
+  must ship production-ready behaviour with tests and/or parity checks.
+
+- **CPU-accelerated hot paths**  
+
+  The rolling checksum and other hot paths use architecture-specific SIMD
+  fast paths with scalar fallbacks:
+
+  - `x86`/`x86_64`: AVX2 and SSE2.
+  - `aarch64`: NEON.
+  - Other architectures: scalar path only.
+
+  Runtime feature detection is cached via `OnceLock` so repeated calls do not
+  repeatedly invoke `is_x86_feature_detected!` / `is_aarch64_feature_detected!`.
+
+  In `crates/checksums`:
+
+  - `rolling::checksum::accumulate_chunk` provides the main SIMD entrypoint.
+  - SIMD and scalar implementations must remain in **lockstep**, reusing the
+    scalar helper for edge cases.
+  - Parity tests such as
+    `avx2_accumulate_matches_scalar_reference`,
+    `sse2_accumulate_matches_scalar_reference`, and
+    `neon_accumulate_matches_scalar_reference` must be updated whenever
+    optimisations are introduced.
+
+  The SIMD reducers rely on a `horizontal_sum_epi64` helper to collapse 64-bit
+  partial sums without spilling to the stack; future AVX2/SSE2 changes should
+  continue to reuse that helper.
+
+  Sparse writing:
+
+  - `crates/engine/src/local_copy/executor/file/sparse.rs` batches zero-run
+    detection into 16-byte `u128` comparisons first, then falls back to a scalar
+    prefix scan.
+  - The `zero_run_length_matches_scalar_reference` test keeps vectorized and
+    scalar paths aligned.
+  - The implementation must preserve the **single seek-per-zero-run** invariant.
+
+  Bandwidth parsing:
+
+  - `crates/bandwidth` uses `memchr` to locate decimal separators and exponent
+    markers so ASCII scans remain vectorised.
+  - Updates must keep the byte-oriented fast path aligned with the exhaustive
+    parser tests.
+
+  Protocol negotiation:
+
+  - Legacy readers in
+    `crates/protocol::negotiation::sniffer::legacy` and
+    `crates/transport::negotiation::stream::legacy` route newline detection
+    through `memchr` so ASCII scanning benefits from SIMD across buffered and
+    streaming reads.
+  - Changes must preserve vectorised newline lookup and the replay buffer
+    invariants.
+
+  Rolling checksum updates:
+
+  - The vectored updater coalesces small `IoSlice` buffers into a 128-byte stack
+    scratch space before dispatching so SIMD back-ends can run on aggregated
+    input. The `update_vectored_coalesces_small_slices` test must stay green.
+  - `RollingChecksum::roll_many` uses weighted-delta aggregation to collapse
+    per-byte loops into a handful of arithmetic reductions, with an escape hatch
+    to the scalar `roll` path for exotic slice lengths.
+  - Future optimisations must preserve the aggregated arithmetic and extend
+    `roll_many_matches_single_rolls_for_long_sequences`.
+
+  Version reporting:
+
+  - `VersionInfoConfig::with_runtime_capabilities` surfaces the SIMD detection
+    result via `checksums::simd_acceleration_available`, and `--version` output
+    must be updated whenever new architecture-specific paths are introduced.
+
+  Any additional CPU offloading should follow the same pattern: runtime feature
+  detection (where applicable) plus deterministic tests that compare against a
+  scalar reference.
+
+- **Environment guardrails for tests**  
+  Environment-sensitive logic (fallback overrides, config paths, etc.) must use
+  `EnvGuard`-style utilities so environment variables are always restored even if
+  tests panic.
+
+- **CI workflow contract**  
+
+  The GitHub Actions workflows are part of the public contract:
+
+  - `.github/workflows/ci.yml`  
+    - Runs on `ubuntu-latest` for pushes to `master`/`main`, pull requests, and
+      manual `workflow_dispatch`.
+    - Jobs:
+      - `lint-and-test`: `cargo fmt --all -- --check`,
+        `cargo clippy --workspace --all-targets --all-features --no-deps`,
+        and `cargo nextest run --all-features --workspace` (with
+        `RUSTFLAGS="-D warnings"` and `Swatinem/rust-cache`).
+  - `.github/workflows/build-cross.yml`  
+    - Builds cross-platform release artifacts from a Linux host using a
+      target matrix (Linux/macOS/Windows; x86_64 and aarch64 where applicable).
+    - Delegates packaging & SBOM generation to `cargo xtask` commands wherever
+      possible so local and CI builds are aligned.
+
+  All additional automation and validation should be surfaced via `cargo xtask`
+  subcommands. CI jobs **must not** grow large ad-hoc shell or Python scripts
+  that diverge from local tooling.
+
+- **`xtask docs` decomposition**  
+  The former monolithic `docs.rs` handler now resides under
+  `xtask/src/commands/docs/` with modules for:
+  - argument parsing (`cli.rs`),
+  - command execution (`executor.rs`),
+  - validation (`validation/`).
+
+  New helpers stay in these purpose-built modules so the hygiene guard passes and
+  future contributors can extend validation logic without reintroducing a single
+  huge file.
+
+- **`xtask package` decomposition**  
+  The packaging command lives in `xtask/src/commands/package/`, split into:
+  - `args.rs`,
+  - `build.rs`,
+  - `tarball.rs`,
+  - `tests.rs`.
+
+  Extend argument handling or packaging logic only in these focused modules; do
+  not recreate monolithic `package.rs`.
+
+- **CLI execution decomposition**  
+  `crates/cli/src/frontend/execution` is split into dedicated submodules
+  (`options`, `module_listing`, `validation`, etc.). The higher-level drive
+  orchestration is in `drive/` and its children:
+
+  - `options.rs` — info/debug/bandwidth/compress parsing
+  - `config.rs` — client builder assembly
+  - `filters.rs` — include/exclude wiring
+  - `summary.rs` — progress & output rendering
+  - `fallback.rs` — remote invocation argument preparation
+  - `metadata.rs` — preservation flags
+
+  New functionality must join these modules directly (or new siblings), not
+  `drive/mod.rs`.
+
+- **Drive workflow layering**  
+  The orchestrator resides under
+  `crates/cli/src/frontend/execution/drive/workflow/`:
+
+  - `preflight.rs` — argument validation
+  - `fallback_plan.rs` — remote-fallback assembly
+  - `operands.rs` — usage rendering & operand checks
+
+  New flow-control helpers belong in these focused modules (or new siblings)
+  instead of inflating `workflow/mod.rs`.
+
+- **CLI argument parser decomposition**  
+  `crates/cli/src/frontend/arguments` is a module tree:
+
+  - `program_name.rs`
+  - `bandwidth.rs`
+  - `parsed_args.rs`
+  - `env.rs`
+  - `parser.rs`
+
+  Parsing helpers and data structures must join the appropriate submodule so
+  `parser.rs` remains orchestration-only.
+
+- **Filter rule decomposition**  
+  CLI filter utilities live in `crates/cli/src/frontend/filter_rules/` covering:
+
+  - filter arguments,
+  - CVS exclusions,
+  - directive parsing,
+  - merge handling,
+  - source loading.
+
+  New behaviour belongs in the relevant submodule.
+
+- **Local copy file executor decomposition**  
+  The large `crates/engine/src/local_copy/executor/file.rs` has been split into
+  a `file/` module tree (`copy/`, `links`, `transfer`, etc.). All new file
+  transfer behaviour must extend those helpers instead of recreating monolithic
+  logic.
+
+- **Bandwidth limiter decomposition**  
+  Throttling logic is under `crates/bandwidth/src/limiter/`:
+
+  - `change.rs` — configuration
+  - `core.rs` — runtime behaviour
+  - `sleep.rs` — sleep utilities
+
+- **Dir-merge parser decomposition**  
+  The dir-merge parser lives in `crates/engine/src/local_copy/dir_merge/parse/`
+  (`types.rs`, `line.rs`, `merge.rs`, `dir_merge.rs`, `modifiers.rs`). Extend
+  parsing via these modules, not via a new all-in-one file.
 
 ---
 
 ## Agents Overview
 
-### 1) Client (CLI Frontend)
+### 1) Client & Daemon Entrypoint (CLI Binary)
+
 - **Binary**: `src/bin/oc-rsync.rs`
-- **Depends on**: `cli`, `core`, `transport`  
+- **Depends on**: `cli`, `core`, `transport`, `daemon`, `logging`
 - **Responsibilities**:
   - Parse CLI (Clap v4) and render upstream-parity help/misuse.
-  - Build `CoreConfig` via Builder and call `core::run_client()`.
-  - Route `--msgs2stderr`, `--out-format`, `--info/--debug` to `logging`.
-  - When invoked without transfer operands, emit the usage banner to **stdout** before surfacing the canonical "missing source operands" error so tests remain deterministic and compatible with scripts that expect upstream ordering.
-- **Invariants**:
-  - Never access protocol/engine directly; only via `core`.
-  - `--version` reflects feature gates and prints `3.4.1-rust`.
+  - Dispatch into:
+    - Client mode (default): build `CoreConfig` and call `core::run_client`.
+    - Daemon/server mode (e.g. `--daemon`, `--server`): delegate to the daemon
+      agent, still via `core`.
+  - Route `--msgs2stderr`, `--out-format`, and `--info` / `--debug` flags to
+    `logging`.
+  - When invoked without transfer operands, emit the usage banner to **stdout**
+    before surfacing the canonical “missing source operands” error so behaviour
+    matches upstream and existing scripts.
 
-**Key API**:
+- **Invariants**:
+  - Never access protocol or engine directly; only via `core`.
+  - `--version` reflects feature gates and prints `3.4.1-rust` with the
+    runtime-capabilities trailer (SIMD, enabled features, etc.).
+  - Daemon mode is a **mode** of `oc-rsync`, not a separate binary.
+
+**Key API (binary-level)**:
+
 ```rust
 pub fn main() -> ExitCode {
-    let (cfg, fmt) = cli::parse_args();         // custom help renderer parity
-    core::run_client(cfg, fmt).into()
+    let code = cli::run();
+    cli::exit_code_from(code)
 }
 ````
 
-*Decomposition note*: flag parsing lives in `crates/cli/src/frontend/arguments.rs`; keep new switches in that module to avoid regressing the hygiene guard on `mod.rs`.
+(*Dispatch into client vs daemon lives behind the `cli` crate’s frontend.*)
 
 ---
 
-### 2) Daemon (rsyncd)
+### 2) Daemon Agent (`rsyncd` semantics)
 
-* **Binary**: `src/bin/oc-rsyncd.rs`
-* **Depends on**: `daemon`, `core`, `transport`, `logging`
+* **Crate**: `crates/daemon`
+
+* **Mode**: Entered via `oc-rsync` CLI (e.g. `oc-rsync --daemon`)
+
+* **Depends on**: `core`, `transport`, `logging`, `metadata`
+
 * **Responsibilities**:
 
-  * Listen on TCP; legacy `@RSYNCD:` negotiation for pre-30; binary handshake otherwise.
+  * Listen on TCP; implement legacy `@RSYNCD:` negotiation for older clients,
+    and the binary handshake for protocol 30+.
   * Apply `oc-rsyncd.conf` semantics (auth users, secrets 0600, chroot, caps).
-  * Enforce daemon `--bwlimit` as default and **cap**.
-  * sd_notify ready/status; systemd unit/env-file integration.
+  * Enforce daemon `--bwlimit` as both default and **cap**.
+  * Integrate with systemd (sd_notify ready/status) for service units.
+
 * **Invariants**:
 
-  * Never bypass `core` for transfers or metadata.
+  * Never bypass `core` for transfers or metadata; per-session work flows
+    through `core::run_daemon_session`.
+  * Secrets files must be permission-checked and errors rendered with
+    upstream-compatible diagnostics.
 
 **Key API**:
 
 ```rust
-pub fn main() -> ExitCode {
-    let conf = daemon::load_config();
-    daemon::serve(conf) // loops; spawns sessions; per-session calls into core
+pub fn run_daemon_mode(args: DaemonArgs) -> Result<(), DaemonError> {
+    let conf = load_config(&args)?;
+    serve(conf) // loops; spawns sessions; per-session -> core::run_daemon_session
 }
 ```
 
-*Modularity notes*: the daemon implementation is now decomposed across
-`crates/daemon/src/daemon/sections/*.rs` and pulled into `daemon.rs` via
-`include!` blocks so no single file exceeds the hygiene caps. New work that
-touches the daemon should follow this layout, adding additional section files as
-needed rather than growing existing ones.
+Daemon entrypoints are wired in the `cli` frontend; there is **no** separate
+`oc-rsyncd` binary.
 
 ---
 
 ### 3) Core (Facade)
 
 * **Crate**: `crates/core`
-* **Depends on**: `protocol`, `engine`, `meta`, `filters`, `compress`, `checksums`, `logging`, `transport`
+
+* **Depends on**:
+  `protocol`, `engine`, `walk`, `filters`, `compress`, `checksums`, `metadata`,
+  `logging`, `transport`
+
 * **Responsibilities**:
 
-  * Single facade for orchestration: file walking, selection, delta pipeline, metadata, xattrs/ACLs, messages/progress.
-  * Enforce centralization: all transfers use `core::session()`; both CLI and daemon go through here.
-  * Error/message construction (including Rust source suffix + role trailers).
+  * Single facade for orchestration: file walking, selection, delta pipeline,
+    metadata, xattrs/ACLs, messages, and progress.
+  * Enforce centralisation: all transfers use `core::session()` and
+    `CoreConfig`; both CLI and daemon go through here.
+  * Error/message construction, including Rust source suffix and role trailers.
+
 * **Invariants**:
 
-  * No `unwrap/expect`; stable error enums → exit code mapping.
+  * No `unwrap` / `expect` on fallible paths; use stable error enums mapped to
+    exit codes.
+  * Role trailers (`[sender]`, `[receiver]`, `[generator]`, `[server]`,
+    `[client]`, `[daemon]`) mirror upstream semantics.
 
 **Key API**:
 
 ```rust
 pub struct CoreConfig { /* builder-generated */ }
+
 pub fn run_client(cfg: CoreConfig, fmt: logging::Format) -> Result<(), CoreError>;
+
 pub fn run_daemon_session(ctx: DaemonCtx, req: ModuleRequest) -> Result<(), CoreError>;
 ```
 
 ---
 
-### 4) Protocol (Handshake & Multiplex)
+### 4) Protocol (Handshake & Multiplexing)
 
 * **Crate**: `crates/protocol`
 * **Responsibilities**:
 
-  * Version negotiation (32–28), constants copied from upstream.
-  * Envelope read/write; multiplex `MSG_*`; legacy `@RSYNCD:` fallback.
-  * Golden byte streams and fuzz tests.
-* **Key API**:
+  * Version negotiation (protocol 32 down to 28), with constants copied from
+    upstream.
+  * Envelope read/write; multiplex `MSG_*` frames.
+  * Legacy `@RSYNCD:` fallback and line-based negotiation for older clients.
+  * Golden byte streams and fuzz tests for handshake and message framing.
+
+**Key API**:
 
 ```rust
 pub fn negotiate(io: &mut dyn ReadWrite) -> Result<Proto, ProtoError>;
+
 pub fn send_msg(io: &mut dyn Write, tag: MsgTag, payload: &[u8]) -> io::Result<()>;
+
 pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 ```
 
@@ -274,39 +402,45 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 ### 5) Engine (Delta Pipeline)
 
 * **Crate**: `crates/engine`
+
 * **Responsibilities**:
 
   * Rolling checksum + strong checksum scheduling.
-  * Block-match/literal emission per upstream heuristics.
-  * `--inplace/--partial` behavior; temp-file commit.
-* **Perf**: buffer reuse; vectored I/O; cache-friendly layouts.
+  * Block-match / literal emission per upstream heuristics.
+  * `--inplace` / `--partial` behaviour; temp-file commit semantics.
+  * Efficient local-copy executor with sparse support.
+
+* **Performance**:
+
+  * Buffer reuse; vectored I/O; cache-friendly data structures.
   * `delta/script.rs::apply_delta` caches the current basis offset so
     sequential `COPY` tokens avoid redundant seeks. The helper advances the
-    tracked position with `u64::checked_add` on every buffered read and
-    returns an `InvalidInput` error on overflow. Future optimisations must keep
-    this monotonic tracking intact and continue reusing the shared copy buffer
-    to minimise syscall churn on large delta streams.
+    tracked position with `u64::checked_add` and returns `InvalidInput` on
+    overflow while reusing a shared copy buffer to minimise syscall churn.
 
-#### Local Copy Module Layout
+#### Local Copy Layout
 
-- `crates/engine/src/local_copy/` is decomposed into focused modules. The
-  `executor/` directory now contains `cleanup`, `directory`, `file`,
-  `reference`, `sources`, `special`, and `util` submodules. Shared helpers such
-  as hard-link tracking, metadata synchronization, and operand parsing live in
-  sibling files (`hard_links.rs`, `metadata_sync.rs`, `operands.rs`).
-- New work touching the local copy path **must** follow this structure instead
-  of growing a single monolithic file. Prefer adding small modules and keep
-  re-exports in `executor/mod.rs` limited to items required by other modules or
-  tests. Test-only helpers are gated behind `cfg(test)` to keep release builds
-  warning-free.
-- When splitting further, update this section to document the new module and
-  adjust the curated re-export list so that only intentional surface area is
-  exposed.
-- `local_copy/context.rs` keeps the `CopyContext` inherent impl decomposed via
-  `include!` into `context_impl/impl_part*.rs` files, each ≤400 LoC. Extend the
-  implementation by adding new part files (and updating the include list) when
-  a segment would otherwise exceed the hygiene caps—never grow the root file
-  beyond the centralized preamble/postamble.
+* `crates/engine/src/local_copy/` is decomposed into focused modules, with
+  `executor/` containing:
+
+  * `cleanup`
+  * `directory`
+  * `file`
+  * `reference`
+  * `sources`
+  * `special`
+  * `util`
+
+  Sibling helpers:
+
+  * `hard_links.rs`
+  * `metadata_sync.rs`
+  * `operands.rs`
+
+* `local_copy/context.rs` uses `include!` to split `CopyContext` across
+  `context_impl/impl_part*.rs`, each under the hygiene cap.
+
+New work touching local copy must follow this structure.
 
 ---
 
@@ -316,7 +450,7 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 * **Responsibilities**:
 
   * Deterministic traversal; relative-path enforcement; path-delta compression.
-  * Sorted lexicographic order; repeated-field elision.
+  * Sorted lexicographic order; repeated-field elision for bandwidth savings.
 
 ---
 
@@ -325,8 +459,8 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 * **Crate**: `crates/filters`
 * **Responsibilities**:
 
-  * Parser/merger for `--filter`, includes/excludes, `.rsync-filter`.
-  * Property tests & snapshot goldens.
+  * Parser/merger for `--filter`, includes/excludes, and `.rsync-filter`.
+  * Property tests and snapshot goldens to ensure long-term stability.
 
 ---
 
@@ -335,9 +469,15 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 * **Crate**: `crates/metadata`
 * **Responsibilities**:
 
-  * Apply/record perms/uid/gid/ns-mtime/links/devices/FIFOs/symlinks.
-  * `-A/--acls` implies `--perms`; gated features & diagnostics.
-  * `-X/--xattrs` namespace rules; feature gating.
+  * Apply/record:
+
+    * perms/uid/gid,
+    * ns-mtime,
+    * link counts,
+    * devices/FIFOs/symlinks.
+  * `-A/--acls` implies `--perms`; emit upstream-style diagnostics if ACL
+    support is unavailable.
+  * `-X/--xattrs` namespace rules and feature gating.
 
 ---
 
@@ -346,8 +486,8 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 * **Crate**: `crates/compress`
 * **Responsibilities**:
 
-  * Upstream defaults/negotiation; parity with `-z` & `--compress-level`.
-  * Throughput/ratio benchmarks.
+  * Upstream defaults and negotiation for `-z` and `--compress-level`.
+  * Throughput/ratio benchmarks and regression tests.
 
 ---
 
@@ -356,8 +496,8 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 * **Crate**: `crates/checksums`
 * **Responsibilities**:
 
-  * Rolling `rsum`; MD4/MD5/xxhash (protocol-selected).
-  * Property tests (window slide, truncation, seeds).
+  * Rolling `rsum`; strong checksums (MD4/MD5/xxhash) as selected by protocol.
+  * Property tests (window slide, truncation, seeds, SIMD vs scalar parity).
 
 ---
 
@@ -366,116 +506,242 @@ pub fn recv_msg(io: &mut dyn Read) -> io::Result<MessageFrame>;
 * **Crate**: `crates/transport`
 * **Responsibilities**:
 
-  * ssh stdio passthrough; `rsync://` TCP; stdio mux.
-  * Timeouts/back-pressure; daemon cap enforcement.
+  * ssh stdio passthrough.
+  * `rsync://` TCP transport, including daemon-side caps.
+  * stdio multiplexing for subprocess-based fallbacks.
+  * Timeouts/back-pressure and graceful shutdown.
 
 ---
 
 ### 12) Logging & Messages
 
-* **Crate**: `crates/logging`
+* **Crates**: `crates/logging`, `crates/core::message`
 * **Responsibilities**:
 
-  * Map `--info/--debug`; `--msgs2stderr`; `--out-format`.
+  * Mapping for `--info` / `--debug` flags.
+  * `--msgs2stderr` handling; `--out-format` templating.
   * Central construction of user-visible messages via `core::message`.
-  * Exit-code mapping; progress and summary parity.
+  * Exit-code mapping and progress/summary parity.
 
 ---
 
 ## Exit Codes & Roles
 
-* Exit codes map 1:1 to upstream; enforced by integration tests.
+* Exit codes map 1:1 to upstream rsync. Integration tests assert:
+
+  * Known errors map to the expected code.
+  * Unknown errors are clamped to a safe default range.
+
 * Each agent sets its role for message trailers:
 
   * Client sender path → `[sender]`
   * Client receiver path → `[receiver]`
   * Generator on receive side → `[generator]`
-  * Daemon process context → `[server]`/`[daemon]` as upstream does
+  * Daemon process context → `[server]` / `[daemon]` as upstream does
+  * CLI-only paths that are not part of protocol data flow may use `[client]`.
 
 ---
 
 ## Security & Timeouts
 
-* Path normalization & traversal prevention identical to upstream (relative paths only unless explicitly allowed).
-* Timeouts applied at transport and protocol layers; back-pressure respected.
-* `secrets file` permissions (0600) enforced with upstream-style diagnostics.
+* Path normalisation and traversal prevention mirror upstream:
+
+  * Relative paths only, unless explicitly allowed by options.
+  * Symlink and device handling controlled by flags.
+
+* Timeouts are applied at both transport and protocol layers; back-pressure from
+  slow receivers must be respected rather than ignored.
+
+* `secrets file` permissions:
+
+  * Must be `0600`.
+  * Violations emit upstream-style diagnostics with branded trailers.
 
 ---
 
 ## Interop & Determinism
 
-* Loopback CI matrix across protocols 32–28 with upstream versions 3.0.9/3.1.3/3.4.1.
-* Upstream references are cloned from `https://github.com/RsyncProject/rsync` tags
-  (`v3.0.9`, `v3.1.3`, `v3.4.1`) by `tools/ci/run_interop.sh`, which runs
-  `./prepare-source` when necessary before configuring and installing the
-  binaries. Contributors must keep the tag list in sync with the versions tested
-  by the parity harness.
-* Deterministic output: `LC_ALL=C`, `COLUMNS=80`; normalized metadata ordering; stable progress formatting.
-* Error messages include Rust source suffix as specified; snapshot tests assert presence/shape, not specific line numbers.
+* Loopback CI matrix across protocols 32–28 with upstream versions:
+
+  * 3.0.9
+  * 3.1.3
+  * 3.4.1
+
+* Upstream references are cloned from `https://github.com/RsyncProject/rsync`
+  tags (`v3.0.9`, `v3.1.3`, `v3.4.1`) by dedicated interop tooling, which runs
+  `./prepare-source` as needed before configuring and installing the binaries.
+
+* Deterministic output:
+
+  * `LC_ALL=C`
+  * `COLUMNS=80`
+  * Normalised metadata ordering and stable progress formatting.
+
+* Error messages include the Rust source suffix as specified; snapshot tests
+  assert presence and shape, but not specific line numbers.
 
 ---
 
 ## Lint & Hygiene Agents
 
 ### 2.2 `enforce_limits` Agent
-- **Script:** `tools/enforce_limits.sh`
-- **Purpose:** Enforce **LoC caps** (target ≤400; hard **≤600** lines) and comment policy.
-- **Config:** `MAX_RUST_LINES` (default `600`).
-- **Run locally:**
+
+* **Script:** `tools/enforce_limits.sh`
+
+* **Backend:** `cargo run -p xtask -- enforce-limits …`
+
+* **Purpose:** Enforce LoC caps and comment hygiene for Rust source files.
+
+* **Configuration:**
+
+  * Command-line flags (from `xtask enforce-limits`) control:
+
+    * maximum allowed lines per file,
+    * comment ratio limits,
+    * allowed exceptions (e.g. autogenerated modules).
+  * Environment variables such as `MAX_RUST_LINES` may be honoured by the
+    command; see `cargo xtask enforce-limits --help`.
+
+* **Usage:**
+
   ```sh
-  MAX_RUST_LINES=600 bash tools/enforce_limits.sh
+  bash tools/enforce_limits.sh
+  # or, equivalently:
+  cargo run -p xtask -- enforce-limits
   ```
 
 ### 2.4 `no_placeholders` Agent
-- **Script:** `tools/no_placeholders.sh`
-- **Purpose:** Ban `todo!`, `unimplemented!`, `FIXME`, `XXX`, and obvious placeholder panics in Rust sources.
-- **Run locally:**
+
+* **Script:** `tools/no_placeholders.sh`
+
+* **Purpose:** Ban `todo!`, `unimplemented!`, `FIXME`, `XXX`, and obvious
+  placeholder panics from all Rust sources, including untracked files.
+
+* **Implementation details:**
+
+  * Uses a carefully tuned `grep -nEi` pattern that:
+
+    * Matches common placeholder macros and comment tags.
+    * Handles escaped quotes inside `panic!` string literals.
+    * Avoids tripping on legitimate identifiers like `prefixme`.
+  * Scans both tracked and untracked `*.rs` files via
+    `git ls-files -z --cached --others --exclude-standard -- '*.rs'`.
+
+* **Usage:**
+
   ```sh
   bash tools/no_placeholders.sh
   ```
 
+  A non-zero exit code indicates placeholder code that must be removed.
+
 ---
 
-## 3) Build & Test Agents
+## Build & Test Agents
 
 ### 3.1 `lint` Agent (fmt + clippy)
-- **Invoker:** CI job `lint` (see workflow).  
-- **Purpose:** Enforce formatting and deny warnings.
-- **Run locally:**
+
+* **Invoker:** `ci.yml` (`lint-and-test` job).
+
+* **Purpose:** Enforce formatting and deny warnings.
+
+* **CI behaviour:**
+
+  * Uses `dtolnay/rust-toolchain@stable` with `rustfmt, clippy` components.
+  * Uses `Swatinem/rust-cache@v2` for incremental builds.
+  * Runs:
+
+    ```sh
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
+    ```
+
+* **Local usage:**
+
   ```sh
-  cargo fmt --all -- --check
-  cargo clippy --workspace --all-targets -- -Dwarnings
+  cargo fmt --all
+  cargo clippy --workspace --all-targets --all-features -- -D warnings
   ```
 
-### 3.2 `test-linux` Agent (coverage-gated)
-- **Purpose:** Run unit/integration tests and enforce **≥95%** line/block coverage.
-- **Run locally (example):**
-  ```sh
-  rustup component add llvm-tools-preview
-  cargo install cargo-llvm-cov
-  cargo llvm-cov --workspace --lcov --output-path coverage.lcov --fail-under-lines 95
-  ```
-- **Artifacts:** `coverage.lcov`
+### 3.2 `test` Agent (nextest)
 
-### 3.3 `build-matrix` Agent
-- **Purpose:** Release builds for Linux/macOS/Windows (x86_64 + aarch64 as applicable).  
-- **Run locally (Linux example):**
+* **Invoker:** `ci.yml` (`lint-and-test` job).
+
+* **Purpose:** Run unit/integration tests across the workspace via `cargo nextest`.
+
+* **CI behaviour (simplified):**
+
   ```sh
-  cargo build --release --workspace
+  cargo nextest run --all-features --workspace
   ```
 
-### 3.4 `package-linux` Agent (+ SBOM)
-- **Purpose:** Build `.deb`, `.rpm`, and generate CycloneDX SBOM.
-- **Run locally (examples):**
+* **Local usage:**
+
   ```sh
-  cargo install cargo-deb cargo-rpm
-  cargo deb --no-build
-  cargo rpm build
-  cargo install cyclonedx-bom || true
-  cyclonedx-bom -o target/sbom/rsync.cdx.json
+  # default profile, all workspace tests
+  cargo nextest run --all-features --workspace
+
+  # alternative profile (e.g. with JUnit output), if configured
+  cargo nextest run --profile ci --all-features --workspace
   ```
+
+* **Contract:** CI and local development must both be able to run the **entire
+  workspace** without bespoke crate lists. Changes to `.config/nextest.toml`
+  must preserve that property.
+
+### 3.3 `build-cross` Agent (release matrix)
+
+* **Workflow:** `.github/workflows/build-cross.yml`
+
+* **Purpose:** Build cross-platform release artifacts for the `oc-rsync` binary
+  from a Linux host, targeting multiple OS/arch combinations.
+
+* **Responsibilities:**
+
+  * Use a matrix of targets (Linux/macOS/Windows; x86_64 + aarch64 where supported).
+  * Build `oc-rsync` with `cargo build --release` for each target, using
+    cross-compilation toolchains (e.g. Zig or target-specific GCC) as required.
+  * Package artifacts into `tar.gz` / `.zip` bundles under a consistent
+    `target/dist/` layout for release uploads.
+
+* **Constraints:**
+
+  * Automation should rely on `cargo`, `cargo xtask`, and packaging tools
+    (`cargo-deb`, `cargo-generate-rpm`, etc.) instead of ad-hoc shell logic.
+  * The matrix must keep parity with documented supported platforms.
+
+### 3.4 `package` & `sbom` Agents (via `xtask`)
+
+* **Commands:** `cargo xtask package`, `cargo xtask sbom`
+
+* **Purpose:**
+
+  * Build `.deb` and `.rpm` packages for Linux.
+  * Generate a CycloneDX SBOM JSON for the workspace.
+
+* **Example usage:**
+
+  ```sh
+  # Build Linux packages (without rebuilding binaries)
+  cargo xtask package --no-build
+
+  # Generate default SBOM
+  cargo xtask sbom
+
+  # Generate SBOM at a custom location
+  cargo xtask sbom --output artifacts/rsync.cdx.json
+  ```
+
+* **CI integration:**
+
+  * `build-cross.yml` should call these commands for Linux targets so SBOM and
+    packages are produced from the same bits shipped to users.
 
 ---
 
+This document is the contract between the internal agents and the external
+behaviour of **oc-rsync**. Changes to binaries, crates, or CI workflows must be
+reflected here so contributors and reviewers can reason about the system as a
+whole.
 
-
+```
