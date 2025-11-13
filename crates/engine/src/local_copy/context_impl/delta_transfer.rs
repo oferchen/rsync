@@ -26,6 +26,7 @@ impl<'a> CopyContext<'a> {
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
+        let mut sparse_state = SparseWriteState::default();
         let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
         let mut pending_literals = Vec::with_capacity(index.block_length());
         let mut scratch = Vec::with_capacity(index.block_length());
@@ -72,6 +73,7 @@ impl<'a> CopyContext<'a> {
                         writer,
                         pending_literals.as_slice(),
                         sparse,
+                        &mut sparse_state,
                         compressor.as_mut(),
                         &mut compressed_progress,
                         source,
@@ -94,6 +96,7 @@ impl<'a> CopyContext<'a> {
                     destination,
                     matched,
                     sparse,
+                    &mut sparse_state,
                 )?;
                 total_bytes = total_bytes.saturating_add(block_len as u64);
                 let progressed = initial_bytes.saturating_add(total_bytes);
@@ -120,6 +123,7 @@ impl<'a> CopyContext<'a> {
                 writer,
                 pending_literals.as_slice(),
                 sparse,
+                &mut sparse_state,
                 compressor.as_mut(),
                 &mut compressed_progress,
                 source,
@@ -132,6 +136,7 @@ impl<'a> CopyContext<'a> {
         }
 
         if sparse {
+            sparse_state.finish(writer, destination)?;
             let final_len = initial_bytes.saturating_add(total_bytes);
             writer.set_len(final_len).map_err(|error| {
                 LocalCopyError::io(
@@ -163,6 +168,7 @@ impl<'a> CopyContext<'a> {
         writer: &mut fs::File,
         chunk: &[u8],
         sparse: bool,
+        state: &mut SparseWriteState,
         compressor: Option<&mut ActiveCompressor>,
         compressed_progress: &mut u64,
         source: &Path,
@@ -173,7 +179,7 @@ impl<'a> CopyContext<'a> {
         }
         self.enforce_timeout()?;
         let written = if sparse {
-            write_sparse_chunk(writer, chunk, destination)?
+            write_sparse_chunk(writer, state, chunk, destination)?
         } else {
             writer.write_all(chunk).map_err(|error| {
                 LocalCopyError::io("copy file", destination.to_path_buf(), error)
@@ -204,6 +210,7 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
         matched: MatchedBlock<'_>,
         sparse: bool,
+        state: &mut SparseWriteState,
     ) -> Result<(), LocalCopyError> {
         let offset = matched.offset();
         existing.seek(SeekFrom::Start(offset)).map_err(|error| {
@@ -238,7 +245,7 @@ impl<'a> CopyContext<'a> {
             }
 
             if sparse {
-                let _ = write_sparse_chunk(writer, &buffer[..read], destination)?;
+                let _ = write_sparse_chunk(writer, state, &buffer[..read], destination)?;
             } else {
                 writer.write_all(&buffer[..read]).map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
