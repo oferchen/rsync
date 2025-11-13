@@ -14,14 +14,26 @@ jobs:
     if: |
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      startsWith(github.event.workflow_run.head_branch, 'v')
+      (github.event.workflow_run.head_branch == '' || startsWith(github.event.workflow_run.head_branch, 'v'))
     name: Upload build artifacts to release
     runs-on: ubuntu-latest
 
     steps:
-      - name: Capture release tag
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine release tag
         id: release
-        run: echo "tag=${{ github.event.workflow_run.head_branch }}" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          TAGS="$(git tag --points-at "${{ github.event.workflow_run.head_sha }}")"
+          if [ -z "${TAGS}" ]; then
+            echo "::error::No tag found for commit ${{ github.event.workflow_run.head_sha }}" >&2
+            exit 1
+          fi
+          TAG="$(printf '%s\n' "${TAGS}" | head -n1)"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts from Build-cross
         uses: dawidd6/action-download-artifact@v6

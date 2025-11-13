@@ -6,6 +6,7 @@ OUTNAME="$2"
 BINARIES="${3:-oc-rsync}"
 
 OUTDIR="dist/${TARGET}"
+rm -rf "${OUTDIR}"
 mkdir -p "${OUTDIR}"
 
 for bin in $BINARIES; do
@@ -20,5 +21,7 @@ for bin in $BINARIES; do
   cp "${SRC}" "${OUTDIR}/"
 done
 
-tar -czf "${OUTNAME}" -C "${OUTDIR}" .
+ARCHIVE_PATH="dist/${OUTNAME}"
+mkdir -p "$(dirname "${ARCHIVE_PATH}")"
+tar -czf "${ARCHIVE_PATH}" -C "${OUTDIR}" .
 
