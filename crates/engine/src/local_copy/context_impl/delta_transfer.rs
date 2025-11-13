@@ -1,3 +1,8 @@
+pub(super) struct SparseCopy<'state> {
+    enabled: bool,
+    state: &'state mut SparseWriteState,
+}
+
 impl<'a> CopyContext<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn copy_file_contents_with_delta(
@@ -54,9 +59,13 @@ impl<'a> CopyContext<'a> {
             window.push_back(byte);
             if let Some(outgoing_byte) = outgoing.take() {
                 debug_assert!(window.len() <= index.block_length());
-                rolling.roll_many(&[outgoing_byte], &[byte]).map_err(|_| {
-                    LocalCopyError::invalid_argument(LocalCopyArgumentError::UnsupportedFileType)
-                })?;
+                rolling
+                    .roll_many(&[outgoing_byte], &[byte])
+                    .map_err(|_| {
+                        LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::UnsupportedFileType,
+                        )
+                    })?;
             } else {
                 rolling.update(&[byte]);
             }
@@ -82,7 +91,12 @@ impl<'a> CopyContext<'a> {
                     literal_bytes = literal_bytes.saturating_add(flushed as u64);
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
                     let progressed = initial_bytes.saturating_add(total_bytes);
-                    self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
+                    self.notify_progress(
+                        relative,
+                        Some(total_size),
+                        progressed,
+                        start.elapsed(),
+                    );
                     pending_literals.clear();
                 }
 
@@ -95,8 +109,10 @@ impl<'a> CopyContext<'a> {
                     buffer,
                     destination,
                     matched,
-                    sparse,
-                    &mut sparse_state,
+                    SparseCopy {
+                        enabled: sparse,
+                        state: &mut sparse_state,
+                    },
                 )?;
                 total_bytes = total_bytes.saturating_add(block_len as u64);
                 let progressed = initial_bytes.saturating_add(total_bytes);
@@ -209,8 +225,7 @@ impl<'a> CopyContext<'a> {
         buffer: &mut [u8],
         destination: &Path,
         matched: MatchedBlock<'_>,
-        sparse: bool,
-        state: &mut SparseWriteState,
+        sparse: SparseCopy<'_>,
     ) -> Result<(), LocalCopyError> {
         let offset = matched.offset();
         existing.seek(SeekFrom::Start(offset)).map_err(|error| {
@@ -244,8 +259,9 @@ impl<'a> CopyContext<'a> {
                 ));
             }
 
-            if sparse {
-                let _ = write_sparse_chunk(writer, state, &buffer[..read], destination)?;
+            if sparse.enabled {
+                let _ =
+                    write_sparse_chunk(writer, sparse.state, &buffer[..read], destination)?;
             } else {
                 writer.write_all(&buffer[..read]).map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
@@ -257,5 +273,4 @@ impl<'a> CopyContext<'a> {
 
         Ok(())
     }
-
 }
