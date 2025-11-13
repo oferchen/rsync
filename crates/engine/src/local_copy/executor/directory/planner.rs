@@ -109,9 +109,7 @@ pub(crate) fn plan_directory_entries<'a>(
         } else if effective_type.is_dir() {
             EntryAction::CopyDirectory
         } else if entry_type.is_symlink() {
-            if context.links_enabled() && !context.copy_links_enabled() {
-                EntryAction::CopySymlink
-            } else if context.links_enabled() {
+            if context.links_enabled() {
                 EntryAction::CopySymlink
             } else {
                 keep_name = false;

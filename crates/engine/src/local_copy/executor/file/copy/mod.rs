@@ -28,10 +28,12 @@ pub(crate) fn copy_file(
     let metadata_options = context.metadata_options();
     let mode = context.mode();
     let file_type = metadata.file_type();
-    #[cfg(feature = "xattr")]
+
+    #[cfg(all(unix, feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     let preserve_acls = context.acls_enabled();
+
     let record_path = relative
         .map(Path::to_path_buf)
         .or_else(|| source.file_name().map(PathBuf::from))
@@ -56,6 +58,7 @@ pub(crate) fn copy_file(
             return Ok(());
         }
     }
+
     let existing_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -148,9 +151,9 @@ pub(crate) fn copy_file(
         ignore_times_enabled,
         checksum_enabled,
         mode,
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         preserve_acls,
     )?;
 
@@ -180,9 +183,9 @@ pub(crate) fn copy_file(
         ignore_times_enabled,
         checksum_enabled,
         mode,
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         preserve_acls,
         link_outcome.copy_source_override,
     )
