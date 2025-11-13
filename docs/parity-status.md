@@ -1,0 +1,43 @@
+# Parity Status — oc-rsync vs rsync 3.4.1
+
+This report summarises the current behavioural coverage of oc-rsync relative to upstream rsync 3.4.1. Each section identifies the implemented scope, notable interoperability guarantees, and the primary gaps that remain.
+
+## File data transfer
+
+* oc-rsync’s native engine focuses on deterministic local filesystem copies that cover regular files, directories, symbolic links, FIFOs, devices, hard links, and sparse regions. Metadata application follows upstream ordering so attributes are written after content copies.【F:crates/engine/src/local_copy/mod.rs†L1-L24】
+* The user-facing CLI explicitly documents that this snapshot only accepts local sources; remote transfers fall back to upstream `rsync` when required. The same help banner enumerates the remote transport flags that are forwarded to the fallback binary.【F:crates/cli/src/frontend/help.rs†L19-L70】
+* Remote execution paths therefore spawn the system `rsync` binary while forwarding stdout/stderr, credentials, and the negotiated option set to preserve interoperability today.【F:crates/core/src/client/fallback/runner/mod.rs†L1-L73】
+* Gaps: delta-transfer scheduling between native sender/receiver roles is still in development, so cross-host copies depend on the fallback implementation. Local support for batch mode (`--write-batch`/`--read-batch`) also remains delegated to fallback handling.
+
+## Metadata preservation
+
+* `LocalCopyOptions` wires the preservation toggles implied by `-a` (`--owner`, `--group`, `--perms`, `--times`, `--devices`, `--specials`) and exposes delete timing controls that mirror upstream semantics.【F:crates/engine/src/local_copy/mod.rs†L12-L20】【F:crates/engine/src/local_copy/options/deletion.rs†L1-L85】
+* Extended attributes and ACLs are synchronised via the shared `metadata` crate when the corresponding features are enabled and the caller requested them. Filters are honoured so xattr rules mirror upstream include/exclude behaviour.【F:crates/engine/src/local_copy/metadata_sync.rs†L1-L44】
+* Ownership and permission toggles negotiated by the CLI feed through to the engine, with clap enforcing the same mutual exclusions that upstream uses (for example, only one `--usermap` or `--groupmap` value is accepted).【F:crates/cli/src/frontend/arguments/parser.rs†L183-L213】
+* Gaps: Windows ACL/xattr plumbing and numeric ID handling still depend on the fallback paths; documentation for those divergences should be added once the Windows feature work lands.
+
+## Compression and checksums
+
+* Compression negotiation supports zlib by default with optional LZ4 and Zstandard encoders, matching upstream’s selectable algorithm set when the relevant Cargo features are present.【F:crates/engine/src/local_copy/compressor.rs†L1-L52】
+* CLI parsing honours `--compress`, `--compress-level`, `--compress-choice`, and `--skip-compress`, flipping the engine settings or signalling the fallback runner when native support is incomplete.【F:crates/cli/src/frontend/arguments/parser.rs†L153-L166】【F:crates/cli/src/frontend/arguments/parser.rs†L349-L464】
+* Strong checksum selection flows through `--checksum-choice` with xxHash variants exposed just like upstream. The rolling checksum remains shared with fallback mode until the networked delta pipeline is in place.
+* Gaps: native compression currently covers local copies; remote transfers inherit upstream behaviour through the fallback runner. The parity harness should add fixtures that compare compressed and uncompressed runs once network mode lands.
+
+## Delete and pruning semantics
+
+* The engine recognises all delete timing options (`--delete-before`, `--delete-during`, `--delete-delay`, `--delete-after`) and enforces the same mutual exclusivity checks surfaced by the CLI parser.【F:crates/cli/src/frontend/arguments/parser.rs†L118-L147】【F:crates/engine/src/local_copy/options/deletion.rs†L1-L85】
+* `--delete-excluded` and `--max-delete` propagate through `LocalCopyOptions`, allowing the local executor to cap removal counts and include excluded entries when requested.【F:crates/engine/src/local_copy/options/deletion.rs†L50-L75】
+* Directory handling honours `--prune-empty-dirs` and `--mkpath`, ensuring directory creation and cleanup mirror upstream once filters are applied.【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L169-L214】【F:crates/engine/src/local_copy/options/path_behavior.rs†L98-L104】
+* Gaps: cross-host deletion timing still piggybacks on upstream `rsync` via the fallback path; parity validation should include mixed local/remote trees before those fallbacks can be retired.
+
+## Remote and daemon support
+
+* The CLI exposes the full remote shell and rsync daemon surface so operators can talk to upstream daemons today. Flags such as `--rsh`, `--rsync-path`, `--remote-option`, and authentication helpers are forwarded unchanged to the fallback invocation.【F:crates/cli/src/frontend/help.rs†L29-L58】【F:crates/core/src/client/fallback/runner/command_builder.rs†L319-L501】
+* Daemon mode (`--daemon`) is branded for oc-rsync but currently delegates to the unified binary entry-point defined in the workspace metadata; configuration paths align with the workspace branding guidance.【F:crates/cli/src/frontend/help.rs†L19-L44】【F:crates/core/src/version/mod.rs†L1-L44】
+* Gaps: native server mode still relies on the fallback implementation for network I/O and module negotiation. The parity harness needs end-to-end rsync:// fixtures to lock down behaviour before unifying the Rust daemon with upstream.
+
+## Next steps
+
+1. Integrate the delta-transfer pipeline so native sender/receiver roles cover remote copies without invoking the fallback binary.
+2. Extend metadata preservation tests to cover ACL/xattr combinations across platforms and document any remaining divergences.
+3. Build the parity harness described in the mission brief so YAML status entries can be regression-tested against upstream behaviour.

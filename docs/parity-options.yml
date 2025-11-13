@@ -1,0 +1,1507 @@
+options:
+  - option: --help
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --version
+    short: V
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --verbose
+    short: v
+    category: logging
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-verbose
+    short: 
+    category: logging
+    upstream_default: n/a
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-v
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --info
+    short: 
+    category: logging
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --debug
+    short: 
+    category: logging
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --stderr
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --msgs2stderr
+    short: 
+    category: logging
+    upstream_default: default 2
+    status: implemented
+    notes: ""
+  - option: --no-msgs2stderr
+    short: 
+    category: logging
+    upstream_default: enabled by default (2)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --quiet
+    short: q
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --motd
+    short: 
+    category: daemon
+    upstream_default: default 1
+    status: missing
+    notes: ""
+  - option: --no-motd
+    short: 
+    category: daemon
+    upstream_default: enabled by default (1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --stats
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --human-readable
+    short: h
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-human-readable
+    short: 
+    category: general
+    upstream_default: enabled by default (1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-h
+    short: 
+    category: general
+    upstream_default: enabled by default (1)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --dry-run
+    short: n
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --archive
+    short: a
+    category: traversal
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --recursive
+    short: r
+    category: traversal
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-recursive
+    short: 
+    category: traversal
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-r
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: --inc-recursive
+    short: 
+    category: traversal
+    upstream_default: default 1
+    status: missing
+    notes: ""
+  - option: --no-inc-recursive
+    short: 
+    category: traversal
+    upstream_default: enabled by default (1)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --i-r
+    short: 
+    category: general
+    upstream_default: default 1
+    status: missing
+    notes: ""
+  - option: --no-i-r
+    short: 
+    category: general
+    upstream_default: enabled by default (1)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --dirs
+    short: d
+    category: traversal
+    upstream_default: default -1
+    status: implemented
+    notes: ""
+  - option: --no-dirs
+    short: 
+    category: traversal
+    upstream_default: enabled by default (-1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-d
+    short: 
+    category: general
+    upstream_default: enabled by default (-1)
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: --old-dirs
+    short: 
+    category: traversal
+    upstream_default: default -1
+    status: missing
+    notes: ""
+  - option: --old-d
+    short: 
+    category: general
+    upstream_default: default -1
+    status: missing
+    notes: ""
+  - option: --perms
+    short: p
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-perms
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-p
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: --executability
+    short: E
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --acls
+    short: A
+    category: metadata
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-acls
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-A
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --xattrs
+    short: X
+    category: metadata
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-xattrs
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-X
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --times
+    short: t
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-times
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-t
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --atimes
+    short: U
+    category: metadata
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --no-atimes
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-U
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --open-noatime
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-open-noatime
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --crtimes
+    short: N
+    category: metadata
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --no-crtimes
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-N
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --omit-dir-times
+    short: O
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-omit-dir-times
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-O
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --omit-link-times
+    short: J
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-omit-link-times
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-J
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --modify-window
+    short: @
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --super
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-super
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --fake-super
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --owner
+    short: o
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-owner
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-o
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: --group
+    short: g
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-group
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-g
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: -D (short-only)
+    short: D
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-D
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --devices
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-devices
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --copy-devices
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --write-devices
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --no-write-devices
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --specials
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-specials
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --links
+    short: l
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --no-links
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-l
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --copy-links
+    short: L
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --copy-unsafe-links
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --safe-links
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --munge-links
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --no-munge-links
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --copy-dirlinks
+    short: k
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --keep-dirlinks
+    short: K
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --hard-links
+    short: H
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-hard-links
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-H
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --relative
+    short: R
+    category: traversal
+    upstream_default: default -1
+    status: implemented
+    notes: ""
+  - option: --no-relative
+    short: 
+    category: traversal
+    upstream_default: enabled by default (-1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-R
+    short: 
+    category: general
+    upstream_default: enabled by default (-1)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --implied-dirs
+    short: 
+    category: traversal
+    upstream_default: default 1
+    status: implemented
+    notes: ""
+  - option: --no-implied-dirs
+    short: 
+    category: traversal
+    upstream_default: enabled by default (1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --i-d
+    short: 
+    category: general
+    upstream_default: default 1
+    status: missing
+    notes: ""
+  - option: --no-i-d
+    short: 
+    category: general
+    upstream_default: enabled by default (1)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --chmod
+    short: 
+    category: metadata
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --ignore-times
+    short: I
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --size-only
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --one-file-system
+    short: x
+    category: traversal
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-one-file-system
+    short: 
+    category: traversal
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-x
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --update
+    short: u
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --existing
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --ignore-non-existing
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --ignore-existing
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --max-size
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --min-size
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --max-alloc
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --sparse
+    short: S
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-sparse
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-S
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --preallocate
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --inplace
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-inplace
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --append
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --append-verify
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-append
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --del
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Alias maintained for compatibility.
+  - option: --delete
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --delete-before
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --delete-during
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --delete-delay
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --delete-after
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --delete-excluded
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --delete-missing-args
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --ignore-missing-args
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --remove-sent-files
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --remove-source-files
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --force
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --no-force
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --ignore-errors
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --no-ignore-errors
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --max-delete
+    short: 
+    category: deletion
+    upstream_default: enabled by default (INT_MIN)
+    status: implemented
+    notes: ""
+  - option: -F (short-only)
+    short: F
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --filter
+    short: f
+    category: filters
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --exclude
+    short: 
+    category: filters
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --include
+    short: 
+    category: filters
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --exclude-from
+    short: 
+    category: filters
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --include-from
+    short: 
+    category: filters
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --cvs-exclude
+    short: C
+    category: filters
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --whole-file
+    short: W
+    category: transfer
+    upstream_default: default -1
+    status: implemented
+    notes: ""
+  - option: --no-whole-file
+    short: 
+    category: transfer
+    upstream_default: enabled by default (-1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-W
+    short: 
+    category: general
+    upstream_default: enabled by default (-1)
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: --checksum
+    short: c
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-checksum
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-c
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: --checksum-choice
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --cc
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --block-size
+    short: B
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --compare-dest
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --copy-dest
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --link-dest
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --fuzzy
+    short: y
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --no-fuzzy
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-y
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --compress
+    short: z
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --old-compress
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --new-compress
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --no-compress
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-z
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --compress-choice
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --zc
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --skip-compress
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --compress-level
+    short: 
+    category: transfer
+    upstream_default: enabled by default (CLVL_NOT_SPECIFIED)
+    status: implemented
+    notes: ""
+  - option: --zl
+    short: 
+    category: general
+    upstream_default: enabled by default (CLVL_NOT_SPECIFIED)
+    status: missing
+    notes: ""
+  - option: -P (short-only)
+    short: P
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --progress
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-progress
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --partial
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-partial
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --partial-dir
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --delay-updates
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-delay-updates
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --prune-empty-dirs
+    short: m
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-prune-empty-dirs
+    short: 
+    category: deletion
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-m
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --log-file
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --log-file-format
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --out-format
+    short: 
+    category: logging
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --log-format
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --itemize-changes
+    short: i
+    category: logging
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-itemize-changes
+    short: 
+    category: logging
+    upstream_default: n/a
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-i
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: Negates the corresponding positive option.; Alias maintained for compatibility.
+  - option: --bwlimit
+    short: 
+    category: transfer
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-bwlimit
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --backup
+    short: b
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-backup
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --backup-dir
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --suffix
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --list-only
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --read-batch
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --write-batch
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --only-write-batch
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --files-from
+    short: 
+    category: filters
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --from0
+    short: 0
+    category: filters
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-from0
+    short: 
+    category: filters
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --old-args
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --no-old-args
+    short: 
+    category: general
+    upstream_default: enabled by default (-1)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --secluded-args
+    short: s
+    category: general
+    upstream_default: default -1
+    status: implemented
+    notes: ""
+  - option: --no-secluded-args
+    short: 
+    category: general
+    upstream_default: enabled by default (-1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --protect-args
+    short: 
+    category: general
+    upstream_default: default -1
+    status: implemented
+    notes: ""
+  - option: --no-protect-args
+    short: 
+    category: general
+    upstream_default: enabled by default (-1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --no-s
+    short: 
+    category: general
+    upstream_default: enabled by default (-1)
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --trust-sender
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --numeric-ids
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-numeric-ids
+    short: 
+    category: metadata
+    upstream_default: disabled by default
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --usermap
+    short: 
+    category: metadata
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --groupmap
+    short: 
+    category: metadata
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --chown
+    short: 
+    category: metadata
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --timeout
+    short: 
+    category: connection
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-timeout
+    short: 
+    category: connection
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --contimeout
+    short: 
+    category: connection
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-contimeout
+    short: 
+    category: connection
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --fsync
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --stop-after
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --time-limit
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --stop-at
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --rsh
+    short: e
+    category: connection
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --rsync-path
+    short: 
+    category: connection
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --temp-dir
+    short: T
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --iconv
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --no-iconv
+    short: 
+    category: general
+    upstream_default: n/a
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --ipv4
+    short: 4
+    category: connection
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --ipv6
+    short: 6
+    category: connection
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --8-bit-output
+    short: 8
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --no-8-bit-output
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --no-8
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --mkpath
+    short: 
+    category: traversal
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --no-mkpath
+    short: 
+    category: traversal
+    upstream_default: disabled by default
+    status: missing
+    notes: Negates the corresponding positive option.
+  - option: --qsort
+    short: 
+    category: general
+    upstream_default: disabled by default
+    status: missing
+    notes: ""
+  - option: --copy-as
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --address
+    short: 
+    category: connection
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --port
+    short: 
+    category: connection
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --sockopts
+    short: 
+    category: connection
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --password-file
+    short: 
+    category: daemon
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --early-input
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --blocking-io
+    short: 
+    category: connection
+    upstream_default: default -1
+    status: implemented
+    notes: ""
+  - option: --no-blocking-io
+    short: 
+    category: connection
+    upstream_default: enabled by default (-1)
+    status: implemented
+    notes: Negates the corresponding positive option.
+  - option: --outbuf
+    short: 
+    category: logging
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --remote-option
+    short: M
+    category: connection
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --protocol
+    short: 
+    category: connection
+    upstream_default: enabled by default (PROTOCOL_VERSION)
+    status: implemented
+    notes: ""
+  - option: --checksum-seed
+    short: 
+    category: transfer
+    upstream_default: disabled by default
+    status: implemented
+    notes: ""
+  - option: --server
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --sender
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --config
+    short: 
+    category: daemon
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --daemon
+    short: 
+    category: daemon
+    upstream_default: n/a
+    status: implemented
+    notes: ""
+  - option: --dparam
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --detach
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: ""
+  - option: --no-detach
+    short: 
+    category: general
+    upstream_default: n/a
+    status: missing
+    notes: Negates the corresponding positive option.
