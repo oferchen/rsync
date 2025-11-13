@@ -1,0 +1,62 @@
+# CLI Parity Matrix — oc-rsync vs rsync 3.4.1
+
+This living document tracks the command-line option compatibility between the
+Rust implementation (`oc-rsync`) and upstream rsync 3.4.1. The inventory starts
+with the switches that the current clap front-end recognises and maps onto core
+engine toggles. Additional rows will be appended until every upstream option is
+represented; any omissions in the matrix below are tracked in the "Open work"
+section.
+
+## Methodology
+
+* **Source of truth (upstream):** `options.c`, `rsync.c`, and the canonical
+  `rsync.1` manpage for rsync 3.4.1.
+* **Source of truth (oc-rsync):** the clap command builder and argument parser in
+  `crates/cli`, plus the downstream option application in `crates/core` and
+  dependent crates.
+* **Status categories:**
+  * `implemented` — option is parsed and wired through with semantics that match
+    upstream for the covered scenarios.
+  * `partial` — option is parsed but behaviour diverges or is incomplete (e.g.
+    only honoured by the fallback client or missing edge cases).
+  * `missing` — upstream exposes this option but oc-rsync neither parses nor
+    emulates it yet.
+  * `divergent` — oc-rsync intentionally differs; divergence rationale appears in
+    the notes column.
+
+## Option matrix (initial subset)
+
+| option | short | category | upstream default | status | notes |
+| ------ | ----- | -------- | ---------------- | ------ | ----- |
+| `--help` | none | tooling | off | implemented | clap handles help text rendering through `help` flag wiring. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L5-L25】
+| `--version` | `-V` | tooling | off | implemented | Surfaces via clap and feeds the shared version banner renderer so output matches upstream layout. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L66-L70】【F:crates/core/src/version/report/renderer.rs†L13-L192】
+| `--human-readable[=LEVEL]` | `-h` | formatting | off | partial | Parser accepts the flag and negotiates `HumanReadableMode`, but downstream numeric rendering still differs from upstream in delta-transfer paths that remain unimplemented. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L16-L35】【F:crates/cli/src/frontend/arguments/parser.rs†L27-L38】
+| `--no-human-readable` | none | formatting | off | implemented | Negates the human-readable toggle and maps directly to `HumanReadableMode::Disabled`. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L36-L44】【F:crates/cli/src/frontend/arguments/parser.rs†L33-L38】
+| `--msgs2stderr` | none | logging | off | implemented | Flag is parsed and forwarded to logging sinks so transfer diagnostics follow upstream stderr routing. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L45-L52】【F:crates/cli/src/frontend/arguments/parser.rs†L244-L250】【F:crates/logging/src/sink/message_sink/mod.rs†L65-L92】
+| `--outbuf=MODE` | none | logging | `L` | partial | Parsed but oc-rsync currently applies buffering only to the fallback runner; native engine integration is pending. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L53-L59】【F:crates/core/src/client/fallback/runner/command_builder.rs†L420-L501】
+| `--itemize-changes` | `-i` | logging | off | partial | Parser toggles `NameOutputLevel`, but the structured change itemiser still lacks parity with upstream’s full format codes. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L67-L74】【F:crates/cli/src/frontend/arguments/parser.rs†L279-L293】
+| `--out-format=FORMAT` | none | logging | off | partial | Formatting string is captured and passed into the progress subsystem, yet only the subset needed by the local copy engine is honoured. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L75-L83】【F:crates/core/src/client/fallback/runner/command_builder.rs†L438-L500】
+| `--rsh=COMMAND` | `-e` | transport | `ssh` | partial | Flag is parsed and propagated to fallback execution; native transport still defers to upstream rsync. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L84-L98】【F:crates/core/src/client/fallback/runner/command_builder.rs†L350-L418】
+| `--rsync-path=PROGRAM` | none | transport | `rsync` | partial | Value is honoured for fallback invocation, with native implementation pending. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L99-L108】【F:crates/core/src/client/fallback/runner/command_builder.rs†L319-L348】
+| `--connect-program=COMMAND` | none | transport | unset | missing | Parser recognises the option but the transport layer does not yet spawn helper programs for daemon connections. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L109-L122】【F:crates/cli/src/frontend/arguments/parser.rs†L49-L58】
+| `--port=PORT` | none | transport | 873 | partial | Port overrides are parsed; native daemon client honours them for TCP sockets, but ssh-based transports still defer to fallback behaviour. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L123-L133】【F:crates/core/src/client/fallback/runner/command_builder.rs†L294-L318】
+| `--remote-option=OPTION` | `-M` | transport | unset | partial | Parser collects forwarded options; only forwarded when launching the upstream fallback binary. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L134-L148】【F:crates/core/src/client/fallback/runner/command_builder.rs†L472-L501】
+| `--protect-args` | `-s` | transport | off | partial | Argument is parsed (with `--no-protect-args` alias) but native remote shell escaping is pending; fallback forwarding works. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L149-L168】【F:crates/cli/src/frontend/arguments/env.rs†L10-L55】
+| `--ipv4` | none | transport | auto | implemented | Sets the address mode to IPv4, matching upstream connection selection semantics. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L169-L178】【F:crates/cli/src/frontend/arguments/parser.rs†L58-L70】
+| `--ipv6` | none | transport | auto | implemented | Sets the address mode to IPv6, matching upstream connection selection semantics. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L179-L188】【F:crates/cli/src/frontend/arguments/parser.rs†L58-L70】
+| `--address=ADDRESS` | none | transport | unset | partial | Value is recorded, but binding logic exists only in the daemon client path; ssh fallback uses upstream defaults. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L189-L198】【F:crates/cli/src/frontend/arguments/parser.rs†L70-L76】
+| `--dry-run` | `-n` | safety | off | implemented | Flag forces simulation mode and is automatically enabled for `--list-only` to match upstream. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L199-L207】【F:crates/cli/src/frontend/arguments/parser.rs†L38-L46】
+| `--list-only` | none | safety | off | implemented | Triggers dry-run semantics while requesting generator output only. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L208-L214】【F:crates/cli/src/frontend/arguments/parser.rs†L38-L46】
+| `--mkpath` | none | filesystem | off | implemented | Ensures parent directories exist before transfers when relying on the local copy engine. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L175-L178】【F:crates/engine/src/local_copy/options/path_behavior.rs†L98-L104】【F:crates/engine/src/local_copy/tests/execute_directories.rs†L457-L476】
+| `--prune-empty-dirs` | `-m` | traversal | off | partial | Parser toggles directory pruning, but upstream’s nuanced interaction with implied directories still needs verification. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L222-L235】【F:crates/cli/src/frontend/arguments/parser.rs†L46-L52】
+| `--archive` | `-a` | aggregate | off | partial | Implies several preservation flags, yet block-level delta transfer parity is outstanding. 【F:crates/cli/src/frontend/command_builder/sections/build_base_command.rs†L236-L244】【F:crates/cli/src/frontend/arguments/parser.rs†L86-L112】
+| `--recursive` | `-r` | traversal | off | implemented | Explicit `--no-recursive` handling matches upstream overriding semantics. 【F:crates/cli/src/frontend/arguments/parser.rs†L86-L102】
+
+## Open work
+
+* Enumerate the remaining upstream options (daemon administration, debugging,
+  checksum tuning, ACL/xattr controls, etc.) and populate the matrix above.
+* Record every deliberate divergence alongside the relevant module or tracking
+  issue.
+* Cross-link each `partial` entry to the parity harness once the associated
+  integration coverage lands.
