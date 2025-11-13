@@ -98,15 +98,14 @@ source = "https://github.com/oferchen/rsync"
 [workspace.metadata.oc_rsync.cross_compile]
 linux = ["x86_64", "aarch64"]
 macos = ["x86_64", "aarch64"]
-windows = ["x86_64", "aarch64"]
+windows = ["x86_64"]
 
 [workspace.metadata.oc_rsync.cross_compile_matrix]
 "linux-x86_64" = true
-"linux-aarch64" = false
-"darwin-x86_64" = false
-"darwin-aarch64" = false
-"windows-x86_64" = false
-"windows-aarch64" = false
+"linux-aarch64" = true
+"darwin-x86_64" = true
+"darwin-aarch64" = true
+"windows-x86_64" = true
 "windows-x86" = false
 
 [package.metadata.deb]
