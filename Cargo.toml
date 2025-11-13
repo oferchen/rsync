@@ -188,7 +188,7 @@ buildflags = ["--profile", "dist", "--bins"]
 inherits = "release"
 # lto = "thin"
 # disble lto until production
-lto = off
+lto = false
 codegen-units = 1
 #strip = "debuginfo"
 strip = true
