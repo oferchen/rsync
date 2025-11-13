@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
     CopyContext, CopyOutcome, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord, LocalCopyRecordHandler,
-    SourceSpec,
+    LocalCopyExecution, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord,
+    LocalCopyRecordHandler, SourceSpec,
 };
 use crate::local_copy::{is_device, is_fifo};
 
@@ -286,15 +286,50 @@ pub(crate) fn copy_sources(
                             non_empty_path(relative.as_path()),
                             root_device,
                         )?;
-                    } else if file_type.is_symlink() && !context.copy_links_enabled() {
-                        copy_symlink(
-                            context,
-                            source_path,
-                            &target,
-                            &metadata,
-                            &metadata_options,
-                            record_path,
-                        )?;
+                    } else if file_type.is_symlink() {
+                        if context.links_enabled() && !context.copy_links_enabled() {
+                            copy_symlink(
+                                context,
+                                source_path,
+                                &target,
+                                &metadata,
+                                &metadata_options,
+                                record_path,
+                            )?;
+                        } else if context.links_enabled() {
+                            copy_symlink(
+                                context,
+                                source_path,
+                                &target,
+                                &metadata,
+                                &metadata_options,
+                                record_path,
+                            )?;
+                        } else {
+                            context.summary_mut().record_symlink_total();
+                            if let Some(relative_path) = record_path {
+                                match fs::read_link(source_path) {
+                                    Ok(target) => {
+                                        let metadata_snapshot = LocalCopyMetadata::from_metadata(
+                                            &metadata,
+                                            Some(target),
+                                        );
+                                        let record = LocalCopyRecord::new(
+                                            relative_path.to_path_buf(),
+                                            LocalCopyAction::SkippedNonRegular,
+                                            0,
+                                            None,
+                                            Duration::default(),
+                                            Some(metadata_snapshot),
+                                        );
+                                        context.record(record);
+                                    }
+                                    Err(_) => {
+                                        context.record_skipped_non_regular(Some(relative_path));
+                                    }
+                                }
+                            }
+                        }
                     } else if is_fifo(&effective_type) {
                         if !context.specials_enabled() {
                             context.record_skipped_non_regular(record_path);

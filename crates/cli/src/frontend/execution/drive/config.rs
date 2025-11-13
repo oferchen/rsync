@@ -68,6 +68,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) update: bool,
     pub(crate) numeric_ids: bool,
     pub(crate) hard_links: bool,
+    pub(crate) links: bool,
     pub(crate) sparse: bool,
     pub(crate) copy_links: bool,
     pub(crate) copy_dirlinks: bool,
@@ -177,6 +178,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .update(inputs.update)
         .numeric_ids(inputs.numeric_ids)
         .hard_links(inputs.hard_links)
+        .links(inputs.links)
         .sparse(inputs.sparse)
         .copy_links(inputs.copy_links)
         .copy_dirlinks(inputs.copy_dirlinks)

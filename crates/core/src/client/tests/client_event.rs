@@ -306,6 +306,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         omit_link_times: None,
         numeric_ids: None,
         hard_links: None,
+        links: None,
         copy_links: None,
         copy_dirlinks: false,
         copy_unsafe_links: None,

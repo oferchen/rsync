@@ -15,7 +15,7 @@ fn execute_copies_symbolic_link() {
     let operands = vec![link.into_os_string(), dest_link.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default().hard_links(true);
+    let options = LocalCopyOptions::default().links(true).hard_links(true);
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -40,7 +40,7 @@ fn execute_with_copy_links_materialises_symlink_to_file() {
     let operands = vec![link.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default().copy_links(true);
+    let options = LocalCopyOptions::default().links(false).copy_links(true);
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -68,7 +68,7 @@ fn execute_with_copy_links_materialises_symlink_to_directory() {
     let operands = vec![link.into_os_string(), dest_dir.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default().copy_links(true);
+    let options = LocalCopyOptions::default().links(false).copy_links(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -95,7 +95,7 @@ fn execute_with_copy_dirlinks_follows_directory_symlink() {
     let operands = vec![link.into_os_string(), dest_dir.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default().copy_dirlinks(true);
+    let options = LocalCopyOptions::default().links(false).copy_dirlinks(true);
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
@@ -121,7 +121,7 @@ fn execute_with_copy_dirlinks_preserves_file_symlink() {
     let operands = vec![link.into_os_string(), dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default().copy_dirlinks(true);
+    let options = LocalCopyOptions::default().links(true).copy_dirlinks(true);
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -159,7 +159,7 @@ fn execute_with_safe_links_allows_relative_symlink() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().safe_links(true),
+            LocalCopyOptions::default().links(true).safe_links(true),
         )
         .expect("copy succeeds");
 
@@ -190,6 +190,7 @@ fn execute_with_safe_links_skips_unsafe_symlink() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
+        .links(true)
         .safe_links(true)
         .collect_events(true);
     let report = plan
@@ -236,7 +237,7 @@ fn execute_preserves_symlink_hard_links() {
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().hard_links(true),
+            LocalCopyOptions::default().links(true).hard_links(true),
         )
         .expect("copy succeeds");
 

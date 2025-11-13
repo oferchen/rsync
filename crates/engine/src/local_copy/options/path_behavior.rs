@@ -19,6 +19,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Preserves symlinks instead of transforming or skipping them.
+    #[must_use]
+    #[doc(alias = "--links")]
+    #[doc(alias = "-l")]
+    pub const fn links(mut self, preserve: bool) -> Self {
+        self.preserve_symlinks = preserve;
+        self
+    }
+
     /// Attempts to open source files without updating their access time.
     #[must_use]
     #[doc(alias = "--open-noatime")]
@@ -167,6 +176,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn copy_links_enabled(&self) -> bool {
         self.copy_links
+    }
+
+    /// Returns whether symlinks should be preserved as symlinks.
+    #[must_use]
+    pub const fn links_enabled(&self) -> bool {
+        self.preserve_symlinks
     }
 
     /// Returns whether unsafe symlinks should be materialised as their referents.

@@ -312,6 +312,22 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .conflicts_with("sparse"),
             )
             .arg(
+                Arg::new("links")
+                    .long("links")
+                    .short('l')
+                    .help("Copy symlinks as symlinks.")
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with_all(["copy-links", "no-links"]),
+            )
+            .arg(
+                Arg::new("no-links")
+                    .long("no-links")
+                    .visible_alias("no-l")
+                    .help("Do not copy symlinks as symlinks.")
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with_all(["links", "copy-links"]),
+            )
+            .arg(
                 Arg::new("copy-links")
                     .long("copy-links")
                     .short('L')

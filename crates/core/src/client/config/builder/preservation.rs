@@ -10,6 +10,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables preserving symlinks as symlinks.
+    #[must_use]
+    #[doc(alias = "--links")]
+    #[doc(alias = "-l")]
+    pub const fn links(mut self, preserve_links: bool) -> Self {
+        self.preserve_symlinks = preserve_links;
+        self
+    }
+
     /// Enables or disables copying unsafe symlink referents.
     #[must_use]
     #[doc(alias = "--copy-unsafe-links")]

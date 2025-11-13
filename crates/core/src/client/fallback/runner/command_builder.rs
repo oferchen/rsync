@@ -79,6 +79,7 @@ pub(crate) fn prepare_invocation(
         omit_link_times,
         numeric_ids,
         hard_links,
+        links,
         copy_links,
         copy_dirlinks,
         copy_unsafe_links,
@@ -378,6 +379,7 @@ pub(crate) fn prepare_invocation(
         "--no-hard-links",
         hard_links,
     );
+    push_toggle(&mut command_args, "--links", "--no-links", links);
     push_toggle(
         &mut command_args,
         "--copy-links",

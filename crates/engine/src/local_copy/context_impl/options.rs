@@ -19,6 +19,10 @@ impl<'a> CopyContext<'a> {
         self.options.copy_links_enabled()
     }
 
+    pub(super) fn links_enabled(&self) -> bool {
+        self.options.links_enabled()
+    }
+
     pub(super) fn copy_unsafe_links_enabled(&self) -> bool {
         self.options.copy_unsafe_links_enabled()
     }
