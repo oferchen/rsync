@@ -1,7 +1,6 @@
 //! Rendering helpers for `--help` output.
 
-use core::branding::{manifest, rust_version};
-
+use core::branding::{manifest, rust_version, build_revision};
 use super::ProgramName;
 
 /// Renders deterministic help text describing the CLI surface supported by this build for `program_name`.
@@ -16,7 +15,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
 
     format!(
         concat!(
-            "{program} v{version}\n",
+            "{program} v{version} revision #{revision}\n",
             "Usage: {program} [-h] [-V] [--daemon] [-n] [-a] [-S] [-z] [-e COMMAND] [--delete] [--bwlimit=RATE[:BURST]] SOURCE... DEST\n",
             "\n",
             "Options:\n",
@@ -188,6 +187,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
         ),
         program = program,
         version = rust_version(),
+        revision = build_revision(),
         daemon = daemon,
     )
 }
