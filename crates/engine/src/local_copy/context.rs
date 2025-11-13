@@ -25,7 +25,7 @@ use super::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
     LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
     LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, ReferenceDirectory,
-    compute_backup_path, copy_entry_to_backup, delete_extraneous_entries,
+    SparseWriteState, compute_backup_path, copy_entry_to_backup, delete_extraneous_entries,
     filter_program_local_error, follow_symlink_metadata, load_dir_merge_rules_recursive,
     map_metadata_error, remove_source_entry_if_requested, resolve_dir_merge_path, should_skip_copy,
     write_sparse_chunk,

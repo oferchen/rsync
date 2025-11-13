@@ -5,8 +5,48 @@ use std::path::Path;
 use crate::local_copy::LocalCopyError;
 use memchr::memchr;
 
+#[derive(Default)]
+pub(crate) struct SparseWriteState {
+    pending_zero_run: u64,
+}
+
+impl SparseWriteState {
+    fn accumulate(&mut self, additional: usize) {
+        self.pending_zero_run = self.pending_zero_run.saturating_add(additional as u64);
+    }
+
+    fn flush(&mut self, writer: &mut fs::File, destination: &Path) -> Result<(), LocalCopyError> {
+        if self.pending_zero_run == 0 {
+            return Ok(());
+        }
+
+        let mut remaining = self.pending_zero_run;
+        while remaining > 0 {
+            let step = remaining.min(i64::MAX as u64);
+            writer
+                .seek(SeekFrom::Current(step as i64))
+                .map_err(|error| {
+                    LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
+                })?;
+            remaining -= step;
+        }
+
+        self.pending_zero_run = 0;
+        Ok(())
+    }
+
+    pub(crate) fn finish(
+        &mut self,
+        writer: &mut fs::File,
+        destination: &Path,
+    ) -> Result<(), LocalCopyError> {
+        self.flush(writer, destination)
+    }
+}
+
 pub(crate) fn write_sparse_chunk(
     writer: &mut fs::File,
+    state: &mut SparseWriteState,
     chunk: &[u8],
     destination: &Path,
 ) -> Result<usize, LocalCopyError> {
@@ -21,7 +61,8 @@ pub(crate) fn write_sparse_chunk(
             Some(rel_zero) => {
                 let zero_index = offset + rel_zero;
 
-                if rel_zero > 0 {
+                if zero_index > offset {
+                    state.flush(writer, destination)?;
                     writer
                         .write_all(&chunk[offset..zero_index])
                         .map_err(|error| {
@@ -30,24 +71,11 @@ pub(crate) fn write_sparse_chunk(
                 }
 
                 let zero_run = zero_run_length(&chunk[zero_index..]);
-                let zero_end = zero_index + zero_run;
-
-                let span = zero_end - zero_index;
-                if span > 0 {
-                    writer
-                        .seek(SeekFrom::Current(span as i64))
-                        .map_err(|error| {
-                            LocalCopyError::io(
-                                "seek in destination file",
-                                destination.to_path_buf(),
-                                error,
-                            )
-                        })?;
-                }
-
-                offset = zero_end;
+                state.accumulate(zero_run);
+                offset = zero_index + zero_run;
             }
             None => {
+                state.flush(writer, destination)?;
                 writer.write_all(&chunk[offset..]).map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
                 })?;
@@ -86,7 +114,9 @@ fn zero_run_length_scalar(bytes: &[u8]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{zero_run_length, zero_run_length_scalar};
+    use super::{SparseWriteState, write_sparse_chunk, zero_run_length, zero_run_length_scalar};
+    use std::io::{Read, Seek, SeekFrom};
+    use tempfile::NamedTempFile;
 
     #[test]
     fn zero_run_length_matches_scalar_reference() {
@@ -116,5 +146,68 @@ mod tests {
         long.push(0);
         assert_eq!(zero_run_length(&long[511..]), 0);
         assert_eq!(zero_run_length(&long[512..]), 1);
+    }
+
+    #[test]
+    fn sparse_writer_accumulates_zero_runs_across_chunks() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        let first = [b'A', b'B', 0, 0, 0];
+        write_sparse_chunk(file.as_file_mut(), &mut state, &first, path.as_path())
+            .expect("write first chunk");
+
+        let second = [0, 0, b'C', b'D'];
+        write_sparse_chunk(file.as_file_mut(), &mut state, &second, path.as_path())
+            .expect("write second chunk");
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finalise sparse writer");
+
+        let total = (first.len() + second.len()) as u64;
+        file.as_file_mut()
+            .set_len(total)
+            .expect("truncate file to final length");
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind for verification");
+
+        let mut buffer = vec![0u8; total as usize];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back contents");
+
+        assert_eq!(&buffer[0..2], b"AB");
+        assert!(buffer[2..7].iter().all(|&byte| byte == 0));
+        assert_eq!(&buffer[7..9], b"CD");
+    }
+
+    #[test]
+    fn sparse_writer_flushes_trailing_zero_run() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        let chunk = [b'Z', 0, 0, 0, 0];
+        write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write chunk");
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("flush trailing zeros");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate file");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![0u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back data");
+
+        assert_eq!(buffer[0], b'Z');
+        assert!(buffer[1..].iter().all(|&byte| byte == 0));
     }
 }
