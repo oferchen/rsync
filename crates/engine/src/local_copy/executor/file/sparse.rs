@@ -10,8 +10,11 @@ pub(crate) fn write_sparse_chunk(
     chunk: &[u8],
     destination: &Path,
 ) -> Result<usize, LocalCopyError> {
+    if chunk.is_empty() {
+        return Ok(0);
+    }
+
     let mut offset = 0usize;
-    let mut written = 0usize;
 
     while offset < chunk.len() {
         match memchr(0, &chunk[offset..]) {
@@ -24,7 +27,6 @@ pub(crate) fn write_sparse_chunk(
                         .map_err(|error| {
                             LocalCopyError::io("copy file", destination.to_path_buf(), error)
                         })?;
-                    written = written.saturating_add(rel_zero);
                 }
 
                 let zero_run = zero_run_length(&chunk[zero_index..]);
@@ -49,13 +51,12 @@ pub(crate) fn write_sparse_chunk(
                 writer.write_all(&chunk[offset..]).map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
                 })?;
-                written = written.saturating_add(chunk.len() - offset);
                 break;
             }
         }
     }
 
-    Ok(written)
+    Ok(chunk.len())
 }
 
 #[inline]
