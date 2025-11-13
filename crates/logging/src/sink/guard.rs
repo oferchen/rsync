@@ -50,16 +50,15 @@ impl<'a, W> LineModeGuard<'a, W> {
     ///     let sink = sink
     ///         .scoped_line_mode(LineMode::WithoutNewline)
     ///         .into_inner();
-    ///     sink.write(Message::info("phase one"))?;
+    ///     sink.write(Message::info("phase one")).expect("write succeeds");
     /// }
     ///
-    /// sink.write(Message::info("phase two"))?;
+    /// sink.write(Message::info("phase two")).expect("write succeeds");
     /// assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
     /// assert_eq!(
     ///     sink.into_inner(),
     ///     b"rsync info: phase onersync info: phase two".to_vec()
     /// );
-    /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn into_inner(mut self) -> &'a mut MessageSink<W> {
         self.sink

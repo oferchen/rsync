@@ -1,6 +1,6 @@
-use ::core::fmt;
-use ::core::iter::{FromIterator, FusedIterator};
-use ::core::str::FromStr;
+use std::fmt;
+use std::iter::{FromIterator, FusedIterator};
+use std::str::FromStr;
 use std::vec::Vec;
 
 const COMPILED_FEATURE_COUNT: usize = CompiledFeature::ALL.len();

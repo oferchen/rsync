@@ -23,13 +23,11 @@ impl<'a> MessageSegments<'a> {
     /// # Examples
     ///
     /// ```
-    /// # use std::collections::TryReserveError;
     /// use core::{
     ///     message::{Message, MessageScratch, Role},
     ///     message_source,
     /// };
     ///
-    /// # fn demo() -> Result<(), TryReserveError> {
     /// let mut scratch = MessageScratch::new();
     /// let message = Message::error(23, "delta-transfer failure")
     ///     .with_role(Role::Sender)
@@ -38,14 +36,14 @@ impl<'a> MessageSegments<'a> {
     /// let segments = message.as_segments(&mut scratch, false);
     /// let mut buffer = b"prefix: ".to_vec();
     /// let prefix_len = buffer.len();
-    /// let appended = segments.try_extend_vec(&mut buffer)?;
+    /// let appended = segments
+    ///     .try_extend_vec(&mut buffer)
+    ///     .expect("buffer extension succeeds");
     ///
+    /// let rendered = message.to_bytes().unwrap();
     /// assert_eq!(&buffer[..prefix_len], b"prefix: ");
-    /// assert_eq!(&buffer[prefix_len..], message.to_bytes().unwrap().as_slice());
-    /// assert_eq!(appended, message.to_bytes().unwrap().len());
-    /// # Ok(())
-    /// # }
-    /// # demo().unwrap();
+    /// assert_eq!(&buffer[prefix_len..], rendered.as_slice());
+    /// assert_eq!(appended, rendered.len());
     /// ```
     #[must_use = "buffer extension reserves memory and may fail; handle allocation errors and inspect the appended length"]
     pub fn try_extend_vec(&self, buffer: &mut Vec<u8>) -> Result<usize, TryReserveError> {
@@ -113,11 +111,12 @@ impl<'a> MessageSegments<'a> {
     /// let segments = message.as_segments(&mut scratch, false);
     ///
     /// let mut buffer = vec![0u8; segments.len()];
-    /// let copied = segments.copy_to_slice(&mut buffer)?;
+    /// let copied = segments
+    ///     .copy_to_slice(&mut buffer)
+    ///     .expect("slice has sufficient capacity");
     ///
     /// assert_eq!(copied, segments.len());
     /// assert_eq!(buffer, message.to_bytes().unwrap());
-    /// # Ok::<(), core::message::CopyToSliceError>(())
     /// ```
     #[must_use = "callers should handle the number of copied bytes or the returned error"]
     pub fn copy_to_slice(&self, dest: &mut [u8]) -> Result<usize, CopyToSliceError> {
