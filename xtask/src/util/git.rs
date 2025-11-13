@@ -1,5 +1,6 @@
 use super::env::map_command_error;
 use crate::error::{TaskError, TaskResult};
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
