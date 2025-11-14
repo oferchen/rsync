@@ -44,6 +44,8 @@ pub struct RemoteFallbackArgs {
     pub archive: bool,
     /// Controls recursive traversal (`--recursive`/`--no-recursive`).
     pub recursive: Option<bool>,
+    /// Controls incremental recursion (`--inc-recursive`/`--no-inc-recursive`).
+    pub inc_recursive: Option<bool>,
     /// Controls directory handling when recursion is disabled (`--dirs`/`--no-dirs`).
     pub dirs: Option<bool>,
     /// Enables `--delete`.

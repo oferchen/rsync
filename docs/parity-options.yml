@@ -132,28 +132,28 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --inc-recursive
-    short: 
+    short:
     category: traversal
     upstream_default: default 1
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-inc-recursive
-    short: 
+    short:
     category: traversal
     upstream_default: enabled by default (1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --i-r
-    short: 
+    short:
     category: general
     upstream_default: default 1
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-i-r
-    short: 
+    short:
     category: general
     upstream_default: enabled by default (1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --dirs
     short: d
