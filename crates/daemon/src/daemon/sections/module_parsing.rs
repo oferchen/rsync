@@ -477,8 +477,10 @@ fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
 }
 
 fn config_error(text: String) -> DaemonError {
-    let message = Message::error(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
-    DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon),
+    )
 }
 
 fn secrets_env_error(env: &'static str, path: &Path, detail: impl Into<String>) -> DaemonError {
@@ -496,14 +498,18 @@ fn config_parse_error(path: &Path, line: usize, message: impl Into<String>) -> D
         message.into(),
         line
     );
-    let message = Message::error(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
-    DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon),
+    )
 }
 
 fn config_io_error(action: &str, path: &Path, error: io::Error) -> DaemonError {
     let text = format!("failed to {action} config '{}': {error}", path.display());
-    let message = Message::error(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
-    DaemonError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon),
+    )
 }
 
 fn ensure_valid_module_name(name: &str) -> Result<(), &'static str> {
@@ -546,8 +552,10 @@ fn stream_error(peer: Option<SocketAddr>, action: &str, error: io::Error) -> Dae
 
 fn network_error<T: fmt::Display>(action: &str, target: T, error: io::Error) -> DaemonError {
     let text = format!("failed to {action} {target}: {error}");
-    let message = Message::error(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
-    DaemonError::new(SOCKET_IO_EXIT_CODE, message)
+    DaemonError::new(
+        SOCKET_IO_EXIT_CODE,
+        rsync_error!(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon),
+    )
 }
 
 pub(crate) fn configured_fallback_binary() -> Option<OsString> {
