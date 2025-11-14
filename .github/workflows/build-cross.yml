@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: ctions/checkout@v5.0.0
+        uses: actions/checkout@v5.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -78,7 +78,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: ctions/checkout@v5.0.0
+        uses: actions/checkout@v5.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -114,7 +114,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: ctions/checkout@v5.0.0
+        uses: actions/checkout@v5.0.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
