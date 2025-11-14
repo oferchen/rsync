@@ -1,14 +1,15 @@
+#[cfg(not(target_family = "windows"))]
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::{
-    CopyContext, DeleteTiming, LocalCopyArgumentError, LocalCopyError, delete_extraneous_entries,
-    follow_symlink_metadata,
+    delete_extraneous_entries, follow_symlink_metadata, CopyContext, DeleteTiming,
+    LocalCopyArgumentError, LocalCopyError,
 };
 
 use super::super::{non_empty_path, symlink_target_is_safe};
-use super::support::{DirectoryEntry, is_device, is_fifo};
+use super::support::{is_device, is_fifo, DirectoryEntry};
 
 #[derive(Clone, Copy)]
 pub(crate) enum EntryAction {
@@ -45,6 +46,69 @@ pub(crate) struct DirectoryPlan<'a> {
     pub(crate) delete_timing: Option<DeleteTiming>,
 }
 
+/// Centralized decision policy for how to treat a directory entry.
+///
+/// This encapsulates the "strategy" for turning the entry type + context
+/// into an [`EntryAction`] and whether the name should be preserved for
+/// deletion tracking.
+fn decide_entry_action(
+    context: &CopyContext,
+    relative_path: &Path,
+    entry_type: &fs::FileType,
+    effective_type: &fs::FileType,
+    keep_name: &mut bool,
+) -> Result<EntryAction, LocalCopyError> {
+    if !context.allows(relative_path, effective_type.is_dir()) {
+        if context.options().delete_excluded_enabled() {
+            *keep_name = false;
+        }
+        return Ok(EntryAction::SkipExcluded);
+    }
+
+    if entry_type.is_dir() {
+        return Ok(EntryAction::CopyDirectory);
+    }
+
+    if effective_type.is_file() {
+        return Ok(EntryAction::CopyFile);
+    }
+
+    if effective_type.is_dir() {
+        return Ok(EntryAction::CopyDirectory);
+    }
+
+    if entry_type.is_symlink() {
+        if context.links_enabled() {
+            return Ok(EntryAction::CopySymlink);
+        }
+        *keep_name = false;
+        return Ok(EntryAction::SkipNonRegular);
+    }
+
+    if is_fifo(effective_type) {
+        if context.specials_enabled() {
+            return Ok(EntryAction::CopyFifo);
+        }
+        *keep_name = false;
+        return Ok(EntryAction::SkipNonRegular);
+    }
+
+    if is_device(effective_type) {
+        if context.copy_devices_as_files_enabled() {
+            return Ok(EntryAction::CopyDeviceAsFile);
+        }
+        if context.devices_enabled() {
+            return Ok(EntryAction::CopyDevice);
+        }
+        *keep_name = false;
+        return Ok(EntryAction::SkipNonRegular);
+    }
+
+    Err(LocalCopyError::invalid_argument(
+        LocalCopyArgumentError::UnsupportedFileType,
+    ))
+}
+
 pub(crate) fn plan_directory_entries<'a>(
     context: &mut CopyContext,
     entries: &'a [DirectoryEntry],
@@ -69,6 +133,7 @@ pub(crate) fn plan_directory_entries<'a>(
         let entry_type = entry_metadata.file_type();
         let mut metadata_override = None;
         let mut effective_type = entry_type;
+
         if entry_type.is_symlink()
             && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
         {
@@ -89,6 +154,7 @@ pub(crate) fn plan_directory_entries<'a>(
                 }
             }
         }
+
         let relative_path = match relative {
             Some(base) => base.join(Path::new(&file_name)),
             None => PathBuf::from(Path::new(&file_name)),
@@ -96,46 +162,13 @@ pub(crate) fn plan_directory_entries<'a>(
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
 
         let mut keep_name = true;
-
-        let mut action = if !context.allows(&relative_path, effective_type.is_dir()) {
-            if context.options().delete_excluded_enabled() {
-                keep_name = false;
-            }
-            EntryAction::SkipExcluded
-        } else if entry_type.is_dir() {
-            EntryAction::CopyDirectory
-        } else if effective_type.is_file() {
-            EntryAction::CopyFile
-        } else if effective_type.is_dir() {
-            EntryAction::CopyDirectory
-        } else if entry_type.is_symlink() {
-            if context.links_enabled() {
-                EntryAction::CopySymlink
-            } else {
-                keep_name = false;
-                EntryAction::SkipNonRegular
-            }
-        } else if is_fifo(&effective_type) {
-            if context.specials_enabled() {
-                EntryAction::CopyFifo
-            } else {
-                keep_name = false;
-                EntryAction::SkipNonRegular
-            }
-        } else if is_device(&effective_type) {
-            if context.copy_devices_as_files_enabled() {
-                EntryAction::CopyDeviceAsFile
-            } else if context.devices_enabled() {
-                EntryAction::CopyDevice
-            } else {
-                keep_name = false;
-                EntryAction::SkipNonRegular
-            }
-        } else {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::UnsupportedFileType,
-            ));
-        };
+        let mut action = decide_entry_action(
+            context,
+            relative_path.as_path(),
+            &entry_type,
+            &effective_type,
+            &mut keep_name,
+        )?;
 
         if matches!(action, EntryAction::CopySymlink)
             && context.safe_links_enabled()

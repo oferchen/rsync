@@ -21,6 +21,7 @@ use super::fallback::{RemoteFallbackContext, run_remote_transfer_fallback};
 use super::outcome::{ClientOutcome, FallbackSummary};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::summary::ClientSummary;
+
 /// Runs the client orchestration using the provided configuration.
 ///
 /// The helper executes the local copy engine and returns a summary of the
@@ -108,8 +109,8 @@ where
     };
 
     let filter_program = compile_filter_program(config.filter_rules())?;
-
     let mut options = build_local_copy_options(&config, filter_program);
+
     let mode = if config.dry_run() || config.list_only() {
         LocalCopyExecution::DryRun
     } else {
@@ -151,6 +152,152 @@ where
         .map_err(map_local_copy_error)
 }
 
+/// Builder for [`LocalCopyOptions`] derived from a [`ClientConfig`] and
+/// optional [`FilterProgram`].
+///
+/// This makes the translation layer explicit and keeps the main
+/// `build_local_copy_options` helper as a thin facade.
+struct LocalCopyOptionsBuilder<'a> {
+    config: &'a ClientConfig,
+    filter_program: Option<FilterProgram>,
+}
+
+impl<'a> LocalCopyOptionsBuilder<'a> {
+    fn new(config: &'a ClientConfig, filter_program: Option<FilterProgram>) -> Self {
+        Self {
+            config,
+            filter_program,
+        }
+    }
+
+    fn build(self) -> LocalCopyOptions {
+        let config = self.config;
+        let mut options = LocalCopyOptions::default();
+
+        options = options.recursive(config.recursive());
+
+        if config.delete_mode().is_enabled() || config.delete_excluded() {
+            options = options.delete(true);
+        }
+
+        options = match config.delete_mode() {
+            DeleteMode::Before => options.delete_before(true),
+            DeleteMode::After => options.delete_after(true),
+            DeleteMode::Delay => options.delete_delay(true),
+            DeleteMode::During | DeleteMode::Disabled => options,
+        };
+
+        options = options
+            .delete_excluded(config.delete_excluded())
+            .max_deletions(config.max_delete())
+            .min_file_size(config.min_file_size())
+            .max_file_size(config.max_file_size())
+            .with_block_size_override(config.block_size_override())
+            .remove_source_files(config.remove_source_files())
+            .bandwidth_limit(
+                config
+                    .bandwidth_limit()
+                    .map(|limit| limit.bytes_per_second()),
+            )
+            .bandwidth_burst(
+                config
+                    .bandwidth_limit()
+                    .and_then(|limit| limit.burst_bytes()),
+            )
+            .with_compression_algorithm(config.compression_algorithm())
+            .with_default_compression_level(config.compression_setting().level_or_default())
+            .with_skip_compress(config.skip_compress().clone())
+            .with_stop_at(config.stop_at())
+            .whole_file(config.whole_file())
+            .open_noatime(config.open_noatime())
+            .compress(config.compress())
+            .with_compression_level_override(config.compression_level())
+            .owner(config.preserve_owner())
+            .with_owner_override(config.owner_override())
+            .group(config.preserve_group())
+            .with_group_override(config.group_override())
+            .with_chmod(config.chmod().cloned())
+            .permissions(config.preserve_permissions())
+            .times(config.preserve_times())
+            .omit_dir_times(config.omit_dir_times())
+            .omit_link_times(config.omit_link_times())
+            .with_user_mapping(config.user_mapping().cloned())
+            .with_group_mapping(config.group_mapping().cloned())
+            .checksum(config.checksum())
+            .with_checksum_algorithm(config.checksum_signature_algorithm())
+            .size_only(config.size_only())
+            .ignore_times(config.ignore_times())
+            .ignore_existing(config.ignore_existing())
+            .existing_only(config.existing_only())
+            .ignore_missing_args(config.ignore_missing_args())
+            .delete_missing_args(config.delete_missing_args())
+            .update(config.update())
+            .with_modify_window(config.modify_window_duration())
+            .with_filter_program(self.filter_program)
+            .numeric_ids(config.numeric_ids())
+            .preallocate(config.preallocate())
+            .fsync(config.fsync())
+            .hard_links(config.preserve_hard_links())
+            .links(config.links())
+            .sparse(config.sparse())
+            .copy_links(config.copy_links())
+            .copy_dirlinks(config.copy_dirlinks())
+            .copy_devices_as_files(config.copy_devices())
+            .copy_unsafe_links(config.copy_unsafe_links())
+            .keep_dirlinks(config.keep_dirlinks())
+            .safe_links(config.safe_links())
+            .devices(config.preserve_devices())
+            .specials(config.preserve_specials())
+            .one_file_system(config.one_file_system())
+            .relative_paths(config.relative_paths())
+            .dirs(config.dirs())
+            .implied_dirs(config.implied_dirs())
+            .mkpath(config.mkpath())
+            .prune_empty_dirs(config.prune_empty_dirs())
+            .inplace(config.inplace())
+            .append(config.append())
+            .append_verify(config.append_verify())
+            .partial(config.partial())
+            .with_temp_directory(config.temp_directory().map(|path| path.to_path_buf()))
+            .backup(config.backup())
+            .with_backup_directory(config.backup_directory().map(|path| path.to_path_buf()))
+            .with_backup_suffix(config.backup_suffix().map(OsStr::to_os_string))
+            .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
+            .delay_updates(config.delay_updates())
+            .extend_link_dests(config.link_dest_paths().iter().cloned())
+            .with_timeout(
+                config
+                    .timeout()
+                    .as_seconds()
+                    .map(|seconds| Duration::from_secs(seconds.get())),
+            );
+
+        #[cfg(feature = "acl")]
+        {
+            options = options.acls(config.preserve_acls());
+        }
+
+        #[cfg(feature = "xattr")]
+        {
+            options = options.xattrs(config.preserve_xattrs());
+        }
+
+        if !config.reference_directories().is_empty() {
+            let references = config.reference_directories().iter().map(|reference| {
+                let kind = match reference.kind() {
+                    ReferenceDirectoryKind::Compare => EngineReferenceDirectoryKind::Compare,
+                    ReferenceDirectoryKind::Copy => EngineReferenceDirectoryKind::Copy,
+                    ReferenceDirectoryKind::Link => EngineReferenceDirectoryKind::Link,
+                };
+                EngineReferenceDirectory::new(kind, reference.path().to_path_buf())
+            });
+            options = options.extend_reference_directories(references);
+        }
+
+        options
+    }
+}
+
 /// Builds [`LocalCopyOptions`] reflecting the provided client configuration and optional filter
 /// program.
 ///
@@ -161,123 +308,7 @@ pub fn build_local_copy_options(
     config: &ClientConfig,
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {
-    let mut options = LocalCopyOptions::default();
-    options = options.recursive(config.recursive());
-    if config.delete_mode().is_enabled() || config.delete_excluded() {
-        options = options.delete(true);
-    }
-    options = match config.delete_mode() {
-        DeleteMode::Before => options.delete_before(true),
-        DeleteMode::After => options.delete_after(true),
-        DeleteMode::Delay => options.delete_delay(true),
-        DeleteMode::During | DeleteMode::Disabled => options,
-    };
-    options = options
-        .delete_excluded(config.delete_excluded())
-        .max_deletions(config.max_delete())
-        .min_file_size(config.min_file_size())
-        .max_file_size(config.max_file_size())
-        .with_block_size_override(config.block_size_override())
-        .remove_source_files(config.remove_source_files())
-        .bandwidth_limit(
-            config
-                .bandwidth_limit()
-                .map(|limit| limit.bytes_per_second()),
-        )
-        .bandwidth_burst(
-            config
-                .bandwidth_limit()
-                .and_then(|limit| limit.burst_bytes()),
-        )
-        .with_compression_algorithm(config.compression_algorithm())
-        .with_default_compression_level(config.compression_setting().level_or_default())
-        .with_skip_compress(config.skip_compress().clone())
-        .with_stop_at(config.stop_at())
-        .whole_file(config.whole_file())
-        .open_noatime(config.open_noatime())
-        .compress(config.compress())
-        .with_compression_level_override(config.compression_level())
-        .owner(config.preserve_owner())
-        .with_owner_override(config.owner_override())
-        .group(config.preserve_group())
-        .with_group_override(config.group_override())
-        .with_chmod(config.chmod().cloned())
-        .permissions(config.preserve_permissions())
-        .times(config.preserve_times())
-        .omit_dir_times(config.omit_dir_times())
-        .omit_link_times(config.omit_link_times())
-        .with_user_mapping(config.user_mapping().cloned())
-        .with_group_mapping(config.group_mapping().cloned())
-        .checksum(config.checksum())
-        .with_checksum_algorithm(config.checksum_signature_algorithm())
-        .size_only(config.size_only())
-        .ignore_times(config.ignore_times())
-        .ignore_existing(config.ignore_existing())
-        .existing_only(config.existing_only())
-        .ignore_missing_args(config.ignore_missing_args())
-        .delete_missing_args(config.delete_missing_args())
-        .update(config.update())
-        .with_modify_window(config.modify_window_duration())
-        .with_filter_program(filter_program)
-        .numeric_ids(config.numeric_ids())
-        .preallocate(config.preallocate())
-        .fsync(config.fsync())
-        .hard_links(config.preserve_hard_links())
-        .links(config.links())
-        .sparse(config.sparse())
-        .copy_links(config.copy_links())
-        .copy_dirlinks(config.copy_dirlinks())
-        .copy_devices_as_files(config.copy_devices())
-        .copy_unsafe_links(config.copy_unsafe_links())
-        .keep_dirlinks(config.keep_dirlinks())
-        .safe_links(config.safe_links())
-        .devices(config.preserve_devices())
-        .specials(config.preserve_specials())
-        .one_file_system(config.one_file_system())
-        .relative_paths(config.relative_paths())
-        .dirs(config.dirs())
-        .implied_dirs(config.implied_dirs())
-        .mkpath(config.mkpath())
-        .prune_empty_dirs(config.prune_empty_dirs())
-        .inplace(config.inplace())
-        .append(config.append())
-        .append_verify(config.append_verify())
-        .partial(config.partial())
-        .with_temp_directory(config.temp_directory().map(|path| path.to_path_buf()))
-        .backup(config.backup())
-        .with_backup_directory(config.backup_directory().map(|path| path.to_path_buf()))
-        .with_backup_suffix(config.backup_suffix().map(OsStr::to_os_string))
-        .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
-        .delay_updates(config.delay_updates())
-        .extend_link_dests(config.link_dest_paths().iter().cloned())
-        .with_timeout(
-            config
-                .timeout()
-                .as_seconds()
-                .map(|seconds| Duration::from_secs(seconds.get())),
-        );
-    #[cfg(feature = "acl")]
-    {
-        options = options.acls(config.preserve_acls());
-    }
-    #[cfg(feature = "xattr")]
-    {
-        options = options.xattrs(config.preserve_xattrs());
-    }
-
-    if !config.reference_directories().is_empty() {
-        let references = config.reference_directories().iter().map(|reference| {
-            let kind = match reference.kind() {
-                ReferenceDirectoryKind::Compare => EngineReferenceDirectoryKind::Compare,
-                ReferenceDirectoryKind::Copy => EngineReferenceDirectoryKind::Copy,
-                ReferenceDirectoryKind::Link => EngineReferenceDirectoryKind::Link,
-            };
-            EngineReferenceDirectory::new(kind, reference.path().to_path_buf())
-        });
-        options = options.extend_reference_directories(references);
-    }
-
-    options
+    LocalCopyOptionsBuilder::new(config, filter_program).build()
 }
 
 fn invoke_fallback<Out, Err>(
