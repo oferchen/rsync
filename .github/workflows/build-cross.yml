@@ -36,8 +36,8 @@ jobs:
         run: |
           set -euo pipefail
           sudo dpkg --add-architecture arm64
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt update
+          sudo apt install -y \
             pkg-config \
             libssl-dev \
             libacl1-dev \
