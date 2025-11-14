@@ -14,10 +14,10 @@ use super::config::{
     ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,
 };
 use super::error::{
-    compile_filter_error, fallback_context_missing_error, map_local_copy_error,
-    missing_operands_error, ClientError,
+    ClientError, compile_filter_error, fallback_context_missing_error, map_local_copy_error,
+    missing_operands_error,
 };
-use super::fallback::{run_remote_transfer_fallback, RemoteFallbackContext};
+use super::fallback::{RemoteFallbackContext, run_remote_transfer_fallback};
 use super::outcome::{ClientOutcome, FallbackSummary};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::summary::ClientSummary;
