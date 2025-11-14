@@ -54,10 +54,10 @@ options:
     status: implemented
     notes: ""
   - option: --no-msgs2stderr
-    short: 
+    short:
     category: logging
     upstream_default: enabled by default (2)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --quiet
     short: q

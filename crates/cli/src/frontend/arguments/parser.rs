@@ -239,7 +239,7 @@ where
     let one_file_system =
         tri_state_flag_positive_first(&matches, "one-file-system", "no-one-file-system");
     let implied_dirs = tri_state_flag_positive_first(&matches, "implied-dirs", "no-implied-dirs");
-    let msgs_to_stderr = matches.get_flag("msgs2stderr");
+    let msgs_to_stderr = tri_state_flag_positive_first(&matches, "msgs2stderr", "no-msgs2stderr");
     let outbuf = matches.remove_one::<OsString>("outbuf");
     let stats = matches.get_flag("stats");
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;

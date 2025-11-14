@@ -67,8 +67,8 @@ options such as `--config`, etc.).
   --no-x, --no-y, --no-z, --old-args, --old-d, --only-write-batch, --qsort, --quiet,
   --read-batch, --sender, --server, --stderr, --stop-after, --stop-at, --time-limit,
   --trust-sender, --write-batch, --write-devices, --zc, --zl
-- **logging** (3):
-  --no-itemize-changes, --no-msgs2stderr, --no-verbose
+- **logging** (2):
+  --no-itemize-changes, --no-verbose
 - **metadata** (4):
   --atimes, --crtimes, --no-atimes, --no-crtimes
 - **transfer** (5):
