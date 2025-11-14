@@ -27,10 +27,10 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
 
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2.8.1
-        with:
-          key: build-linux
+      # - name: Cache cargo builds
+      #   uses: Swatinem/rust-cache@v2.8.1
+      #   with:
+      #     key: build-linux
 
       - name: Install system dependencies
         run: |
@@ -85,10 +85,10 @@ jobs:
         with:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2.8.1
-        with:
-          key: build-macos
+      # - name: Cache cargo builds
+      #   uses: Swatinem/rust-cache@v2.8.1
+      #   with:
+      #     key: build-macos
 
       - name: Install OpenSSL
         run: |
@@ -121,10 +121,10 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2.8.1
-        with:
-          key: build-windows
+      # - name: Cache cargo builds
+      #   uses: Swatinem/rust-cache@v2.8.1
+      #   with:
+      #     key: build-windows
 
       - name: Disable rustc wrapper if configured
         shell: pwsh
