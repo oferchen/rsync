@@ -4,6 +4,8 @@ use std::path::Path;
 
 use crate::local_copy::LocalCopyError;
 
+const SPARSE_WRITE_SIZE: usize = 1024;
+
 #[derive(Default)]
 pub(crate) struct SparseWriteState {
     pending_zero_run: u64,
@@ -57,30 +59,40 @@ pub(crate) fn write_sparse_chunk(
         return Ok(0);
     }
 
-    let leading = leading_zero_run(chunk);
-    state.accumulate(leading);
+    let mut written = 0usize;
+    let mut offset = 0usize;
 
-    if leading == chunk.len() {
-        return Ok(0);
+    while offset < chunk.len() {
+        let segment_end = (offset + SPARSE_WRITE_SIZE).min(chunk.len());
+        let segment = &chunk[offset..segment_end];
+
+        let leading = leading_zero_run(segment);
+        state.accumulate(leading);
+
+        if leading == segment.len() {
+            offset = segment_end;
+            continue;
+        }
+
+        let trailing = trailing_zero_run(&segment[leading..]);
+        let data_start = offset + leading;
+        let data_end = segment_end - trailing;
+
+        if data_end > data_start {
+            state.flush(writer, destination)?;
+            writer
+                .write_all(&chunk[data_start..data_end])
+                .map_err(|error| {
+                    LocalCopyError::io("copy file", destination.to_path_buf(), error)
+                })?;
+            written += data_end - data_start;
+        }
+
+        state.replace(trailing);
+        offset = segment_end;
     }
 
-    let trailing = trailing_zero_run(&chunk[leading..]);
-    let data_start = leading;
-    let data_end = chunk.len() - trailing;
-
-    let literal_written = if data_end > data_start {
-        state.flush(writer, destination)?;
-        writer
-            .write_all(&chunk[data_start..data_end])
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
-        data_end - data_start
-    } else {
-        0
-    };
-
-    state.replace(trailing);
-
-    Ok(literal_written)
+    Ok(written)
 }
 
 #[inline]
@@ -300,5 +312,79 @@ mod tests {
             .expect("read back zeros");
 
         assert!(buffer.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn sparse_writer_skips_large_interior_zero_runs() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        let mut chunk = vec![0u8; super::SPARSE_WRITE_SIZE * 2];
+        chunk[0] = b'L';
+        let last = super::SPARSE_WRITE_SIZE * 2 - 1;
+        chunk[last] = b'R';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write sparse chunk");
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish sparse writer");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate file");
+
+        assert_eq!(written, 2);
+
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind for verification");
+        let mut buffer = vec![0u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back data");
+
+        assert_eq!(buffer[0], b'L');
+        assert!(buffer[1..buffer.len() - 1].iter().all(|&byte| byte == 0));
+        assert_eq!(buffer[buffer.len() - 1], b'R');
+    }
+
+    #[test]
+    fn sparse_writer_writes_small_interior_zero_runs_dense() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        let mut chunk = vec![0u8; super::SPARSE_WRITE_SIZE / 2];
+        chunk[0] = b'L';
+        let last = chunk.len() - 1;
+        chunk[last] = b'R';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write sparse chunk");
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish sparse writer");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate file");
+
+        assert_eq!(written, chunk.len());
+
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind for verification");
+        let mut buffer = vec![0u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back data");
+
+        assert_eq!(buffer[0], b'L');
+        assert!(buffer[1..buffer.len() - 1].iter().all(|&byte| byte == 0));
+        assert_eq!(buffer[buffer.len() - 1], b'R');
     }
 }
