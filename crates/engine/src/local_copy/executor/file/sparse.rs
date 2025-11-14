@@ -61,23 +61,26 @@ pub(crate) fn write_sparse_chunk(
     state.accumulate(leading);
 
     if leading == chunk.len() {
-        return Ok(chunk.len());
+        return Ok(0);
     }
 
     let trailing = trailing_zero_run(&chunk[leading..]);
     let data_start = leading;
     let data_end = chunk.len() - trailing;
 
-    if data_end > data_start {
+    let literal_written = if data_end > data_start {
         state.flush(writer, destination)?;
         writer
             .write_all(&chunk[data_start..data_end])
             .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
-    }
+        data_end - data_start
+    } else {
+        0
+    };
 
     state.replace(trailing);
 
-    Ok(chunk.len())
+    Ok(literal_written)
 }
 
 #[inline]
@@ -207,12 +210,17 @@ mod tests {
         let mut state = SparseWriteState::default();
 
         let first = [b'A', b'B', 0, 0, 0];
-        write_sparse_chunk(file.as_file_mut(), &mut state, &first, path.as_path())
-            .expect("write first chunk");
+        let written_first =
+            write_sparse_chunk(file.as_file_mut(), &mut state, &first, path.as_path())
+                .expect("write first chunk");
 
         let second = [0, 0, b'C', b'D'];
-        write_sparse_chunk(file.as_file_mut(), &mut state, &second, path.as_path())
-            .expect("write second chunk");
+        let written_second =
+            write_sparse_chunk(file.as_file_mut(), &mut state, &second, path.as_path())
+                .expect("write second chunk");
+
+        assert_eq!(written_first, 2);
+        assert_eq!(written_second, 2);
 
         state
             .finish(file.as_file_mut(), path.as_path())
@@ -243,11 +251,13 @@ mod tests {
         let mut state = SparseWriteState::default();
 
         let chunk = [b'Z', 0, 0, 0, 0];
-        write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
             .expect("write chunk");
         state
             .finish(file.as_file_mut(), path.as_path())
             .expect("flush trailing zeros");
+
+        assert_eq!(written, 1);
 
         file.as_file_mut()
             .set_len(chunk.len() as u64)
@@ -261,5 +271,34 @@ mod tests {
 
         assert_eq!(buffer[0], b'Z');
         assert!(buffer[1..].iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn sparse_writer_reports_zero_literal_bytes_for_all_zero_chunks() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        let zeros = [0u8; 32];
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &zeros, path.as_path())
+            .expect("write zero chunk");
+
+        assert_eq!(written, 0);
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish sparse writer");
+
+        file.as_file_mut()
+            .set_len(zeros.len() as u64)
+            .expect("truncate file");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![1u8; zeros.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back zeros");
+
+        assert!(buffer.iter().all(|&byte| byte == 0));
     }
 }
