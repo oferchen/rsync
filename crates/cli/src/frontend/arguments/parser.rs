@@ -91,6 +91,8 @@ where
     } else {
         recursive_override.unwrap_or(false)
     };
+    let inc_recursive =
+        tri_state_flag_positive_first(&matches, "inc-recursive", "no-inc-recursive");
     let dirs = tri_state_flag_negative_first(&matches, "dirs", "no-dirs");
     let delete_flag = matches.get_flag("delete");
     let delete_before_flag = matches.get_flag("delete-before");
@@ -445,6 +447,7 @@ where
         archive,
         recursive,
         recursive_override,
+        inc_recursive,
         dirs,
         delete_mode,
         delete_excluded,

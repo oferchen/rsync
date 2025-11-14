@@ -249,6 +249,22 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .overrides_with("recursive"),
             )
             .arg(
+                Arg::new("inc-recursive")
+                    .long("inc-recursive")
+                    .visible_alias("i-r")
+                    .help("Scan directories incrementally during recursion (default behaviour).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-inc-recursive"),
+            )
+            .arg(
+                Arg::new("no-inc-recursive")
+                    .long("no-inc-recursive")
+                    .visible_alias("no-i-r")
+                    .help("Disable incremental directory scanning during recursion.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("inc-recursive"),
+            )
+            .arg(
                 Arg::new("dirs")
                     .long("dirs")
                     .short('d')

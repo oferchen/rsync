@@ -38,6 +38,7 @@ pub(crate) fn prepare_invocation(
         human_readable: human_readable_mode,
         archive,
         recursive,
+        inc_recursive,
         dirs,
         delete,
         delete_mode,
@@ -160,6 +161,11 @@ pub(crate) fn prepare_invocation(
     match recursive {
         Some(true) => command_args.push(OsString::from("--recursive")),
         Some(false) => command_args.push(OsString::from("--no-recursive")),
+        None => {}
+    }
+    match inc_recursive {
+        Some(true) => command_args.push(OsString::from("--inc-recursive")),
+        Some(false) => command_args.push(OsString::from("--no-inc-recursive")),
         None => {}
     }
     match dirs {
