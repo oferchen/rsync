@@ -109,8 +109,7 @@ impl ParsedSocketOption {
     /// parsing/orchestration rather than low-level details.
     fn apply(&self, stream: &TcpStream) -> io::Result<()> {
         match self.kind {
-            SocketOptionKind::Bool { level, option }
-            | SocketOptionKind::Int { level, option } => {
+            SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
                 let value = self.explicit_value.unwrap_or(libc::c_int::from(1));
                 set_socket_option_int(stream, level, option, value)
             }
