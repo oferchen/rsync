@@ -1,11 +1,19 @@
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync)](https://github.com/oferchen/rsync/releases)
 
-# oc-rsync - Classic rsync implementation in pure rust.
+# oc-rsync – Classic rsync implementation in pure Rust
 
+Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **protocol 32** and near drop-in CLI/daemon behavior, while taking advantage of Rust’s safety guarantees and modern tooling.
 
-- **Parity goal:** CLI UX, negotiation, framing/tags, messages, and exit codes are designed to be **indistinguishable** from [rsync](https://rsync.samba.org/).
-- **Safety & performance:** Memory-safe Rust, explicit error types, and hot-path IO attention.
+> Binary name: **`oc-rsync`** (client and daemon in one binary). System packages can keep the original `rsync` installed side-by-side.
+
+---
+
+## About
+
+`oc-rsync` is in the final stages of stabilization: the core feature set is implemented and working, and the focus is now on polishing edge cases, and ergonomics.
+
+At the moment, Linux CI builds are temporarily failing due to a `ubuntu-latest` GitHub Actions issue; once that is resolved, official Linux packages (Deb/RPM and tarballs) will be published on the Releases page.
 
 ---
 
@@ -13,218 +21,303 @@
 
 - [Features](#features)
 - [Status](#status)
-- [Project Structure](#project-structure)
-- [Quick Start](#quick-start)
-- [Build From Source](#build-from-source)
-- [Linting, Formatting, and Clippy](#linting-formatting-and-clippy)
-- [Testing and Coverage](#testing-and-coverage)
-- [Interop & Compliance](#interop--compliance)
-- [XTask & Docs Validation](#xtask--docs-validation)
-- [CI](#ci)
-- [Release & Packaging](#release--packaging)
-- [Configuration & Environment](#configuration--environment)
+- [Installation](#installation)
+  - [Prebuilt packages](#prebuilt-packages)
+  - [Build from source](#build-from-source)
+- [Usage](#usage)
+  - [Basic examples](#basic-examples)
+  - [Daemon mode](#daemon-mode)
+- [Project layout](#project-layout)
+- [Development](#development)
+  - [Linting and formatting](#linting-and-formatting)
+  - [Testing and coverage](#testing-and-coverage)
+  - [Interop & compliance harness](#interop--compliance-harness)
+  - [XTask & docs validation](#xtask--docs-validation)
+  - [Release & packaging](#release--packaging)
+- [Configuration & environment](#configuration--environment)
 - [Logging](#logging)
-- [Security Notes](#security-notes)
-- [Design Highlights](#design-highlights)
 - [Contributing](#contributing)
 - [License](#license)
-- [Acknowledgments](#acknowledgments)
+- [Acknowledgements](#acknowledgements)
 
 ---
 
 ## Features
 
-- **Protocol 32**: Negotiation, tags, framing & multiplexing modeled after [rsync](https://rsync.samba.org/).
-- **Functional parity**: Exit codes, progress/prose, and CLI help emulate upstream behavior.
-- **Checksums**: Rolling + strong checksums with clear traits for future SIMD paths.
-- **Composed crates**: Separation of protocol, engine, daemon, CLI, filters, checksums, bandwidth.
-- **Strict hygiene**: Clippy `-D warnings`, rustfmt checks, and doc validation via `xtask`.
+- **Protocol 32 parity**
 
-> Note: [rsync](https://rsync.samba.org/) error lines reference C source files. Here, diagnostics map to **Rust module/function paths** with equivalent fidelity.
+  - Negotiation, tags, framing, and multiplexing modeled closely after upstream `rsync` (3.4.x).
+  - Designed to interoperate with existing `rsync` daemons and clients (both directions).
 
----
+- **CLI & UX parity**
 
-## Status
+  - Command-line surface modeled after `rsync`, including exit codes and user-facing messages.
+  - `--version` and `--help` outputs are structured to closely match upstream while exposing Rust-specific details.
 
-- **Compatibility**: Mirrors [rsync](https://rsync.samba.org/) (protocol 32) with Rust-branded release `3.4.1-rust`.
-- **Daemon defaults**: Ships `/etc/oc-rsyncd/oc-rsyncd.conf` as the primary configuration file, matching packaging and systemd units.
+- **Rust safety & performance**
 
----
+  - Memory-safe implementation using idiomatic Rust.
+  - Hot path I/O and checksum operations are structured for future SIMD/vectorization work.
 
-## Project Structure
+- **Composed workspace**
 
-```
+  - Multiple crates separate concerns:
+    - `cli` for argument parsing and user experience.
+    - `core` for shared types, error model, and utilities.
+    - `protocol` for wire format, tags, and negotiation.
+    - `engine` for file list and data pump pipelines.
+    - `daemon` for rsync-style daemon behavior.
+    - `filters`, `checksums`, `bandwidth` for independent subsystems.
 
-bin/oc-rsync/           # Client and daemon entry (binary crate)
-crates/cli/             # CLI: flags/help/UX parity
-crates/core/            # Core types, error model, shared utils
-crates/protocol/        # Protocol v32: negotiation, tags, framing, IO
-crates/engine/          # File-list & data pump pipelines
-crates/daemon/          # Rsync-like daemon behaviors
-crates/filters/         # Include/exclude pattern engine
-crates/checksums/       # Rolling & strong checksum implementations
-crates/bandwidth/       # Throttling/pacing primitives
-tools/                  # Dev utilities (e.g., enforce_limits.sh)
-xtask/                  # Developer tasks (e.g., doc validation)
+- **Strict hygiene**
 
-````
-
-> The workspace also includes additional internal crates/utilities as development evolves; the above are stable anchors for docs/CI.
+  - `cargo fmt` and `cargo clippy` enforced in CI with `-D warnings`.
+  - Documentation and README validation via `xtask` to keep public docs in sync with code.
 
 ---
 
-## Quick Start
+## Installation
+
+### Prebuilt packages
+
+Prebuilt artifacts are (or will be) published on the GitHub **Releases** page (Deb/RPM packages and tarballs, across multiple platforms/architectures).
+
+1. Go to: <https://github.com/oferchen/rsync/releases>
+2. Download the asset for your OS/arch (e.g., `.deb`, `.rpm`, or `.tar.*`).
+3. Install it using your platform’s package manager or by extracting the tarball.
+
+The packaging pipeline installs `oc-rsync` under dedicated paths so that the system `rsync` can remain installed in parallel.
+
+### Build from source
+
+Requirements:
+
+- Rust toolchain **1.88** (or newer compatible with the workspace).
+
+Clone and build:
 
 ```bash
 git clone https://github.com/oferchen/rsync.git
 cd rsync
 
-# Build (debug)
+# Debug build
 cargo build --workspace
 
-# Build (release)
+# Optimized build
 cargo build --workspace --release
-
-# Version/help parity check
-cargo run --bin oc-rsync -- --version
-cargo run --bin oc-rsync -- --help
 ````
 
----
-
-## Build From Source
+To match the documented toolchain:
 
 ```bash
-# Ensure Rust 1.88 toolchain
 rustup toolchain install 1.88.0
 rustup default 1.88.0
-
-# Workspace build
 cargo build --workspace --all-features
 ```
 
-Cross builds and extra packaging live in CI and optional developer flows (see [Release & Packaging](#release--packaging)).
+The primary entrypoint binary is `oc-rsync` (client and daemon).
 
 ---
 
-## Linting, Formatting, and Clippy
+## Usage
+
+`oc-rsync` is designed to behave like `rsync`, so existing `rsync` muscle memory should mostly apply.
+
+### Basic examples
+
+Local directory sync:
 
 ```bash
-# Format (check)
+oc-rsync -av ./source/ ./dest/
+```
+
+Remote pull:
+
+```bash
+oc-rsync -av user@host:/remote/path/ ./local/path/
+```
+
+Remote push:
+
+```bash
+oc-rsync -av ./local/path/ user@host:/remote/path/
+```
+
+Stats, progress, and other flags follow upstream semantics wherever possible.
+
+### Daemon mode
+
+Run as a daemon:
+
+```bash
+oc-rsync --daemon --config=/etc/oc-rsyncd/oc-rsyncd.conf
+```
+
+Default daemon configuration example path:
+
+```text
+/etc/oc-rsyncd/oc-rsyncd.conf
+```
+
+The daemon mode is intended to interoperate with upstream `rsync` clients and daemons.
+
+---
+
+## Project layout
+
+High-level workspace structure:
+
+```text
+bin/oc-rsync/           # Client + daemon entry (binary crate)
+crates/cli/             # CLI: flags, help, UX parity
+crates/core/            # Core types, error model, shared utilities
+crates/protocol/        # Protocol v32: negotiation, tags, framing, IO
+crates/engine/          # File list & data pump pipelines
+crates/daemon/          # Rsync-like daemon behaviors
+crates/filters/         # Include/exclude pattern engine
+crates/checksums/       # Rolling & strong checksum implementations
+crates/bandwidth/       # Throttling/pacing primitives
+docs/                   # Design notes, internal docs
+tools/                  # Dev utilities (e.g., enforce_limits.sh)
+xtask/                  # Developer tasks: docs validation, packaging helpers
+AGENTS.md               # Internal agent roles & conventions
+```
+
+---
+
+## Development
+
+### Linting and formatting
+
+```bash
+# Format (check mode)
 cargo fmt --all -- --check
 
 # Clippy (deny warnings)
 cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
 ```
 
-These are enforced in CI.
+These are enforced in CI to keep the codebase consistent and warning-free.
 
----
-
-## Testing and Coverage
+### Testing and coverage
 
 ```bash
 # Unit + integration tests
-cargo test --workspace --all-features
+cargo nextest --workspace --all-features
+```
 
-# Optional coverage (example with llvm-cov)
+Example coverage flow (LLVM based):
+
+```bash
 cargo llvm-cov clean
 cargo llvm-cov --workspace --lcov --output-path lcov.info
 ```
 
-> Where enabled, CI enforces a coverage gate to prevent regressions.
+Where enabled, CI may enforce coverage gates to avoid regressions.
 
----
+### XTask & docs validation
 
-## Interop & Compliance
-
-* **Protocol v32:** Message/tag semantics mirror [rsync](https://rsync.samba.org/).
-* **Client/daemon:** Designed to operate with upstream `rsync` daemons and clients.
-* **Exit codes/messages:** Map to upstream conventions; differences are documented inline when safety/perf requires.
-* **Interop harness:** `tools/ci/run_interop.sh` downloads upstream releases 3.0.9,
-  3.1.3, and 3.4.1 and exercises both directions—upstream client →
-  `oc-rsync --daemon` and `oc-rsync` → upstream daemon—to verify parity while the native transfer
-  engine is integrated.
-* **Smoke test example:**
-
-  ```bash
-  # Replace host/module with your upstream rsyncd endpoint
-  cargo run --bin oc-rsync -- -av rsync://host/module/ /tmp/sync-test
-  ```
-
----
-
-## XTask & Docs Validation
-
-Documentation & hygiene are validated via `xtask`:
+Documentation and policy checks are wired via `xtask`:
 
 ```bash
 # Validate README and docs (anchors, headings, fenced blocks, link sets as configured)
 cargo xtask doc-validate
 
-# Source limits / policy checks
+# Source/policy limits
 bash tools/enforce_limits.sh
 
-# One-liner (fmt + clippy + tests + docs)
+# One-liner: fmt + clippy + tests + docs
 cargo fmt --all -- --check \
   && cargo clippy --workspace --all-targets --all-features --no-deps -D warnings \
-  && cargo test --workspace --all-features \
+  && cargo nextest --workspace --all-features \
   && cargo xtask doc-validate
 ```
 
-This README intentionally uses **stable, simple headings** (e.g., `#xtask--docs-validation`) to keep validators deterministic.
+This keeps public docs and internal invariants in sync with the codebase.
 
----
+### Release & packaging
 
-## Release & Packaging
+Release builds use a dedicated `dist` profile and `xtask` packaging helpers:
 
 ```bash
-# Build optimised binaries (dist profile) used for release packaging
+# Build optimized binaries (dist profile)
 cargo build --workspace --profile dist --locked
 
 # Produce Debian, RPM, and tarball artifacts for the host platform
 cargo xtask package --release
 
-# Limit packaging to tarballs (e.g. for macOS cross-build hosts)
+# Only tarballs (e.g., for macOS cross-build hosts)
 cargo xtask package --release --tarball
 
 # Restrict tarball generation to a specific target triple
 cargo xtask package --release --tarball --tarball-target x86_64-apple-darwin
 ```
 
-The packaging pipeline installs `oc-rsync` under dedicated paths so upstream `rsync`
-packages can remain installed. CI publishes Linux
-(`x86_64`/`aarch64`) `.deb`/`.rpm` packages, macOS and Windows tarballs
-(`x86_64`/`aarch64`), and a CycloneDX SBOM generated from the same `dist`
-builds.
+CI publishes artifacts across:
+
+* Linux (`x86_64` / `aarch64`) `.deb` / `.rpm`
+* macOS and Windows tarballs (for supported targets)
+* CycloneDX SBOM built from the same `dist` binaries.
 
 ---
 
-## Configuration & Environment
+## Configuration & environment
 
-Defaults aim to **mirror [rsync](https://rsync.samba.org/)** semantics. Flags/envs follow upstream names where feasible.
+Defaults aim to mirror upstream `rsync` semantics wherever possible. Flags and environment variables follow upstream names when feasible.
+
+For a full overview of supported options:
 
 ```bash
-cargo run --bin oc-rsync -- --help
-cargo run --bin oc-rsync -- --daemon --help
+# Client options
+oc-rsync --help
+
+# Daemon options
+oc-rsync --daemon --help
 ```
 
 ---
 
 ## Logging
 
-* Structured logs with conventional levels: `error`, `warn`, `info`, `debug`, `trace`.
-* End-user progress output follows rsync UX; diagnostics emphasize actionable context.
+* Structured logs with standard levels: `error`, `warn`, `info`, `debug`, `trace`.
+* Human-oriented progress output follows `rsync` UX conventions.
+* Diagnostics reference Rust module/function paths instead of C file/line pairs while preserving the same level of precision.
+
+---
+
+## Contributing
+
+Contributions, bug reports, and interop findings are very welcome.
+
+1. Fork the repository and create a feature branch.
+
+2. Run the full hygiene pipeline:
+
+   ```bash
+   cargo fmt --all -- --check
+   cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
+   cargo nextest --workspace --all-features
+   cargo xtask doc-validate
+   ```
+
+3. Open a pull request with a clear description of:
+
+   * Behavioral changes (especially vs upstream `rsync`)
+   * New flags or configuration knobs
+   * Any interop impact or protocol changes
+
+Please keep changes focused and align with the existing crate split and error handling patterns.
 
 ---
 
 ## License
 
-This project is available under the GPL-3.0-or-later license. See `LICENSE` for full terms.
+This project is licensed under the **GNU GPL v3.0 or later**.
+See [`LICENSE`](./LICENSE) for the full text.
 
 ---
 
 ## Acknowledgements
 
-Inspired by the original [rsync](https://rsync.samba.org/) by Andrew Tridgell and the Samba team. Thanks to the Rust community that made this possible.
-
+Inspired by the original [`rsync`](https://rsync.samba.org/) by Andrew Tridgell and the Samba team, and by the broader Rust ecosystem that made this re-implementation feasible.
+```
