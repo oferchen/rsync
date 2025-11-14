@@ -3,7 +3,9 @@
 use std::ffi::OsString;
 
 use ::metadata::ChmodModifiers;
-use ::metadata::{GroupMapping, MappingKind, NameMapping, UserMapping};
+use ::metadata::{GroupMapping, UserMapping};
+#[cfg(unix)]
+use ::metadata::{MappingKind, NameMapping};
 
 use crate::frontend::execution::chown::ParsedChown;
 
@@ -83,14 +85,17 @@ pub(crate) fn compute_metadata_settings(
         one_file_system,
         chmod,
     } = inputs;
+
     let user_mapping = match usermap {
         Some(value) => Some(parse_user_mapping(value, parsed_chown)?),
         None => None,
     };
+
     let group_mapping = match groupmap {
         Some(value) => Some(parse_group_mapping(value, parsed_chown)?),
         None => None,
     };
+
     let preserve_owner =
         if parsed_chown.and_then(|value| value.owner()).is_some() || user_mapping.is_some() {
             true
@@ -154,7 +159,9 @@ pub(crate) fn compute_metadata_settings(
             Err(error) => {
                 let formatted =
                     format!("failed to parse --chmod specification '{spec_text}': {error}");
-                return Err(core::rsync_error!(1, formatted).with_role(core::message::Role::Client));
+                return Err(
+                    core::rsync_error!(1, formatted).with_role(core::message::Role::Client),
+                );
             }
         }
     }
@@ -182,54 +189,158 @@ pub(crate) fn compute_metadata_settings(
     })
 }
 
+/// Strategy-style parser interface so we can swap mapping behavior per-platform
+/// (Unix implementation vs. Windows "unsupported" implementation).
+trait MappingParser<M> {
+    fn parse(
+        &self,
+        value: &OsString,
+        parsed_chown: Option<&ParsedChown>,
+    ) -> Result<M, core::message::Message>;
+}
+
+#[cfg(unix)]
+struct UnixUserMappingParser;
+
+#[cfg(unix)]
+impl MappingParser<UserMapping> for UnixUserMappingParser {
+    fn parse(
+        &self,
+        value: &OsString,
+        parsed_chown: Option<&ParsedChown>,
+    ) -> Result<UserMapping, core::message::Message> {
+        if parsed_chown.and_then(|parsed| parsed.owner()).is_some() {
+            return Err(
+                core::rsync_error!(
+                    1,
+                    "--usermap conflicts with prior --chown user specification"
+                )
+                .with_role(core::message::Role::Client),
+            );
+        }
+
+        parse_mapping_impl(value, MappingKind::User)
+    }
+}
+
+#[cfg(unix)]
+struct UnixGroupMappingParser;
+
+#[cfg(unix)]
+impl MappingParser<GroupMapping> for UnixGroupMappingParser {
+    fn parse(
+        &self,
+        value: &OsString,
+        parsed_chown: Option<&ParsedChown>,
+    ) -> Result<GroupMapping, core::message::Message> {
+        if parsed_chown.and_then(|parsed| parsed.group()).is_some() {
+            return Err(
+                core::rsync_error!(
+                    1,
+                    "--groupmap conflicts with prior --chown group specification"
+                )
+                .with_role(core::message::Role::Client),
+            );
+        }
+
+        parse_mapping_impl(value, MappingKind::Group)
+    }
+}
+
+#[cfg(windows)]
+struct UnsupportedUserMappingParser;
+
+#[cfg(windows)]
+impl MappingParser<UserMapping> for UnsupportedUserMappingParser {
+    fn parse(
+        &self,
+        value: &OsString,
+        parsed_chown: Option<&ParsedChown>,
+    ) -> Result<UserMapping, core::message::Message> {
+        let _ = (value, parsed_chown);
+
+        Err(core::rsync_error!(
+            1,
+            "--usermap is not supported on Windows builds of oc-rsync"
+        )
+        .with_role(core::message::Role::Client))
+    }
+}
+
+#[cfg(windows)]
+struct UnsupportedGroupMappingParser;
+
+#[cfg(windows)]
+impl MappingParser<GroupMapping> for UnsupportedGroupMappingParser {
+    fn parse(
+        &self,
+        value: &OsString,
+        parsed_chown: Option<&ParsedChown>,
+    ) -> Result<GroupMapping, core::message::Message> {
+        let _ = (value, parsed_chown);
+
+        Err(core::rsync_error!(
+            1,
+            "--groupmap is not supported on Windows builds of oc-rsync"
+        )
+        .with_role(core::message::Role::Client))
+    }
+}
+
 fn parse_user_mapping(
     value: &OsString,
     parsed_chown: Option<&ParsedChown>,
 ) -> Result<UserMapping, core::message::Message> {
-    if parsed_chown.and_then(|parsed| parsed.owner()).is_some() {
-        return Err(core::rsync_error!(
-            1,
-            "--usermap conflicts with prior --chown user specification"
-        )
-        .with_role(core::message::Role::Client));
-    }
+    #[cfg(unix)]
+    let parser = UnixUserMappingParser;
 
-    parse_mapping(value, MappingKind::User)
+    #[cfg(windows)]
+    let parser = UnsupportedUserMappingParser;
+
+    parser.parse(value, parsed_chown)
 }
 
 fn parse_group_mapping(
     value: &OsString,
     parsed_chown: Option<&ParsedChown>,
 ) -> Result<GroupMapping, core::message::Message> {
-    if parsed_chown.and_then(|parsed| parsed.group()).is_some() {
-        return Err(core::rsync_error!(
-            1,
-            "--groupmap conflicts with prior --chown group specification"
-        )
-        .with_role(core::message::Role::Client));
-    }
+    #[cfg(unix)]
+    let parser = UnixGroupMappingParser;
 
-    parse_mapping(value, MappingKind::Group)
+    #[cfg(windows)]
+    let parser = UnsupportedGroupMappingParser;
+
+    parser.parse(value, parsed_chown)
 }
 
-fn parse_mapping<M>(value: &OsString, kind: MappingKind) -> Result<M, core::message::Message>
+#[cfg(unix)]
+fn parse_mapping_impl<M>(
+    value: &OsString,
+    kind: MappingKind,
+) -> Result<M, core::message::Message>
 where
     M: From<NameMapping>,
 {
     let spec = value.to_string_lossy();
     let trimmed = spec.trim();
+
     if trimmed.is_empty() {
-        return Err(core::rsync_error!(
-            1,
-            format!("{} requires a non-empty mapping specification", kind.flag())
-        )
-        .with_role(core::message::Role::Client));
+        return Err(
+            core::rsync_error!(
+                1,
+                format!(
+                    "{} requires a non-empty mapping specification",
+                    kind.flag()
+                )
+            )
+            .with_role(core::message::Role::Client),
+        );
     }
 
     match NameMapping::parse(kind, trimmed) {
         Ok(mapping) => Ok(M::from(mapping)),
-        Err(error) => {
-            Err(core::rsync_error!(1, error.to_string()).with_role(core::message::Role::Client))
-        }
+        Err(error) => Err(
+            core::rsync_error!(1, error.to_string()).with_role(core::message::Role::Client),
+        ),
     }
 }
