@@ -297,13 +297,18 @@ where
     } else {
         ProgressSetting::Unspecified
     };
-    let name_level = if matches.get_flag("itemize-changes") {
+    let itemize_changes_flag = matches.get_flag("itemize-changes");
+    let no_itemize_changes_flag = matches.get_flag("no-itemize-changes");
+    let name_level = if itemize_changes_flag && !no_itemize_changes_flag {
         NameOutputLevel::UpdatedOnly
     } else {
         NameOutputLevel::Disabled
     };
-    let name_overridden = matches.get_flag("itemize-changes");
+    let name_overridden = itemize_changes_flag || no_itemize_changes_flag;
     let mut verbosity = matches.get_count("verbose") as u8;
+    if matches.get_flag("no-verbose") {
+        verbosity = 0;
+    }
     if matches.get_flag("quiet") {
         verbosity = 0;
     }
@@ -414,7 +419,7 @@ where
     let stop_after = matches.remove_one::<OsString>("stop-after");
     let stop_at_option = matches.remove_one::<OsString>("stop-at");
     let out_format = matches.remove_one::<OsString>("out-format");
-    let itemize_changes = matches.get_flag("itemize-changes");
+    let itemize_changes = itemize_changes_flag && !no_itemize_changes_flag;
     let no_motd = matches.get_flag("no-motd");
 
     Ok(ParsedArgs {
