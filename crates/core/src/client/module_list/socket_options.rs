@@ -89,6 +89,7 @@ enum SocketOptionKind {
         level: libc::c_int,
         option: libc::c_int,
     },
+    #[cfg(not(target_family = "windows"))]
     On {
         level: libc::c_int,
         option: libc::c_int,
@@ -96,6 +97,10 @@ enum SocketOptionKind {
     },
 }
 
+/// Small command object representing a single parsed socket option.
+///
+/// This decouples parsing from execution: `apply` performs the actual
+/// setsockopt call using the platform-specific helper.
 struct ParsedSocketOption {
     kind: SocketOptionKind,
     explicit_value: Option<libc::c_int>,
@@ -103,10 +108,14 @@ struct ParsedSocketOption {
 }
 
 impl ParsedSocketOption {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
     /// Applies this parsed option to the provided stream.
     ///
-    /// Small command-style helper to keep `apply_socket_options` focused on
-    /// parsing/orchestration rather than low-level details.
+    /// On Unix, we support the full set including IPTOS_*.
+    #[cfg(not(target_family = "windows"))]
     fn apply(&self, stream: &TcpStream) -> io::Result<()> {
         match self.kind {
             SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
@@ -120,9 +129,31 @@ impl ParsedSocketOption {
             } => set_socket_option_int(stream, level, option, value),
         }
     }
+
+    /// Applies this parsed option to the provided stream.
+    ///
+    /// On Windows, IPTOS_* options are not exposed, so only Bool/Int are
+    /// reachable; the `On` variant is not compiled for this target.
+    #[cfg(target_family = "windows")]
+    fn apply(&self, stream: &TcpStream) -> io::Result<()> {
+        match self.kind {
+            SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
+                let value = self.explicit_value.unwrap_or(libc::c_int::from(1));
+                set_socket_option_int(stream, level, option, value)
+            }
+        }
+    }
 }
 
 /// Applies the caller-provided socket options to the supplied TCP stream.
+///
+/// The option string is a comma/whitespace-separated list of names with
+/// optional `=value` suffixes:
+///
+/// - `SO_KEEPALIVE`
+/// - `SO_SNDBUF=65536`
+/// - `TCP_NODELAY`
+/// - `IPTOS_LOWDELAY` (Unix only)
 pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Result<(), ClientError> {
     let list = options.to_string_lossy();
 
@@ -136,41 +167,57 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Resul
         .split(|ch: char| ch == ',' || ch.is_ascii_whitespace())
         .filter(|token| !token.is_empty())
     {
-        let (name, value) = match token.split_once('=') {
+        let (name, value_str) = match token.split_once('=') {
             Some((name, value)) => (name, Some(value)),
             None => (token, None),
         };
 
-        let descriptor = lookup_socket_option(name).ok_or_else(|| unknown_option(name))?;
+        let kind = lookup_socket_option(name).ok_or_else(|| unknown_option(name))?;
 
-        match descriptor {
-            SocketOptionKind::On { .. } if value.is_some() => {
-                return Err(option_disallows_value(name));
+        #[cfg(not(target_family = "windows"))]
+        {
+            match kind {
+                SocketOptionKind::On { .. } if value_str.is_some() => {
+                    return Err(option_disallows_value(name));
+                }
+                SocketOptionKind::On { .. } => {
+                    parsed.push(ParsedSocketOption {
+                        kind,
+                        explicit_value: None,
+                        name: intern_name(name),
+                    });
+                }
+                SocketOptionKind::Bool { .. } | SocketOptionKind::Int { .. } => {
+                    let parsed_value = value_str
+                        .map(parse_socket_option_value)
+                        .unwrap_or(libc::c_int::from(1));
+                    parsed.push(ParsedSocketOption {
+                        kind,
+                        explicit_value: Some(parsed_value),
+                        name: intern_name(name),
+                    });
+                }
             }
-            SocketOptionKind::On { .. } => {
-                parsed.push(ParsedSocketOption {
-                    kind: descriptor,
-                    explicit_value: None,
-                    name: intern_name(name),
-                });
-            }
-            SocketOptionKind::Bool { .. } | SocketOptionKind::Int { .. } => {
-                let parsed_value = value
-                    .map(parse_socket_option_value)
-                    .unwrap_or(libc::c_int::from(1));
-                parsed.push(ParsedSocketOption {
-                    kind: descriptor,
-                    explicit_value: Some(parsed_value),
-                    name: intern_name(name),
-                });
-            }
+        }
+
+        #[cfg(target_family = "windows")]
+        {
+            // On Windows we never have `On` variants; all options are Bool/Int.
+            let parsed_value = value_str
+                .map(parse_socket_option_value)
+                .unwrap_or(libc::c_int::from(1));
+            parsed.push(ParsedSocketOption {
+                kind,
+                explicit_value: Some(parsed_value),
+                name: intern_name(name),
+            });
         }
     }
 
     for option in parsed {
         option
             .apply(stream)
-            .map_err(|error| socket_option_error(option.name, error))?;
+            .map_err(|error| socket_option_error(option.name(), error))?;
     }
 
     Ok(())
@@ -271,6 +318,9 @@ fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
     }
 }
 
+/// Minimal, allocation-free numeric parser for socket option values.
+///
+/// This is stricter than `libc::atoi`-style parsing and clamps into i32.
 fn parse_socket_option_value(raw: &str) -> libc::c_int {
     let mut bytes = raw.trim_start().as_bytes().iter().copied();
 
@@ -353,6 +403,8 @@ fn option_disallows_value(name: &str) -> ClientError {
     )
 }
 
+/// Interns well-known option names into static string slices so the
+/// error paths can safely hold references without allocating.
 fn intern_name(name: &str) -> &'static str {
     match name {
         "SO_KEEPALIVE" => "SO_KEEPALIVE",
