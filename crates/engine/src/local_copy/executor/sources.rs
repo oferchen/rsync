@@ -39,8 +39,7 @@ fn record_skipped_symlink(
     if let Some(relative_path) = record_path {
         match fs::read_link(source_path) {
             Ok(target) => {
-                let metadata_snapshot =
-                    LocalCopyMetadata::from_metadata(metadata, Some(target));
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
                 let record = LocalCopyRecord::new(
                     relative_path.to_path_buf(),
                     LocalCopyAction::SkippedNonRegular,
@@ -330,12 +329,7 @@ pub(crate) fn copy_sources(
                                 record_path,
                             )?;
                         } else {
-                            record_skipped_symlink(
-                                context,
-                                source_path,
-                                &metadata,
-                                record_path,
-                            );
+                            record_skipped_symlink(context, source_path, &metadata, record_path);
                         }
                     } else if is_fifo(&effective_type) {
                         if !context.specials_enabled() {
