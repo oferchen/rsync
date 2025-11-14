@@ -368,6 +368,27 @@ mod locate_binary_tests {
         assert_eq!(resolved, binary_path);
     }
 
+    #[test]
+    fn env_guard_restores_absent_variable() {
+        const KEY: &str = "_RSYNC_TEST_ENV_GUARD_REMOVED";
+
+        let _guard = ENV_MUTEX.lock().expect("env mutex poisoned");
+
+        unsafe {
+            env::remove_var(KEY);
+        }
+
+        {
+            let _env_guard = EnvVarGuard::set(KEY, OsString::from("temporary"));
+            assert_eq!(env::var_os(KEY), Some(OsString::from("temporary")));
+        }
+
+        assert!(
+            env::var_os(KEY).is_none(),
+            "environment variable should be cleared"
+        );
+    }
+
     struct EnvVarGuard {
         key: &'static str,
         original: Option<OsString>,
