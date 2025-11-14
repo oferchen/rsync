@@ -155,7 +155,7 @@ where
         inplace,
         append,
         append_verify,
-        msgs_to_stderr,
+        msgs_to_stderr: msgs_to_stderr_option,
         outbuf,
         itemize_changes,
         whole_file,
@@ -175,6 +175,7 @@ where
     let human_readable_setting = human_readable;
     let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
     let human_readable_enabled = human_readable_mode.is_enabled();
+    let msgs_to_stderr_enabled = msgs_to_stderr_option.unwrap_or(false);
 
     if let Err(code) = validate_stdin_sources_conflict(&password_file, &files_from, stderr) {
         return code;
@@ -455,7 +456,7 @@ where
         append,
         append_verify,
         inplace,
-        msgs_to_stderr,
+        msgs_to_stderr: msgs_to_stderr_option,
         outbuf: outbuf.as_ref(),
         whole_file_option,
         fallback_bwlimit: fallback_bwlimit.as_ref(),
@@ -724,7 +725,7 @@ where
         summary::TransferExecutionInputs {
             config,
             fallback_args,
-            msgs_to_stderr,
+            msgs_to_stderr: msgs_to_stderr_enabled,
             progress_mode,
             human_readable_mode,
             itemize_changes,

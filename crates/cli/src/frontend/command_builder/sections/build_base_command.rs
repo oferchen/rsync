@@ -37,7 +37,15 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                 Arg::new("msgs2stderr")
                     .long("msgs2stderr")
                     .help("Route informational messages to standard error.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-msgs2stderr"),
+            )
+            .arg(
+                Arg::new("no-msgs2stderr")
+                    .long("no-msgs2stderr")
+                    .help("Route informational messages to standard output.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("msgs2stderr"),
             )
             .arg(
                 Arg::new("outbuf")

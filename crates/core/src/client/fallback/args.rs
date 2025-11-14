@@ -193,8 +193,8 @@ pub struct RemoteFallbackArgs {
     pub append_verify: bool,
     /// Optional `--inplace`/`--no-inplace` toggle.
     pub inplace: Option<bool>,
-    /// Routes daemon messages to standard error via `--msgs2stderr`.
-    pub msgs_to_stderr: bool,
+    /// Routes daemon messages via `--msgs2stderr` / `--no-msgs2stderr` when specified.
+    pub msgs_to_stderr: Option<bool>,
     /// Optional `--outbuf` value forwarded to the fallback binary.
     pub outbuf: Option<OsString>,
     /// Optional `--whole-file`/`--no-whole-file` toggle.

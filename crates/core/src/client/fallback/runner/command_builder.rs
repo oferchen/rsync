@@ -487,9 +487,12 @@ pub(crate) fn prepare_invocation(
     } else {
         push_toggle(&mut command_args, "--append", "--no-append", append);
     }
-    if msgs_to_stderr {
-        command_args.push(OsString::from("--msgs2stderr"));
-    }
+    push_toggle(
+        &mut command_args,
+        "--msgs2stderr",
+        "--no-msgs2stderr",
+        msgs_to_stderr,
+    );
     if let Some(mode) = outbuf {
         let mut arg = OsString::from("--outbuf=");
         arg.push(mode);
