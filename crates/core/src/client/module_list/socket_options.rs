@@ -74,6 +74,8 @@ mod socket_consts {
     pub const TCP_NODELAY: libc::c_int = 0x0001;
 
     // setsockopt() returns -1 on error; on Winsock this is SOCKET_ERROR == -1.
+    // Only needed on Windows; on Unix we just compare against -1 directly.
+    #[cfg(windows)]
     pub const SOCKET_ERROR: libc::c_int = -1;
 }
 
@@ -103,11 +105,12 @@ struct ParsedSocketOption {
 impl ParsedSocketOption {
     /// Applies this parsed option to the provided stream.
     ///
-    /// This is a small command-style helper, keeping `apply_socket_options`
-    /// focused on parsing/orchestration rather than low-level details.
+    /// Small command-style helper to keep `apply_socket_options` focused on
+    /// parsing/orchestration rather than low-level details.
     fn apply(&self, stream: &TcpStream) -> io::Result<()> {
         match self.kind {
-            SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
+            SocketOptionKind::Bool { level, option }
+            | SocketOptionKind::Int { level, option } => {
                 let value = self.explicit_value.unwrap_or(libc::c_int::from(1));
                 set_socket_option_int(stream, level, option, value)
             }
