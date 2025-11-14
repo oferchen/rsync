@@ -17,11 +17,11 @@ env:
   FORMULA_PATH: Formula/oc-rsync.rb
 
 jobs:
-  # --------------------------------------------------------------------------
-  # 1) Build & upload cross-platform archives via rust-release-binary
-  # --------------------------------------------------------------------------
-  binaries:
-    name: Build & upload binaries (${{ matrix.target }})
+  # ---------------------------------------------------------------------------
+  # 1) x86_64 binaries via rust-release-binary (Linux, macOS, Windows)
+  # ---------------------------------------------------------------------------
+  binaries-x86:
+    name: Build & upload x86_64 binaries (${{ matrix.target }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -30,15 +30,18 @@ jobs:
           - target: x86_64-unknown-linux-musl
             archive: "tar.gz"
             archive_suffix: "linux-x86_64.tar.gz"
-            static_linking: "false"   # avoid OpenSSL static linking issues :contentReference[oaicite:2]{index=2}
+            static_linking: "false"
+            extra_flags: "--all-features"
           - target: x86_64-apple-darwin
             archive: "tar.gz"
             archive_suffix: "darwin-x86_64.tar.gz"
             static_linking: "true"
+            extra_flags: "--all-features"
           - target: x86_64-pc-windows-gnu
             archive: "zip"
             archive_suffix: "windows-x86_64.zip"
             static_linking: "true"
+            extra_flags: '--no-default-features --features "zstd lz4 iconv"'
 
     steps:
       - name: Checkout
@@ -56,7 +59,7 @@ jobs:
             echo "version_no_prefix=${VERSION_NO_PREFIX}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install Linux build deps (for linux target)
+      - name: Install Linux build deps (for linux-musl target)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           set -euo pipefail
@@ -68,24 +71,25 @@ jobs:
             zlib1g-dev \
             libxxhash-dev
 
-      - name: Compile and upload via rust-release-binary
+      - name: Compile & upload via rust-release-binary
         uses: rust-build/rust-build.action@v1.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXTRA_COMMAND_FLAGS: ${{ matrix.extra_flags }}
         with:
           RUSTTARGET: ${{ matrix.target }}
           ARCHIVE_TYPES: ${{ matrix.archive }}
           ARCHIVE_NAME: oc-rsync-${{ steps.vars.outputs.version_no_prefix }}-${{ matrix.archive_suffix }}
-          EXTRA_FILES: "README.md LICENSE"
           STATIC_LINKING: ${{ matrix.static_linking }}
+          EXTRA_FILES: "README.md LICENSE"
 
-  # --------------------------------------------------------------------------
-  # 2) Build Linux DEB/RPM + glibc tarball using your xtask packaging
-  # --------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # 2) Linux glibc DEB/RPM + multi-arch tarballs via cargo xtask package
+  # ---------------------------------------------------------------------------
   linux-packages:
-    name: Build DEB/RPM packages
-    needs: binaries
-    runs-on: ubuntu-latest
+    name: Build Linux DEB/RPM + multi-arch tarballs
+    needs: binaries-x86
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -109,11 +113,13 @@ jobs:
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build Linux DEB/RPM/tarball (glibc)
+      - name: Build Linux x86_64 DEB/RPM + tarball (glibc)
         run: |
           set -euo pipefail
           cargo xtask package \
@@ -123,7 +129,19 @@ jobs:
             --tarball-target x86_64-unknown-linux-gnu \
             --release
 
-      - name: Upload Linux packages to release
+      - name: Build Linux aarch64 tarball
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          cargo xtask package \
+            --tarball \
+            --tarball-target aarch64-unknown-linux-gnu \
+            --release
+
+      - name: Upload Linux artifacts to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.release.tag_name }}
@@ -134,12 +152,58 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # --------------------------------------------------------------------------
-  # 3) Regenerate Homebrew formula from macOS tarball and open PR
-  # --------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # 3) macOS arm64 tarball via cargo xtask package
+  # ---------------------------------------------------------------------------
+  macos-arm-tarball:
+    name: Build macOS arm64 tarball
+    needs: binaries-x86
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install OpenSSL
+        run: |
+          brew update
+          brew install openssl@3 || true
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build macOS arm64 tarball
+        run: |
+          set -euo pipefail
+          cargo xtask package \
+            --tarball \
+            --tarball-target aarch64-apple-darwin \
+            --release
+
+      - name: Upload macOS arm64 tarball to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            target/dist/oc-rsync-*-darwin-aarch64*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # 4) Update Homebrew formula from macOS x86_64 tarball
+  # ---------------------------------------------------------------------------
   brew-formula:
     name: Update Homebrew formula
-    needs: binaries
+    needs: binaries-x86
     runs-on: ubuntu-latest
 
     steps:
@@ -174,7 +238,7 @@ jobs:
 
           AMD64_TARBALL="oc-rsync-${VERSION}-darwin-x86_64.tar.gz"
 
-          # Download macOS x86_64 tarball produced by rust-release-binary
+          # x86_64 macOS tarball from rust-release-binary
           curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
 
           AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
