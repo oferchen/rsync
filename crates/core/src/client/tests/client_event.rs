@@ -339,7 +339,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         append: None,
         append_verify: false,
         inplace: None,
-        msgs_to_stderr: false,
+        msgs_to_stderr: None,
         outbuf: None,
         whole_file: None,
         bwlimit: None,

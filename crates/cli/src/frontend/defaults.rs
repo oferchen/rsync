@@ -17,7 +17,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--blocking-io, --no-blocking-io, --protocol, --compress/-z, --no-compress, --compress-level, --compress-choice, ",
     "--skip-compress, --open-noatime, --no-open-noatime, --iconv, --no-iconv, --info, --debug, --verbose/-v, ",
     "--relative/-R, --no-relative, --one-file-system/-x, --no-one-file-system, --implied-dirs, --no-implied-dirs, ",
-    "--mkpath, --prune-empty-dirs/-m, --no-prune-empty-dirs, --progress, --no-progress, --msgs2stderr, --outbuf, ",
+    "--mkpath, --prune-empty-dirs/-m, --no-prune-empty-dirs, --progress, --no-progress, --msgs2stderr, --no-msgs2stderr, --outbuf, ",
     "--itemize-changes/-i, --out-format, --stats, --partial, --no-partial, --partial-dir, --temp-dir, --log-file, ",
     "--log-file-format, --delay-updates, --no-delay-updates, --whole-file/-W, --no-whole-file, --remove-source-files, ",
     "--remove-sent-files, --append, --no-append, --append-verify, --preallocate, --fsync, --inplace, --no-inplace, ",

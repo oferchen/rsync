@@ -104,7 +104,7 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) append: Option<bool>,
     pub(crate) append_verify: bool,
     pub(crate) inplace: Option<bool>,
-    pub(crate) msgs_to_stderr: bool,
+    pub(crate) msgs_to_stderr: Option<bool>,
     pub(crate) outbuf: Option<&'a OsString>,
     pub(crate) whole_file_option: Option<bool>,
     pub(crate) fallback_bwlimit: Option<&'a OsString>,
