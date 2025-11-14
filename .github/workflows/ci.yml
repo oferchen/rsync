@@ -16,6 +16,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
 
 jobs:
   lint-and-test:
@@ -36,11 +37,11 @@ jobs:
             nextest_flags: "--all-features"
 
           # ---------------- macOS (Intel + Apple Silicon) ---------
-          - os: macos-13          # x86_64
+          - os: macos-latest          # x86_64
             family: macos
             arch: x86_64
             nextest_flags: "--all-features"
-          - os: macos-15          # arm64
+          - os: macos-latest          # arm64
             family: macos
             arch: arm64
             nextest_flags: "--all-features"
