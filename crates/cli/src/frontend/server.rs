@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, Read, Write};
@@ -8,8 +10,8 @@ use std::thread;
 
 use core::branding::Brand;
 use core::fallback::{
-    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_available, fallback_override,
+    describe_missing_fallback_binary, fallback_binary_available, fallback_override,
+    CLIENT_FALLBACK_ENV, FallbackOverride,
 };
 use core::message::Role;
 use core::rsync_error;
@@ -48,7 +50,11 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
         daemon_args.push(arg.clone());
     }
 
-    if found { Some(daemon_args) } else { None }
+    if found {
+        Some(daemon_args)
+    } else {
+        None
+    }
 }
 
 /// Returns `true` when the invocation requests server mode.
@@ -56,7 +62,9 @@ pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
     args.iter().skip(1).any(|arg| arg == "--server")
 }
 
-/// Delegates execution to the daemon front-end.
+/// Delegates execution to the daemon front-end (Unix) or reports that daemon
+/// mode is unavailable (Windows).
+#[cfg(unix)]
 pub(crate) fn run_daemon_mode<Out, Err>(
     args: Vec<OsString>,
     stdout: &mut Out,
@@ -66,7 +74,30 @@ where
     Out: Write,
     Err: Write,
 {
+    // On Unix, delegate to the actual daemon front-end.
     daemon::run(args, stdout, stderr)
+}
+
+#[cfg(windows)]
+pub(crate) fn run_daemon_mode<Out, Err>(
+    args: Vec<OsString>,
+    stdout: &mut Out,
+    stderr: &mut Err,
+) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
+    let _ = stdout.flush();
+    let _ = stderr.flush();
+
+    let program_brand = super::detect_program_name(
+        args.first().map(OsString::as_os_str),
+    )
+    .brand();
+
+    write_daemon_unavailable_error(stderr, program_brand);
+    1
 }
 
 /// Delegates execution to the system rsync binary when `--server` is requested.
@@ -167,7 +198,9 @@ where
                 write_server_fallback_error(
                     stderr,
                     program_brand,
-                    format!("failed to read stdout from fallback {upstream_program}: {error}"),
+                    format!(
+                        "failed to read stdout from fallback {upstream_program}: {error}"
+                    ),
                 );
                 return 1;
             }
@@ -176,7 +209,9 @@ where
                 write_server_fallback_error(
                     stderr,
                     program_brand,
-                    format!("failed to read stderr from fallback {upstream_program}: {error}"),
+                    format!(
+                        "failed to read stderr from fallback {upstream_program}: {error}"
+                    ),
                 );
                 return 1;
             }
@@ -200,7 +235,9 @@ where
             write_server_fallback_error(
                 stderr,
                 program_brand,
-                format!("failed to wait for fallback {upstream_program} process: {error}"),
+                format!(
+                    "failed to wait for fallback {upstream_program} process: {error}"
+                ),
             );
             1
         }
@@ -280,5 +317,25 @@ fn write_server_fallback_error<Err: Write>(
     message = message.with_role(Role::Client);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+#[cfg(windows)]
+fn write_daemon_unavailable_error<Err: Write>(
+    stderr: &mut Err,
+    brand: Brand,
+) {
+    let mut sink = MessageSink::with_brand(stderr, brand);
+    let mut message = rsync_error!(
+        1,
+        "daemon mode is not supported on this platform; run the oc-rsync daemon on a Unix-like system"
+    );
+    message = message.with_role(Role::Client);
+
+    if super::write_message(&message, &mut sink).is_err() {
+        let _ = writeln!(
+            sink.writer_mut(),
+            "daemon mode is not supported on this platform; run the oc-rsync daemon on a Unix-like system"
+        );
     }
 }
