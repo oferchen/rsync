@@ -19,12 +19,41 @@ env:
 
 jobs:
   lint-and-test:
-    name: fmt + clippy + nextest (${{ matrix.os }})
+    name: fmt + clippy + nextest (${{ matrix.family }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          # ---------------- Linux (x86_64 + arm64) ----------------
+          - os: ubuntu-24.04
+            family: linux
+            arch: x86_64
+            nextest_flags: "--all-features"
+          - os: ubuntu-24.04-arm
+            family: linux
+            arch: arm64
+            nextest_flags: "--all-features"
+
+          # ---------------- macOS (Intel + Apple Silicon) ---------
+          - os: macos-13          # x86_64
+            family: macos
+            arch: x86_64
+            nextest_flags: "--all-features"
+          - os: macos-15          # arm64
+            family: macos
+            arch: arm64
+            nextest_flags: "--all-features"
+
+          # ---------------- Windows (x86_64 + arm64) --------------
+          - os: windows-2022
+            family: windows
+            arch: x86_64
+            nextest_flags: '--no-default-features --features "zstd lz4 iconv"'
+          - os: windows-11-arm
+            family: windows
+            arch: arm64
+            nextest_flags: '--no-default-features --features "zstd lz4 iconv"'
 
     steps:
       - name: Checkout
@@ -38,9 +67,10 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      # ---- platform deps ----
-      - name: Install system deps (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      # ---------- Platform-specific system deps ----------
+
+      - name: Install Linux deps
+        if: matrix.family == 'linux'
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -54,7 +84,7 @@ jobs:
             libxxhash-dev
 
       - name: Install OpenSSL (macOS)
-        if: matrix.os == 'macos-latest'
+        if: matrix.family == 'macos'
         run: |
           brew update
           brew install openssl@3 || true
@@ -62,7 +92,7 @@ jobs:
           echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Disable rustc wrapper if configured (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.family == 'windows'
         shell: pwsh
         run: |
           $configPath = ".cargo/config.toml"
@@ -74,18 +104,20 @@ jobs:
           "RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CARGO_BUILD_RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      # ---- lints on Linux only ----
+      # ---------- Lints: Linux x86_64, all features ----------
+
       - name: Format
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.family == 'linux' && matrix.arch == 'x86_64'
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.family == 'linux' && matrix.arch == 'x86_64'
         run: cargo clippy --workspace --all-targets --all-features --no-deps
 
-      # ---- tests everywhere ----
+      # ---------- Tests: nextest on each platform/arch ----------
+
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --locked
 
       - name: Nextest
-        run: cargo nextest run --workspace --all-targets --all-features
+        run: cargo nextest run --workspace --all-targets ${{ matrix.nextest_flags }}
