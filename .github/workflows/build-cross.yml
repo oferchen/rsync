@@ -17,9 +17,14 @@ env:
 jobs:
   linux:
     name: linux release artifacts
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
+      - name: Force DNS to 8.8.8.8
+        run: |
+          sudo rm -f /etc/resolv.conf
+          printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
+
       - name: Checkout
         uses: actions/checkout@v4
 
