@@ -129,6 +129,86 @@ impl<'a> CopyContext<'a> {
         self.options.omit_link_times_enabled()
     }
 
+    // --- Template-style helpers for parent replacement policies ----------------
+
+    fn parent_relative_to_destination<'p>(&self, parent: &'p Path) -> Option<&'p Path> {
+        parent
+            .strip_prefix(self.destination_root())
+            .ok()
+            .filter(|path| !path.as_os_str().is_empty())
+    }
+
+    /// Dry-run replacement policy: remove destination (logically) and either
+    /// allow creation (Ok) or synthesize a "NotFound" error.
+    fn replace_parent_entry_dry_run(
+        &mut self,
+        parent: &Path,
+        existing: &fs::Metadata,
+        allow_creation: bool,
+    ) -> Result<(), LocalCopyError> {
+        if self.force_replacements_enabled() {
+            let relative = self.parent_relative_to_destination(parent);
+            self.force_remove_destination(parent, relative, existing)?;
+            if allow_creation {
+                Ok(())
+            } else {
+                Err(LocalCopyError::io(
+                    "create parent directory",
+                    parent.to_path_buf(),
+                    io::Error::from(io::ErrorKind::NotFound),
+                ))
+            }
+        } else {
+            Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+            ))
+        }
+    }
+
+    /// Creation policy when creation is allowed and side effects are real
+    /// (non-dry-run): replace destination, create directory, and register progress.
+    fn replace_parent_entry_create(
+        &mut self,
+        parent: &Path,
+        existing: &fs::Metadata,
+    ) -> Result<(), LocalCopyError> {
+        if self.force_replacements_enabled() {
+            let relative = self.parent_relative_to_destination(parent);
+            self.force_remove_destination(parent, relative, existing)?;
+            fs::create_dir_all(parent).map_err(|error| {
+                LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+            })?;
+            self.register_progress();
+            Ok(())
+        } else {
+            Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+            ))
+        }
+    }
+
+    /// Policy when creation is forbidden: replace destination and always return
+    /// the synthesized "NotFound" IO error (mirroring upstream behavior).
+    fn replace_parent_entry_forbidden(
+        &mut self,
+        parent: &Path,
+        existing: &fs::Metadata,
+    ) -> Result<(), LocalCopyError> {
+        if self.force_replacements_enabled() {
+            let relative = self.parent_relative_to_destination(parent);
+            self.force_remove_destination(parent, relative, existing)?;
+            Err(LocalCopyError::io(
+                "create parent directory",
+                parent.to_path_buf(),
+                io::Error::from(io::ErrorKind::NotFound),
+            ))
+        } else {
+            Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+            ))
+        }
+    }
+
     pub(super) fn prepare_parent_directory(&mut self, parent: &Path) -> Result<(), LocalCopyError> {
         if parent.as_os_str().is_empty() {
             return Ok(());
@@ -148,49 +228,11 @@ impl<'a> CopyContext<'a> {
                             if metadata.file_type().is_dir() {
                                 Ok(())
                             } else {
-                                if self.force_replacements_enabled() {
-                                    let relative = parent
-                                        .strip_prefix(self.destination_root())
-                                        .ok()
-                                        .filter(|path| !path.as_os_str().is_empty());
-                                    self.force_remove_destination(parent, relative, &existing)?;
-                                    if allow_creation {
-                                        Ok(())
-                                    } else {
-                                        Err(LocalCopyError::io(
-                                            "create parent directory",
-                                            parent.to_path_buf(),
-                                            io::Error::from(io::ErrorKind::NotFound),
-                                        ))
-                                    }
-                                } else {
-                                    Err(LocalCopyError::invalid_argument(
-                                        LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                                    ))
-                                }
+                                self.replace_parent_entry_dry_run(parent, &existing, allow_creation)
                             }
                         })
                     } else {
-                        if self.force_replacements_enabled() {
-                            let relative = parent
-                                .strip_prefix(self.destination_root())
-                                .ok()
-                                .filter(|path| !path.as_os_str().is_empty());
-                            self.force_remove_destination(parent, relative, &existing)?;
-                            if allow_creation {
-                                Ok(())
-                            } else {
-                                Err(LocalCopyError::io(
-                                    "create parent directory",
-                                    parent.to_path_buf(),
-                                    io::Error::from(io::ErrorKind::NotFound),
-                                ))
-                            }
-                        } else {
-                            Err(LocalCopyError::invalid_argument(
-                                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                            ))
-                        }
+                        self.replace_parent_entry_dry_run(parent, &existing, allow_creation)
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -221,48 +263,10 @@ impl<'a> CopyContext<'a> {
                         if metadata.file_type().is_dir() {
                             Ok(())
                         } else {
-                            if self.force_replacements_enabled() {
-                                let relative = parent
-                                    .strip_prefix(self.destination_root())
-                                    .ok()
-                                    .filter(|path| !path.as_os_str().is_empty());
-                                self.force_remove_destination(parent, relative, &existing)?;
-                                fs::create_dir_all(parent).map_err(|error| {
-                                    LocalCopyError::io(
-                                        "create parent directory",
-                                        parent.to_path_buf(),
-                                        error,
-                                    )
-                                })?;
-                                self.register_progress();
-                                Ok(())
-                            } else {
-                                Err(LocalCopyError::invalid_argument(
-                                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                                ))
-                            }
+                            self.replace_parent_entry_create(parent, &existing)
                         }
                     } else {
-                        if self.force_replacements_enabled() {
-                            let relative = parent
-                                .strip_prefix(self.destination_root())
-                                .ok()
-                                .filter(|path| !path.as_os_str().is_empty());
-                            self.force_remove_destination(parent, relative, &existing)?;
-                            fs::create_dir_all(parent).map_err(|error| {
-                                LocalCopyError::io(
-                                    "create parent directory",
-                                    parent.to_path_buf(),
-                                    error,
-                                )
-                            })?;
-                            self.register_progress();
-                            Ok(())
-                        } else {
-                            Err(LocalCopyError::invalid_argument(
-                                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                            ))
-                        }
+                        self.replace_parent_entry_create(parent, &existing)
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -288,37 +292,11 @@ impl<'a> CopyContext<'a> {
                         let metadata = follow_symlink_metadata(parent)?;
                         if metadata.file_type().is_dir() {
                             Ok(())
-                        } else if self.force_replacements_enabled() {
-                            let relative = parent
-                                .strip_prefix(self.destination_root())
-                                .ok()
-                                .filter(|path| !path.as_os_str().is_empty());
-                            self.force_remove_destination(parent, relative, &existing)?;
-                            Err(LocalCopyError::io(
-                                "create parent directory",
-                                parent.to_path_buf(),
-                                io::Error::from(io::ErrorKind::NotFound),
-                            ))
                         } else {
-                            Err(LocalCopyError::invalid_argument(
-                                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                            ))
+                            self.replace_parent_entry_forbidden(parent, &existing)
                         }
-                    } else if self.force_replacements_enabled() {
-                        let relative = parent
-                            .strip_prefix(self.destination_root())
-                            .ok()
-                            .filter(|path| !path.as_os_str().is_empty());
-                        self.force_remove_destination(parent, relative, &existing)?;
-                        Err(LocalCopyError::io(
-                            "create parent directory",
-                            parent.to_path_buf(),
-                            io::Error::from(io::ErrorKind::NotFound),
-                        ))
                     } else {
-                        Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ))
+                        self.replace_parent_entry_forbidden(parent, &existing)
                     }
                 }
                 Err(error) => Err(LocalCopyError::io(
