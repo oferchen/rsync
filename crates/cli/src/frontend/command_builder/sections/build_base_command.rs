@@ -259,6 +259,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-dirs")
                     .long("no-dirs")
+                    .visible_alias("no-d")
                     .help("Skip directory entries when recursion is disabled.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("dirs"),
@@ -416,6 +417,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-hard-links")
                     .long("no-hard-links")
+                    .visible_alias("no-H")
                     .help("Disable hard link preservation.")
                     .action(ArgAction::SetTrue)
                     .conflicts_with("hard-links"),
@@ -525,6 +527,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-relative")
                     .long("no-relative")
+                    .visible_alias("no-R")
                     .help("Disable preservation of source path components.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("relative"),
@@ -547,6 +550,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("implied-dirs")
                     .long("implied-dirs")
+                    .visible_alias("i-d")
                     .help("Create parent directories implied by source paths.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("no-implied-dirs"),
@@ -554,6 +558,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-implied-dirs")
                     .long("no-implied-dirs")
+                    .visible_alias("no-i-d")
                     .help("Disable creation of parent directories implied by source paths.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("implied-dirs"),

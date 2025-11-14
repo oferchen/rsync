@@ -160,3 +160,51 @@ fn parse_args_stderr_alias_routes_messages_to_stderr() {
 
     assert_eq!(parsed.msgs_to_stderr, Some(true));
 }
+
+#[test]
+fn parse_args_negative_aliases_disable_flags() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-d"),
+        OsString::from("--no-p"),
+        OsString::from("--no-A"),
+        OsString::from("--no-X"),
+        OsString::from("--no-t"),
+        OsString::from("--no-O"),
+        OsString::from("--no-J"),
+        OsString::from("--no-o"),
+        OsString::from("--no-g"),
+        OsString::from("--no-H"),
+        OsString::from("--no-R"),
+        OsString::from("--no-i-d"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse negative aliases");
+
+    assert_eq!(parsed.dirs, Some(false));
+    assert_eq!(parsed.perms, Some(false));
+    assert_eq!(parsed.acls, Some(false));
+    assert_eq!(parsed.xattrs, Some(false));
+    assert_eq!(parsed.times, Some(false));
+    assert_eq!(parsed.omit_dir_times, Some(false));
+    assert_eq!(parsed.omit_link_times, Some(false));
+    assert_eq!(parsed.owner, Some(false));
+    assert_eq!(parsed.group, Some(false));
+    assert_eq!(parsed.hard_links, Some(false));
+    assert_eq!(parsed.relative, Some(false));
+    assert_eq!(parsed.implied_dirs, Some(false));
+}
+
+#[test]
+fn parse_args_positive_implied_dirs_alias_enables_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--i-d"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse positive alias");
+
+    assert_eq!(parsed.implied_dirs, Some(true));
+}

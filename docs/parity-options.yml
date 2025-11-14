@@ -168,10 +168,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-d
-    short: 
+    short:
     category: general
     upstream_default: enabled by default (-1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --old-dirs
     short: 
@@ -198,10 +198,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-p
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --executability
     short: E
@@ -222,10 +222,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-A
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --xattrs
     short: X
@@ -240,10 +240,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-X
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --times
     short: t
@@ -258,10 +258,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-t
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --atimes
     short: U
@@ -324,10 +324,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-O
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --omit-link-times
     short: J
@@ -342,10 +342,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-J
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --modify-window
     short: @
@@ -384,10 +384,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-o
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --group
     short: g
@@ -402,10 +402,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-g
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: -D (short-only)
     short: D
@@ -534,10 +534,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-H
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --relative
     short: R
@@ -552,10 +552,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-R
-    short: 
+    short:
     category: general
     upstream_default: enabled by default (-1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --implied-dirs
     short: 
@@ -570,16 +570,16 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --i-d
-    short: 
+    short:
     category: general
     upstream_default: default 1
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-i-d
-    short: 
+    short:
     category: general
     upstream_default: enabled by default (1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --chmod
     short: 
