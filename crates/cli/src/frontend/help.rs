@@ -20,6 +20,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "\n",
             "Options:\n",
             "      --help       Show this help message and exit.\n",
+            "  -q, --quiet      Suppress non-error messages.\n",
             "  -V, --version    Output version information and exit.\n",
             "  -e, --rsh=COMMAND  Use remote shell COMMAND for remote transfers.\n",
             "      --rsync-path=PROGRAM  Use PROGRAM as the remote rsync executable during remote transfers.\n",
