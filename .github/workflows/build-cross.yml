@@ -28,7 +28,7 @@ jobs:
           targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
 
       - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.8.1
         with:
           key: build-linux
 
@@ -86,7 +86,7 @@ jobs:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
       - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.8.1
         with:
           key: build-macos
 
@@ -122,7 +122,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.8.1
         with:
           key: build-windows
 
