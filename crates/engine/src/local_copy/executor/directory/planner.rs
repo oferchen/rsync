@@ -4,12 +4,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::{
-    delete_extraneous_entries, follow_symlink_metadata, CopyContext, DeleteTiming,
-    LocalCopyArgumentError, LocalCopyError,
+    CopyContext, DeleteTiming, LocalCopyArgumentError, LocalCopyError, delete_extraneous_entries,
+    follow_symlink_metadata,
 };
 
 use super::super::{non_empty_path, symlink_target_is_safe};
-use super::support::{is_device, is_fifo, DirectoryEntry};
+use super::support::{DirectoryEntry, is_device, is_fifo};
 
 #[derive(Clone, Copy)]
 pub(crate) enum EntryAction {

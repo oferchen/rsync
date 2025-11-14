@@ -107,8 +107,7 @@ impl ParsedSocketOption {
     /// focused on parsing/orchestration rather than low-level details.
     fn apply(&self, stream: &TcpStream) -> io::Result<()> {
         match self.kind {
-            SocketOptionKind::Bool { level, option }
-            | SocketOptionKind::Int { level, option } => {
+            SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
                 let value = self.explicit_value.unwrap_or(libc::c_int::from(1));
                 set_socket_option_int(stream, level, option, value)
             }
@@ -182,8 +181,8 @@ fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
             option: socket_consts::SO_KEEPALIVE,
         }),
         "SO_REUSEADDR" => Some(SocketOptionKind::Bool {
-           level: socket_consts::SOL_SOCKET,
-           option: socket_consts::SO_REUSEADDR,
+            level: socket_consts::SOL_SOCKET,
+            option: socket_consts::SO_REUSEADDR,
         }),
         #[cfg(any(target_family = "unix", target_os = "windows"))]
         "SO_BROADCAST" => Some(SocketOptionKind::Bool {
