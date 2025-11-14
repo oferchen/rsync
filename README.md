@@ -320,4 +320,3 @@ See [`LICENSE`](./LICENSE) for the full text.
 ## Acknowledgements
 
 Inspired by the original [`rsync`](https://rsync.samba.org/) by Andrew Tridgell and the Samba team, and by the broader Rust ecosystem that made this re-implementation feasible.
-```
