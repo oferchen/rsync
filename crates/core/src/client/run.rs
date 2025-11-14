@@ -272,7 +272,10 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             options = options.acls(config.preserve_acls());
         }
 
-        #[cfg(feature = "xattr")]
+        // IMPORTANT: LocalCopyOptions::xattrs is only implemented on Unix.
+        // Match the engine crate's cfg so Windows builds with the `xattr`
+        // feature do not try to call a non-existent method.
+        #[cfg(all(feature = "xattr", unix))]
         {
             options = options.xattrs(config.preserve_xattrs());
         }
