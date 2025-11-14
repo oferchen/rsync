@@ -159,9 +159,7 @@ pub(crate) fn compute_metadata_settings(
             Err(error) => {
                 let formatted =
                     format!("failed to parse --chmod specification '{spec_text}': {error}");
-                return Err(
-                    core::rsync_error!(1, formatted).with_role(core::message::Role::Client),
-                );
+                return Err(core::rsync_error!(1, formatted).with_role(core::message::Role::Client));
             }
         }
     }
@@ -210,13 +208,11 @@ impl MappingParser<UserMapping> for UnixUserMappingParser {
         parsed_chown: Option<&ParsedChown>,
     ) -> Result<UserMapping, core::message::Message> {
         if parsed_chown.and_then(|parsed| parsed.owner()).is_some() {
-            return Err(
-                core::rsync_error!(
-                    1,
-                    "--usermap conflicts with prior --chown user specification"
-                )
-                .with_role(core::message::Role::Client),
-            );
+            return Err(core::rsync_error!(
+                1,
+                "--usermap conflicts with prior --chown user specification"
+            )
+            .with_role(core::message::Role::Client));
         }
 
         parse_mapping_impl(value, MappingKind::User)
@@ -234,13 +230,11 @@ impl MappingParser<GroupMapping> for UnixGroupMappingParser {
         parsed_chown: Option<&ParsedChown>,
     ) -> Result<GroupMapping, core::message::Message> {
         if parsed_chown.and_then(|parsed| parsed.group()).is_some() {
-            return Err(
-                core::rsync_error!(
-                    1,
-                    "--groupmap conflicts with prior --chown group specification"
-                )
-                .with_role(core::message::Role::Client),
-            );
+            return Err(core::rsync_error!(
+                1,
+                "--groupmap conflicts with prior --chown group specification"
+            )
+            .with_role(core::message::Role::Client));
         }
 
         parse_mapping_impl(value, MappingKind::Group)
@@ -314,10 +308,7 @@ fn parse_group_mapping(
 }
 
 #[cfg(unix)]
-fn parse_mapping_impl<M>(
-    value: &OsString,
-    kind: MappingKind,
-) -> Result<M, core::message::Message>
+fn parse_mapping_impl<M>(value: &OsString, kind: MappingKind) -> Result<M, core::message::Message>
 where
     M: From<NameMapping>,
 {
@@ -325,22 +316,17 @@ where
     let trimmed = spec.trim();
 
     if trimmed.is_empty() {
-        return Err(
-            core::rsync_error!(
-                1,
-                format!(
-                    "{} requires a non-empty mapping specification",
-                    kind.flag()
-                )
-            )
-            .with_role(core::message::Role::Client),
-        );
+        return Err(core::rsync_error!(
+            1,
+            format!("{} requires a non-empty mapping specification", kind.flag())
+        )
+        .with_role(core::message::Role::Client));
     }
 
     match NameMapping::parse(kind, trimmed) {
         Ok(mapping) => Ok(M::from(mapping)),
-        Err(error) => Err(
-            core::rsync_error!(1, error.to_string()).with_role(core::message::Role::Client),
-        ),
+        Err(error) => {
+            Err(core::rsync_error!(1, error.to_string()).with_role(core::message::Role::Client))
+        }
     }
 }
