@@ -420,7 +420,10 @@ where
     let stop_at_option = matches.remove_one::<OsString>("stop-at");
     let out_format = matches.remove_one::<OsString>("out-format");
     let itemize_changes = itemize_changes_flag && !no_itemize_changes_flag;
-    let no_motd = matches.get_flag("no-motd");
+    let mut no_motd = matches.get_flag("no-motd");
+    if matches.get_flag("motd") {
+        no_motd = false;
+    }
 
     Ok(ParsedArgs {
         program_name,
