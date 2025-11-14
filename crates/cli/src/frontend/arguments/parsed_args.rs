@@ -84,6 +84,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) devices: Option<bool>,
     pub(crate) copy_devices: bool,
     pub(crate) specials: Option<bool>,
+    pub(crate) force: Option<bool>,
     pub(crate) relative: Option<bool>,
     pub(crate) one_file_system: Option<bool>,
     pub(crate) implied_dirs: Option<bool>,

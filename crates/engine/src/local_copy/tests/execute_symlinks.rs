@@ -26,6 +26,34 @@ fn execute_copies_symbolic_link() {
 
 #[cfg(unix)]
 #[test]
+fn execute_symlink_replaces_directory_when_force_enabled() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("target.txt");
+    fs::write(&target, b"target").expect("write target");
+
+    let link = temp.path().join("link");
+    symlink(&target, &link).expect("create link");
+    let dest_link = temp.path().join("dest-link");
+    fs::create_dir_all(&dest_link).expect("create conflicting directory");
+
+    let operands = vec![link.into_os_string(), dest_link.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .links(true)
+        .hard_links(true)
+        .force_replacements(true);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("forced replacement succeeds");
+
+    let copied = fs::read_link(dest_link).expect("read copied link");
+    assert_eq!(copied, target);
+}
+
+#[cfg(unix)]
+#[test]
 fn execute_with_copy_links_materialises_symlink_to_file() {
     use std::os::unix::fs::symlink;
 

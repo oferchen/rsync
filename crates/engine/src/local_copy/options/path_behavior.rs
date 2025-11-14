@@ -145,6 +145,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests removal of conflicting destination entries before updating them.
+    #[must_use]
+    #[doc(alias = "--force")]
+    #[doc(alias = "--no-force")]
+    pub const fn force_replacements(mut self, force: bool) -> Self {
+        self.force_replacements = force;
+        self
+    }
+
     /// Restricts traversal to a single filesystem when enabled.
     #[must_use]
     #[doc(alias = "--one-file-system")]
@@ -266,5 +275,11 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn specials_enabled(&self) -> bool {
         self.specials
+    }
+
+    /// Reports whether destination conflicts should be resolved by removing existing entries.
+    #[must_use]
+    pub const fn force_replacements_enabled(&self) -> bool {
+        self.force_replacements
     }
 }

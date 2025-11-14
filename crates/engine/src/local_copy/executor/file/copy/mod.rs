@@ -59,7 +59,7 @@ pub(crate) fn copy_file(
         }
     }
 
-    let existing_metadata = match fs::symlink_metadata(destination) {
+    let mut existing_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
@@ -71,15 +71,21 @@ pub(crate) fn copy_file(
         }
     };
 
-    if let Some(existing) = &existing_metadata {
+    let mut destination_previously_existed = existing_metadata.is_some();
+
+    if let Some(existing) = existing_metadata.as_ref() {
         if existing.file_type().is_dir() {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::ReplaceDirectoryWithFile,
-            ));
+            if context.force_replacements_enabled() {
+                context.force_remove_destination(destination, relative, existing)?;
+                destination_previously_existed = true;
+                existing_metadata = None;
+            } else {
+                return Err(LocalCopyError::invalid_argument(
+                    LocalCopyArgumentError::ReplaceDirectoryWithFile,
+                ));
+            }
         }
     }
-
-    let destination_previously_existed = existing_metadata.is_some();
 
     if context.existing_only_enabled() && existing_metadata.is_none() {
         context.summary_mut().record_regular_file_skipped_missing();

@@ -61,6 +61,33 @@ fn execute_with_remove_source_files_preserves_unchanged_source() {
 }
 
 #[test]
+fn execute_file_replaces_directory_when_force_enabled() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("target");
+
+    fs::write(&source, b"replacement").expect("write source");
+    fs::create_dir_all(&destination).expect("create conflicting directory");
+
+    let operands = vec![
+        source.clone().into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().force_replacements(true),
+        )
+        .expect("forced replacement succeeds");
+
+    assert!(destination.is_file(), "directory should be replaced by file");
+    assert_eq!(fs::read(&destination).expect("read destination"), b"replacement");
+    assert_eq!(summary.files_copied(), 1);
+}
+
+#[test]
 fn execute_with_relative_preserves_parent_directories() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");

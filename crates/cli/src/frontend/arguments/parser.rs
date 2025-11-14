@@ -220,6 +220,7 @@ where
     let keep_dirlinks =
         tri_state_flag_positive_first(&matches, "keep-dirlinks", "no-keep-dirlinks");
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
+    let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let copy_devices = matches.get_flag("copy-devices");
     let devices = if matches.get_flag("devices") || matches.get_flag("archive-devices") {
         Some(true)
@@ -500,6 +501,7 @@ where
         devices,
         copy_devices,
         specials,
+        force,
         relative,
         one_file_system,
         implied_dirs,

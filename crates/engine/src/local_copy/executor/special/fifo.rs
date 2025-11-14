@@ -45,86 +45,56 @@ pub(crate) fn copy_fifo(
 
     context.summary_mut().record_fifo_total();
 
-    // --existing / --ignore-non-existing
-    if context.existing_only_enabled() {
-        match fs::symlink_metadata(destination) {
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                if let Some(path) = &record_path {
-                    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-                    context.record(LocalCopyRecord::new(
-                        path.clone(),
-                        LocalCopyAction::SkippedMissingDestination,
-                        0,
-                        Some(metadata_snapshot.len()),
-                        Duration::default(),
-                        Some(metadata_snapshot),
-                    ));
-                }
-                return Ok(());
-            }
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "inspect existing destination",
-                    destination.to_path_buf(),
-                    error,
+    let mut existing_metadata = match fs::symlink_metadata(destination) {
+        Ok(existing) => Some(existing),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(LocalCopyError::io(
+                "inspect existing destination",
+                destination.to_path_buf(),
+                error,
+            ));
+        }
+    };
+
+    let destination_previously_existed = existing_metadata.is_some();
+
+    if let Some(existing) = existing_metadata.as_ref() {
+        if existing.file_type().is_dir() {
+            if context.force_replacements_enabled() {
+                context.force_remove_destination(destination, relative, existing)?;
+                existing_metadata = None;
+            } else {
+                return Err(LocalCopyError::invalid_argument(
+                    LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
                 ));
             }
         }
+    }
+
+    if context.existing_only_enabled() && existing_metadata.is_none() {
+        if let Some(path) = &record_path {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            context.record(LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::SkippedMissingDestination,
+                0,
+                Some(metadata_snapshot.len()),
+                Duration::default(),
+                Some(metadata_snapshot),
+            ));
+        }
+        return Ok(());
     }
 
     // could be deduped to an earlier FIFO we created
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
 
-    // ensure parent exists
     if let Some(parent) = destination.parent() {
-        if !parent.as_os_str().is_empty() {
-            if mode.is_dry_run() {
-                match fs::symlink_metadata(parent) {
-                    Ok(existing) if !existing.file_type().is_dir() => {
-                        return Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        return Err(LocalCopyError::io(
-                            "inspect existing destination",
-                            parent.to_path_buf(),
-                            error,
-                        ));
-                    }
-                }
-            } else {
-                fs::create_dir_all(parent).map_err(|error| {
-                    LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
-                })?;
-                context.register_progress();
-            }
-        }
+        context.prepare_parent_directory(parent)?;
     }
 
-    // dry-run path: just validate and record
     if mode.is_dry_run() {
-        match fs::symlink_metadata(destination) {
-            Ok(existing) => {
-                if existing.file_type().is_dir() {
-                    return Err(LocalCopyError::invalid_argument(
-                        LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
-                    ));
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(LocalCopyError::io(
-                    "inspect existing destination",
-                    destination.to_path_buf(),
-                    error,
-                ));
-            }
-        }
-
         if existing_hard_link_target.is_some() {
             context.summary_mut().record_hard_link();
         } else {
@@ -154,28 +124,9 @@ pub(crate) fn copy_fifo(
         return Ok(());
     }
 
-    // real copy
-    let mut destination_previously_existed = false;
-    match fs::symlink_metadata(destination) {
-        Ok(existing) => {
-            destination_previously_existed = true;
-            if existing.file_type().is_dir() {
-                return Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
-                ));
-            }
-
-            context.backup_existing_entry(destination, relative, existing.file_type())?;
-            remove_existing_destination(destination)?;
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(LocalCopyError::io(
-                "inspect existing destination",
-                destination.to_path_buf(),
-                error,
-            ));
-        }
+    if let Some(existing) = existing_metadata.take() {
+        context.backup_existing_entry(destination, relative, existing.file_type())?;
+        remove_existing_destination(destination)?;
     }
 
     // try to hard-link to an earlier FIFO we made

@@ -130,6 +130,8 @@ mod parse_args_recognises_delay_tests;
 mod parse_args_recognises_devices_tests;
 #[path = "parse_args_recognises_existing.rs"]
 mod parse_args_recognises_existing_tests;
+#[path = "parse_args_recognises_force.rs"]
+mod parse_args_recognises_force_tests;
 #[path = "parse_args_recognises_fsync.rs"]
 mod parse_args_recognises_fsync_tests;
 #[path = "parse_args_recognises_group.rs"]

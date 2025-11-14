@@ -47,6 +47,32 @@ fn execute_with_sparse_enabled_creates_holes() {
 
 #[cfg(unix)]
 #[test]
+fn execute_with_sparse_enabled_counts_literal_data() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("zeros.bin");
+    let file = fs::File::create(&source).expect("create source");
+    file.set_len(1_048_576).expect("extend source");
+
+    let destination = temp.path().join("dest.bin");
+    let operands = vec![
+        source.into_os_string(),
+        destination.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    assert_eq!(summary.bytes_copied(), 1_048_576);
+    assert_eq!(summary.matched_bytes(), 0);
+}
+
+#[cfg(unix)]
+#[test]
 fn execute_without_inplace_replaces_destination_file() {
     use std::os::unix::fs::MetadataExt;
 

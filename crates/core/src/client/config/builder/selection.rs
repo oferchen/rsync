@@ -144,6 +144,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables removal of conflicting destination entries prior to updates.
+    #[must_use]
+    #[doc(alias = "--force")]
+    #[doc(alias = "--no-force")]
+    pub const fn force_replacements(mut self, force: bool) -> Self {
+        self.force_replacements = force;
+        self
+    }
+
     /// Enables or disables pruning of empty directories after filters apply.
     #[must_use]
     #[doc(alias = "--prune-empty-dirs")]
