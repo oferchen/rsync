@@ -396,6 +396,7 @@ fn unknown_option(name: &str) -> ClientError {
     )
 }
 
+#[cfg(not(target_family = "windows"))]
 fn option_disallows_value(name: &str) -> ClientError {
     invalid_argument_error(
         &format!("syntax error -- {name} does not take a value"),
