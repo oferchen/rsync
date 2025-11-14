@@ -91,3 +91,165 @@ fn transfer_request_with_sparse_and_preallocate_allocates_dense() {
     assert_eq!(dense_meta.len(), prealloc_meta.len());
     assert_eq!(prealloc_meta.blocks(), dense_meta.blocks());
 }
+
+#[cfg(unix)]
+#[test]
+fn transfer_request_with_sparse_and_append_uses_dense_allocation() {
+    use std::fs::{self, File, OpenOptions};
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let base = tmp.path().join("base.bin");
+    let mut base_file = File::create(&base).expect("create base");
+    base_file
+        .write_all(&vec![0x55; 1024])
+        .expect("write base prefix");
+    base_file.flush().expect("flush base");
+    drop(base_file);
+
+    let dense_dest = tmp.path().join("append-dense.bin");
+    let sparse_dest = tmp.path().join("append-sparse.bin");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        base.as_os_str().to_os_string(),
+        dense_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        base.as_os_str().to_os_string(),
+        sparse_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let appended_source = tmp.path().join("append-source.bin");
+    fs::copy(&base, &appended_source).expect("copy base to appended source");
+    let mut appended_file = OpenOptions::new()
+        .append(true)
+        .open(&appended_source)
+        .expect("open appended source");
+    appended_file
+        .write_all(&vec![0u8; 1_048_576])
+        .expect("write zero run");
+    appended_file
+        .write_all(&[0x7f])
+        .expect("write trailing byte");
+    appended_file.flush().expect("flush appended source");
+    drop(appended_file);
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--append"),
+        appended_source.as_os_str().to_os_string(),
+        dense_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--sparse"),
+        OsString::from("--append"),
+        appended_source.as_os_str().to_os_string(),
+        sparse_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    assert_eq!(dense_meta.len(), sparse_meta.len());
+    assert_eq!(sparse_meta.blocks(), dense_meta.blocks());
+}
+
+#[cfg(unix)]
+#[test]
+fn transfer_request_with_sparse_and_append_verify_uses_dense_allocation() {
+    use std::fs::{self, File, OpenOptions};
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let base = tmp.path().join("base.bin");
+    let mut base_file = File::create(&base).expect("create base");
+    base_file
+        .write_all(&vec![0x42; 1024])
+        .expect("write base prefix");
+    base_file.flush().expect("flush base");
+    drop(base_file);
+
+    let dense_dest = tmp.path().join("append-verify-dense.bin");
+    let sparse_dest = tmp.path().join("append-verify-sparse.bin");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        base.as_os_str().to_os_string(),
+        dense_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        base.as_os_str().to_os_string(),
+        sparse_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let appended_source = tmp.path().join("append-verify-source.bin");
+    fs::copy(&base, &appended_source).expect("copy base to appended source");
+    let mut appended_file = OpenOptions::new()
+        .append(true)
+        .open(&appended_source)
+        .expect("open appended source");
+    appended_file
+        .write_all(&vec![0u8; 1_048_576])
+        .expect("write zero run");
+    appended_file
+        .write_all(&[0x99])
+        .expect("write trailing byte");
+    appended_file.flush().expect("flush appended source");
+    drop(appended_file);
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--append-verify"),
+        appended_source.as_os_str().to_os_string(),
+        dense_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--sparse"),
+        OsString::from("--append-verify"),
+        appended_source.as_os_str().to_os_string(),
+        sparse_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    assert_eq!(dense_meta.len(), sparse_meta.len());
+    assert_eq!(sparse_meta.blocks(), dense_meta.blocks());
+}

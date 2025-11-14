@@ -126,9 +126,11 @@ pub(crate) fn copy_file(
 
     // Upstream rsync disables sparse writes whenever `--preallocate` is active
     // because the preallocation request must materialise every range in the
-    // destination file.  Keep the same behaviour by refusing to punch holes
-    // when preallocation is enabled.
-    let use_sparse_writes = context.sparse_enabled() && !context.preallocate_enabled();
+    // destination file.  It also turns off sparse handling for append modes so
+    // the receiver does not punch holes into the portion of the file that was
+    // already present.  Mirror that behaviour here.
+    let use_sparse_writes =
+        context.sparse_enabled() && !context.preallocate_enabled() && !context.append_enabled();
     let partial_enabled = context.partial_enabled();
     let inplace_enabled = context.inplace_enabled();
     let checksum_enabled = context.checksum_enabled();
