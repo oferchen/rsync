@@ -14,10 +14,10 @@ use super::config::{
     ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,
 };
 use super::error::{
-    ClientError, compile_filter_error, fallback_context_missing_error, map_local_copy_error,
-    missing_operands_error,
+    compile_filter_error, fallback_context_missing_error, map_local_copy_error,
+    missing_operands_error, ClientError,
 };
-use super::fallback::{RemoteFallbackContext, run_remote_transfer_fallback};
+use super::fallback::{run_remote_transfer_fallback, RemoteFallbackContext};
 use super::outcome::{ClientOutcome, FallbackSummary};
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::summary::ClientSummary;
@@ -155,8 +155,9 @@ where
 /// Builder for [`LocalCopyOptions`] derived from a [`ClientConfig`] and
 /// optional [`FilterProgram`].
 ///
-/// This makes the translation layer explicit and keeps the main
-/// `build_local_copy_options` helper as a thin facade.
+/// This encapsulates the translation from CLI-facing configuration to
+/// engine options using a Builder-style façade, keeping
+/// `build_local_copy_options` small and testable.
 struct LocalCopyOptionsBuilder<'a> {
     config: &'a ClientConfig,
     filter_program: Option<FilterProgram>,
