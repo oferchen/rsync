@@ -393,6 +393,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-owner")
                     .long("no-owner")
+                    .visible_alias("no-o")
                     .help("Disable ownership preservation.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("owner"),
@@ -408,6 +409,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-group")
                     .long("no-group")
+                    .visible_alias("no-g")
                     .help("Disable group preservation.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("group"),
@@ -455,6 +457,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-perms")
                     .long("no-perms")
+                    .visible_alias("no-p")
                     .help("Disable permission preservation.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("perms"),
@@ -470,6 +473,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-times")
                     .long("no-times")
+                    .visible_alias("no-t")
                     .help("Disable modification time preservation.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("times"),
@@ -485,6 +489,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-omit-dir-times")
                     .long("no-omit-dir-times")
+                    .visible_alias("no-O")
                     .help("Preserve directory modification times.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("omit-dir-times"),
@@ -499,6 +504,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-omit-link-times")
                     .long("no-omit-link-times")
+                    .visible_alias("no-J")
                     .help("Preserve symlink modification times.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("omit-link-times"),
@@ -514,6 +520,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-acls")
                     .long("no-acls")
+                    .visible_alias("no-A")
                     .help("Disable POSIX ACL preservation.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("acls"),
@@ -529,6 +536,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-xattrs")
                     .long("no-xattrs")
+                    .visible_alias("no-X")
                     .help("Disable extended attribute preservation.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("xattrs"),
