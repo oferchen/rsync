@@ -79,6 +79,10 @@ impl<'a> CopyContext<'a> {
         self.options.specials_enabled()
     }
 
+    pub(super) fn force_replacements_enabled(&self) -> bool {
+        self.options.force_replacements_enabled()
+    }
+
     // Filter program accessor used by xattr sync logic.
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) fn filter_program(
@@ -144,15 +148,49 @@ impl<'a> CopyContext<'a> {
                             if metadata.file_type().is_dir() {
                                 Ok(())
                             } else {
-                                Err(LocalCopyError::invalid_argument(
-                                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                                ))
+                                if self.force_replacements_enabled() {
+                                    let relative = parent
+                                        .strip_prefix(self.destination_root())
+                                        .ok()
+                                        .filter(|path| !path.as_os_str().is_empty());
+                                    self.force_remove_destination(parent, relative, &existing)?;
+                                    if allow_creation {
+                                        Ok(())
+                                    } else {
+                                        Err(LocalCopyError::io(
+                                            "create parent directory",
+                                            parent.to_path_buf(),
+                                            io::Error::from(io::ErrorKind::NotFound),
+                                        ))
+                                    }
+                                } else {
+                                    Err(LocalCopyError::invalid_argument(
+                                        LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                                    ))
+                                }
                             }
                         })
                     } else {
-                        Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ))
+                        if self.force_replacements_enabled() {
+                            let relative = parent
+                                .strip_prefix(self.destination_root())
+                                .ok()
+                                .filter(|path| !path.as_os_str().is_empty());
+                            self.force_remove_destination(parent, relative, &existing)?;
+                            if allow_creation {
+                                Ok(())
+                            } else {
+                                Err(LocalCopyError::io(
+                                    "create parent directory",
+                                    parent.to_path_buf(),
+                                    io::Error::from(io::ErrorKind::NotFound),
+                                ))
+                            }
+                        } else {
+                            Err(LocalCopyError::invalid_argument(
+                                LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                            ))
+                        }
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -183,14 +221,48 @@ impl<'a> CopyContext<'a> {
                         if metadata.file_type().is_dir() {
                             Ok(())
                         } else {
+                            if self.force_replacements_enabled() {
+                                let relative = parent
+                                    .strip_prefix(self.destination_root())
+                                    .ok()
+                                    .filter(|path| !path.as_os_str().is_empty());
+                                self.force_remove_destination(parent, relative, &existing)?;
+                                fs::create_dir_all(parent).map_err(|error| {
+                                    LocalCopyError::io(
+                                        "create parent directory",
+                                        parent.to_path_buf(),
+                                        error,
+                                    )
+                                })?;
+                                self.register_progress();
+                                Ok(())
+                            } else {
+                                Err(LocalCopyError::invalid_argument(
+                                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                                ))
+                            }
+                        }
+                    } else {
+                        if self.force_replacements_enabled() {
+                            let relative = parent
+                                .strip_prefix(self.destination_root())
+                                .ok()
+                                .filter(|path| !path.as_os_str().is_empty());
+                            self.force_remove_destination(parent, relative, &existing)?;
+                            fs::create_dir_all(parent).map_err(|error| {
+                                LocalCopyError::io(
+                                    "create parent directory",
+                                    parent.to_path_buf(),
+                                    error,
+                                )
+                            })?;
+                            self.register_progress();
+                            Ok(())
+                        } else {
                             Err(LocalCopyError::invalid_argument(
                                 LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
                             ))
                         }
-                    } else {
-                        Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ))
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -216,11 +288,33 @@ impl<'a> CopyContext<'a> {
                         let metadata = follow_symlink_metadata(parent)?;
                         if metadata.file_type().is_dir() {
                             Ok(())
+                        } else if self.force_replacements_enabled() {
+                            let relative = parent
+                                .strip_prefix(self.destination_root())
+                                .ok()
+                                .filter(|path| !path.as_os_str().is_empty());
+                            self.force_remove_destination(parent, relative, &existing)?;
+                            Err(LocalCopyError::io(
+                                "create parent directory",
+                                parent.to_path_buf(),
+                                io::Error::from(io::ErrorKind::NotFound),
+                            ))
                         } else {
                             Err(LocalCopyError::invalid_argument(
                                 LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
                             ))
                         }
+                    } else if self.force_replacements_enabled() {
+                        let relative = parent
+                            .strip_prefix(self.destination_root())
+                            .ok()
+                            .filter(|path| !path.as_os_str().is_empty());
+                        self.force_remove_destination(parent, relative, &existing)?;
+                        Err(LocalCopyError::io(
+                            "create parent directory",
+                            parent.to_path_buf(),
+                            io::Error::from(io::ErrorKind::NotFound),
+                        ))
                     } else {
                         Err(LocalCopyError::invalid_argument(
                             LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,

@@ -319,7 +319,12 @@ impl<'a> CopyContext<'a> {
             }
 
             total_bytes = total_bytes.saturating_add(read as u64);
-            literal_bytes = literal_bytes.saturating_add(written as u64);
+            let literal_delta = if sparse {
+                read as u64
+            } else {
+                written as u64
+            };
+            literal_bytes = literal_bytes.saturating_add(literal_delta);
             let progressed = initial_bytes.saturating_add(total_bytes);
             self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
         }

@@ -52,6 +52,34 @@ fn execute_copies_fifo() {
 
 #[cfg(unix)]
 #[test]
+fn execute_fifo_replaces_directory_when_force_enabled() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_fifo = temp.path().join("source.pipe");
+    mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
+
+    let destination_fifo = temp.path().join("dest.pipe");
+    fs::create_dir_all(&destination_fifo).expect("create conflicting directory");
+
+    let operands = vec![
+        source_fifo.into_os_string(),
+        destination_fifo.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().specials(true).force_replacements(true),
+    )
+    .expect("forced replacement succeeds");
+
+    let metadata = fs::symlink_metadata(&destination_fifo).expect("dest metadata");
+    assert!(metadata.file_type().is_fifo());
+}
+
+#[cfg(unix)]
+#[test]
 fn execute_copies_fifo_within_directory() {
     use filetime::{FileTime, set_file_times};
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};

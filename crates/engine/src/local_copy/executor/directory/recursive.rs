@@ -58,10 +58,18 @@ pub(crate) fn copy_directory_recursive(
             } else if file_type.is_symlink() && keep_dirlinks {
                 let target_metadata = follow_symlink_metadata(destination)?;
                 if !target_metadata.file_type().is_dir() {
-                    return Err(LocalCopyError::invalid_argument(
-                        LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                    ));
+                    if context.force_replacements_enabled() {
+                        context.force_remove_destination(destination, relative, &existing)?;
+                        destination_missing = true;
+                    } else {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ));
+                    }
                 }
+            } else if context.force_replacements_enabled() {
+                context.force_remove_destination(destination, relative, &existing)?;
+                destination_missing = true;
             } else {
                 return Err(LocalCopyError::invalid_argument(
                     LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,

@@ -110,7 +110,7 @@ pub(crate) fn copy_symlink(
     let target = fs::read_link(source)
         .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
 
-    let destination_metadata = match fs::symlink_metadata(destination) {
+    let mut destination_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => {
@@ -121,6 +121,21 @@ pub(crate) fn copy_symlink(
             ));
         }
     };
+
+    let destination_previously_existed = destination_metadata.is_some();
+
+    if let Some(existing) = destination_metadata.as_ref() {
+        if existing.file_type().is_dir() {
+            if context.force_replacements_enabled() {
+                context.force_remove_destination(destination, relative, existing)?;
+                destination_metadata = None;
+            } else {
+                return Err(LocalCopyError::invalid_argument(
+                    LocalCopyArgumentError::ReplaceDirectoryWithSymlink,
+                ));
+            }
+        }
+    }
 
     // --existing handling
     if context.existing_only_enabled() && destination_metadata.is_none() {
@@ -222,59 +237,14 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
-    // ensure parent exists
     if let Some(parent) = destination.parent() {
-        if !parent.as_os_str().is_empty() {
-            if mode.is_dry_run() {
-                match fs::symlink_metadata(parent) {
-                    Ok(existing) if !existing.file_type().is_dir() => {
-                        return Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        return Err(LocalCopyError::io(
-                            "inspect existing destination",
-                            parent.to_path_buf(),
-                            error,
-                        ));
-                    }
-                }
-            } else {
-                fs::create_dir_all(parent).map_err(|error| {
-                    LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
-                })?;
-                context.register_progress();
-            }
-        }
+        context.prepare_parent_directory(parent)?;
     }
 
-    // see what is already there
-    let mut destination_previously_existed = false;
-    match fs::symlink_metadata(destination) {
-        Ok(existing) => {
-            destination_previously_existed = true;
-            let file_type = existing.file_type();
-            if file_type.is_dir() {
-                return Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::ReplaceDirectoryWithSymlink,
-                ));
-            }
-
-            if !mode.is_dry_run() {
-                context.backup_existing_entry(destination, relative, file_type)?;
-                remove_existing_destination(destination)?;
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(LocalCopyError::io(
-                "inspect existing destination",
-                destination.to_path_buf(),
-                error,
-            ));
+    if !mode.is_dry_run() {
+        if let Some(existing) = destination_metadata.take() {
+            context.backup_existing_entry(destination, relative, existing.file_type())?;
+            remove_existing_destination(destination)?;
         }
     }
 
