@@ -57,6 +57,12 @@ jobs:
             nextest_flags: '--no-default-features --features "zstd lz4 iconv"'
 
     steps:
+      - name: Force DNS to 8.8.8.8
+        if: matrix.family == 'linux'
+        run: |
+          sudo rm -f /etc/resolv.conf
+          printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
+
       - name: Checkout
         uses: actions/checkout@v4
 
