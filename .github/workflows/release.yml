@@ -89,9 +89,15 @@ jobs:
   linux-packages:
     name: Build Linux DEB/RPM + multi-arch tarballs
     needs: binaries-x86
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
+      - name: Force DNS to 8.8.8.8
+        if: matrix.family == 'linux'
+        run: |
+          sudo rm -f /etc/resolv.conf
+          printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -158,7 +164,7 @@ jobs:
   macos-arm-tarball:
     name: Build macOS arm64 tarball
     needs: binaries-x86
-    runs-on: macos-15
+    runs-on: macos-latest
 
     steps:
       - name: Checkout
