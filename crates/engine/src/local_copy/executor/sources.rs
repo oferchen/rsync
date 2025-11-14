@@ -25,6 +25,39 @@ pub(crate) struct DestinationState {
     symlink_to_dir: bool,
 }
 
+/// Template-style helper to record how a skipped symlink was handled.
+///
+/// This centralizes the "skip symlink" behavior so the main copy loop
+/// stays focused on control flow and delegates the reporting details.
+fn record_skipped_symlink(
+    context: &mut CopyContext,
+    source_path: &Path,
+    metadata: &fs::Metadata,
+    record_path: Option<&Path>,
+) {
+    context.summary_mut().record_symlink_total();
+    if let Some(relative_path) = record_path {
+        match fs::read_link(source_path) {
+            Ok(target) => {
+                let metadata_snapshot =
+                    LocalCopyMetadata::from_metadata(metadata, Some(target));
+                let record = LocalCopyRecord::new(
+                    relative_path.to_path_buf(),
+                    LocalCopyAction::SkippedNonRegular,
+                    0,
+                    None,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                );
+                context.record(record);
+            }
+            Err(_) => {
+                context.record_skipped_non_regular(Some(relative_path));
+            }
+        }
+    }
+}
+
 pub(crate) fn copy_sources(
     plan: &LocalCopyPlan,
     mode: LocalCopyExecution,
@@ -297,29 +330,12 @@ pub(crate) fn copy_sources(
                                 record_path,
                             )?;
                         } else {
-                            context.summary_mut().record_symlink_total();
-                            if let Some(relative_path) = record_path {
-                                match fs::read_link(source_path) {
-                                    Ok(target) => {
-                                        let metadata_snapshot = LocalCopyMetadata::from_metadata(
-                                            &metadata,
-                                            Some(target),
-                                        );
-                                        let record = LocalCopyRecord::new(
-                                            relative_path.to_path_buf(),
-                                            LocalCopyAction::SkippedNonRegular,
-                                            0,
-                                            None,
-                                            Duration::default(),
-                                            Some(metadata_snapshot),
-                                        );
-                                        context.record(record);
-                                    }
-                                    Err(_) => {
-                                        context.record_skipped_non_regular(Some(relative_path));
-                                    }
-                                }
-                            }
+                            record_skipped_symlink(
+                                context,
+                                source_path,
+                                &metadata,
+                                record_path,
+                            );
                         }
                     } else if is_fifo(&effective_type) {
                         if !context.specials_enabled() {

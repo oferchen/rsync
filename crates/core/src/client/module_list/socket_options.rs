@@ -16,6 +16,67 @@ const IPTOS_LOWDELAY: libc::c_int = 0x10;
 #[cfg(not(target_family = "windows"))]
 const IPTOS_THROUGHPUT: libc::c_int = 0x08;
 
+/// Platform-specific socket constants.
+///
+/// On Unix, forwards directly to `libc`.
+/// On Windows, provides Winsock-compatible numeric values.
+///
+/// This is a small adapter/facade so the rest of the module stays platform-neutral.
+mod socket_consts {
+    #[cfg(not(target_family = "windows"))]
+    pub const SOL_SOCKET: libc::c_int = libc::SOL_SOCKET;
+    #[cfg(target_family = "windows")]
+    pub const SOL_SOCKET: libc::c_int = 0xFFFF;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const SO_KEEPALIVE: libc::c_int = libc::SO_KEEPALIVE;
+    #[cfg(target_family = "windows")]
+    pub const SO_KEEPALIVE: libc::c_int = 0x0008;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const SO_REUSEADDR: libc::c_int = libc::SO_REUSEADDR;
+    #[cfg(target_family = "windows")]
+    pub const SO_REUSEADDR: libc::c_int = 0x0004;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const SO_BROADCAST: libc::c_int = libc::SO_BROADCAST;
+    #[cfg(target_family = "windows")]
+    pub const SO_BROADCAST: libc::c_int = 0x0020;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const SO_SNDBUF: libc::c_int = libc::SO_SNDBUF;
+    #[cfg(target_family = "windows")]
+    pub const SO_SNDBUF: libc::c_int = 0x1001;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const SO_RCVBUF: libc::c_int = libc::SO_RCVBUF;
+    #[cfg(target_family = "windows")]
+    pub const SO_RCVBUF: libc::c_int = 0x1002;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const SO_SNDTIMEO: libc::c_int = libc::SO_SNDTIMEO;
+    #[cfg(target_family = "windows")]
+    pub const SO_SNDTIMEO: libc::c_int = 0x1005;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const SO_RCVTIMEO: libc::c_int = libc::SO_RCVTIMEO;
+    #[cfg(target_family = "windows")]
+    pub const SO_RCVTIMEO: libc::c_int = 0x1006;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const IPPROTO_TCP: libc::c_int = libc::IPPROTO_TCP;
+    #[cfg(target_family = "windows")]
+    pub const IPPROTO_TCP: libc::c_int = 6;
+
+    #[cfg(not(target_family = "windows"))]
+    pub const TCP_NODELAY: libc::c_int = libc::TCP_NODELAY;
+    #[cfg(target_family = "windows")]
+    pub const TCP_NODELAY: libc::c_int = 0x0001;
+
+    // setsockopt() returns -1 on error; on Winsock this is SOCKET_ERROR == -1.
+    pub const SOCKET_ERROR: libc::c_int = -1;
+}
+
 #[derive(Clone, Copy)]
 enum SocketOptionKind {
     Bool {
@@ -37,6 +98,27 @@ struct ParsedSocketOption {
     kind: SocketOptionKind,
     explicit_value: Option<libc::c_int>,
     name: &'static str,
+}
+
+impl ParsedSocketOption {
+    /// Applies this parsed option to the provided stream.
+    ///
+    /// This is a small command-style helper, keeping `apply_socket_options`
+    /// focused on parsing/orchestration rather than low-level details.
+    fn apply(&self, stream: &TcpStream) -> io::Result<()> {
+        match self.kind {
+            SocketOptionKind::Bool { level, option }
+            | SocketOptionKind::Int { level, option } => {
+                let value = self.explicit_value.unwrap_or(libc::c_int::from(1));
+                set_socket_option_int(stream, level, option, value)
+            }
+            SocketOptionKind::On {
+                level,
+                option,
+                value,
+            } => set_socket_option_int(stream, level, option, value),
+        }
+    }
 }
 
 /// Applies the caller-provided socket options to the supplied TCP stream.
@@ -85,22 +167,9 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Resul
     }
 
     for option in parsed {
-        match option.kind {
-            SocketOptionKind::Bool { level, option: opt }
-            | SocketOptionKind::Int { level, option: opt } => {
-                let value = option.explicit_value.unwrap_or(libc::c_int::from(1));
-                set_socket_option_int(stream, level, opt, value)
-                    .map_err(|error| socket_option_error(option.name, error))?;
-            }
-            SocketOptionKind::On {
-                level,
-                option: opt,
-                value,
-            } => {
-                set_socket_option_int(stream, level, opt, value)
-                    .map_err(|error| socket_option_error(option.name, error))?;
-            }
-        }
+        option
+            .apply(stream)
+            .map_err(|error| socket_option_error(option.name, error))?;
     }
 
     Ok(())
@@ -109,25 +178,25 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Resul
 fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
     match name {
         "SO_KEEPALIVE" => Some(SocketOptionKind::Bool {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_KEEPALIVE,
+            level: socket_consts::SOL_SOCKET,
+            option: socket_consts::SO_KEEPALIVE,
         }),
         "SO_REUSEADDR" => Some(SocketOptionKind::Bool {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_REUSEADDR,
+           level: socket_consts::SOL_SOCKET,
+           option: socket_consts::SO_REUSEADDR,
         }),
         #[cfg(any(target_family = "unix", target_os = "windows"))]
         "SO_BROADCAST" => Some(SocketOptionKind::Bool {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_BROADCAST,
+            level: socket_consts::SOL_SOCKET,
+            option: socket_consts::SO_BROADCAST,
         }),
         "SO_SNDBUF" => Some(SocketOptionKind::Int {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_SNDBUF,
+            level: socket_consts::SOL_SOCKET,
+            option: socket_consts::SO_SNDBUF,
         }),
         "SO_RCVBUF" => Some(SocketOptionKind::Int {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_RCVBUF,
+            level: socket_consts::SOL_SOCKET,
+            option: socket_consts::SO_RCVBUF,
         }),
         #[cfg(any(
             target_os = "macos",
@@ -174,16 +243,16 @@ fn lookup_socket_option(name: &str) -> Option<SocketOptionKind> {
             option: libc::SO_RCVLOWAT,
         }),
         "SO_SNDTIMEO" => Some(SocketOptionKind::Int {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_SNDTIMEO,
+            level: socket_consts::SOL_SOCKET,
+            option: socket_consts::SO_SNDTIMEO,
         }),
         "SO_RCVTIMEO" => Some(SocketOptionKind::Int {
-            level: libc::SOL_SOCKET,
-            option: libc::SO_RCVTIMEO,
+            level: socket_consts::SOL_SOCKET,
+            option: socket_consts::SO_RCVTIMEO,
         }),
         "TCP_NODELAY" => Some(SocketOptionKind::Bool {
-            level: libc::IPPROTO_TCP,
-            option: libc::TCP_NODELAY,
+            level: socket_consts::IPPROTO_TCP,
+            option: socket_consts::TCP_NODELAY,
         }),
         #[cfg(not(target_family = "windows"))]
         "IPTOS_LOWDELAY" => Some(SocketOptionKind::On {
@@ -353,7 +422,7 @@ fn set_socket_option_int(
         )
     };
 
-    if ret == libc::SOCKET_ERROR {
+    if ret == socket_consts::SOCKET_ERROR {
         Err(io::Error::last_os_error())
     } else {
         Ok(())
