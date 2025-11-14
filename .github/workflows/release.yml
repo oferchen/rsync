@@ -1,61 +1,222 @@
 name: Release-artifacts
 
 on:
-  workflow_run:
-    workflows: ["Build-cross"]
-    types:
-      - completed
+  release:
+    types: [created]
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FORMULA_PATH: Formula/oc-rsync.rb
 
 jobs:
-  upload-to-release:
-    if: |
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      (github.event.workflow_run.head_branch == '' || startsWith(github.event.workflow_run.head_branch, 'v'))
-    name: Upload build artifacts to release
+  # --------------------------------------------------------------------------
+  # 1) Build & upload cross-platform archives via rust-release-binary
+  # --------------------------------------------------------------------------
+  binaries:
+    name: Build & upload binaries (${{ matrix.target }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            archive: "tar.gz"
+            archive_suffix: "linux-x86_64.tar.gz"
+            static_linking: "false"   # avoid OpenSSL static linking issues :contentReference[oaicite:2]{index=2}
+          - target: x86_64-apple-darwin
+            archive: "tar.gz"
+            archive_suffix: "darwin-x86_64.tar.gz"
+            static_linking: "true"
+          - target: x86_64-pc-windows-gnu
+            archive: "zip"
+            archive_suffix: "windows-x86_64.zip"
+            static_linking: "true"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Determine release tag
-        id: release
+      - name: Derive version from tag
+        id: vars
+        shell: bash
         run: |
           set -euo pipefail
-          git fetch --tags --force
-          TAGS="$(git tag --points-at "${{ github.event.workflow_run.head_sha }}")"
-          if [ -z "${TAGS}" ]; then
-            echo "::error::No tag found for commit ${{ github.event.workflow_run.head_sha }}" >&2
-            exit 1
-          fi
-          TAG="$(printf '%s\n' "${TAGS}" | head -n1)"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION_NO_PREFIX="${TAG#v}"
+          {
+            echo "tag=${TAG}"
+            echo "version_no_prefix=${VERSION_NO_PREFIX}"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Download artifacts from Build-cross
-        uses: dawidd6/action-download-artifact@v6
-        with:
-          run_id: ${{ github.event.workflow_run.id }}
-          path: dist
-          # we want all artifacts: tar.gz, deb, rpm, zip
-          name: ""
+      - name: Install Linux build deps (for linux target)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            libzstd-dev \
+            zlib1g-dev \
+            libxxhash-dev
 
-      - name: List downloaded artifacts
-        run: ls -R dist
-
-      - name: Create or update GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/**/*.tar.gz
-            dist/**/*.deb
-            dist/**/*.rpm
-            dist/**/*.zip
-          tag_name: ${{ steps.release.outputs.tag }}
-          name: ${{ steps.release.outputs.tag }}
+      - name: Compile and upload via rust-release-binary
+        uses: rust-build/rust-build.action@v1.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
+        with:
+          RUSTTARGET: ${{ matrix.target }}
+          ARCHIVE_TYPES: ${{ matrix.archive }}
+          ARCHIVE_NAME: oc-rsync-${{ steps.vars.outputs.version_no_prefix }}-${{ matrix.archive_suffix }}
+          EXTRA_FILES: "README.md LICENSE"
+          STATIC_LINKING: ${{ matrix.static_linking }}
+
+  # --------------------------------------------------------------------------
+  # 2) Build Linux DEB/RPM + glibc tarball using your xtask packaging
+  # --------------------------------------------------------------------------
+  linux-packages:
+    name: Build DEB/RPM packages
+    needs: binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install packaging deps
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            libacl1-dev \
+            libattr1-dev \
+            libzstd-dev \
+            zlib1g-dev \
+            libxxhash-dev \
+            rpm
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Linux DEB/RPM/tarball (glibc)
+        run: |
+          set -euo pipefail
+          cargo xtask package \
+            --deb \
+            --rpm \
+            --tarball \
+            --tarball-target x86_64-unknown-linux-gnu \
+            --release
+
+      - name: Upload Linux packages to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            target/dist/oc-rsync-*-linux-*.tar.gz
+            target/debian/*.deb
+            target/generate-rpm/*.rpm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --------------------------------------------------------------------------
+  # 3) Regenerate Homebrew formula from macOS tarball and open PR
+  # --------------------------------------------------------------------------
+  brew-formula:
+    name: Update Homebrew formula
+    needs: binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract tag
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name }}"
+          VERSION_NO_PREFIX="${TAG#v}"
+          {
+            echo "tag=${TAG}"
+            echo "version_no_prefix=${VERSION_NO_PREFIX}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate Homebrew formula
+        shell: bash
+        env:
+          FORMULA_PATH: ${{ env.FORMULA_PATH }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          VERSION="${{ steps.vars.outputs.version_no_prefix }}"
+          REPO="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          WORKDIR="$(mktemp -d)"
+          trap 'rm -rf "$WORKDIR"' EXIT
+
+          AMD64_TARBALL="oc-rsync-${VERSION}-darwin-x86_64.tar.gz"
+
+          # Download macOS x86_64 tarball produced by rust-release-binary
+          curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
+
+          AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
+          ARM64_TARBALL="${AMD64_TARBALL}"
+          ARM64_SHA256="${AMD64_SHA256}"
+
+          mkdir -p "$(dirname "${FORMULA_PATH}")"
+
+          {
+            echo "class OcRsync < Formula"
+            echo '  desc "Pure-Rust rsync 3.4.1-compatible implementation"'
+            echo '  homepage "https://github.com/oferchen/rsync"'
+            echo '  license "GPL-3.0-or-later"'
+            echo "  version \"${VERSION}\""
+            echo
+            echo "  on_macos do"
+            echo "    on_intel do"
+            echo "      url \"${REPO}/${AMD64_TARBALL}\""
+            echo "      sha256 \"${AMD64_SHA256}\""
+            echo "    end"
+            echo
+            echo "    on_arm do"
+            echo "      url \"${REPO}/${ARM64_TARBALL}\""
+            echo "      sha256 \"${ARM64_SHA256}\""
+            echo "    end"
+            echo "  end"
+            echo
+            echo "  def install"
+            echo "    bin.install \"oc-rsync\""
+            echo "  end"
+            echo
+            echo "  test do"
+            echo "    system \"#{bin}/oc-rsync\", \"--version\""
+            echo "  end"
+            echo "end"
+          } > "${FORMULA_PATH}"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
+          title: "Update Homebrew formula for ${{ steps.vars.outputs.tag }}"
+          body: "Auto-generated from release assets."
+          branch: "ci/brew-formula-${{ steps.vars.outputs.tag }}"
+          base: master
