@@ -79,7 +79,7 @@ At the moment, Linux CI builds are temporarily failing due to a `ubuntu-latest` 
 ## Status
 
 - **Upstream baseline:** tracking `rsync` **3.4.1** (protocol 32).
-- **Rust-branded release line:** **3.4.1a-rust**.
+- **Rust-branded release line:** **3.4.1-rust**.
 - **Stability:** alpha/early-beta; most day-to-day flows are implemented, with ongoing work on edge cases, performance, and polish.
 
 ---
