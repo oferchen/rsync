@@ -1,5 +1,3 @@
-//! Source operand execution entry points.
-
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -301,8 +299,14 @@ pub(crate) fn copy_sources(
                         && relative_parent.is_none()
                         && !source.copy_contents();
 
+                    // Simplified non-minimal boolean expression:
+                    // destination_behaves_like_directory
+                    //   && !(prefer_root_destination && !effective_type.is_dir())
+                    // =>
+                    // destination_behaves_like_directory
+                    //   && (!prefer_root_destination || effective_type.is_dir())
                     let target = if destination_behaves_like_directory
-                        && !(prefer_root_destination && !effective_type.is_dir())
+                        && (!prefer_root_destination || effective_type.is_dir())
                     {
                         destination_base.join(name)
                     } else {
