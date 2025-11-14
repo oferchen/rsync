@@ -10,8 +10,8 @@ use std::thread;
 
 use core::branding::Brand;
 use core::fallback::{
-    describe_missing_fallback_binary, fallback_binary_available, fallback_override,
-    CLIENT_FALLBACK_ENV, FallbackOverride,
+    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
+    fallback_binary_available, fallback_override,
 };
 use core::message::Role;
 use core::rsync_error;
@@ -50,11 +50,7 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
         daemon_args.push(arg.clone());
     }
 
-    if found {
-        Some(daemon_args)
-    } else {
-        None
-    }
+    if found { Some(daemon_args) } else { None }
 }
 
 /// Returns `true` when the invocation requests server mode.
@@ -91,10 +87,7 @@ where
     let _ = stdout.flush();
     let _ = stderr.flush();
 
-    let program_brand = super::detect_program_name(
-        args.first().map(OsString::as_os_str),
-    )
-    .brand();
+    let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
 
     write_daemon_unavailable_error(stderr, program_brand);
     1
@@ -198,9 +191,7 @@ where
                 write_server_fallback_error(
                     stderr,
                     program_brand,
-                    format!(
-                        "failed to read stdout from fallback {upstream_program}: {error}"
-                    ),
+                    format!("failed to read stdout from fallback {upstream_program}: {error}"),
                 );
                 return 1;
             }
@@ -209,9 +200,7 @@ where
                 write_server_fallback_error(
                     stderr,
                     program_brand,
-                    format!(
-                        "failed to read stderr from fallback {upstream_program}: {error}"
-                    ),
+                    format!("failed to read stderr from fallback {upstream_program}: {error}"),
                 );
                 return 1;
             }
@@ -235,9 +224,7 @@ where
             write_server_fallback_error(
                 stderr,
                 program_brand,
-                format!(
-                    "failed to wait for fallback {upstream_program} process: {error}"
-                ),
+                format!("failed to wait for fallback {upstream_program} process: {error}"),
             );
             1
         }
@@ -321,10 +308,7 @@ fn write_server_fallback_error<Err: Write>(
 }
 
 #[cfg(windows)]
-fn write_daemon_unavailable_error<Err: Write>(
-    stderr: &mut Err,
-    brand: Brand,
-) {
+fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(
         1,
