@@ -16,7 +16,7 @@ env:
 jobs:
   linux:
     name: linux release artifacts
-    runs-on: ubuntu-plucky
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
