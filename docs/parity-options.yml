@@ -18,16 +18,16 @@ options:
     status: implemented
     notes: ""
   - option: --no-verbose
-    short: 
+    short:
     category: logging
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-v
-    short: 
+    short:
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --info
     short: 
@@ -42,10 +42,10 @@ options:
     status: implemented
     notes: ""
   - option: --stderr
-    short: 
+    short:
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --msgs2stderr
     short: 
@@ -63,13 +63,13 @@ options:
     short: q
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: ""
   - option: --motd
-    short: 
+    short:
     category: daemon
     upstream_default: default 1
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-motd
     short: 
@@ -96,10 +96,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-h
-    short: 
+    short:
     category: general
     upstream_default: enabled by default (1)
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --dry-run
     short: n
@@ -126,10 +126,10 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-r
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --inc-recursive
     short: 

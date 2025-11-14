@@ -29,6 +29,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-human-readable")
                     .long("no-human-readable")
+                    .visible_alias("no-h")
                     .help("Disable human-readable number formatting.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("human-readable"),
@@ -36,6 +37,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("msgs2stderr")
                     .long("msgs2stderr")
+                    .visible_alias("stderr")
                     .help("Route informational messages to standard error.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("no-msgs2stderr"),
@@ -43,6 +45,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-msgs2stderr")
                     .long("no-msgs2stderr")
+                    .visible_alias("no-stderr")
                     .help("Route informational messages to standard output.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("msgs2stderr"),
@@ -226,6 +229,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-recursive")
                     .long("no-recursive")
+                    .visible_alias("no-r")
                     .help("Do not recurse into directories when processing source operands.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("recursive"),
@@ -483,6 +487,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-verbose")
                     .long("no-verbose")
+                    .visible_alias("no-v")
                     .help("Disable verbosity (equivalent to --quiet).")
                     .action(ArgAction::SetTrue)
                     .overrides_with("verbose"),

@@ -355,10 +355,18 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::Set),
             )
             .arg(
+                Arg::new("motd")
+                    .long("motd")
+                    .help("Display daemon MOTD lines when listing rsync:// modules.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-motd"),
+            )
+            .arg(
                 Arg::new("no-motd")
                     .long("no-motd")
                     .help("Suppress daemon MOTD lines when listing rsync:// modules.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("motd"),
             )
             .arg(
                 Arg::new("from0")
