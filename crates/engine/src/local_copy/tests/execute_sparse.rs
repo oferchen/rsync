@@ -73,6 +73,57 @@ fn execute_with_sparse_enabled_counts_literal_data() {
 
 #[cfg(unix)]
 #[test]
+fn execute_delta_with_sparse_counts_zero_literal_data() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    let source_path = source_root.join("file.bin");
+    let dest_path = dest_root.join("file.bin");
+
+    let prefix = vec![b'A'; 700];
+    let zeros = vec![0u8; 700];
+    let previous = vec![b'X'; zeros.len()];
+    let prefix_len = prefix.len() as u64;
+    let literal_len = zeros.len() as u64;
+
+    let mut initial = Vec::with_capacity(prefix.len() + previous.len());
+    initial.extend_from_slice(&prefix);
+    initial.extend_from_slice(&previous);
+    fs::write(&dest_path, &initial).expect("write initial destination");
+    set_file_mtime(&dest_path, FileTime::from_unix_time(1, 0)).expect("set destination mtime");
+
+    let mut updated = Vec::with_capacity(prefix.len() + zeros.len());
+    updated.extend_from_slice(&prefix);
+    updated.extend_from_slice(&zeros);
+    fs::write(&source_path, &updated).expect("write updated source");
+    set_file_mtime(&source_path, FileTime::from_unix_time(2, 0)).expect("set source mtime");
+
+    let operands = vec![
+        source_path.clone().into_os_string(),
+        dest_path.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .whole_file(false)
+                .sparse(true),
+        )
+        .expect("delta sparse copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.bytes_copied(), literal_len);
+    assert_eq!(summary.matched_bytes(), prefix_len);
+    assert_eq!(fs::read(&dest_path).expect("read destination"), updated);
+}
+
+#[cfg(unix)]
+#[test]
 fn execute_without_inplace_replaces_destination_file() {
     use std::os::unix::fs::MetadataExt;
 

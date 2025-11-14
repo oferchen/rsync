@@ -88,7 +88,12 @@ impl<'a> CopyContext<'a> {
                         source,
                         destination,
                     )?;
-                    literal_bytes = literal_bytes.saturating_add(flushed as u64);
+                    let literal_written = if sparse {
+                        flushed_len as u64
+                    } else {
+                        flushed as u64
+                    };
+                    literal_bytes = literal_bytes.saturating_add(literal_written);
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
                     let progressed = initial_bytes.saturating_add(total_bytes);
                     self.notify_progress(
@@ -146,7 +151,12 @@ impl<'a> CopyContext<'a> {
                 destination,
             )?;
             total_bytes = total_bytes.saturating_add(flushed_len as u64);
-            literal_bytes = literal_bytes.saturating_add(flushed as u64);
+            let literal_written = if sparse {
+                flushed_len as u64
+            } else {
+                flushed as u64
+            };
+            literal_bytes = literal_bytes.saturating_add(literal_written);
             let progressed = initial_bytes.saturating_add(total_bytes);
             self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
         }
