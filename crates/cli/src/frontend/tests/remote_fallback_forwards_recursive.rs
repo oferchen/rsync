@@ -53,6 +53,22 @@ fn remote_fallback_forwards_no_recursive_flag() {
 
 #[cfg(unix)]
 #[test]
+fn remote_fallback_forwards_inc_recursive_flag() {
+    let args = capture_remote_fallback_args(&[OsString::from("--inc-recursive")]);
+    assert!(args.contains(&"--inc-recursive".to_string()));
+    assert!(!args.contains(&"--no-inc-recursive".to_string()));
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_fallback_forwards_no_inc_recursive_flag() {
+    let args = capture_remote_fallback_args(&[OsString::from("--no-inc-recursive")]);
+    assert!(args.contains(&"--no-inc-recursive".to_string()));
+    assert!(!args.contains(&"--inc-recursive".to_string()));
+}
+
+#[cfg(unix)]
+#[test]
 fn remote_fallback_forwards_dirs_flag() {
     let args = capture_remote_fallback_args(&[OsString::from("--dirs")]);
     assert!(args.contains(&"--dirs".to_string()));

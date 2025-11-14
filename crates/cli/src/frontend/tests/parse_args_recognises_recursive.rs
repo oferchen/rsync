@@ -50,6 +50,80 @@ fn parse_args_recognises_no_recursive_flag() {
 }
 
 #[test]
+fn parse_args_recognises_inc_recursive_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--inc-recursive"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse inc-recursive");
+
+    assert_eq!(parsed.inc_recursive, Some(true));
+}
+
+#[test]
+fn parse_args_recognises_no_inc_recursive_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-inc-recursive"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse no-inc-recursive");
+
+    assert_eq!(parsed.inc_recursive, Some(false));
+}
+
+#[test]
+fn parse_args_prefers_last_inc_recursive_toggle() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--inc-recursive"),
+        OsString::from("--no-inc-recursive"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse inc-recursive then no-inc-recursive");
+
+    assert_eq!(parsed.inc_recursive, Some(false));
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-inc-recursive"),
+        OsString::from("--inc-recursive"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse no-inc-recursive then inc-recursive");
+
+    assert_eq!(parsed.inc_recursive, Some(true));
+}
+
+#[test]
+fn parse_args_recognises_inc_recursive_aliases() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--i-r"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse --i-r");
+
+    assert_eq!(parsed.inc_recursive, Some(true));
+
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-i-r"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse --no-i-r");
+
+    assert_eq!(parsed.inc_recursive, Some(false));
+}
+
+#[test]
 fn parse_args_recognises_dirs_flag() {
     let parsed = parse_args([
         OsString::from(RSYNC),
