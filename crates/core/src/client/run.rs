@@ -175,6 +175,24 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         let config = self.config;
         let mut options = LocalCopyOptions::default();
 
+        options = self.apply_recursion_and_delete(options, config);
+        options = self.apply_core_limits_and_bandwidth(options, config);
+        options = self.apply_compression(options, config);
+        options = self.apply_metadata_preservation(options, config);
+        options = self.apply_behavioral_flags(options, config);
+        options = self.apply_paths_and_backups(options, config);
+        options = self.apply_time_and_timeout(options, config);
+        options = self.apply_reference_directories(options, config);
+        options = self.apply_filter_program(options);
+
+        options
+    }
+
+    fn apply_recursion_and_delete(
+        &self,
+        mut options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
         options = options.recursive(config.recursive());
 
         if config.delete_mode().is_enabled() || config.delete_excluded() {
@@ -188,9 +206,17 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             DeleteMode::During | DeleteMode::Disabled => options,
         };
 
-        options = options
+        options
             .delete_excluded(config.delete_excluded())
             .max_deletions(config.max_delete())
+    }
+
+    fn apply_core_limits_and_bandwidth(
+        &self,
+        options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
+        options
             .min_file_size(config.min_file_size())
             .max_file_size(config.max_file_size())
             .with_block_size_override(config.block_size_override())
@@ -205,14 +231,30 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
                     .bandwidth_limit()
                     .and_then(|limit| limit.burst_bytes()),
             )
+    }
+
+    fn apply_compression(
+        &self,
+        options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
+        options
             .with_compression_algorithm(config.compression_algorithm())
             .with_default_compression_level(config.compression_setting().level_or_default())
             .with_skip_compress(config.skip_compress().clone())
+            .compress(config.compress())
+            .with_compression_level_override(config.compression_level())
+    }
+
+    fn apply_metadata_preservation(
+        &self,
+        mut options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
+        options = options
             .with_stop_at(config.stop_at())
             .whole_file(config.whole_file())
             .open_noatime(config.open_noatime())
-            .compress(config.compress())
-            .with_compression_level_override(config.compression_level())
             .owner(config.preserve_owner())
             .with_owner_override(config.owner_override())
             .group(config.preserve_group())
@@ -223,7 +265,27 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .omit_dir_times(config.omit_dir_times())
             .omit_link_times(config.omit_link_times())
             .with_user_mapping(config.user_mapping().cloned())
-            .with_group_mapping(config.group_mapping().cloned())
+            .with_group_mapping(config.group_mapping().cloned());
+
+        #[cfg(feature = "acl")]
+        {
+            options = options.acls(config.preserve_acls());
+        }
+
+        #[cfg(feature = "xattr")]
+        {
+            options = options.xattrs(config.preserve_xattrs());
+        }
+
+        options
+    }
+
+    fn apply_behavioral_flags(
+        &self,
+        options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
+        options
             .checksum(config.checksum())
             .with_checksum_algorithm(config.checksum_signature_algorithm())
             .size_only(config.size_only())
@@ -234,7 +296,6 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .delete_missing_args(config.delete_missing_args())
             .update(config.update())
             .with_modify_window(config.modify_window_duration())
-            .with_filter_program(self.filter_program)
             .numeric_ids(config.numeric_ids())
             .preallocate(config.preallocate())
             .fsync(config.fsync())
@@ -259,6 +320,14 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .append(config.append())
             .append_verify(config.append_verify())
             .partial(config.partial())
+    }
+
+    fn apply_paths_and_backups(
+        &self,
+        options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
+        options
             .with_temp_directory(config.temp_directory().map(|path| path.to_path_buf()))
             .backup(config.backup())
             .with_backup_directory(config.backup_directory().map(|path| path.to_path_buf()))
@@ -266,23 +335,26 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
             .delay_updates(config.delay_updates())
             .extend_link_dests(config.link_dest_paths().iter().cloned())
-            .with_timeout(
-                config
-                    .timeout()
-                    .as_seconds()
-                    .map(|seconds| Duration::from_secs(seconds.get())),
-            );
+    }
 
-        #[cfg(feature = "acl")]
-        {
-            options = options.acls(config.preserve_acls());
-        }
+    fn apply_time_and_timeout(
+        &self,
+        options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
+        options.with_timeout(
+            config
+                .timeout()
+                .as_seconds()
+                .map(|seconds| Duration::from_secs(seconds.get())),
+        )
+    }
 
-        #[cfg(feature = "xattr")]
-        {
-            options = options.xattrs(config.preserve_xattrs());
-        }
-
+    fn apply_reference_directories(
+        &self,
+        mut options: LocalCopyOptions,
+        config: &ClientConfig,
+    ) -> LocalCopyOptions {
         if !config.reference_directories().is_empty() {
             let references = config.reference_directories().iter().map(|reference| {
                 let kind = match reference.kind() {
@@ -294,8 +366,11 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             });
             options = options.extend_reference_directories(references);
         }
-
         options
+    }
+
+    fn apply_filter_program(self, options: LocalCopyOptions) -> LocalCopyOptions {
+        options.with_filter_program(self.filter_program)
     }
 }
 
