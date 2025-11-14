@@ -11,7 +11,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 ## About
 
-`oc-rsync` is in the final stages of stabilization: the core feature set is implemented and working, and the focus is now on polishing edge cases, and ergonomics.
+`oc-rsync` is in the final stages of stabilization: the core feature set is implemented and working, and the focus is now on polishing edge cases, interoperability, and ergonomics.
 
 At the moment, Linux CI builds are temporarily failing due to a `ubuntu-latest` GitHub Actions issue; once that is resolved, official Linux packages (Deb/RPM and tarballs) will be published on the Releases page.
 
@@ -76,14 +76,22 @@ At the moment, Linux CI builds are temporarily failing due to a `ubuntu-latest` 
 
 ---
 
+## Status
+
+- **Upstream baseline:** tracking `rsync` **3.4.1** (protocol 32).
+- **Rust-branded release line:** **3.4.1a-rust**.
+- **Stability:** alpha/early-beta; most day-to-day flows are implemented, with ongoing work on edge cases, performance, and polish.
+
+---
+
 ## Installation
 
 ### Prebuilt packages
 
 Prebuilt artifacts are (or will be) published on the GitHub **Releases** page (Deb/RPM packages and tarballs, across multiple platforms/architectures).
 
-1. Go to: <https://github.com/oferchen/rsync/releases>
-2. Download the asset for your OS/arch (e.g., `.deb`, `.rpm`, or `.tar.*`).
+1. Go to: <https://github.com/oferchen/rsync/releases>  
+2. Download the asset for your OS/arch (e.g., `.deb`, `.rpm`, or `.tar.*`).  
 3. Install it using your platform’s package manager or by extracting the tarball.
 
 The packaging pipeline installs `oc-rsync` under dedicated paths so that the system `rsync` can remain installed in parallel.
@@ -203,7 +211,7 @@ These are enforced in CI to keep the codebase consistent and warning-free.
 
 ```bash
 # Unit + integration tests
-cargo nextest --workspace --all-features
+cargo nextest run --workspace --all-targets --all-features
 ```
 
 Example coverage flow (LLVM based):
@@ -214,6 +222,22 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 ```
 
 Where enabled, CI may enforce coverage gates to avoid regressions.
+
+### Interop & compliance harness
+
+An interop harness exercises both directions against upstream `rsync` releases (e.g., 3.0.9, 3.1.3, 3.4.1):
+
+* Upstream `rsync` client → `oc-rsync --daemon`
+* `oc-rsync` client → upstream `rsync` daemon
+
+Look under `tools/ci/` for the relevant scripts and pinned upstream versions.
+
+Example smoke test:
+
+```bash
+# Replace host/module with your upstream rsyncd endpoint
+cargo run --bin oc-rsync -- -av rsync://host/module/ /tmp/sync-test
+```
 
 ### XTask & docs validation
 
@@ -229,7 +253,7 @@ bash tools/enforce_limits.sh
 # One-liner: fmt + clippy + tests + docs
 cargo fmt --all -- --check \
   && cargo clippy --workspace --all-targets --all-features --no-deps -D warnings \
-  && cargo nextest --workspace --all-features \
+  && cargo nextest run --workspace --all-targets --all-features \
   && cargo xtask doc-validate
 ```
 
@@ -296,7 +320,7 @@ Contributions, bug reports, and interop findings are very welcome.
    ```bash
    cargo fmt --all -- --check
    cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
-   cargo nextest --workspace --all-features
+   cargo nextest run --workspace --all-targets --all-features
    cargo xtask doc-validate
    ```
 
@@ -320,3 +344,6 @@ See [`LICENSE`](./LICENSE) for the full text.
 ## Acknowledgements
 
 Inspired by the original [`rsync`](https://rsync.samba.org/) by Andrew Tridgell and the Samba team, and by the broader Rust ecosystem that made this re-implementation feasible.
+
+::contentReference[oaicite:0]{index=0}
+```
