@@ -60,7 +60,15 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .long("itemize-changes")
                     .short('i')
                     .help("Output a change summary for each updated entry.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-itemize-changes"),
+            )
+            .arg(
+                Arg::new("no-itemize-changes")
+                    .long("no-itemize-changes")
+                    .help("Disable change summaries for updated entries.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("itemize-changes"),
             )
             .arg(
                 Arg::new("out-format")
@@ -469,7 +477,15 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .short('v')
                     .help("Increase verbosity; may be supplied multiple times.")
                     .action(ArgAction::Count)
+                    .overrides_with("no-verbose")
                     .overrides_with("quiet"),
+            )
+            .arg(
+                Arg::new("no-verbose")
+                    .long("no-verbose")
+                    .help("Disable verbosity (equivalent to --quiet).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("verbose"),
             )
             .arg(
                 Arg::new("quiet")

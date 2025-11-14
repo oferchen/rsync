@@ -15,6 +15,34 @@ fn parse_args_recognises_no_super_flag() {
 }
 
 #[test]
+fn parse_args_recognises_no_verbose_flag() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("-vv"),
+        OsString::from("--no-verbose"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.verbosity, 0);
+}
+
+#[test]
+fn parse_args_no_verbose_respects_following_verbose_flags() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--no-verbose"),
+        OsString::from("-vv"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.verbosity, 2);
+}
+
+#[test]
 fn parse_args_recognises_no_delay_updates_flag() {
     let parsed = parse_args([
         OsString::from(RSYNC),
