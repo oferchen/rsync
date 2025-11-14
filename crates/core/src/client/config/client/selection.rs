@@ -118,6 +118,14 @@ impl ClientConfig {
         self.mkpath
     }
 
+    /// Returns whether conflicting destination entries should be removed prior to updates.
+    #[must_use]
+    #[doc(alias = "--force")]
+    #[doc(alias = "--no-force")]
+    pub const fn force_replacements(&self) -> bool {
+        self.force_replacements
+    }
+
     /// Returns whether empty directories should be pruned after filtering.
     #[must_use]
     #[doc(alias = "--prune-empty-dirs")]

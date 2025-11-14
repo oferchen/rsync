@@ -191,6 +191,20 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("force")
+                    .long("force")
+                    .help("Remove conflicting destination directories to make way for files.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-force"),
+            )
+            .arg(
+                Arg::new("no-force")
+                    .long("no-force")
+                    .help("Preserve conflicting destination directories when updating entries.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("force"),
+            )
+            .arg(
                 Arg::new("mkpath")
                     .long("mkpath")
                     .help("Create destination's missing path components.")

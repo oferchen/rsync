@@ -58,6 +58,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) devices: bool,
     pub(crate) copy_devices: bool,
     pub(crate) specials: bool,
+    pub(crate) force_replacements: bool,
     pub(crate) checksum: bool,
     pub(crate) checksum_seed: Option<u32>,
     pub(crate) size_only: bool,
@@ -168,6 +169,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .devices(inputs.devices)
         .copy_devices(inputs.copy_devices)
         .specials(inputs.specials)
+        .force_replacements(inputs.force_replacements)
         .checksum(inputs.checksum)
         .checksum_seed(inputs.checksum_seed)
         .size_only(inputs.size_only)

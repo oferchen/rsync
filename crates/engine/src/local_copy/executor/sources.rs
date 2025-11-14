@@ -294,7 +294,16 @@ pub(crate) fn copy_sources(
                         continue;
                     }
 
-                    let target = if destination_behaves_like_directory {
+                    let prefer_root_destination = destination_behaves_like_directory
+                        && context.force_replacements_enabled()
+                        && !multiple_sources
+                        && !plan.destination_spec().force_directory()
+                        && relative_parent.is_none()
+                        && !source.copy_contents();
+
+                    let target = if destination_behaves_like_directory
+                        && !(prefer_root_destination && !effective_type.is_dir())
+                    {
                         destination_base.join(name)
                     } else {
                         destination_path.to_path_buf()
@@ -320,6 +329,14 @@ pub(crate) fn copy_sources(
                         )?;
                     } else if file_type.is_symlink() {
                         if context.links_enabled() {
+                            let target = if destination_behaves_like_directory
+                                && !(prefer_root_destination)
+                            {
+                                destination_base.join(name)
+                            } else {
+                                destination_path.to_path_buf()
+                            };
+
                             copy_symlink(
                                 context,
                                 source_path,
@@ -336,6 +353,13 @@ pub(crate) fn copy_sources(
                             context.record_skipped_non_regular(record_path);
                             continue;
                         }
+                        let target =
+                            if destination_behaves_like_directory && !prefer_root_destination {
+                                destination_base.join(name)
+                            } else {
+                                destination_path.to_path_buf()
+                            };
+
                         copy_fifo(
                             context,
                             source_path,
@@ -346,6 +370,13 @@ pub(crate) fn copy_sources(
                         )?;
                     } else if is_device(&effective_type) {
                         if context.copy_devices_as_files_enabled() {
+                            let target =
+                                if destination_behaves_like_directory && !prefer_root_destination {
+                                    destination_base.join(name)
+                                } else {
+                                    destination_path.to_path_buf()
+                                };
+
                             copy_file(
                                 context,
                                 source_path,
@@ -357,6 +388,13 @@ pub(crate) fn copy_sources(
                             context.record_skipped_non_regular(record_path);
                             continue;
                         } else {
+                            let target =
+                                if destination_behaves_like_directory && !prefer_root_destination {
+                                    destination_base.join(name)
+                                } else {
+                                    destination_path.to_path_buf()
+                                };
+
                             copy_device(
                                 context,
                                 source_path,

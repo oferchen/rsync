@@ -322,6 +322,72 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
+    pub(super) fn force_remove_destination(
+        &mut self,
+        destination: &Path,
+        relative: Option<&Path>,
+        metadata: &fs::Metadata,
+    ) -> Result<(), LocalCopyError> {
+        let file_type = metadata.file_type();
+
+        if self.mode.is_dry_run() {
+            self.summary_mut().record_deletion();
+            if let Some(path) = relative {
+                self.record(LocalCopyRecord::new(
+                    path.to_path_buf(),
+                    LocalCopyAction::EntryDeleted,
+                    0,
+                    None,
+                    Duration::default(),
+                    None,
+                ));
+            }
+            self.register_progress();
+            return Ok(());
+        }
+
+        self.backup_existing_entry(destination, relative, file_type)?;
+
+        let context = if file_type.is_dir() {
+            "remove existing directory"
+        } else {
+            "remove existing destination"
+        };
+
+        let removal_result = if file_type.is_dir() {
+            fs::remove_dir_all(destination)
+        } else {
+            fs::remove_file(destination)
+        };
+
+        match removal_result {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    context,
+                    destination.to_path_buf(),
+                    error,
+                ));
+            }
+        }
+
+        self.summary_mut().record_deletion();
+        if let Some(path) = relative {
+            self.record(LocalCopyRecord::new(
+                path.to_path_buf(),
+                LocalCopyAction::EntryDeleted,
+                0,
+                None,
+                Duration::default(),
+                None,
+            ));
+        }
+        self.register_progress();
+
+        Ok(())
+    }
+
     pub(super) fn finalize_deferred_update(
         &mut self,
         update: DeferredUpdate,

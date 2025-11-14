@@ -501,6 +501,37 @@ fn execute_with_dry_run_detects_directory_conflict() {
     }
 }
 
+#[test]
+fn execute_directory_replaces_file_when_force_enabled() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source-dir");
+    fs::create_dir_all(&source_root).expect("create source directory");
+    fs::write(source_root.join("file.txt"), b"payload").expect("write source file");
+
+    let destination = temp.path().join("dest");
+    fs::write(&destination, b"old").expect("write existing file");
+
+    let operands = vec![
+        source_root.clone().into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().force_replacements(true),
+        )
+        .expect("forced replacement succeeds");
+
+    assert!(destination.is_dir(), "file should be replaced by directory");
+    assert_eq!(
+        fs::read(destination.join("file.txt")).expect("read copied file"),
+        b"payload"
+    );
+    assert!(summary.directories_created() >= 1);
+}
+
 #[cfg(unix)]
 #[test]
 fn execute_preserves_hard_links() {
