@@ -1,14 +1,10 @@
 name: Brew-formula
 
 on:
-  # Manual trigger is still allowed
   workflow_dispatch:
-
-  # Run automatically after the Release-artifacts workflow completes
-  workflow_run:
-    workflows: ["Release-artifacts"]
-    types:
-      - completed
+  push:
+    tags:
+      - "v*.*.*-rust"
 
 permissions:
   contents: write
@@ -19,73 +15,43 @@ env:
 
 jobs:
   update-brew:
-    # Only run automatically if Release-artifacts succeeded
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          # we need full history + tags when triggered via workflow_run
-          fetch-depth: 0
 
       - name: Extract tag
         id: vars
-        shell: bash
         run: |
-          set -euo pipefail
-
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            # Manual run: assume we're on the tag ref
-            TAG="${GITHUB_REF##*/}"
-          else
-            # Triggered from workflow_run (Release-artifacts)
-            SHA="${{ github.event.workflow_run.head_sha }}"
-            git fetch --tags --force
-
-            TAGS="$(git tag --points-at "${SHA}")"
-            if [ -z "${TAGS}" ]; then
-              echo "::error::No tag found for commit ${SHA}" >&2
-              exit 1
-            fi
-
-            TAG="$(printf '%s\n' "${TAGS}" | head -n1)"
-          fi
-
-          VERSION_NO_PREFIX="${TAG#v}"
-
-          {
-            echo "tag=${TAG}"
-            echo "version_no_prefix=${VERSION_NO_PREFIX}"
-          } >> "${GITHUB_OUTPUT}"
+          TAG="${GITHUB_REF##*/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Generate Homebrew formula
         shell: bash
         env:
-          FORMULA_PATH: ${{ env.FORMULA_PATH }}
+          FORMULA_PATH: Formula/oc-rsync.rb
         run: |
           set -euo pipefail
 
-          TAG="${{ steps.vars.outputs.tag }}"
-          VERSION="${{ steps.vars.outputs.version_no_prefix }}"
-          REPO="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          VERSION="${{ steps.vars.outputs.tag }}"
+          REPO="https://github.com/oferchen/rsync/releases/download/${VERSION}"
 
+          mkdir -p Formula
+
+          # temp dir for downloads
           WORKDIR="$(mktemp -d)"
           trap 'rm -rf "$WORKDIR"' EXIT
 
-          AMD64_TARBALL="oc-rsync-${VERSION}-darwin-x86_64.tar.gz"
-          ARM64_TARBALL="oc-rsync-${VERSION}-darwin-aarch64.tar.gz"
+          AMD64_TARBALL="oc-rsync-macos-amd64.tar.gz"
+          ARM64_TARBALL="oc-rsync-macos-arm64.tar.gz"
 
+          # download release assets (must exist in the release)
           curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
           curl -fsSL "${REPO}/${ARM64_TARBALL}" -o "${WORKDIR}/${ARM64_TARBALL}"
 
           AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
           ARM64_SHA256="$(shasum -a 256 "${WORKDIR}/${ARM64_TARBALL}" | awk '{print $1}')"
-
-          mkdir -p "$(dirname "${FORMULA_PATH}")"
 
           {
             echo "class OcRsync < Formula"
@@ -108,6 +74,7 @@ jobs:
             echo
             echo "  def install"
             echo "    bin.install \"oc-rsync\""
+            echo "    bin.install \"oc-rsyncd\""
             echo "  end"
             echo
             echo "  test do"
@@ -115,6 +82,8 @@ jobs:
             echo "  end"
             echo "end"
           } > "${FORMULA_PATH}"
+
+          echo "Formula generated at ${FORMULA_PATH}"
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
