@@ -20,6 +20,62 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Reset APT sources to Canonical defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+      
+          # Determine Ubuntu codename (e.g. noble, jammy) from os-release
+          if [ -r /etc/os-release ]; then
+            . /etc/os-release
+          fi
+          codename="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
+      
+          if [ -z "${codename}" ]; then
+            echo "Unable to determine Ubuntu codename from /etc/os-release" >&2
+            exit 1
+          fi
+      
+          echo "Ubuntu codename: ${codename}"
+      
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            echo "Resetting /etc/apt/sources.list.d/ubuntu.sources to Canonical defaults"
+            sudo cp /etc/apt/sources.list.d/ubuntu.sources \
+                    /etc/apt/sources.list.d/ubuntu.sources.bak || true
+      
+            sudo sh -c '
+              codename="$1"
+              {
+                printf "Types: deb\n"
+                printf "URIs: http://archive.ubuntu.com/ubuntu/\n"
+                printf "Suites: %s %s-updates %s-backports\n" "$codename" "$codename" "$codename"
+                printf "Components: main restricted universe multiverse\n"
+                printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+                printf "\n"
+                printf "Types: deb\n"
+                printf "URIs: http://security.ubuntu.com/ubuntu/\n"
+                printf "Suites: %s-security\n" "$codename"
+                printf "Components: main restricted universe multiverse\n"
+                printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+              } > /etc/apt/sources.list.d/ubuntu.sources
+            ' sh "$codename"
+          else
+            echo "Resetting /etc/apt/sources.list to Canonical defaults"
+            sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak || true
+      
+            sudo sh -c '
+              codename="$1"
+              {
+                printf "deb http://archive.ubuntu.com/ubuntu %s main restricted universe multiverse\n" "$codename"
+                printf "deb http://archive.ubuntu.com/ubuntu %s-updates main restricted universe multiverse\n" "$codename"
+                printf "deb http://archive.ubuntu.com/ubuntu %s-backports main restricted universe multiverse\n" "$codename"
+                printf "deb http://security.ubuntu.com/ubuntu %s-security main restricted universe multiverse\n" "$codename"
+              } > /etc/apt/sources.list
+            ' sh "$codename"
+          fi
+      
+          sudo apt-get update
+
       - name: Checkout
         uses: actions/checkout@v4
 
