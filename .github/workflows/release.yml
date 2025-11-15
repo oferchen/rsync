@@ -6,9 +6,13 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+
+env:
+  FORMULA_PATH: Formula/oc-rsync.rb
 
 jobs:
-  gather-and-upload:
+  upload-artifacts:
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -27,4 +31,126 @@ jobs:
             dist/**/*.deb
             dist/**/*.rpm
         env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-brew:
+    runs-on: ubuntu-latest
+    needs: upload-artifacts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract tag
+        id: vars
+        run: |
+          # For release events, tag_name is like "v3.4.1a-rust"
+          TAG="${{ github.event.release.tag_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Homebrew formula
+        shell: bash
+        env:
+          FORMULA_PATH: Formula/oc-rsync.rb
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.vars.outputs.tag }}"
+          # TAG is like "v3.4.1a-rust"
+          VERSION="${TAG#v}"  # plain version without leading "v"
+          REPO="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          mkdir -p Formula
+
+          WORKDIR="$(mktemp -d)"
+          trap 'rm -rf "$WORKDIR"' EXIT
+
+          # Candidate filenames for macOS Intel (amd64)
+          amd64_candidates=(
+            "oc-rsync-${VERSION}-x86_64-apple-darwin.tar.gz"
+            "oc-rsync-${VERSION}-darwin-amd64.tar.gz"
+            "oc-rsync-${VERSION}-darwin-x86_64.tar.gz"
+            "oc-rsync-macos-amd64.tar.gz"
+          )
+
+          # Candidate filenames for macOS ARM64
+          arm64_candidates=(
+            "oc-rsync-${VERSION}-aarch64-apple-darwin.tar.gz"
+            "oc-rsync-${VERSION}-darwin-arm64.tar.gz"
+            "oc-rsync-${VERSION}-darwin-aarch64.tar.gz"
+            "oc-rsync-macos-arm64.tar.gz"
+          )
+
+          pick_asset() {
+            local os_arch="$1"    # "macos-amd64" / "macos-arm64"
+            shift
+            local -a candidates=("$@")
+
+            for name in "${candidates[@]}"; do
+              local url="${REPO}/${name}"
+              # Log to stderr so stdout is ONLY the chosen name
+              echo "Probing ${os_arch} candidate: ${url}" >&2
+              if curl -fsIL "${url}" >/dev/null 2>&1; then
+                echo "${name}"
+                return 0
+              fi
+            done
+
+            echo "ERROR: No matching asset found for ${os_arch} in release ${TAG}" >&2
+            echo "Tried candidates:" >&2
+            printf '  - %s\n' "${candidates[@]}" >&2
+            exit 1
+          }
+
+          AMD64_TARBALL="$(pick_asset "macos-amd64" "${amd64_candidates[@]}")"
+          ARM64_TARBALL="$(pick_asset "macos-arm64" "${arm64_candidates[@]}")"
+
+          echo "Using macOS Intel tarball: ${AMD64_TARBALL}"
+          echo "Using macOS ARM64 tarball: ${ARM64_TARBALL}"
+
+          curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
+          curl -fsSL "${REPO}/${ARM64_TARBALL}" -o "${WORKDIR}/${ARM64_TARBALL}"
+
+          AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
+          ARM64_SHA256="$(shasum -a 256 "${WORKDIR}/${ARM64_TARBALL}" | awk '{print $1}')"
+
+          {
+            echo "class OcRsync < Formula"
+            echo '  desc "Pure-Rust rsync 3.4.1-compatible implementation"'
+            echo '  homepage "https://github.com/oferchen/rsync"'
+            echo '  license "GPL-3.0-or-later"'
+            echo "  version \"${VERSION}\""
+            echo
+            echo "  on_macos do"
+            echo "    on_intel do"
+            echo "      url \"${REPO}/${AMD64_TARBALL}\""
+            echo "      sha256 \"${AMD64_SHA256}\""
+            echo "    end"
+            echo
+            echo "    on_arm do"
+            echo "      url \"${REPO}/${ARM64_TARBALL}\""
+            echo "      sha256 \"${ARM64_SHA256}\""
+            echo "    end"
+            echo "  end"
+            echo
+            echo "  def install"
+            echo "    bin.install \"oc-rsync\""
+            echo "    bin.install \"oc-rsyncd\""
+            echo "  end"
+            echo
+            echo "  test do"
+            echo "    system \"#{bin}/oc-rsync\", \"--version\""
+            echo "  end"
+            echo "end"
+          } > "${FORMULA_PATH}"
+
+          echo "Formula generated at ${FORMULA_PATH}"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
+          title: "Update Homebrew formula for ${{ steps.vars.outputs.tag }}"
+          body: "Auto-generated from release assets."
+          branch: "ci/brew-formula-${{ steps.vars.outputs.tag }}"
+          base: master
