@@ -93,8 +93,8 @@ jobs:
 
     steps:
       - name: Force DNS to 8.8.8.8
-        if: matrix.family == 'linux'
         run: |
+          set -euo pipefail
           sudo rm -f /etc/resolv.conf
           printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf
 
