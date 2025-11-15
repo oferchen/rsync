@@ -111,7 +111,6 @@ jobs:
             echo
             echo "  def install"
             echo "    bin.install \"oc-rsync\""
-            echo "    bin.install \"oc-rsyncd\""
             echo "  end"
             echo
             echo "  test do"
