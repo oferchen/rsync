@@ -44,4 +44,3 @@ rm -rf %{buildroot}
 %{_unitdir}/oc-rsyncd.service
 %config(noreplace) %{_sysconfdir}/oc-rsyncd/oc-rsyncd.conf
 %config(noreplace) %{_sysconfdir}/oc-rsyncd/oc-rsyncd.secrets
-%config(noreplace) %{_sysconfdir}/default/oc-rsyncd
