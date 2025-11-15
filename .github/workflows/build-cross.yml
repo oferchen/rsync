@@ -1,243 +1,663 @@
-name: Build-cross
+use crate::commands::package::DIST_PROFILE;
+use crate::error::{TaskError, TaskResult};
+use crate::util::ensure_command_available;
+use crate::workspace::WorkspaceBranding;
+use std::env;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-on:
-  push:
-    tags:
-      - "v*.*.*-rust"
-  workflow_dispatch:
+const INSTALL_HINT: &str = "install the GitHub CLI from https://cli.github.com/";
+const REPOSITORY_ENV: &str = "OC_RSYNC_RELEASE_REPOSITORY";
+const TAG_ENV: &str = "OC_RSYNC_RELEASE_TAG";
+const COMMAND_ENV: &str = "OC_RSYNC_RELEASE_UPLOAD_CMD";
+const GITHUB_PREFIX: &str = "https://github.com/";
 
-permissions:
-  contents: read
+pub(super) fn upload_release_artifacts(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+) -> TaskResult<()> {
+    let repository = resolve_repository(branding)?;
+    let tag = resolve_tag(branding)?;
+    let artifacts = gather_release_artifacts(workspace, branding)?;
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
-  RUST_BACKTRACE: "full"
+    println!("Uploading release artifacts for tag {tag} to {repository}:");
+    for artifact in &artifacts {
+        println!("  - {}", artifact.display());
+    }
 
-jobs:
-  linux:
-    name: linux release artifacts
-    runs-on: ubuntu-latest
+    run_upload_command(workspace, &repository, &tag, &artifacts)
+}
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+fn resolve_repository(branding: &WorkspaceBranding) -> TaskResult<String> {
+    if let Ok(value) = env::var(REPOSITORY_ENV) {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(TaskError::Validation(format!(
+                "{REPOSITORY_ENV} cannot be empty"
+            )));
+        }
+        return Ok(trimmed.to_owned());
+    }
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+    let source = &branding.source;
+    let Some(remainder) = source.strip_prefix(GITHUB_PREFIX) else {
+        return Err(TaskError::Metadata(format!(
+            "workspace metadata source '{source}' does not reference a GitHub repository"
+        )));
+    };
 
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: build-linux
+    let trimmed = remainder
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .trim_end_matches('/')
+        .to_owned();
 
-      - name: Install system dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
+    if trimmed.split('/').count() != 2 {
+        return Err(TaskError::Metadata(format!(
+            "workspace metadata source '{source}' must resolve to 'owner/repo'"
+        )));
+    }
 
-          # Enable arm64 multiarch
-          sudo dpkg --add-architecture arm64
+    Ok(trimmed)
+}
 
-          # Discover codename (e.g. noble)
-          . /etc/os-release
-          codename="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
-          echo "Ubuntu codename: ${codename}"
+fn resolve_tag(branding: &WorkspaceBranding) -> TaskResult<String> {
+    if let Ok(value) = env::var(TAG_ENV) {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(TaskError::Validation(format!(
+                "{TAG_ENV} cannot be empty"
+            )));
+        }
+        return Ok(trimmed.to_owned());
+    }
 
-          # If deb822 ubuntu.sources exists (24.04+), make it amd64-only
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo awk '
-              BEGIN { in_stanza = 0; had_arch = 0 }
-              /^Types:/ { in_stanza = 1; had_arch = 0 }
-              /^$/     { in_stanza = 0; had_arch = 0 }
-              /^Architectures:/ { had_arch = 1 }
-              {
-                print
-                if (in_stanza && /^Components:/ && !had_arch) {
-                  print "Architectures: amd64"
-                  had_arch = 1
+    Ok(format!("v{}", branding.rust_version))
+}
+
+fn gather_release_artifacts(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+) -> TaskResult<Vec<PathBuf>> {
+    let mut artifacts = Vec::new();
+
+    collect_tarballs(workspace, &mut artifacts)?;
+    collect_debian_packages(workspace, &mut artifacts)?;
+    collect_rpm_packages(workspace, &mut artifacts)?;
+    collect_cross_compile_binaries(workspace, branding, &mut artifacts)?;
+
+    artifacts.sort();
+    artifacts.dedup();
+
+    if artifacts.is_empty() {
+        return Err(TaskError::Validation(String::from(
+            "no release artifacts were found under target/; run `cargo xtask package` \
+             before uploading or pass --skip-upload",
+        )));
+    }
+
+    Ok(artifacts)
+}
+
+fn collect_tarballs(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> TaskResult<()> {
+    let dist_dir = workspace.join("target").join("dist");
+    if !dist_dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in read_directory(&dist_dir)? {
+        let metadata = read_metadata(&entry)?;
+        if metadata.is_file() && has_suffix(&entry, ".tar.gz") {
+            artifacts.push(entry);
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_debian_packages(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> TaskResult<()> {
+    let deb_dir = workspace.join("target").join("debian");
+    if !deb_dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in read_directory(&deb_dir)? {
+        let metadata = read_metadata(&entry)?;
+        if metadata.is_file() && has_suffix(&entry, ".deb") {
+            artifacts.push(entry);
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_rpm_packages(workspace: &Path, artifacts: &mut Vec<PathBuf>) -> TaskResult<()> {
+    let target_dir = workspace.join("target");
+    if !target_dir.is_dir() {
+        return Ok(());
+    }
+
+    // cargo-rpm layout: target/{DIST_PROFILE,release,debug}/rpmbuild/RPMS/*/*.rpm
+    for profile in [DIST_PROFILE, "release", "debug"] {
+        let rpms_dir = target_dir.join(profile).join("rpmbuild").join("RPMS");
+        collect_rpms_from_directory(&rpms_dir, artifacts)?;
+    }
+
+    // Cross-target layout: target/<triple>/{DIST_PROFILE}/rpmbuild/RPMS/*/*.rpm
+    for entry in read_directory(&target_dir)? {
+        let metadata = read_metadata(&entry)?;
+        if !metadata.is_dir() {
+            continue;
+        }
+
+        let rpms_dir = entry.join(DIST_PROFILE).join("rpmbuild").join("RPMS");
+        collect_rpms_from_directory(&rpms_dir, artifacts)?;
+    }
+
+    // Legacy cargo-generate-rpm layout: target/generate-rpm/*.rpm
+    let generate_rpm_dir = target_dir.join("generate-rpm");
+    if generate_rpm_dir.is_dir() {
+        for entry in read_directory(&generate_rpm_dir)? {
+            let metadata = read_metadata(&entry)?;
+            if metadata.is_file() && has_suffix(&entry, ".rpm") {
+                artifacts.push(entry);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_rpms_from_directory(rpms_dir: &Path, artifacts: &mut Vec<PathBuf>) -> TaskResult<()> {
+    if !rpms_dir.is_dir() {
+        return Ok(());
+    }
+
+    for arch_dir in read_directory(rpms_dir)? {
+        let metadata = read_metadata(&arch_dir)?;
+        if !metadata.is_dir() {
+            continue;
+        }
+
+        for entry in read_directory(&arch_dir)? {
+            let metadata = read_metadata(&entry)?;
+            if metadata.is_file() && has_suffix(&entry, ".rpm") {
+                artifacts.push(entry);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_cross_compile_binaries(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+    artifacts: &mut Vec<PathBuf>,
+) -> TaskResult<()> {
+    for (os, arches) in &branding.cross_compile {
+        for arch in arches {
+            let target = cross_compile_target(os, arch).ok_or_else(|| {
+                TaskError::Validation(format!(
+                    "unsupported cross-compilation target '{os}-{arch}' \
+                     declared in workspace metadata",
+                ))
+            })?;
+
+            let release_dir = workspace.join("target").join(target).join("release");
+
+            collect_cross_compile_binary(&release_dir, &branding.client_bin, os, arch, artifacts)?;
+
+            if cross_compile_builds_daemon(os) {
+                collect_cross_compile_binary(
+                    &release_dir,
+                    &branding.daemon_bin,
+                    os,
+                    arch,
+                    artifacts,
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_cross_compile_binary(
+    release_dir: &Path,
+    binary: &str,
+    os: &str,
+    arch: &str,
+    artifacts: &mut Vec<PathBuf>,
+) -> TaskResult<()> {
+    let primary_path = release_dir.join(binary);
+    if primary_path.is_file() {
+        artifacts.push(primary_path);
+        return Ok(());
+    }
+
+    if os == "windows" {
+        let exe_path = release_dir.join(format!("{binary}.exe"));
+        if exe_path.is_file() {
+            artifacts.push(exe_path);
+            return Ok(());
+        }
+
+        return Err(TaskError::Validation(format!(
+            "cross-compiled binary missing for {os}/{arch}: expected {} or {}",
+            primary_path.display(),
+            exe_path.display(),
+        )));
+    }
+
+    Err(TaskError::Validation(format!(
+        "cross-compiled binary missing for {os}/{arch}: expected {}",
+        primary_path.display(),
+    )))
+}
+
+fn cross_compile_target(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-gnu"),
+        ("windows", "x86") => Some("i686-pc-windows-gnu"),
+        ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+fn cross_compile_builds_daemon(os: &str) -> bool {
+    !matches!(os, "windows")
+}
+
+fn read_directory(path: &Path) -> TaskResult<Vec<PathBuf>> {
+    let entries = fs::read_dir(path).map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!("failed to read directory {}: {error}", path.display()),
+        ))
+    })?;
+
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            TaskError::Io(io::Error::new(
+                error.kind(),
+                format!("failed to iterate directory {}: {error}", path.display()),
+            ))
+        })?;
+        paths.push(entry.path());
+    }
+
+    paths.sort();
+    Ok(paths)
+}
+
+fn read_metadata(path: &Path) -> TaskResult<fs::Metadata> {
+    fs::metadata(path).map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!("failed to read metadata for {}: {error}", path.display()),
+        ))
+    })
+}
+
+fn has_suffix(path: &Path, suffix: &str) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(|name| name.ends_with(suffix))
+        .unwrap_or(false)
+}
+
+fn run_upload_command(
+    workspace: &Path,
+    repository: &str,
+    tag: &str,
+    artifacts: &[PathBuf],
+) -> TaskResult<()> {
+    let program = resolve_command()?;
+    let display = program.display();
+
+    if let CommandLocation::Named(name) = &program {
+        ensure_command_available(name, INSTALL_HINT)?;
+    }
+
+    let mut command = match &program {
+        CommandLocation::Named(name) => Command::new(name),
+        CommandLocation::Explicit(path) => Command::new(path),
+    };
+
+    command.current_dir(workspace);
+    command.arg("release");
+    command.arg("upload");
+    command.arg(tag);
+    command.arg("--repo");
+    command.arg(repository);
+    command.arg("--clobber");
+
+    for artifact in artifacts {
+        command.arg(artifact);
+    }
+
+    let status = command.status().map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!("failed to invoke {display}: {error}"),
+        ))
+    })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(TaskError::CommandFailed {
+            program: format!("{display} release upload"),
+            status,
+        })
+    }
+}
+
+enum CommandLocation {
+    Named(String),
+    Explicit(PathBuf),
+}
+
+impl CommandLocation {
+    fn display(&self) -> String {
+        match self {
+            CommandLocation::Named(name) => name.clone(),
+            CommandLocation::Explicit(path) => path.display().to_string(),
+        }
+    }
+}
+
+fn resolve_command() -> TaskResult<CommandLocation> {
+    if let Some(value) = env::var_os(COMMAND_ENV) {
+        if value.is_empty() {
+            return Err(TaskError::Validation(format!(
+                "{COMMAND_ENV} cannot be empty"
+            )));
+        }
+        return Ok(CommandLocation::Explicit(PathBuf::from(value)));
+    }
+
+    Ok(CommandLocation::Named(String::from("gh")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support;
+    use std::ffi::OsString;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    struct ScopedEnv {
+        previous: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl ScopedEnv {
+        fn new() -> Self {
+            Self {
+                previous: Vec::new(),
+            }
+        }
+
+        fn set(&mut self, key: &'static str, value: OsString) {
+            if self.previous.iter().all(|(existing, _)| existing != &key) {
+                self.previous.push((key, env::var_os(key)));
+            }
+            env::set_var(key, &value);
+        }
+    }
+
+    impl Drop for ScopedEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.previous.drain(..).rev() {
+                if let Some(value) = value {
+                    env::set_var(key, value);
+                } else {
+                    env::remove_var(key);
                 }
-              }
-            ' /etc/apt/sources.list.d/ubuntu.sources \
-              | sudo tee /etc/apt/sources.list.d/ubuntu.sources.new >/dev/null
-            sudo mv /etc/apt/sources.list.d/ubuntu.sources.new /etc/apt/sources.list.d/ubuntu.sources
-          fi
+            }
+        }
+    }
 
-          # Add ports.ubuntu.com for arm64
-          sudo sh -c '
-            codename="$1"
-            {
-              printf "Types: deb\n"
-              printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
-              printf "Suites: %s %s-updates %s-backports\n" "$codename" "$codename" "$codename"
-              printf "Components: main restricted universe multiverse\n"
-              printf "Architectures: arm64\n"
-              printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
-              printf "\n"
-              printf "Types: deb\n"
-              printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
-              printf "Suites: %s-security\n" "$codename"
-              printf "Components: main restricted universe multiverse\n"
-              printf "Architectures: arm64\n"
-              printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
-            } > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources
-          ' sh "$codename"
+    fn sample_branding() -> WorkspaceBranding {
+        test_support::workspace_branding_snapshot()
+    }
 
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update
-          sudo apt-get -y install \
-            pkg-config \
-            libssl-dev \
-            libacl1-dev \
-            libattr1-dev \
-            libzstd-dev \
-            zlib1g-dev \
-            libxxhash-dev \
-            gcc-aarch64-linux-gnu \
-            libssl-dev:arm64 \
-            libacl1-dev:arm64 \
-            libattr1-dev:arm64 \
-            libzstd-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libxxhash-dev:arm64
+    #[test]
+    fn resolve_repository_defaults_to_branding_source() {
+        let branding = sample_branding();
+        let repository = resolve_repository(&branding).expect("repository parsed");
+        let expected = branding
+            .source
+            .strip_prefix(GITHUB_PREFIX)
+            .unwrap_or(&branding.source);
+        assert_eq!(repository, expected);
+    }
 
-      - name: Install cargo-deb and cargo-rpm
-        shell: bash
-        run: |
-          set -euo pipefail
+    #[test]
+    fn resolve_repository_respects_override() {
+        let branding = sample_branding();
+        let mut env = ScopedEnv::new();
+        env.set(REPOSITORY_ENV, OsString::from("custom/repo"));
+        let repository = resolve_repository(&branding).expect("repository parsed");
+        assert_eq!(repository, "custom/repo");
+    }
 
-          # Ensure cargo is on PATH and use the standard cargo bin dir
-          export CARGO_HOME="${HOME}/.cargo"
-          export PATH="${CARGO_HOME}/bin:${PATH}"
+    #[test]
+    fn resolve_tag_defaults_to_rust_version() {
+        let branding = sample_branding();
+        let tag = resolve_tag(&branding).expect("tag parsed");
+        assert_eq!(tag, format!("v{}", branding.rust_version));
+    }
 
-          if ! command -v cargo-deb >/dev/null 2>&1; then
-            cargo install --locked cargo-deb
-          fi
-          if ! command -v cargo-rpm >/dev/null 2>&1; then
-            cargo install --locked cargo-rpm
-          fi
+    #[test]
+    fn gather_release_artifacts_collects_known_outputs() {
+        let temp = TempDir::new().expect("temp workspace");
+        let workspace = temp.path();
+        let mut branding = sample_branding();
+        branding
+            .cross_compile
+            .insert(String::from("linux"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("macos"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("windows"), vec![String::from("x86_64")]);
+        branding.cross_compile_matrix.clear();
+        branding
+            .cross_compile_matrix
+            .insert(String::from("linux-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("darwin-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("windows-x86_64"), true);
 
-      - name: Build Linux x86_64 packages
-        run: cargo xtask package --deb --rpm --tarball --tarball-target x86_64-unknown-linux-gnu --release
+        let tarball = workspace.join("target/dist").join(format!(
+            "{}-{}-x86_64-unknown-linux-gnu.tar.gz",
+            branding.client_bin, branding.rust_version
+        ));
+        let deb = workspace.join("target/debian").join(format!(
+            "{}_{}_amd64.deb",
+            branding.client_bin, branding.rust_version
+        ));
+        let rpm = workspace
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join(DIST_PROFILE)
+            .join("rpmbuild/RPMS/x86_64")
+            .join(format!(
+                "{}-{}-1.x86_64.rpm",
+                branding.client_bin, branding.upstream_version
+            ));
+        let linux_binary = workspace
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join("release")
+            .join(&branding.client_bin);
+        let mac_binary = workspace
+            .join("target")
+            .join("x86_64-apple-darwin")
+            .join("release")
+            .join(&branding.client_bin);
+        let windows_binary = workspace
+            .join("target")
+            .join("x86_64-pc-windows-gnu")
+            .join("release")
+            .join(format!("{}.exe", branding.client_bin));
 
-      - name: Build Linux aarch64 tarball
-        env:
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
-        run: cargo xtask package --tarball --tarball-target aarch64-unknown-linux-gnu --release
+        for path in [
+            &tarball,
+            &deb,
+            &rpm,
+            &linux_binary,
+            &mac_binary,
+            &windows_binary,
+        ] {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create parent directories");
+            }
+            fs::File::create(path).expect("create artifact");
+        }
 
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-linux
-          path: |
-            target/dist/oc-rsync-*-linux-*.tar.gz
-            target/debian/*.deb
-            target/rpm/*.rpm
+        let artifacts = gather_release_artifacts(workspace, &branding).expect("gather artifacts");
+        let mut expected = vec![deb, rpm, tarball, linux_binary, mac_binary, windows_binary];
+        expected.sort();
+        assert_eq!(artifacts, expected);
+    }
 
-  macos:
-    name: macOS release artifacts
-    runs-on: macos-latest
+    #[test]
+    fn upload_release_artifacts_invokes_command_with_assets() {
+        let temp = TempDir::new().expect("temp workspace");
+        let workspace = temp.path();
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+        let mut branding = sample_branding();
+        branding
+            .cross_compile
+            .insert(String::from("linux"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("macos"), vec![String::from("x86_64")]);
+        branding
+            .cross_compile
+            .insert(String::from("windows"), vec![String::from("x86_64")]);
+        branding.cross_compile_matrix.clear();
+        branding
+            .cross_compile_matrix
+            .insert(String::from("linux-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("darwin-x86_64"), true);
+        branding
+            .cross_compile_matrix
+            .insert(String::from("windows-x86_64"), true);
+        let tarball = workspace.join("target/dist").join(format!(
+            "{}-{}-x86_64-unknown-linux-gnu.tar.gz",
+            branding.client_bin, branding.rust_version
+        ));
+        let deb = workspace.join("target/debian").join(format!(
+            "{}_{}_amd64.deb",
+            branding.client_bin, branding.rust_version
+        ));
+        let rpm = workspace
+            .join("target")
+            .join(DIST_PROFILE)
+            .join("rpmbuild/RPMS/x86_64")
+            .join(format!(
+                "{}-{}-1.x86_64.rpm",
+                branding.client_bin, branding.upstream_version
+            ));
+        let linux_binary = workspace
+            .join("target")
+            .join("x86_64-unknown-linux-gnu")
+            .join("release")
+            .join(&branding.client_bin);
+        let mac_binary = workspace
+            .join("target")
+            .join("x86_64-apple-darwin")
+            .join("release")
+            .join(&branding.client_bin);
+        let windows_binary = workspace
+            .join("target")
+            .join("x86_64-pc-windows-gnu")
+            .join("release")
+            .join(format!("{}.exe", branding.client_bin));
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+        for path in [
+            &tarball,
+            &deb,
+            &rpm,
+            &linux_binary,
+            &mac_binary,
+            &windows_binary,
+        ] {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create parent directories");
+            }
+            fs::File::create(path).expect("create artifact");
+        }
 
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: build-macos
+        let log_path = workspace.join("upload-args.log");
+        let script_path = workspace.join("fake-gh");
+        let mut script = fs::File::create(&script_path).expect("create fake gh");
+        writeln!(
+            script,
+            "#!/bin/sh\nprintf '%s\n' \"$@\" > \"$OC_RSYNC_TEST_UPLOAD_LOG\""
+        )
+        .expect("write script");
+        drop(script);
 
-      - name: Install OpenSSL
-        run: |
-          brew update
-          brew install openssl@3 || true
-          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&script_path)
+                .expect("script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script_path, permissions).expect("make script executable");
+        }
 
-      - name: Build macOS aarch64 tarball
-        run: cargo xtask package --tarball --tarball-target aarch64-apple-darwin --release
+        let mut env = ScopedEnv::new();
+        env.set(COMMAND_ENV, script_path.clone().into_os_string());
+        env.set(TAG_ENV, OsString::from("v3.4.1-rust"));
+        env.set(REPOSITORY_ENV, OsString::from("example/rsync"));
+        env.set(
+            "OC_RSYNC_TEST_UPLOAD_LOG",
+            log_path.clone().into_os_string(),
+        );
 
-      - name: Build macOS x86_64 tarball
-        run: cargo xtask package --tarball --tarball-target x86_64-apple-darwin --release
+        upload_release_artifacts(workspace, &branding).expect("upload succeeds");
 
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-macos
-          path: target/dist/oc-rsync-*-darwin-*.tar.gz
-
-  windows:
-    name: windows release artifacts
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: build-windows
-
-      - name: Disable rustc wrapper if configured
-        shell: pwsh
-        run: |
-          $configPath = ".cargo/config.toml"
-          if (Test-Path $configPath) {
-            $content = Get-Content -Path $configPath -Encoding UTF8
-            $filtered = $content | Where-Object { $_ -notmatch '^\s*rustc-wrapper\s*=' }
-            $filtered | Set-Content -Path $configPath -Encoding UTF8
-          }
-          "RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CARGO_BUILD_RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build Windows tarball
-        shell: pwsh
-        run: |
-          $env:OC_RSYNC_PACKAGE_DEFAULT_FEATURES = "0"
-          $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv"
-          cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --release
-
-      - name: Create Windows zip archive
-        shell: pwsh
-        run: |
-          $distDir = Join-Path (Get-Location) "dist"
-          if (-not (Test-Path $distDir)) {
-            New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-          }
-          $tarball = Get-ChildItem -Path (Join-Path (Get-Location) "target\dist") -Filter "oc-rsync-*-windows-*.tar.gz" | Select-Object -First 1
-          if ($null -eq $tarball) {
-            throw "expected windows tarball to exist"
-          }
-          $profileDir = Join-Path (Get-Location) "target\x86_64-pc-windows-msvc\dist"
-          $binaries = Get-ChildItem -Path $profileDir -Filter "*.exe" | Where-Object { $_.Name -match '^(oc-rsync|rsync)' }
-          if ($binaries.Count -eq 0) {
-            throw "no Windows binaries found for zip packaging"
-          }
-          $zipPath = Join-Path $distDir ($tarball.BaseName + ".zip")
-          Compress-Archive -Path $binaries.FullName -DestinationPath $zipPath -Force
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-windows
-          path: target/dist/oc-rsync-*-windows-*.tar.gz
-
-      - name: Upload Windows zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-windows-zip
-          path: dist/*.zip
+        let contents = fs::read_to_string(&log_path).expect("read upload log");
+        let mut expected_lines = vec![
+            String::from("release"),
+            String::from("upload"),
+            String::from("v3.4.1-rust"),
+            String::from("--repo"),
+            String::from("example/rsync"),
+            String::from("--clobber"),
+        ];
+        let mut asset_lines = vec![
+            deb.to_string_lossy().into_owned(),
+            rpm.to_string_lossy().into_owned(),
+            tarball.to_string_lossy().into_owned(),
+            linux_binary.to_string_lossy().into_owned(),
+            mac_binary.to_string_lossy().into_owned(),
+            windows_binary.to_string_lossy().into_owned(),
+        ];
+        asset_lines.sort();
+        expected_lines.extend(asset_lines);
+        expected_lines.push(String::new());
+        assert_eq!(contents, expected_lines.join("\n"));
+    }
+}
