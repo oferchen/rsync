@@ -19,53 +19,6 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Force DNS to 8.8.8.8 (robust)
-        run: |
-          set -euo pipefail
-
-          echo ">>> Inspecting current /etc/resolv.conf"
-          ls -l /etc/resolv.conf || true
-          cat /etc/resolv.conf || true
-          echo ">>> End of original resolv.conf"
-
-          # If resolv.conf is completely missing, create a minimal one and exit.
-          if [ ! -e /etc/resolv.conf ]; then
-            echo ">>> /etc/resolv.conf missing, creating minimal one"
-            printf 'nameserver 8.8.8.8\n' | sudo tee /etc/resolv.conf >/dev/null
-            ls -l /etc/resolv.conf
-            cat /etc/resolv.conf
-            exit 0
-          fi
-
-          # Backup the original (follow symlink) once per job for debugging.
-          if [ ! -f /tmp/resolv.conf.original ]; then
-            echo ">>> Backing up original resolv.conf to /tmp/resolv.conf.original"
-            sudo cp -L /etc/resolv.conf /tmp/resolv.conf.original || true
-          fi
-
-          tmp="$(mktemp)"
-          trap 'sudo rm -f "$tmp" >/dev/null 2>&1 || true' EXIT
-
-          # Always work on a plain file, even if /etc/resolv.conf is a symlink
-          sudo cp -L /etc/resolv.conf "$tmp"
-
-          # Build a new resolv.conf:
-          #   - First line is always: nameserver 8.8.8.8
-          #   - Then all existing non-empty, non-comment lines
-          #     excluding any existing 8.8.8.8 nameserver (to avoid duplicates).
-          {
-            printf 'nameserver 8.8.8.8\n'
-            sudo sed -E '
-              /^[[:space:]]*$/d;                                       # drop empty
-              /^[[:space:]]*#/d;                                       # drop comments
-              /^[[:space:]]*nameserver[[:space:]]+8\.8\.8\.8([[:space:]]|$)/d;
-            ' "$tmp"
-          } | sudo tee /etc/resolv.conf >/dev/null
-
-          echo ">>> Effective /etc/resolv.conf after override"
-          ls -l /etc/resolv.conf
-          cat /etc/resolv.conf
-
       - name: Checkout
         uses: actions/checkout@v4
 
