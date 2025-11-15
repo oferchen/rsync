@@ -425,7 +425,7 @@ jobs:
           fi
 
           git commit -m "chore: update Homebrew formula for ${TAG}"
-          git push --force-with-lease origin "${BRANCH}"
+          git push --force origin "${BRANCH}"
 
           printf 'Pushed branch %s\n' "${BRANCH}"
           printf 'Open a PR at:\n'
