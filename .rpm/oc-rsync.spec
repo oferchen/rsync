@@ -3,9 +3,11 @@
 %define debug_package %{nil}
 %{!?_unitdir:%global _unitdir %{_prefix}/lib/systemd/system}
 
+%global oc_rsync_flavor rust
+
 Name:           oc-rsync
 Summary:        Pure-Rust implementation of rsync-compatible client and daemon functionality.
-Version:        @@VERSION@@
+Version:        @@VERSION@@-%{oc_rsync_flavor}
 Release:        @@RELEASE@@%{?dist}
 License:        GPL-3.0-or-later
 URL:            https://github.com/oferchen/rsync
