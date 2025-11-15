@@ -38,6 +38,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Enable arm64 multiarch
           sudo dpkg --add-architecture arm64
 
           # Discover codename (e.g. noble)
@@ -45,7 +46,7 @@ jobs:
           codename="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
           echo "Ubuntu codename: ${codename}"
 
-          # Make ubuntu.sources (if present) amd64-only to avoid arm64 404s on archive.ubuntu.com
+          # If deb822 ubuntu.sources exists (24.04+), make it amd64-only
           if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
             sudo awk '
               BEGIN { in_stanza = 0; had_arch = 0 }
@@ -107,6 +108,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          # Ensure cargo is on PATH and use the standard cargo bin dir
+          export CARGO_HOME="${HOME}/.cargo"
+          export PATH="${CARGO_HOME}/bin:${PATH}"
+
           if ! command -v cargo-deb >/dev/null 2>&1; then
             cargo install --locked cargo-deb
           fi
