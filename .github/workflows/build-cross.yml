@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -46,7 +45,7 @@ jobs:
           # Discover codename (e.g. noble)
           . /etc/os-release
           codename="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
-          echo "Ubuntu codename: ${codename}"
+          printf 'Ubuntu codename: %s\n' "${codename}"
 
           # If deb822 ubuntu.sources exists (24.04+), make it amd64-only
           if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
@@ -110,7 +109,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # cargo is already on PATH from the toolchain action; just ensure the subcommands exist
           if ! command -v cargo-deb >/dev/null 2>&1; then
             cargo install --locked cargo-deb
           fi
@@ -124,7 +122,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Running cargo xtask package with RPM..."
+          printf 'Running cargo xtask package with RPM...\n'
           if cargo xtask package \
               --deb \
               --rpm \
@@ -132,10 +130,10 @@ jobs:
               --tarball-target x86_64-unknown-linux-gnu \
               --release
           then
-            echo "cargo xtask package (with RPM) completed successfully."
+            printf 'cargo xtask package (with RPM) completed successfully.\n'
           else
-            echo "cargo xtask package failed (likely during RPM build)."
-            echo "Falling back to packaging without RPM..."
+            printf 'cargo xtask package failed (likely during RPM build).\n'
+            printf 'Falling back to packaging without RPM...\n'
             cargo xtask package \
               --deb \
               --tarball \
@@ -301,7 +299,9 @@ jobs:
     name: update Homebrew formula
     runs-on: ubuntu-latest
     needs:
-      - release-artifacts
+      - linux
+      - macos
+      - windows
 
     steps:
       - name: Checkout
@@ -309,9 +309,17 @@ jobs:
 
       - name: Extract tag
         id: vars
+        shell: bash
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF##*/}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-macos
+          path: dist-macos
 
       - name: Generate Homebrew formula
         shell: bash
@@ -326,54 +334,21 @@ jobs:
 
           mkdir -p Formula
 
-          WORKDIR="$(mktemp -d)"
-          trap 'rm -rf "$WORKDIR"' EXIT
+          # Find actual macOS tarballs from artifacts (accepts both x86_64/amd64 and aarch64/arm64)
+          AMD64_PATH="$(find dist-macos -maxdepth 1 -type f \( -name 'oc-rsync-*darwin*x86_64*.tar.gz' -o -name 'oc-rsync-*darwin*amd64*.tar.gz' \) | sort | head -n1 || true)"
+          ARM64_PATH="$(find dist-macos -maxdepth 1 -type f \( -name 'oc-rsync-*darwin*aarch64*.tar.gz' -o -name 'oc-rsync-*darwin*arm64*.tar.gz' \) | sort | head -n1 || true)"
 
-          amd64_candidates=(
-            "oc-rsync-${VERSION}-x86_64-apple-darwin.tar.gz"
-            "oc-rsync-${VERSION}-darwin-amd64.tar.gz"
-            "oc-rsync-${VERSION}-darwin-x86_64.tar.gz"
-            "oc-rsync-macos-amd64.tar.gz"
-          )
-
-          arm64_candidates=(
-            "oc-rsync-${VERSION}-aarch64-apple-darwin.tar.gz"
-            "oc-rsync-${VERSION}-darwin-arm64.tar.gz"
-            "oc-rsync-${VERSION}-darwin-aarch64.tar.gz"
-            "oc-rsync-macos-arm64.tar.gz"
-          )
-
-          pick_asset() {
-            local os_arch="$1"
-            shift
-            local -a candidates=("$@")
-
-            for name in "${candidates[@]}"; do
-              local url="${REPO}/${name}"
-              echo "Probing ${os_arch} candidate: ${url}" >&2
-              if curl -fsIL "${url}" >/dev/null 2>&1; then
-                echo "${name}"
-                return 0
-              fi
-            done
-
-            echo "ERROR: No matching asset found for ${os_arch} in release ${TAG}" >&2
-            echo "Tried candidates:" >&2
-            printf '  - %s\n' "${candidates[@]}" >&2
+          if [ -z "${AMD64_PATH}" ] || [ -z "${ARM64_PATH}" ]; then
+            printf 'Could not locate both macOS amd64 and arm64 tarballs in dist-macos\n' >&2
+            ls -R dist-macos || true
             exit 1
-          }
+          fi
 
-          AMD64_TARBALL="$(pick_asset "macos-amd64" "${amd64_candidates[@]}")"
-          ARM64_TARBALL="$(pick_asset "macos-arm64" "${arm64_candidates[@]}")"
+          AMD64_TARBALL="$(basename "${AMD64_PATH}")"
+          ARM64_TARBALL="$(basename "${ARM64_PATH}")"
 
-          echo "Using macOS Intel tarball: ${AMD64_TARBALL}"
-          echo "Using macOS ARM64 tarball: ${ARM64_TARBALL}"
-
-          curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
-          curl -fsSL "${REPO}/${ARM64_TARBALL}" -o "${WORKDIR}/${ARM64_TARBALL}"
-
-          AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
-          ARM64_SHA256="$(shasum -a 256 "${WORKDIR}/${ARM64_TARBALL}" | awk '{print $1}')"
+          AMD64_SHA256="$(shasum -a 256 "${AMD64_PATH}" | awk '{print $1}')"
+          ARM64_SHA256="$(shasum -a 256 "${ARM64_PATH}" | awk '{print $1}')"
 
           {
             echo "class OcRsync < Formula"
@@ -396,7 +371,6 @@ jobs:
             echo
             echo "  def install"
             echo "    bin.install \"oc-rsync\""
-            echo "    bin.install \"oc-rsyncd\""
             echo "  end"
             echo
             echo "  test do"
@@ -405,13 +379,32 @@ jobs:
             echo "end"
           } > "${FORMULA_PATH}"
 
-          echo "Formula generated at ${FORMULA_PATH}"
+          printf 'Formula generated at %s\n' "${FORMULA_PATH}"
 
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
-        with:
-          commit-message: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
-          title: "Update Homebrew formula for ${{ steps.vars.outputs.tag }}"
-          body: "Auto-generated from release assets."
-          branch: "ci/brew-formula-${{ steps.vars.outputs.tag }}"
-          base: master
+      - name: Commit and push formula branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.vars.outputs.tag }}"
+          BRANCH="ci/brew-formula-${TAG}"
+
+          git config user.name "oc-rsync-bot"
+          git config user.email "actions@github.com"
+
+          git fetch origin master --depth=1
+          git checkout -B "${BRANCH}" origin/master
+
+          git add "${FORMULA_PATH}"
+
+          if git diff --cached --quiet; then
+            printf 'No changes to commit; skipping push.\n'
+            exit 0
+          fi
+
+          git commit -m "chore: update Homebrew formula for ${TAG}"
+          git push --force-with-lease origin "${BRANCH}"
+
+          printf 'Pushed branch %s\n' "${BRANCH}"
+          printf 'Open a PR at:\n'
+          printf '  https://github.com/%s/compare/master...%s?expand=1\n' "${GITHUB_REPOSITORY}" "${BRANCH}"
