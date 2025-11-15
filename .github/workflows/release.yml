@@ -146,13 +146,41 @@ jobs:
 
           echo "Formula generated at ${FORMULA_PATH}"
 
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
-        with:
-          # Use PAT-based token so we bypass the "Actions cannot create PRs" restriction
-          token: ${{ secrets.OC_RSYNC_BOT_TOKEN }}
-          commit-message: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
-          title: "Update Homebrew formula for ${{ steps.vars.outputs.tag }}"
-          body: "Auto-generated from release assets."
-          branch: "ci/brew-formula-${{ steps.vars.outputs.tag }}"
-          base: master
+      - name: Commit and push formula update
+        shell: bash
+        env:
+          OC_RSYNC_BOT_TOKEN: ${{ secrets.OC_RSYNC_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.vars.outputs.tag }}"
+          BRANCH="ci/brew-formula-${TAG}"
+
+          # Configure git identity
+          git config user.name "oc-rsync-bot"
+          git config user.email "actions@github.com"
+
+          # Make sure we’re on master and up to date
+          git fetch origin master --prune
+          git checkout master
+          git reset --hard origin/master
+
+          # Stage the updated formula
+          git add "${FORMULA_PATH}"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit; skipping branch creation."
+            exit 0
+          fi
+
+          git commit -m "chore: update Homebrew formula for ${TAG}"
+
+          # Set authenticated remote using the bot token
+          git remote set-url origin "https://x-access-token:${OC_RSYNC_BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Create or update the branch
+          git push --force-with-lease origin "HEAD:${BRANCH}"
+
+          echo "Pushed branch ${BRANCH}"
+          echo "Open a PR at:"
+          echo "  https://github.com/${GITHUB_REPOSITORY}/compare/master...${BRANCH}?expand=1"
