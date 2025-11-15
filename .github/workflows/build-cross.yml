@@ -104,7 +104,7 @@ jobs:
             zlib1g-dev:arm64 \
             libxxhash-dev:arm64
 
-      - name: Install cargo-deb and cargo-generate-rpm
+      - name: Install cargo-deb and cargo-rpm
         shell: bash
         run: |
           set -euo pipefail
@@ -137,7 +137,7 @@ jobs:
           path: |
             target/dist/oc-rsync-*-linux-*.tar.gz
             target/debian/*.deb
-            target/generate-rpm/*.rpm
+            target/rpm/*.rpm
 
   macos:
     name: macOS release artifacts
