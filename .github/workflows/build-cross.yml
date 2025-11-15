@@ -128,7 +128,7 @@ jobs:
               --rpm \
               --tarball \
               --tarball-target x86_64-unknown-linux-gnu \
-              --release
+              --profile dist
           then
             printf 'cargo xtask package (with RPM) completed successfully.\n'
           else
@@ -138,7 +138,7 @@ jobs:
               --deb \
               --tarball \
               --tarball-target x86_64-unknown-linux-gnu \
-              --release
+              --profile dist
           fi
 
       - name: Build Linux aarch64 tarball
@@ -152,7 +152,7 @@ jobs:
           cargo xtask package \
             --tarball \
             --tarball-target aarch64-unknown-linux-gnu \
-            --release
+            --profile dist
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -188,10 +188,10 @@ jobs:
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       - name: Build macOS aarch64 tarball
-        run: cargo xtask package --tarball --tarball-target aarch64-apple-darwin --release
+        run: cargo xtask package --tarball --tarball-target aarch64-apple-darwin --profile dist
 
       - name: Build macOS x86_64 tarball
-        run: cargo xtask package --tarball --tarball-target x86_64-apple-darwin --release
+        run: cargo xtask package --tarball --tarball-target x86_64-apple-darwin --profile dist
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -234,7 +234,7 @@ jobs:
         run: |
           $env:OC_RSYNC_PACKAGE_DEFAULT_FEATURES = "0"
           $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv"
-          cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --release
+          cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --profile dist
 
       - name: Create Windows zip archive
         shell: pwsh

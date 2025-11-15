@@ -114,7 +114,7 @@ section = "utils"
 priority = "optional"
 maintainer = "Ofer Chen <skewers.irises.3b@icloud.com>"
 depends = "libc6 (>= 2.34), libgcc-s1"
-extended-description = "Pure-Rust implementation of the rsync-compatible client and daemon entrypoints installed as a single oc-rsync binary so it can coexist with the system rsync package without replacing it."
+extended-description = "Pure-Rust implementation of the rsync-compatible client and daemon"
 conflicts = []
 replaces = []
 
@@ -186,9 +186,7 @@ buildflags = ["--profile", "dist", "--bins"]
 
 [profile.dist]
 inherits = "release"
-# lto = "thin"
-# disble lto until production
-lto = false
+lto = "thin"
 codegen-units = 1
 #strip = "debuginfo"
 strip = true
