@@ -27,6 +27,14 @@ jobs:
           TAG="${{ github.event.release.tag_name }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Get short HEAD revision
+        id: gitrev
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT="$(git rev-parse --short HEAD)"
+          printf 'short=%s\n' "${SHORT}" >> "${GITHUB_OUTPUT}"
+
       - name: Generate Homebrew formula
         shell: bash
         env:
@@ -132,14 +140,12 @@ jobs:
           TAG="${{ steps.vars.outputs.tag }}"
           BRANCH="ci/brew-formula-${TAG}"
 
-          # Configure git identity for the commit
           git config user.name "oc-rsync-bot"
           git config user.email "actions@github.com"
 
           # Repoint "origin" to use the PAT instead of GITHUB_TOKEN
           git remote set-url origin "https://x-access-token:${BREW_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
-          # Base the branch off the latest master
           git fetch origin master --depth=1
           git checkout -B "${BRANCH}" origin/master
 
@@ -151,7 +157,7 @@ jobs:
           fi
 
           git commit -m "chore: update Homebrew formula for ${TAG}"
-          git push --force-with-lease origin "${BRANCH}"
+          git push --force origin "${BRANCH}"
 
           echo "Pushed branch ${BRANCH}"
           echo "Open a PR at:"
@@ -162,12 +168,13 @@ jobs:
         with:
           token: ${{ secrets.OC_RSYNC_BREW_TOKEN }}
           branch: ci/brew-formula-${{ steps.vars.outputs.tag }}
-          title: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
+          title: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }} (rev ${{ steps.gitrev.outputs.short }})"
           body: |
             Automated Homebrew formula update for `${{ steps.vars.outputs.tag }}`.
 
             - Source: `${{ github.event.repository.full_name }}`
             - Tag: `${{ steps.vars.outputs.tag }}`
+            - Commit: `${{ steps.gitrev.outputs.short }}`
           base: master
           labels: |
             automated
