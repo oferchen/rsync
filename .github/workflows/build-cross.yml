@@ -12,32 +12,32 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  RUST_BACKTRACE: "full"
 
 jobs:
   linux:
-    name: Linux packages (x86_64 + aarch64)
-    runs-on: ubuntu-latest
+    name: linux release artifacts
+    runs-on: ubuntu-noble
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
 
-      - name: Rust cache
+      - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
+        with:
+          key: build-linux
 
       - name: Install system dependencies
         run: |
           set -euo pipefail
           sudo dpkg --add-architecture arm64
-          sudo apt update
-          sudo apt install -y \
+          sudo apt-get update
+          sudo apt-get install -y \
             pkg-config \
             libssl-dev \
             libacl1-dev \
@@ -53,27 +53,15 @@ jobs:
             zlib1g-dev:arm64 \
             libxxhash-dev:arm64
 
-      - name: Build Linux x86_64 packages (deb + rpm + tarball)
-        run: |
-          set -euo pipefail
-          cargo xtask package \
-            --deb \
-            --rpm \
-            --tarball \
-            --tarball-target x86_64-unknown-linux-gnu \
-            --release
+      - name: Build Linux x86_64 packages
+        run: cargo xtask package --deb --rpm --tarball --tarball-target x86_64-unknown-linux-gnu --release
 
       - name: Build Linux aarch64 tarball
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           PKG_CONFIG_ALLOW_CROSS: "1"
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
-        run: |
-          set -euo pipefail
-          cargo xtask package \
-            --tarball \
-            --tarball-target aarch64-unknown-linux-gnu \
-            --release
+        run: cargo xtask package --tarball --tarball-target aarch64-unknown-linux-gnu --release
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -85,44 +73,34 @@ jobs:
             target/generate-rpm/*.rpm
 
   macos:
-    name: macOS tarballs (x86_64 + aarch64)
+    name: macOS release artifacts
     runs-on: macos-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
 
-      - name: Rust cache
+      - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
+        with:
+          key: build-macos
 
       - name: Install OpenSSL
         run: |
-          set -euo pipefail
           brew update
           brew install openssl@3 || true
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       - name: Build macOS aarch64 tarball
-        run: |
-          set -euo pipefail
-          cargo xtask package \
-            --tarball \
-            --tarball-target aarch64-apple-darwin \
-            --release
+        run: cargo xtask package --tarball --tarball-target aarch64-apple-darwin --release
 
       - name: Build macOS x86_64 tarball
-        run: |
-          set -euo pipefail
-          cargo xtask package \
-            --tarball \
-            --tarball-target x86_64-apple-darwin \
-            --release
+        run: cargo xtask package --tarball --tarball-target x86_64-apple-darwin --release
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -131,31 +109,48 @@ jobs:
           path: target/dist/oc-rsync-*-darwin-*.tar.gz
 
   windows:
-    name: Windows tarball + zip (x86_64)
+    name: windows release artifacts
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Rust cache
+      - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
+        with:
+          key: build-windows
+
+      # - name: Disable rustc wrapper if configured
+      #   shell: pwsh
+      #   run: |
+      #     New-Item -ItemType Directory -Force -Path .cargo | Out-Null
+      #     Set-Content -Path .cargo/config.toml -Encoding UTF8 -Value "[build]"
+      #     Add-Content -Path .cargo/config.toml -Encoding UTF8 -Value 'rustc-wrapper = ""'
+      #     Remove-Item Env:CARGO_BUILD_RUSTC_WRAPPER -ErrorAction SilentlyContinue
+      #     Remove-Item Env:RUSTC_WRAPPER -ErrorAction SilentlyContinue
 
       - name: Disable rustc wrapper if configured
         shell: pwsh
         run: |
           $configPath = ".cargo/config.toml"
+      
+          # 1) Keep existing config, only remove rustc-wrapper lines
           if (Test-Path $configPath) {
             $content = Get-Content -Path $configPath -Encoding UTF8
+      
+            # drop any rustc-wrapper = ... line
             $filtered = $content | Where-Object { $_ -notmatch '^\s*rustc-wrapper\s*=' }
+      
             $filtered | Set-Content -Path $configPath -Encoding UTF8
           }
+      
+          # 2) Explicitly override in the job environment using GitHub Actions convention
           "RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CARGO_BUILD_RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
