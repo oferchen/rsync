@@ -124,6 +124,8 @@ jobs:
 
       - name: Commit and push formula branch
         shell: bash
+        env:
+          BREW_TOKEN: ${{ secrets.OC_RSYNC_BREW_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -133,6 +135,9 @@ jobs:
           # Configure git identity for the commit
           git config user.name "oc-rsync-bot"
           git config user.email "actions@github.com"
+
+          # Repoint "origin" to use the PAT instead of GITHUB_TOKEN
+          git remote set-url origin "https://x-access-token:${BREW_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           # Base the branch off the latest master
           git fetch origin master --depth=1
@@ -146,8 +151,6 @@ jobs:
           fi
 
           git commit -m "chore: update Homebrew formula for ${TAG}"
-
-          # Push branch using the GITHUB_TOKEN-authenticated remote
           git push --force-with-lease origin "${BRANCH}"
 
           echo "Pushed branch ${BRANCH}"
