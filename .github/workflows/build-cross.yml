@@ -116,8 +116,8 @@ jobs:
           if ! command -v cargo-deb >/dev/null 2>&1; then
             cargo install --locked cargo-deb
           fi
-          if ! command -v cargo-generate-rpm >/dev/null 2>&1; then
-            cargo install --locked cargo-generate-rpm
+          if ! command -v cargo-rpm >/dev/null 2>&1; then
+            cargo install --locked cargo-rpm
           fi
 
       - name: Build Linux x86_64 packages
