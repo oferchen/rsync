@@ -34,19 +34,58 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION="${{ steps.vars.outputs.tag }}"
-          REPO="https://github.com/oferchen/rsync/releases/download/${VERSION}"
+          TAG="${{ steps.vars.outputs.tag }}"
+          # TAG is like "v3.4.1a-rust"
+          VERSION="${TAG#v}"  # plain version without leading "v"
+          REPO="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
           mkdir -p Formula
 
-          # temp dir for downloads
           WORKDIR="$(mktemp -d)"
           trap 'rm -rf "$WORKDIR"' EXIT
 
-          AMD64_TARBALL="oc-rsync-macos-amd64.tar.gz"
-          ARM64_TARBALL="oc-rsync-macos-arm64.tar.gz"
+          # Candidate filenames for macOS Intel (amd64)
+          amd64_candidates=(
+            "oc-rsync-${VERSION}-x86_64-apple-darwin.tar.gz"
+            "oc-rsync-${VERSION}-darwin-amd64.tar.gz"
+            "oc-rsync-${VERSION}-darwin-x86_64.tar.gz"
+            "oc-rsync-macos-amd64.tar.gz"
+          )
 
-          # download release assets (must exist in the release)
+          # Candidate filenames for macOS ARM64
+          arm64_candidates=(
+            "oc-rsync-${VERSION}-aarch64-apple-darwin.tar.gz"
+            "oc-rsync-${VERSION}-darwin-arm64.tar.gz"
+            "oc-rsync-${VERSION}-darwin-aarch64.tar.gz"
+            "oc-rsync-macos-arm64.tar.gz"
+          )
+
+          pick_asset() {
+            local os_arch="$1"    # for logging: "macos-amd64" / "macos-arm64"
+            shift
+            local -a candidates=("$@")
+
+            for name in "${candidates[@]}"; do
+              local url="${REPO}/${name}"
+              echo "Probing ${os_arch} candidate: ${url}"
+              if curl -fsIL "${url}" >/dev/null 2>&1; then
+                echo "${name}"
+                return 0
+              fi
+            done
+
+            echo "ERROR: No matching asset found for ${os_arch} in release ${TAG}" >&2
+            echo "Tried candidates:" >&2
+            printf '  - %s\n' "${candidates[@]}" >&2
+            exit 1
+          }
+
+          AMD64_TARBALL="$(pick_asset "macos-amd64" "${amd64_candidates[@]}")"
+          ARM64_TARBALL="$(pick_asset "macos-arm64" "${arm64_candidates[@]}")"
+
+          echo "Using macOS Intel tarball: ${AMD64_TARBALL}"
+          echo "Using macOS ARM64 tarball: ${ARM64_TARBALL}"
+
           curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
           curl -fsSL "${REPO}/${ARM64_TARBALL}" -o "${WORKDIR}/${ARM64_TARBALL}"
 
