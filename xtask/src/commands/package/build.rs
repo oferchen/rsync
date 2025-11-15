@@ -39,11 +39,22 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     }
 
     if options.build_rpm {
-        println!("Building RPM package with cargo rpm build");
+        let profile_label = options
+            .profile
+            .as_deref()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| String::from("debug"));
+
+        println!(
+            "Building RPM package with cargo rpm build (profile={})",
+            profile_label
+        );
+
         ensure_command_available(
             "rpmbuild",
             "install the rpmbuild tooling (for example, `dnf install rpm-build` or `apt install rpm`)",
         )?;
+
         if let Some(profile) = options.profile.as_deref() {
             if profile != "release" && profile != DIST_PROFILE {
                 probe_cargo_tool(
@@ -58,7 +69,18 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
                 )));
             }
         }
-        let rpm_args = vec![OsString::from("rpm"), OsString::from("build")];
+
+        let rpm_output_rel = std::path::Path::new("target").join("dist");
+        let rpm_output_abs = workspace.join(&rpm_output_rel);
+        fs::create_dir_all(&rpm_output_abs)?;
+
+        let rpm_args = vec![
+            OsString::from("rpm"),
+            OsString::from("build"),
+            OsString::from("--output"),
+            OsString::from(rpm_output_rel.to_string_lossy().into_owned()),
+        ];
+
         run_cargo_tool(
             workspace,
             rpm_args,
