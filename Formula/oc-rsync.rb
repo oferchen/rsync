@@ -7,12 +7,12 @@ class OcRsync < Formula
   on_macos do
     on_intel do
       url "https://github.com/oferchen/rsync/releases/download/v3.4.1-rust/oc-rsync-3.4.1-rust-darwin-x86_64.tar.gz"
-      sha256 "1accf8e57076106ff64025c0f0eb8dba6a395360dba8b6caf1d6ae223ceb1c38"
+      sha256 "d97197f4e8a71cc13a5476f687f9ab64ec84bfc8a28418136ecfa9c2c8fdeb49"
     end
 
     on_arm do
       url "https://github.com/oferchen/rsync/releases/download/v3.4.1-rust/oc-rsync-3.4.1-rust-darwin-aarch64.tar.gz"
-      sha256 "0dd6ccb12217bef7f424734e6323c5d8bc970cadc162daf4fc5f445c9ac94a33"
+      sha256 "e9b02ab14decb3985f89598cf3d0ce758b2bf7fbd779fb3722320cc5eb3380cf"
     end
   end
 
