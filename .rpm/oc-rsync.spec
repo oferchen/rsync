@@ -4,7 +4,7 @@
 %{!?_unitdir:%global _unitdir %{_prefix}/lib/systemd/system}
 
 Name:           oc-rsync
-Summary:        Pure-Rust implementation of rsync-compatible client and daemon.
+Summary:        Pure-Rust implementation of rsync-compatible client and daemon functionality.
 Version:        @@VERSION@@
 Release:        @@RELEASE@@%{?dist}
 License:        GPL-3.0-or-later
@@ -16,7 +16,7 @@ Requires:       glibc, libgcc
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root
 
 %description
-Pure-Rust implementation of rsync-compatible client and daemon.
+Pure-Rust implementation of rsync-compatible client and daemon functionality.
 
 %prep
 %setup -q
