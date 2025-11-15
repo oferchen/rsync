@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   FORMULA_PATH: Formula/oc-rsync.rb
@@ -155,3 +156,19 @@ jobs:
           echo "Pushed branch ${BRANCH}"
           echo "Open a PR at:"
           echo "  https://github.com/${GITHUB_REPOSITORY}/compare/master...${BRANCH}?expand=1"
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.OC_RSYNC_BREW_TOKEN }}
+          branch: ci/brew-formula-${{ steps.vars.outputs.tag }}
+          title: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
+          body: |
+            Automated Homebrew formula update for `${{ steps.vars.outputs.tag }}`.
+
+            - Source: `${{ github.event.repository.full_name }}`
+            - Tag: `${{ steps.vars.outputs.tag }}`
+          base: master
+          labels: |
+            automated
+            homebrew
