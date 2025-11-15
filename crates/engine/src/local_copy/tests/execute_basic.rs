@@ -223,7 +223,7 @@ fn execute_respects_xattr_filter_rules() {
     assert!(skipped, "excluded xattr should be absent");
 }
 
-#[cfg(all(unix, feature = "acl"))]
+#[cfg(all(unix, feature = "acl", not(target_vendor = "apple")))]
 #[test]
 fn execute_copies_file_with_acls() {
     let temp = tempdir().expect("tempdir");
@@ -247,8 +247,47 @@ fn execute_copies_file_with_acls() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let copied = acl_to_text(&destination, acl_sys::ACL_TYPE_ACCESS).expect("dest acl");
+
+    // On Linux and other non-Apple Unix, ACLs are actually copied and visible.
+    let copied =
+        acl_to_text(&destination, acl_sys::ACL_TYPE_ACCESS).expect("dest acl");
     assert!(copied.contains("user::rw-"));
+}
+
+#[cfg(all(unix, feature = "acl", target_vendor = "apple"))]
+#[test]
+fn execute_copies_file_with_acls_is_noop_on_apple() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    fs::write(&source, b"acl").expect("write source");
+
+    // Even if we call the ACL helper, the active strategy on Apple is a stub.
+    let acl_text = "user::rw-\ngroup::r--\nother::r--\n";
+    set_acl_from_text(&source, acl_text, acl_sys::ACL_TYPE_ACCESS);
+
+    let operands = vec![
+        source.clone().into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().acls(true),
+        )
+        .expect("copy succeeds");
+
+    // Data copy still happens.
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read dest"), b"acl");
+
+    // ACLs are effectively a no-op on Apple: we must not panic, but
+    // we also don't assert on actual ACL contents.
+    let maybe_acl = acl_to_text(&destination, acl_sys::ACL_TYPE_ACCESS);
+    // For the stub strategy, this should be None.
+    assert!(maybe_acl.is_none());
 }
 
 #[test]
