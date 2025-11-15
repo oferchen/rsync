@@ -1,5 +1,5 @@
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/oferchen/rsync)](https://github.com/oferchen/rsync/releases)
+[![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync – Classic rsync implementation in pure Rust
 
