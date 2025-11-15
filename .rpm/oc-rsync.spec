@@ -7,8 +7,8 @@
 
 Name:           oc-rsync
 Summary:        Pure-Rust implementation of rsync-compatible client and daemon functionality.
-Version:        @@VERSION@@-%{oc_rsync_flavor}
-Release:        @@RELEASE@@%{?dist}
+Version:        @@VERSION@@
+Release:        @@RELEASE@@.%{oc_rsync_flavor}%{?dist}
 License:        GPL-3.0-or-later
 URL:            https://github.com/oferchen/rsync
 Group:          Applications/System
