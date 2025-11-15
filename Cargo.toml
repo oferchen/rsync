@@ -135,6 +135,8 @@ conf-files = [
 maintainer-scripts = "packaging/deb"
 
 [package.metadata.rpm]
+release = "0"
+dist = ".rust"
 package = "oc-rsync"
 summary = "Rust implementation of the rsync-compatible client/daemon installed as a single oc-rsync binary"
 assets = [
