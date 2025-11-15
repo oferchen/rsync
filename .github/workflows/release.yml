@@ -167,7 +167,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.OC_RSYNC_BREW_TOKEN }}
-          branch: ci/brew-formula-${{ steps.vars.outputs.tag }}
+          branch: ci/brew-formula-${{ steps.vars.outputs.tag }}-${{ steps.gitrev.outputs.short }}
           title: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }} (rev ${{ steps.gitrev.outputs.short }})"
           body: |
             Automated Homebrew formula update for `${{ steps.vars.outputs.tag }}`.
