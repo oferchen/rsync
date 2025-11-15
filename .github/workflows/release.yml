@@ -149,8 +149,11 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v6
         with:
+          # Use a PAT-based token because GITHUB_TOKEN is not allowed to open PRs
+          token: ${{ secrets.OC_RSYNC_BOT_TOKEN }}
           commit-message: "chore: update Homebrew formula for ${{ steps.vars.outputs.tag }}"
           title: "Update Homebrew formula for ${{ steps.vars.outputs.tag }}"
           body: "Auto-generated from release assets."
           branch: "ci/brew-formula-${{ steps.vars.outputs.tag }}"
           base: master
+
