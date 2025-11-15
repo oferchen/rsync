@@ -45,8 +45,8 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_else(|| String::from("debug"));
 
-            let msg = format!("Building RPM package with cargo rpm build (profile={profile_label})");
-            println!("{msg}");
+        let msg = format!("Building RPM package with cargo rpm build (profile={profile_label})");
+        println!("{msg}");
 
         ensure_command_available(
             "rpmbuild",
