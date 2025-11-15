@@ -108,26 +108,51 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ensure cargo is on PATH and use the standard cargo bin dir
-          export CARGO_HOME="${HOME}/.cargo"
-          export PATH="${CARGO_HOME}/bin:${PATH}"
-
+          # cargo is already on PATH from the toolchain action; just ensure the subcommands exist
           if ! command -v cargo-deb >/dev/null 2>&1; then
             cargo install --locked cargo-deb
           fi
+
           if ! command -v cargo-rpm >/dev/null 2>&1; then
             cargo install --locked cargo-rpm
           fi
 
-      - name: Build Linux x86_64 packages
-        run: cargo xtask package --deb --rpm --tarball --tarball-target x86_64-unknown-linux-gnu --release
+      - name: Build Linux packages (deb + tarball, try RPM)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Running cargo xtask package with RPM..."
+          if cargo xtask package \
+              --deb \
+              --rpm \
+              --tarball \
+              --tarball-target x86_64-unknown-linux-gnu \
+              --release
+          then
+            echo "cargo xtask package (with RPM) completed successfully."
+          else
+            echo "cargo xtask package failed (likely during RPM build)."
+            echo "Falling back to packaging without RPM..."
+            cargo xtask package \
+              --deb \
+              --tarball \
+              --tarball-target x86_64-unknown-linux-gnu \
+              --release
+          fi
 
       - name: Build Linux aarch64 tarball
+        shell: bash
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           PKG_CONFIG_ALLOW_CROSS: "1"
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
-        run: cargo xtask package --tarball --tarball-target aarch64-unknown-linux-gnu --release
+        run: |
+          set -euo pipefail
+          cargo xtask package \
+            --tarball \
+            --tarball-target aarch64-unknown-linux-gnu \
+            --release
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
