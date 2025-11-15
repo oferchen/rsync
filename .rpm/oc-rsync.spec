@@ -3,20 +3,20 @@
 %define debug_package %{nil}
 %{!?_unitdir:%global _unitdir %{_prefix}/lib/systemd/system}
 
-Name: oc-rsync
-Summary: Rust implementation of rsync-compatible client and daemon (includes oc-rsync compatibility wrappers)
-Version: @@VERSION@@
-Release: @@RELEASE@@%{?dist}
-License: GPL-3.0-or-later
-URL: https://github.com/oferchen/rsync
-Group: Applications/System
-Source0: %{name}-%{version}.tar.gz
-Requires: glibc, libgcc
+Name:           oc-rsync
+Summary:        Pure-Rust implementation of rsync-compatible client and daemon.
+Version:        @@VERSION@@
+Release:        @@RELEASE@@%{?dist}
+License:        GPL-3.0-or-later
+URL:            https://github.com/oferchen/rsync
+Group:          Applications/System
+Source0:        %{name}-%{version}.tar.gz
+Requires:       glibc, libgcc
 
-BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root
 
 %description
-Pure-Rust implementation of rsync-compatible client and daemon binaries. Ships oc-rsync compatibility wrappers for environments that still rely on the legacy branding.
+Pure-Rust implementation of rsync-compatible client and daemon.
 
 %prep
 %setup -q
@@ -41,9 +41,6 @@ rm -rf %{buildroot}
 %files
 %defattr(-,root,root,-)
 %{_bindir}/oc-rsync
-%{_bindir}/oc-rsyncd
-%{_libexecdir}/oc-rsync/rsync
-%{_libexecdir}/oc-rsync/rsyncd
 %{_unitdir}/oc-rsyncd.service
 %config(noreplace) %{_sysconfdir}/oc-rsyncd/oc-rsyncd.conf
 %config(noreplace) %{_sysconfdir}/oc-rsyncd/oc-rsyncd.secrets
