@@ -1,10 +1,11 @@
 name: Brew-formula
 
 on:
+  # Manual run if you want to regenerate the formula
   workflow_dispatch:
-  push:
-    tags:
-      - "v*.*.*-rust"
+  # Run automatically after a GitHub Release is published
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -24,6 +25,7 @@ jobs:
       - name: Extract tag
         id: vars
         run: |
+          # For release events, this is the tag name (e.g. v3.4.1a-rust)
           TAG="${GITHUB_REF##*/}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
@@ -61,13 +63,14 @@ jobs:
           )
 
           pick_asset() {
-            local os_arch="$1"    # for logging: "macos-amd64" / "macos-arm64"
+            local os_arch="$1"    # "macos-amd64" / "macos-arm64"
             shift
             local -a candidates=("$@")
 
             for name in "${candidates[@]}"; do
               local url="${REPO}/${name}"
-              echo "Probing ${os_arch} candidate: ${url}"
+              # IMPORTANT: log to stderr so stdout only contains the chosen name
+              echo "Probing ${os_arch} candidate: ${url}" >&2
               if curl -fsIL "${url}" >/dev/null 2>&1; then
                 echo "${name}"
                 return 0
