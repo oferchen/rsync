@@ -71,7 +71,7 @@ jobs:
 
           TAG="${{ steps.vars.outputs.tag }}"
           VERSION="${{ steps.vars.outputs.version_no_prefix }}"
-          REPO="https://github.com/oferchen/rsync/releases/download/${TAG}"
+          REPO="https://github.com/${{ github.repository }}/releases/download/${TAG}"
 
           WORKDIR="$(mktemp -d)"
           trap 'rm -rf "$WORKDIR"' EXIT
@@ -85,7 +85,7 @@ jobs:
           AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
           ARM64_SHA256="$(shasum -a 256 "${WORKDIR}/${ARM64_TARBALL}" | awk '{print $1}')"
 
-          mkdir -p Formula
+          mkdir -p "$(dirname "${FORMULA_PATH}")"
 
           {
             echo "class OcRsync < Formula"
