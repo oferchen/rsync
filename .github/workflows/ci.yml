@@ -16,12 +16,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  RUST_BACKTRACE: "full"
 
 jobs:
-  lint:
-    name: fmt + clippy (linux)
+  lint-and-test:
+    name: fmt + clippy + nextest
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,96 +37,12 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Clippy (all targets, all features)
-        run: |
-          set -euo pipefail
-          cargo clippy --workspace --all-targets --all-features --no-deps
-
-  test:
-    name: nextest (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    needs: lint
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux x86_64 (all features)
-            os: ubuntu-latest
-            family: linux
-            nextest-features: "--all-features"
-          - name: macOS x86_64/aarch64 (all features)
-            os: macos-latest
-            family: macos
-            nextest-features: "--all-features"
-          - name: windows x86_64 (no ACL/xattr)
-            os: windows-latest
-            family: windows
-            # Disable default features and enable only the Windows-safe subset
-            # (ACL/xattr use Unix-only APIs).
-            nextest-features: "--no-default-features --features \"zstd lz4 iconv\""
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      # ---------- Platform-specific deps ----------
-
-      - name: Install Linux deps
-        if: matrix.family == 'linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            libssl-dev \
-            libacl1-dev \
-            libattr1-dev \
-            libzstd-dev \
-            zlib1g-dev \
-            libxxhash-dev
-
-      - name: Install OpenSSL (macOS)
-        if: matrix.family == 'macos'
-        run: |
-          set -euo pipefail
-          brew update
-          brew install openssl@3 || true
-          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
-
-      - name: Disable rustc wrapper if configured (Windows)
-        if: matrix.family == 'windows'
-        shell: pwsh
-        run: |
-          $configPath = ".cargo/config.toml"
-          if (Test-Path $configPath) {
-            $content = Get-Content -Path $configPath -Encoding UTF8
-            $filtered = $content | Where-Object { $_ -notmatch '^\s*rustc-wrapper\s*=' }
-            $filtered | Set-Content -Path $configPath -Encoding UTF8
-          }
-          "RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "CARGO_BUILD_RUSTC_WRAPPER=" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      # ---------- Nextest ----------
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --no-deps
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
+        run: cargo install cargo-nextest --locked
 
       - name: Nextest
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo nextest run --workspace --all-targets ${{ matrix.nextest-features }} \
-            -- \
-            --skip commands::package::tests::cross_compiler_resolution_falls_back_to_zig \
-            --skip commands::package::tests::cross_compiler_resolution_prefers_cross_gcc \
-            --skip commands::package::tests::execute_reports_missing_cross_compiler
-
+        run: cargo nextest run --workspace --all-targets --all-features
+        
