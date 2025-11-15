@@ -141,7 +141,7 @@ jobs:
               --profile dist
           fi
 
-      - name: Build Linux aarch64 tarball
+      - name: Build Linux aarch64 artifacts (tarball + deb + rpm)
         shell: bash
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
@@ -149,10 +149,27 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
         run: |
           set -euo pipefail
+          printf 'Running cargo xtask package for aarch64 (tarball)...\n'
           cargo xtask package \
             --tarball \
             --tarball-target aarch64-unknown-linux-gnu \
             --profile dist
+
+          printf 'Building aarch64 .deb (reusing dist binaries)...\n'
+          cargo deb \
+            --target aarch64-unknown-linux-gnu \
+            --no-build \
+            --profile dist
+
+          printf 'Building aarch64 .rpm (reusing dist binaries)...\n'
+          if cargo rpm build \
+              --target aarch64-unknown-linux-gnu \
+              --output target/dist/
+          then
+            printf 'cargo rpm build (aarch64) completed successfully.\n'
+          else
+            printf 'cargo rpm build (aarch64) failed; skipping aarch64 RPM.\n'
+          fi
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -161,7 +178,8 @@ jobs:
           path: |
             target/dist/oc-rsync-*-linux-*.tar.gz
             target/debian/*.deb
-            target/**/*.rpm
+            target/aarch64-unknown-linux-gnu/debian/*.deb
+            target/dist/*.rpm
 
   macos:
     name: macOS release artifacts
