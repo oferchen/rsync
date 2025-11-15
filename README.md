@@ -11,9 +11,9 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 ## About
 
-`oc-rsync` is in the final stages of stabilization: the core feature set is implemented and working, and the focus is now on polishing edge cases, interoperability, and ergonomics.
+`oc-rsync` is approaching final stabilization: the core feature set is complete and production-ready, and current work focuses on edge cases, interoperability, and overall ergonomics.
 
-Preliminary version Linux packages (Deb/RPM/Brew/tarballs) is published on the Releases page.
+Preliminary Linux packages (Deb, RPM, Homebrew, and tarballs) are available on the Releases page.
 
 ---
 
