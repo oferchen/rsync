@@ -146,40 +146,144 @@ jobs:
 
           echo "Formula generated at ${FORMULA_PATH}"
 
-      - name: Commit and push formula update
+  brew-formula:
+    name: update Homebrew formula
+    runs-on: ubuntu-latest
+    needs:
+      - release-artifacts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract tag
+        id: vars
+        run: |
+          # For this workflow, github.ref_name is the tag (e.g. v3.4.1a-rust)
+          TAG="${GITHUB_REF##*/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Homebrew formula
         shell: bash
         env:
-          OC_RSYNC_BOT_TOKEN: ${{ secrets.OC_RSYNC_BOT_TOKEN }}
+          FORMULA_PATH: Formula/oc-rsync.rb
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.vars.outputs.tag }}"
+          VERSION="${TAG#v}"
+          REPO="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+
+          mkdir -p Formula
+
+          WORKDIR="$(mktemp -d)"
+          trap 'rm -rf "$WORKDIR"' EXIT
+
+          amd64_candidates=(
+            "oc-rsync-${VERSION}-x86_64-apple-darwin.tar.gz"
+            "oc-rsync-${VERSION}-darwin-amd64.tar.gz"
+            "oc-rsync-${VERSION}-darwin-x86_64.tar.gz"
+            "oc-rsync-macos-amd64.tar.gz"
+          )
+
+          arm64_candidates=(
+            "oc-rsync-${VERSION}-aarch64-apple-darwin.tar.gz"
+            "oc-rsync-${VERSION}-darwin-arm64.tar.gz"
+            "oc-rsync-${VERSION}-darwin-aarch64.tar.gz"
+            "oc-rsync-macos-arm64.tar.gz"
+          )
+
+          pick_asset() {
+            local os_arch="$1"
+            shift
+            local -a candidates=("$@")
+
+            for name in "${candidates[@]}"; do
+              local url="${REPO}/${name}"
+              echo "Probing ${os_arch} candidate: ${url}" >&2
+              if curl -fsIL "${url}" >/dev/null 2>&1; then
+                echo "${name}"
+                return 0
+              fi
+            done
+
+            echo "ERROR: No matching asset found for ${os_arch} in release ${TAG}" >&2
+            echo "Tried candidates:" >&2
+            printf '  - %s\n' "${candidates[@]}" >&2
+            exit 1
+          }
+
+          AMD64_TARBALL="$(pick_asset "macos-amd64" "${amd64_candidates[@]}")"
+          ARM64_TARBALL="$(pick_asset "macos-arm64" "${arm64_candidates[@]}")"
+
+          echo "Using macOS Intel tarball: ${AMD64_TARBALL}"
+          echo "Using macOS ARM64 tarball: ${ARM64_TARBALL}"
+
+          curl -fsSL "${REPO}/${AMD64_TARBALL}" -o "${WORKDIR}/${AMD64_TARBALL}"
+          curl -fsSL "${REPO}/${ARM64_TARBALL}" -o "${WORKDIR}/${ARM64_TARBALL}"
+
+          AMD64_SHA256="$(shasum -a 256 "${WORKDIR}/${AMD64_TARBALL}" | awk '{print $1}')"
+          ARM64_SHA256="$(shasum -a 256 "${WORKDIR}/${ARM64_TARBALL}" | awk '{print $1}')"
+
+          {
+            echo "class OcRsync < Formula"
+            echo '  desc "Pure-Rust rsync 3.4.1-compatible implementation"'
+            echo '  homepage "https://github.com/oferchen/rsync"'
+            echo '  license "GPL-3.0-or-later"'
+            echo "  version \"${VERSION}\""
+            echo
+            echo "  on_macos do"
+            echo "    on_intel do"
+            echo "      url \"${REPO}/${AMD64_TARBALL}\""
+            echo "      sha256 \"${AMD64_SHA256}\""
+            echo "    end"
+            echo
+            echo "    on_arm do"
+            echo "      url \"${REPO}/${ARM64_TARBALL}\""
+            echo "      sha256 \"${ARM64_SHA256}\""
+            echo "    end"
+            echo "  end"
+            echo
+            echo "  def install"
+            echo "    bin.install \"oc-rsync\""
+            echo "    bin.install \"oc-rsyncd\""
+            echo "  end"
+            echo
+            echo "  test do"
+            echo "    system \"#{bin}/oc-rsync\", \"--version\""
+            echo "  end"
+            echo "end"
+          } > "${FORMULA_PATH}"
+
+          echo "Formula generated at ${FORMULA_PATH}"
+
+      - name: Commit and push formula branch
+        shell: bash
         run: |
           set -euo pipefail
 
           TAG="${{ steps.vars.outputs.tag }}"
           BRANCH="ci/brew-formula-${TAG}"
 
-          # Configure git identity
+          # Configure git identity for the commit
           git config user.name "oc-rsync-bot"
           git config user.email "actions@github.com"
 
-          # Make sure we’re on master and up to date
-          git fetch origin master --prune
-          git checkout master
-          git reset --hard origin/master
+          # Base the branch off the latest master
+          git fetch origin master --depth=1
+          git checkout -B "${BRANCH}" origin/master
 
-          # Stage the updated formula
           git add "${FORMULA_PATH}"
 
           if git diff --cached --quiet; then
-            echo "No changes to commit; skipping branch creation."
+            echo "No changes to commit; skipping push."
             exit 0
           fi
 
           git commit -m "chore: update Homebrew formula for ${TAG}"
 
-          # Set authenticated remote using the bot token
-          git remote set-url origin "https://x-access-token:${OC_RSYNC_BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
-          # Create or update the branch
-          git push --force-with-lease origin "HEAD:${BRANCH}"
+          # Push branch using the GITHUB_TOKEN-authenticated remote
+          git push --force-with-lease origin "${BRANCH}"
 
           echo "Pushed branch ${BRANCH}"
           echo "Open a PR at:"
