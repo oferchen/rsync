@@ -13,7 +13,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: "full"
-  FORMULA_PATH: homebrew-tap/Formula/oc-rsync.rb
+  FORMULA_PATH: Formula/oc-rsync.rb
 
 jobs:
   linux:
@@ -346,7 +346,7 @@ jobs:
       - name: Generate Homebrew formula
         shell: bash
         env:
-          FORMULA_PATH: homebrew-tap/Formula/oc-rsync.rb
+          FORMULA_PATH: Formula/oc-rsync.rb
         run: |
           set -euo pipefail
 
