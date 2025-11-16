@@ -321,7 +321,7 @@ Contributions, bug reports, and interop findings are very welcome.
    cargo fmt --all -- --check
    cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
    cargo nextest run --workspace --all-targets --all-features
-   cargo xtask doc-validate
+   cargo xtask docs
    ```
 
 3. Open a pull request with a clear description of:
