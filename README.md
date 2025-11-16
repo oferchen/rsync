@@ -13,7 +13,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 `oc-rsync` is approaching final stabilization: the core feature set is complete and production-ready, and current work focuses on edge cases, interoperability, and overall ergonomics.
 
-Preliminary Linux packages (Deb, RPM, Homebrew, and tarballs) are available on the Releases page.
+Preliminary packages (`.deb`, `.rpm`, Homebrew formula, and tarballs) are available on the Releases page.
 
 ---
 
@@ -23,6 +23,7 @@ Preliminary Linux packages (Deb, RPM, Homebrew, and tarballs) are available on t
 - [Status](#status)
 - [Installation](#installation)
   - [Prebuilt packages](#prebuilt-packages)
+  - [Homebrew 🍺](#homebrew-)
   - [Build from source](#build-from-source)
 - [Usage](#usage)
   - [Basic examples](#basic-examples)
@@ -96,6 +97,35 @@ Prebuilt artifacts are (or will be) published on the GitHub **Releases** page (D
 
 The packaging pipeline installs `oc-rsync` under dedicated paths so that the system `rsync` can remain installed in parallel.
 
+---
+
+### Homebrew 🍺
+
+You can install `oc-rsync` via Homebrew from the custom tap:
+
+```bash
+# Add the tap (one-time)
+brew tap oferchen/rsync
+
+# Install oc-rsync
+brew install oferchen/rsync/oc-rsync
+```
+
+To upgrade to the latest released version:
+
+```bash
+brew update
+brew upgrade oferchen/rsync/oc-rsync
+```
+
+After installation, confirm that the binary is available and reports the expected Rust-branded version:
+
+```bash
+oc-rsync --version
+```
+
+---
+
 ### Build from source
 
 Requirements:
@@ -113,7 +143,7 @@ cargo build --workspace
 
 # Optimized build
 cargo build --workspace --release
-````
+```
 
 To match the documented toolchain:
 
