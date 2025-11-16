@@ -252,7 +252,7 @@ bash tools/enforce_limits.sh
 
 # One-liner: fmt + clippy + tests + docs
 cargo fmt --all -- --check \
-  && cargo clippy --workspace --all-targets --all-features --no-deps -D warnings \
+  && cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings \
   && cargo nextest run --workspace --all-targets --all-features \
   && cargo xtask doc-validate
 ```
