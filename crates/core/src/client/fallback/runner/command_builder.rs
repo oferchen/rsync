@@ -223,8 +223,10 @@ pub(crate) fn prepare_invocation(
         arg.push(spec);
         command_args.push(arg);
     }
-    if checksum {
-        command_args.push(OsString::from("--checksum"));
+    match checksum {
+        Some(true) => command_args.push(OsString::from("--checksum")),
+        Some(false) => command_args.push(OsString::from("--no-checksum")),
+        None => {}
     }
     if let Some(choice) = checksum_choice {
         let mut arg = OsString::from("--checksum-choice=");

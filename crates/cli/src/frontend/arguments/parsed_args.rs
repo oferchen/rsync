@@ -36,7 +36,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) backup: bool,
     pub(crate) backup_dir: Option<OsString>,
     pub(crate) backup_suffix: Option<OsString>,
-    pub(crate) checksum: bool,
+    pub(crate) checksum: Option<bool>,
     pub(crate) checksum_choice: Option<StrongChecksumChoice>,
     pub(crate) checksum_choice_arg: Option<OsString>,
     pub(crate) checksum_seed: Option<u32>,

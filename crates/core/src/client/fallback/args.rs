@@ -63,8 +63,8 @@ pub struct RemoteFallbackArgs {
     /// Overrides the delta-transfer block size via `--block-size`.
     #[doc(alias = "--block-size")]
     pub block_size: Option<OsString>,
-    /// Enables `--checksum`.
-    pub checksum: bool,
+    /// Optional `--checksum`/`--no-checksum` toggle.
+    pub checksum: Option<bool>,
     /// Optional strong checksum selection forwarded via `--checksum-choice`.
     pub checksum_choice: Option<OsString>,
     /// Optional checksum seed forwarded via `--checksum-seed`.

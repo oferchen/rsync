@@ -43,7 +43,7 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) min_size: &'a Option<OsString>,
     pub(crate) max_size: &'a Option<OsString>,
     pub(crate) block_size: &'a Option<OsString>,
-    pub(crate) checksum: bool,
+    pub(crate) checksum: Option<bool>,
     pub(crate) checksum_choice_arg: Option<&'a OsString>,
     pub(crate) checksum_seed: Option<u32>,
     pub(crate) size_only: bool,
