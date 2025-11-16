@@ -368,6 +368,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-sparse")
                     .long("no-sparse")
+                    .visible_alias("no-S")
                     .help("Disable sparse file handling.")
                     .action(ArgAction::SetTrue)
                     .conflicts_with("sparse"),

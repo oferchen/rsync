@@ -146,7 +146,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-human-readable  Disable human-readable number formatting.\n",
             "  -P              Equivalent to --partial --progress.\n",
             "  -S, --sparse    Preserve sparse files by creating holes in the destination.\n",
-            "      --no-sparse Disable sparse file handling.\n",
+            "      --no-sparse/--no-S Disable sparse file handling.\n",
             "  -L, --copy-links     Transform symlinks into referent files/directories.\n",
             "      --no-copy-links  Preserve symlinks instead of following them.\n",
             "      --copy-unsafe-links  Transform unsafe symlinks into referent files/directories.\n",
