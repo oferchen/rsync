@@ -9,7 +9,7 @@ permissions:
   pull-requests: write
 
 env:
-  FORMULA_PATH: Formula/oc-rsync.rb
+  FORMULA_PATH: homebrew-tap/Formula/oc-rsync.rb
 
 jobs:
   brew-formula:
@@ -38,7 +38,7 @@ jobs:
       - name: Generate Homebrew formula
         shell: bash
         env:
-          FORMULA_PATH: Formula/oc-rsync.rb
+          FORMULA_PATH: homebrew-tap/Formula/oc-rsync.rb
         run: |
           set -euo pipefail
 
