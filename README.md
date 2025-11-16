@@ -105,7 +105,7 @@ You can install `oc-rsync` via Homebrew from the custom tap:
 
 ```bash
 # Add the tap (one-time)
-brew tap oferchen/rsync
+brew tap oferchen/rsync https://github.com/oferchen/rsync
 
 # Install oc-rsync
 brew install oferchen/rsync/oc-rsync
