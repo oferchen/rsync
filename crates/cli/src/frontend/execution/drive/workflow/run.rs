@@ -603,6 +603,8 @@ where
     let append_enabled = append.unwrap_or(false);
     let whole_file_enabled = whole_file_option.unwrap_or(true);
 
+    let checksum_for_config = checksum.unwrap_or(false);
+
     let config_inputs = config::ConfigInputs {
         transfer_operands,
         address_mode,
@@ -646,7 +648,7 @@ where
         copy_devices,
         specials: preserve_specials,
         force_replacements: force.unwrap_or(false),
-        checksum,
+        checksum: checksum_for_config,
         checksum_seed,
         size_only,
         ignore_times,

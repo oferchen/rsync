@@ -76,6 +76,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("out-format")
                     .long("out-format")
+                    .visible_alias("log-format")
                     .value_name("FORMAT")
                     .help("Customise transfer output using FORMAT for each processed entry.")
                     .num_args(1)
@@ -285,7 +286,16 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .long("checksum")
                     .short('c')
                     .help("Skip files whose contents already match by checksum.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-checksum"),
+            )
+            .arg(
+                Arg::new("no-checksum")
+                    .long("no-checksum")
+                    .visible_alias("no-c")
+                    .help("Disable checksum-based change detection.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("checksum"),
             )
             .arg(
                 Arg::new("checksum-choice")

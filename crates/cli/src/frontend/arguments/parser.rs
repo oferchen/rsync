@@ -319,7 +319,7 @@ where
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
         .unwrap_or_default();
-    let checksum = matches.get_flag("checksum");
+    let checksum = tri_state_flag_positive_first(&matches, "checksum", "no-checksum");
     let size_only = matches.get_flag("size-only");
     let ignore_times = matches.get_flag("ignore-times");
     let (checksum_choice, checksum_choice_arg) =
