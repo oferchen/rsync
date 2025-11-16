@@ -245,7 +245,7 @@ Documentation and policy checks are wired via `xtask`:
 
 ```bash
 # Validate README and docs (anchors, headings, fenced blocks, link sets as configured)
-cargo xtask doc-validate
+cargo xtask docs
 
 # Source/policy limits
 bash tools/enforce_limits.sh
@@ -254,7 +254,7 @@ bash tools/enforce_limits.sh
 cargo fmt --all -- --check \
   && cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings \
   && cargo nextest run --workspace --all-targets --all-features \
-  && cargo xtask doc-validate
+  && cargo xtask docs
 ```
 
 This keeps public docs and internal invariants in sync with the codebase.
