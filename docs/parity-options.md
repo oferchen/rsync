@@ -22,8 +22,8 @@ workspace.
 
 | status | count |
 |---|---:|
-| implemented | 160 |
-| missing | 91 |
+| implemented | 161 |
+| missing | 90 |
 
 `missing` entries denote upstream flags that are absent from the current
 `oc-rsync` help surface. Many of these are `--no-*` aliases that suppress a
@@ -38,13 +38,13 @@ must be closed before we can claim full compatibility.
 | daemon | 3 | 2 |
 | deletion | 13 | 0 |
 | filters | 9 | 0 |
-| general | 50 | 72 |
+| general | 51 | 71 |
 | logging | 7 | 3 |
 | metadata | 23 | 4 |
 | transfer | 29 | 5 |
 | traversal | 14 | 2 |
 
-The `general` bucket (72 missing options) is dominated by compatibility
+The `general` bucket (71 missing options) is dominated by compatibility
 aliases such as `--no-r`, `--no-g`, and `--no-times`, together with
 functionality that is currently absent (`--links`, `--fake-super`, daemon-only
 options such as `--config`, etc.).
@@ -56,11 +56,11 @@ options such as `--config`, etc.).
 - **daemon** (2):
   --config, --motd
 - **filters** (0): (none)
-- **general** (72):
+- **general** (71):
   --8-bit-output, --cc, --copy-as, --detach, --dparam, --early-input, --executability,
   --fake-super, --force, --fuzzy, --i-d, --ignore-errors, --ignore-non-existing,
   --links, --max-alloc, --munge-links, --no-8, --no-8-bit-output, --no-A, --no-D,
-  --no-H, --no-J, --no-N, --no-O, --no-R, --no-S, --no-U, --no-W, --no-X, --no-backup,
+  --no-H, --no-J, --no-N, --no-O, --no-R, --no-U, --no-W, --no-X, --no-backup,
   --no-c, --no-d, --no-detach, --no-force, --no-fuzzy, --no-g, --no-h, --no-i,
   --no-i-d, --no-ignore-errors, --no-l, --no-links, --no-m, --no-munge-links,
   --no-o, --no-old-args, --no-p, --no-r, --no-s, --no-t, --no-v, --no-write-devices,

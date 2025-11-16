@@ -672,11 +672,11 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-S
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
-    notes: Negates the corresponding positive option.
+    status: implemented
+    notes: Alias of --no-sparse.
   - option: --preallocate
     short: 
     category: transfer
