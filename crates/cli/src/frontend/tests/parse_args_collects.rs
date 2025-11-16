@@ -50,6 +50,19 @@ fn parse_args_collects_out_format_value() {
 }
 
 #[test]
+fn parse_args_accepts_log_format_alias() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--log-format=%l"),
+        OsString::from("src"),
+        OsString::from("dst"),
+    ])
+    .expect("parse");
+
+    assert_eq!(parsed.out_format, Some(OsString::from("%l")));
+}
+
+#[test]
 fn parse_args_collects_filter_patterns() {
     let parsed = parse_args([
         OsString::from(RSYNC),

@@ -276,7 +276,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         min_size: None,
         max_size: None,
         block_size: None,
-        checksum: false,
+        checksum: None,
         checksum_choice: None,
         checksum_seed: None,
         size_only: false,

@@ -56,5 +56,19 @@ fn checksum_flag_is_parsed() {
     ])
     .expect("parse succeeds");
 
-    assert!(parsed.checksum);
+    assert_eq!(parsed.checksum, Some(true));
+}
+
+#[test]
+fn checksum_flag_can_be_disabled() {
+    let parsed = super::parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--checksum"),
+        OsString::from("--no-checksum"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse succeeds");
+
+    assert_eq!(parsed.checksum, Some(false));
 }
