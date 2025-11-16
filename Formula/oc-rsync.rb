@@ -17,7 +17,7 @@ class OcRsync < Formula
   end
 
   def install
-    bin.install "oc-rsync"
+    bin.install "bin/oc-rsync"
   end
 
   test do
