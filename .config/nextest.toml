@@ -1,5 +1,3 @@
+# Nextest defaults: keep full workspace filter while relying on CLI flags for package selection.
 [profile.default]
-build-bins = true
-
-[profile.default.package]
-graph = "workspace"
+default-filter = "all()"
