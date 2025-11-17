@@ -111,6 +111,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --implied-dirs  Create parent directories implied by source paths.\n",
             "      --no-implied-dirs  Disable creation of parent directories implied by source paths.\n",
             "      --mkpath     Create destination's missing path components.\n",
+            "      --no-mkpath, --old-dirs  Do not create destination's missing path components.\n",
             "  -m, --prune-empty-dirs  Skip creating directories that remain empty after filters.\n",
             "      --no-prune-empty-dirs  Disable pruning of empty directories.\n",
             "      --progress   Show progress information during transfers.\n",

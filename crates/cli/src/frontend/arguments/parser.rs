@@ -42,7 +42,7 @@ where
     }
     let mut dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");
-    let mkpath = matches.get_flag("mkpath");
+    let mkpath = tri_state_flag_positive_first(&matches, "mkpath", "no-mkpath").unwrap_or(false);
     let prune_empty_dirs =
         tri_state_flag_negative_first(&matches, "prune-empty-dirs", "no-prune-empty-dirs");
     let omit_link_times =

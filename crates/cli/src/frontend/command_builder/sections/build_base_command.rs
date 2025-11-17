@@ -209,7 +209,16 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                 Arg::new("mkpath")
                     .long("mkpath")
                     .help("Create destination's missing path components.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-mkpath"),
+            )
+            .arg(
+                Arg::new("no-mkpath")
+                    .long("no-mkpath")
+                    .visible_alias("old-dirs")
+                    .help("Disable creation of destination path components (compatibility with older rsync releases).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("mkpath"),
             )
             .arg(
                 Arg::new("prune-empty-dirs")
