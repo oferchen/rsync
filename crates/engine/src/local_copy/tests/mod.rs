@@ -61,18 +61,14 @@ use std::os::unix::ffi::OsStrExt;
 
 #[cfg(all(unix, feature = "acl"))]
 mod acl_sys {
-    #![allow(unsafe_code)]
+    #![allow(unsafe_code, dead_code)]
 
     use libc::{c_char, c_int, c_void, ssize_t};
 
     pub type AclHandle = *mut c_void;
     pub type AclType = c_int;
-
     pub const ACL_TYPE_ACCESS: AclType = 0x8000;
 
-    // On non-Apple Unix we link against libacl explicitly. On Apple,
-    // the symbols are provided by libSystem, so no explicit link
-    // attribute is needed.
     #[cfg_attr(not(target_vendor = "apple"), link(name = "acl"))]
     unsafe extern "C" {
         pub fn acl_get_file(path_p: *const c_char, ty: AclType) -> AclHandle;
