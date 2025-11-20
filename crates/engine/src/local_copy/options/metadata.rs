@@ -27,6 +27,15 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Requests that executability be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--executability")]
+    #[doc(alias = "-E")]
+    pub const fn executability(mut self, preserve: bool) -> Self {
+        self.preserve_executability = preserve;
+        self
+    }
+
     /// Applies an explicit group override to transferred entries.
     #[must_use]
     #[doc(alias = "--chown")]
@@ -151,6 +160,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn preserve_permissions(&self) -> bool {
         self.preserve_permissions
+    }
+
+    /// Reports whether executability should be preserved.
+    #[must_use]
+    pub const fn preserve_executability(&self) -> bool {
+        self.preserve_executability
     }
 
     /// Reports whether timestamps should be preserved.

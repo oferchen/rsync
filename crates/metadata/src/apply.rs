@@ -211,16 +211,7 @@ fn apply_permissions_with_chmod(
         use std::os::unix::fs::PermissionsExt;
 
         if let Some(modifiers) = options.chmod() {
-            let mut mode = if options.permissions() {
-                metadata.permissions().mode()
-            } else {
-                fs::metadata(destination)
-                    .map_err(|error| {
-                        MetadataError::new("inspect destination permissions", destination, error)
-                    })?
-                    .permissions()
-                    .mode()
-            };
+            let mut mode = base_mode_for_permissions(destination, metadata, options)?;
 
             mode = modifiers.apply(mode, metadata.file_type());
             let permissions = PermissionsExt::from_mode(mode);
@@ -230,8 +221,85 @@ fn apply_permissions_with_chmod(
         }
     }
 
+    if options.permissions() || options.executability() {
+        apply_permissions_without_chmod(destination, metadata, options)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn base_mode_for_permissions(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+) -> Result<u32, MetadataError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if options.permissions() {
+        return Ok(metadata.permissions().mode());
+    }
+
+    let mut destination_permissions = fs::metadata(destination)
+        .map_err(|error| MetadataError::new("inspect destination permissions", destination, error))?
+        .permissions()
+        .mode();
+
+    if options.executability() && metadata.is_file() {
+        let source_exec = metadata.permissions().mode() & 0o111;
+        if source_exec == 0 {
+            destination_permissions &= !0o111;
+        } else {
+            destination_permissions |= 0o111;
+        }
+    }
+
+    Ok(destination_permissions)
+}
+
+#[cfg(not(unix))]
+fn base_mode_for_permissions(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+) -> Result<u32, MetadataError> {
+    let _ = (destination, metadata, options);
+    Ok(0)
+}
+
+fn apply_permissions_without_chmod(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
     if options.permissions() {
         set_permissions_like(metadata, destination)?;
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        if options.executability() && metadata.is_file() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut destination_permissions = fs::metadata(destination)
+                .map_err(|error| {
+                    MetadataError::new("inspect destination permissions", destination, error)
+                })?
+                .permissions()
+                .mode();
+
+            let source_exec = metadata.permissions().mode() & 0o111;
+            if source_exec == 0 {
+                destination_permissions &= !0o111;
+            } else {
+                destination_permissions |= 0o111;
+            }
+
+            let permissions = PermissionsExt::from_mode(destination_permissions);
+            fs::set_permissions(destination, permissions)
+                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+        }
     }
 
     Ok(())
@@ -370,6 +438,37 @@ mod tests {
 
         let mode = current_mode(&dest) & 0o777;
         assert_ne!(mode, 0o750);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_executability_can_be_preserved_without_other_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-exec.txt");
+        let dest = temp.path().join("dest-exec.txt");
+
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        fs::set_permissions(&source, PermissionsExt::from_mode(0o751)).expect("set source perms");
+        fs::set_permissions(&dest, PermissionsExt::from_mode(0o620)).expect("set dest perms");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new()
+                .preserve_permissions(false)
+                .preserve_executability(true),
+        )
+        .expect("apply metadata");
+
+        let mode = current_mode(&dest) & 0o777;
+        assert_eq!(mode & 0o111, 0o751 & 0o111);
+        assert_eq!(mode & 0o666, 0o620);
     }
 
     #[test]

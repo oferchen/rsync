@@ -141,4 +141,5 @@ pub(crate) struct ParsedArgs {
     pub(crate) out_format: Option<OsString>,
     pub(crate) daemon_port: Option<u16>,
     pub(crate) no_iconv: bool,
+    pub(crate) executability: Option<bool>,
 }

@@ -73,6 +73,7 @@ pub(crate) fn prepare_invocation(
         usermap,
         groupmap,
         chmod,
+        executability,
         perms,
         super_mode,
         times,
@@ -360,6 +361,12 @@ pub(crate) fn prepare_invocation(
         arg.push(&spec);
         command_args.push(arg);
     }
+    push_toggle(
+        &mut command_args,
+        "--executability",
+        "--no-executability",
+        executability,
+    );
     push_toggle(&mut command_args, "--perms", "--no-perms", perms);
     push_toggle(&mut command_args, "--super", "--no-super", super_mode);
     push_toggle(&mut command_args, "--times", "--no-times", times);

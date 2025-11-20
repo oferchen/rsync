@@ -200,6 +200,8 @@ where
         .map(|values| values.collect())
         .unwrap_or_default();
     let perms = tri_state_flag_positive_first(&matches, "perms", "no-perms");
+    let executability =
+        tri_state_flag_positive_first(&matches, "executability", "no-executability");
     let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
     let times = tri_state_flag_positive_first(&matches, "times", "no-times");
     let omit_dir_times =
@@ -560,6 +562,7 @@ where
         out_format,
         daemon_port,
         no_iconv,
+        executability,
     })
 }
 

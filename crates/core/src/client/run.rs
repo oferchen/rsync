@@ -260,6 +260,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .group(config.preserve_group())
             .with_group_override(config.group_override())
             .with_chmod(config.chmod().cloned())
+            .executability(config.preserve_executability())
             .permissions(config.preserve_permissions())
             .times(config.preserve_times())
             .omit_dir_times(config.omit_dir_times())

@@ -50,6 +50,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) chmod_modifiers: Option<ChmodModifiers>,
     pub(crate) user_mapping: Option<UserMapping>,
     pub(crate) group_mapping: Option<GroupMapping>,
+    pub(crate) executability: bool,
     pub(crate) permissions: bool,
     pub(crate) times: bool,
     pub(crate) modify_window_setting: Option<u64>,
@@ -161,6 +162,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .chmod(inputs.chmod_modifiers.clone())
         .user_mapping(inputs.user_mapping.clone())
         .group_mapping(inputs.group_mapping.clone())
+        .executability(inputs.executability)
         .permissions(inputs.permissions)
         .times(inputs.times)
         .modify_window(inputs.modify_window_setting)
