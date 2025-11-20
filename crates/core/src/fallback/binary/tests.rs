@@ -63,6 +63,23 @@ impl Drop for EnvGuard {
     }
 }
 
+struct CurrentDirGuard {
+    original: PathBuf,
+}
+
+impl CurrentDirGuard {
+    fn new() -> Self {
+        let original = env::current_dir().expect("current dir");
+        Self { original }
+    }
+}
+
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        env::set_current_dir(&self.original).expect("restore current dir");
+    }
+}
+
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -210,6 +227,45 @@ fn fallback_binary_path_respects_path_environment_changes() {
 }
 
 #[test]
+fn fallback_binary_cache_accounts_for_relative_explicit_paths() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _cwd_guard = CurrentDirGuard::new();
+    clear_availability_cache();
+
+    let first_dir = TempDir::new().expect("first tempdir");
+    let second_dir = TempDir::new().expect("second tempdir");
+
+    let relative = Path::new("bin/oc-rsync-relative-candidate");
+    let first_binary = first_dir.path().join(relative);
+    fs::create_dir_all(first_binary.parent().expect("parent dir"))
+        .expect("create parent directory");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let file = File::create(&first_binary).expect("create helper binary");
+        let mut permissions = file.metadata().expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&first_binary, permissions).expect("chmod");
+    }
+
+    #[cfg(not(unix))]
+    {
+        File::create(&first_binary).expect("create helper binary");
+    }
+
+    env::set_current_dir(first_dir.path()).expect("change into first dir");
+    assert!(fallback_binary_available(relative.as_os_str()));
+
+    env::set_current_dir(second_dir.path()).expect("change into second dir");
+    assert!(
+        !fallback_binary_available(relative.as_os_str()),
+        "availability cache must account for cwd-sensitive explicit paths"
+    );
+}
+
+#[test]
 fn fallback_binary_path_revalidates_removed_executable() {
     let _lock = env_lock().lock().expect("env lock");
     clear_availability_cache();
@@ -242,6 +298,49 @@ fn fallback_binary_path_revalidates_removed_executable() {
     fs::remove_file(&binary_path).expect("remove binary");
 
     assert!(fallback_binary_path(binary_name).is_none());
+}
+
+#[test]
+fn fallback_binary_cache_accounts_for_cwd_entries_in_path() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _cwd_guard = CurrentDirGuard::new();
+    clear_availability_cache();
+
+    let first_dir = TempDir::new().expect("first tempdir");
+    let second_dir = TempDir::new().expect("second tempdir");
+
+    let binary_name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
+    let joined = env::join_paths([PathBuf::new()]).expect("join paths");
+    let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
+
+    #[cfg(windows)]
+    let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+    let first_binary = first_dir.path().join(binary_name);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let file = File::create(&first_binary).expect("create helper binary");
+        let mut permissions = file.metadata().expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&first_binary, permissions).expect("chmod");
+    }
+
+    #[cfg(not(unix))]
+    {
+        File::create(&first_binary).expect("create helper binary");
+    }
+
+    env::set_current_dir(first_dir.path()).expect("cd into first dir");
+    assert!(fallback_binary_available(OsStr::new(binary_name)));
+
+    env::set_current_dir(second_dir.path()).expect("cd into second dir");
+    assert!(
+        !fallback_binary_available(OsStr::new(binary_name)),
+        "availability cache must change when PATH depends on cwd"
+    );
 }
 
 #[test]
