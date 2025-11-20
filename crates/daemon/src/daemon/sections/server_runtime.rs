@@ -6,6 +6,184 @@ fn log_sd_notify_failure(log: Option<&SharedLogSink>, context: &str, error: &io:
     }
 }
 
+struct GeneratedFallbackConfig {
+    config: NamedTempFile,
+    _motd: Option<NamedTempFile>,
+}
+
+impl GeneratedFallbackConfig {
+    fn config_path(&self) -> &Path {
+        self.config.path()
+    }
+}
+
+fn format_bool(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
+fn host_pattern_token(pattern: &HostPattern) -> String {
+    match pattern {
+        HostPattern::Any => String::from("*"),
+        HostPattern::Ipv4 { network, prefix } => format!("{network}/{prefix}"),
+        HostPattern::Ipv6 { network, prefix } => format!("{network}/{prefix}"),
+        HostPattern::Hostname(pattern) => match pattern.kind {
+            HostnamePatternKind::Exact(ref exact) => exact.clone(),
+            HostnamePatternKind::Suffix(ref suffix) => {
+                let mut token = String::with_capacity(suffix.len() + 1);
+                token.push('.');
+                token.push_str(suffix);
+                token
+            }
+            HostnamePatternKind::Wildcard(ref wildcard) => wildcard.clone(),
+        },
+    }
+}
+
+fn join_pattern_tokens(patterns: &[HostPattern]) -> Option<String> {
+    if patterns.is_empty() {
+        None
+    } else {
+        Some(
+            patterns
+                .iter()
+                .map(host_pattern_token)
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    }
+}
+
+fn render_auth_users(users: &[String]) -> Option<String> {
+    if users.is_empty() {
+        None
+    } else {
+        Some(users.join(","))
+    }
+}
+
+fn render_refused_options(options: &[String]) -> Option<String> {
+    if options.is_empty() {
+        None
+    } else {
+        Some(options.join(" "))
+    }
+}
+
+fn render_optional_u32(value: Option<u32>) -> Option<String> {
+    value.map(|id| id.to_string())
+}
+
+fn render_optional_timeout(value: Option<NonZeroU64>) -> Option<String> {
+    value.map(|timeout| timeout.get().to_string())
+}
+
+fn render_optional_bwlimit(limit: Option<NonZeroU64>) -> Option<String> {
+    limit.map(|rate| rate.get().to_string())
+}
+
+fn render_chmod(value: Option<&str>) -> Option<String> {
+    value.map(str::to_string)
+}
+
+fn generate_fallback_config(
+    modules: &[ModuleDefinition],
+    motd_lines: &[String],
+) -> io::Result<Option<GeneratedFallbackConfig>> {
+    if modules.is_empty() && motd_lines.is_empty() {
+        return Ok(None);
+    }
+
+    let motd_file = if motd_lines.is_empty() {
+        None
+    } else {
+        let mut file = NamedTempFile::new()?;
+        for line in motd_lines {
+            writeln!(file, "{line}")?;
+        }
+        Some(file)
+    };
+
+    let mut config = NamedTempFile::new()?;
+
+    if let Some(motd) = motd_file.as_ref() {
+        writeln!(config, "motd file = {}", motd.path().display())?;
+    }
+
+    for module in modules {
+        writeln!(config, "[{}]", module.name)?;
+        writeln!(config, "    path = {}", module.path.display())?;
+
+        if let Some(comment) = &module.comment {
+            if !comment.is_empty() {
+                writeln!(config, "    comment = {comment}")?;
+            }
+        }
+
+        if let Some(allowed) = join_pattern_tokens(&module.hosts_allow) {
+            writeln!(config, "    hosts allow = {allowed}")?;
+        }
+
+        if let Some(denied) = join_pattern_tokens(&module.hosts_deny) {
+            writeln!(config, "    hosts deny = {denied}")?;
+        }
+
+        if let Some(users) = render_auth_users(&module.auth_users) {
+            writeln!(config, "    auth users = {users}")?;
+        }
+
+        if let Some(secrets) = module.secrets_file.as_ref() {
+            writeln!(config, "    secrets file = {}", secrets.display())?;
+        }
+
+        if let Some(bwlimit) = render_optional_bwlimit(module.bandwidth_limit) {
+            writeln!(config, "    bwlimit = {bwlimit}")?;
+        }
+
+        if let Some(options) = render_refused_options(&module.refuse_options) {
+            writeln!(config, "    refuse options = {options}")?;
+        }
+
+        writeln!(config, "    read only = {}", format_bool(module.read_only))?;
+        writeln!(config, "    write only = {}", format_bool(module.write_only))?;
+        writeln!(config, "    list = {}", format_bool(module.listable))?;
+        writeln!(config, "    use chroot = {}", format_bool(module.use_chroot))?;
+        writeln!(config, "    numeric ids = {}", format_bool(module.numeric_ids))?;
+
+        if let Some(uid) = render_optional_u32(module.uid) {
+            writeln!(config, "    uid = {uid}")?;
+        }
+
+        if let Some(gid) = render_optional_u32(module.gid) {
+            writeln!(config, "    gid = {gid}")?;
+        }
+
+        if let Some(timeout) = render_optional_timeout(module.timeout) {
+            writeln!(config, "    timeout = {timeout}")?;
+        }
+
+        if let Some(max) = module.max_connections {
+            writeln!(config, "    max connections = {}", max.get())?;
+        }
+
+        if let Some(chmod) = render_chmod(module.incoming_chmod.as_deref()) {
+            writeln!(config, "    incoming chmod = {chmod}")?;
+        }
+
+        if let Some(chmod) = render_chmod(module.outgoing_chmod.as_deref()) {
+            writeln!(config, "    outgoing chmod = {chmod}")?;
+        }
+
+        writeln!(config)?;
+    }
+
+    config.flush()?;
+
+    Ok(Some(GeneratedFallbackConfig {
+        config,
+        _motd: motd_file,
+    }))
+}
+
 fn format_connection_status(active: usize) -> String {
     match active {
         0 => String::from("Idle; waiting for connections"),
@@ -35,10 +213,27 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     } = options;
 
     let mut fallback_warning_message: Option<Message> = None;
+    let mut delegate_arguments = delegate_arguments;
+    let mut generated_config: Option<GeneratedFallbackConfig> = None;
 
-    let delegation = if inline_modules {
-        None
-    } else if let Some(binary) = configured_fallback_binary() {
+    if inline_modules {
+        generated_config = generate_fallback_config(&modules, &motd_lines).map_err(|error| {
+            DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    format!("failed to prepare fallback config: {error}")
+                )
+                .with_role(Role::Daemon),
+            )
+        })?;
+        if let Some(config) = generated_config.as_ref() {
+            delegate_arguments.push(OsString::from("--config"));
+            delegate_arguments.push(config.config_path().as_os_str().to_owned());
+        }
+    }
+
+    let delegation = if let Some(binary) = configured_fallback_binary() {
         if fallback_binary_available(binary.as_os_str()) {
             Some(SessionDelegation::new(binary, delegate_arguments))
         } else {
@@ -52,6 +247,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     } else {
         None
     };
+
+    let _generated_config_guard = generated_config;
 
     let pid_guard = if let Some(path) = pid_file {
         Some(PidFileGuard::create(path)?)

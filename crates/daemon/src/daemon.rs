@@ -34,6 +34,7 @@ use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use fs2::FileExt;
+use tempfile::NamedTempFile;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
