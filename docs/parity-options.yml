@@ -174,17 +174,17 @@ options:
     status: implemented
     notes: Negates the corresponding positive option.; Alias maintained for compatibility.
   - option: --old-dirs
-    short: 
+    short:
     category: traversal
     upstream_default: default -1
-    status: missing
-    notes: ""
+    status: implemented
+    notes: Alias for --no-mkpath (compatibility with older rsync releases).
   - option: --old-d
-    short: 
+    short:
     category: general
     upstream_default: default -1
-    status: missing
-    notes: ""
+    status: implemented
+    notes: Alias for --no-mkpath.
   - option: --perms
     short: p
     category: metadata
@@ -1380,10 +1380,10 @@ options:
     status: implemented
     notes: ""
   - option: --no-mkpath
-    short: 
+    short:
     category: traversal
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --qsort
     short: 
