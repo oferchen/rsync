@@ -93,6 +93,7 @@ include!("tests/chunks/run_daemon_enforces_bwlimit_during_module_list.rs");
 include!("tests/chunks/run_daemon_enforces_module_connection_limit.rs");
 include!("tests/chunks/run_daemon_filters_modules_during_list_request.rs");
 include!("tests/chunks/run_daemon_handles_binary_negotiation.rs");
+include!("tests/chunks/binary_session_delegates_inline_module_config.rs");
 include!("tests/chunks/run_daemon_handles_parallel_sessions.rs");
 include!("tests/chunks/run_daemon_honours_max_sessions.rs");
 include!("tests/chunks/run_daemon_lists_modules_on_request.rs");
