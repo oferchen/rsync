@@ -27,6 +27,14 @@ impl ClientConfig {
         self.group_override
     }
 
+    /// Reports whether executability should be preserved.
+    #[must_use]
+    #[doc(alias = "--executability")]
+    #[doc(alias = "-E")]
+    pub const fn preserve_executability(&self) -> bool {
+        self.preserve_executability
+    }
+
     /// Returns the configured chmod modifiers, if any.
     #[must_use]
     #[doc(alias = "--chmod")]

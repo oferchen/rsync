@@ -13,6 +13,7 @@ use crate::frontend::execution::chown::ParsedChown;
 pub(crate) struct MetadataSettings {
     pub(crate) preserve_owner: bool,
     pub(crate) preserve_group: bool,
+    pub(crate) preserve_executability: bool,
     pub(crate) preserve_permissions: bool,
     pub(crate) preserve_times: bool,
     pub(crate) omit_dir_times: bool,
@@ -37,6 +38,7 @@ pub(crate) struct MetadataInputs<'a> {
     pub(crate) parsed_chown: Option<&'a ParsedChown>,
     pub(crate) owner: Option<bool>,
     pub(crate) group: Option<bool>,
+    pub(crate) executability: Option<bool>,
     pub(crate) usermap: Option<&'a OsString>,
     pub(crate) groupmap: Option<&'a OsString>,
     pub(crate) perms: Option<bool>,
@@ -66,6 +68,7 @@ pub(crate) fn compute_metadata_settings(
         parsed_chown,
         owner,
         group,
+        executability,
         perms,
         usermap,
         groupmap,
@@ -126,6 +129,12 @@ pub(crate) fn compute_metadata_settings(
         archive
     };
 
+    let preserve_executability = if preserve_permissions {
+        true
+    } else {
+        executability.unwrap_or(false)
+    };
+
     let preserve_times = times.unwrap_or(archive);
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
     let omit_link_times_setting = omit_link_times.unwrap_or(false);
@@ -167,6 +176,7 @@ pub(crate) fn compute_metadata_settings(
     Ok(MetadataSettings {
         preserve_owner,
         preserve_group,
+        preserve_executability,
         preserve_permissions,
         preserve_times,
         omit_dir_times: omit_dir_times_setting,

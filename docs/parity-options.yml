@@ -207,8 +207,8 @@ options:
     short: E
     category: general
     upstream_default: disabled by default
-    status: missing
-    notes: ""
+    status: implemented
+    notes: Preserves only execute bits when full permission preservation is disabled.
   - option: --acls
     short: A
     category: metadata

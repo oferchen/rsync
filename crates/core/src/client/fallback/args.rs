@@ -115,6 +115,8 @@ pub struct RemoteFallbackArgs {
     pub groupmap: Option<OsString>,
     /// Repeated `--chmod` specifications forwarded to the fallback binary.
     pub chmod: Vec<OsString>,
+    /// Optional `--executability`/`--no-executability` toggle.
+    pub executability: Option<bool>,
     /// Optional `--perms`/`--no-perms` toggle.
     pub perms: Option<bool>,
     /// Optional `--super`/`--no-super` toggle.

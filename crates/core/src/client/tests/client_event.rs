@@ -300,6 +300,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         usermap: None,
         groupmap: None,
         chmod: Vec::new(),
+        executability: None,
         perms: None,
         super_mode: None,
         times: None,
