@@ -151,5 +151,5 @@ fn server_mode_reports_missing_fallback_binary() {
     let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
     assert!(stderr_text.contains("fallback rsync binary"));
     assert!(stderr_text.contains(&missing_display));
-    assert_contains_client_trailer(&stderr_text);
+    assert_contains_server_trailer(&stderr_text);
 }

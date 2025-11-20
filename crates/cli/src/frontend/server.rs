@@ -301,7 +301,7 @@ fn write_server_fallback_error<Err: Write>(
 ) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
-    message = message.with_role(Role::Client);
+    message = message.with_role(Role::Server);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
     }
