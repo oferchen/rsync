@@ -7,15 +7,14 @@ const NEXTEST_ARGS: &[&str] = &[
     "nextest",
     "run",
     "--workspace",
-    "--all-targets",
     "--all-features",
 ];
-const NEXTEST_DISPLAY: &str = "cargo nextest run --workspace --all-targets --all-features";
+const NEXTEST_DISPLAY: &str = "cargo nextest run --workspace --all-features";
 const NEXTEST_INSTALL_HINT: &str =
     "install cargo-nextest with `cargo install cargo-nextest --locked`";
 
-const CARGO_TEST_ARGS: &[&str] = &["test", "--workspace", "--all-targets", "--all-features"];
-const CARGO_TEST_DISPLAY: &str = "cargo test --workspace --all-targets --all-features";
+const CARGO_TEST_ARGS: &[&str] = &["test", "--workspace", "--all-features"];
+const CARGO_TEST_DISPLAY: &str = "cargo test --workspace --all-features";
 const CARGO_TEST_INSTALL_HINT: &str = "install Rust and cargo from https://rustup.rs";
 
 /// Options accepted by the `test` command.
