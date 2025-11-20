@@ -55,11 +55,13 @@ pub(crate) fn write_sparse_chunk(
     chunk: &[u8],
     destination: &Path,
 ) -> Result<usize, LocalCopyError> {
+    // Mirror rsync's write_sparse: always report the full chunk length as
+    // consumed even when large sections become holes. Callers that track
+    // literal bytes should account for sparseness separately.
     if chunk.is_empty() {
         return Ok(0);
     }
 
-    let mut written = 0usize;
     let mut offset = 0usize;
 
     while offset < chunk.len() {
@@ -85,25 +87,23 @@ pub(crate) fn write_sparse_chunk(
                 .map_err(|error| {
                     LocalCopyError::io("copy file", destination.to_path_buf(), error)
                 })?;
-            written += data_end - data_start;
         }
 
         state.replace(trailing);
         offset = segment_end;
     }
 
-    Ok(written)
+    Ok(chunk.len())
 }
 
 #[inline]
 fn leading_zero_run(bytes: &[u8]) -> usize {
     let mut offset = 0usize;
-    let mut buffer = [0u8; 16];
     let mut iter = bytes.chunks_exact(16);
 
     for chunk in &mut iter {
-        buffer.copy_from_slice(chunk);
-        if u128::from_ne_bytes(buffer) == 0 {
+        let chunk: &[u8; 16] = chunk.try_into().expect("chunked to 16 bytes");
+        if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
             continue;
         }
@@ -123,12 +123,11 @@ fn leading_zero_run_scalar(bytes: &[u8]) -> usize {
 #[inline]
 fn trailing_zero_run(bytes: &[u8]) -> usize {
     let mut offset = 0usize;
-    let mut buffer = [0u8; 16];
     let mut iter = bytes.rchunks_exact(16);
 
     for chunk in &mut iter {
-        buffer.copy_from_slice(chunk);
-        if u128::from_ne_bytes(buffer) == 0 {
+        let chunk: &[u8; 16] = chunk.try_into().expect("chunked to 16 bytes");
+        if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
             continue;
         }
@@ -231,8 +230,8 @@ mod tests {
             write_sparse_chunk(file.as_file_mut(), &mut state, &second, path.as_path())
                 .expect("write second chunk");
 
-        assert_eq!(written_first, 2);
-        assert_eq!(written_second, 2);
+        assert_eq!(written_first, first.len());
+        assert_eq!(written_second, second.len());
 
         state
             .finish(file.as_file_mut(), path.as_path())
@@ -269,7 +268,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("flush trailing zeros");
 
-        assert_eq!(written, 1);
+        assert_eq!(written, chunk.len());
 
         file.as_file_mut()
             .set_len(chunk.len() as u64)
@@ -295,7 +294,7 @@ mod tests {
         let written = write_sparse_chunk(file.as_file_mut(), &mut state, &zeros, path.as_path())
             .expect("write zero chunk");
 
-        assert_eq!(written, 0);
+        assert_eq!(written, zeros.len());
 
         state
             .finish(file.as_file_mut(), path.as_path())
@@ -336,7 +335,7 @@ mod tests {
             .set_len(chunk.len() as u64)
             .expect("truncate file");
 
-        assert_eq!(written, 2);
+        assert_eq!(written, chunk.len());
 
         file.as_file_mut()
             .seek(SeekFrom::Start(0))
