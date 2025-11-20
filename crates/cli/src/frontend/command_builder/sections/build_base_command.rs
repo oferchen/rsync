@@ -384,6 +384,21 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .conflicts_with("sparse"),
             )
             .arg(
+                Arg::new("fuzzy")
+                    .long("fuzzy")
+                    .short('y')
+                    .help("Search for basis files with similar names at the destination.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-fuzzy"),
+            )
+            .arg(
+                Arg::new("no-fuzzy")
+                    .long("no-fuzzy")
+                    .help("Disable --fuzzy basis file search.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("fuzzy"),
+            )
+            .arg(
                 Arg::new("links")
                     .long("links")
                     .short('l')

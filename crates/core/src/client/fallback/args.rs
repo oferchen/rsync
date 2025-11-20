@@ -145,6 +145,8 @@ pub struct RemoteFallbackArgs {
     pub safe_links: bool,
     /// Optional `--sparse`/`--no-sparse` toggle.
     pub sparse: Option<bool>,
+    /// Optional `--fuzzy`/`--no-fuzzy` toggle.
+    pub fuzzy: Option<bool>,
     /// Optional `--devices`/`--no-devices` toggle.
     pub devices: Option<bool>,
     /// Enables `--copy-devices` when `true`.
