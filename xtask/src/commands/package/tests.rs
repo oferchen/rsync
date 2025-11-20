@@ -1,6 +1,9 @@
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 use super::build::{resolve_cross_compiler_for_tests, resolve_tarball_cross_compilers_for_tests};
+
+#[cfg(all(test, target_os = "linux"))]
 use super::tarball::{TarballPlatform, TarballSpec};
+
 use super::{DIST_PROFILE, PackageOptions, execute};
 use crate::error::TaskError;
 use std::env;
@@ -176,6 +179,7 @@ fn execute_reports_missing_rpmbuild_tool() {
     ));
 }
 
+#[cfg(all(test, target_os = "linux"))]
 #[test]
 fn execute_reports_missing_cross_compiler() {
     let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
@@ -195,6 +199,7 @@ fn execute_reports_missing_cross_compiler() {
     ));
 }
 
+#[cfg(all(test, target_os = "linux"))]
 #[test]
 fn cross_compiler_resolution_prefers_cross_gcc() {
     let (dir, _path) = fake_tool("aarch64-linux-gnu-gcc");
@@ -214,6 +219,7 @@ fn cross_compiler_resolution_prefers_cross_gcc() {
     assert_eq!(override_value.1, OsString::from("aarch64-linux-gnu-gcc"));
 }
 
+#[cfg(all(test, target_os = "linux"))]
 #[test]
 fn cross_compiler_resolution_falls_back_to_zig() {
     let (dir, _path) = fake_tool("zig");
@@ -239,6 +245,7 @@ fn cross_compiler_resolution_falls_back_to_zig() {
     assert!(override_path.exists());
 }
 
+#[cfg(all(test, target_os = "linux"))]
 #[test]
 fn tarball_resolution_skips_targets_without_cross_tooling() {
     let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
@@ -315,6 +322,7 @@ fn fake_rpmbuild_path() -> (tempfile::TempDir, PathBuf) {
     (dir, rpmbuild_path)
 }
 
+#[cfg(all(test, target_os = "linux"))]
 fn fake_tool(name: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("create temp directory for fake tool");
     let file_name = if cfg!(windows) {
@@ -345,6 +353,7 @@ fn fake_tool(name: &str) -> (tempfile::TempDir, PathBuf) {
     (dir, tool_path)
 }
 
+#[cfg(all(test, target_os = "linux"))]
 fn prepend_path(env: &mut ScopedEnv, directory: &Path) {
     let mut path_entries = vec![directory.to_path_buf()];
     if let Some(existing) = env::var_os("PATH") {
@@ -354,6 +363,7 @@ fn prepend_path(env: &mut ScopedEnv, directory: &Path) {
     env.set_os("PATH", joined.as_os_str());
 }
 
+#[cfg(all(test, target_os = "linux"))]
 fn zig_shim_name(target: &str) -> String {
     if cfg!(windows) {
         format!("zig-linker-{target}.cmd")

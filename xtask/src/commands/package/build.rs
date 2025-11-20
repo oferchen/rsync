@@ -145,7 +145,7 @@ fn resolve_tarball_builds(
     Ok(ResolvedTarballSpecs { builds, skipped })
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(super) fn resolve_tarball_cross_compilers_for_tests(
     workspace: &Path,
     specs: Vec<tarball::TarballSpec>,
@@ -567,7 +567,7 @@ fn create_zig_linker_shim(
     Ok(shim_path.into_os_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[allow(unsafe_code)]
 pub(super) fn resolve_cross_compiler_for_tests(
     workspace: &Path,
