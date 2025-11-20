@@ -20,7 +20,7 @@ pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
         return candidates_for_explicit_path(direct_path);
     }
 
-    let Some(path_env) = env::var_os("PATH") else {
+    let Some(path_env) = effective_path_env() else {
         return Vec::new();
     };
 
@@ -98,6 +98,47 @@ fn apply_extension(base: &Path, ext: &OsStr) -> Option<PathBuf> {
 
 fn has_explicit_path(path: &Path) -> bool {
     path.is_absolute() || path.components().count() > 1
+}
+
+fn effective_path_env() -> Option<OsString> {
+    read_path_env().or_else(default_search_path)
+}
+
+fn read_path_env() -> Option<OsString> {
+    #[cfg(windows)]
+    {
+        env::var_os("PATH").or_else(|| env::var_os("Path"))
+    }
+
+    #[cfg(not(windows))]
+    {
+        env::var_os("PATH")
+    }
+}
+
+#[cfg(unix)]
+fn default_search_path() -> Option<OsString> {
+    Some(OsString::from("/bin:/usr/bin"))
+}
+
+#[cfg(windows)]
+fn default_search_path() -> Option<OsString> {
+    let system_root = env::var_os("SystemRoot").or_else(|| env::var_os("SYSTEMROOT"));
+    let default = OsString::from(r"C:\Windows\System32;C:\Windows");
+
+    let root = system_root?;
+    let root_path = PathBuf::from(&root);
+    let mut paths = Vec::new();
+    paths.push(root_path.join("System32"));
+    paths.push(root_path.clone());
+    paths.push(root_path.join("System32").join("Wbem"));
+
+    env::join_paths(paths).ok().or(Some(default))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn default_search_path() -> Option<OsString> {
+    None
 }
 
 #[cfg(windows)]
