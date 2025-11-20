@@ -1,3 +1,11 @@
+// Patch note (oc-rsync):
+// - Removed the #[cfg(not(unix))] variant of `base_mode_for_permissions`,
+//   which was never called on non-Unix targets and triggered a dead_code
+//   error when building for Windows with `-D warnings`.
+//   The function is only needed on Unix and is only referenced inside a
+//   #[cfg(unix)] block, so restricting it to Unix preserves behavior and
+//   keeps non-Unix builds clean.
+
 use crate::error::MetadataError;
 use crate::options::MetadataOptions;
 use filetime::{FileTime, set_file_times, set_symlink_file_times};
@@ -255,16 +263,6 @@ fn base_mode_for_permissions(
     }
 
     Ok(destination_permissions)
-}
-
-#[cfg(not(unix))]
-fn base_mode_for_permissions(
-    destination: &Path,
-    metadata: &fs::Metadata,
-    options: &MetadataOptions,
-) -> Result<u32, MetadataError> {
-    let _ = (destination, metadata, options);
-    Ok(0)
 }
 
 fn apply_permissions_without_chmod(
