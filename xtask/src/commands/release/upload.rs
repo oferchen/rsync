@@ -377,16 +377,20 @@ mod tests {
     use crate::test_support;
     use std::ffi::OsString;
     use std::io::Write;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
     use tempfile::TempDir;
 
     struct ScopedEnv {
         previous: Vec<(&'static str, Option<OsString>)>,
+        _guard: MutexGuard<'static, ()>,
     }
 
     impl ScopedEnv {
         fn new() -> Self {
+            let guard = env_lock().lock().expect("env lock poisoned");
             Self {
                 previous: Vec::new(),
+                _guard: guard,
             }
         }
 
@@ -399,6 +403,11 @@ mod tests {
                 env::set_var(key, &value);
             }
         }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
     }
 
     impl Drop for ScopedEnv {
