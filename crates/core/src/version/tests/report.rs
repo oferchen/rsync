@@ -6,6 +6,12 @@ use crate::version::report::{
 use libc::{ino_t, off_t, time_t};
 use std::mem;
 
+fn gpl_footer(program_name: &str) -> String {
+    format!(
+        "{program_name} comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details.\n"
+    )
+}
+
 #[test]
 fn version_info_report_renders_default_report() {
     let config = VersionInfoConfig::default();
@@ -68,9 +74,7 @@ fn version_info_report_renders_default_report() {
     assert!(actual.contains(&format!(
         "Daemon auth list:\n    {daemon_auth_algorithms}\n"
     )));
-    assert!(actual.ends_with(
-        "oc-rsync comes with ABSOLUTELY NO WARRANTY. This is free software, and you are welcome to redistribute it under certain conditions. See the GNU General Public License for details.\n"
-    ));
+    assert!(actual.ends_with(&gpl_footer(PROGRAM_NAME)));
 }
 
 #[test]
@@ -183,6 +187,14 @@ fn version_info_report_omits_rust_specific_sections() {
 
     assert!(!rendered.contains("Compiled features:"));
     assert!(!rendered.contains("Build info:"));
+}
+
+#[test]
+fn version_info_report_daemon_footer_uses_daemon_program_name() {
+    let report = VersionInfoReport::for_daemon_brand(Brand::Oc);
+    let rendered = report.human_readable();
+
+    assert!(rendered.ends_with(&gpl_footer(DAEMON_PROGRAM_NAME)));
 }
 
 #[test]
