@@ -83,6 +83,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) copy_unsafe_links: Option<bool>,
     pub(crate) keep_dirlinks: Option<bool>,
     pub(crate) safe_links: bool,
+    pub(crate) write_devices: Option<bool>,
     pub(crate) devices: Option<bool>,
     pub(crate) copy_devices: bool,
     pub(crate) specials: Option<bool>,

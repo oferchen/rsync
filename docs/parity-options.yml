@@ -414,10 +414,10 @@ options:
     status: implemented
     notes: ""
   - option: --no-D
-    short: 
+    short:
     category: general
     upstream_default: n/a
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --devices
     short: 
@@ -438,16 +438,16 @@ options:
     status: implemented
     notes: ""
   - option: --write-devices
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-write-devices
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --specials
     short: 
@@ -465,19 +465,19 @@ options:
     short: l
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: ""
   - option: --no-links
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --no-l
-    short: 
+    short:
     category: general
     upstream_default: disabled by default
-    status: missing
+    status: implemented
     notes: Negates the corresponding positive option.
   - option: --copy-links
     short: L

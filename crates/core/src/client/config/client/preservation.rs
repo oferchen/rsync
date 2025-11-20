@@ -23,6 +23,13 @@ impl ClientConfig {
         self.copy_devices
     }
 
+    /// Reports whether file data should be written directly to device files.
+    #[must_use]
+    #[doc(alias = "--write-devices")]
+    pub const fn write_devices(&self) -> bool {
+        self.write_devices
+    }
+
     /// Reports whether unsafe links should be copied rather than dereferenced.
     #[must_use]
     #[doc(alias = "--copy-unsafe-links")]
