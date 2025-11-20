@@ -5,6 +5,7 @@ use std::path::Path;
 
 const NEXTEST_ARGS: &[&str] = &["nextest", "run", "--workspace", "--all-features"];
 const NEXTEST_DISPLAY: &str = "cargo nextest run --workspace --all-features";
+const NEXTEST_INSTALL_COMMAND: &str = "cargo install cargo-nextest --locked";
 const NEXTEST_INSTALL_HINT: &str =
     "install cargo-nextest with `cargo install cargo-nextest --locked`";
 
@@ -53,14 +54,18 @@ pub fn execute(workspace: &Path, options: TestOptions) -> TaskResult<()> {
         Ok(()) => Ok(()),
         Err(TaskError::ToolMissing(message)) => {
             println!("{message}");
-            println!(
-                "Falling back to {CARGO_TEST_DISPLAY}; install cargo-nextest with `{NEXTEST_INSTALL_HINT}` \
-                 or rerun with --use-cargo-test to skip the probe",
-            );
+            println!("{}", fallback_to_cargo_test_message());
             run_cargo_tests(workspace)
         }
         Err(other) => Err(other),
     }
+}
+
+fn fallback_to_cargo_test_message() -> String {
+    format!(
+        "Falling back to {CARGO_TEST_DISPLAY}; install cargo-nextest with `{NEXTEST_INSTALL_COMMAND}` \
+         or rerun with --use-cargo-test to skip the probe"
+    )
 }
 
 fn run_nextest(workspace: &Path) -> TaskResult<()> {
@@ -174,6 +179,16 @@ mod tests {
         let _missing = guard_force_missing(NEXTEST_DISPLAY);
         let workspace = workspace_root().expect("workspace root");
         execute(workspace.as_path(), TestOptions::default()).expect("fallback succeeds");
+    }
+
+    #[test]
+    fn fallback_message_is_well_formed() {
+        assert_eq!(
+            fallback_to_cargo_test_message(),
+            format!(
+                "Falling back to {CARGO_TEST_DISPLAY}; install cargo-nextest with `{NEXTEST_INSTALL_COMMAND}` or rerun with --use-cargo-test to skip the probe"
+            )
+        );
     }
 
     #[test]
