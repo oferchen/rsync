@@ -123,6 +123,7 @@ where
         hard_links,
         links,
         sparse,
+        fuzzy,
         copy_links,
         copy_dirlinks,
         copy_unsafe_links,
@@ -436,6 +437,7 @@ where
         keep_dirlinks,
         safe_links,
         sparse,
+        fuzzy,
         devices,
         copy_devices,
         specials,
@@ -608,6 +610,7 @@ where
     let whole_file_enabled = whole_file_option.unwrap_or(true);
 
     let checksum_for_config = checksum.unwrap_or(false);
+    let fuzzy_enabled = fuzzy.unwrap_or(false);
 
     let config_inputs = config::ConfigInputs {
         transfer_operands,
@@ -669,6 +672,7 @@ where
         copy_unsafe_links,
         keep_dirlinks: keep_dirlinks_flag,
         safe_links,
+        fuzzy: fuzzy_enabled,
         links: preserve_symlinks,
         relative_paths: relative,
         one_file_system,

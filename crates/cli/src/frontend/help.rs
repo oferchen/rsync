@@ -72,6 +72,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --compare-dest=DIR  Skip creating files that already match DIR.\n",
             "      --copy-dest=DIR  Copy matching files from DIR instead of the source.\n",
             "      --link-dest=DIR  Hard-link matching files from DIR into DEST.\n",
+            "  -y, --fuzzy      Find similar destination files to use as the basis for transfers.\n",
             "  -H, --hard-links  Preserve hard links between files.\n",
             "      --no-hard-links  Disable hard link preservation.\n",
             "  -C, --cvs-exclude  Auto-ignore files using CVS-style ignore rules.\n",

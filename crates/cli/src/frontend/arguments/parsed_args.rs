@@ -77,6 +77,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) hard_links: Option<bool>,
     pub(crate) links: Option<bool>,
     pub(crate) sparse: Option<bool>,
+    pub(crate) fuzzy: Option<bool>,
     pub(crate) copy_links: Option<bool>,
     pub(crate) copy_dirlinks: bool,
     pub(crate) copy_unsafe_links: Option<bool>,
