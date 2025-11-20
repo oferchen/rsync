@@ -26,6 +26,7 @@ protocol = { path = "../protocol" }
 logging = { path = "../logging" }
 fs2 = "0.4"
 sd-notify = { version = "0.4.5", optional = true }
+tempfile = "3.10"
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
@@ -34,5 +35,4 @@ checksums = { path = "../checksums" }
 checksums = { path = "../checksums", default-features = false }
 
 [dev-dependencies]
-tempfile = "3.10"
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
