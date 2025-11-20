@@ -14,6 +14,7 @@ use super::unix::unix_can_execute;
 pub(super) struct CacheKey {
     binary: OsString,
     path: Option<OsString>,
+    cwd: Option<PathBuf>,
     #[cfg(windows)]
     pathext: Option<OsString>,
 }
@@ -21,9 +22,16 @@ pub(super) struct CacheKey {
 impl CacheKey {
     #[inline]
     fn new(binary: &OsStr) -> Self {
+        let path = env::var_os("PATH");
+        let cwd = if cache_key_depends_on_cwd(binary, path.as_deref()) {
+            env::current_dir().ok()
+        } else {
+            None
+        };
         Self {
             binary: binary.to_os_string(),
-            path: env::var_os("PATH"),
+            path,
+            cwd,
             #[cfg(windows)]
             pathext: env::var_os("PATHEXT"),
         }
@@ -143,6 +151,19 @@ fn evaluate_availability(binary: &OsStr) -> (bool, Option<PathBuf>) {
     }
 
     (false, None)
+}
+
+fn cache_key_depends_on_cwd(binary: &OsStr, path_env: Option<&OsStr>) -> bool {
+    let path = Path::new(binary);
+    if !path.is_absolute() && path.components().count() > 1 {
+        return true;
+    }
+
+    let Some(path_env) = path_env else {
+        return false;
+    };
+
+    env::split_paths(path_env).any(|entry| entry.as_os_str().is_empty())
 }
 
 fn candidate_is_executable(path: &Path) -> bool {
