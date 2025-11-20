@@ -165,7 +165,7 @@ fn cache_key_depends_on_cwd(binary: &OsStr, path_env: Option<&OsStr>) -> bool {
         return false;
     };
 
-    env::split_paths(path_env).any(|entry| entry.as_os_str().is_empty())
+    env::split_paths(path_env).any(|entry| entry.as_os_str().is_empty() || entry.is_relative())
 }
 
 fn candidate_is_executable(path: &Path) -> bool {
