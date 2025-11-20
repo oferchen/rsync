@@ -344,6 +344,49 @@ fn fallback_binary_cache_accounts_for_cwd_entries_in_path() {
 }
 
 #[test]
+fn fallback_binary_cache_accounts_for_relative_path_entries() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _cwd_guard = CurrentDirGuard::new();
+    clear_availability_cache();
+
+    let first_dir = TempDir::new().expect("first tempdir");
+    let second_dir = TempDir::new().expect("second tempdir");
+
+    let binary_name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
+    let joined = env::join_paths([PathBuf::from(".")]).expect("join paths");
+    let _path_guard = EnvGuard::set_os("PATH", joined.as_os_str());
+
+    #[cfg(windows)]
+    let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+    let first_binary = first_dir.path().join(binary_name);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let file = File::create(&first_binary).expect("create helper binary");
+        let mut permissions = file.metadata().expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&first_binary, permissions).expect("chmod");
+    }
+
+    #[cfg(not(unix))]
+    {
+        File::create(&first_binary).expect("create helper binary");
+    }
+
+    env::set_current_dir(first_dir.path()).expect("cd into first dir");
+    assert!(fallback_binary_available(OsStr::new(binary_name)));
+
+    env::set_current_dir(second_dir.path()).expect("cd into second dir");
+    assert!(
+        !fallback_binary_available(OsStr::new(binary_name)),
+        "availability cache must change when PATH uses relative entries",
+    );
+}
+
+#[test]
 fn fallback_binary_is_self_detects_current_process() {
     let current = env::current_exe().expect("current exe");
     assert!(fallback_binary_is_self(&current));
