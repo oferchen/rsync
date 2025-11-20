@@ -58,7 +58,11 @@ pub fn execute(workspace: &Path, options: TestOptions) -> TaskResult<()> {
     match run_nextest(workspace) {
         Ok(()) => Ok(()),
         Err(TaskError::ToolMissing(message)) => {
-            println!("{message}; falling back to cargo test");
+            println!("{message}");
+            println!(
+                "Falling back to {CARGO_TEST_DISPLAY}; install cargo-nextest with `{NEXTEST_INSTALL_HINT}` \
+                 or rerun with --use-cargo-test to skip the probe",
+            );
             run_cargo_tests(workspace)
         }
         Err(other) => Err(other),
