@@ -102,7 +102,6 @@ fn create_device_node_inner(
     )
 ))]
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
-    use std::convert::TryInto;
     use std::os::unix::fs::PermissionsExt;
 
     let mode_bits = permissions_mode(
@@ -110,9 +109,9 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
         destination,
         metadata.permissions().mode() & 0o777,
     )?;
-    let mode: libc::mode_t = mode_bits
-        .try_into()
-        .map_err(|_| invalid_mode_error("create fifo", destination))?;
+    // On Apple platforms, `libc::mode_t` is currently a type alias for `u16`,
+    // so this cast is infallible and does not require a checked conversion.
+    let mode: libc::mode_t = mode_bits as libc::mode_t;
 
     apple_fs::mkfifo(destination, mode)
         .map_err(|error| MetadataError::new("create fifo", destination, error))
@@ -131,7 +130,6 @@ fn create_device_node_inner(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    use std::convert::TryInto;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
@@ -155,9 +153,9 @@ fn create_device_node_inner(
         destination,
         metadata.permissions().mode() & 0o777,
     )?;
-    let permissions: libc::mode_t = perm_bits
-        .try_into()
-        .map_err(|_| invalid_mode_error("create device", destination))?;
+    // As above, `libc::mode_t` is a `u16` alias on Apple targets,
+    // so this is an infallible cast and cannot overflow.
+    let permissions: libc::mode_t = perm_bits as libc::mode_t;
     let device: libc::dev_t = metadata
         .rdev()
         .try_into()
