@@ -1,19 +1,23 @@
 use core::version::{
     DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_PROGRAM_NAME, PROGRAM_NAME,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
 fn unique_program_names(names: &[&'static str]) -> Vec<&'static str> {
-    let mut seen = BTreeSet::new();
-    names
-        .iter()
-        .copied()
-        .filter(|name| seen.insert(*name))
-        .collect()
+    let mut seen = HashSet::new();
+    let mut unique = Vec::new();
+
+    for name in names.iter().copied() {
+        if seen.insert(name) {
+            unique.push(name);
+        }
+    }
+
+    unique
 }
 
 fn client_binaries() -> Vec<&'static str> {
@@ -108,20 +112,23 @@ fn daemon_help_lists_usage() {
             continue;
         }
 
-        let output = binary_output(binary, &["--help"]);
-        assert!(output.status.success(), "{binary} --help should succeed");
+        let output = binary_output(binary, &["--daemon", "--help"]);
+        assert!(
+            output.status.success(),
+            "{binary} --daemon --help should succeed"
+        );
         assert!(
             output.stderr.is_empty(),
-            "{binary} help output should not write to stderr"
+            "{binary} daemon help output should not write to stderr"
         );
         let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
         assert!(
             stdout.contains("Usage:"),
-            "{binary} help output should contain a Usage: line, got:\n{stdout}"
+            "{binary} daemon help output should contain a Usage: line, got:\n{stdout}"
         );
         assert!(
             stdout.contains(binary),
-            "{binary} help output should mention the binary name, got:\n{stdout}"
+            "{binary} daemon help output should mention the binary name, got:\n{stdout}"
         );
     }
 }
@@ -139,15 +146,15 @@ fn daemon_rejects_unknown_flag() {
             continue;
         }
 
-        let output = binary_output(binary, &["--definitely-not-a-flag"]);
+        let output = binary_output(binary, &["--daemon", "--definitely-not-a-flag"]);
         assert!(
             !output.status.success(),
-            "unexpected flags should return a failure exit status for {binary}"
+            "unexpected flags should return a failure exit status for {binary} in daemon mode"
         );
         let combined = combined_utf8(&output);
         assert!(
             combined.contains("unknown option"),
-            "{binary} output for unknown flag should mention \"unknown option\", got:\n{combined}"
+            "{binary} daemon output for unknown flag should mention \"unknown option\", got:\n{combined}"
         );
     }
 }
@@ -492,6 +499,19 @@ mod locate_binary_tests {
             .unwrap_or_default()
             .as_nanos();
         format!("pid{}_{}_attempt{}", std::process::id(), timestamp, attempt)
+    }
+}
+
+#[cfg(test)]
+mod program_name_tests {
+    use super::unique_program_names;
+
+    #[test]
+    fn deduplicates_and_preserves_input_order() {
+        let names = ["rsync", "rsync", "oc-rsync", "rsync", "oc-rsyncd"];
+        let unique = unique_program_names(&names);
+
+        assert_eq!(unique, vec!["rsync", "oc-rsync", "oc-rsyncd"]);
     }
 }
 
