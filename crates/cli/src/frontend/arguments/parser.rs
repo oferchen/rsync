@@ -227,20 +227,14 @@ where
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let copy_devices = matches.get_flag("copy-devices");
-    let devices = if matches.get_flag("devices") || matches.get_flag("archive-devices") {
-        Some(true)
-    } else if matches.get_flag("no-devices") {
-        Some(false)
-    } else {
-        None
-    };
-    let specials = if matches.get_flag("specials") || matches.get_flag("archive-devices") {
-        Some(true)
-    } else if matches.get_flag("no-specials") {
-        Some(false)
-    } else {
-        None
-    };
+    let archive_devices =
+        tri_state_flag_positive_first(&matches, "archive-devices", "no-archive-devices");
+    let devices =
+        tri_state_flag_positive_first(&matches, "devices", "no-devices").or(archive_devices);
+    let specials =
+        tri_state_flag_positive_first(&matches, "specials", "no-specials").or(archive_devices);
+    let write_devices =
+        tri_state_flag_positive_first(&matches, "write-devices", "no-write-devices");
     let relative = tri_state_flag_positive_first(&matches, "relative", "no-relative");
     let one_file_system =
         tri_state_flag_positive_first(&matches, "one-file-system", "no-one-file-system");
@@ -505,6 +499,7 @@ where
         copy_unsafe_links: copy_unsafe_links_option,
         keep_dirlinks,
         safe_links,
+        write_devices,
         devices,
         copy_devices,
         specials,

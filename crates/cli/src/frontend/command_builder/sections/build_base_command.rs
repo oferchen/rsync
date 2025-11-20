@@ -491,7 +491,16 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                 Arg::new("archive-devices")
                     .short('D')
                     .help("Preserve device and special files (equivalent to --devices --specials).")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-archive-devices"),
+            )
+            .arg(
+                Arg::new("no-archive-devices")
+                    .long("no-D")
+                    .visible_alias("no-archive-devices")
+                    .help("Disable preservation of device and special files (negates -D).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("archive-devices"),
             )
             .arg(
                 Arg::new("devices")
@@ -507,11 +516,25 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("write-devices")
+                    .long("write-devices")
+                    .help("Write file data directly to device files instead of creating nodes.")
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with("no-write-devices"),
+            )
+            .arg(
                 Arg::new("no-devices")
                     .long("no-devices")
                     .help("Disable device file preservation.")
                     .action(ArgAction::SetTrue)
                     .conflicts_with("devices"),
+            )
+            .arg(
+                Arg::new("no-write-devices")
+                    .long("no-write-devices")
+                    .help("Do not write file data directly to device files.")
+                    .action(ArgAction::SetTrue)
+                    .conflicts_with("write-devices"),
             )
             .arg(
                 Arg::new("specials")
