@@ -29,10 +29,9 @@ pub fn parse_args<I>(args: I) -> TaskResult<TestOptions>
 where
     I: IntoIterator<Item = OsString>,
 {
-    let mut args = args.into_iter();
     let mut options = TestOptions::default();
 
-    while let Some(arg) = args.next() {
+    for arg in args.into_iter() {
         if is_help_flag(&arg) {
             return Err(TaskError::Help(usage()));
         }
