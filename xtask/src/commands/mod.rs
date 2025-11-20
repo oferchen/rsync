@@ -8,3 +8,4 @@ pub mod preflight;
 pub mod readme_version;
 pub mod release;
 pub mod sbom;
+pub mod test;
