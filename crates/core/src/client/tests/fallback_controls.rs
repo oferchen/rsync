@@ -220,6 +220,24 @@ fn remote_fallback_detects_missing_default_binary_on_path() {
     assert!(message.contains("is not available on PATH"));
 }
 
+#[test]
+fn remote_fallback_rejects_recursive_resolution() {
+    let _lock = env_lock().lock().expect("env mutex poisoned");
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let mut args = baseline_fallback_args();
+    args.fallback_binary = Some(std::env::current_exe().expect("current exe").into_os_string());
+
+    let error = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+        .expect_err("recursive fallback should be rejected");
+
+    assert_eq!(error.exit_code(), 1);
+    let message = format!("{error}");
+    assert!(message.contains("fallback resolution points to this oc-rsync executable"));
+}
+
 #[cfg(unix)]
 #[test]
 fn remote_fallback_reports_stdout_forward_errors() {

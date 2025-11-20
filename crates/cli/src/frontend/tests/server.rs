@@ -153,3 +153,32 @@ fn server_mode_reports_missing_fallback_binary() {
     assert!(stderr_text.contains(&missing_display));
     assert_contains_server_trailer(&stderr_text);
 }
+
+#[test]
+fn server_mode_rejects_recursive_fallback() {
+    use std::env;
+    use std::io;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+    let current = env::current_exe().expect("current exe");
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, current.as_os_str());
+
+    let mut stdout = io::sink();
+    let mut stderr = Vec::new();
+    let exit_code = run(
+        [
+            OsString::from(RSYNC),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 1);
+    let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
+    assert!(stderr_text.contains("resolves to this oc-rsync executable"));
+    assert_contains_server_trailer(&stderr_text);
+}
