@@ -263,3 +263,69 @@ fn transfer_request_with_sparse_and_append_verify_uses_dense_allocation() {
     assert_eq!(dense_meta.len(), sparse_meta.len());
     assert_eq!(sparse_meta.blocks(), dense_meta.blocks());
 }
+
+#[cfg(unix)]
+#[test]
+fn transfer_request_with_sparse_and_inplace_uses_dense_allocation() {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let base = tmp.path().join("inplace-base.bin");
+    let mut base_file = fs::File::create(&base).expect("create base");
+    base_file
+        .write_all(&vec![0x24; 2048])
+        .expect("write base prefix");
+    base_file.flush().expect("flush base");
+    drop(base_file);
+
+    let dense_dest = tmp.path().join("inplace-dense.bin");
+    let sparse_dest = tmp.path().join("inplace-sparse.bin");
+
+    fs::copy(&base, &dense_dest).expect("seed dense destination");
+    fs::copy(&base, &sparse_dest).expect("seed sparse destination");
+
+    let updated_source = tmp.path().join("inplace-source.bin");
+    fs::copy(&base, &updated_source).expect("copy base to updated source");
+    let mut updated_file = OpenOptions::new()
+        .append(true)
+        .open(&updated_source)
+        .expect("open updated source");
+    updated_file
+        .write_all(&vec![0u8; 1_048_576])
+        .expect("write zero run");
+    updated_file
+        .write_all(&[0x7a])
+        .expect("write trailing byte");
+    updated_file.flush().expect("flush updated source");
+    drop(updated_file);
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--inplace"),
+        updated_source.as_os_str().to_os_string(),
+        dense_dest.as_os_str().to_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--sparse"),
+        OsString::from("--inplace"),
+        updated_source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    assert_eq!(dense_meta.len(), sparse_meta.len());
+    assert_eq!(sparse_meta.blocks(), dense_meta.blocks());
+}
