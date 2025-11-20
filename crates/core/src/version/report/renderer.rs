@@ -189,10 +189,7 @@ impl VersionInfoReport {
 
     /// Internal helper for the GPL footer. Single fmt call, no allocations.
     fn write_gpl_footer<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
-        // Derive the program name from the standard banner to avoid hardcoding.
-        // If you ever expose `VersionMetadata::program_name()`, use that instead.
-        let banner = self.metadata.standard_banner();
-        let program_name = banner.split_whitespace().next().unwrap_or("This program");
+        let program_name = self.metadata.program_name();
 
         writeln!(
             writer,
