@@ -68,6 +68,13 @@ fn env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn clear_availability_cache() {
+    availability::availability_cache()
+        .lock()
+        .expect("availability cache lock")
+        .clear();
+}
+
 #[test]
 fn describe_missing_fallback_binary_lists_single_env() {
     let message =
@@ -139,6 +146,71 @@ fn fallback_binary_path_resolves_executable() {
 
     let resolved = fallback_binary_path(temp.path().as_os_str());
     assert_eq!(resolved.as_deref(), Some(temp.path()));
+}
+
+#[test]
+fn fallback_binary_path_refreshes_after_negative_cache_ttl() {
+    let _lock = env_lock().lock().expect("env lock");
+    clear_availability_cache();
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let binary_name = OsStr::new("oc-rsync-refresh-test");
+    let binary_path = temp_dir.path().join(binary_name);
+
+    let _path_guard = EnvGuard::set_os("PATH", temp_dir.path().as_os_str());
+
+    assert!(fallback_binary_path(binary_name).is_none());
+
+    File::create(&binary_path).expect("create binary");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&binary_path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary_path, permissions).expect("chmod");
+    }
+
+    thread::sleep(availability::NEGATIVE_CACHE_TTL + Duration::from_millis(50));
+
+    let resolved = fallback_binary_path(binary_name);
+    assert_eq!(resolved.as_deref(), Some(binary_path.as_path()));
+}
+
+#[test]
+fn fallback_binary_path_revalidates_removed_executable() {
+    let _lock = env_lock().lock().expect("env lock");
+    clear_availability_cache();
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let binary_name = OsStr::new("oc-rsync-revalidate-test");
+    let binary_path = temp_dir.path().join(binary_name);
+
+    let _path_guard = EnvGuard::set_os("PATH", temp_dir.path().as_os_str());
+
+    {
+        let mut file = File::create(&binary_path).expect("create binary");
+        writeln!(file, "#!/bin/sh\nexit 0").expect("write binary body");
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&binary_path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary_path, permissions).expect("chmod");
+    }
+
+    assert_eq!(
+        fallback_binary_path(binary_name).as_deref(),
+        Some(binary_path.as_path())
+    );
+
+    fs::remove_file(&binary_path).expect("remove binary");
+
+    assert!(fallback_binary_path(binary_name).is_none());
 }
 
 #[test]
