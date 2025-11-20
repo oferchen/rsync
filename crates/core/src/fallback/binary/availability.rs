@@ -74,40 +74,42 @@ pub(super) const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(1);
 #[must_use]
 pub fn fallback_binary_path(binary: &OsStr) -> Option<PathBuf> {
     let key = CacheKey::new(binary);
-    let cache = availability_cache();
+    let mut cache = availability_cache()
+        .lock()
+        .expect("fallback availability cache lock poisoned");
 
-    let cached_entry = {
-        let guard = cache
-            .lock()
-            .expect("fallback availability cache lock poisoned");
-        guard.get(&key).cloned()
-    };
-
-    if let Some(entry) = cached_entry {
-        if entry.result {
-            if let Some(path) = entry.matched_path.clone() {
-                if candidate_is_executable(&path) {
-                    return Some(path);
-                }
-            }
-        } else if entry.recorded_at.elapsed() < NEGATIVE_CACHE_TTL {
-            return None;
-        }
-
-        cache
-            .lock()
-            .expect("fallback availability cache lock poisoned")
-            .remove(&key);
+    if let Some(result) = cached_result(&mut cache, &key) {
+        return result;
     }
 
     let (available, matched_path) = evaluate_availability(binary);
 
-    cache
-        .lock()
-        .expect("fallback availability cache lock poisoned")
-        .insert(key, AvailabilityEntry::new(available, matched_path.clone()));
+    cache.insert(key, AvailabilityEntry::new(available, matched_path.clone()));
 
     if available { matched_path } else { None }
+}
+
+fn cached_result(
+    cache: &mut HashMap<CacheKey, AvailabilityEntry>,
+    key: &CacheKey,
+) -> Option<Option<PathBuf>> {
+    let (result, matched_path, recorded_at) = {
+        let entry = cache.get(key)?;
+        (entry.result, entry.matched_path.clone(), entry.recorded_at)
+    };
+
+    if result {
+        if let Some(path) = matched_path.as_ref() {
+            if candidate_is_executable(path) {
+                return Some(Some(path.clone()));
+            }
+        }
+    } else if recorded_at.elapsed() < NEGATIVE_CACHE_TTL {
+        return Some(None);
+    }
+
+    cache.remove(key);
+    None
 }
 
 /// Reports whether the provided fallback executable exists and is runnable.
