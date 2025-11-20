@@ -57,7 +57,7 @@ mod workspace;
 
 use crate::commands::{
     branding, docs, enforce_limits, no_binaries, no_placeholders, package, preflight,
-    readme_version, release, sbom,
+    readme_version, release, sbom, test,
 };
 use crate::error::TaskError;
 use crate::util::is_help_flag;
@@ -151,6 +151,11 @@ where
             let workspace = workspace_root()?;
             package::execute(&workspace, options)
         }
+        "test" => {
+            let options = test::parse_args(args)?;
+            let workspace = workspace_root()?;
+            test::execute(&workspace, options)
+        }
         other => Err(TaskError::Usage(format!(
             "unrecognised command '{other}'; run with --help for available tasks"
         ))),
@@ -169,6 +174,7 @@ fn top_level_usage() -> String {
         "  preflight        Run packaging preflight validation\n",
         "  release         Run aggregated release-readiness checks\n",
         "  readme-version   Ensure README versions match workspace metadata\n",
+        "  test            Run the workspace test suite (prefers cargo-nextest)\n",
         "  sbom             Generate a CycloneDX SBOM for the workspace\n",
         "  help             Show this help message\n\n",
         "Run `cargo xtask <command> --help` for command-specific options."
@@ -185,6 +191,7 @@ mod tests {
         assert!(usage.contains("enforce-limits"));
         assert!(usage.contains("readme-version"));
         assert!(usage.contains("release"));
+        assert!(usage.contains("test"));
     }
 
     #[test]
