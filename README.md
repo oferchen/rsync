@@ -225,6 +225,18 @@ AGENTS.md               # Internal agent roles & conventions
 
 ## Development
 
+### Prerequisites
+
+* Rust toolchain 1.88.0 (managed via `rust-toolchain.toml`).
+* [`cargo-nextest`](https://nexte.st/) for running the test suite:
+
+  ```bash
+  cargo install cargo-nextest --locked
+  ```
+
+* [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) if you want to
+  generate coverage reports locally.
+
 ### Linting and formatting
 
 ```bash
