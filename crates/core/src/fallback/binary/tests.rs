@@ -4,11 +4,12 @@ use super::{
 };
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs::File;
-#[cfg(not(unix))]
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::Duration;
 use tempfile::{NamedTempFile, TempDir};
 
 struct EnvGuard {
@@ -197,6 +198,67 @@ fn unix_mode_treats_root_as_universal_executor() {
     assert!(!super::unix::unix_mode_allows_execution(
         0o000, 3_000, 500, &root
     ));
+}
+
+#[test]
+fn fallback_binary_revalidates_removed_executable() {
+    let temp = NamedTempFile::new().expect("tempfile");
+    let path = temp.into_temp_path();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("chmod");
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut file = File::create(&path).expect("create file");
+        writeln!(file, "echo ok").expect("write");
+    }
+
+    assert!(fallback_binary_available(path.as_os_str()));
+
+    fs::remove_file(&path).expect("remove file");
+
+    assert!(!fallback_binary_available(path.as_os_str()));
+}
+
+#[test]
+fn fallback_binary_negative_cache_expires() {
+    let temp_dir = TempDir::new().expect("tempdir");
+    let path = temp_dir.path().join("rsync-candidate");
+
+    availability::availability_cache()
+        .lock()
+        .expect("cache lock")
+        .clear();
+
+    assert!(!fallback_binary_available(path.as_os_str()));
+
+    thread::sleep(availability::NEGATIVE_CACHE_TTL + Duration::from_millis(20));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut file = File::create(&path).expect("create file");
+        file.flush().expect("flush");
+        let mut permissions = file.metadata().expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("chmod");
+    }
+
+    #[cfg(not(unix))]
+    {
+        let mut file = File::create(&path).expect("create file");
+        writeln!(file, "echo ok").expect("write");
+    }
+
+    assert!(fallback_binary_available(path.as_os_str()));
 }
 
 #[test]
