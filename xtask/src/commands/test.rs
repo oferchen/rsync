@@ -17,6 +17,7 @@ const CARGO_TEST_INSTALL_HINT: &str = "install Rust and cargo from https://rustu
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TestOptions {
     force_cargo_test: bool,
+    install_nextest: bool,
 }
 
 /// Parses CLI arguments for the `test` command.
@@ -33,6 +34,7 @@ where
 
         match arg.to_string_lossy().as_ref() {
             "--use-cargo-test" => options.force_cargo_test = true,
+            "--install-nextest" => options.install_nextest = true,
             other => {
                 return Err(TaskError::Usage(format!(
                     "unrecognised argument '{other}' for test command"
@@ -54,6 +56,15 @@ pub fn execute(workspace: &Path, options: TestOptions) -> TaskResult<()> {
         Ok(()) => Ok(()),
         Err(TaskError::ToolMissing(message)) => {
             println!("{message}");
+            if options.install_nextest {
+                install_nextest(workspace)?;
+
+                match run_nextest(workspace) {
+                    Ok(()) => return Ok(()),
+                    Err(TaskError::ToolMissing(message)) => println!("{message}"),
+                    Err(other) => return Err(other),
+                }
+            }
             println!("{}", fallback_to_cargo_test_message());
             run_cargo_tests(workspace)
         }
@@ -86,11 +97,23 @@ fn run_cargo_tests(workspace: &Path) -> TaskResult<()> {
     )
 }
 
+fn install_nextest(workspace: &Path) -> TaskResult<()> {
+    run_cargo_tool(
+        workspace,
+        NEXTEST_INSTALL_COMMAND
+            .split_whitespace()
+            .map(OsString::from)
+            .collect(),
+        NEXTEST_INSTALL_COMMAND,
+        NEXTEST_INSTALL_HINT,
+    )
+}
+
 /// Returns usage text for the command.
 pub fn usage() -> String {
     String::from(
-        "Usage: cargo xtask test [--use-cargo-test]\\n\\n\\\
-Options:\\n  --use-cargo-test  Force running cargo test even when cargo-nextest is available\\n  -h, --help        Show this help message",
+        "Usage: cargo xtask test [--use-cargo-test] [--install-nextest]\\n\\n\\\
+Options:\\n  --use-cargo-test    Force running cargo test even when cargo-nextest is available\\n  --install-nextest   Install cargo-nextest when missing before falling back to cargo test\\n  -h, --help          Show this help message",
     )
 }
 
@@ -167,6 +190,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_supports_install_nextest_flag() {
+        let options = parse_args([OsString::from("--install-nextest")]).expect("parse succeeds");
+        assert!(options.install_nextest);
+    }
+
+    #[test]
     fn parse_args_reports_help_request() {
         let error = parse_args([OsString::from("--help")]).unwrap_err();
         assert!(matches!(error, TaskError::Help(message) if message == usage()));
@@ -212,8 +241,25 @@ mod tests {
             workspace.as_path(),
             TestOptions {
                 force_cargo_test: true,
+                install_nextest: false,
             },
         )
         .expect("cargo test invocation succeeds");
+    }
+
+    #[test]
+    fn execute_attempts_install_when_requested() {
+        let _cargo = guard_cargo("true");
+        let _missing = guard_force_missing(NEXTEST_DISPLAY);
+        let workspace = workspace_root().expect("workspace root");
+
+        execute(
+            workspace.as_path(),
+            TestOptions {
+                force_cargo_test: false,
+                install_nextest: true,
+            },
+        )
+        .expect("install path falls back to cargo test");
     }
 }
