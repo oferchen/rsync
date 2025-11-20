@@ -151,6 +151,8 @@ pub struct RemoteFallbackArgs {
     pub devices: Option<bool>,
     /// Enables `--copy-devices` when `true`.
     pub copy_devices: bool,
+    /// Enables `--write-devices` when `true`.
+    pub write_devices: bool,
     /// Optional `--specials`/`--no-specials` toggle.
     pub specials: Option<bool>,
     /// Optional `--relative`/`--no-relative` toggle.

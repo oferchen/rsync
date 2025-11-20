@@ -318,6 +318,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         fuzzy: None,
         devices: None,
         copy_devices: false,
+        write_devices: false,
         specials: None,
         relative: None,
         one_file_system: None,

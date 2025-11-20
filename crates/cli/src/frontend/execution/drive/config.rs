@@ -58,6 +58,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) omit_link_times: bool,
     pub(crate) devices: bool,
     pub(crate) copy_devices: bool,
+    pub(crate) write_devices: bool,
     pub(crate) specials: bool,
     pub(crate) force_replacements: bool,
     pub(crate) checksum: bool,
@@ -171,6 +172,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .omit_link_times(inputs.omit_link_times)
         .devices(inputs.devices)
         .copy_devices(inputs.copy_devices)
+        .write_devices(inputs.write_devices)
         .specials(inputs.specials)
         .force_replacements(inputs.force_replacements)
         .checksum(inputs.checksum)

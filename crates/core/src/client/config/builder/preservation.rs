@@ -44,6 +44,14 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Enables or disables writing file data directly to device files.
+    #[must_use]
+    #[doc(alias = "--write-devices")]
+    pub const fn write_devices(mut self, write_devices: bool) -> Self {
+        self.write_devices = write_devices;
+        self
+    }
+
     /// Preserves existing destination symlinks that refer to directories.
     #[must_use]
     #[doc(alias = "--keep-dirlinks")]
