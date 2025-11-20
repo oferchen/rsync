@@ -13,7 +13,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 `oc-rsync` is approaching final stabilization: the core feature set is complete and production-ready, and current work focuses on edge cases, interoperability, and overall ergonomics.
 
-Preliminary packages (`.deb`, `.rpm`, Homebrew formula, and tarballs) are available on the Releases page.
+Preliminary packages (`.deb`, `.rpm`, Homebrew formula, and tarballs) are available on the [Releases](https://github.com/oferchen/rsync/releases) page.
 
 ---
 
