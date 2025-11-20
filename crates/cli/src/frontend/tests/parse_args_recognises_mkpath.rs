@@ -42,6 +42,19 @@ fn parse_args_recognises_old_dirs_alias() {
 }
 
 #[test]
+fn parse_args_recognises_old_d_alias() {
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--old-d"),
+        OsString::from("source"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(!parsed.mkpath);
+}
+
+#[test]
 fn parse_args_no_mkpath_allows_later_mkpath_override() {
     let parsed = parse_args([
         OsString::from(RSYNC),

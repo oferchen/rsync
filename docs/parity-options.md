@@ -22,8 +22,8 @@ workspace.
 
 | status | count |
 |---|---:|
-| implemented | 161 |
-| missing | 90 |
+| implemented | 164 |
+| missing | 87 |
 
 `missing` entries denote upstream flags that are absent from the current
 `oc-rsync` help surface. Many of these are `--no-*` aliases that suppress a
@@ -38,13 +38,13 @@ must be closed before we can claim full compatibility.
 | daemon | 3 | 2 |
 | deletion | 13 | 0 |
 | filters | 9 | 0 |
-| general | 51 | 71 |
+| general | 52 | 70 |
 | logging | 7 | 3 |
 | metadata | 23 | 4 |
 | transfer | 29 | 5 |
-| traversal | 14 | 2 |
+| traversal | 16 | 0 |
 
-The `general` bucket (71 missing options) is dominated by compatibility
+The `general` bucket (70 missing options) is dominated by compatibility
 aliases such as `--no-r`, `--no-g`, and `--no-times`, together with
 functionality that is currently absent (`--links`, `--fake-super`, daemon-only
 options such as `--config`, etc.).
@@ -56,7 +56,7 @@ options such as `--config`, etc.).
 - **daemon** (2):
   --config, --motd
 - **filters** (0): (none)
-- **general** (71):
+- **general** (70):
   --8-bit-output, --cc, --copy-as, --detach, --dparam, --early-input, --executability,
   --fake-super, --force, --fuzzy, --i-d, --ignore-errors, --ignore-non-existing,
   --links, --max-alloc, --munge-links, --no-8, --no-8-bit-output, --no-A, --no-D,
@@ -64,7 +64,7 @@ options such as `--config`, etc.).
   --no-c, --no-d, --no-detach, --no-force, --no-fuzzy, --no-g, --no-h, --no-i,
   --no-i-d, --no-ignore-errors, --no-l, --no-links, --no-m, --no-munge-links,
   --no-o, --no-old-args, --no-p, --no-r, --no-s, --no-t, --no-v, --no-write-devices,
-  --no-x, --no-y, --no-z, --old-args, --old-d, --only-write-batch, --qsort, --quiet,
+  --no-x, --no-y, --no-z, --old-args, --only-write-batch, --qsort, --quiet,
   --read-batch, --sender, --server, --stderr, --stop-after, --stop-at, --time-limit,
   --trust-sender, --write-batch, --write-devices, --zc, --zl
 - **logging** (2):
@@ -73,8 +73,7 @@ options such as `--config`, etc.).
   --atimes, --crtimes, --no-atimes, --no-crtimes
 - **transfer** (5):
   --compress-choice, --log-format, --new-compress, --no-checksum, --old-compress
-- **traversal** (2):
-  --no-mkpath, --old-dirs
+- **traversal** (0): (none)
 
 ### oc-rsync–only switches
 

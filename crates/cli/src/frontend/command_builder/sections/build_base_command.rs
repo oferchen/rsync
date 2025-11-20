@@ -216,6 +216,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                 Arg::new("no-mkpath")
                     .long("no-mkpath")
                     .visible_alias("old-dirs")
+                    .visible_alias("old-d")
                     .help("Disable creation of destination path components (compatibility with older rsync releases).")
                     .action(ArgAction::SetTrue)
                     .overrides_with("mkpath"),
