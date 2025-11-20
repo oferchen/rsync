@@ -133,6 +133,20 @@ fn fallback_binary_is_self_detects_current_process() {
 }
 
 #[cfg(unix)]
+#[test]
+fn fallback_binary_is_self_accepts_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let current = env::current_exe().expect("current exe");
+    let temp_dir = TempDir::new().expect("tempdir");
+    let symlink_path = temp_dir.path().join("oc-rsync-symlink");
+
+    symlink(&current, &symlink_path).expect("create symlink to current executable");
+
+    assert!(fallback_binary_is_self(&symlink_path));
+}
+
+#[cfg(unix)]
 fn identity(euid: u32, egid: u32, groups: &[u32]) -> super::unix::UnixProcessIdentity {
     super::unix::UnixProcessIdentity::for_tests(euid, egid, groups)
 }
