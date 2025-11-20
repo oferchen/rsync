@@ -82,6 +82,7 @@ use std::ffi::{OsStr, OsString};
 
 pub use binary::{
     describe_missing_fallback_binary, fallback_binary_available, fallback_binary_candidates,
+    fallback_binary_is_self, fallback_binary_path,
 };
 
 /// Name of the client fallback override environment variable.

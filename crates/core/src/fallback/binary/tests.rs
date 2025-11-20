@@ -1,6 +1,6 @@
 use super::{
     availability, describe_missing_fallback_binary, fallback_binary_available,
-    fallback_binary_candidates,
+    fallback_binary_candidates, fallback_binary_is_self, fallback_binary_path,
 };
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -96,6 +96,40 @@ fn fallback_binary_available_detects_executable() {
     }
 
     assert!(fallback_binary_available(temp.path().as_os_str()));
+}
+
+#[test]
+fn fallback_binary_path_resolves_executable() {
+    #[allow(unused_mut)]
+    let mut temp = NamedTempFile::new().expect("tempfile");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = temp.as_file().metadata().expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        temp.as_file().set_permissions(permissions).expect("chmod");
+    }
+
+    #[cfg(not(unix))]
+    {
+        writeln!(temp, "echo ok").expect("write");
+    }
+
+    let resolved = fallback_binary_path(temp.path().as_os_str());
+    assert_eq!(resolved.as_deref(), Some(temp.path()));
+}
+
+#[test]
+fn fallback_binary_is_self_detects_current_process() {
+    let current = env::current_exe().expect("current exe");
+    assert!(fallback_binary_is_self(&current));
+
+    let temp_dir = TempDir::new().expect("tempdir");
+    let other_path = temp_dir.path().join("other");
+    File::create(&other_path).expect("create other file");
+    assert!(!fallback_binary_is_self(&other_path));
 }
 
 #[cfg(unix)]

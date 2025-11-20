@@ -11,7 +11,7 @@ use std::thread;
 use core::branding::Brand;
 use core::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_available, fallback_override,
+    fallback_binary_is_self, fallback_binary_path, fallback_override,
 };
 use core::message::Role;
 use core::rsync_error;
@@ -123,14 +123,23 @@ where
         None => OsString::from(upstream_program),
     };
 
-    if !fallback_binary_available(fallback.as_os_str()) {
+    let Some(resolved_fallback) = fallback_binary_path(fallback.as_os_str()) else {
         let diagnostic =
             describe_missing_fallback_binary(fallback.as_os_str(), &[CLIENT_FALLBACK_ENV]);
         write_server_fallback_error(stderr, program_brand, diagnostic);
         return 1;
+    };
+
+    if fallback_binary_is_self(&resolved_fallback) {
+        let text = format!(
+            "remote server mode is unavailable because the fallback binary '{}' resolves to this oc-rsync executable; install upstream {upstream_program} or set {CLIENT_FALLBACK_ENV} to a different path",
+            resolved_fallback.display()
+        );
+        write_server_fallback_error(stderr, program_brand, text);
+        return 1;
     }
 
-    let mut command = Command::new(&fallback);
+    let mut command = Command::new(&resolved_fallback);
     command.args(args.iter().skip(1));
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::piped());

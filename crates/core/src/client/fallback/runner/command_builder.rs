@@ -8,7 +8,7 @@ use super::helpers::{fallback_error, prepare_file_list, push_human_readable, pus
 use crate::client::{AddressMode, ClientError, DeleteMode, IconvSetting, TransferTimeout};
 use crate::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_available, fallback_override,
+    fallback_binary_is_self, fallback_binary_path, fallback_override,
 };
 
 /// Prepared command invocation for the legacy fallback binary.
@@ -711,17 +711,24 @@ pub(crate) fn prepare_invocation(
         }
     };
 
-    if !fallback_binary_available(binary.as_os_str()) {
+    let Some(resolved_binary) = fallback_binary_path(binary.as_os_str()) else {
         let diagnostic =
             describe_missing_fallback_binary(binary.as_os_str(), &[CLIENT_FALLBACK_ENV]);
         let display = Path::new(binary.as_os_str()).display();
         return Err(fallback_error(format!(
             "failed to launch fallback rsync binary '{display}': {diagnostic}"
         )));
+    };
+
+    if fallback_binary_is_self(&resolved_binary) {
+        let display = resolved_binary.display();
+        return Err(fallback_error(format!(
+            "failed to launch fallback rsync binary '{display}': fallback resolution points to this oc-rsync executable; install upstream rsync or set {CLIENT_FALLBACK_ENV} to a different path"
+        )));
     }
 
     Ok(PreparedInvocation {
-        binary,
+        binary: resolved_binary.into_os_string(),
         args: command_args,
         daemon_password,
         files_from_temp,

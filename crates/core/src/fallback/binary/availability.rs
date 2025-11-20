@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -57,13 +58,13 @@ pub(super) const NEGATIVE_CACHE_TTL: Duration = Duration::from_millis(100);
 #[cfg(not(test))]
 pub(super) const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(1);
 
-/// Reports whether the provided fallback executable exists and is runnable.
+/// Resolves the provided fallback executable to an executable path if one is available.
 ///
 /// The computation memoises its result for the current `PATH` (and `PATHEXT`
 /// on Windows) so repeated availability checks avoid re-walking identical
 /// search paths.
 #[must_use]
-pub fn fallback_binary_available(binary: &OsStr) -> bool {
+pub fn fallback_binary_path(binary: &OsStr) -> Option<PathBuf> {
     let key = CacheKey::new(binary);
     let cache = availability_cache();
 
@@ -76,13 +77,13 @@ pub fn fallback_binary_available(binary: &OsStr) -> bool {
 
     if let Some(entry) = cached_entry {
         if entry.result {
-            if let Some(path) = entry.matched_path {
+            if let Some(path) = entry.matched_path.clone() {
                 if candidate_is_executable(&path) {
-                    return true;
+                    return Some(path);
                 }
             }
         } else if entry.recorded_at.elapsed() < NEGATIVE_CACHE_TTL {
-            return false;
+            return None;
         }
 
         cache
@@ -96,8 +97,32 @@ pub fn fallback_binary_available(binary: &OsStr) -> bool {
     cache
         .lock()
         .expect("fallback availability cache lock poisoned")
-        .insert(key, AvailabilityEntry::new(available, matched_path));
-    available
+        .insert(key, AvailabilityEntry::new(available, matched_path.clone()));
+
+    if available { matched_path } else { None }
+}
+
+/// Reports whether the provided fallback executable exists and is runnable.
+///
+/// The computation memoises its result for the current `PATH` (and `PATHEXT`
+/// on Windows) so repeated availability checks avoid re-walking identical
+/// search paths.
+#[must_use]
+pub fn fallback_binary_available(binary: &OsStr) -> bool {
+    fallback_binary_path(binary).is_some()
+}
+
+/// Reports whether the provided executable path resolves to the current process binary.
+#[must_use]
+pub fn fallback_binary_is_self(path: &Path) -> bool {
+    let Ok(current_exe) = env::current_exe() else {
+        return false;
+    };
+
+    let canonical_current = current_exe.canonicalize().unwrap_or(current_exe);
+    let canonical_target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    canonical_current == canonical_target
 }
 
 fn evaluate_availability(binary: &OsStr) -> (bool, Option<PathBuf>) {
@@ -111,7 +136,7 @@ fn evaluate_availability(binary: &OsStr) -> (bool, Option<PathBuf>) {
 }
 
 fn candidate_is_executable(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
+    let Ok(metadata) = fs::metadata(path) else {
         return false;
     };
 
