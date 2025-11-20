@@ -15,6 +15,13 @@ import pathlib
 import re
 import sys
 
+if sys.version_info < (3, 11):
+    print(
+        f"[ERROR] Python 3.11+ is required for tomllib; found {sys.version.split()[0]}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 from pathlib import PurePosixPath
 
 import tomllib
