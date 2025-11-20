@@ -136,6 +136,8 @@ mod parse_args_recognises_existing_tests;
 mod parse_args_recognises_force_tests;
 #[path = "parse_args_recognises_fsync.rs"]
 mod parse_args_recognises_fsync_tests;
+#[path = "parse_args_recognises_fuzzy.rs"]
+mod parse_args_recognises_fuzzy_tests;
 #[path = "parse_args_recognises_group.rs"]
 mod parse_args_recognises_group_tests;
 #[path = "parse_args_recognises_hard.rs"]
@@ -280,6 +282,8 @@ mod remote_fallback_forwards_files_tests;
 mod remote_fallback_forwards_filter_tests;
 #[path = "remote_fallback_forwards_fsync.rs"]
 mod remote_fallback_forwards_fsync_tests;
+#[path = "remote_fallback_forwards_fuzzy.rs"]
+mod remote_fallback_forwards_fuzzy_tests;
 #[path = "remote_fallback_forwards_hard.rs"]
 mod remote_fallback_forwards_hard_tests;
 #[path = "remote_fallback_forwards_human.rs"]

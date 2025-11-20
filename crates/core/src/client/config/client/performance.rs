@@ -60,6 +60,14 @@ impl ClientConfig {
         self.sparse
     }
 
+    /// Reports whether fuzzy basis file matching was requested.
+    #[must_use]
+    #[doc(alias = "--fuzzy")]
+    #[doc(alias = "-y")]
+    pub const fn fuzzy(&self) -> bool {
+        self.fuzzy
+    }
+
     /// Returns the configured delta-transfer block size override, if any.
     #[must_use]
     #[doc(alias = "--block-size")]

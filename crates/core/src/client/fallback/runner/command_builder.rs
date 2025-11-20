@@ -88,6 +88,7 @@ pub(crate) fn prepare_invocation(
         keep_dirlinks,
         safe_links,
         sparse,
+        fuzzy,
         devices,
         copy_devices,
         specials,
@@ -420,6 +421,7 @@ pub(crate) fn prepare_invocation(
         command_args.push(OsString::from("--safe-links"));
     }
     push_toggle(&mut command_args, "--sparse", "--no-sparse", sparse);
+    push_toggle(&mut command_args, "--fuzzy", "--no-fuzzy", fuzzy);
     push_toggle(&mut command_args, "--devices", "--no-devices", devices);
     if copy_devices {
         command_args.push(OsString::from("--copy-devices"));

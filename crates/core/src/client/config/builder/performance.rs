@@ -101,4 +101,14 @@ impl ClientConfigBuilder {
         self.sparse = sparse;
         self
     }
+
+    /// Enables or disables fuzzy basis file search during delta transfers.
+    #[must_use]
+    #[doc(alias = "--fuzzy")]
+    #[doc(alias = "--no-fuzzy")]
+    #[doc(alias = "-y")]
+    pub const fn fuzzy(mut self, fuzzy: bool) -> Self {
+        self.fuzzy = fuzzy;
+        self
+    }
 }

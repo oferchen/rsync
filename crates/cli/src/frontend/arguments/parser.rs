@@ -212,6 +212,7 @@ where
     let hard_links = tri_state_flag_positive_first(&matches, "hard-links", "no-hard-links");
     let links = tri_state_flag_positive_first(&matches, "links", "no-links");
     let sparse = tri_state_flag_positive_first(&matches, "sparse", "no-sparse");
+    let fuzzy = tri_state_flag_positive_first(&matches, "fuzzy", "no-fuzzy");
     let copy_links = tri_state_flag_positive_first(&matches, "copy-links", "no-copy-links");
     let copy_dirlinks = matches.get_flag("copy-dirlinks");
     let copy_unsafe_links_option = if matches.get_flag("copy-unsafe-links") {
@@ -498,6 +499,7 @@ where
         hard_links,
         links,
         sparse,
+        fuzzy,
         copy_links,
         copy_dirlinks,
         copy_unsafe_links: copy_unsafe_links_option,
