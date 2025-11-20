@@ -58,8 +58,14 @@ fn client_help_lists_usage() {
             "{binary} help output should not write to stderr"
         );
         let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
-        assert!(stdout.contains("Usage:"));
-        assert!(stdout.contains(binary));
+        assert!(
+            stdout.contains("Usage:"),
+            "{binary} help output should contain a Usage: line, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains(binary),
+            "{binary} help output should mention the binary name, got:\n{stdout}"
+        );
     }
 }
 
@@ -82,7 +88,10 @@ fn client_without_operands_shows_usage() {
             "running {binary} without operands should fail so the caller sees the usage"
         );
         let combined = combined_utf8(&output);
-        assert!(combined.contains("Usage:"));
+        assert!(
+            combined.contains("Usage:"),
+            "{binary} output without operands should contain Usage:, got:\n{combined}"
+        );
     }
 }
 
@@ -106,8 +115,14 @@ fn daemon_help_lists_usage() {
             "{binary} help output should not write to stderr"
         );
         let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
-        assert!(stdout.contains("Usage:"));
-        assert!(stdout.contains(binary));
+        assert!(
+            stdout.contains("Usage:"),
+            "{binary} help output should contain a Usage: line, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains(binary),
+            "{binary} help output should mention the binary name, got:\n{stdout}"
+        );
     }
 }
 
@@ -130,7 +145,10 @@ fn daemon_rejects_unknown_flag() {
             "unexpected flags should return a failure exit status for {binary}"
         );
         let combined = combined_utf8(&output);
-        assert!(combined.contains("unknown option"));
+        assert!(
+            combined.contains("unknown option"),
+            "{binary} output for unknown flag should mention \"unknown option\", got:\n{combined}"
+        );
     }
 }
 
@@ -152,6 +170,18 @@ fn binary_command(name: &str) -> Command {
     }
 }
 
+/// Locate a test binary built by Cargo.
+///
+/// Resolution order:
+/// 1. `CARGO_BIN_EXE_<name>` environment variable set by Cargo.
+/// 2. Walk upwards from the current executable looking for a `target`
+///    directory and common `{debug,release}` subdirectories.
+/// 3. Fallback to a sibling of the current executable, stripping a trailing
+///    `deps/` segment when present.
+///
+/// System-wide `PATH` is **intentionally ignored** to avoid picking up host
+/// binaries (for example, `/usr/bin/rsync`) that do not match oc-rsync
+/// behaviour, which would make the tests environment-dependent.
 fn locate_binary(name: &str) -> Option<PathBuf> {
     let env_var = format!("CARGO_BIN_EXE_{name}");
     if let Some(path) = env::var_os(&env_var) {
@@ -200,15 +230,7 @@ fn locate_binary(name: &str) -> Option<PathBuf> {
         }
     }
 
-    if let Some(path_var) = env::var_os("PATH") {
-        for dir in env::split_paths(&path_var) {
-            let candidate = dir.join(&binary_name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-
+    // Fallback: resolve beside the test binary (e.g. target/debug/oc-rsync)
     let mut fallback_dir = current_exe;
     fallback_dir.pop();
     if fallback_dir.ends_with("deps") {
@@ -345,26 +367,21 @@ mod locate_binary_tests {
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn finds_binary_via_path_search() {
+    fn resolves_binary_from_cargo_env_var() {
         let _guard = ENV_MUTEX.lock().expect("env mutex poisoned");
 
         let temp_dir = TempDir::create().expect("failed to create temporary directory");
-        let binary_name = "rsync_locate_binary";
+        let binary_name = "rsync_locate_binary_env";
         let binary_path = temp_dir
             .path()
             .join(format!("{binary_name}{}", std::env::consts::EXE_SUFFIX));
         fs::write(&binary_path, b"test binary").expect("failed to write binary placeholder");
 
-        let mut paths = vec![temp_dir.path().to_path_buf()];
-        if let Some(original) = env::var_os("PATH") {
-            paths.extend(env::split_paths(&original));
-        }
-
-        let joined = env::join_paths(&paths).expect("failed to build PATH");
-        let _path_guard = EnvVarGuard::set("PATH", joined);
+        let env_key = format!("CARGO_BIN_EXE_{binary_name}");
+        let _env_guard = EnvVarGuard::set(env_key, OsString::from(&binary_path));
 
         let resolved = locate_binary(binary_name)
-            .unwrap_or_else(|| panic!("expected {binary_name} to be resolved"));
+            .unwrap_or_else(|| panic!("expected {binary_name} to be resolved from env var"));
         assert_eq!(resolved, binary_path);
     }
 
@@ -379,7 +396,7 @@ mod locate_binary_tests {
         }
 
         {
-            let _env_guard = EnvVarGuard::set(KEY, OsString::from("temporary"));
+            let _env_guard = EnvVarGuard::set(KEY.to_string(), OsString::from("temporary"));
             assert_eq!(env::var_os(KEY), Some(OsString::from("temporary")));
         }
 
@@ -390,21 +407,28 @@ mod locate_binary_tests {
     }
 
     struct EnvVarGuard {
-        key: &'static str,
+        key: String,
         original: Option<OsString>,
     }
 
     impl EnvVarGuard {
         #[allow(unsafe_code)]
-        fn set(key: &'static str, value: OsString) -> Self {
-            let original = env::var_os(key);
+        fn set<K>(key: K, value: OsString) -> Self
+        where
+            K: Into<String>,
+        {
+            let key_string = key.into();
+            let original = env::var_os(&key_string);
             // We guard environment mutations with a process-wide mutex to avoid
             // concurrent changes across tests, matching the guidance in
             // `std::env` documentation for multi-threaded programs.
             unsafe {
-                env::set_var(key, &value);
+                env::set_var(&key_string, &value);
             }
-            Self { key, original }
+            Self {
+                key: key_string,
+                original,
+            }
         }
     }
 
@@ -415,12 +439,12 @@ mod locate_binary_tests {
                 // The global mutex ensures no other thread performs an
                 // environment mutation while we restore the prior value.
                 unsafe {
-                    env::set_var(self.key, original);
+                    env::set_var(&self.key, original);
                 }
             } else {
                 // Protected by the same mutex as other mutations.
                 unsafe {
-                    env::remove_var(self.key);
+                    env::remove_var(&self.key);
                 }
             }
         }
