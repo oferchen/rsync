@@ -67,6 +67,12 @@ mod tests {
     use super::*;
     use std::env;
     use std::ffi::{OsStr, OsString};
+    use std::sync::Mutex;
+
+    // Environment variables are process-global, so serialize access to avoid
+    // cross-test interference when multiple threads run this module's tests in
+    // parallel.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     struct EnvGuard {
         key: &'static str,
@@ -112,6 +118,7 @@ mod tests {
 
     #[test]
     fn unset_variable_returns_none() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::remove(VARIABLE);
         assert_eq!(
             force_no_compress_from_env(VARIABLE).expect("unset variable"),
@@ -121,6 +128,7 @@ mod tests {
 
     #[test]
     fn true_values_enable_forced_disable() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(VARIABLE, OsStr::new("1"));
         assert_eq!(
             force_no_compress_from_env(VARIABLE).expect("parse true"),
@@ -136,6 +144,7 @@ mod tests {
 
     #[test]
     fn false_values_disable_override() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(VARIABLE, OsStr::new("0"));
         assert_eq!(
             force_no_compress_from_env(VARIABLE).expect("parse false"),
@@ -151,6 +160,7 @@ mod tests {
 
     #[test]
     fn invalid_values_error() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         let _guard = EnvGuard::set(VARIABLE, OsStr::new("maybe"));
         let error = force_no_compress_from_env(VARIABLE).expect_err("invalid value");
         let rendered = error.to_string();
@@ -160,6 +170,7 @@ mod tests {
 
     #[test]
     fn non_utf8_values_error() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         #[cfg(unix)]
         let value = {
             use std::os::unix::ffi::OsStringExt;
