@@ -27,6 +27,15 @@ impl EnvGuard {
         Self { key, previous }
     }
 
+    fn unset(key: &'static str) -> Self {
+        let previous = env::var_os(key);
+        #[allow(unsafe_code)]
+        unsafe {
+            env::remove_var(key);
+        }
+        Self { key, previous }
+    }
+
     #[cfg(windows)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = env::var_os(key);
@@ -97,6 +106,16 @@ fn fallback_binary_available_detects_executable() {
     }
 
     assert!(fallback_binary_available(temp.path().as_os_str()));
+}
+
+#[test]
+fn fallback_binary_candidates_use_default_path_when_path_missing() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _guard = EnvGuard::unset("PATH");
+
+    let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+
+    assert!(!candidates.is_empty());
 }
 
 #[test]
