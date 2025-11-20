@@ -179,6 +179,37 @@ fn fallback_binary_path_refreshes_after_negative_cache_ttl() {
 }
 
 #[test]
+fn fallback_binary_path_respects_path_environment_changes() {
+    let _lock = env_lock().lock().expect("env lock");
+    clear_availability_cache();
+
+    let missing_dir = TempDir::new().expect("missing path tempdir");
+    let available_dir = TempDir::new().expect("available path tempdir");
+    let binary_name = OsStr::new("oc-rsync-path-change-test");
+    let binary_path = available_dir.path().join(binary_name);
+
+    let _path_guard_missing = EnvGuard::set_os("PATH", missing_dir.path().as_os_str());
+
+    assert!(fallback_binary_path(binary_name).is_none());
+
+    File::create(&binary_path).expect("create binary");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&binary_path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&binary_path, permissions).expect("chmod");
+    }
+
+    let _path_guard_available = EnvGuard::set_os("PATH", available_dir.path().as_os_str());
+
+    let resolved = fallback_binary_path(binary_name);
+    assert_eq!(resolved.as_deref(), Some(binary_path.as_path()));
+}
+
+#[test]
 fn fallback_binary_path_revalidates_removed_executable() {
     let _lock = env_lock().lock().expect("env lock");
     clear_availability_cache();
