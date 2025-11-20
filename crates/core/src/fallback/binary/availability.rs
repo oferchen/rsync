@@ -115,14 +115,24 @@ pub fn fallback_binary_available(binary: &OsStr) -> bool {
 /// Reports whether the provided executable path resolves to the current process binary.
 #[must_use]
 pub fn fallback_binary_is_self(path: &Path) -> bool {
-    let Ok(current_exe) = env::current_exe() else {
+    let Some(canonical_current) = cached_current_executable() else {
         return false;
     };
-
-    let canonical_current = current_exe.canonicalize().unwrap_or(current_exe);
     let canonical_target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
-    canonical_current == canonical_target
+    canonical_current == &canonical_target
+}
+
+fn cached_current_executable() -> Option<&'static PathBuf> {
+    static CURRENT: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    CURRENT
+        .get_or_init(|| {
+            env::current_exe()
+                .ok()
+                .map(|path| path.canonicalize().unwrap_or(path))
+        })
+        .as_ref()
 }
 
 fn evaluate_availability(binary: &OsStr) -> (bool, Option<PathBuf>) {
