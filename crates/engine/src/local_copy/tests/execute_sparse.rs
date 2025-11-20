@@ -65,6 +65,72 @@ fn execute_with_sparse_enabled_creates_holes() {
 
 #[cfg(unix)]
 #[test]
+fn execute_inplace_disables_sparse_writes() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source-inplace.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+    source_file.write_all(&[0x11]).expect("write leading byte");
+    source_file
+        .seek(SeekFrom::Start(2 * 1024 * 1024))
+        .expect("seek to create hole");
+    source_file
+        .write_all(&[0x22])
+        .expect("write trailing byte");
+    source_file
+        .set_len(4 * 1024 * 1024)
+        .expect("extend source");
+
+    let dense_dest = temp.path().join("dense-inplace.bin");
+    let sparse_dest = temp.path().join("sparse-inplace.bin");
+    let initial = vec![0xCC; 4 * 1024 * 1024];
+    fs::write(&dense_dest, &initial).expect("initialise dense destination");
+    fs::write(&sparse_dest, &initial).expect("initialise sparse destination");
+
+    let dense_plan = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    dense_plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().inplace(true),
+        )
+        .expect("dense inplace copy succeeds");
+
+    let sparse_plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    sparse_plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true).inplace(true),
+        )
+        .expect("sparse inplace copy succeeds");
+
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    assert_eq!(dense_meta.len(), sparse_meta.len());
+    assert_eq!(
+        fs::read(&dense_dest).expect("read dense destination"),
+        fs::read(&sparse_dest).expect("read sparse destination"),
+    );
+
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+    assert!(
+        sparse_blocks >= dense_blocks,
+        "in-place sparse copy should not create holes (sparse blocks: {sparse_blocks}, dense blocks: {dense_blocks})",
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn execute_with_sparse_enabled_counts_literal_data() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("zeros.bin");
