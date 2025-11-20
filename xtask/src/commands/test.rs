@@ -109,28 +109,40 @@ mod tests {
     }
 
     impl EnvGuard {
-        #[allow(unsafe_code)]
         fn set(key: &'static str, value: &str) -> Self {
             let previous = env::var_os(key);
-            unsafe {
-                env::set_var(key, value);
-            }
+            set_env_var(key, value);
             Self { key, previous }
         }
     }
 
     impl Drop for EnvGuard {
-        #[allow(unsafe_code)]
         fn drop(&mut self) {
             if let Some(previous) = self.previous.take() {
-                unsafe {
-                    env::set_var(self.key, previous);
-                }
+                set_env_var(self.key, &previous);
             } else {
-                unsafe {
-                    env::remove_var(self.key);
-                }
+                remove_env_var(self.key);
             }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    fn set_env_var<K: AsRef<std::ffi::OsStr>, V: AsRef<std::ffi::OsStr>>(key: K, value: V) {
+        // SAFETY: These helpers are only used in tests to temporarily override process
+        // environment variables. The test harness serializes each invocation, so scoped
+        // mutations are safe for the duration of the test.
+        unsafe {
+            env::set_var(key, value);
+        }
+    }
+
+    #[allow(unsafe_code)]
+    fn remove_env_var<K: AsRef<std::ffi::OsStr>>(key: K) {
+        // SAFETY: These helpers are only used in tests to temporarily override process
+        // environment variables. The test harness serializes each invocation, so scoped
+        // mutations are safe for the duration of the test.
+        unsafe {
+            env::remove_var(key);
         }
     }
 
