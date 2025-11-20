@@ -6,6 +6,7 @@ use crate::{GroupMapping, UserMapping};
 pub struct MetadataOptions {
     preserve_owner: bool,
     preserve_group: bool,
+    preserve_executability: bool,
     preserve_permissions: bool,
     preserve_times: bool,
     numeric_ids: bool,
@@ -26,6 +27,7 @@ impl MetadataOptions {
         Self {
             preserve_owner: false,
             preserve_group: false,
+            preserve_executability: false,
             preserve_permissions: true,
             preserve_times: true,
             numeric_ids: false,
@@ -48,6 +50,15 @@ impl MetadataOptions {
     #[must_use]
     pub const fn preserve_group(mut self, preserve: bool) -> Self {
         self.preserve_group = preserve;
+        self
+    }
+
+    /// Requests that executability be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--executability")]
+    #[doc(alias = "-E")]
+    pub const fn preserve_executability(mut self, preserve: bool) -> Self {
+        self.preserve_executability = preserve;
         self
     }
 
@@ -133,6 +144,12 @@ impl MetadataOptions {
         self.preserve_group
     }
 
+    /// Reports whether executability should be preserved.
+    #[must_use]
+    pub const fn executability(&self) -> bool {
+        self.preserve_executability
+    }
+
     /// Reports whether permissions should be preserved.
     #[must_use]
     pub const fn permissions(&self) -> bool {
@@ -199,6 +216,7 @@ mod tests {
 
         assert!(!options.owner());
         assert!(!options.group());
+        assert!(!options.executability());
         assert!(options.permissions());
         assert!(options.times());
         assert!(!options.numeric_ids_enabled());
@@ -221,6 +239,7 @@ mod tests {
         let options = MetadataOptions::new()
             .preserve_owner(true)
             .preserve_group(true)
+            .preserve_executability(true)
             .preserve_permissions(false)
             .preserve_times(false)
             .numeric_ids(true)
@@ -232,6 +251,7 @@ mod tests {
 
         assert!(options.owner());
         assert!(options.group());
+        assert!(options.executability());
         assert!(!options.permissions());
         assert!(!options.times());
         assert!(options.numeric_ids_enabled());

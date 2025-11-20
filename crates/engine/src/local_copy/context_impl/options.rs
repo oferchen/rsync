@@ -5,6 +5,7 @@ impl<'a> CopyContext<'a> {
         MetadataOptions::new()
             .preserve_owner(self.options.preserve_owner())
             .preserve_group(self.options.preserve_group())
+            .preserve_executability(self.options.preserve_executability())
             .preserve_permissions(self.options.preserve_permissions())
             .preserve_times(self.options.preserve_times())
             .numeric_ids(self.options.numeric_ids_enabled())

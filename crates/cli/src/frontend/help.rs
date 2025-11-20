@@ -173,6 +173,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --groupmap=STRING  Map source group IDs using STRING rules (OLD:NEW[,...]).\n",
             "      --chmod=SPEC  Apply chmod-style SPEC modifiers to received files.\n",
             "  -p, --perms      Preserve file permissions.\n",
+            "  -E, --executability  Preserve executability without affecting other permission bits.\n",
             "      --no-perms   Disable permission preservation.\n",
             "  -t, --times      Preserve modification times.\n",
             "      --no-times   Disable modification time preservation.\n",

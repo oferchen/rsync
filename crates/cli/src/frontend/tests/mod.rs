@@ -128,6 +128,8 @@ mod parse_args_recognises_cvs_tests;
 mod parse_args_recognises_delay_tests;
 #[path = "parse_args_recognises_devices.rs"]
 mod parse_args_recognises_devices_tests;
+#[path = "parse_args_recognises_executability.rs"]
+mod parse_args_recognises_executability_tests;
 #[path = "parse_args_recognises_existing.rs"]
 mod parse_args_recognises_existing_tests;
 #[path = "parse_args_recognises_force.rs"]
@@ -388,6 +390,8 @@ mod transfer_request_with_cvs_tests;
 mod transfer_request_with_delete_tests;
 #[path = "transfer_request_with_exclude.rs"]
 mod transfer_request_with_exclude_tests;
+#[path = "transfer_request_with_executability.rs"]
+mod transfer_request_with_executability_tests;
 #[path = "transfer_request_with_files_from.rs"]
 mod transfer_request_with_files_from_tests;
 #[path = "transfer_request_with_files.rs"]

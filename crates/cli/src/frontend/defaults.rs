@@ -26,7 +26,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--copy-links/-L, --no-copy-links, ",
     "--copy-unsafe-links, --no-copy-unsafe-links, --safe-links, --copy-dirlinks/-k, --keep-dirlinks/-K, --no-keep-dirlinks, ",
     "-D, --devices, --copy-devices, --no-devices, --specials, --no-specials, --super, --no-super, --owner, --no-owner, --group, --no-group, ",
-    "--chown, --usermap, --groupmap, --chmod, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, ",
+    "--chown, --usermap, --groupmap, --chmod, --executability/-E, --no-executability, --perms/-p, --no-perms, --times/-t, --no-times, --omit-dir-times, ",
     "--no-omit-dir-times, --omit-link-times, --no-omit-link-times, --acls/-A, --no-acls, --xattrs/-X, --no-xattrs, ",
     "--numeric-ids, --no-numeric-ids"
 );

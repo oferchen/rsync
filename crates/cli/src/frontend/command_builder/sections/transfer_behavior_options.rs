@@ -447,6 +447,21 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("executability")
+                    .long("executability")
+                    .short('E')
+                    .help("Preserve executability without altering other permission bits.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-executability"),
+            )
+            .arg(
+                Arg::new("no-executability")
+                    .long("no-executability")
+                    .help("Disable executability preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("executability"),
+            )
+            .arg(
                 Arg::new("perms")
                     .long("perms")
                     .short('p')

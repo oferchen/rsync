@@ -65,6 +65,15 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Requests that executability be preserved when applying metadata.
+    #[must_use]
+    #[doc(alias = "--executability")]
+    #[doc(alias = "-E")]
+    pub const fn executability(mut self, preserve: bool) -> Self {
+        self.preserve_executability = preserve;
+        self
+    }
+
     /// Requests that permissions be preserved when applying metadata.
     #[must_use]
     #[doc(alias = "--perms")]

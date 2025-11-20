@@ -48,6 +48,16 @@ fn builder_preserves_permissions_flag() {
 }
 
 #[test]
+fn builder_preserves_executability_flag() {
+    let config = ClientConfig::builder()
+        .transfer_args([OsString::from("src"), OsString::from("dst")])
+        .executability(true)
+        .build();
+
+    assert!(config.preserve_executability());
+}
+
+#[test]
 fn builder_preserves_times_flag() {
     let config = ClientConfig::builder()
         .transfer_args([OsString::from("src"), OsString::from("dst")])
