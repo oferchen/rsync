@@ -182,21 +182,6 @@ pub(super) fn assert_contains_client_trailer(rendered: &str) {
     );
 }
 
-pub(super) fn assert_contains_sender_trailer(rendered: &str) {
-    let expected = format!("[sender={}]", rust_version());
-    assert!(
-        rendered.contains(&expected),
-        "expected message to contain {expected:?}, got {rendered:?}"
-    );
-}
-
-pub(super) fn assert_contains_receiver_trailer(rendered: &str) {
-    let expected = format!("[receiver={}]", rust_version());
-    assert!(
-        rendered.contains(&expected),
-        "expected message to contain {expected:?}, got {rendered:?}"
-    );
-}
 pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
