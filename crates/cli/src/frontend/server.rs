@@ -253,11 +253,7 @@ where
 /// This version does not rely on any fallback helper; it directly spawns
 /// `Brand::Upstream.client_program_name()` and forwards all arguments after
 /// `--server`, exactly as upstream `rsync` would do.
-fn run_server_mode_upstream<Out, Err>(
-    args: &[OsString],
-    stdout: &mut Out,
-    stderr: &mut Err,
-) -> i32
+fn run_server_mode_upstream<Out, Err>(args: &[OsString], stdout: &mut Out, stderr: &mut Err) -> i32
 where
     Out: Write,
     Err: Write,
