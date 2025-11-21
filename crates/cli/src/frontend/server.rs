@@ -139,6 +139,56 @@ where
         return 1;
     }
 
+    #[cfg(all(unix, not(test)))]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new(&resolved_fallback);
+        command.args(args.iter().skip(1));
+        command.stdin(Stdio::inherit());
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+
+        if let Err(error) = command.exec() {
+            let text = format!(
+                "failed to launch fallback {upstream_program} binary '{}': {error}",
+                Path::new(&fallback).display()
+            );
+            write_server_fallback_error(stderr, program_brand, text);
+            return 1;
+        }
+
+        unreachable!("exec replaced the current process");
+    }
+
+    #[cfg(any(test, windows))]
+    {
+        run_fallback_server_child(
+            args,
+            stdout,
+            stderr,
+            program_brand,
+            upstream_program,
+            fallback,
+            resolved_fallback,
+        )
+    }
+}
+
+#[cfg(any(test, windows))]
+fn run_fallback_server_child<Out, Err>(
+    args: &[OsString],
+    stdout: &mut Out,
+    stderr: &mut Err,
+    program_brand: Brand,
+    upstream_program: &str,
+    fallback: OsString,
+    resolved_fallback: OsString,
+) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
     let mut command = Command::new(&resolved_fallback);
     command.args(args.iter().skip(1));
     command.stdin(Stdio::inherit());
