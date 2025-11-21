@@ -4,6 +4,9 @@ use std::env;
 use std::ffi::OsString;
 use std::io::Write;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
