@@ -272,7 +272,7 @@ fn is_rsync_flag_string(s: &str) -> bool {
 fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: &str) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
-    message = message.with_role(Role::Server);
+    message = message.with_role(role);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
     }
