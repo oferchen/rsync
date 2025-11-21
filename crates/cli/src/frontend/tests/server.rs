@@ -151,7 +151,7 @@ fn server_mode_reports_missing_fallback_binary() {
     let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
     assert!(stderr_text.contains("fallback rsync binary"));
     assert!(stderr_text.contains(&missing_display));
-    assert_contains_server_trailer(&stderr_text);
+    assert_contains_sender_trailer(&stderr_text);
 }
 
 #[test]
@@ -180,5 +180,35 @@ fn server_mode_rejects_recursive_fallback() {
     assert_eq!(exit_code, 1);
     let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
     assert!(stderr_text.contains("resolves to this oc-rsync executable"));
-    assert_contains_server_trailer(&stderr_text);
+    assert_contains_sender_trailer(&stderr_text);
+}
+
+#[test]
+fn server_mode_without_sender_reports_receiver_role() {
+    use std::io;
+    use tempfile::tempdir;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+
+    let temp = tempdir().expect("tempdir");
+    let missing_path = temp.path().join("server-missing-fallback");
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, missing_path.as_os_str());
+
+    let mut stdout = io::sink();
+    let mut stderr = Vec::new();
+    let exit_code = run(
+        [
+            OsString::from(RSYNC),
+            OsString::from("--server"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 1);
+    let stderr_text = String::from_utf8(stderr).expect("stderr utf8");
+    assert!(stderr_text.contains("fallback rsync binary"));
+    assert_contains_receiver_trailer(&stderr_text);
 }

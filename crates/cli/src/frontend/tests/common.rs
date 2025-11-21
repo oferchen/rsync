@@ -182,8 +182,16 @@ pub(super) fn assert_contains_client_trailer(rendered: &str) {
     );
 }
 
-pub(super) fn assert_contains_server_trailer(rendered: &str) {
-    let expected = format!("[server={}]", rust_version());
+pub(super) fn assert_contains_sender_trailer(rendered: &str) {
+    let expected = format!("[sender={}]", rust_version());
+    assert!(
+        rendered.contains(&expected),
+        "expected message to contain {expected:?}, got {rendered:?}"
+    );
+}
+
+pub(super) fn assert_contains_receiver_trailer(rendered: &str) {
+    let expected = format!("[receiver={}]", rust_version());
     assert!(
         rendered.contains(&expected),
         "expected message to contain {expected:?}, got {rendered:?}"

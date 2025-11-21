@@ -108,13 +108,14 @@ where
 
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
     let upstream_program = Brand::Upstream.client_program_name();
+    let server_role = detect_server_role(args);
     let upstream_program_os = OsStr::new(upstream_program);
     let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
         Some(FallbackOverride::Disabled) => {
             let text = format!(
                 "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream {upstream_program} binary"
             );
-            write_server_fallback_error(stderr, program_brand, text);
+            write_server_fallback_error(stderr, program_brand, server_role, text);
             return 1;
         }
         Some(other) => other
@@ -126,7 +127,7 @@ where
     let Some(resolved_fallback) = fallback_binary_path(fallback.as_os_str()) else {
         let diagnostic =
             describe_missing_fallback_binary(fallback.as_os_str(), &[CLIENT_FALLBACK_ENV]);
-        write_server_fallback_error(stderr, program_brand, diagnostic);
+        write_server_fallback_error(stderr, program_brand, server_role, diagnostic);
         return 1;
     };
 
@@ -135,7 +136,7 @@ where
             "remote server mode is unavailable because the fallback binary '{}' resolves to this oc-rsync executable; install upstream {upstream_program} or set {CLIENT_FALLBACK_ENV} to a different path",
             resolved_fallback.display()
         );
-        write_server_fallback_error(stderr, program_brand, text);
+        write_server_fallback_error(stderr, program_brand, server_role, text);
         return 1;
     }
 
@@ -152,7 +153,7 @@ where
                 "failed to launch fallback {upstream_program} binary '{}': {error}",
                 Path::new(&fallback).display()
             );
-            write_server_fallback_error(stderr, program_brand, text);
+            write_server_fallback_error(stderr, program_brand, server_role, text);
             return 1;
         }
     };
@@ -179,6 +180,7 @@ where
                     write_server_fallback_error(
                         stderr,
                         program_brand,
+                        server_role,
                         format!("failed to forward fallback stdout: {error}"),
                     );
                     return 1;
@@ -190,6 +192,7 @@ where
                     write_server_fallback_error(
                         stderr,
                         program_brand,
+                        server_role,
                         format!("failed to forward fallback stderr: {error}"),
                     );
                     return 1;
@@ -200,6 +203,7 @@ where
                 write_server_fallback_error(
                     stderr,
                     program_brand,
+                    server_role,
                     format!("failed to read stdout from fallback {upstream_program}: {error}"),
                 );
                 return 1;
@@ -209,6 +213,7 @@ where
                 write_server_fallback_error(
                     stderr,
                     program_brand,
+                    server_role,
                     format!("failed to read stderr from fallback {upstream_program}: {error}"),
                 );
                 return 1;
@@ -233,10 +238,19 @@ where
             write_server_fallback_error(
                 stderr,
                 program_brand,
+                server_role,
                 format!("failed to wait for fallback {upstream_program} process: {error}"),
             );
             1
         }
+    }
+}
+
+fn detect_server_role(args: &[OsString]) -> Role {
+    if args.iter().any(|arg| arg == "--sender") {
+        Role::Sender
+    } else {
+        Role::Receiver
     }
 }
 
@@ -306,11 +320,12 @@ fn terminate_server_process(
 fn write_server_fallback_error<Err: Write>(
     stderr: &mut Err,
     brand: Brand,
+    role: Role,
     text: impl fmt::Display,
 ) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
-    message = message.with_role(Role::Server);
+    message = message.with_role(role);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
     }
