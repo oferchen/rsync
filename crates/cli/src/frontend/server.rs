@@ -134,17 +134,12 @@ where
 /// This is intentionally conservative: it keeps behaviour identical to the
 /// historical implementation while giving you a single hook (`invocation`)
 /// to wire into a Rust-native server engine when you're ready.
-fn run_server_mode_native<Out, Err>(
-    args: &[OsString],
-    stdout: &mut Out,
-    stderr: &mut Err,
-) -> i32
+fn run_server_mode_native<Out, Err>(args: &[OsString], stdout: &mut Out, stderr: &mut Err) -> i32
 where
     Out: Write,
     Err: Write,
 {
-    let program_brand =
-        super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+    let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
 
     // Parse the server invocation. If parsing fails, emit a branded server
     // error and fall back to the historical implementation.
@@ -177,11 +172,7 @@ where
 ///
 /// This is your previous `run_server_mode` logic, extracted into a helper so
 /// that both the top-level entry point and the native parser can call it.
-fn run_server_mode_fallback<Out, Err>(
-    args: &[OsString],
-    stdout: &mut Out,
-    stderr: &mut Err,
-) -> i32
+fn run_server_mode_fallback<Out, Err>(args: &[OsString], stdout: &mut Out, stderr: &mut Err) -> i32
 where
     Out: Write,
     Err: Write,
@@ -524,4 +515,3 @@ fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: 
         let _ = writeln!(sink.writer_mut(), "{text}");
     }
 }
-
