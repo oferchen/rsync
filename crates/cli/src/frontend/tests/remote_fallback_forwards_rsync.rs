@@ -33,7 +33,9 @@ exit 0
     assert!(stderr.is_empty());
 
     let recorded = std::fs::read_to_string(&args_path).expect("read args file");
-    assert!(recorded
-        .lines()
-        .any(|line| line == "--rsync-path=/opt/custom/rsync"));
+    assert!(
+        recorded
+            .lines()
+            .any(|line| line == "--rsync-path=/opt/custom/rsync")
+    );
 }
