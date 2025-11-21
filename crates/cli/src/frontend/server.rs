@@ -1,20 +1,13 @@
 #![deny(unsafe_code)]
 
 use std::env;
-use std::ffi::{OsStr, OsString};
-use std::io::{self, Write};
-use std::process::{Command, Stdio};
+use std::ffi::OsString;
+use std::io::Write;
 
 use core::branding::Brand;
-use core::fallback::{
-    CLIENT_FALLBACK_ENV, describe_missing_fallback_binary, fallback_binary_is_self,
-    fallback_binary_path,
-};
 use core::message::Role;
 use core::rsync_error;
 use logging::MessageSink;
-
-const SERVER_IMPL_ENV: &str = "OC_RSYNC_SERVER_IMPL";
 
 /// Translate a client invocation that requested `--daemon` into a standalone
 /// daemon invocation.
@@ -123,30 +116,6 @@ fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
     }
 }
 
-/// Selects the implementation used for server mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ServerBackend {
-    /// Use the embedded Rust implementation.
-    Embedded,
-    /// Delegate to an external binary discovered via the fallback mechanism.
-    Fallback,
-    /// Delegate to the upstream `rsync` binary explicitly.
-    Upstream,
-}
-
-/// Parse `OC_RSYNC_SERVER_IMPL` into a `ServerBackend`.
-fn detect_server_backend_from_env() -> Option<ServerBackend> {
-    match env::var(SERVER_IMPL_ENV) {
-        Ok(value) => match value.as_str() {
-            "embedded" => Some(ServerBackend::Embedded),
-            "fallback" => Some(ServerBackend::Fallback),
-            "upstream" => Some(ServerBackend::Upstream),
-            _ => None,
-        },
-        Err(_) => None,
-    }
-}
-
 /// Dispatch server mode to the selected backend.  Defaults to the upstream binary.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
@@ -157,16 +126,12 @@ where
     Out: Write,
     Err: Write,
 {
+    // Flush buffers before invoking the server.
     let _ = stdout.flush();
     let _ = stderr.flush();
 
-    let backend = detect_server_backend_from_env().unwrap_or(ServerBackend::Upstream);
-
-    match backend {
-        ServerBackend::Embedded => run_server_mode_embedded(args, stdout, stderr),
-        ServerBackend::Fallback => run_server_mode_fallback(args, stdout, stderr),
-        ServerBackend::Upstream => run_server_mode_upstream(args, stdout, stderr),
-    }
+    // Ignore OC_RSYNC_SERVER_IMPL overrides and always use the embedded handler.
+    run_server_mode_embedded(args, stdout, stderr)
 }
 
 /// Run server mode using the embedded implementation.
@@ -203,128 +168,6 @@ where
     );
     write_server_error_message(stderr, program_brand, &text);
     1
-}
-
-/// Run server mode by delegating to the external fallback binary.
-///
-/// This uses the same binary-discovery mechanism as the client front-end. The
-/// `CLIENT_FALLBACK_ENV` environment variable is only used for diagnostics.
-fn run_server_mode_fallback<Out, Err>(args: &[OsString], stdout: &mut Out, stderr: &mut Err) -> i32
-where
-    Out: Write,
-    Err: Write,
-{
-    let _ = stdout.flush();
-    let _ = stderr.flush();
-
-    let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
-    let upstream_program = Brand::Upstream.client_program_name();
-    let upstream_program_os = OsStr::new(upstream_program);
-
-    let fallback = match fallback_binary_path(upstream_program_os) {
-        Some(path) => path,
-        None => {
-            let text =
-                describe_missing_fallback_binary(upstream_program_os, &[CLIENT_FALLBACK_ENV]);
-            write_server_error_message(stderr, program_brand, &text);
-            return 1;
-        }
-    };
-
-    if fallback_binary_is_self(&fallback) {
-        let text =
-            "remote server mode fallback binary resolved to this process, refusing to recurse";
-        write_server_error_message(stderr, program_brand, text);
-        return 1;
-    }
-
-    match spawn_fallback_server(fallback.as_os_str(), args) {
-        Ok(status) => status,
-        Err(err) => {
-            let text = format!("failed to execute fallback server: {err}");
-            write_server_error_message(stderr, program_brand, &text);
-            1
-        }
-    }
-}
-
-/// Invoke the upstream `rsync` binary in server mode.
-///
-/// This version does not rely on any fallback helper; it directly spawns
-/// `Brand::Upstream.client_program_name()` and forwards all arguments after
-/// `--server`, exactly as upstream `rsync` would do.
-fn run_server_mode_upstream<Out, Err>(args: &[OsString], stdout: &mut Out, stderr: &mut Err) -> i32
-where
-    Out: Write,
-    Err: Write,
-{
-    let _ = stdout.flush();
-    let _ = stderr.flush();
-
-    let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
-    let upstream_program = Brand::Upstream.client_program_name();
-
-    match spawn_upstream_server(OsStr::new(upstream_program), args) {
-        Ok(status) => status,
-        Err(err) => {
-            let text = format!("failed to execute upstream server: {err}");
-            write_server_error_message(stderr, program_brand, &text);
-            1
-        }
-    }
-}
-
-/// Spawn the upstream server process and forward all arguments after `--server`.
-fn spawn_upstream_server(program: &OsStr, args: &[OsString]) -> io::Result<i32> {
-    let mut command = Command::new(program);
-
-    // Forward everything from `--server` onwards, as upstream does.
-    let mut saw_server = false;
-    for arg in args.iter().skip(1) {
-        if !saw_server && arg == "--server" {
-            saw_server = true;
-        }
-        if saw_server {
-            command.arg(arg);
-        }
-    }
-
-    let status = command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()?;
-
-    Ok(status.code().unwrap_or(1))
-}
-
-/// Spawn a fallback or upstream server process and wire it up to this
-/// process's standard streams.
-///
-/// This mirrors upstream rsync's behaviour for remote server delegation: the
-/// child inherits stdin/stdout/stderr and we simply wait for its exit status.
-fn spawn_fallback_server(program: &OsStr, args: &[OsString]) -> io::Result<i32> {
-    let mut command = Command::new(program);
-
-    // Upstream forwards everything from `--server` onwards for the remote
-    // side, so we do the same.
-    let mut saw_server = false;
-    for arg in args.iter().skip(1) {
-        if !saw_server && arg == "--server" {
-            saw_server = true;
-        }
-        if saw_server {
-            command.arg(arg);
-        }
-    }
-
-    let status = command
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()?;
-
-    Ok(status.code().unwrap_or(1))
 }
 
 /// Parsed representation of a `--server` invocation.
