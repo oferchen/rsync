@@ -702,8 +702,9 @@ pub(crate) fn prepare_invocation(
     }
 
     if let Some(path) = rsync_path {
-        command_args.push(OsString::from("--rsync-path"));
-        command_args.push(path);
+        let mut arg = OsString::from("--rsync-path=");
+        arg.push(path);
+        command_args.push(arg);
     }
 
     command_args.append(&mut remainder);
