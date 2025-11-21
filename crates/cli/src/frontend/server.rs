@@ -139,6 +139,29 @@ where
         return 1;
     }
 
+    #[cfg(all(unix, not(test)))]
+    {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new(&resolved_fallback);
+        command.args(args.iter().skip(1));
+        command.stdin(Stdio::inherit());
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+
+        match command.exec() {
+            Ok(_) => unreachable!("exec only returns on error"),
+            Err(error) => {
+                let text = format!(
+                    "failed to launch fallback {upstream_program} binary '{}': {error}",
+                    Path::new(&fallback).display()
+                );
+                write_server_fallback_error(stderr, program_brand, text);
+                return 1;
+            }
+        }
+    }
+
     let mut command = Command::new(&resolved_fallback);
     command.args(args.iter().skip(1));
     command.stdin(Stdio::inherit());
