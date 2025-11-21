@@ -380,16 +380,35 @@ mod tests {
             ".",
             ".",
         ];
+
+        // Capture-mode embedding: should report non-zero exit and route
+        // all diagnostics to stderr, leaving stdout empty.
         let error = run_server(args).expect_err("server mode reports usage");
         assert_eq!(error.exit_status(), 1);
-        assert!(error.output().stderr().iter().any(|b| *b != 0));
 
+        let output = error.output();
+        assert!(
+            output.stderr().iter().any(|b| *b != 0),
+            "stderr should contain non-empty diagnostics"
+        );
+        assert!(
+            output.stdout().is_empty(),
+            "server misuse should not write anything to stdout"
+        );
+
+        // Stream-based embedding: same semantics as above.
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run_server_with(args, &mut stdout, &mut stderr).unwrap_err();
         assert_eq!(status.exit_status(), 1);
-        assert!(!stdout.is_empty());
-        assert!(!stderr.is_empty());
+        assert!(
+            stdout.is_empty(),
+            "server misuse should not write anything to stdout"
+        );
+        assert!(
+            !stderr.is_empty(),
+            "stderr should contain diagnostics in stream-based embedding"
+        );
     }
 
     struct EnvGuard {
