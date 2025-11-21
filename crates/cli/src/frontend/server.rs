@@ -8,6 +8,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 use core::branding::Brand;
 use core::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
@@ -217,7 +220,27 @@ where
                 ServerStreamKind::Stdout => stdout_open = false,
                 ServerStreamKind::Stderr => stderr_open = false,
             },
-            Err(_) => break,
+            Err(_) => {
+                if stdout_open {
+                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    write_server_fallback_error(
+                        stderr,
+                        program_brand,
+                        "failed to capture stdout from fallback binary",
+                    );
+                    return 1;
+                }
+                if stderr_open {
+                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    write_server_fallback_error(
+                        stderr,
+                        program_brand,
+                        "failed to capture stderr from fallback binary",
+                    );
+                    return 1;
+                }
+                break;
+            }
         }
     }
 
@@ -225,10 +248,17 @@ where
     join_server_thread(&mut stderr_thread);
 
     match child.wait() {
-        Ok(status) => status
-            .code()
-            .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
-            .unwrap_or(1),
+        Ok(status) => match status.code() {
+            Some(code) => code.clamp(0, super::MAX_EXIT_CODE),
+            None => {
+                #[cfg(unix)]
+                if let Some(signal) = status.signal() {
+                    return (128 + signal).min(super::MAX_EXIT_CODE);
+                }
+
+                super::MAX_EXIT_CODE
+            }
+        },
         Err(error) => {
             write_server_fallback_error(
                 stderr,
