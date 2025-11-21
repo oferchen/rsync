@@ -421,4 +421,20 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn env_guard_restores_environment() {
+        const KEY: &str = "OC_RSYNC_EMBEDDING_TEST_ENVGUARD";
+        let original = std::env::var_os(KEY);
+
+        {
+            let _guard = EnvGuard::set(KEY, "temporary-value");
+            assert_eq!(
+                std::env::var_os(KEY),
+                Some(OsString::from("temporary-value"))
+            );
+        }
+
+        assert_eq!(std::env::var_os(KEY), original);
+    }
 }
