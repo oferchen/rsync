@@ -373,9 +373,6 @@ mod tests {
 
     #[test]
     fn run_server_reports_exit_status() {
-        const ENV: &str = "OC_RSYNC_FALLBACK";
-        let _guard = EnvGuard::set(ENV, "0");
-
         let args = [
             client_program_name(),
             "--server",
@@ -383,21 +380,16 @@ mod tests {
             ".",
             ".",
         ];
-        let error = run_server(args).expect_err("fallback disabled should fail");
+        let error = run_server(args).expect_err("server mode reports usage");
         assert_eq!(error.exit_status(), 1);
-        assert!(
-            !error.output().stderr().is_empty(),
-            "stderr should report fallback diagnostics"
-        );
+        assert!(error.output().stderr().iter().any(|b| *b != 0));
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run_server_with(args, &mut stdout, &mut stderr).unwrap_err();
         assert_eq!(status.exit_status(), 1);
-        assert!(
-            !stderr.is_empty(),
-            "stderr should report fallback diagnostics"
-        );
+        assert!(!stdout.is_empty());
+        assert!(!stderr.is_empty());
     }
 
     struct EnvGuard {
