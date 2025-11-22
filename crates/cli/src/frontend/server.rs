@@ -7,6 +7,7 @@ use std::io::Write;
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
+use core::server::{ServerConfig, ServerRole};
 use logging::MessageSink;
 
 /// Translate a client invocation that requested `--daemon` into a standalone
@@ -287,4 +288,66 @@ fn touch_server_invocation(invocation: &ServerInvocation) {
     let _role = invocation.role;
     let _flags = &invocation.raw_flag_string;
     let _args = &invocation.args;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_receiver_invocation_and_normalises_dot_placeholder() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ];
+
+        let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+        assert_eq!(invocation.role, InvocationRole::Receiver);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(invocation.args, vec![OsString::from("dest")]);
+
+        let config = invocation.into_server_config().expect("config parses");
+        assert_eq!(config.role, ServerRole::Receiver);
+        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(config.args, vec![OsString::from("dest")]);
+    }
+
+    #[test]
+    fn parses_sender_invocation_without_placeholder() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("relative"),
+            OsString::from("dest"),
+        ];
+
+        let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+        assert_eq!(invocation.role, InvocationRole::Generator);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(
+            invocation.args,
+            vec![OsString::from("relative"), OsString::from("dest")]
+        );
+
+        let config = invocation.into_server_config().expect("config parses");
+        assert_eq!(config.role, ServerRole::Generator);
+        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(
+            config.args,
+            vec![OsString::from("relative"), OsString::from("dest")]
+        );
+    }
+
+    #[test]
+    fn parse_rejects_missing_flag_string() {
+        let args = [OsString::from("rsync"), OsString::from("--server")];
+
+        let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+        assert!(error.contains("flag string"));
+    }
 }
