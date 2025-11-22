@@ -373,9 +373,6 @@ mod tests {
 
     #[test]
     fn run_server_reports_exit_status() {
-        const ENV: &str = "OC_RSYNC_FALLBACK";
-        let _guard = EnvGuard::set(ENV, "0");
-
         let args = [
             client_program_name(),
             "--server",
@@ -383,20 +380,34 @@ mod tests {
             ".",
             ".",
         ];
-        let error = run_server(args).expect_err("fallback disabled should fail");
+
+        // Capture-mode embedding: should report non-zero exit and route
+        // all diagnostics to stderr, leaving stdout empty.
+        let error = run_server(args).expect_err("server mode reports usage");
         assert_eq!(error.exit_status(), 1);
+
+        let output = error.output();
         assert!(
-            !error.output().stderr().is_empty(),
-            "stderr should report fallback diagnostics"
+            output.stderr().iter().any(|b| *b != 0),
+            "stderr should contain non-empty diagnostics"
+        );
+        assert!(
+            output.stdout().is_empty(),
+            "server misuse should not write anything to stdout"
         );
 
+        // Stream-based embedding: same semantics as above.
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let status = run_server_with(args, &mut stdout, &mut stderr).unwrap_err();
         assert_eq!(status.exit_status(), 1);
         assert!(
+            stdout.is_empty(),
+            "server misuse should not write anything to stdout"
+        );
+        assert!(
             !stderr.is_empty(),
-            "stderr should report fallback diagnostics"
+            "stderr should contain diagnostics in stream-based embedding"
         );
     }
 
@@ -428,5 +439,21 @@ mod tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn env_guard_restores_environment() {
+        const KEY: &str = "OC_RSYNC_EMBEDDING_TEST_ENVGUARD";
+        let original = std::env::var_os(KEY);
+
+        {
+            let _guard = EnvGuard::set(KEY, "temporary-value");
+            assert_eq!(
+                std::env::var_os(KEY),
+                Some(OsString::from("temporary-value"))
+            );
+        }
+
+        assert_eq!(std::env::var_os(KEY), original);
     }
 }
