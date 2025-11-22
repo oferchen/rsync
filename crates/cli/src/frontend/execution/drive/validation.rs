@@ -20,7 +20,7 @@ pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
     "the --connect-program option may only be used when accessing an rsync daemon";
 
 pub(super) fn validate_local_only_options<Err>(
-    fallback_required: bool,
+    has_remote_operands: bool,
     desired_protocol: Option<ProtocolVersion>,
     password_file: Option<&PathBuf>,
     connect_program: Option<&OsString>,
@@ -31,7 +31,7 @@ pub(super) fn validate_local_only_options<Err>(
 where
     Err: Write,
 {
-    if fallback_required {
+    if has_remote_operands {
         return None;
     }
 
