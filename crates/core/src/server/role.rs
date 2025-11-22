@@ -1,10 +1,10 @@
-#![deny(unsafe_code)]
+//! Server roles negotiated through the `--server` entry point.
 
-/// Server execution role selected by the remote client.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Enumerates the server-side pipeline roles.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ServerRole {
-    /// Receiver role applies incoming updates to the local filesystem.
+    /// Receives data from the client and applies it to the local filesystem.
     Receiver,
-    /// Generator role enumerates and streams file data to the client.
+    /// Generates file lists and delta streams to send back to the client.
     Generator,
 }
