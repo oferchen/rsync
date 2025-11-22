@@ -4,9 +4,6 @@ use std::env;
 use std::ffi::OsString;
 use std::io::Write;
 
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
-
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
@@ -275,7 +272,8 @@ fn is_rsync_flag_string(s: &str) -> bool {
 fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: &str) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
-    message = message.with_role(role);
+    // Treat these diagnostics as daemon/server-side errors for logging purposes.
+    message = message.with_role(Role::Daemon);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
     }

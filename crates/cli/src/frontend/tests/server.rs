@@ -17,8 +17,13 @@
 
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Command;
+
+use crate::frontend::tests::daemon_cli::run;
+use crate::frontend::tests::out_tests::{ENV_LOCK, EnvGuard, RSYNC};
+use core::fallback::CLIENT_FALLBACK_ENV;
 
 /// Resolve the `oc-rsync` binary path for tests.
 ///
