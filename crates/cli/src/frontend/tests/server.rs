@@ -53,6 +53,35 @@ exit 37
     assert_eq!(fs::read(&marker_path).expect("read marker"), b"invoked");
 }
 
+#[test]
+fn server_invocation_parses_flag_string_and_placeholder() {
+    let invocation = ServerInvocation::parse(&[
+        OsString::from(RSYNC),
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("."),
+        OsString::from("src"),
+        OsString::from("dest"),
+    ])
+    .expect("parse invocation");
+
+    assert_eq!(invocation.role, RoleKind::Generator);
+    assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(
+        invocation.args,
+        vec![OsString::from("src"), OsString::from("dest")]
+    );
+}
+
+#[test]
+fn server_invocation_rejects_missing_flag_string() {
+    let err = ServerInvocation::parse(&[OsString::from(RSYNC), OsString::from("--server")])
+        .expect_err("expected missing flag string error");
+
+    assert!(err.contains("missing rsync server flag string"));
+}
+
 #[cfg(unix)]
 #[test]
 fn server_mode_forwards_output_to_provided_handles() {

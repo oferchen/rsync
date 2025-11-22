@@ -15,6 +15,7 @@ use core::fallback::{
 };
 use core::message::Role;
 use core::rsync_error;
+use core::server::{ServerConfig, ServerRole};
 use logging::MessageSink;
 
 /// Returns the daemon argument vector when `--daemon` is present.
@@ -56,6 +57,72 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
 /// Returns `true` when the invocation requests server mode.
 pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
     args.iter().skip(1).any(|arg| arg == "--server")
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum RoleKind {
+    Receiver,
+    Generator,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct ServerInvocation {
+    pub(crate) role: RoleKind,
+    pub(crate) raw_flag_string: String,
+    pub(crate) args: Vec<OsString>,
+}
+
+impl ServerInvocation {
+    fn parse(args: &[OsString]) -> Result<Self, String> {
+        let mut iter = args.iter();
+        let Some(program) = iter.next() else {
+            return Err("missing program name".to_string());
+        };
+
+        let Some(marker) = iter.next() else {
+            return Err(format!("{program:?} missing --server marker"));
+        };
+
+        if marker != "--server" {
+            return Err(format!("{marker:?} is not a valid --server marker"));
+        }
+
+        let mut role = RoleKind::Receiver;
+        if let Some(peek) = iter.clone().next() {
+            if peek == "--sender" {
+                role = RoleKind::Generator;
+                iter.next();
+            }
+        }
+
+        let flag_string = iter
+            .next()
+            .ok_or_else(|| "missing rsync server flag string".to_string())?
+            .to_string_lossy()
+            .into_owned();
+
+        let mut remaining_args: Vec<OsString> = iter.cloned().collect();
+        if let Some(first) = remaining_args.first() {
+            if first == "." {
+                remaining_args.remove(0);
+            }
+        }
+
+        Ok(Self {
+            role,
+            raw_flag_string: flag_string,
+            args: remaining_args,
+        })
+    }
+
+    fn into_server_config(self) -> Result<ServerConfig, String> {
+        let role = match self.role {
+            RoleKind::Receiver => ServerRole::Receiver,
+            RoleKind::Generator => ServerRole::Generator,
+        };
+
+        ServerConfig::from_flag_string_and_args(role, self.raw_flag_string, self.args)
+    }
 }
 
 /// Delegates execution to the daemon front-end (Unix) or reports that daemon
@@ -107,6 +174,21 @@ where
     let _ = stderr.flush();
 
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+    let invocation = match ServerInvocation::parse(args) {
+        Ok(invocation) => invocation,
+        Err(text) => {
+            write_server_error_message(stderr, program_brand, text);
+            return 1;
+        }
+    };
+
+    let _config = match invocation.into_server_config() {
+        Ok(config) => config,
+        Err(text) => {
+            write_server_error_message(stderr, program_brand, text);
+            return 1;
+        }
+    };
     let upstream_program = Brand::Upstream.client_program_name();
     let upstream_program_os = OsStr::new(upstream_program);
     let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
@@ -301,6 +383,16 @@ fn terminate_server_process(
     let _ = child.wait();
     join_server_thread(stdout_thread);
     join_server_thread(stderr_thread);
+}
+
+fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
+    let mut sink = MessageSink::with_brand(stderr, brand);
+    let mut message = rsync_error!(1, "{}", text);
+    message = message.with_role(Role::Server);
+
+    if super::write_message(&message, &mut sink).is_err() {
+        let _ = writeln!(sink.writer_mut(), "{text}");
+    }
 }
 
 fn write_server_fallback_error<Err: Write>(
