@@ -244,104 +244,45 @@ impl ServerInvocation {
     /// - `rsync --server -l ogDtpre.iLsfxC . <args...>`
     ///   which is normalised to `-logDtpre.iLsfxC`.
     fn parse(args: &[OsString]) -> Result<Self, String> {
-        let mut iter = args.iter();
-
-        let first = iter
-            .next()
+        let first = args
+            .first()
             .ok_or_else(|| "missing program name".to_string())?;
         if first.is_empty() {
             return Err("missing program name".to_string());
         }
 
-        let second = iter
-            .next()
+        let second = args
+            .get(1)
             .ok_or_else(|| "missing rsync server marker".to_string())?;
         if second != "--server" {
             return Err(format!("expected --server, found {second:?}"));
         }
 
+        let mut index = 2usize;
         let mut role = InvocationRole::Receiver;
-        let mut next = iter.next();
-        if let Some(flag) = next {
+
+        if let Some(flag) = args.get(index) {
             if flag == "--sender" {
                 role = InvocationRole::Generator;
-                next = iter.next();
+                index += 1;
             }
         }
 
-        let head = match next {
-            Some(s) => s,
-            None => return Err("missing rsync flag string".to_string()),
-        };
+        let (flag_string, mut index) = Self::parse_flag_block(args, index)?;
 
-        let head_cow = head.to_string_lossy();
-        let head_str: &str = &head_cow;
-
-        if !looks_like_flag_or_stub(head_str) {
-            return Err(format!("invalid rsync server flag string: {head_str:?}"));
-        }
-
-        let mut iter = iter.peekable();
-        let flag_string: String;
-
-        match role {
-            InvocationRole::Receiver => {
-                // For receiver, we use the "." placeholder as an anchor.
-                match iter.peek() {
-                    Some(dot_candidate) if *dot_candidate == "." => {
-                        // Simple case: entire flag block is in `head`.
-                        if !is_rsync_flag_string(head_str) {
-                            return Err(format!("invalid rsync server flag string: {head_str:?}"));
-                        }
-                        flag_string = head_str.to_owned();
-                    }
-                    Some(_) => {
-                        // Attempt to combine `head` and a tail to normalise
-                        // split flag blocks such as "-l" + "ogDtpre.iLsfxC".
-                        let tail = iter
-                            .next()
-                            .ok_or_else(|| "missing server path component".to_string())?;
-                        let tail_cow = tail.to_string_lossy();
-                        let tail_str = tail_cow.trim_start_matches('-');
-
-                        let mut combined = String::with_capacity(head_str.len() + tail_str.len());
-                        combined.push_str(head_str);
-                        combined.push_str(tail_str);
-
-                        if !is_rsync_flag_string(&combined) {
-                            return Err(format!("invalid rsync server flag string: {combined:?}"));
-                        }
-
-                        flag_string = combined;
-                    }
-                    None => {
-                        return Err("missing server path component".to_string());
-                    }
+        // For receiver mode, a "." placeholder is accepted and normalised away,
+        // but it is not strictly required. This keeps us tolerant of slightly
+        // different remote-shell behaviours.
+        if role == InvocationRole::Receiver {
+            if let Some(component) = args.get(index) {
+                if component == "." {
+                    index += 1;
                 }
-
-                // Now we must see the "." placeholder.
-                let dot = iter
-                    .next()
-                    .ok_or_else(|| "missing server path component".to_string())?;
-                if dot != "." {
-                    return Err(format!(
-                        "expected server path placeholder '.', found {dot:?}"
-                    ));
-                }
-            }
-            InvocationRole::Generator => {
-                // For sender/generator, the next tokens are positional
-                // arguments; we rely on the client to keep the flag block
-                // contiguous.
-                if !is_rsync_flag_string(head_str) {
-                    return Err(format!("invalid rsync server flag string: {head_str:?}"));
-                }
-                flag_string = head_str.to_owned();
             }
         }
 
-        // Remaining args are the same for both roles.
-        let remaining_args: Vec<OsString> = iter.cloned().collect();
+        // Remaining args (which must not be empty) are passed through unchanged.
+        let remaining_args: Vec<OsString> = args[index..].to_vec();
 
         if remaining_args.is_empty() {
             return Err("missing server arguments".to_string());
@@ -355,6 +296,42 @@ impl ServerInvocation {
 
         touch_server_invocation(&invocation);
         Ok(invocation)
+    }
+
+    /// Parse the flag block, accepting both contiguous and split forms:
+    /// - `-logDtpre.iLsfxC`
+    /// - `-l ogDtpre.iLsfxC`  (combined into `-logDtpre.iLsfxC`)
+    fn parse_flag_block(args: &[OsString], start: usize) -> Result<(String, usize), String> {
+        let head = args
+            .get(start)
+            .ok_or_else(|| "missing rsync flag string".to_string())?;
+
+        // Take ownership up front to avoid `Cow` move pitfalls.
+        let head_str: String = head.to_string_lossy().into_owned();
+
+        // Prefer the combined head+tail form when we see a short "-X" head
+        // followed by a valid tail fragment. This matches split forms such as:
+        //   - `-l ogDtpre.iLsfxC`
+        if let Some(split_tail) = args.get(start + 1) {
+            let head_bytes = head_str.as_bytes();
+            if head_bytes.len() == 2 && head_bytes[0] == b'-' {
+                let tail_str: String = split_tail.to_string_lossy().into_owned();
+                if is_rsync_flag_tail(&tail_str) {
+                    let mut combined = head_str.clone();
+                    combined.push_str(&tail_str);
+                    if is_rsync_flag_string(&combined) {
+                        return Ok((combined, start + 2));
+                    }
+                }
+            }
+        }
+
+        // Fall back to treating the head as the complete flag string.
+        if is_rsync_flag_string(&head_str) {
+            return Ok((head_str, start + 1));
+        }
+
+        Err(format!("invalid rsync server flag string: {head_str:?}"))
     }
 
     /// Helper used by tests to convert a parsed invocation into the core
@@ -395,21 +372,22 @@ fn is_rsync_flag_string(s: &str) -> bool {
     })
 }
 
-/// Heuristic used to decide whether a token is a plausible head of an rsync
-/// server flag block.
+/// Validate a tail fragment of a flag string (no leading '-').
 ///
-/// This keeps the parser permissive in the face of shell splitting quirks
-/// while still rejecting obvious non-flag inputs.
-fn looks_like_flag_or_stub(s: &str) -> bool {
-    if !s.starts_with('-') {
+/// This allows us to accept split forms like:
+/// - `-l ogDtpre.iLsfxC`
+///   while still rejecting obvious path-like arguments (which contain `/`).
+fn is_rsync_flag_tail(s: &str) -> bool {
+    if s.is_empty() || s.contains('/') {
         return false;
     }
 
-    if s.contains('/') {
-        return false;
-    }
-
-    s.len() >= 2
+    s.bytes().all(|b| {
+        matches!(
+            b,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b',' | b'_' | b'+'
+        )
+    })
 }
 
 fn write_server_error_message(stderr: &mut dyn Write, brand: Brand, text: &str) {
