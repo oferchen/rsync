@@ -15,7 +15,78 @@ use core::fallback::{
 };
 use core::message::Role;
 use core::rsync_error;
+use core::server::{ServerConfig, ServerRole};
 use logging::MessageSink;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InvocationRole {
+    Receiver,
+    Generator,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ServerInvocation {
+    role: InvocationRole,
+    raw_flag_string: String,
+    args: Vec<OsString>,
+}
+
+impl ServerInvocation {
+    fn parse(args: &[OsString]) -> Result<Self, String> {
+        if args.len() < 2 {
+            return Err("server invocation is missing the --server marker".to_string());
+        }
+
+        if args
+            .get(1)
+            .map_or(true, |arg| arg != OsStr::new("--server"))
+        {
+            return Err("server invocation must include --server".to_string());
+        }
+
+        let mut index = 2;
+        let mut role = InvocationRole::Receiver;
+        if args
+            .get(index)
+            .is_some_and(|arg| arg == OsStr::new("--sender"))
+        {
+            role = InvocationRole::Generator;
+            index += 1;
+        }
+
+        let flag_arg = args
+            .get(index)
+            .ok_or_else(|| "missing rsync server flag string".to_string())?;
+        let raw_flag_string = flag_arg
+            .to_str()
+            .ok_or_else(|| "rsync server flag string must be valid UTF-8".to_string())?
+            .to_owned();
+        index += 1;
+
+        if args.get(index).is_some_and(|arg| arg == OsStr::new(".")) {
+            index += 1;
+        }
+
+        let trailing_args = args
+            .get(index..)
+            .map_or_else(Vec::new, |slice| slice.to_vec());
+
+        Ok(Self {
+            role,
+            raw_flag_string,
+            args: trailing_args,
+        })
+    }
+
+    fn into_server_config(self) -> Result<ServerConfig, String> {
+        let role = match self.role {
+            InvocationRole::Receiver => ServerRole::Receiver,
+            InvocationRole::Generator => ServerRole::Generator,
+        };
+
+        ServerConfig::from_flag_string_and_args(role, self.raw_flag_string, self.args)
+    }
+}
 
 /// Returns the daemon argument vector when `--daemon` is present.
 pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
@@ -107,6 +178,21 @@ where
     let _ = stderr.flush();
 
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+    let invocation = match ServerInvocation::parse(args) {
+        Ok(invocation) => invocation,
+        Err(text) => {
+            write_server_error_message(stderr, program_brand, &text);
+            return 1;
+        }
+    };
+
+    let _server_config = match invocation.into_server_config() {
+        Ok(config) => config,
+        Err(text) => {
+            write_server_error_message(stderr, program_brand, &text);
+            return 1;
+        }
+    };
     let upstream_program = Brand::Upstream.client_program_name();
     let upstream_program_os = OsStr::new(upstream_program);
     let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
@@ -316,6 +402,16 @@ fn write_server_fallback_error<Err: Write>(
     }
 }
 
+fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
+    let mut sink = MessageSink::with_brand(stderr, brand);
+    let mut message = rsync_error!(1, "{}", text);
+    message = message.with_role(Role::Server);
+
+    if super::write_message(&message, &mut sink).is_err() {
+        let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
 #[cfg(windows)]
 fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
     let mut sink = MessageSink::with_brand(stderr, brand);
@@ -330,5 +426,67 @@ fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
             sink.writer_mut(),
             "daemon mode is not supported on this platform; run the oc-rsync daemon on a Unix-like system"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_receiver_invocation_and_normalises_dot_placeholder() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ];
+
+        let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+        assert_eq!(invocation.role, InvocationRole::Receiver);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(invocation.args, vec![OsString::from("dest")]);
+
+        let config = invocation.into_server_config().expect("config parses");
+        assert_eq!(config.role, ServerRole::Receiver);
+        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(config.args, vec![OsString::from("dest")]);
+    }
+
+    #[test]
+    fn parses_sender_invocation_without_placeholder() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("relative"),
+            OsString::from("dest"),
+        ];
+
+        let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+        assert_eq!(invocation.role, InvocationRole::Generator);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(
+            invocation.args,
+            vec![OsString::from("relative"), OsString::from("dest")]
+        );
+
+        let config = invocation.into_server_config().expect("config parses");
+        assert_eq!(config.role, ServerRole::Generator);
+        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(
+            config.args,
+            vec![OsString::from("relative"), OsString::from("dest")]
+        );
+    }
+
+    #[test]
+    fn parse_rejects_missing_flag_string() {
+        let args = [OsString::from("rsync"), OsString::from("--server")];
+
+        let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+        assert!(error.contains("flag string"));
     }
 }
