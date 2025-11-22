@@ -2,20 +2,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{self, Read, Write};
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
+use std::io::Write;
 
 use core::branding::Brand;
-use core::fallback::{
-    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_is_self, fallback_binary_path, fallback_override,
-};
 use core::message::Role;
 use core::rsync_error;
 use logging::MessageSink;
+
+use core::server::{ServerConfig, ServerRole};
 
 /// Returns the daemon argument vector when `--daemon` is present.
 pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
@@ -93,7 +87,7 @@ where
     1
 }
 
-/// Delegates execution to the system rsync binary when `--server` is requested.
+/// Runs the embedded server implementation when `--server` is requested.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
     stdout: &mut Out,
@@ -107,212 +101,139 @@ where
     let _ = stderr.flush();
 
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
-    let upstream_program = Brand::Upstream.client_program_name();
-    let upstream_program_os = OsStr::new(upstream_program);
-    let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
-        Some(FallbackOverride::Disabled) => {
-            let text = format!(
-                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream {upstream_program} binary"
-            );
-            write_server_fallback_error(stderr, program_brand, text);
-            return 1;
-        }
-        Some(other) => other
-            .resolve_or_default(upstream_program_os)
-            .unwrap_or_else(|| OsString::from(upstream_program)),
-        None => OsString::from(upstream_program),
-    };
-
-    let Some(resolved_fallback) = fallback_binary_path(fallback.as_os_str()) else {
-        let diagnostic =
-            describe_missing_fallback_binary(fallback.as_os_str(), &[CLIENT_FALLBACK_ENV]);
-        write_server_fallback_error(stderr, program_brand, diagnostic);
-        return 1;
-    };
-
-    if fallback_binary_is_self(&resolved_fallback) {
-        let text = format!(
-            "remote server mode is unavailable because the fallback binary '{}' resolves to this oc-rsync executable; install upstream {upstream_program} or set {CLIENT_FALLBACK_ENV} to a different path",
-            resolved_fallback.display()
-        );
-        write_server_fallback_error(stderr, program_brand, text);
-        return 1;
-    }
-
-    let mut command = Command::new(&resolved_fallback);
-    command.args(args.iter().skip(1));
-    command.stdin(Stdio::inherit());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            let text = format!(
-                "failed to launch fallback {upstream_program} binary '{}': {error}",
-                Path::new(&fallback).display()
-            );
-            write_server_fallback_error(stderr, program_brand, text);
+    let invocation = match ServerInvocation::parse(args) {
+        Ok(invocation) => invocation,
+        Err(text) => {
+            write_server_error_message(stderr, program_brand, &text);
             return 1;
         }
     };
 
-    let (sender, receiver) = mpsc::channel();
-    let mut stdout_thread = child
-        .stdout
-        .take()
-        .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stdout, sender.clone()));
-    let mut stderr_thread = child
-        .stderr
-        .take()
-        .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stderr, sender.clone()));
-    drop(sender);
-
-    let mut stdout_open = stdout_thread.is_some();
-    let mut stderr_open = stderr_thread.is_some();
-
-    while stdout_open || stderr_open {
-        match receiver.recv() {
-            Ok(ServerStreamMessage::Data(ServerStreamKind::Stdout, data)) => {
-                if let Err(error) = stdout.write_all(&data) {
-                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                    write_server_fallback_error(
-                        stderr,
-                        program_brand,
-                        format!("failed to forward fallback stdout: {error}"),
-                    );
-                    return 1;
-                }
-            }
-            Ok(ServerStreamMessage::Data(ServerStreamKind::Stderr, data)) => {
-                if let Err(error) = stderr.write_all(&data) {
-                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                    write_server_fallback_error(
-                        stderr,
-                        program_brand,
-                        format!("failed to forward fallback stderr: {error}"),
-                    );
-                    return 1;
-                }
-            }
-            Ok(ServerStreamMessage::Error(ServerStreamKind::Stdout, error)) => {
-                terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                write_server_fallback_error(
-                    stderr,
-                    program_brand,
-                    format!("failed to read stdout from fallback {upstream_program}: {error}"),
-                );
-                return 1;
-            }
-            Ok(ServerStreamMessage::Error(ServerStreamKind::Stderr, error)) => {
-                terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                write_server_fallback_error(
-                    stderr,
-                    program_brand,
-                    format!("failed to read stderr from fallback {upstream_program}: {error}"),
-                );
-                return 1;
-            }
-            Ok(ServerStreamMessage::Finished(kind)) => match kind {
-                ServerStreamKind::Stdout => stdout_open = false,
-                ServerStreamKind::Stderr => stderr_open = false,
-            },
-            Err(_) => break,
+    let config = match invocation.into_server_config() {
+        Ok(config) => config,
+        Err(text) => {
+            write_server_error_message(stderr, program_brand, &text);
+            return 1;
         }
-    }
+    };
 
-    join_server_thread(&mut stdout_thread);
-    join_server_thread(&mut stderr_thread);
-
-    match child.wait() {
-        Ok(status) => status
-            .code()
-            .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
-            .unwrap_or(1),
+    match core::server::run_server_stdio(config, &mut std::io::stdin(), &mut std::io::stdout()) {
+        Ok(code) => code,
         Err(error) => {
-            write_server_fallback_error(
-                stderr,
-                program_brand,
-                format!("failed to wait for fallback {upstream_program} process: {error}"),
-            );
+            let text = format!("server I/O error: {error}");
+            write_server_error_message(stderr, program_brand, &text);
             1
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum ServerStreamKind {
-    Stdout,
-    Stderr,
-}
-
-enum ServerStreamMessage {
-    Data(ServerStreamKind, Vec<u8>),
-    Error(ServerStreamKind, io::Error),
-    Finished(ServerStreamKind),
-}
-
-fn spawn_server_reader<R>(
-    mut reader: R,
-    kind: ServerStreamKind,
-    sender: mpsc::Sender<ServerStreamMessage>,
-) -> thread::JoinHandle<()>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let mut buffer = vec![0u8; 8192];
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => {
-                    let _ = sender.send(ServerStreamMessage::Finished(kind));
-                    break;
-                }
-                Ok(n) => {
-                    if sender
-                        .send(ServerStreamMessage::Data(kind, buffer[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => {
-                    let _ = sender.send(ServerStreamMessage::Error(kind, error));
-                    break;
-                }
-            }
-        }
-    })
-}
-
-fn join_server_thread(handle: &mut Option<thread::JoinHandle<()>>) {
-    if let Some(join) = handle.take() {
-        let _ = join.join();
-    }
-}
-
-fn terminate_server_process(
-    child: &mut Child,
-    stdout_thread: &mut Option<thread::JoinHandle<()>>,
-    stderr_thread: &mut Option<thread::JoinHandle<()>>,
-) {
-    let _ = child.kill();
-    let _ = child.wait();
-    join_server_thread(stdout_thread);
-    join_server_thread(stderr_thread);
-}
-
-fn write_server_fallback_error<Err: Write>(
-    stderr: &mut Err,
-    brand: Brand,
-    text: impl fmt::Display,
-) {
+fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
     message = message.with_role(Role::Server);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InvocationRole {
+    Receiver,
+    Generator,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ServerInvocation {
+    role: InvocationRole,
+    raw_flag_string: String,
+    args: Vec<OsString>,
+}
+
+impl ServerInvocation {
+    fn parse(args: &[OsString]) -> Result<Self, String> {
+        let mut iter = args.iter();
+        let Some(program) = iter.next() else {
+            return Err("missing program name".to_string());
+        };
+
+        let Some(flag) = iter.next() else {
+            let program = program.to_string_lossy();
+            return Err(format!("{program}: --server must be supplied"));
+        };
+
+        if flag != "--server" {
+            let program = program.to_string_lossy();
+            return Err(format!(
+                "{program}: unexpected argument {:?}; expected --server",
+                flag
+            ));
+        }
+
+        let mut role = InvocationRole::Receiver;
+        let current = match iter.next() {
+            Some(arg) if arg == "--sender" => {
+                role = InvocationRole::Generator;
+                iter.next()
+            }
+            other => other,
+        };
+
+        let Some(flag_string) = current else {
+            return Err("missing rsync server flag string".to_string());
+        };
+
+        let mut remaining: Vec<OsString> = iter.cloned().collect();
+        if remaining
+            .first()
+            .map_or(false, |arg| arg.as_os_str() == OsStr::new("."))
+        {
+            remaining.remove(0);
+        }
+
+        Ok(Self {
+            role,
+            raw_flag_string: flag_string.to_string_lossy().into_owned(),
+            args: remaining,
+        })
+    }
+
+    fn into_server_config(self) -> Result<ServerConfig, String> {
+        let role = match self.role {
+            InvocationRole::Receiver => ServerRole::Receiver,
+            InvocationRole::Generator => ServerRole::Generator,
+        };
+
+        ServerConfig::from_flag_string_and_args(role, self.raw_flag_string, self.args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InvocationRole, ServerInvocation};
+    use std::ffi::OsString;
+
+    #[test]
+    fn parses_sender_invocation_with_placeholder() {
+        let args = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("path"),
+        ];
+
+        let parsed = ServerInvocation::parse(&args).expect("parse succeeds");
+        assert_eq!(parsed.role, InvocationRole::Generator);
+        assert_eq!(parsed.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(parsed.args, vec![OsString::from("path")]);
+    }
+
+    #[test]
+    fn errors_when_missing_flag_string() {
+        let args = vec![OsString::from("rsync"), OsString::from("--server")];
+        let err = ServerInvocation::parse(&args).expect_err("parse fails");
+        assert!(err.contains("flag string"));
     }
 }
 
