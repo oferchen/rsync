@@ -250,7 +250,6 @@ impl ServerInvocation {
 
         Ok(invocation)
     }
-}
 
 /// Returns true if `s` looks like an rsync server flag string.
 ///
