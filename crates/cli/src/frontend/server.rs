@@ -8,6 +8,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 use core::branding::Brand;
 use core::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
@@ -225,10 +228,7 @@ where
     join_server_thread(&mut stderr_thread);
 
     match child.wait() {
-        Ok(status) => status
-            .code()
-            .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
-            .unwrap_or(1),
+        Ok(status) => normalize_server_exit_status(status),
         Err(error) => {
             write_server_fallback_error(
                 stderr,
@@ -313,6 +313,20 @@ fn write_server_fallback_error<Err: Write>(
     message = message.with_role(Role::Server);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+fn normalize_server_exit_status(status: std::process::ExitStatus) -> i32 {
+    match status.code() {
+        Some(code) => code.min(super::MAX_EXIT_CODE),
+        None => {
+            #[cfg(unix)]
+            if let Some(signal) = status.signal() {
+                return (128 + signal).min(super::MAX_EXIT_CODE);
+            }
+
+            super::MAX_EXIT_CODE
+        }
     }
 }
 
