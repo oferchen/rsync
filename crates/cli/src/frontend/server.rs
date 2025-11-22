@@ -1,12 +1,12 @@
 #![deny(unsafe_code)]
 
-use std::env;
 use std::ffi::OsString;
 use std::io::Write;
 
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
+#[cfg(test)]
 use core::server::{ServerConfig, ServerRole};
 use logging::MessageSink;
 
@@ -55,10 +55,7 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
     Some(daemon_args)
 }
 
-/// Returns true if the command-line arguments indicate server mode.
-///
-/// This looks for the `--server` flag in the initial argument vector, before
-/// any `--` separator.
+/// Return `true` if `--server` appears in the argument vector (before `--`).
 pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
     let mut reached_double_dash = false;
 
@@ -86,8 +83,6 @@ where
     Out: Write,
     Err: Write,
 {
-    // On Unix we have a real daemon implementation: delegate to the `daemon`
-    // crate, which already mirrors upstream behaviour.
     daemon::run(args, stdout, stderr)
 }
 
@@ -117,7 +112,12 @@ fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
     }
 }
 
-/// Dispatch server mode to the selected backend.  Defaults to the upstream binary.
+/// Entry point for `--server` mode.
+///
+/// This is the public façade that:
+/// - Flushes stdio (mirroring upstream).
+/// - Detects the brand.
+/// - Delegates to the embedded server dispatcher.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
     stdout: &mut Out,
@@ -127,86 +127,142 @@ where
     Out: Write,
     Err: Write,
 {
-    // Flush buffers before invoking the server.
+    // Upstream rsync flushes stdio before switching roles; we mirror that.
     let _ = stdout.flush();
     let _ = stderr.flush();
 
-    // Ignore OC_RSYNC_SERVER_IMPL overrides and always use the embedded handler.
-    run_server_mode_embedded(args, stdout, stderr)
+    let brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+    run_server_mode_embedded(args, stderr, brand)
 }
 
-/// Run server mode using the embedded implementation.
+/// Strategy interface for executing a parsed server invocation.
 ///
-/// For now this only validates the invocation and reports an rsync-style error,
-/// mirroring upstream's behaviour for invalid `--server` argument vectors.
-fn run_server_mode_embedded<Out, Err>(args: &[OsString], _stdout: &mut Out, stderr: &mut Err) -> i32
-where
-    Out: Write,
-    Err: Write,
-{
-    let _ = _stdout.flush();
-    let _ = stderr.flush();
+/// This separates parsing from execution and allows battle-tested,
+/// role-specific logic to be plugged in later without changing the call site.
+trait ServerExecutor {
+    fn execute(&self, invocation: &ServerInvocation, stderr: &mut dyn Write, brand: Brand) -> i32;
+}
 
-    let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+struct ReceiverExecutor;
+struct GeneratorExecutor;
+
+impl ServerExecutor for ReceiverExecutor {
+    fn execute(&self, invocation: &ServerInvocation, stderr: &mut dyn Write, brand: Brand) -> i32 {
+        // Keep invocation in scope so that future implementations can use it
+        // without changing the interface.
+        let _ = invocation;
+        write_server_error_message(
+            stderr,
+            brand,
+            "server mode is not yet implemented for role Receiver",
+        );
+        1
+    }
+}
+
+impl ServerExecutor for GeneratorExecutor {
+    fn execute(&self, invocation: &ServerInvocation, stderr: &mut dyn Write, brand: Brand) -> i32 {
+        let _ = invocation;
+        write_server_error_message(
+            stderr,
+            brand,
+            "server mode is not yet implemented for role Generator",
+        );
+        1
+    }
+}
+
+/// Factory for role-specific server executors.
+///
+/// This centralises the mapping between protocol role and concrete
+/// implementation, so adding new roles or shims is a local change.
+fn make_server_executor(role: InvocationRole) -> Box<dyn ServerExecutor> {
+    match role {
+        InvocationRole::Receiver => Box::new(ReceiverExecutor),
+        InvocationRole::Generator => Box::new(GeneratorExecutor),
+    }
+}
+
+/// Minimal embedded server-mode handler.
+///
+/// For now this only:
+/// - Parses the `--server` invocation into a structured `ServerInvocation`.
+/// - Resolves a role-specific executor.
+/// - Emits a branded "not yet implemented" error.
+///
+/// The Strategy + Factory design here is intentionally stable so that the
+/// real server engine can be wired in later without touching the CLI
+/// entrypoints.
+fn run_server_mode_embedded<Err: Write>(args: &[OsString], stderr: &mut Err, brand: Brand) -> i32 {
     let invocation = match ServerInvocation::parse(args) {
-        Ok(invocation) => {
-            // Keep the parsed structure alive to discourage bitrot in the parser.
-            touch_server_invocation(&invocation);
-            invocation
-        }
-        Err(text) => {
-            write_server_error_message(stderr, program_brand, &text);
+        Ok(invocation) => invocation,
+        Err(error) => {
+            write_server_error_message(stderr, brand, &error);
             return 1;
         }
     };
 
-    // For now we do not yet implement the actual data transfer; upstream rsync
-    // reports usage errors for invalid invocations, which is what the embedding
-    // tests rely on. A valid invocation would reach this point.
-    let text = format!(
-        "server mode is not yet implemented for role {:?}",
-        invocation.role
-    );
-    write_server_error_message(stderr, program_brand, &text);
-    1
+    let executor = make_server_executor(invocation.role);
+    executor.execute(&invocation, stderr, brand)
 }
 
-/// Parsed representation of a `--server` invocation.
+/// Local representation of a parsed `--server` invocation.
+///
+/// This acts as a stable value object between the argv world and
+/// the internal server engine, mirroring the way upstream rsync
+/// distinguishes between receiver and generator roles.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum InvocationRole {
+    Receiver,
+    Generator,
+}
+
+impl InvocationRole {
+    #[cfg(test)]
+    fn as_server_role(self) -> ServerRole {
+        match self {
+            Self::Receiver => ServerRole::Receiver,
+            Self::Generator => ServerRole::Generator,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ServerInvocation {
-    role: Role,
+    role: InvocationRole,
     raw_flag_string: String,
     args: Vec<OsString>,
 }
 
 impl ServerInvocation {
+    /// Parse the argv vector of a `--server` invocation as generated by the
+    /// client side.
+    ///
+    /// Expected shapes (mirroring upstream):
+    /// - `rsync --server <flags> . <args...>`
+    /// - `rsync --server --sender <flags> <args...>`
     fn parse(args: &[OsString]) -> Result<Self, String> {
-        if args.is_empty() {
+        let mut iter = args.iter();
+
+        let first = iter
+            .next()
+            .ok_or_else(|| "missing program name".to_string())?;
+        if first.is_empty() {
             return Err("missing program name".to_string());
         }
 
-        // Upstream expects:
-        //   rsync --server <flags> . <args...>
-        //
-        // We keep this strict to make it easier to reason about.
-        let mut iter = args.iter();
-        let _program = iter.next().unwrap();
-
-        let first = match iter.next() {
-            Some(s) => s.to_string_lossy().into_owned(),
-            None => return Err("missing --server flag".to_string()),
-        };
-
-        if first != "--server" {
-            return Err(format!("expected --server, found {first:?}"));
+        let second = iter
+            .next()
+            .ok_or_else(|| "missing rsync server marker".to_string())?;
+        if second != "--server" {
+            return Err(format!("expected --server, found {second:?}"));
         }
 
-        let mut role = Role::Receiver;
+        let mut role = InvocationRole::Receiver;
         let mut maybe_next = iter.next();
-
         if let Some(flag) = maybe_next {
             if flag == "--sender" {
-                role = Role::Generator;
+                role = InvocationRole::Generator;
                 maybe_next = iter.next();
             }
         }
@@ -220,19 +276,19 @@ impl ServerInvocation {
             return Err(format!("invalid rsync server flag string: {flag_string:?}"));
         }
 
-        // Upstream uses "." as the next argument; we validate but otherwise
-        // ignore it here.
-        let dot = match iter.next() {
-            Some(s) => s,
-            None => return Err("missing server path component".to_string()),
-        };
-
-        if dot != "." {
-            return Err(format!(
-                "expected server path placeholder '.', found {dot:?}"
-            ));
+        // For receiver mode, the next argument must be the "." placeholder.
+        if role == InvocationRole::Receiver {
+            let dot = iter
+                .next()
+                .ok_or_else(|| "missing server path component".to_string())?;
+            if dot != "." {
+                return Err(format!(
+                    "expected server path placeholder '.', found {dot:?}"
+                ));
+            }
         }
 
+        // Remaining args are the same for both roles.
         let remaining_args: Vec<OsString> = iter.cloned().collect();
 
         if remaining_args.is_empty() {
@@ -245,16 +301,24 @@ impl ServerInvocation {
             args: remaining_args,
         };
 
-        // Keep this local helper updated when we add fields.
         touch_server_invocation(&invocation);
-
         Ok(invocation)
     }
+
+    /// Helper used by tests to convert a parsed invocation into the core
+    /// `ServerConfig` structure.
+    #[cfg(test)]
+    fn into_server_config(self) -> Result<ServerConfig, String> {
+        ServerConfig::from_flag_string_and_args(
+            self.role.as_server_role(),
+            self.raw_flag_string,
+            self.args,
+        )
+    }
 }
-/// Returns true if `s` looks like an rsync server flag string.
-///
-/// Upstream uses a compact flag-string format consisting of a leading `-`
-/// followed by alphanumeric and a small set of punctuation characters.
+
+/// Validate that the server flag string looks like an rsync `--server`
+/// short-option block (e.g. `-logDtpre.iLsfxC`).
 fn is_rsync_flag_string(s: &str) -> bool {
     let bytes = s.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'-' {
@@ -269,20 +333,17 @@ fn is_rsync_flag_string(s: &str) -> bool {
     })
 }
 
-fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: &str) {
+fn write_server_error_message(stderr: &mut dyn Write, brand: Brand, text: &str) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
-    // Treat these diagnostics as daemon/server-side errors for logging purposes.
     message = message.with_role(Role::Daemon);
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
     }
 }
 
-/// Dummy use of all fields in `ServerInvocation` to prevent it from becoming
-/// partially-dead when we extend it.
-///
-/// This helps keep the parser and the usages in sync.
+/// Touch all fields of the `ServerInvocation` so that additions remain
+/// Clippy-clean even if unused in some builds.
 fn touch_server_invocation(invocation: &ServerInvocation) {
     let _role = invocation.role;
     let _flags = &invocation.raw_flag_string;
@@ -345,7 +406,6 @@ mod tests {
     #[test]
     fn parse_rejects_missing_flag_string() {
         let args = [OsString::from("rsync"), OsString::from("--server")];
-
         let error = ServerInvocation::parse(&args).expect_err("parse should fail");
         assert!(error.contains("flag string"));
     }
