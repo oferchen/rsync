@@ -32,6 +32,7 @@ core = { path = "crates/core" }
 assert_cmd = "2.0"
 core = { path = "crates/core" }
 libc = "0.2"
+tempfile = "3.10"
 
 # Windows-wide deps (applies to MSVC and GNU toolchains)
 [target.'cfg(windows)'.dependencies]
