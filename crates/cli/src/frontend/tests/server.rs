@@ -1,20 +1,3 @@
-//! Tests for server-mode frontend behaviour.
-//!
-//! These tests validate how `oc-rsync` behaves when `--server` is invoked
-//! directly from the command line (which is always misuse). In this case,
-//! the binary should:
-//!   * exit with a non-zero status,
-//!   * print nothing on stdout, and
-//!   * emit a diagnostic on stderr (but not the full user-facing `--help`
-//!     banner that normal CLI misuse would show).
-//
-// NOTE: This test module spawns the compiled `oc-rsync` binary directly,
-// without using the deprecated `assert_cmd::cargo_bin` helper. Instead, it
-// resolves the binary path via environment variables or a workspace-relative
-// default. The tests cover multiple argument-shape variants and both with
-// and without a synthetic `RSYNC_CONNECTION` environment, to exercise the
-// main misuse cases for `--server`.
-
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
 use std::ffi::OsString;
@@ -22,7 +5,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::frontend::tests::daemon_cli::run;
-use crate::frontend::tests::out_tests::{ENV_LOCK, EnvGuard, RSYNC};
+use crate::frontend::tests::out_tests::{ENV_LOCK, EnvGuard, RSYNC, write_executable_script};
 use core::fallback::CLIENT_FALLBACK_ENV;
 
 /// Resolve the `oc-rsync` binary path for tests.
@@ -203,9 +186,19 @@ fn server_mode_maps_signal_exit_status() {
     assert_signal_exit_status(exit_code, 15);
 }
 
+/// Ensure that `--` stops option parsing for the frontend and that a
+/// `--server` flag **after** `--` is treated as a normal positional
+/// argument. In particular, even if a fallback server implementation is
+/// configured, the direct CLI invocation:
+///
+///     oc-rsync -- --server source dest
+///
+/// must **not** trigger the fallback server binary, and must therefore
+/// not create the marker file or propagate the fallback script's exit
+/// status.
 #[test]
 fn server_mode_ignores_flag_after_double_dash() {
-    use std::io;
+    use std::fs;
     use tempfile::tempdir;
 
     let _env_lock = ENV_LOCK.lock().expect("env lock");
@@ -225,23 +218,23 @@ exit 5
     let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
     let _marker_guard = EnvGuard::set("SERVER_MARKER", marker_path.as_os_str());
 
-    let mut stdout = io::sink();
-    let mut stderr = io::sink();
-    let exit_code = run(
-        [
-            OsString::from(RSYNC),
-            OsString::from("--"),
-            OsString::from("--server"),
-            OsString::from("source"),
-            OsString::from("dest"),
-        ],
-        &mut stdout,
-        &mut stderr,
-    );
+    let mut cmd = Command::new(oc_rsync_binary());
+    cmd.arg("--");
+    cmd.arg("--server");
+    cmd.arg("source");
+    cmd.arg("dest");
+
+    let output = cmd.output().expect("run oc-rsync");
 
     assert!(
         !marker_path.exists(),
-        "fallback script should not be invoked"
+        "fallback script should not be invoked for `-- --server`"
     );
-    assert_ne!(exit_code, 5);
+
+    if let Some(code) = output.status.code() {
+        assert_ne!(
+            code, 5,
+            "exit code must not come from the fallback script for `-- --server`"
+        );
+    }
 }
