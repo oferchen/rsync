@@ -2,10 +2,16 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{self, Read, Write};
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
+#[cfg(any(windows, test))]
+use std::io::Read;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+#[cfg(any(windows, test))]
+use std::process::Child;
+use std::process::{Command, Stdio};
+#[cfg(any(windows, test))]
 use std::sync::mpsc;
+#[cfg(any(windows, test))]
 use std::thread;
 
 use core::branding::Brand;
@@ -107,37 +113,56 @@ where
     let _ = stderr.flush();
 
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+
+    let Some(resolved_fallback) = resolve_server_fallback(stderr, program_brand) else {
+        return 1;
+    };
+
+    run_server_process(args, stderr, program_brand, resolved_fallback)
+}
+
+#[cfg(all(unix, not(test)))]
+fn run_server_process<Err: Write>(
+    args: &[OsString],
+    stderr: &mut Err,
+    program_brand: Brand,
+    resolved_fallback: PathBuf,
+) -> i32 {
+    let error = exec_server_process(&resolved_fallback, args);
+
+    write_server_fallback_error(
+        stderr,
+        program_brand,
+        format!(
+            "failed to launch fallback {} binary '{}': {error}",
+            Brand::Upstream.client_program_name(),
+            Path::new(&resolved_fallback).display()
+        ),
+    );
+
+    1
+}
+
+#[cfg(all(unix, not(test)))]
+fn exec_server_process(fallback: &Path, args: &[OsString]) -> io::Error {
+    use std::os::unix::process::CommandExt;
+
+    Command::new(fallback)
+        .args(args.iter().skip(1))
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .exec()
+}
+
+#[cfg(any(windows, test))]
+fn run_server_process<Err: Write>(
+    args: &[OsString],
+    stderr: &mut Err,
+    program_brand: Brand,
+    resolved_fallback: PathBuf,
+) -> i32 {
     let upstream_program = Brand::Upstream.client_program_name();
-    let upstream_program_os = OsStr::new(upstream_program);
-    let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
-        Some(FallbackOverride::Disabled) => {
-            let text = format!(
-                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream {upstream_program} binary"
-            );
-            write_server_fallback_error(stderr, program_brand, text);
-            return 1;
-        }
-        Some(other) => other
-            .resolve_or_default(upstream_program_os)
-            .unwrap_or_else(|| OsString::from(upstream_program)),
-        None => OsString::from(upstream_program),
-    };
-
-    let Some(resolved_fallback) = fallback_binary_path(fallback.as_os_str()) else {
-        let diagnostic =
-            describe_missing_fallback_binary(fallback.as_os_str(), &[CLIENT_FALLBACK_ENV]);
-        write_server_fallback_error(stderr, program_brand, diagnostic);
-        return 1;
-    };
-
-    if fallback_binary_is_self(&resolved_fallback) {
-        let text = format!(
-            "remote server mode is unavailable because the fallback binary '{}' resolves to this oc-rsync executable; install upstream {upstream_program} or set {CLIENT_FALLBACK_ENV} to a different path",
-            resolved_fallback.display()
-        );
-        write_server_fallback_error(stderr, program_brand, text);
-        return 1;
-    }
 
     let mut command = Command::new(&resolved_fallback);
     command.args(args.iter().skip(1));
@@ -150,7 +175,7 @@ where
         Err(error) => {
             let text = format!(
                 "failed to launch fallback {upstream_program} binary '{}': {error}",
-                Path::new(&fallback).display()
+                resolved_fallback.display()
             );
             write_server_fallback_error(stderr, program_brand, text);
             return 1;
@@ -240,18 +265,57 @@ where
     }
 }
 
+fn resolve_server_fallback<Err: Write>(stderr: &mut Err, program_brand: Brand) -> Option<PathBuf> {
+    let upstream_program = Brand::Upstream.client_program_name();
+    let upstream_program_os = OsStr::new(upstream_program);
+    let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
+        Some(FallbackOverride::Disabled) => {
+            let text = format!(
+                "remote server mode is unavailable because OC_RSYNC_FALLBACK is disabled; set OC_RSYNC_FALLBACK to point to an upstream {upstream_program} binary"
+            );
+            write_server_fallback_error(stderr, program_brand, text);
+            return None;
+        }
+        Some(other) => other
+            .resolve_or_default(upstream_program_os)
+            .unwrap_or_else(|| OsString::from(upstream_program)),
+        None => OsString::from(upstream_program),
+    };
+
+    let Some(resolved_fallback) = fallback_binary_path(fallback.as_os_str()) else {
+        let diagnostic =
+            describe_missing_fallback_binary(fallback.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+        write_server_fallback_error(stderr, program_brand, diagnostic);
+        return None;
+    };
+
+    if fallback_binary_is_self(&resolved_fallback) {
+        let text = format!(
+            "remote server mode is unavailable because the fallback binary '{}' resolves to this oc-rsync executable; install upstream {upstream_program} or set {CLIENT_FALLBACK_ENV} to a different path",
+            resolved_fallback.display()
+        );
+        write_server_fallback_error(stderr, program_brand, text);
+        return None;
+    }
+
+    Some(resolved_fallback)
+}
+
+#[cfg(any(windows, test))]
 #[derive(Clone, Copy, Debug)]
 enum ServerStreamKind {
     Stdout,
     Stderr,
 }
 
+#[cfg(any(windows, test))]
 enum ServerStreamMessage {
     Data(ServerStreamKind, Vec<u8>),
     Error(ServerStreamKind, io::Error),
     Finished(ServerStreamKind),
 }
 
+#[cfg(any(windows, test))]
 fn spawn_server_reader<R>(
     mut reader: R,
     kind: ServerStreamKind,
@@ -286,12 +350,14 @@ where
     })
 }
 
+#[cfg(any(windows, test))]
 fn join_server_thread(handle: &mut Option<thread::JoinHandle<()>>) {
     if let Some(join) = handle.take() {
         let _ = join.join();
     }
 }
 
+#[cfg(any(windows, test))]
 fn terminate_server_process(
     child: &mut Child,
     stdout_thread: &mut Option<thread::JoinHandle<()>>,
