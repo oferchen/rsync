@@ -1,5 +1,17 @@
 use super::common::*;
 use super::*;
+use crate::frontend::server::server_mode_requested;
+
+#[test]
+fn server_flag_after_double_dash_is_treated_as_operand() {
+    let args = vec![
+        OsString::from(RSYNC),
+        OsString::from("--"),
+        OsString::from("--server"),
+    ];
+
+    assert!(!server_mode_requested(&args));
+}
 
 #[cfg(unix)]
 #[test]
