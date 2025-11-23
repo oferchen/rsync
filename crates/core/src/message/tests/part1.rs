@@ -1,3 +1,5 @@
+use crate::message::strings;
+
 #[test]
 fn message_scratch_with_thread_local_borrows_shared_buffer() {
     let len = MessageScratch::with_thread_local(|scratch| {
@@ -79,6 +81,22 @@ fn message_from_exit_code_returns_none_for_unknown_values() {
             "unexpected mapping for {code}"
         );
     }
+}
+
+#[test]
+fn exit_code_message_with_detail_includes_canonical_text() {
+    let message = strings::exit_code_message_with_detail(1, "unrecognised flag --bad")
+        .expect("exit code 1 should be defined");
+
+    assert_eq!(message.code(), Some(1));
+    assert!(
+        message.text().starts_with("syntax or usage error: "),
+        "message should reuse the canonical exit-code wording"
+    );
+    assert!(
+        message.text().contains("unrecognised flag --bad"),
+        "detail text should be appended"
+    );
 }
 
 #[test]

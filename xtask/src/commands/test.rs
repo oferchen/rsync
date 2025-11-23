@@ -3,14 +3,20 @@ use crate::util::{is_help_flag, run_cargo_tool};
 use std::ffi::OsString;
 use std::path::Path;
 
-const NEXTEST_ARGS: &[&str] = &["nextest", "run", "--workspace", "--all-features"];
-const NEXTEST_DISPLAY: &str = "cargo nextest run --workspace --all-features";
+const NEXTEST_ARGS: &[&str] = &[
+    "nextest",
+    "run",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+];
+const NEXTEST_DISPLAY: &str = "cargo nextest run --workspace --all-targets --all-features";
 const NEXTEST_INSTALL_COMMAND: &str = "cargo install cargo-nextest --locked";
 const NEXTEST_INSTALL_HINT: &str =
     "install cargo-nextest with `cargo install cargo-nextest --locked`";
 
-const CARGO_TEST_ARGS: &[&str] = &["test", "--workspace", "--all-features"];
-const CARGO_TEST_DISPLAY: &str = "cargo test --workspace --all-features";
+const CARGO_TEST_ARGS: &[&str] = &["test", "--workspace", "--all-targets", "--all-features"];
+const CARGO_TEST_DISPLAY: &str = "cargo test --workspace --all-targets --all-features";
 const CARGO_TEST_INSTALL_HINT: &str = "install Rust and cargo from https://rustup.rs";
 
 /// Options accepted by the `test` command.
@@ -121,61 +127,10 @@ Options:\\n  --use-cargo-test    Force running cargo test even when cargo-nextes
 mod tests {
     use super::*;
     use crate::error::TaskError;
+    use crate::util::test_env::EnvGuard;
     use crate::workspace::workspace_root;
-    use std::env;
 
     const FORCE_MISSING_ENV: &str = "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS";
-
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = env::var_os(key);
-            set_env_var(key, value);
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = self.previous.take() {
-                set_env_var(self.key, &previous);
-            } else {
-                remove_env_var(self.key);
-            }
-        }
-    }
-
-    #[allow(unsafe_code)]
-    fn set_env_var<K: AsRef<std::ffi::OsStr>, V: AsRef<std::ffi::OsStr>>(key: K, value: V) {
-        // SAFETY: These helpers are only used in tests to temporarily override process
-        // environment variables. The test harness serializes each invocation, so scoped
-        // mutations are safe for the duration of the test.
-        unsafe {
-            env::set_var(key, value);
-        }
-    }
-
-    #[allow(unsafe_code)]
-    fn remove_env_var<K: AsRef<std::ffi::OsStr>>(key: K) {
-        // SAFETY: These helpers are only used in tests to temporarily override process
-        // environment variables. The test harness serializes each invocation, so scoped
-        // mutations are safe for the duration of the test.
-        unsafe {
-            env::remove_var(key);
-        }
-    }
-
-    fn guard_cargo(value: &str) -> EnvGuard {
-        EnvGuard::set("CARGO", value)
-    }
-
-    fn guard_force_missing(value: &str) -> EnvGuard {
-        EnvGuard::set(FORCE_MISSING_ENV, value)
-    }
 
     #[test]
     fn parse_args_accepts_default_configuration() {
@@ -209,15 +164,17 @@ mod tests {
 
     #[test]
     fn execute_prefers_nextest_when_available() {
-        let _cargo = guard_cargo("true");
+        let mut env = EnvGuard::new();
+        env.set("CARGO", "true");
         let workspace = workspace_root().expect("workspace root");
         execute(workspace.as_path(), TestOptions::default()).expect("nextest invocation succeeds");
     }
 
     #[test]
     fn execute_falls_back_when_nextest_missing() {
-        let _cargo = guard_cargo("true");
-        let _missing = guard_force_missing(NEXTEST_DISPLAY);
+        let mut env = EnvGuard::new();
+        env.set("CARGO", "true");
+        env.set(FORCE_MISSING_ENV, NEXTEST_DISPLAY);
         let workspace = workspace_root().expect("workspace root");
         execute(workspace.as_path(), TestOptions::default()).expect("fallback succeeds");
     }
@@ -234,8 +191,9 @@ mod tests {
 
     #[test]
     fn execute_honours_force_cargo_test_flag() {
-        let _cargo = guard_cargo("true");
-        let _missing = guard_force_missing(NEXTEST_DISPLAY);
+        let mut env = EnvGuard::new();
+        env.set("CARGO", "true");
+        env.set(FORCE_MISSING_ENV, NEXTEST_DISPLAY);
         let workspace = workspace_root().expect("workspace root");
         execute(
             workspace.as_path(),
@@ -249,8 +207,9 @@ mod tests {
 
     #[test]
     fn execute_attempts_install_when_requested() {
-        let _cargo = guard_cargo("true");
-        let _missing = guard_force_missing(NEXTEST_DISPLAY);
+        let mut env = EnvGuard::new();
+        env.set("CARGO", "true");
+        env.set(FORCE_MISSING_ENV, NEXTEST_DISPLAY);
         let workspace = workspace_root().expect("workspace root");
 
         execute(

@@ -143,6 +143,22 @@ fn fallback_binary_candidates_use_default_path_when_path_missing() {
 }
 
 #[test]
+fn fallback_binary_candidates_use_default_path_when_path_empty() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _guard = EnvGuard::set_os("PATH", OsStr::new(""));
+
+    #[cfg(windows)]
+    let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+    let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+
+    assert!(
+        candidates.iter().all(|candidate| candidate.is_absolute()),
+        "empty PATH should fall back to the default search path instead of the current directory: {candidates:?}",
+    );
+}
+
+#[test]
 fn fallback_binary_path_resolves_executable() {
     #[allow(unused_mut)]
     let mut temp = NamedTempFile::new().expect("tempfile");
