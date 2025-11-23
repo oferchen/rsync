@@ -26,7 +26,7 @@ type ScopedEnv = EnvGuard;
 fn scoped_env(keys: &[&'static str]) -> ScopedEnv {
     let mut guard = EnvGuard::new();
     for key in keys {
-        guard.track(*key);
+        guard.track(key);
     }
     guard
 }

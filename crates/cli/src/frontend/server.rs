@@ -1,18 +1,19 @@
 #![deny(unsafe_code)]
 
+use std::env;
 use std::ffi::OsString;
 use std::io::Write;
-
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
+use std::process::Command;
 
 use core::branding::Brand;
+use core::fallback::CLIENT_FALLBACK_ENV;
 use core::message::Role;
 use core::rsync_error;
 #[cfg(test)]
 use core::server::{ServerConfig, ServerRole};
 use logging::MessageSink;
 
+#[cfg(unix)]
 /// Translate a client invocation that requested `--daemon` into a standalone
 /// daemon invocation.
 ///
@@ -119,8 +120,9 @@ fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
 ///
 /// This is the public façade that:
 /// - Flushes stdio (mirroring upstream).
+/// - Consults the client-side fallback hook (CLIENT_FALLBACK_ENV).
 /// - Detects the brand.
-/// - Delegates to the embedded server dispatcher.
+/// - Delegates to the embedded server dispatcher when no fallback is active.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
     stdout: &mut Out,
@@ -135,6 +137,48 @@ where
     let _ = stderr.flush();
 
     let brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+
+    // If a client-specified fallback implementation is configured, delegate to
+    // it. This preserves the ability to plug in an external rsync server (for
+    // example, the C implementation or a test script) while the Rust server is
+    // incomplete.
+    if let Some(fallback_path) = env::var_os(CLIENT_FALLBACK_ENV) {
+        if !fallback_path.is_empty() {
+            // Avoid trivial recursion if the fallback accidentally points to
+            // this very binary: in that case, fall back to the embedded server
+            // path rather than looping.
+            let current_exe = env::current_exe().ok();
+            let fallback_is_self = current_exe
+                .as_ref()
+                .map(|exe| exe.as_os_str() == fallback_path)
+                .unwrap_or(false);
+
+            if !fallback_is_self {
+                let mut command = Command::new(&fallback_path);
+                if !args.is_empty() {
+                    // Preserve argv shape for the fallback: it should see the
+                    // same `--server` invocation as the Rust frontend,
+                    // including `--sender` and any operands.
+                    command.args(&args[1..]);
+                }
+
+                match command.status() {
+                    Ok(status) => {
+                        return status.code().unwrap_or(1);
+                    }
+                    Err(error) => {
+                        let message = format!(
+                            "failed to execute fallback server implementation {:?}: {error}",
+                            fallback_path
+                        );
+                        write_server_error_message(stderr, brand, &message);
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+
     run_server_mode_embedded(args, stderr, brand)
 }
 
@@ -213,14 +257,14 @@ fn run_server_mode_embedded<Err: Write>(args: &[OsString], stderr: &mut Err, bra
 /// the internal server engine, mirroring the way upstream rsync
 /// distinguishes between receiver and generator roles.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum InvocationRole {
+pub(crate) enum InvocationRole {
     Receiver,
     Generator,
 }
 
 impl InvocationRole {
     #[cfg(test)]
-    fn as_server_role(self) -> ServerRole {
+    pub(crate) fn as_server_role(self) -> ServerRole {
         match self {
             Self::Receiver => ServerRole::Receiver,
             Self::Generator => ServerRole::Generator,
@@ -229,10 +273,10 @@ impl InvocationRole {
 }
 
 #[derive(Debug)]
-struct ServerInvocation {
-    role: InvocationRole,
-    raw_flag_string: String,
-    args: Vec<OsString>,
+pub(crate) struct ServerInvocation {
+    pub(crate) role: InvocationRole,
+    pub(crate) raw_flag_string: String,
+    pub(crate) args: Vec<OsString>,
 }
 
 impl ServerInvocation {
@@ -246,7 +290,7 @@ impl ServerInvocation {
     /// For receiver mode we additionally support the common split-flag case:
     /// - `rsync --server -l ogDtpre.iLsfxC . <args...>`
     ///   which is normalised to `-logDtpre.iLsfxC`.
-    fn parse(args: &[OsString]) -> Result<Self, String> {
+    pub(crate) fn parse(args: &[OsString]) -> Result<Self, String> {
         let first = args
             .first()
             .ok_or_else(|| "missing program name".to_string())?;
@@ -304,7 +348,10 @@ impl ServerInvocation {
     /// Parse the flag block, accepting both contiguous and split forms:
     /// - `-logDtpre.iLsfxC`
     /// - `-l ogDtpre.iLsfxC`  (combined into `-logDtpre.iLsfxC`)
-    fn parse_flag_block(args: &[OsString], start: usize) -> Result<(String, usize), String> {
+    pub(crate) fn parse_flag_block(
+        args: &[OsString],
+        start: usize,
+    ) -> Result<(String, usize), String> {
         let head = args
             .get(start)
             .ok_or_else(|| "missing rsync flag string".to_string())?;
@@ -340,7 +387,7 @@ impl ServerInvocation {
     /// Helper used by tests to convert a parsed invocation into the core
     /// `ServerConfig` structure.
     #[cfg(test)]
-    fn into_server_config(self) -> Result<ServerConfig, String> {
+    pub(crate) fn into_server_config(self) -> Result<ServerConfig, String> {
         ServerConfig::from_flag_string_and_args(
             self.role.as_server_role(),
             self.raw_flag_string,
@@ -357,7 +404,7 @@ impl ServerInvocation {
 /// - Alphanumeric characters.
 /// - `.`, `,`, `_`, `+`.
 ///   while still rejecting obvious path-like arguments (which contain `/`).
-fn is_rsync_flag_string(s: &str) -> bool {
+pub(crate) fn is_rsync_flag_string(s: &str) -> bool {
     let bytes = s.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'-' {
         return false;
@@ -380,7 +427,7 @@ fn is_rsync_flag_string(s: &str) -> bool {
 /// This allows us to accept split forms like:
 /// - `-l ogDtpre.iLsfxC`
 ///   while still rejecting obvious path-like arguments (which contain `/`).
-fn is_rsync_flag_tail(s: &str) -> bool {
+pub(crate) fn is_rsync_flag_tail(s: &str) -> bool {
     if s.is_empty() || s.contains('/') {
         return false;
     }
@@ -393,7 +440,7 @@ fn is_rsync_flag_tail(s: &str) -> bool {
     })
 }
 
-fn write_server_error_message(stderr: &mut dyn Write, brand: Brand, text: &str) {
+pub(crate) fn write_server_error_message(stderr: &mut dyn Write, brand: Brand, text: &str) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
     message = message.with_role(Role::Daemon);
@@ -404,92 +451,8 @@ fn write_server_error_message(stderr: &mut dyn Write, brand: Brand, text: &str) 
 
 /// Touch all fields of the `ServerInvocation` so that additions remain
 /// Clippy-clean even if unused in some builds.
-fn touch_server_invocation(invocation: &ServerInvocation) {
+pub(crate) fn touch_server_invocation(invocation: &ServerInvocation) {
     let _role = invocation.role;
     let _flags = &invocation.raw_flag_string;
     let _args = &invocation.args;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_receiver_invocation_and_normalises_dot_placeholder() {
-        let args = [
-            OsString::from("rsync"),
-            OsString::from("--server"),
-            OsString::from("-logDtpre.iLsfxC"),
-            OsString::from("."),
-            OsString::from("dest"),
-        ];
-
-        let invocation = ServerInvocation::parse(&args).expect("invocation parses");
-        assert_eq!(invocation.role, InvocationRole::Receiver);
-        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
-        assert_eq!(invocation.args, vec![OsString::from("dest")]);
-
-        let config = invocation.into_server_config().expect("config parses");
-        assert_eq!(config.role, ServerRole::Receiver);
-        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
-        assert_eq!(config.args, vec![OsString::from("dest")]);
-    }
-
-    #[test]
-    fn parses_receiver_invocation_with_split_flag_block() {
-        // Simulate a shell that split the flag block into "-l" and "ogDtpre.iLsfxC".
-        let args = [
-            OsString::from("rsync"),
-            OsString::from("--server"),
-            OsString::from("-l"),
-            OsString::from("ogDtpre.iLsfxC"),
-            OsString::from("."),
-            OsString::from("dest"),
-        ];
-
-        let invocation = ServerInvocation::parse(&args).expect("invocation parses");
-        assert_eq!(invocation.role, InvocationRole::Receiver);
-        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
-        assert_eq!(invocation.args, vec![OsString::from("dest")]);
-
-        let config = invocation.into_server_config().expect("config parses");
-        assert_eq!(config.role, ServerRole::Receiver);
-        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
-        assert_eq!(config.args, vec![OsString::from("dest")]);
-    }
-
-    #[test]
-    fn parses_sender_invocation_without_placeholder() {
-        let args = [
-            OsString::from("rsync"),
-            OsString::from("--server"),
-            OsString::from("--sender"),
-            OsString::from("-logDtpre.iLsfxC"),
-            OsString::from("relative"),
-            OsString::from("dest"),
-        ];
-
-        let invocation = ServerInvocation::parse(&args).expect("invocation parses");
-        assert_eq!(invocation.role, InvocationRole::Generator);
-        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
-        assert_eq!(
-            invocation.args,
-            vec![OsString::from("relative"), OsString::from("dest")]
-        );
-
-        let config = invocation.into_server_config().expect("config parses");
-        assert_eq!(config.role, ServerRole::Generator);
-        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
-        assert_eq!(
-            config.args,
-            vec![OsString::from("relative"), OsString::from("dest")]
-        );
-    }
-
-    #[test]
-    fn parse_rejects_missing_flag_string() {
-        let args = [OsString::from("rsync"), OsString::from("--server")];
-        let error = ServerInvocation::parse(&args).expect_err("parse should fail");
-        assert!(error.contains("flag string"));
-    }
 }
