@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -15,6 +15,12 @@ use crate::frontend::password::load_password_file;
 use crate::frontend::progress::ProgressSetting;
 
 use super::messages::fail_with_message;
+use core::fallback::{
+    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
+    fallback_binary_is_self, fallback_binary_path, fallback_override,
+};
+use core::message::Role;
+use core::rsync_error;
 
 /// Inputs required to construct [`RemoteFallbackArgs`].
 pub(crate) struct FallbackInputs {
@@ -150,6 +156,43 @@ pub(crate) struct FallbackInputs {
     pub(crate) read_batch: Option<OsString>,
 }
 
+fn resolve_fallback_binary<Err>(stderr: &mut MessageSink<Err>) -> Result<OsString, i32>
+where
+    Err: Write,
+{
+    let candidate = match fallback_override(CLIENT_FALLBACK_ENV) {
+        Some(FallbackOverride::Disabled) => {
+            let text = format!(
+                "remote transfers are unavailable because {CLIENT_FALLBACK_ENV} is disabled; set {CLIENT_FALLBACK_ENV} to point to an upstream rsync binary",
+            );
+            let message = rsync_error!(1, text).with_role(Role::Client);
+            return Err(fail_with_message(message, stderr));
+        }
+        Some(other) => other
+            .resolve_or_default(OsStr::new("rsync"))
+            .unwrap_or_else(|| OsString::from("rsync")),
+        None => OsString::from("rsync"),
+    };
+
+    let Some(resolved) = fallback_binary_path(candidate.as_os_str()) else {
+        let diagnostic =
+            describe_missing_fallback_binary(candidate.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+        let message = rsync_error!(1, diagnostic).with_role(Role::Client);
+        return Err(fail_with_message(message, stderr));
+    };
+
+    if fallback_binary_is_self(&resolved) {
+        let text = format!(
+            "failed to launch fallback rsync binary '{}': fallback resolution points to this oc-rsync executable; install upstream rsync or set {CLIENT_FALLBACK_ENV} to a different path",
+            resolved.display()
+        );
+        let message = rsync_error!(1, text).with_role(Role::Client);
+        return Err(fail_with_message(message, stderr));
+    }
+
+    Ok(resolved.into_os_string())
+}
+
 /// Builds the remote fallback arguments when required.
 pub(crate) fn build_fallback_args<Err>(
     inputs: FallbackInputs,
@@ -161,6 +204,8 @@ where
     if !inputs.required {
         return Ok(None);
     }
+
+    let resolved_fallback_binary = resolve_fallback_binary(stderr)?;
 
     let mut info_flags = inputs.info_flags;
     let debug_flags = inputs.debug_flags;
@@ -308,7 +353,7 @@ where
         log_file_format: inputs.log_file_format,
         no_motd: inputs.no_motd,
         address_mode: inputs.address_mode,
-        fallback_binary: None,
+        fallback_binary: Some(resolved_fallback_binary),
         rsync_path: inputs.rsync_path,
         remainder: inputs.remainder,
         write_batch: inputs.write_batch,
