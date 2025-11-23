@@ -4,7 +4,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
@@ -225,10 +225,7 @@ where
     join_server_thread(&mut stderr_thread);
 
     match child.wait() {
-        Ok(status) => status
-            .code()
-            .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
-            .unwrap_or(1),
+        Ok(status) => exit_code_from_status(status),
         Err(error) => {
             write_server_fallback_error(
                 stderr,
@@ -238,6 +235,23 @@ where
             1
         }
     }
+}
+
+fn exit_code_from_status(status: ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code.clamp(0, super::MAX_EXIT_CODE);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+
+        if let Some(signal) = status.signal() {
+            return (128 + signal).min(super::MAX_EXIT_CODE);
+        }
+    }
+
+    super::MAX_EXIT_CODE
 }
 
 #[derive(Clone, Copy, Debug)]
