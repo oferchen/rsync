@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -16,6 +16,9 @@ use core::fallback::{
 use core::message::Role;
 use core::rsync_error;
 use logging::MessageSink;
+
+/// Forces server mode to proxy the fallback binary rather than performing an `exec`.
+pub(crate) const SERVER_PROXY_ENV: &str = "OC_RSYNC_SERVER_PROXY";
 
 /// Returns the daemon argument vector when `--daemon` is present.
 pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
@@ -139,6 +142,49 @@ where
         return 1;
     }
 
+    #[cfg(unix)]
+    if std::env::var_os(SERVER_PROXY_ENV).is_none() {
+        use std::os::unix::process::CommandExt;
+
+        let mut command = Command::new(&resolved_fallback);
+        command.args(args.iter().skip(1));
+        command.stdin(Stdio::inherit());
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+
+        let error = command.exec();
+        let text = format!(
+            "failed to launch fallback {upstream_program} binary '{}': {error}",
+            Path::new(&fallback).display()
+        );
+        write_server_fallback_error(stderr, program_brand, text);
+        return 1;
+    }
+
+    run_server_fallback_proxy(
+        args,
+        stdout,
+        stderr,
+        program_brand,
+        fallback,
+        resolved_fallback,
+        upstream_program,
+    )
+}
+
+fn run_server_fallback_proxy<Out, Err>(
+    args: &[OsString],
+    stdout: &mut Out,
+    stderr: &mut Err,
+    program_brand: Brand,
+    fallback: OsString,
+    resolved_fallback: PathBuf,
+    upstream_program: &str,
+) -> i32
+where
+    Out: Write,
+    Err: Write,
+{
     let mut command = Command::new(&resolved_fallback);
     command.args(args.iter().skip(1));
     command.stdin(Stdio::inherit());
