@@ -94,6 +94,43 @@ exit 0
 
 #[cfg(unix)]
 #[test]
+fn server_mode_maps_signal_exit_status() {
+    use tempfile::tempdir;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+
+    let temp = tempdir().expect("tempdir");
+    let script_path = temp.path().join("server_signal.sh");
+
+    let script = r#"#!/bin/sh
+set -eu
+kill -TERM $$
+"#;
+    write_executable_script(&script_path, script);
+
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let exit_code = run(
+        [
+            OsString::from(RSYNC),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 143);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
 fn server_mode_reports_disabled_fallback_override() {
     use std::io;
 
