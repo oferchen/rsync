@@ -1,5 +1,6 @@
 use super::common::*;
 use super::*;
+use crate::frontend::server::server_mode_requested;
 
 #[cfg(unix)]
 #[test]
@@ -51,6 +52,18 @@ exit 37
 
     assert_eq!(exit_code, 37);
     assert_eq!(fs::read(&marker_path).expect("read marker"), b"invoked");
+}
+
+#[test]
+fn server_mode_detection_honours_double_dash() {
+    let args = [
+        OsString::from(RSYNC),
+        OsString::from("src"),
+        OsString::from("--"),
+        OsString::from("--server"),
+    ];
+
+    assert!(!server_mode_requested(&args));
 }
 
 #[cfg(unix)]

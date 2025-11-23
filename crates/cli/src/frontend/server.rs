@@ -55,7 +55,24 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
 
 /// Returns `true` when the invocation requests server mode.
 pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
-    args.iter().skip(1).any(|arg| arg == "--server")
+    let mut reached_double_dash = false;
+
+    for arg in args.iter().skip(1) {
+        if !reached_double_dash && arg == "--" {
+            reached_double_dash = true;
+            continue;
+        }
+
+        if reached_double_dash {
+            continue;
+        }
+
+        if arg == "--server" {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Delegates execution to the daemon front-end (Unix) or reports that daemon
