@@ -182,3 +182,38 @@ fn server_mode_rejects_recursive_fallback() {
     assert!(stderr_text.contains("resolves to this oc-rsync executable"));
     assert_contains_server_trailer(&stderr_text);
 }
+
+#[cfg(unix)]
+#[test]
+fn server_mode_propagates_signal_exit_status() {
+    use std::io;
+    use tempfile::tempdir;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+
+    let temp = tempdir().expect("tempdir");
+    let script_path = temp.path().join("server_signal.sh");
+    let script = r#"#!/bin/sh
+set -eu
+kill -TERM $$
+"#;
+    write_executable_script(&script_path, script);
+
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
+
+    let mut stdout = io::sink();
+    let mut stderr = io::sink();
+    let exit_code = run(
+        [
+            OsString::from(RSYNC),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("."),
+            OsString::from("dest"),
+        ],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert_eq!(exit_code, 143);
+}

@@ -17,6 +17,9 @@ use core::message::Role;
 use core::rsync_error;
 use logging::MessageSink;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
 /// Returns the daemon argument vector when `--daemon` is present.
 pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
     if args.is_empty() {
@@ -225,10 +228,7 @@ where
     join_server_thread(&mut stderr_thread);
 
     match child.wait() {
-        Ok(status) => status
-            .code()
-            .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
-            .unwrap_or(1),
+        Ok(status) => map_exit_status(status),
         Err(error) => {
             write_server_fallback_error(
                 stderr,
@@ -314,6 +314,19 @@ fn write_server_fallback_error<Err: Write>(
     if super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
     }
+}
+
+fn map_exit_status(status: std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code.clamp(0, super::MAX_EXIT_CODE);
+    }
+
+    #[cfg(unix)]
+    if let Some(signal) = status.signal() {
+        return (128 + signal).min(super::MAX_EXIT_CODE);
+    }
+
+    super::MAX_EXIT_CODE
 }
 
 #[cfg(windows)]
