@@ -234,6 +234,9 @@ AGENTS.md               # Internal agent roles & conventions
   cargo install cargo-nextest --locked
   ```
 
+  A helper script (`scripts/install-nextest.sh`) installs the locked
+  dependency set for environments that don't have a recent toolchain.
+
 * [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) if you want to
   generate coverage reports locally.
 
