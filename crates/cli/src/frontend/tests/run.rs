@@ -24,6 +24,23 @@ fn run_reports_invalid_chmod_specification() {
 }
 
 #[test]
+fn clap_error_uses_canonical_exit_code_text() {
+    let (code, _stdout, stderr) = run_with_args([
+        OsString::from(OC_RSYNC),
+        OsString::from("--definitely-invalid-option"),
+    ]);
+
+    assert_eq!(code, 1);
+
+    let rendered = String::from_utf8(stderr).expect("diagnostic utf8");
+    assert!(rendered.contains("syntax or usage error"));
+    assert!(
+        rendered.contains("--definitely-invalid-option"),
+        "diagnostic should include the clap-provided detail"
+    );
+}
+
+#[test]
 fn run_without_operands_emits_usage_for_oc_rsync() {
     let (code, stdout, stderr) = run_with_args([OsString::from(OC_RSYNC)]);
 
