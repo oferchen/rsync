@@ -3,8 +3,14 @@ use crate::util::{is_help_flag, run_cargo_tool};
 use std::ffi::OsString;
 use std::path::Path;
 
-const NEXTEST_ARGS: &[&str] = &["nextest", "run", "--workspace", "--all-features"];
-const NEXTEST_DISPLAY: &str = "cargo nextest run --workspace --all-features";
+const NEXTEST_ARGS: &[&str] = &[
+    "nextest",
+    "run",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+];
+const NEXTEST_DISPLAY: &str = "cargo nextest run --workspace --all-targets --all-features";
 const NEXTEST_INSTALL_COMMAND: &str = "cargo install cargo-nextest --locked";
 const NEXTEST_INSTALL_HINT: &str =
     "install cargo-nextest with `cargo install cargo-nextest --locked`";
