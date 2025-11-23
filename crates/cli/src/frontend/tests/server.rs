@@ -150,7 +150,6 @@ fn assert_signal_exit_status(exit_code: i32, signal: i32) {
 #[test]
 fn server_mode_maps_signal_exit_status() {
     use std::fs;
-    use std::io;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
@@ -166,10 +165,11 @@ fn server_mode_maps_signal_exit_status() {
     perms.set_mode(0o755);
     fs::set_permissions(&script_path, perms).expect("set permissions");
 
+    let _proxy_guard = EnvGuard::set(SERVER_PROXY_ENV, OsStr::new("1"));
     let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
 
-    let mut stdout = io::sink();
-    let mut stderr = io::sink();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
     let exit_code = run(
         [
             OsString::from(RSYNC),
@@ -215,6 +215,7 @@ exit 5
 
     write_executable_script(&script_path, script);
 
+    let _proxy_guard = EnvGuard::set(SERVER_PROXY_ENV, OsStr::new("1"));
     let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
     let _marker_guard = EnvGuard::set("SERVER_MARKER", marker_path.as_os_str());
 
