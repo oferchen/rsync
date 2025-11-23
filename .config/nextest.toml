@@ -1,3 +1,6 @@
 # Nextest defaults: keep full workspace filter while relying on CLI flags for package selection.
 [profile.default]
 default-filter = "all()"
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "immediate-final"
