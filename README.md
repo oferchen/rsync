@@ -253,7 +253,7 @@ These are enforced in CI to keep the codebase consistent and warning-free.
 
 ```bash
 # Unit + integration tests
-cargo nextest run --workspace --all-targets --all-features
+cargo nextest run --workspace --all-features
 
 # Convenience wrapper (falls back to `cargo test` if `cargo-nextest` is missing)
 cargo xtask test
@@ -298,7 +298,7 @@ bash tools/enforce_limits.sh
 # One-liner: fmt + clippy + tests + docs
 cargo fmt --all -- --check \
   && cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings \
-  && cargo nextest run --workspace --all-targets --all-features \
+  && cargo nextest run --workspace --all-features \
   && cargo xtask docs
 ```
 
@@ -362,12 +362,12 @@ Contributions, bug reports, and interop findings are very welcome.
 
 2. Run the full hygiene pipeline:
 
-   ```bash
-   cargo fmt --all -- --check
-   cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
-   cargo nextest run --workspace --all-targets --all-features
-   cargo xtask docs
-   ```
+    ```bash
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --all-features --no-deps -D warnings
+    cargo nextest run --workspace --all-features
+    cargo xtask docs
+    ```
 
 3. Open a pull request with a clear description of:
 
