@@ -225,10 +225,7 @@ where
     join_server_thread(&mut stderr_thread);
 
     match child.wait() {
-        Ok(status) => status
-            .code()
-            .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
-            .unwrap_or(1),
+        Ok(status) => exit_code_from_status(status),
         Err(error) => {
             write_server_fallback_error(
                 stderr,
@@ -238,6 +235,22 @@ where
             1
         }
     }
+}
+
+#[cfg(unix)]
+fn exit_code_from_status(status: std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+
+    match (status.code(), status.signal()) {
+        (Some(code), _) => code,
+        (None, Some(signal)) => 128 + signal,
+        _ => 1,
+    }
+}
+
+#[cfg(windows)]
+fn exit_code_from_status(status: std::process::ExitStatus) -> i32 {
+    status.code().unwrap_or(1)
 }
 
 #[derive(Clone, Copy, Debug)]
