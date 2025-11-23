@@ -78,6 +78,7 @@ name = "apple-fs"
 version = "3.4.1-rust"
 dependencies = [
  "libc",
+ "nix",
 ]
 
 [[package]]

@@ -1,4 +1,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(clippy::undocumented_unsafe_blocks)]
@@ -15,34 +16,18 @@ type DeviceType = libc::c_uint;
 #[cfg(unix)]
 mod unix {
     use super::{Path, io};
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    fn path_to_c(path: &Path) -> io::Result<CString> {
-        CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains interior NUL"))
-    }
+    use nix::sys::stat::{Mode, SFlag, mknod as nix_mknod};
+    use nix::unistd::mkfifo as nix_mkfifo;
 
     pub(super) fn mkfifo(path: &Path, mode: libc::mode_t) -> io::Result<()> {
-        let c_path = path_to_c(path)?;
-        // SAFETY: `c_path` is a valid, NUL-terminated representation of `path`.
-        let result = unsafe { libc::mkfifo(c_path.as_ptr(), mode) };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
+        let mode = Mode::from_bits_truncate(mode);
+        nix_mkfifo(path, mode).map_err(io::Error::from)
     }
 
     pub(super) fn mknod(path: &Path, mode: libc::mode_t, device: libc::dev_t) -> io::Result<()> {
-        let c_path = path_to_c(path)?;
-        // SAFETY: `c_path` is a valid, NUL-terminated representation of `path`.
-        let result = unsafe { libc::mknod(c_path.as_ptr(), mode, device) };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
+        let kind = SFlag::from_bits_truncate(mode);
+        let perm = Mode::from_bits_truncate(mode);
+        nix_mknod(path, kind, perm, device).map_err(io::Error::from)
     }
 }
 

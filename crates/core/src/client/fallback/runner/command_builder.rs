@@ -702,8 +702,16 @@ pub(crate) fn prepare_invocation(
     }
 
     if let Some(path) = rsync_path {
-        command_args.push(OsString::from("--rsync-path"));
-        command_args.push(path);
+        let mut arg = OsString::from("--rsync-path=");
+        let path_str = path.to_string_lossy();
+        if path_str.contains(|c: char| c.is_whitespace()) {
+            let escaped = path_str.replace("'", "'\\''");
+            let quoted = format!("'{escaped}'");
+            arg.push(quoted);
+        } else {
+            arg.push(path);
+        }
+        command_args.push(arg);
     }
 
     command_args.append(&mut remainder);
