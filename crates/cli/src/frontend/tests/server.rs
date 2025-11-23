@@ -202,3 +202,46 @@ fn server_mode_maps_signal_exit_status() {
     // TERM == 15
     assert_signal_exit_status(exit_code, 15);
 }
+
+#[test]
+fn server_mode_ignores_flag_after_double_dash() {
+    use std::io;
+    use tempfile::tempdir;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+
+    let temp = tempdir().expect("tempdir");
+    let script_path = temp.path().join("server_marker.sh");
+    let marker_path = temp.path().join("marker.txt");
+
+    let script = r#"#!/bin/sh
+set -eu
+printf 'invoked' > "$SERVER_MARKER"
+exit 5
+"#;
+
+    write_executable_script(&script_path, script);
+
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
+    let _marker_guard = EnvGuard::set("SERVER_MARKER", marker_path.as_os_str());
+
+    let mut stdout = io::sink();
+    let mut stderr = io::sink();
+    let exit_code = run(
+        [
+            OsString::from(RSYNC),
+            OsString::from("--"),
+            OsString::from("--server"),
+            OsString::from("source"),
+            OsString::from("dest"),
+        ],
+        &mut stdout,
+        &mut stderr,
+    );
+
+    assert!(
+        !marker_path.exists(),
+        "fallback script should not be invoked"
+    );
+    assert_ne!(exit_code, 5);
+}
