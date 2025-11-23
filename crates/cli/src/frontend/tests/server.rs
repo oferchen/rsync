@@ -1,276 +1,513 @@
-use assert_cmd::prelude::*;
-use predicates::prelude::*;
+use std::env;
 use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process::Command;
+use std::io::Write;
 
-use crate::frontend::tests::daemon_cli::run;
-use crate::frontend::tests::out_tests::{ENV_LOCK, EnvGuard, RSYNC, write_executable_script};
+use core::branding::Brand;
 use core::fallback::CLIENT_FALLBACK_ENV;
+use core::server::{ServerConfig, ServerRole};
 
-/// Resolve the `oc-rsync` binary path for tests.
-///
-/// Precedence:
-/// 1. `OC_RSYNC_BIN` — explicit override for tests.
-/// 2. `CARGO_BIN_EXE_oc-rsync` — set by Cargo when available.
-/// 3. Workspace-relative fallback: `../../target/debug/oc-rsync`
-///    (or `.exe` on Windows), assuming a standard layout where this
-///    crate lives under `crates/cli`.
-fn oc_rsync_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("OC_RSYNC_BIN") {
-        return PathBuf::from(path);
+use crate::frontend::server::{
+    InvocationRole, ServerInvocation, daemon_mode_arguments, is_rsync_flag_string,
+    is_rsync_flag_tail, run_server_mode, server_mode_requested, touch_server_invocation,
+    write_server_error_message,
+};
+
+/// Simple in-memory writer that tracks written bytes and flush calls.
+#[derive(Default)]
+struct Buffer {
+    bytes: Vec<u8>,
+    flushes: usize,
+}
+
+impl Buffer {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            flushes: 0,
+        }
     }
 
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_oc-rsync") {
-        return PathBuf::from(path);
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.bytes).unwrap_or("")
     }
 
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    fn flushes(&self) -> usize {
+        self.flushes
+    }
+}
 
-    let binary_name = if cfg!(windows) {
-        "oc-rsync.exe"
-    } else {
-        "oc-rsync"
+impl Write for Buffer {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flushes += 1;
+        Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// daemon_mode_arguments
+// -----------------------------------------------------------------------------
+
+#[test]
+fn daemon_mode_arguments_empty_args_returns_none() {
+    let args: Vec<OsString> = Vec::new();
+    assert!(daemon_mode_arguments(&args).is_none());
+}
+
+#[test]
+fn daemon_mode_arguments_without_daemon_flag_returns_none() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("-av"),
+        OsString::from("src"),
+        OsString::from("dest"),
+    ];
+    assert!(daemon_mode_arguments(&args).is_none());
+}
+
+#[test]
+fn daemon_mode_arguments_rewrites_program_name_for_upstream_rsync() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--daemon"),
+        OsString::from("--no-detach"),
+        OsString::from("--config=/etc/rsyncd.conf"),
+    ];
+
+    let rewritten =
+        daemon_mode_arguments(&args).expect("daemon_mode_arguments should detect --daemon");
+    let expected_daemon = Brand::Upstream.daemon_program_name();
+
+    assert_eq!(rewritten[0], OsString::from(expected_daemon));
+    assert_eq!(
+        &rewritten[1..],
+        &args[2..],
+        "arguments after --daemon should be forwarded unchanged"
+    );
+}
+
+#[test]
+fn daemon_mode_arguments_rewrites_program_name_for_oc_brand() {
+    let args = [
+        OsString::from("oc-rsync"),
+        OsString::from("--daemon"),
+        OsString::from("--no-detach"),
+        OsString::from("--config=/etc/oc-rsyncd/oc-rsyncd.conf"),
+    ];
+
+    let rewritten =
+        daemon_mode_arguments(&args).expect("daemon_mode_arguments should detect --daemon");
+    let expected_daemon = Brand::Oc.daemon_program_name();
+
+    assert_eq!(rewritten[0], OsString::from(expected_daemon));
+    assert_eq!(&rewritten[1..], &args[2..]);
+}
+
+#[test]
+fn daemon_mode_arguments_preserves_double_dash_and_subsequent_args() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--daemon"),
+        OsString::from("--no-detach"),
+        OsString::from("--"),
+        OsString::from("--not-a-daemon-flag"),
+    ];
+
+    let rewritten =
+        daemon_mode_arguments(&args).expect("daemon_mode_arguments should detect --daemon");
+
+    assert_eq!(
+        rewritten.len(),
+        4,
+        "should contain daemon bin, --no-detach, --, and trailing arg"
+    );
+    assert_eq!(rewritten[1], OsString::from("--no-detach"));
+    assert_eq!(rewritten[2], OsString::from("--"));
+    assert_eq!(rewritten[3], OsString::from("--not-a-daemon-flag"));
+}
+
+#[test]
+fn daemon_mode_arguments_ignores_daemon_flag_after_double_dash() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--no-detach"),
+        OsString::from("--"),
+        OsString::from("--daemon"),
+    ];
+
+    assert!(daemon_mode_arguments(&args).is_none());
+}
+
+// -----------------------------------------------------------------------------
+// server_mode_requested
+// -----------------------------------------------------------------------------
+
+#[test]
+fn server_mode_requested_detects_flag_before_double_dash() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+    ];
+
+    assert!(server_mode_requested(&args));
+}
+
+#[test]
+fn server_mode_requested_ignores_flag_after_double_dash() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--"),
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+    ];
+
+    assert!(!server_mode_requested(&args));
+}
+
+#[test]
+fn server_mode_requested_is_false_when_flag_absent() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("-av"),
+        OsString::from("src"),
+        OsString::from("dest"),
+    ];
+    assert!(!server_mode_requested(&args));
+}
+
+// -----------------------------------------------------------------------------
+// ServerInvocation::parse and related helper methods
+// -----------------------------------------------------------------------------
+
+#[test]
+fn parses_receiver_invocation_and_normalises_dot_placeholder() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("."),
+        OsString::from("dest"),
+    ];
+
+    let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+    assert_eq!(invocation.role, InvocationRole::Receiver);
+    assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(invocation.args, vec![OsString::from("dest")]);
+
+    let config: ServerConfig = invocation.into_server_config().expect("config parses");
+    assert_eq!(config.role, ServerRole::Receiver);
+    assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(config.args, vec![OsString::from("dest")]);
+}
+
+#[test]
+fn parses_receiver_invocation_without_dot_placeholder() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("dest"),
+    ];
+
+    let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+    assert_eq!(invocation.role, InvocationRole::Receiver);
+    assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(invocation.args, vec![OsString::from("dest")]);
+
+    let config: ServerConfig = invocation.into_server_config().expect("config parses");
+    assert_eq!(config.role, ServerRole::Receiver);
+    assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(config.args, vec![OsString::from("dest")]);
+}
+
+#[test]
+fn parses_receiver_invocation_with_split_flag_block() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-l"),
+        OsString::from("ogDtpre.iLsfxC"),
+        OsString::from("."),
+        OsString::from("dest"),
+    ];
+
+    let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+    assert_eq!(invocation.role, InvocationRole::Receiver);
+    assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(invocation.args, vec![OsString::from("dest")]);
+
+    let config: ServerConfig = invocation.into_server_config().expect("config parses");
+    assert_eq!(config.role, ServerRole::Receiver);
+    assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(config.args, vec![OsString::from("dest")]);
+}
+
+#[test]
+fn parses_sender_invocation_without_placeholder() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("relative"),
+        OsString::from("dest"),
+    ];
+
+    let invocation = ServerInvocation::parse(&args).expect("invocation parses");
+    assert_eq!(invocation.role, InvocationRole::Generator);
+    assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(
+        invocation.args,
+        vec![OsString::from("relative"), OsString::from("dest")]
+    );
+
+    let config: ServerConfig = invocation.into_server_config().expect("config parses");
+    assert_eq!(config.role, ServerRole::Generator);
+    assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+    assert_eq!(
+        config.args,
+        vec![OsString::from("relative"), OsString::from("dest")]
+    );
+}
+
+#[test]
+fn parse_rejects_missing_program_name() {
+    let args: [OsString; 0] = [];
+    let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+    assert!(
+        error.contains("missing program name"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn parse_rejects_missing_server_marker() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("dest"),
+    ];
+    let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+    assert!(
+        error.contains("expected --server"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn parse_rejects_missing_flag_string() {
+    let args = [OsString::from("rsync"), OsString::from("--server")];
+    let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+    assert!(error.contains("flag string"), "unexpected error: {error}");
+}
+
+#[test]
+fn parse_rejects_invalid_flag_block() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-/notflags"),
+        OsString::from("dest"),
+    ];
+    let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+    assert!(
+        error.contains("invalid rsync server flag string"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn parse_rejects_missing_server_arguments() {
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+    ];
+    let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+    assert!(
+        error.contains("missing server arguments"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn parse_flag_block_accepts_combined_and_split_forms() {
+    let (combined, next) =
+        ServerInvocation::parse_flag_block(&[OsString::from("-logDtpre.iLsfxC")], 0)
+            .expect("combined form is valid");
+    assert_eq!(combined, "-logDtpre.iLsfxC");
+    assert_eq!(next, 1);
+
+    let args = [
+        OsString::from("-l"),
+        OsString::from("ogDtpre.iLsfxC"),
+        OsString::from("ignored"),
+    ];
+    let (split, next) = ServerInvocation::parse_flag_block(&args, 0).expect("split form is valid");
+    assert_eq!(split, "-logDtpre.iLsfxC");
+    assert_eq!(next, 2);
+}
+
+#[test]
+fn parse_flag_block_rejects_invalid_tail() {
+    let args = [OsString::from("-l"), OsString::from("invalid/tail")];
+    let err = ServerInvocation::parse_flag_block(&args, 0).expect_err("parse_flag_block must fail");
+    assert!(
+        err.contains("invalid rsync server flag string"),
+        "unexpected error: {err}"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Flag validation helpers
+// -----------------------------------------------------------------------------
+
+#[test]
+fn is_rsync_flag_string_accepts_valid_block() {
+    assert!(is_rsync_flag_string("-logDtpre.iLsfxC"));
+    assert!(is_rsync_flag_string("-a"));
+    assert!(is_rsync_flag_string("-Z123._+,"));
+}
+
+#[test]
+fn is_rsync_flag_string_rejects_invalid_block() {
+    assert!(!is_rsync_flag_string("logDtpre.iLsfxC"));
+    assert!(!is_rsync_flag_string("-"));
+    assert!(!is_rsync_flag_string("-logD/tre"));
+}
+
+#[test]
+fn is_rsync_flag_tail_accepts_valid_tail() {
+    assert!(is_rsync_flag_tail("ogDtpre.iLsfxC"));
+    assert!(is_rsync_flag_tail("a"));
+    assert!(is_rsync_flag_tail("Z123._+,"));
+}
+
+#[test]
+fn is_rsync_flag_tail_rejects_invalid_tail() {
+    assert!(!is_rsync_flag_tail(""));
+    assert!(!is_rsync_flag_tail("with/slash"));
+}
+
+// -----------------------------------------------------------------------------
+// Error reporting and façade behaviour
+// -----------------------------------------------------------------------------
+
+#[test]
+fn write_server_error_message_writes_rsync_style_error() {
+    let mut stderr = Buffer::new();
+    write_server_error_message(
+        &mut stderr,
+        Brand::Oc,
+        "server mode is not yet implemented for role Receiver",
+    );
+
+    let text = stderr.as_str();
+    assert!(
+        text.contains("server mode is not yet implemented for role Receiver"),
+        "stderr did not contain expected error, got: {text}"
+    );
+    assert!(
+        text.to_ascii_lowercase().contains("daemon"),
+        "error message should indicate daemon / server role: {text}"
+    );
+}
+
+#[test]
+fn run_server_mode_reports_unimplemented_receiver_role_and_flushes_streams() {
+    let args = [
+        OsString::from("oc-rsync"),
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("."),
+        OsString::from("dest"),
+    ];
+
+    let mut stdout = Buffer::new();
+    let mut stderr = Buffer::new();
+
+    env::remove_var(CLIENT_FALLBACK_ENV);
+
+    let code = run_server_mode(&args, &mut stdout, &mut stderr);
+    assert_eq!(code, 1);
+
+    assert!(
+        stdout.flushes() >= 1,
+        "stdout should have been flushed at least once"
+    );
+    assert!(
+        stderr.flushes() >= 1,
+        "stderr should have been flushed at least once"
+    );
+
+    let text = stderr.as_str();
+    assert!(
+        text.contains("server mode is not yet implemented for role Receiver"),
+        "stderr should mention receiver role being unimplemented; got: {text}"
+    );
+}
+
+#[test]
+fn run_server_mode_reports_unimplemented_generator_role() {
+    let args = [
+        OsString::from("oc-rsync"),
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("relative"),
+        OsString::from("dest"),
+    ];
+
+    let mut stdout = Buffer::new();
+    let mut stderr = Buffer::new();
+
+    env::remove_var(CLIENT_FALLBACK_ENV);
+
+    let code = run_server_mode(&args, &mut stdout, &mut stderr);
+    assert_eq!(code, 1);
+
+    let text = stderr.as_str();
+    assert!(
+        text.contains("server mode is not yet implemented for role Generator"),
+        "stderr should mention generator role being unimplemented; got: {text}"
+    );
+}
+
+#[test]
+fn run_server_mode_reports_parse_error_for_invalid_invocation() {
+    let args = [OsString::from("oc-rsync"), OsString::from("--server")];
+
+    let mut stdout = Buffer::new();
+    let mut stderr = Buffer::new();
+
+    env::remove_var(CLIENT_FALLBACK_ENV);
+
+    let code = run_server_mode(&args, &mut stdout, &mut stderr);
+    assert_eq!(code, 1);
+
+    let text = stderr.as_str();
+    assert!(
+        text.contains("flag string"),
+        "stderr should mention flag string parse error; got: {text}"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Sanity: touch_server_invocation helper
+// -----------------------------------------------------------------------------
+
+#[test]
+fn touch_server_invocation_is_noop_but_compiles() {
+    let invocation = ServerInvocation {
+        role: InvocationRole::Receiver,
+        raw_flag_string: "-logDtpre.iLsfxC".to_string(),
+        args: vec![OsString::from("dest")],
     };
 
-    PathBuf::from(manifest_dir)
-        .join("..")
-        .join("..")
-        .join("target")
-        .join("debug")
-        .join(binary_name)
-}
-
-/// Build a `Command` that runs `oc-rsync --server <args...>`, optionally
-/// setting a synthetic `RSYNC_CONNECTION`-style environment variable.
-fn new_server_command(args: &[&str], with_rsync_connection_env: bool) -> Command {
-    let bin = oc_rsync_binary();
-    let mut cmd = Command::new(bin);
-
-    cmd.arg("--server");
-    cmd.args(args);
-
-    if with_rsync_connection_env {
-        // Approximate how a remote-shell launcher might set connection
-        // metadata. Even with this env set, direct CLI invocation should
-        // still be treated as misuse.
-        cmd.env("RSYNC_CONNECTION", "rsync://dummy-host/dummy-module");
-    }
-
-    cmd
-}
-
-/// Helper that runs `oc-rsync --server <args...>` and asserts the common
-/// invariants for all misuse variants:
-///
-/// * exit code is non-zero,
-/// * stdout is completely empty,
-/// * stderr contains some rsync/server/usage-related diagnostic text.
-///
-/// The boolean flag lets us exercise both with and without an
-/// `RSYNC_CONNECTION`-style environment variable, to approximate the
-/// different ways `--server` might be mis-invoked from a shell.
-fn assert_server_misuse_case(args: &[&str], with_rsync_connection_env: bool) {
-    let mut cmd = new_server_command(args, with_rsync_connection_env);
-
-    let assert = cmd.assert();
-
-    assert
-        .failure()
-        .stdout(predicate::str::is_empty())
-        // We keep this deliberately loose: we only require that some
-        // server/usage-related diagnostic is printed, not the full
-        // user-facing `--help` banner.
-        .stderr(predicate::str::is_match("rsync|server|usage").unwrap());
-}
-
-/// Covers the basic argument-shape variants for direct `--server` misuse
-/// *without* any connection-related environment:
-///
-/// * `oc-rsync --server`
-/// * `oc-rsync --server .`
-/// * `oc-rsync --server . /tmp`
-/// * `oc-rsync --server --daemon` (junk flag in server position)
-#[test]
-fn server_mode_misuse_without_rsync_connection_env_covers_argument_shapes() {
-    let cases: &[&[&str]] = &[
-        &[],            // bare `--server`
-        &["."],         // single junk arg
-        &[".", "/tmp"], // multiple junk args
-        &["--daemon"],  // junk flag in server position
-    ];
-
-    for args in cases {
-        assert_server_misuse_case(args, false);
-    }
-}
-
-/// Covers the same argument-shape variants, but with a synthetic
-/// `RSYNC_CONNECTION`-style environment variable present. Even with this
-/// environment set, a user-invoked `--server` should still be treated as
-/// misuse with the same invariants.
-///
-/// * `RSYNC_CONNECTION=... oc-rsync --server`
-/// * `RSYNC_CONNECTION=... oc-rsync --server .`
-/// * `RSYNC_CONNECTION=... oc-rsync --server . /tmp`
-/// * `RSYNC_CONNECTION=... oc-rsync --server --daemon`
-#[test]
-fn server_mode_misuse_with_rsync_connection_env_covers_argument_shapes() {
-    let cases: &[&[&str]] = &[
-        &[],            // bare `--server`
-        &["."],         // single junk arg
-        &[".", "/tmp"], // multiple junk args
-        &["--daemon"],  // junk flag in server position
-    ];
-
-    for args in cases {
-        assert_server_misuse_case(args, true);
-    }
-}
-
-#[cfg(unix)]
-fn assert_signal_exit_status(exit_code: i32, signal: i32) {
-    // On Unix, two conventions are relevant in practice:
-    //
-    // * "Classic" rsync-style: 128 + signal number.
-    // * Generic "unknown / signal" mapping: 255 when no explicit code
-    //   is available from the child process.
-    //
-    // To avoid over-constraining implementation details while still
-    // catching regressions, we accept both non-zero conventions here.
-    let expected_classic = 128 + signal;
-    assert!(
-        exit_code == expected_classic || exit_code == 255,
-        "unexpected exit code for signal {signal}: got {exit_code}, \
-         expected {expected_classic} or 255"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn server_mode_maps_signal_exit_status() {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
-
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let temp = tempdir().expect("tempdir");
-    let script_path = temp.path().join("server_signal.sh");
-
-    fs::write(&script_path, "#!/bin/sh\nkill -TERM $$\n").expect("write script");
-    let mut perms = fs::metadata(&script_path)
-        .expect("script metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script_path, perms).expect("set permissions");
-
-    let _proxy_guard = EnvGuard::set(SERVER_PROXY_ENV, OsStr::new("1"));
-    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
-
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let exit_code = run(
-        [
-            OsString::from(RSYNC),
-            OsString::from("--server"),
-            OsString::from("--sender"),
-            OsString::from("."),
-            OsString::from("dest"),
-        ],
-        &mut stdout,
-        &mut stderr,
-    );
-
-    // TERM == 15
-    assert_signal_exit_status(exit_code, 15);
-}
-
-/// Ensure that `--` stops option parsing for the frontend and that a
-/// `--server` flag **after** `--` is treated as a normal positional
-/// argument. In particular, even if a fallback server implementation is
-/// configured, the direct CLI invocation:
-///
-///     oc-rsync -- --server source dest
-///
-/// must **not** trigger the fallback server binary, and must therefore
-/// not create the marker file or propagate the fallback script's exit
-/// status.
-#[test]
-fn server_mode_ignores_flag_after_double_dash() {
-    use std::fs;
-    use tempfile::tempdir;
-
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let temp = tempdir().expect("tempdir");
-    let script_path = temp.path().join("server_marker.sh");
-    let marker_path = temp.path().join("marker.txt");
-
-    let script = r#"#!/bin/sh
-set -eu
-printf 'invoked' > "$SERVER_MARKER"
-exit 5
-"#;
-
-    write_executable_script(&script_path, script);
-
-    let _proxy_guard = EnvGuard::set(SERVER_PROXY_ENV, OsStr::new("1"));
-    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
-    let _marker_guard = EnvGuard::set("SERVER_MARKER", marker_path.as_os_str());
-
-    let mut cmd = Command::new(oc_rsync_binary());
-    cmd.arg("--");
-    cmd.arg("--server");
-    cmd.arg("source");
-    cmd.arg("dest");
-
-    let output = cmd.output().expect("run oc-rsync");
-
-    assert!(
-        !marker_path.exists(),
-        "fallback script should not be invoked for `-- --server`"
-    );
-
-    if let Some(code) = output.status.code() {
-        assert_ne!(
-            code, 5,
-            "exit code must not come from the fallback script for `-- --server`"
-        );
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn server_mode_propagates_signal_exit_status() {
-    use std::io;
-    use tempfile::tempdir;
-
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let temp = tempdir().expect("tempdir");
-    let script_path = temp.path().join("server_signal.sh");
-    let script = r#"#!/bin/sh
-set -eu
-kill -TERM $$
-"#;
-    write_executable_script(&script_path, script);
-
-    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
-
-    let mut stdout = io::sink();
-    let mut stderr = io::sink();
-    let exit_code = run(
-        [
-            OsString::from(RSYNC),
-            OsString::from("--server"),
-            OsString::from("--sender"),
-            OsString::from("."),
-            OsString::from("dest"),
-        ],
-        &mut stdout,
-        &mut stderr,
-    );
-
-    assert_eq!(exit_code, 143);
+    touch_server_invocation(&invocation);
 }
