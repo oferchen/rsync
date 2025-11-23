@@ -34,8 +34,8 @@ impl ScopedEnv {
     fn new(keys: &[&'static str]) -> Self {
         let lock = env_lock().lock().unwrap();
         let mut previous = Vec::with_capacity(keys.len());
-        for key in keys {
-            previous.push((*key, env::var_os(key)));
+        for &key in keys {
+            previous.push((key, env::var_os(key)));
         }
         Self {
             previous,

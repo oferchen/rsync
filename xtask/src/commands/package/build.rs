@@ -617,8 +617,8 @@ mod build_command_tests {
     impl EnvGuard {
         fn capture(keys: &[&'static str]) -> Self {
             let mut entries = Vec::with_capacity(keys.len());
-            for key in keys {
-                entries.push((*key, env::var_os(key)));
+            for &key in keys {
+                entries.push((key, env::var_os(key)));
             }
             Self { entries }
         }
