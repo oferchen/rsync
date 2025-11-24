@@ -351,6 +351,7 @@ dependencies = [
  "socket2",
  "tempfile",
  "transport",
+ "walk",
 ]
 
 [[package]]
