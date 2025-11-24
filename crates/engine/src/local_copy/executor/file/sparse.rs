@@ -44,8 +44,12 @@ impl SparseWriteState {
         &mut self,
         writer: &mut fs::File,
         destination: &Path,
-    ) -> Result<(), LocalCopyError> {
-        self.flush(writer, destination)
+    ) -> Result<u64, LocalCopyError> {
+        self.flush(writer, destination)?;
+
+        writer.seek(SeekFrom::Current(0)).map_err(|error| {
+            LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
+        })
     }
 }
 
@@ -385,5 +389,31 @@ mod tests {
         assert_eq!(buffer[0], b'L');
         assert!(buffer[1..buffer.len() - 1].iter().all(|&byte| byte == 0));
         assert_eq!(buffer[buffer.len() - 1], b'R');
+    }
+
+    #[test]
+    fn finish_reports_final_offset_after_trailing_zeros() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        let chunk = [b'A', 0, 0, 0, 0];
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write sparse chunk");
+
+        assert_eq!(written, chunk.len());
+
+        let final_offset = state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finalise sparse writer");
+
+        assert_eq!(final_offset, chunk.len() as u64);
+
+        file.as_file_mut()
+            .set_len(final_offset)
+            .expect("truncate to sparse length");
+
+        let metadata = file.as_file_mut().metadata().expect("metadata");
+        assert_eq!(metadata.len(), final_offset);
     }
 }
