@@ -27,6 +27,7 @@ libc = "0.2"
 base64 = "0.22"
 tempfile = "3.10"
 socket2 = "0.4"
+filetime = "0.2"
 branding = { path = "../branding" }
 
 [target.'cfg(unix)'.dependencies]
