@@ -7,6 +7,8 @@
 mod compatibility;
 mod envelope;
 mod error;
+/// File list encoding and decoding.
+pub mod flist;
 mod legacy;
 mod multiplex;
 mod negotiation;

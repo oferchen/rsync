@@ -1,375 +1,328 @@
 #![deny(unsafe_code)]
-//! Generator role implementation for server mode.
+//! Server-side Generator role implementation.
 //!
-//! The generator walks the local filesystem and sends file metadata and signatures
-//! to the client/receiver. This mirrors upstream rsync's generator.c functionality.
+//! When the native server operates as a Generator (sender), it:
+//! 1. Walks the local filesystem to build a file list
+//! 2. Sends the file list to the client (receiver)
+//! 3. Receives signatures from the client for existing files
+//! 4. Generates and sends deltas for each file
 
-use std::fs::File;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use checksums::RollingChecksum;
-use checksums::strong::Md4;
-use engine::delta::{SignatureLayoutParams, calculate_signature_layout};
-use protocol::wire::{FileEntry, SignatureBlock, write_signature};
 use protocol::ProtocolVersion;
-use walk::{WalkBuilder, WalkEntry};
+use protocol::flist::{FileEntry, FileListWriter};
 
-use super::ServerConfig;
-use crate::message::Role;
+use super::config::ServerConfig;
+use super::handshake::HandshakeResult;
 
-/// Generator role error conditions.
+/// Context for the generator role during a transfer.
 #[derive(Debug)]
-pub enum GeneratorError {
-    /// File walk failed.
-    WalkError(walk::WalkError),
-    /// I/O error during file list transmission.
-    IoError(io::Error),
-    /// Failed to read file for signature generation.
-    SignatureReadError {
-        /// Path that could not be read.
-        path: PathBuf,
-        /// Underlying I/O error.
-        source: io::Error,
-    },
-    /// Signature layout calculation failed.
-    SignatureLayoutError {
-        /// Path being processed.
-        path: PathBuf,
-        /// Layout error.
-        source: engine::delta::SignatureLayoutError,
-    },
-}
-
-impl std::fmt::Display for GeneratorError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GeneratorError::WalkError(e) => write!(f, "file walk failed: {}", e),
-            GeneratorError::IoError(e) => write!(f, "I/O error: {}", e),
-            GeneratorError::SignatureReadError { path, source } => {
-                write!(f, "failed to read file {:?} for signature: {}", path, source)
-            }
-            GeneratorError::SignatureLayoutError { path, source } => {
-                write!(f, "signature layout error for {:?}: {}", path, source)
-            }
-        }
-    }
-}
-
-impl std::error::Error for GeneratorError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            GeneratorError::WalkError(e) => Some(e),
-            GeneratorError::IoError(e) => Some(e),
-            GeneratorError::SignatureReadError { source, .. } => Some(source),
-            GeneratorError::SignatureLayoutError { source, .. } => Some(source),
-        }
-    }
-}
-
-impl From<io::Error> for GeneratorError {
-    fn from(e: io::Error) -> Self {
-        GeneratorError::IoError(e)
-    }
-}
-
-impl From<walk::WalkError> for GeneratorError {
-    fn from(e: walk::WalkError) -> Self {
-        GeneratorError::WalkError(e)
-    }
-}
-
-/// Runs the generator role over stdio.
-///
-/// The generator:
-/// 1. Walks the local filesystem specified in config.args
-/// 2. Sends file list as FileEntry records via stdout
-/// 3. Waits for signature requests on stdin
-/// 4. Generates and sends signatures for requested files
-///
-/// This implements the server-side generator role that corresponds to
-/// upstream rsync's generator.c.
-pub fn run_generator(
-    config: ServerConfig,
-    _stdin: &mut dyn Read,
-    stdout: &mut dyn Write,
-) -> Result<i32, GeneratorError> {
-    let _role = Role::Generator;
-
-    let source_paths = config.args;
-    if source_paths.is_empty() {
-        return Err(GeneratorError::IoError(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "no source paths specified for generator",
-        )));
-    }
-
-    let file_list = build_file_list(&source_paths)?;
-    send_file_list_dyn(stdout, &file_list)?;
-
-    Ok(0)
-}
-
-/// Helper to send file list with dynamic dispatch.
-fn send_file_list_dyn(
-    stdout: &mut dyn Write,
-    file_list: &[FileEntry],
-) -> Result<(), GeneratorError> {
-    let mut prev: Option<&FileEntry> = None;
-    let mut buffer = Vec::new();
-
-    for entry in file_list {
-        buffer.clear();
-        entry.write_to(&mut buffer, prev)?;
-        stdout.write_all(&buffer)?;
-        prev = Some(entry);
-    }
-
-    stdout.write_all(&[0x00])?;
-    stdout.flush()?;
-
-    Ok(())
-}
-
-/// Builds a file list by walking the provided source paths.
-fn build_file_list(sources: &[std::ffi::OsString]) -> Result<Vec<FileEntry>, GeneratorError> {
-    let mut file_list = Vec::new();
-
-    for source in sources {
-        let source_path = Path::new(source);
-
-        if !source_path.exists() {
-            return Err(GeneratorError::IoError(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("source path {:?} does not exist", source_path),
-            )));
-        }
-
-        let walker = WalkBuilder::new(source_path)
-            .include_root(true)
-            .build()?;
-
-        for entry_result in walker {
-            let entry = entry_result?;
-
-            if let Ok(file_entry) = convert_walk_entry_to_file_entry(&entry) {
-                file_list.push(file_entry);
-            }
-        }
-    }
-
-    Ok(file_list)
-}
-
-/// Converts a walk entry to a wire protocol FileEntry.
-#[cfg(unix)]
-fn convert_walk_entry_to_file_entry(entry: &WalkEntry) -> io::Result<FileEntry> {
-    let metadata = entry.metadata();
-    FileEntry::from_metadata(entry.full_path(), metadata)
-}
-
-#[cfg(not(unix))]
-fn convert_walk_entry_to_file_entry(entry: &WalkEntry) -> io::Result<FileEntry> {
-    use protocol::wire::FileType;
-
-    let metadata = entry.metadata();
-    let path = entry.relative_path();
-
-    let file_type = if metadata.is_dir() {
-        FileType::Directory
-    } else if metadata.is_symlink() {
-        FileType::Symlink
-    } else {
-        FileType::Regular
-    };
-
-    let symlink_target = if file_type == FileType::Symlink {
-        Some(std::fs::read_link(entry.full_path())?.to_string_lossy().into_owned())
-    } else {
-        None
-    };
-
-    Ok(FileEntry {
-        path: path.to_string_lossy().into_owned(),
-        file_type,
-        size: metadata.len(),
-        mtime: metadata.modified()?
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
-        mode: 0o644,
-        uid: None,
-        gid: None,
-        symlink_target,
-        dev_major: None,
-        dev_minor: None,
-    })
-}
-
-/// Sends the file list to stdout using wire protocol format.
-fn send_file_list<W: Write>(
-    writer: &mut W,
-    file_list: &[FileEntry],
-) -> Result<(), GeneratorError> {
-    let mut prev: Option<&FileEntry> = None;
-
-    for entry in file_list {
-        entry.write_to(writer, prev)?;
-        prev = Some(entry);
-    }
-
-    writer.write_all(&[0x00])?;
-    writer.flush()?;
-
-    Ok(())
-}
-
-/// Generates a signature for a file and sends it via stdout.
-///
-/// This reads the file in blocks, computes rolling and strong checksums,
-/// and writes the signature using the wire protocol format.
-pub fn generate_and_send_signature<W: Write>(
-    file_path: &Path,
-    file_size: u64,
+pub struct GeneratorContext {
+    /// Negotiated protocol version.
     protocol: ProtocolVersion,
-    stdout: &mut W,
-) -> Result<(), GeneratorError> {
-    let params = SignatureLayoutParams::new(
-        file_size,
-        None,
-        protocol,
-        std::num::NonZeroU8::new(16).expect("checksum length is non-zero"),
-    );
+    /// Server configuration.
+    config: ServerConfig,
+    /// List of files to send.
+    file_list: Vec<FileEntry>,
+}
 
-    let layout = calculate_signature_layout(params).map_err(|e| {
-        GeneratorError::SignatureLayoutError {
-            path: file_path.to_path_buf(),
-            source: e,
+impl GeneratorContext {
+    /// Creates a new generator context from handshake result and config.
+    pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+        Self {
+            protocol: handshake.protocol,
+            config,
+            file_list: Vec::new(),
         }
-    })?;
-
-    let file = File::open(file_path).map_err(|e| GeneratorError::SignatureReadError {
-        path: file_path.to_path_buf(),
-        source: e,
-    })?;
-
-    let mut reader = BufReader::new(file);
-    let block_length = layout.block_length().get() as usize;
-    let mut blocks = Vec::new();
-    let mut block_index = 0u32;
-
-    let mut buffer = vec![0u8; block_length];
-
-    loop {
-        let bytes_read = reader.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-
-        let block_data = &buffer[..bytes_read];
-
-        let mut rolling = RollingChecksum::new();
-        rolling.update(block_data);
-        let rolling_sum = rolling.digest();
-
-        let mut strong = Md4::new();
-        strong.update(block_data);
-        let strong_sum = strong.finalize()[..layout.strong_sum_length().get() as usize].to_vec();
-
-        blocks.push(SignatureBlock {
-            index: block_index,
-            rolling_sum: rolling_sum.into(),
-            strong_sum,
-        });
-
-        block_index += 1;
     }
 
-    write_signature(
-        stdout,
-        blocks.len() as u32,
-        layout.block_length().get(),
-        layout.strong_sum_length().get(),
-        &blocks,
-    )?;
+    /// Returns the negotiated protocol version.
+    #[must_use]
+    pub const fn protocol(&self) -> ProtocolVersion {
+        self.protocol
+    }
 
-    stdout.flush()?;
+    /// Returns a reference to the server configuration.
+    #[must_use]
+    pub const fn config(&self) -> &ServerConfig {
+        &self.config
+    }
 
-    Ok(())
+    /// Returns the generated file list.
+    #[must_use]
+    pub fn file_list(&self) -> &[FileEntry] {
+        &self.file_list
+    }
+
+    /// Builds the file list from the specified paths.
+    ///
+    /// This walks the filesystem starting from each path in the arguments
+    /// and builds a sorted file list for transmission.
+    pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize> {
+        self.file_list.clear();
+
+        for base_path in base_paths {
+            self.walk_path(base_path, base_path)?;
+        }
+
+        // Sort file list lexicographically (rsync requirement)
+        self.file_list.sort_by(|a, b| a.name().cmp(b.name()));
+
+        Ok(self.file_list.len())
+    }
+
+    /// Recursively walks a path and adds entries to the file list.
+    fn walk_path(&mut self, base: &Path, path: &Path) -> io::Result<()> {
+        let metadata = std::fs::symlink_metadata(path)?;
+
+        // Calculate relative path
+        let relative = path.strip_prefix(base).unwrap_or(path).to_path_buf();
+
+        // Skip the base path itself if it's a directory
+        if relative.as_os_str().is_empty() && metadata.is_dir() {
+            // Walk children of the base directory
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                self.walk_path(base, &entry.path())?;
+            }
+            return Ok(());
+        }
+
+        // Create file entry based on type
+        let entry = self.create_entry(path, &relative, &metadata)?;
+        self.file_list.push(entry);
+
+        // Recurse into directories if recursive mode is enabled
+        if metadata.is_dir() && self.config.flags.recursive {
+            for dir_entry in std::fs::read_dir(path)? {
+                let dir_entry = dir_entry?;
+                self.walk_path(base, &dir_entry.path())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Creates a file entry from path and metadata.
+    ///
+    /// The `full_path` is used for filesystem operations (e.g., reading symlink targets),
+    /// while `relative_path` is stored in the entry for transmission to the receiver.
+    fn create_entry(
+        &self,
+        full_path: &Path,
+        relative_path: &Path,
+        metadata: &std::fs::Metadata,
+    ) -> io::Result<FileEntry> {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+
+        let file_type = metadata.file_type();
+
+        let mut entry = if file_type.is_file() {
+            #[cfg(unix)]
+            let mode = metadata.mode() & 0o7777;
+            #[cfg(not(unix))]
+            let mode = if metadata.permissions().readonly() {
+                0o444
+            } else {
+                0o644
+            };
+
+            FileEntry::new_file(relative_path.to_path_buf(), metadata.len(), mode)
+        } else if file_type.is_dir() {
+            #[cfg(unix)]
+            let mode = metadata.mode() & 0o7777;
+            #[cfg(not(unix))]
+            let mode = 0o755;
+
+            FileEntry::new_directory(relative_path.to_path_buf(), mode)
+        } else if file_type.is_symlink() {
+            let target = std::fs::read_link(full_path).unwrap_or_else(|_| PathBuf::from(""));
+
+            FileEntry::new_symlink(relative_path.to_path_buf(), target)
+        } else {
+            // Other file types (devices, etc.)
+            FileEntry::new_file(relative_path.to_path_buf(), 0, 0o644)
+        };
+
+        // Set modification time
+        #[cfg(unix)]
+        {
+            entry.set_mtime(metadata.mtime(), metadata.mtime_nsec() as u32);
+        }
+        #[cfg(not(unix))]
+        {
+            if let Ok(mtime) = metadata.modified() {
+                if let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                    entry.set_mtime(duration.as_secs() as i64, duration.subsec_nanos());
+                }
+            }
+        }
+
+        // Set ownership if preserving
+        #[cfg(unix)]
+        if self.config.flags.owner {
+            entry.set_uid(metadata.uid());
+        }
+        #[cfg(unix)]
+        if self.config.flags.group {
+            entry.set_gid(metadata.gid());
+        }
+
+        Ok(entry)
+    }
+
+    /// Sends the file list to the receiver.
+    pub fn send_file_list<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
+        let mut flist_writer = FileListWriter::new(self.protocol);
+
+        for entry in &self.file_list {
+            flist_writer.write_entry(writer, entry)?;
+        }
+
+        flist_writer.write_end(writer)?;
+        writer.flush()?;
+
+        Ok(self.file_list.len())
+    }
+
+    /// Runs the generator role to completion.
+    ///
+    /// This orchestrates the full send operation:
+    /// 1. Build file list from paths
+    /// 2. Send file list
+    /// 3. For each file: receive signature, generate delta, send delta
+    pub fn run<R: Read + ?Sized, W: Write + ?Sized>(
+        &mut self,
+        _reader: &mut R,
+        writer: &mut W,
+        paths: &[PathBuf],
+    ) -> io::Result<GeneratorStats> {
+        // Build file list
+        self.build_file_list(paths)?;
+
+        // Send file list
+        let file_count = self.send_file_list(writer)?;
+
+        // For now, just report what we sent
+        // Delta generation and sending will be implemented next
+        Ok(GeneratorStats {
+            files_listed: file_count,
+            files_transferred: 0,
+            bytes_sent: 0,
+        })
+    }
+}
+
+/// Statistics from a generator transfer operation.
+#[derive(Debug, Clone, Default)]
+pub struct GeneratorStats {
+    /// Number of files in the sent file list.
+    pub files_listed: usize,
+    /// Number of files actually transferred.
+    pub files_transferred: usize,
+    /// Total bytes sent.
+    pub bytes_sent: u64,
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::flags::ParsedServerFlags;
+    use super::super::role::ServerRole;
     use super::*;
-    use std::io::Cursor;
-    use tempfile::TempDir;
+    use std::ffi::OsString;
 
-    #[test]
-    fn build_file_list_for_single_file() {
-        let temp = TempDir::new().unwrap();
-        let file_path = temp.path().join("test.txt");
-        std::fs::write(&file_path, b"hello world").unwrap();
+    fn test_config() -> ServerConfig {
+        ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_string(),
+            flags: ParsedServerFlags::default(),
+            args: vec![OsString::from(".")],
+        }
+    }
 
-        let sources = vec![file_path.as_os_str().to_owned()];
-        let file_list = build_file_list(&sources).unwrap();
-
-        assert_eq!(file_list.len(), 1);
-        assert!(file_list[0].path.contains("test.txt"));
-        assert_eq!(file_list[0].size, 11);
+    fn test_handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+        }
     }
 
     #[test]
-    fn build_file_list_for_directory() {
-        let temp = TempDir::new().unwrap();
-        let dir = temp.path().join("subdir");
-        std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("file1.txt"), b"data1").unwrap();
-        std::fs::write(dir.join("file2.txt"), b"data2").unwrap();
+    fn generator_context_creation() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = GeneratorContext::new(&handshake, config);
 
-        let sources = vec![dir.as_os_str().to_owned()];
-        let file_list = build_file_list(&sources).unwrap();
-
-        assert!(file_list.len() >= 3);
+        assert_eq!(ctx.protocol().as_u8(), 32);
+        assert!(ctx.file_list().is_empty());
     }
 
     #[test]
-    fn send_file_list_writes_wire_format() {
-        let entry = FileEntry {
-            path: "test.txt".to_string(),
-            file_type: protocol::wire::FileType::Regular,
-            size: 100,
-            mtime: 1700000000,
-            mode: 0o644,
-            uid: Some(1000),
-            gid: Some(1000),
-            symlink_target: None,
-            dev_major: None,
-            dev_minor: None,
-        };
+    fn send_empty_file_list() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = GeneratorContext::new(&handshake, config);
 
         let mut output = Vec::new();
-        send_file_list(&mut output, &[entry]).unwrap();
+        let count = ctx.send_file_list(&mut output).unwrap();
 
-        assert!(!output.is_empty());
-        assert_eq!(output[output.len() - 1], 0x00);
+        assert_eq!(count, 0);
+        // Should just have the end marker
+        assert_eq!(output, vec![0u8]);
     }
 
     #[test]
-    fn generate_signature_for_small_file() {
-        let temp = TempDir::new().unwrap();
-        let file_path = temp.path().join("data.bin");
-        let data = vec![0xAA; 2048];
-        std::fs::write(&file_path, &data).unwrap();
+    fn send_single_file_entry() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        // Manually add an entry
+        let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        ctx.file_list.push(entry);
 
         let mut output = Vec::new();
-        generate_and_send_signature(
-            &file_path,
-            2048,
-            ProtocolVersion::NEWEST,
-            &mut output,
-        )
-        .unwrap();
+        let count = ctx.send_file_list(&mut output).unwrap();
 
+        assert_eq!(count, 1);
+        // Should have entry data plus end marker
         assert!(!output.is_empty());
+        assert_eq!(*output.last().unwrap(), 0u8); // End marker
+    }
+
+    #[test]
+    fn build_and_send_round_trip() {
+        use super::super::receiver::ReceiverContext;
+        use std::io::Cursor;
+
+        let handshake = test_handshake();
+        let mut gen_config = test_config();
+        gen_config.role = ServerRole::Generator;
+        let mut generator = GeneratorContext::new(&handshake, gen_config);
+
+        // Add some entries manually (simulating a walk)
+        let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
+        entry1.set_mtime(1700000000, 0);
+        let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
+        entry2.set_mtime(1700000000, 0);
+        generator.file_list.push(entry1);
+        generator.file_list.push(entry2);
+
+        // Send file list
+        let mut wire_data = Vec::new();
+        generator.send_file_list(&mut wire_data).unwrap();
+
+        // Receive file list
+        let recv_config = test_config();
+        let mut receiver = ReceiverContext::new(&handshake, recv_config);
+        let mut cursor = Cursor::new(&wire_data[..]);
+        let count = receiver.receive_file_list(&mut cursor).unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(receiver.file_list()[0].name(), "file1.txt");
+        assert_eq!(receiver.file_list()[1].name(), "file2.txt");
     }
 }
