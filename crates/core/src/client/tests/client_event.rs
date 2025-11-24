@@ -263,6 +263,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
         blocking_io: None,
         protect_args: None,
         human_readable: None,
+        eight_bit_output: false,
         address_mode: AddressMode::Default,
         archive: false,
         recursive: None,

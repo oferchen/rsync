@@ -242,6 +242,7 @@ where
     let msgs_to_stderr = tri_state_flag_positive_first(&matches, "msgs2stderr", "no-msgs2stderr");
     let outbuf = matches.remove_one::<OsString>("outbuf");
     let stats = matches.get_flag("stats");
+    let eight_bit_output = matches.get_flag("8-bit-output");
     let partial_flag = matches.get_flag("partial") || matches.get_count("partial-progress") > 0;
     let no_partial = matches.get_flag("no-partial");
     let preallocate = matches.get_flag("preallocate");
@@ -514,6 +515,7 @@ where
         name_level,
         name_overridden,
         stats,
+        eight_bit_output,
         partial,
         preallocate,
         fsync,

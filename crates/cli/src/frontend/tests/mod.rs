@@ -128,6 +128,8 @@ mod parse_args_recognises_cvs_tests;
 mod parse_args_recognises_delay_tests;
 #[path = "parse_args_recognises_devices.rs"]
 mod parse_args_recognises_devices_tests;
+#[path = "parse_args_recognises_eight_bit_output.rs"]
+mod parse_args_recognises_eight_bit_output_tests;
 #[path = "parse_args_recognises_executability.rs"]
 mod parse_args_recognises_executability_tests;
 #[path = "parse_args_recognises_existing.rs"]
@@ -274,6 +276,8 @@ mod remote_fallback_forwards_delete_tests;
 mod remote_fallback_forwards_devices_tests;
 #[path = "remote_fallback_forwards_double.rs"]
 mod remote_fallback_forwards_double_tests;
+#[path = "remote_fallback_forwards_eight_bit_output.rs"]
+mod remote_fallback_forwards_eight_bit_output_tests;
 #[path = "remote_fallback_forwards_existing.rs"]
 mod remote_fallback_forwards_existing_tests;
 #[path = "remote_fallback_forwards_files.rs"]
