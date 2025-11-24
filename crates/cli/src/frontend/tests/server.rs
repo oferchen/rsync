@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use super::common::*;
 use super::*;
 use std::os::unix::ffi::OsStringExt;
