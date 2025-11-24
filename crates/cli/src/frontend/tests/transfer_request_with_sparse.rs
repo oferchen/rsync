@@ -58,6 +58,57 @@ fn transfer_request_with_sparse_preserves_holes() {
 
 #[cfg(unix)]
 #[test]
+fn transfer_request_with_sparse_preserves_length_for_zero_files() {
+    use std::os::unix::fs::MetadataExt;
+    use tempfile::tempdir;
+
+    const ZERO_FILE_LEN: usize = 2 * 1024 * 1024;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("all-zero.bin");
+    let mut source_file = std::fs::File::create(&source).expect("create source");
+    source_file
+        .write_all(&vec![0u8; ZERO_FILE_LEN])
+        .expect("write zero payload");
+
+    let dense_dest = tmp.path().join("dense.bin");
+    let sparse_dest = tmp.path().join("sparse.bin");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--sparse"),
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let dense_meta = std::fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = std::fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    assert_eq!(dense_meta.len(), ZERO_FILE_LEN as u64);
+    assert_eq!(sparse_meta.len(), dense_meta.len());
+
+    assert!(
+        sparse_meta.blocks() <= dense_meta.blocks(),
+        "sparse copy must not use more blocks than dense copy (sparse={}, dense={})",
+        sparse_meta.blocks(),
+        dense_meta.blocks()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn transfer_request_with_sparse_and_preallocate_allocates_dense() {
     use std::os::unix::fs::MetadataExt;
     use tempfile::tempdir;
