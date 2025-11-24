@@ -183,7 +183,12 @@ mod tests {
         let result = read_delta_op(&mut &buf[..]);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("invalid delta opcode"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid delta opcode")
+        );
     }
 
     #[test]
