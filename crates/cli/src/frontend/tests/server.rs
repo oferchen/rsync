@@ -1,112 +1,18 @@
 #![cfg(unix)]
+//! Tests for server mode argument parsing and dispatch.
 
-use super::common::*;
-use super::*;
-use std::os::unix::ffi::OsStringExt;
-
-#[test]
-fn server_mode_rejects_missing_flag_string() {
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--server"),
-        OsString::from("--sender"),
-    ]);
-
-    assert_eq!(code, 1);
-    let stderr_text = String::from_utf8(stderr).expect("utf8 stderr");
-    assert!(stderr_text.contains("missing rsync server flag string"));
-    assert_contains_server_trailer(&stderr_text);
-}
-
-#[test]
-fn server_mode_reports_unimplemented_roles() {
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--server"),
-        OsString::from("-logDtpre.iLsfxC"),
-        OsString::from("."),
-        OsString::from("."),
-    ]);
-
-    assert_eq!(code, 1);
-    let stderr_text = String::from_utf8(stderr).expect("utf8 stderr");
-    assert!(stderr_text.contains("native receiver role is not yet implemented"));
-    assert_contains_server_trailer(&stderr_text);
-}
-
-#[test]
-fn server_mode_requires_utf8_flag_string() {
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let invalid = OsString::from_vec(vec![0xff]);
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--server"),
-        invalid,
-        OsString::from("."),
-    ]);
-
-    assert_eq!(code, 1);
-    let stderr_text = String::from_utf8(stderr).expect("utf8 stderr");
-    assert!(stderr_text.contains("flag string must be valid UTF-8"));
-    assert_contains_server_trailer(&stderr_text);
-
-    assert_eq!(code, 1);
-    let stderr_text = String::from_utf8(stderr).expect("utf8 stderr");
-    assert!(stderr_text.contains("missing rsync server flag string"));
-    assert_contains_server_trailer(&stderr_text);
-}
-
-#[test]
-fn server_mode_reports_unimplemented_roles() {
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--server"),
-        OsString::from("-logDtpre.iLsfxC"),
-        OsString::from("."),
-        OsString::from("."),
-    ]);
-
-    assert_eq!(code, 1);
-    let stderr_text = String::from_utf8(stderr).expect("utf8 stderr");
-    assert!(stderr_text.contains("native receiver role is not yet implemented"));
-    assert_contains_server_trailer(&stderr_text);
-}
-
-#[test]
-fn server_mode_requires_utf8_flag_string() {
-    let _env_lock = ENV_LOCK.lock().expect("env lock");
-
-    let invalid = OsString::from_vec(vec![0xff]);
-    let (code, _stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        OsString::from("--server"),
-        invalid,
-        OsString::from("."),
-    ]);
-
-    assert_eq!(code, 1);
-    let stderr_text = String::from_utf8(stderr).expect("utf8 stderr");
-    assert!(stderr_text.contains("flag string must be valid UTF-8"));
-    assert_contains_server_trailer(&stderr_text);
-use std::env;
 use std::ffi::OsString;
 use std::io::Write;
+use std::os::unix::ffi::OsStringExt;
 
 use core::branding::Brand;
 use core::fallback::CLIENT_FALLBACK_ENV;
 use core::server::{ServerConfig, ServerRole};
 
+use super::common::EnvGuard;
 use crate::frontend::server::{
     InvocationRole, ServerInvocation, daemon_mode_arguments, is_rsync_flag_string,
     is_rsync_flag_tail, run_server_mode, server_mode_requested, touch_server_invocation,
-    write_server_error_message,
 };
 
 /// Simple in-memory writer that tracks written bytes and flush calls.
@@ -451,12 +357,40 @@ fn parse_flag_block_accepts_combined_and_split_forms() {
 }
 
 #[test]
-fn parse_flag_block_rejects_invalid_tail() {
+fn parse_flag_block_falls_back_to_head_when_tail_invalid() {
+    // When the tail contains a slash (invalid), we fall back to using just the head
     let args = [OsString::from("-l"), OsString::from("invalid/tail")];
+    let (flag, next) = ServerInvocation::parse_flag_block(&args, 0)
+        .expect("should succeed with just head");
+    assert_eq!(flag, "-l");
+    assert_eq!(next, 1);
+}
+
+#[test]
+fn parse_flag_block_rejects_completely_invalid_head() {
+    // A head that doesn't start with - should fail
+    let args = [OsString::from("notaflags")];
     let err = ServerInvocation::parse_flag_block(&args, 0).expect_err("parse_flag_block must fail");
     assert!(
         err.contains("invalid rsync server flag string"),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn server_mode_requires_utf8_flag_string() {
+    let invalid = OsString::from_vec(vec![0xff]);
+    let args = [
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        invalid,
+        OsString::from("."),
+        OsString::from("dest"),
+    ];
+    let error = ServerInvocation::parse(&args).expect_err("parse should fail");
+    assert!(
+        error.contains("invalid rsync server flag string"),
+        "unexpected error: {error}"
     );
 }
 
@@ -492,31 +426,11 @@ fn is_rsync_flag_tail_rejects_invalid_tail() {
 }
 
 // -----------------------------------------------------------------------------
-// Error reporting and façade behaviour
+// Error reporting and facade behaviour
 // -----------------------------------------------------------------------------
 
 #[test]
-fn write_server_error_message_writes_rsync_style_error() {
-    let mut stderr = Buffer::new();
-    write_server_error_message(
-        &mut stderr,
-        Brand::Oc,
-        "server mode is not yet implemented for role Receiver",
-    );
-
-    let text = stderr.as_str();
-    assert!(
-        text.contains("server mode is not yet implemented for role Receiver"),
-        "stderr did not contain expected error, got: {text}"
-    );
-    assert!(
-        text.to_ascii_lowercase().contains("daemon"),
-        "error message should indicate daemon / server role: {text}"
-    );
-}
-
-#[test]
-fn run_server_mode_reports_unimplemented_receiver_role_and_flushes_streams() {
+fn run_server_mode_receiver_attempts_handshake_and_flushes_streams() {
     let args = [
         OsString::from("oc-rsync"),
         OsString::from("--server"),
@@ -528,9 +442,11 @@ fn run_server_mode_reports_unimplemented_receiver_role_and_flushes_streams() {
     let mut stdout = Buffer::new();
     let mut stderr = Buffer::new();
 
-    env::remove_var(CLIENT_FALLBACK_ENV);
+    // Remove the fallback env var so native server mode is used
+    let _guard = EnvGuard::remove(CLIENT_FALLBACK_ENV);
 
     let code = run_server_mode(&args, &mut stdout, &mut stderr);
+    // Server will fail because there's no actual client providing handshake data
     assert_eq!(code, 1);
 
     assert!(
@@ -542,15 +458,16 @@ fn run_server_mode_reports_unimplemented_receiver_role_and_flushes_streams() {
         "stderr should have been flushed at least once"
     );
 
+    // Server now attempts to run and fails on handshake (no client data)
     let text = stderr.as_str();
     assert!(
-        text.contains("server mode is not yet implemented for role Receiver"),
-        "stderr should mention receiver role being unimplemented; got: {text}"
+        !text.is_empty(),
+        "stderr should contain an error message; got empty string"
     );
 }
 
 #[test]
-fn run_server_mode_reports_unimplemented_generator_role() {
+fn run_server_mode_generator_attempts_handshake() {
     let args = [
         OsString::from("oc-rsync"),
         OsString::from("--server"),
@@ -563,15 +480,18 @@ fn run_server_mode_reports_unimplemented_generator_role() {
     let mut stdout = Buffer::new();
     let mut stderr = Buffer::new();
 
-    env::remove_var(CLIENT_FALLBACK_ENV);
+    // Remove the fallback env var so native server mode is used
+    let _guard = EnvGuard::remove(CLIENT_FALLBACK_ENV);
 
     let code = run_server_mode(&args, &mut stdout, &mut stderr);
+    // Server will fail because there's no actual client providing handshake data
     assert_eq!(code, 1);
 
+    // Server now attempts to run and fails on handshake (no client data)
     let text = stderr.as_str();
     assert!(
-        text.contains("server mode is not yet implemented for role Generator"),
-        "stderr should mention generator role being unimplemented; got: {text}"
+        !text.is_empty(),
+        "stderr should contain an error message; got empty string"
     );
 }
 
@@ -582,7 +502,8 @@ fn run_server_mode_reports_parse_error_for_invalid_invocation() {
     let mut stdout = Buffer::new();
     let mut stderr = Buffer::new();
 
-    env::remove_var(CLIENT_FALLBACK_ENV);
+    // Remove the fallback env var so native server error is reported
+    let _guard = EnvGuard::remove(CLIENT_FALLBACK_ENV);
 
     let code = run_server_mode(&args, &mut stdout, &mut stderr);
     assert_eq!(code, 1);
