@@ -456,3 +456,47 @@ pub(crate) fn touch_server_invocation(invocation: &ServerInvocation) {
     let _flags = &invocation.raw_flag_string;
     let _args = &invocation.args;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{InvocationRole, ServerInvocation};
+    use std::ffi::OsString;
+
+    #[test]
+    fn parses_receiver_invocation() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("."),
+        ];
+        let invocation = ServerInvocation::parse(&args).expect("valid receiver args");
+        assert_eq!(invocation.role, InvocationRole::Receiver);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(invocation.args, vec![OsString::from(".")]);
+    }
+
+    #[test]
+    fn parses_generator_invocation_with_sender_flag() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("/tmp"),
+        ];
+        let invocation = ServerInvocation::parse(&args).expect("valid sender args");
+        assert_eq!(invocation.role, InvocationRole::Generator);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(invocation.args, vec![OsString::from("/tmp")]);
+    }
+
+    #[test]
+    fn rejects_missing_flag_string() {
+        let args = [OsString::from("rsync"), OsString::from("--server")];
+        let error = ServerInvocation::parse(&args).unwrap_err();
+        assert_eq!(error, "missing rsync server flag string");
+    }
+}
