@@ -15,6 +15,7 @@ struct RuntimeOptions {
     global_refuse_options: Option<Vec<String>>,
     global_secrets_file: Option<PathBuf>,
     global_secrets_from_config: bool,
+    global_secrets_from_cli: bool,
     pid_file: Option<PathBuf>,
     pid_file_from_config: bool,
     reverse_lookup: bool,
@@ -45,6 +46,7 @@ impl Default for RuntimeOptions {
             global_refuse_options: None,
             global_secrets_file: None,
             global_secrets_from_config: false,
+            global_secrets_from_cli: false,
             pid_file: None,
             pid_file_from_config: false,
             reverse_lookup: true,
@@ -165,6 +167,13 @@ impl RuntimeOptions {
                     .delegate_arguments
                     .push(OsString::from("--lock-file"));
                 options.delegate_arguments.push(value.clone());
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--secrets-file")? {
+                let validated = validate_cli_secrets_file(PathBuf::from(value.clone()))?;
+                options.set_cli_secrets_file(validated.clone())?;
+                options
+                    .delegate_arguments
+                    .push(OsString::from("--secrets-file"));
+                options.delegate_arguments.push(validated.into_os_string());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {
                 options.set_pid_file(PathBuf::from(value.clone()))?;
                 options
@@ -579,6 +588,27 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    fn set_cli_secrets_file(&mut self, path: PathBuf) -> Result<(), DaemonError> {
+        if self.global_secrets_from_cli {
+            return Err(duplicate_argument("--secrets-file"));
+        }
+
+        let path = Some(path);
+        self.global_secrets_file = path.clone();
+        self.global_secrets_from_config = false;
+        self.global_secrets_from_cli = true;
+
+        if let Some(global) = path {
+            for module in &mut self.modules {
+                if module.secrets_file.is_none() {
+                    module.secrets_file = Some(global.clone());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
         let contents =
@@ -599,6 +629,22 @@ impl RuntimeOptions {
             .to_string();
         self.motd_lines.push(line);
     }
+}
+
+fn validate_cli_secrets_file(path: PathBuf) -> Result<PathBuf, DaemonError> {
+    let metadata = fs::metadata(&path).map_err(|error| {
+        config_error(format!(
+            "failed to access secrets file '{}': {}",
+            path.display(),
+            error
+        ))
+    })?;
+
+    if let Err(detail) = ensure_secrets_file(&path, &metadata) {
+        return Err(config_error(detail));
+    }
+
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -646,6 +692,72 @@ impl RuntimeOptions {
 
     pub(super) fn lock_file(&self) -> Option<&Path> {
         self.lock_file.as_deref()
+    }
+}
+
+#[cfg(test)]
+mod runtime_options_tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::fs;
+
+    use tempfile::{NamedTempFile, TempDir};
+
+    #[cfg(unix)]
+    fn set_owner_only_permissions(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path)
+            .expect("metadata")
+            .permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(path, permissions).expect("set permissions");
+    }
+
+    #[cfg(not(unix))]
+    fn set_owner_only_permissions(_path: &Path) {}
+
+    #[test]
+    fn cli_secrets_file_sets_global_default_for_inline_modules() {
+        let secrets = NamedTempFile::new().expect("secrets file");
+        set_owner_only_permissions(secrets.path());
+
+        let module_root = TempDir::new().expect("module path");
+        let module_path = module_root.path().join("data");
+        fs::create_dir_all(&module_path).expect("module dir");
+
+        let args = vec![
+            OsString::from("--secrets-file"),
+            secrets.path().as_os_str().to_os_string(),
+            OsString::from("--module"),
+            OsString::from(format!(
+                "docs={};auth users=alice",
+                module_path.display()
+            )),
+        ];
+
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        let module = options.modules().first().expect("module added");
+
+        assert_eq!(module.secrets_file(), Some(secrets.path()));
+    }
+
+    #[test]
+    fn duplicate_cli_secrets_file_is_rejected() {
+        let first = NamedTempFile::new().expect("first secrets");
+        let second = NamedTempFile::new().expect("second secrets");
+        set_owner_only_permissions(first.path());
+        set_owner_only_permissions(second.path());
+
+        let args = vec![
+            OsString::from("--secrets-file"),
+            first.path().as_os_str().to_os_string(),
+            OsString::from("--secrets-file"),
+            second.path().as_os_str().to_os_string(),
+        ];
+
+        let result = RuntimeOptions::parse(&args);
+        assert!(result.is_err());
     }
 }
 
