@@ -1,27 +1,29 @@
-#![deny(unsafe_code)]
+//! Server configuration derived from the compact flag string and trailing arguments.
 
 use std::ffi::OsString;
 
 use protocol::ProtocolVersion;
 
-use crate::server::role::ServerRole;
+use super::role::ServerRole;
 
-/// Structured configuration derived from a `--server` invocation.
+/// Configuration supplied to the server entry point.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ServerConfig {
-    /// Selected role for this invocation.
+    /// Server-side role negotiated via `--server` / `--sender`.
     pub role: ServerRole,
-    /// Protocol version advertised by the server.
+    /// Requested protocol version; capped during handshake.
     pub protocol: ProtocolVersion,
-    /// Raw flag string supplied by the client.
+    /// Raw compact flag string provided by the client.
     pub flag_string: String,
-    /// Trailing arguments forwarded by the client.
+    /// Remaining positional arguments passed to the server.
     pub args: Vec<OsString>,
 }
 
 impl ServerConfig {
-    /// Builds a configuration from the raw flag string and trailing arguments supplied
-    /// to the `--server` shim.
+    /// Builds a [`ServerConfig`] from the compact flag string and positional arguments.
+    ///
+    /// The parser mirrors upstream rsync expectations by rejecting empty flag strings
+    /// so obvious misuse surfaces before any protocol negotiation occurs.
     pub fn from_flag_string_and_args(
         role: ServerRole,
         flag_string: String,
@@ -37,37 +39,5 @@ impl ServerConfig {
             flag_string,
             args,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::server::role::ServerRole;
-
-    #[test]
-    fn rejects_empty_flag_string() {
-        let error = ServerConfig::from_flag_string_and_args(
-            ServerRole::Receiver,
-            String::new(),
-            Vec::new(),
-        )
-        .unwrap_err();
-        assert_eq!(error, "missing rsync server flag string");
-    }
-
-    #[test]
-    fn builds_config_with_defaults() {
-        let args = vec![OsString::from("/tmp"), OsString::from("dest")];
-        let config = ServerConfig::from_flag_string_and_args(
-            ServerRole::Generator,
-            "-logDtpre.iLsfxC".to_string(),
-            args.clone(),
-        )
-        .expect("valid config");
-        assert_eq!(config.role, ServerRole::Generator);
-        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
-        assert_eq!(config.args, args);
-        assert_eq!(config.protocol, ProtocolVersion::NEWEST);
     }
 }

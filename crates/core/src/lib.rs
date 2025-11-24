@@ -16,7 +16,7 @@ pub mod client;
 pub mod fallback;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
-/// Native server orchestration helpers consumed by the CLI binary.
+/// Server orchestration helpers consumed by CLI and embedding entry points.
 pub mod server;
 /// Version constants and capability helpers used by CLI and daemon entry points.
 pub mod version;

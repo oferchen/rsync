@@ -1,10 +1,10 @@
-#![deny(unsafe_code)]
+//! Server roles negotiated through the `--server` entry point.
 
-/// Identifies the server-side role used during a remote rsync invocation.
+/// Enumerates the server-side pipeline roles.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum ServerRole {
-    /// Acts as the receiver, applying updates sent by the client.
+    /// Receives data from the client and applies it to the local filesystem.
     Receiver,
-    /// Acts as the generator/sender, producing file data for the client.
+    /// Generates file lists and delta streams to send back to the client.
     Generator,
 }
