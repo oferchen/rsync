@@ -2,10 +2,16 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{self, Read, Write};
+use std::io::Write;
+#[cfg(any(windows, test))]
+use std::io::{self, Read};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+#[cfg(any(windows, test))]
+use std::process::Child;
+use std::process::{Command, Stdio};
+#[cfg(any(windows, test))]
 use std::sync::mpsc;
+#[cfg(any(windows, test))]
 use std::thread;
 
 use core::branding::Brand;
@@ -139,119 +145,172 @@ where
         return 1;
     }
 
-    let mut command = Command::new(&resolved_fallback);
-    command.args(args.iter().skip(1));
-    command.stdin(Stdio::inherit());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            let text = format!(
-                "failed to launch fallback {upstream_program} binary '{}': {error}",
-                Path::new(&fallback).display()
-            );
-            write_server_fallback_error(stderr, program_brand, text);
-            return 1;
-        }
-    };
-
-    let (sender, receiver) = mpsc::channel();
-    let mut stdout_thread = child
-        .stdout
-        .take()
-        .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stdout, sender.clone()));
-    let mut stderr_thread = child
-        .stderr
-        .take()
-        .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stderr, sender.clone()));
-    drop(sender);
-
-    let mut stdout_open = stdout_thread.is_some();
-    let mut stderr_open = stderr_thread.is_some();
-
-    while stdout_open || stderr_open {
-        match receiver.recv() {
-            Ok(ServerStreamMessage::Data(ServerStreamKind::Stdout, data)) => {
-                if let Err(error) = stdout.write_all(&data) {
-                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                    write_server_fallback_error(
-                        stderr,
-                        program_brand,
-                        format!("failed to forward fallback stdout: {error}"),
-                    );
-                    return 1;
-                }
-            }
-            Ok(ServerStreamMessage::Data(ServerStreamKind::Stderr, data)) => {
-                if let Err(error) = stderr.write_all(&data) {
-                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                    write_server_fallback_error(
-                        stderr,
-                        program_brand,
-                        format!("failed to forward fallback stderr: {error}"),
-                    );
-                    return 1;
-                }
-            }
-            Ok(ServerStreamMessage::Error(ServerStreamKind::Stdout, error)) => {
-                terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                write_server_fallback_error(
-                    stderr,
-                    program_brand,
-                    format!("failed to read stdout from fallback {upstream_program}: {error}"),
-                );
-                return 1;
-            }
-            Ok(ServerStreamMessage::Error(ServerStreamKind::Stderr, error)) => {
-                terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
-                write_server_fallback_error(
-                    stderr,
-                    program_brand,
-                    format!("failed to read stderr from fallback {upstream_program}: {error}"),
-                );
-                return 1;
-            }
-            Ok(ServerStreamMessage::Finished(kind)) => match kind {
-                ServerStreamKind::Stdout => stdout_open = false,
-                ServerStreamKind::Stderr => stderr_open = false,
-            },
-            Err(_) => break,
-        }
+    #[cfg(all(unix, not(test)))]
+    {
+        return delegate_server_exec(
+            &resolved_fallback,
+            args,
+            program_brand,
+            upstream_program,
+            stderr,
+        );
     }
 
-    join_server_thread(&mut stdout_thread);
-    join_server_thread(&mut stderr_thread);
+    #[cfg(any(windows, test))]
+    {
+        let mut command = Command::new(&resolved_fallback);
+        command.args(args.iter().skip(1));
+        command.stdin(Stdio::inherit());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
 
-    match child.wait() {
-        Ok(status) => status
-            .code()
-            .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
-            .unwrap_or(1),
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                let text = format!(
+                    "failed to launch fallback {upstream_program} binary '{}': {error}",
+                    Path::new(&fallback).display()
+                );
+                write_server_fallback_error(stderr, program_brand, text);
+                return 1;
+            }
+        };
+
+        let (sender, receiver) = mpsc::channel();
+        let mut stdout_thread = child
+            .stdout
+            .take()
+            .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stdout, sender.clone()));
+        let mut stderr_thread = child
+            .stderr
+            .take()
+            .map(|handle| spawn_server_reader(handle, ServerStreamKind::Stderr, sender.clone()));
+        drop(sender);
+
+        let mut stdout_open = stdout_thread.is_some();
+        let mut stderr_open = stderr_thread.is_some();
+
+        while stdout_open || stderr_open {
+            match receiver.recv() {
+                Ok(ServerStreamMessage::Data(ServerStreamKind::Stdout, data)) => {
+                    if let Err(error) = stdout.write_all(&data) {
+                        terminate_server_process(
+                            &mut child,
+                            &mut stdout_thread,
+                            &mut stderr_thread,
+                        );
+                        write_server_fallback_error(
+                            stderr,
+                            program_brand,
+                            format!("failed to forward fallback stdout: {error}"),
+                        );
+                        return 1;
+                    }
+                }
+                Ok(ServerStreamMessage::Data(ServerStreamKind::Stderr, data)) => {
+                    if let Err(error) = stderr.write_all(&data) {
+                        terminate_server_process(
+                            &mut child,
+                            &mut stdout_thread,
+                            &mut stderr_thread,
+                        );
+                        write_server_fallback_error(
+                            stderr,
+                            program_brand,
+                            format!("failed to forward fallback stderr: {error}"),
+                        );
+                        return 1;
+                    }
+                }
+                Ok(ServerStreamMessage::Error(ServerStreamKind::Stdout, error)) => {
+                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    write_server_fallback_error(
+                        stderr,
+                        program_brand,
+                        format!("failed to read stdout from fallback {upstream_program}: {error}"),
+                    );
+                    return 1;
+                }
+                Ok(ServerStreamMessage::Error(ServerStreamKind::Stderr, error)) => {
+                    terminate_server_process(&mut child, &mut stdout_thread, &mut stderr_thread);
+                    write_server_fallback_error(
+                        stderr,
+                        program_brand,
+                        format!("failed to read stderr from fallback {upstream_program}: {error}"),
+                    );
+                    return 1;
+                }
+                Ok(ServerStreamMessage::Finished(kind)) => match kind {
+                    ServerStreamKind::Stdout => stdout_open = false,
+                    ServerStreamKind::Stderr => stderr_open = false,
+                },
+                Err(_) => break,
+            }
+        }
+
+        join_server_thread(&mut stdout_thread);
+        join_server_thread(&mut stderr_thread);
+
+        match child.wait() {
+            Ok(status) => status
+                .code()
+                .map(|code| code.clamp(0, super::MAX_EXIT_CODE))
+                .unwrap_or(1),
+            Err(error) => {
+                write_server_fallback_error(
+                    stderr,
+                    program_brand,
+                    format!("failed to wait for fallback {upstream_program} process: {error}"),
+                );
+                1
+            }
+        }
+    }
+}
+
+#[cfg(all(unix, not(test)))]
+fn delegate_server_exec<Err: Write>(
+    resolved_fallback: &OsStr,
+    args: &[OsString],
+    brand: Brand,
+    upstream_program: &str,
+    stderr: &mut Err,
+) -> i32 {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = Command::new(resolved_fallback);
+    command.args(args.iter().skip(1));
+    command.stdin(Stdio::inherit());
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+
+    match command.exec() {
         Err(error) => {
-            write_server_fallback_error(
-                stderr,
-                program_brand,
-                format!("failed to wait for fallback {upstream_program} process: {error}"),
+            let text = format!(
+                "failed to exec fallback {upstream_program} binary '{}': {error}",
+                Path::new(resolved_fallback).display()
             );
+            write_server_fallback_error(stderr, brand, text);
             1
         }
     }
 }
 
+#[cfg(any(windows, test))]
 #[derive(Clone, Copy, Debug)]
 enum ServerStreamKind {
     Stdout,
     Stderr,
 }
 
+#[cfg(any(windows, test))]
 enum ServerStreamMessage {
     Data(ServerStreamKind, Vec<u8>),
     Error(ServerStreamKind, io::Error),
     Finished(ServerStreamKind),
 }
 
+#[cfg(any(windows, test))]
 fn spawn_server_reader<R>(
     mut reader: R,
     kind: ServerStreamKind,
@@ -286,12 +345,14 @@ where
     })
 }
 
+#[cfg(any(windows, test))]
 fn join_server_thread(handle: &mut Option<thread::JoinHandle<()>>) {
     if let Some(join) = handle.take() {
         let _ = join.join();
     }
 }
 
+#[cfg(any(windows, test))]
 fn terminate_server_process(
     child: &mut Child,
     stdout_thread: &mut Option<thread::JoinHandle<()>>,
