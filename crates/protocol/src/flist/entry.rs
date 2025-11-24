@@ -32,13 +32,13 @@ impl FileType {
     pub const fn from_mode(mode: u32) -> Option<Self> {
         // S_IFMT = 0o170000
         match mode & 0o170000 {
-            0o100000 => Some(Self::Regular),    // S_IFREG
-            0o040000 => Some(Self::Directory),  // S_IFDIR
-            0o120000 => Some(Self::Symlink),    // S_IFLNK
+            0o100000 => Some(Self::Regular),     // S_IFREG
+            0o040000 => Some(Self::Directory),   // S_IFDIR
+            0o120000 => Some(Self::Symlink),     // S_IFLNK
             0o060000 => Some(Self::BlockDevice), // S_IFBLK
-            0o020000 => Some(Self::CharDevice), // S_IFCHR
-            0o010000 => Some(Self::Fifo),       // S_IFIFO
-            0o140000 => Some(Self::Socket),     // S_IFSOCK
+            0o020000 => Some(Self::CharDevice),  // S_IFCHR
+            0o010000 => Some(Self::Fifo),        // S_IFIFO
+            0o140000 => Some(Self::Socket),      // S_IFSOCK
             _ => None,
         }
     }
@@ -387,7 +387,10 @@ mod tests {
         let entry = FileEntry::new_symlink("link".into(), "target".into());
         assert_eq!(entry.name(), "link");
         assert!(entry.is_symlink());
-        assert_eq!(entry.link_target().map(|p| p.as_path()), Some("target".as_ref()));
+        assert_eq!(
+            entry.link_target().map(|p| p.as_path()),
+            Some("target".as_ref())
+        );
     }
 
     #[test]

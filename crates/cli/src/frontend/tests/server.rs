@@ -360,8 +360,8 @@ fn parse_flag_block_accepts_combined_and_split_forms() {
 fn parse_flag_block_falls_back_to_head_when_tail_invalid() {
     // When the tail contains a slash (invalid), we fall back to using just the head
     let args = [OsString::from("-l"), OsString::from("invalid/tail")];
-    let (flag, next) = ServerInvocation::parse_flag_block(&args, 0)
-        .expect("should succeed with just head");
+    let (flag, next) =
+        ServerInvocation::parse_flag_block(&args, 0).expect("should succeed with just head");
     assert_eq!(flag, "-l");
     assert_eq!(next, 1);
 }

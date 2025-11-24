@@ -57,11 +57,8 @@ pub fn run_server_stdio(
         }
         ServerRole::Generator => {
             // Convert OsString args to PathBuf for file walking
-            let paths: Vec<std::path::PathBuf> = config
-                .args
-                .iter()
-                .map(std::path::PathBuf::from)
-                .collect();
+            let paths: Vec<std::path::PathBuf> =
+                config.args.iter().map(std::path::PathBuf::from).collect();
 
             let mut ctx = GeneratorContext::new(&handshake, config);
             let stats = ctx.run(stdin, stdout, &paths)?;

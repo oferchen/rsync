@@ -10,8 +10,8 @@
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use protocol::flist::{FileEntry, FileListWriter};
 use protocol::ProtocolVersion;
+use protocol::flist::{FileEntry, FileListWriter};
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
@@ -67,8 +67,7 @@ impl GeneratorContext {
         }
 
         // Sort file list lexicographically (rsync requirement)
-        self.file_list
-            .sort_by(|a, b| a.name().cmp(b.name()));
+        self.file_list.sort_by(|a, b| a.name().cmp(b.name()));
 
         Ok(self.file_list.len())
     }
@@ -78,10 +77,7 @@ impl GeneratorContext {
         let metadata = std::fs::symlink_metadata(path)?;
 
         // Calculate relative path
-        let relative = path
-            .strip_prefix(base)
-            .unwrap_or(path)
-            .to_path_buf();
+        let relative = path.strip_prefix(base).unwrap_or(path).to_path_buf();
 
         // Skip the base path itself if it's a directory
         if relative.as_os_str().is_empty() && metadata.is_dir() {
@@ -232,9 +228,9 @@ pub struct GeneratorStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::flags::ParsedServerFlags;
     use super::super::role::ServerRole;
+    use super::*;
     use std::ffi::OsString;
 
     fn test_config() -> ServerConfig {

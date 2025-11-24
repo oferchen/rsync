@@ -5,8 +5,8 @@
 
 use std::io::{self, Write};
 
-use crate::varint::write_varint;
 use crate::ProtocolVersion;
+use crate::varint::write_varint;
 
 use super::entry::FileEntry;
 use super::flags::{
@@ -52,7 +52,11 @@ impl FileListWriter {
     }
 
     /// Writes a file entry to the stream.
-    pub fn write_entry<W: Write + ?Sized>(&mut self, writer: &mut W, entry: &FileEntry) -> io::Result<()> {
+    pub fn write_entry<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> io::Result<()> {
         let name = entry.name().as_bytes();
 
         // Calculate name compression
