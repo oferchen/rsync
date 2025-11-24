@@ -85,7 +85,10 @@ impl FileEntry {
         if self.file_type == FileType::Directory {
             flags |= 0x02;
         }
-        if matches!(self.file_type, FileType::CharDevice | FileType::BlockDevice | FileType::Fifo) {
+        if matches!(
+            self.file_type,
+            FileType::CharDevice | FileType::BlockDevice | FileType::Fifo
+        ) {
             flags |= 0x04;
         }
 
@@ -208,8 +211,10 @@ impl FileEntry {
             let target_len = read_varint(reader)? as usize;
             let mut target_bytes = vec![0u8; target_len];
             reader.read_exact(&mut target_bytes)?;
-            Some(String::from_utf8(target_bytes)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?)
+            Some(
+                String::from_utf8(target_bytes)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            )
         } else {
             None
         };
@@ -401,7 +406,10 @@ mod tests {
         let mut buf2 = Vec::new();
         entry2.write_to(&mut buf2, Some(&entry1)).unwrap();
 
-        assert!(buf2.len() < buf1.len(), "differential encoding should be smaller");
+        assert!(
+            buf2.len() < buf1.len(),
+            "differential encoding should be smaller"
+        );
 
         let decoded2 = FileEntry::read_from(&mut &buf2[..], Some(&entry1)).unwrap();
         assert_eq!(decoded2.uid, Some(1000));
