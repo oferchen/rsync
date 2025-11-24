@@ -373,9 +373,6 @@ mod tests {
 
     #[test]
     fn run_server_reports_exit_status() {
-        const ENV: &str = "OC_RSYNC_FALLBACK";
-        let _guard = EnvGuard::set(ENV, "0");
-
         let args = [
             client_program_name(),
             "--server",
@@ -383,7 +380,7 @@ mod tests {
             ".",
             ".",
         ];
-        let error = run_server(args).expect_err("fallback disabled should fail");
+        let error = run_server(args).expect_err("server mode is not implemented yet");
         assert_eq!(error.exit_status(), 1);
         assert!(
             !error.output().stderr().is_empty(),
