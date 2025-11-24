@@ -380,6 +380,7 @@ mod tests {
             ".",
             ".",
         ];
+        let error = run_server(args).expect_err("server mode is not implemented yet");
 
         // Capture-mode embedding: should report non-zero exit and route
         // all diagnostics to stderr, leaving stdout empty.
