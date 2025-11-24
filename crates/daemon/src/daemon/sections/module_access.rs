@@ -370,6 +370,14 @@ fn respond_with_module_request(
                 send_daemon_ok(reader.get_mut(), limiter, messages)?;
             }
 
+            // DAEMON WIRING POINT: Replace MODULE_UNAVAILABLE_PAYLOAD with actual transfer
+            // TODO: Protocol negotiation (binary handshake for protocol 30+)
+            // TODO: Detect role (receiver vs generator) from client request
+            // TODO: Build ServerConfig from module settings and request
+            // TODO: Call core::server::run_server_stdio(config, reader, stream)
+            // TODO: Handle result and log completion
+            // For now, return unavailable error until protocol negotiation is implemented
+
             let module_display = sanitize_module_identifier(request);
             let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", module_display.as_ref());
             let stream = reader.get_mut();
