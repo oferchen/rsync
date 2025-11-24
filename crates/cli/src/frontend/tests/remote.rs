@@ -30,6 +30,49 @@ fn remote_operand_reports_launch_failure_when_fallback_missing() {
     assert_contains_client_trailer(&rendered);
 }
 
+#[test]
+fn remote_operand_reports_disabled_fallback_override() {
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+    let _rsh_guard = clear_rsync_rsh();
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("no"));
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("remote::module"),
+        OsString::from("dest"),
+    ]);
+
+    assert_eq!(code, 1);
+    assert!(stdout.is_empty());
+
+    let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+    assert!(
+        rendered.contains("remote transfers are unavailable because OC_RSYNC_FALLBACK is disabled")
+    );
+    assert_contains_client_trailer(&rendered);
+}
+
+#[test]
+fn remote_operand_rejects_recursive_fallback() {
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+    let _rsh_guard = clear_rsync_rsh();
+    let current = std::env::current_exe().expect("current exe");
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, current.as_os_str());
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("remote::module"),
+        OsString::from("dest"),
+    ]);
+
+    assert_eq!(code, 1);
+    assert!(stdout.is_empty());
+
+    let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
+    assert!(rendered.contains("oc-rsync executable"));
+    assert_contains_client_trailer(&rendered);
+}
+
 #[cfg(unix)]
 #[test]
 fn remote_operands_invoke_fallback_binary() {

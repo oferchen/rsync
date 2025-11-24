@@ -568,7 +568,6 @@ fn create_zig_linker_shim(
 }
 
 #[cfg(all(test, target_os = "linux"))]
-#[allow(unsafe_code)]
 pub(super) fn resolve_cross_compiler_for_tests(
     workspace: &Path,
     target: &str,
@@ -599,64 +598,16 @@ pub(super) fn resolve_cross_compiler_for_tests(
 }
 
 #[cfg(test)]
-#[allow(unsafe_code)]
 mod build_command_tests {
     use super::{
         configure_feature_args, ensure_legacy_launchers, parse_env_bool, workspace_build_command,
     };
     use crate::error::TaskError;
+    use crate::util::test_env::EnvGuard;
     use crate::workspace::load_workspace_branding;
     use std::env;
     use std::ffi::{OsStr, OsString};
     use std::path::Path;
-
-    struct EnvGuard {
-        entries: Vec<(&'static str, Option<OsString>)>,
-    }
-
-    impl EnvGuard {
-        fn capture(keys: &[&'static str]) -> Self {
-            let mut entries = Vec::with_capacity(keys.len());
-            for key in keys {
-                entries.push((*key, env::var_os(key)));
-            }
-            Self { entries }
-        }
-
-        fn set(&mut self, key: &'static str, value: &str) {
-            if self.entries.iter().all(|(existing, _)| existing != &key) {
-                self.entries.push((key, env::var_os(key)));
-            }
-            unsafe {
-                env::set_var(key, value);
-            }
-        }
-
-        fn unset(&mut self, key: &'static str) {
-            if self.entries.iter().all(|(existing, _)| existing != &key) {
-                self.entries.push((key, env::var_os(key)));
-            }
-            unsafe {
-                env::remove_var(key);
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.entries.drain(..).rev() {
-                if let Some(existing) = value {
-                    unsafe {
-                        env::set_var(key, existing);
-                    }
-                } else {
-                    unsafe {
-                        env::remove_var(key);
-                    }
-                }
-            }
-        }
-    }
 
     #[test]
     fn parse_env_bool_accepts_truthy_values() {
@@ -674,10 +625,7 @@ mod build_command_tests {
 
     #[test]
     fn workspace_build_command_includes_feature_overrides() {
-        let mut guard = EnvGuard::capture(&[
-            "OC_RSYNC_PACKAGE_DEFAULT_FEATURES",
-            "OC_RSYNC_PACKAGE_FEATURES",
-        ]);
+        let mut guard = EnvGuard::new();
         guard.set("OC_RSYNC_PACKAGE_DEFAULT_FEATURES", "0");
         guard.set("OC_RSYNC_PACKAGE_FEATURES", "zstd lz4 iconv");
 
@@ -695,7 +643,7 @@ mod build_command_tests {
 
     #[test]
     fn configure_feature_args_ignores_empty_feature_sets() {
-        let mut guard = EnvGuard::capture(&["OC_RSYNC_PACKAGE_FEATURES"]);
+        let mut guard = EnvGuard::new();
         guard.set("OC_RSYNC_PACKAGE_FEATURES", "   ");
         let mut args = Vec::new();
         configure_feature_args(&mut args).expect("configure succeeds");
@@ -706,8 +654,8 @@ mod build_command_tests {
     fn ensure_legacy_launchers_creates_copies() {
         let workspace = workspace_root();
         let branding = load_workspace_branding(workspace).expect("load branding");
-        let mut guard = EnvGuard::capture(&["OC_RSYNC_PACKAGE_SKIP_BUILD"]);
-        guard.unset("OC_RSYNC_PACKAGE_SKIP_BUILD");
+        let mut guard = EnvGuard::new();
+        guard.remove("OC_RSYNC_PACKAGE_SKIP_BUILD");
 
         let extension = if cfg!(windows) { ".exe" } else { "" };
         let base = workspace.join("target").join("dist");
@@ -716,9 +664,7 @@ mod build_command_tests {
         std::fs::write(&canonical, b"binary").expect("create canonical binary placeholder");
 
         // Skip invoking cargo; instead rely on placeholders.
-        unsafe {
-            env::set_var("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
-        }
+        guard.set("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
         ensure_legacy_launchers(workspace, &branding, &Some(OsString::from("dist")), None)
             .expect("ensure legacy launchers succeeds");
 

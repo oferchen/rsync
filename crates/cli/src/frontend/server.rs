@@ -2,22 +2,29 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::io::{self, Read, Write};
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::thread;
+use std::io::Write;
 
 use core::branding::Brand;
-use core::fallback::{
-    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_is_self, fallback_binary_path, fallback_override,
-};
+use std::env;
+use std::ffi::OsString;
+use std::io::Write;
+use std::process::Command;
+
+use core::branding::Brand;
+use core::fallback::CLIENT_FALLBACK_ENV;
 use core::message::Role;
 use core::rsync_error;
+#[cfg(test)]
+use core::server::{ServerConfig, ServerRole};
 use logging::MessageSink;
 
-/// Returns the daemon argument vector when `--daemon` is present.
+#[cfg(unix)]
+/// Translate a client invocation that requested `--daemon` into a standalone
+/// daemon invocation.
+///
+/// This mirrors upstream rsync's `--daemon` handling: it replaces the program
+/// name with the daemon binary name and forwards the remaining arguments,
+/// preserving `--` handling.
 pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
     if args.is_empty() {
         return None;
@@ -35,7 +42,7 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
     let mut found = false;
     let mut reached_double_dash = false;
 
-    for arg in args.iter().skip(1) {
+    for arg in &args[1..] {
         if !reached_double_dash && arg == "--" {
             reached_double_dash = true;
             daemon_args.push(arg.clone());
@@ -50,16 +57,31 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
         daemon_args.push(arg.clone());
     }
 
-    if found { Some(daemon_args) } else { None }
+    if !found {
+        return None;
+    }
+
+    Some(daemon_args)
 }
 
-/// Returns `true` when the invocation requests server mode.
+/// Return `true` if `--server` appears in the argument vector (before `--`).
 pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
-    args.iter().skip(1).any(|arg| arg == "--server")
+    let mut reached_double_dash = false;
+
+    for arg in args.iter().skip(1) {
+        if !reached_double_dash && arg == "--" {
+            reached_double_dash = true;
+            continue;
+        }
+
+        if !reached_double_dash && arg == "--server" {
+            return true;
+        }
+    }
+
+    false
 }
 
-/// Delegates execution to the daemon front-end (Unix) or reports that daemon
-/// mode is unavailable (Windows).
 #[cfg(unix)]
 pub(crate) fn run_daemon_mode<Out, Err>(
     args: Vec<OsString>,
@@ -70,30 +92,43 @@ where
     Out: Write,
     Err: Write,
 {
-    // On Unix, delegate to the actual daemon front-end.
     daemon::run(args, stdout, stderr)
 }
 
 #[cfg(windows)]
 pub(crate) fn run_daemon_mode<Out, Err>(
-    args: Vec<OsString>,
-    stdout: &mut Out,
+    _args: Vec<OsString>,
+    _stdout: &mut Out,
     stderr: &mut Err,
 ) -> i32
 where
     Out: Write,
     Err: Write,
 {
-    let _ = stdout.flush();
-    let _ = stderr.flush();
-
-    let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
-
-    write_daemon_unavailable_error(stderr, program_brand);
+    let brand = super::detect_program_name(None).brand();
+    write_daemon_unavailable_error(stderr, brand);
     1
 }
 
 /// Executes the native server entry point when `--server` is requested.
+#[cfg(windows)]
+fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
+    let text = "daemon mode is not available on this platform".to_string();
+    let mut sink = MessageSink::with_brand(stderr, brand);
+    let mut message = rsync_error!(1, "{}", text);
+    message = message.with_role(Role::Daemon);
+    if super::write_message(&message, &mut sink).is_err() {
+        let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+/// Entry point for `--server` mode.
+///
+/// This is the public façade that:
+/// - Flushes stdio (mirroring upstream).
+/// - Consults the client-side fallback hook (CLIENT_FALLBACK_ENV).
+/// - Detects the brand.
+/// - Delegates to the embedded server dispatcher when no fallback is active.
 pub(crate) fn run_server_mode<Out, Err>(
     args: &[OsString],
     stdout: &mut Out,
@@ -107,11 +142,13 @@ where
 }
 
 fn run_server_mode_embedded<Out, Err>(args: &[OsString], stdout: &mut Out, stderr: &mut Err) -> i32
+fn run_server_mode_embedded<Out, Err>(args: &[OsString], _stdout: &mut Out, stderr: &mut Err) -> i32
 where
     Out: Write,
     Err: Write,
 {
     let _ = stdout.flush();
+    let _ = _stdout.flush();
     let _ = stderr.flush();
 
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
@@ -261,30 +298,124 @@ where
         write_server_error_message(stderr, brand, diagnostic);
         return 1;
     };
+    // Upstream rsync flushes stdio before switching roles; we mirror that.
+    let _ = stdout.flush();
+    let _ = stderr.flush();
 
-    if fallback_binary_is_self(&resolved_fallback) {
-        let text = format!(
-            "remote server mode is unavailable because the fallback binary '{}' resolves to this oc-rsync executable; install upstream {upstream_program} or set {CLIENT_FALLBACK_ENV} to a different path",
-            resolved_fallback.display()
+    let brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
+
+    // If a client-specified fallback implementation is configured, delegate to
+    // it. This preserves the ability to plug in an external rsync server (for
+    // example, the C implementation or a test script) while the Rust server is
+    // incomplete.
+    if let Some(fallback_path) = env::var_os(CLIENT_FALLBACK_ENV) {
+        if !fallback_path.is_empty() {
+            // Avoid trivial recursion if the fallback accidentally points to
+            // this very binary: in that case, fall back to the embedded server
+            // path rather than looping.
+            let current_exe = env::current_exe().ok();
+            let fallback_is_self = current_exe
+                .as_ref()
+                .map(|exe| exe.as_os_str() == fallback_path)
+                .unwrap_or(false);
+
+            if !fallback_is_self {
+                let mut command = Command::new(&fallback_path);
+                if !args.is_empty() {
+                    // Preserve argv shape for the fallback: it should see the
+                    // same `--server` invocation as the Rust frontend,
+                    // including `--sender` and any operands.
+                    command.args(&args[1..]);
+                }
+
+                match command.status() {
+                    Ok(status) => {
+                        return status.code().unwrap_or(1);
+                    }
+                    Err(error) => {
+                        let message = format!(
+                            "failed to execute fallback server implementation {:?}: {error}",
+                            fallback_path
+                        );
+                        write_server_error_message(stderr, brand, &message);
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+
+    run_server_mode_embedded(args, stderr, brand)
+}
+
+/// Strategy interface for executing a parsed server invocation.
+///
+/// This separates parsing from execution and allows battle-tested,
+/// role-specific logic to be plugged in later without changing the call site.
+trait ServerExecutor {
+    fn execute(&self, invocation: &ServerInvocation, stderr: &mut dyn Write, brand: Brand) -> i32;
+}
+
+struct ReceiverExecutor;
+struct GeneratorExecutor;
+
+impl ServerExecutor for ReceiverExecutor {
+    fn execute(&self, invocation: &ServerInvocation, stderr: &mut dyn Write, brand: Brand) -> i32 {
+        let _ = invocation;
+        write_server_error_message(
+            stderr,
+            brand,
+            "server mode is not yet implemented for role Receiver",
         );
         write_server_error_message(stderr, brand, text);
         return 1;
+        1
     }
+}
 
-    let mut command = Command::new(&resolved_fallback);
-    command.args(args.iter().skip(1));
-    command.stdin(Stdio::inherit());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
+impl ServerExecutor for GeneratorExecutor {
+    fn execute(&self, invocation: &ServerInvocation, stderr: &mut dyn Write, brand: Brand) -> i32 {
+        let _ = invocation;
+        write_server_error_message(
+            stderr,
+            brand,
+            "server mode is not yet implemented for role Generator",
+        );
+        1
+    }
+}
 
-    let mut child = match command.spawn() {
-        Ok(child) => child,
+/// Factory for role-specific server executors.
+///
+/// This centralises the mapping between protocol role and concrete
+/// implementation, so adding new roles or shims is a local change.
+fn make_server_executor(role: InvocationRole) -> Box<dyn ServerExecutor> {
+    match role {
+        InvocationRole::Receiver => Box::new(ReceiverExecutor),
+        InvocationRole::Generator => Box::new(GeneratorExecutor),
+    }
+}
+
+/// Minimal embedded server-mode handler.
+///
+/// For now this only:
+/// - Parses the `--server` invocation into a structured `ServerInvocation`.
+/// - Resolves a role-specific executor.
+/// - Emits a branded "not yet implemented" error.
+///
+/// The Strategy + Factory design here is intentionally stable so that the
+/// real server engine can be wired in later without touching the CLI
+/// entrypoints.
+fn run_server_mode_embedded<Err: Write>(args: &[OsString], stderr: &mut Err, brand: Brand) -> i32 {
+    let invocation = match ServerInvocation::parse(args) {
+        Ok(invocation) => invocation,
         Err(error) => {
             let text = format!(
                 "failed to launch fallback {upstream_program} binary '{}': {error}",
                 Path::new(&fallback).display()
             );
             write_server_error_message(stderr, brand, text);
+            write_server_error_message(stderr, brand, &error);
             return 1;
         }
     };
@@ -344,17 +475,87 @@ where
                     format!("failed to read stderr from fallback {upstream_program}: {error}"),
                 );
                 return 1;
-            }
-            Ok(ServerStreamMessage::Finished(kind)) => match kind {
-                ServerStreamKind::Stdout => stdout_open = false,
-                ServerStreamKind::Stderr => stderr_open = false,
-            },
-            Err(_) => break,
+    match core::server::run_server_stdio(config, &mut std::io::stdin(), &mut std::io::stdout()) {
+        Ok(code) => code,
+        Err(error) => {
+            let text = format!("server execution failed: {error}");
+            write_server_error_message(stderr, program_brand, &text);
+            1
         }
     }
+}
 
-    join_server_thread(&mut stdout_thread);
-    join_server_thread(&mut stderr_thread);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RoleKind {
+    Receiver,
+    Generator,
+}
+
+#[derive(Debug)]
+struct ServerInvocation {
+    role: RoleKind,
+    raw_flag_string: String,
+    args: Vec<OsString>,
+}
+
+impl ServerInvocation {
+    fn parse(args: &[OsString]) -> Result<Self, String> {
+        if args.len() < 3 {
+            return Err("invalid server invocation: missing arguments".to_string());
+        }
+
+        let mut iter = args.iter().skip(1);
+        match iter.next() {
+            Some(flag) if flag == "--server" => {}
+            _ => return Err("invalid server invocation: expected --server".to_string()),
+        }
+
+        let mut role = RoleKind::Receiver;
+        let mut maybe_flag_string: Option<&OsStr> = None;
+        for candidate in iter.by_ref() {
+            if maybe_flag_string.is_none() && candidate == "--sender" {
+                role = RoleKind::Generator;
+                continue;
+            }
+
+            maybe_flag_string = Some(candidate);
+            break;
+        }
+
+        let Some(flag_string) = maybe_flag_string else {
+            return Err("missing rsync server flag string".to_string());
+        };
+
+        let mut remaining: Vec<OsString> = iter.cloned().collect();
+        if let Some(first) = remaining.first() {
+            if first == "." {
+                remaining.remove(0);
+            }
+        }
+
+        Ok(Self {
+            role,
+            raw_flag_string: flag_string
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "flag string must be valid UTF-8".to_string())?,
+            args: remaining,
+        })
+    }
+
+    fn into_server_config(self) -> Result<core::server::config::ServerConfig, String> {
+        let role = match self.role {
+            RoleKind::Receiver => core::server::role::ServerRole::Receiver,
+            RoleKind::Generator => core::server::role::ServerRole::Generator,
+        };
+
+        core::server::config::ServerConfig::from_flag_string_and_args(
+            role,
+            self.raw_flag_string,
+            self.args,
+        )
+    }
+}
 
     match child.wait() {
         Ok(status) => status
@@ -368,71 +569,198 @@ where
                 format!("failed to wait for fallback {upstream_program} process: {error}"),
             );
             1
+fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
+    let executor = make_server_executor(invocation.role);
+    executor.execute(&invocation, stderr, brand)
+}
+
+/// Local representation of a parsed `--server` invocation.
+///
+/// This acts as a stable value object between the argv world and
+/// the internal server engine, mirroring the way upstream rsync
+/// distinguishes between receiver and generator roles.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum InvocationRole {
+    Receiver,
+    Generator,
+}
+
+impl InvocationRole {
+    #[cfg(test)]
+    pub(crate) fn as_server_role(self) -> ServerRole {
+        match self {
+            Self::Receiver => ServerRole::Receiver,
+            Self::Generator => ServerRole::Generator,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum ServerStreamKind {
-    Stdout,
-    Stderr,
+#[derive(Debug)]
+pub(crate) struct ServerInvocation {
+    pub(crate) role: InvocationRole,
+    pub(crate) raw_flag_string: String,
+    pub(crate) args: Vec<OsString>,
 }
 
-enum ServerStreamMessage {
-    Data(ServerStreamKind, Vec<u8>),
-    Error(ServerStreamKind, io::Error),
-    Finished(ServerStreamKind),
-}
+impl ServerInvocation {
+    /// Parse the argv vector of a `--server` invocation as generated by the
+    /// client side.
+    ///
+    /// Expected shapes (mirroring upstream):
+    /// - `rsync --server <flags> . <args...>`
+    /// - `rsync --server --sender <flags> <args...>`
+    ///
+    /// For receiver mode we additionally support the common split-flag case:
+    /// - `rsync --server -l ogDtpre.iLsfxC . <args...>`
+    ///   which is normalised to `-logDtpre.iLsfxC`.
+    pub(crate) fn parse(args: &[OsString]) -> Result<Self, String> {
+        let first = args
+            .first()
+            .ok_or_else(|| "missing program name".to_string())?;
+        if first.is_empty() {
+            return Err("missing program name".to_string());
+        }
 
-fn spawn_server_reader<R>(
-    mut reader: R,
-    kind: ServerStreamKind,
-    sender: mpsc::Sender<ServerStreamMessage>,
-) -> thread::JoinHandle<()>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let mut buffer = vec![0u8; 8192];
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => {
-                    let _ = sender.send(ServerStreamMessage::Finished(kind));
-                    break;
-                }
-                Ok(n) => {
-                    if sender
-                        .send(ServerStreamMessage::Data(kind, buffer[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => {
-                    let _ = sender.send(ServerStreamMessage::Error(kind, error));
-                    break;
+        let second = args
+            .get(1)
+            .ok_or_else(|| "missing rsync server marker".to_string())?;
+        if second != "--server" {
+            return Err(format!("expected --server, found {second:?}"));
+        }
+
+        let mut index = 2usize;
+        let mut role = InvocationRole::Receiver;
+
+        if let Some(flag) = args.get(index) {
+            if flag == "--sender" {
+                role = InvocationRole::Generator;
+                index += 1;
+            }
+        }
+
+        let (flag_string, mut index) = Self::parse_flag_block(args, index)?;
+
+        // For receiver mode, a "." placeholder is accepted and normalised away,
+        // but it is not strictly required. This keeps us tolerant of slightly
+        // different remote-shell behaviours.
+        if role == InvocationRole::Receiver {
+            if let Some(component) = args.get(index) {
+                if component == "." {
+                    index += 1;
                 }
             }
         }
-    })
-}
 
-fn join_server_thread(handle: &mut Option<thread::JoinHandle<()>>) {
-    if let Some(join) = handle.take() {
-        let _ = join.join();
+        // Remaining args (which must not be empty) are passed through unchanged.
+        let remaining_args: Vec<OsString> = args[index..].to_vec();
+
+        if remaining_args.is_empty() {
+            return Err("missing server arguments".to_string());
+        }
+
+        let invocation = ServerInvocation {
+            role,
+            raw_flag_string: flag_string,
+            args: remaining_args,
+        };
+
+        touch_server_invocation(&invocation);
+        Ok(invocation)
+    }
+
+    /// Parse the flag block, accepting both contiguous and split forms:
+    /// - `-logDtpre.iLsfxC`
+    /// - `-l ogDtpre.iLsfxC`  (combined into `-logDtpre.iLsfxC`)
+    pub(crate) fn parse_flag_block(
+        args: &[OsString],
+        start: usize,
+    ) -> Result<(String, usize), String> {
+        let head = args
+            .get(start)
+            .ok_or_else(|| "missing rsync flag string".to_string())?;
+
+        // Take ownership up front to avoid `Cow` move pitfalls.
+        let head_str: String = head.to_string_lossy().into_owned();
+
+        // Prefer the combined head+tail form when we see a short "-X" head
+        // followed by a valid tail fragment. This matches split forms such as:
+        //   - `-l ogDtpre.iLsfxC`
+        if let Some(split_tail) = args.get(start + 1) {
+            let head_bytes = head_str.as_bytes();
+            if head_bytes.len() == 2 && head_bytes[0] == b'-' {
+                let tail_str: String = split_tail.to_string_lossy().into_owned();
+                if is_rsync_flag_tail(&tail_str) {
+                    let mut combined = head_str.clone();
+                    combined.push_str(&tail_str);
+                    if is_rsync_flag_string(&combined) {
+                        return Ok((combined, start + 2));
+                    }
+                }
+            }
+        }
+
+        // Fall back to treating the head as the complete flag string.
+        if is_rsync_flag_string(&head_str) {
+            return Ok((head_str, start + 1));
+        }
+
+        Err(format!("invalid rsync server flag string: {head_str:?}"))
+    }
+
+    /// Helper used by tests to convert a parsed invocation into the core
+    /// `ServerConfig` structure.
+    #[cfg(test)]
+    pub(crate) fn into_server_config(self) -> Result<ServerConfig, String> {
+        ServerConfig::from_flag_string_and_args(
+            self.role.as_server_role(),
+            self.raw_flag_string,
+            self.args,
+        )
     }
 }
 
-fn terminate_server_process(
-    child: &mut Child,
-    stdout_thread: &mut Option<thread::JoinHandle<()>>,
-    stderr_thread: &mut Option<thread::JoinHandle<()>>,
-) {
-    let _ = child.kill();
-    let _ = child.wait();
-    join_server_thread(stdout_thread);
-    join_server_thread(stderr_thread);
+/// Validate that the server flag string looks like an rsync `--server`
+/// short-option block (e.g. `-logDtpre.iLsfxC`).
+///
+/// This accepts:
+/// - Leading `-`.
+/// - Alphanumeric characters.
+/// - `.`, `,`, `_`, `+`.
+///   while still rejecting obvious path-like arguments (which contain `/`).
+pub(crate) fn is_rsync_flag_string(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'-' {
+        return false;
+    }
+
+    if s.contains('/') {
+        return false;
+    }
+
+    bytes[1..].iter().all(|b| {
+        matches!(
+            *b,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b',' | b'_' | b'+'
+        )
+    })
+}
+
+/// Validate a tail fragment of a flag string (no leading '-').
+///
+/// This allows us to accept split forms like:
+/// - `-l ogDtpre.iLsfxC`
+///   while still rejecting obvious path-like arguments (which contain `/`).
+pub(crate) fn is_rsync_flag_tail(s: &str) -> bool {
+    if s.is_empty() || s.contains('/') {
+        return false;
+    }
+
+    s.bytes().all(|b| {
+        matches!(
+            b,
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b',' | b'_' | b'+'
+        )
+    })
 }
 
 #[cfg(windows)]
@@ -443,12 +771,93 @@ fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
         "daemon mode is not supported on this platform; run the oc-rsync daemon on a Unix-like system"
     );
     message = message.with_role(Role::Client);
-
+pub(crate) fn write_server_error_message(stderr: &mut dyn Write, brand: Brand, text: &str) {
+    let mut sink = MessageSink::with_brand(stderr, brand);
+    let mut message = rsync_error!(1, "{}", text);
+    message = message.with_role(Role::Daemon);
     if super::write_message(&message, &mut sink).is_err() {
-        let _ = writeln!(
-            sink.writer_mut(),
-            "daemon mode is not supported on this platform; run the oc-rsync daemon on a Unix-like system"
-        );
+        let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+/// Touch all fields of the `ServerInvocation` so that additions remain
+/// Clippy-clean even if unused in some builds.
+pub(crate) fn touch_server_invocation(invocation: &ServerInvocation) {
+    let _role = invocation.role;
+    let _flags = &invocation.raw_flag_string;
+    let _args = &invocation.args;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InvocationRole, ServerInvocation};
+    use std::ffi::OsString;
+
+    #[test]
+    fn parses_receiver_invocation() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("."),
+        ];
+        let invocation = ServerInvocation::parse(&args).expect("valid receiver args");
+        assert_eq!(invocation.role, InvocationRole::Receiver);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(invocation.args, vec![OsString::from(".")]);
+    }
+
+    #[test]
+    fn parses_generator_invocation_with_sender_flag() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("/tmp"),
+        ];
+        let invocation = ServerInvocation::parse(&args).expect("valid sender args");
+        assert_eq!(invocation.role, InvocationRole::Generator);
+        assert_eq!(invocation.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(invocation.args, vec![OsString::from("/tmp")]);
+    }
+
+    #[test]
+    fn rejects_missing_flag_string() {
+        let args = [OsString::from("rsync"), OsString::from("--server")];
+        let error = ServerInvocation::parse(&args).unwrap_err();
+        assert_eq!(error, "missing rsync server flag string");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_rejects_missing_server_flag() {
+        let args = [OsString::from("rsync"), OsString::from("--sender")];
+        let error = ServerInvocation::parse(&args).unwrap_err();
+        assert_eq!(error, "invalid server invocation: missing arguments");
+    }
+
+    #[test]
+    fn parse_accepts_placeholder_dot() {
+        let args = [
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-logDtpre.iLsfxC"),
+            OsString::from("."),
+            OsString::from("/tmp"),
+        ];
+
+        let parsed = ServerInvocation::parse(&args).expect("parse invocation");
+        assert_eq!(parsed.role, RoleKind::Generator);
+        assert_eq!(parsed.raw_flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(parsed.args, vec![OsString::from("/tmp")]);
     }
 }
 
