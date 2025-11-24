@@ -1,3 +1,4 @@
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
@@ -721,7 +722,8 @@ pub(crate) fn prepare_invocation(
 
     command_args.append(&mut remainder);
 
-    let binary = if let Some(path) = fallback_binary {
+    let using_explicit_binary = fallback_binary.is_some();
+    let binary = if let Some(path) = fallback_binary.clone() {
         path
     } else {
         match fallback_override(CLIENT_FALLBACK_ENV) {
@@ -736,6 +738,15 @@ pub(crate) fn prepare_invocation(
             None => OsString::from("rsync"),
         }
     };
+
+    if !using_explicit_binary && env::var_os("PATH").is_some_and(|value| value.is_empty()) {
+        let diagnostic =
+            describe_missing_fallback_binary(binary.as_os_str(), &[CLIENT_FALLBACK_ENV]);
+        let display = Path::new(binary.as_os_str()).display();
+        return Err(fallback_error(format!(
+            "failed to launch fallback rsync binary '{display}': {diagnostic}"
+        )));
+    }
 
     let Some(resolved_binary) = fallback_binary_path(binary.as_os_str()) else {
         let diagnostic =
