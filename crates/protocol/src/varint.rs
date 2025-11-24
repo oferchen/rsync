@@ -128,7 +128,7 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
 /// # Errors
 ///
 /// Propagates any error returned by `writer` while writing the encoded bytes.
-pub fn write_varint<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
+pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
     let (len, bytes) = encode_bytes(value);
     writer.write_all(&bytes[..len])
 }
@@ -155,7 +155,7 @@ pub fn encode_varint_to_vec(value: i32, out: &mut Vec<u8>) {
 /// Returns [`io::ErrorKind::UnexpectedEof`] when the reader does not provide the
 /// required bytes and [`io::ErrorKind::InvalidData`] if the encoded value would
 /// overflow the 32-bit range supported by upstream rsync.
-pub fn read_varint<R: Read>(reader: &mut R) -> io::Result<i32> {
+pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     let mut first = [0u8; 1];
     reader.read_exact(&mut first)?;
 
