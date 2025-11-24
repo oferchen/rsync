@@ -24,6 +24,14 @@ pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
         return Vec::new();
     };
 
+    // An explicitly empty PATH disables search resolution; `execvp` would fail
+    // in the same scenario because no lookup directories are available. Avoid
+    // probing the current working directory so callers surface a deterministic
+    // "not available" error instead of spawning an unexpected helper.
+    if path_env.is_empty() {
+        return Vec::new();
+    }
+
     let mut results = Vec::new();
     let mut seen = HashSet::new();
 
