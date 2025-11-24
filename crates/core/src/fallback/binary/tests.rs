@@ -12,6 +12,24 @@ use std::thread;
 use std::time::Duration;
 use tempfile::{NamedTempFile, TempDir};
 
+#[allow(unsafe_code)]
+fn set_var_unchecked<K: AsRef<OsStr>, V: AsRef<OsStr>>(key: K, value: V) {
+    // SAFETY: tests serialise environment mutations via `env_lock` and restore
+    // the previous values through `EnvGuard`, preventing concurrent access from
+    // other threads within the same process.
+    unsafe {
+        env::set_var(key, value);
+    }
+}
+
+#[allow(unsafe_code)]
+fn remove_var_unchecked<K: AsRef<OsStr>>(key: K) {
+    // SAFETY: see `set_var_unchecked` for the synchronisation rationale.
+    unsafe {
+        env::remove_var(key);
+    }
+}
+
 struct EnvGuard {
     key: &'static str,
     previous: Option<OsString>,
@@ -20,29 +38,20 @@ struct EnvGuard {
 impl EnvGuard {
     fn set_os(key: &'static str, value: &OsStr) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::set_var(key, value);
-        }
+        set_var_unchecked(key, value);
         Self { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::remove_var(key);
-        }
+        remove_var_unchecked(key);
         Self { key, previous }
     }
 
     #[cfg(windows)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::set_var(key, value);
-        }
+        set_var_unchecked(key, value);
         Self { key, previous }
     }
 }
@@ -50,15 +59,9 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            #[allow(unsafe_code)]
-            unsafe {
-                env::set_var(self.key, previous);
-            }
+            set_var_unchecked(self.key, previous);
         } else {
-            #[allow(unsafe_code)]
-            unsafe {
-                env::remove_var(self.key);
-            }
+            remove_var_unchecked(self.key);
         }
     }
 }
