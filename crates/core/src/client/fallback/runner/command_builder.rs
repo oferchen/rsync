@@ -36,6 +36,7 @@ pub(crate) fn prepare_invocation(
         blocking_io,
         protect_args,
         human_readable: human_readable_mode,
+        eight_bit_output,
         archive,
         recursive,
         inc_recursive,
@@ -530,6 +531,10 @@ pub(crate) fn prepare_invocation(
     }
 
     push_human_readable(&mut command_args, human_readable_mode);
+
+    if eight_bit_output {
+        command_args.push(OsString::from("--8-bit-output"));
+    }
 
     if let Some(limit) = bwlimit {
         command_args.push(OsString::from("--bwlimit"));
