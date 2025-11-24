@@ -419,13 +419,13 @@ fn respond_with_module_request(
     stream.flush()
 }
 
-fn open_log_sink(path: &Path) -> Result<SharedLogSink, DaemonError> {
+fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .map_err(|error| log_file_error(path, error))?;
-    Ok(Arc::new(Mutex::new(MessageSink::new(file))))
+    Ok(Arc::new(Mutex::new(MessageSink::with_brand(file, brand))))
 }
 
 fn log_file_error(path: &Path, error: io::Error) -> DaemonError {

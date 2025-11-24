@@ -1,5 +1,6 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RuntimeOptions {
+    brand: Brand,
     bind_address: IpAddr,
     port: u16,
     max_sessions: Option<NonZeroUsize>,
@@ -31,6 +32,7 @@ struct RuntimeOptions {
 impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
+            brand: Brand::Oc,
             bind_address: DEFAULT_BIND_ADDRESS,
             port: DEFAULT_PORT,
             max_sessions: None,
@@ -74,6 +76,7 @@ impl RuntimeOptions {
         load_defaults: bool,
     ) -> Result<Self, DaemonError> {
         let mut options = Self::default();
+        options.brand = brand;
         let mut seen_modules = HashSet::new();
         if load_defaults && !config_argument_present(arguments) {
             if let Some(path) = environment_config_override() {
@@ -660,6 +663,10 @@ impl RuntimeOptions {
 
     pub(super) fn bandwidth_burst(&self) -> Option<NonZeroU64> {
         self.bandwidth_burst
+    }
+
+    pub(super) fn brand(&self) -> Brand {
+        self.brand
     }
 
     pub(super) fn bandwidth_limit_configured(&self) -> bool {
