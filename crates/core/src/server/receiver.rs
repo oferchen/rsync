@@ -9,8 +9,8 @@
 
 use std::io::{self, Read, Write};
 
-use protocol::flist::{FileEntry, FileListReader};
 use protocol::ProtocolVersion;
+use protocol::flist::{FileEntry, FileListReader};
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
@@ -107,9 +107,9 @@ pub struct TransferStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::flags::ParsedServerFlags;
     use super::super::role::ServerRole;
+    use super::*;
     use std::ffi::OsString;
     use std::io::Cursor;
 

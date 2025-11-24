@@ -36,5 +36,5 @@ mod write;
 
 pub use entry::{FileEntry, FileType};
 pub use flags::FileFlags;
-pub use read::{read_file_entry, FileListReader};
-pub use write::{write_file_entry, FileListWriter};
+pub use read::{FileListReader, read_file_entry};
+pub use write::{FileListWriter, write_file_entry};

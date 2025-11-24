@@ -7,7 +7,7 @@ use std::io::{self, Write};
 
 use core::branding::Brand;
 use core::fallback::{
-    describe_missing_fallback_binary, fallback_binary_path, CLIENT_FALLBACK_ENV, FallbackOverride,
+    CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary, fallback_binary_path,
     fallback_override,
 };
 use core::message::Role;
@@ -160,7 +160,13 @@ where
         Err(text) => {
             // If fallback is configured, delegate to it even if we can't parse the args
             if should_fallback {
-                return run_server_fallback(args, program_brand, stdout, stderr, fallback_override.unwrap());
+                return run_server_fallback(
+                    args,
+                    program_brand,
+                    stdout,
+                    stderr,
+                    fallback_override.unwrap(),
+                );
             }
             write_server_error_message(stderr, program_brand, &text);
             return 1;
@@ -172,7 +178,13 @@ where
         Err(text) => {
             // If fallback is configured, delegate to it
             if should_fallback {
-                return run_server_fallback(args, program_brand, stdout, stderr, fallback_override.unwrap());
+                return run_server_fallback(
+                    args,
+                    program_brand,
+                    stdout,
+                    stderr,
+                    fallback_override.unwrap(),
+                );
             }
             write_server_error_message(stderr, program_brand, &text);
             return 1;

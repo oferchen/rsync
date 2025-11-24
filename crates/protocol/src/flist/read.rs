@@ -6,8 +6,8 @@
 use std::io::{self, Read};
 use std::path::PathBuf;
 
-use crate::varint::read_varint;
 use crate::ProtocolVersion;
+use crate::varint::read_varint;
 
 use super::entry::FileEntry;
 use super::flags::FileFlags;
@@ -53,7 +53,10 @@ impl FileListReader {
     ///
     /// Returns `None` when the end-of-list marker is received (a zero byte).
     /// Returns an error on I/O failure or malformed data.
-    pub fn read_entry<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<Option<FileEntry>> {
+    pub fn read_entry<R: Read + ?Sized>(
+        &mut self,
+        reader: &mut R,
+    ) -> io::Result<Option<FileEntry>> {
         // Read flags byte
         let mut flags_byte = [0u8; 1];
         reader.read_exact(&mut flags_byte)?;
@@ -104,7 +107,11 @@ impl FileListReader {
     }
 
     /// Reads the file name with path compression.
-    fn read_name<R: Read + ?Sized>(&mut self, reader: &mut R, flags: &FileFlags) -> io::Result<Vec<u8>> {
+    fn read_name<R: Read + ?Sized>(
+        &mut self,
+        reader: &mut R,
+        flags: &FileFlags,
+    ) -> io::Result<Vec<u8>> {
         // Determine how many bytes are shared with the previous name
         let same_len = if flags.same_name() {
             let mut byte = [0u8; 1];
@@ -186,8 +193,8 @@ pub fn read_file_entry<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::flags::{XMIT_SAME_MODE, XMIT_SAME_NAME, XMIT_SAME_TIME};
+    use super::*;
     use std::io::Cursor;
 
     fn test_protocol() -> ProtocolVersion {
