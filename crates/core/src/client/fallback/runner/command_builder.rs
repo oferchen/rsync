@@ -36,6 +36,7 @@ pub(crate) fn prepare_invocation(
         blocking_io,
         protect_args,
         human_readable: human_readable_mode,
+        eight_bit_output,
         archive,
         recursive,
         inc_recursive,
@@ -531,6 +532,10 @@ pub(crate) fn prepare_invocation(
 
     push_human_readable(&mut command_args, human_readable_mode);
 
+    if eight_bit_output {
+        command_args.push(OsString::from("--8-bit-output"));
+    }
+
     if let Some(limit) = bwlimit {
         command_args.push(OsString::from("--bwlimit"));
         command_args.push(limit);
@@ -702,8 +707,16 @@ pub(crate) fn prepare_invocation(
     }
 
     if let Some(path) = rsync_path {
-        command_args.push(OsString::from("--rsync-path"));
-        command_args.push(path);
+        let mut arg = OsString::from("--rsync-path=");
+        let path_str = path.to_string_lossy();
+        if path_str.contains(|c: char| c.is_whitespace()) {
+            let escaped = path_str.replace("'", "'\\''");
+            let quoted = format!("'{escaped}'");
+            arg.push(quoted);
+        } else {
+            arg.push(path);
+        }
+        command_args.push(arg);
     }
 
     command_args.append(&mut remainder);

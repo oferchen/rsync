@@ -143,6 +143,22 @@ fn fallback_binary_candidates_use_default_path_when_path_missing() {
 }
 
 #[test]
+fn fallback_binary_candidates_use_default_path_when_path_empty() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _guard = EnvGuard::set_os("PATH", OsStr::new(""));
+
+    #[cfg(windows)]
+    let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+    let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+
+    assert!(
+        candidates.iter().all(|candidate| candidate.is_absolute()),
+        "empty PATH should fall back to the default search path instead of the current directory: {candidates:?}",
+    );
+}
+
+#[test]
 fn fallback_binary_path_resolves_executable() {
     #[allow(unused_mut)]
     let mut temp = NamedTempFile::new().expect("tempfile");
@@ -489,6 +505,30 @@ fn fallback_binary_revalidates_removed_executable() {
     fs::remove_file(&path).expect("remove file");
 
     assert!(!fallback_binary_available(path.as_os_str()));
+}
+
+#[cfg(unix)]
+#[test]
+fn fallback_binary_revalidates_permission_changes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = NamedTempFile::new().expect("tempfile");
+    let path = temp.into_temp_path();
+
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("chmod +x");
+
+    assert!(fallback_binary_available(path.as_os_str()));
+
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(&path, permissions).expect("chmod -x");
+
+    assert!(
+        !fallback_binary_available(path.as_os_str()),
+        "availability cache should revalidate executability after permission changes",
+    );
 }
 
 #[test]

@@ -7,11 +7,14 @@
 mod compatibility;
 mod envelope;
 mod error;
+/// File list encoding and decoding.
+pub mod flist;
 mod legacy;
 mod multiplex;
 mod negotiation;
 mod varint;
 mod version;
+pub mod wire;
 
 pub use compatibility::{
     CompatibilityFlags, KnownCompatibilityFlag, KnownCompatibilityFlagsIter,
