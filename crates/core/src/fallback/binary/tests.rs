@@ -1,6 +1,7 @@
 use super::{
-    availability, describe_missing_fallback_binary, fallback_binary_available,
-    fallback_binary_candidates, fallback_binary_is_self, fallback_binary_path,
+    availability, availability::NEGATIVE_CACHE_TTL, availability::availability_cache,
+    describe_missing_fallback_binary, fallback_binary_available, fallback_binary_candidates,
+    fallback_binary_is_self, fallback_binary_path,
 };
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -193,6 +194,43 @@ fn fallback_binary_path_refreshes_after_negative_cache_ttl() {
 
     let resolved = fallback_binary_path(binary_name);
     assert_eq!(resolved.as_deref(), Some(binary_path.as_path()));
+}
+
+#[test]
+fn availability_cache_prunes_expired_entries_and_stale_hits() {
+    let _lock = env_lock().lock().expect("env lock");
+    clear_availability_cache();
+
+    let _path_guard = EnvGuard::set_os("PATH", OsStr::new(""));
+
+    let first = OsString::from("oc-rsync-prune-expired");
+    let second = OsString::from("oc-rsync-prune-new");
+
+    assert!(fallback_binary_path(first.as_os_str()).is_none());
+
+    {
+        let cache = availability_cache()
+            .lock()
+            .expect("availability cache lock");
+        assert_eq!(cache.len(), 1);
+    }
+
+    thread::sleep(NEGATIVE_CACHE_TTL + Duration::from_millis(20));
+
+    assert!(fallback_binary_path(second.as_os_str()).is_none());
+
+    let cache = availability_cache()
+        .lock()
+        .expect("availability cache lock");
+
+    let cached_binaries: Vec<OsString> = cache
+        .keys()
+        .map(|key| key.binary().to_os_string())
+        .collect();
+
+    assert_eq!(cached_binaries.len(), 1);
+    assert!(cached_binaries.contains(&second));
+    assert!(!cached_binaries.contains(&first));
 }
 
 #[test]

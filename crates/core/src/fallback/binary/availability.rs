@@ -36,6 +36,12 @@ impl CacheKey {
             pathext: env::var_os("PATHEXT"),
         }
     }
+
+    #[cfg(test)]
+    #[inline]
+    pub(super) fn binary(&self) -> &OsStr {
+        &self.binary
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -78,6 +84,8 @@ pub fn fallback_binary_path(binary: &OsStr) -> Option<PathBuf> {
         .lock()
         .expect("fallback availability cache lock poisoned");
 
+    prune_cache(&mut cache);
+
     if let Some(result) = cached_result(&mut cache, &key) {
         return result;
     }
@@ -110,6 +118,22 @@ fn cached_result(
 
     cache.remove(key);
     None
+}
+
+fn prune_cache(cache: &mut HashMap<CacheKey, AvailabilityEntry>) {
+    let now = Instant::now();
+
+    cache.retain(|_, entry| {
+        if entry.result {
+            if let Some(path) = entry.matched_path.as_ref() {
+                return candidate_is_executable(path);
+            }
+
+            return false;
+        }
+
+        now.duration_since(entry.recorded_at) < NEGATIVE_CACHE_TTL
+    });
 }
 
 /// Reports whether the provided fallback executable exists and is runnable.
