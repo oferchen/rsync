@@ -491,6 +491,30 @@ fn fallback_binary_revalidates_removed_executable() {
     assert!(!fallback_binary_available(path.as_os_str()));
 }
 
+#[cfg(unix)]
+#[test]
+fn fallback_binary_revalidates_permission_changes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = NamedTempFile::new().expect("tempfile");
+    let path = temp.into_temp_path();
+
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("chmod +x");
+
+    assert!(fallback_binary_available(path.as_os_str()));
+
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(&path, permissions).expect("chmod -x");
+
+    assert!(
+        !fallback_binary_available(path.as_os_str()),
+        "availability cache should revalidate executability after permission changes",
+    );
+}
+
 #[test]
 fn fallback_binary_negative_cache_expires() {
     let temp_dir = TempDir::new().expect("tempdir");
