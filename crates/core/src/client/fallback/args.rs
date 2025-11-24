@@ -40,6 +40,8 @@ pub struct RemoteFallbackArgs {
     pub protect_args: Option<bool>,
     /// Optional `--human-readable` level forwarded to the fallback binary.
     pub human_readable: Option<HumanReadableMode>,
+    /// Enables `--8-bit-output` for raw multibyte output.
+    pub eight_bit_output: bool,
     /// Enables archive mode (`-a`).
     pub archive: bool,
     /// Controls recursive traversal (`--recursive`/`--no-recursive`).

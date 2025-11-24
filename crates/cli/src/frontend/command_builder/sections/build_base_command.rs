@@ -43,6 +43,12 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .overrides_with("no-msgs2stderr"),
             )
             .arg(
+                Arg::new("8-bit-output")
+                    .long("8-bit-output")
+                    .help("Leave high-bit characters unescaped in output.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("no-msgs2stderr")
                     .long("no-msgs2stderr")
                     .visible_alias("no-stderr")
