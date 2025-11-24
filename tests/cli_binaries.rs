@@ -1,3 +1,4 @@
+use core::fallback::CLIENT_FALLBACK_ENV;
 use core::version::{
     DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_PROGRAM_NAME, PROGRAM_NAME,
 };
@@ -157,6 +158,74 @@ fn daemon_rejects_unknown_flag() {
             "{binary} daemon output for unknown flag should mention \"unknown option\", got:\n{combined}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn server_entry_execs_fallback_binary() {
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let binary = locate_binary(PROGRAM_NAME)
+        .unwrap_or_else(|| panic!("expected {PROGRAM_NAME} binary to be available"));
+
+    let temp = tempdir().expect("tempdir");
+    let script_path = temp.path().join("server_exec.sh");
+    let marker_path = temp.path().join("marker.txt");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+set -eu
+: "${SERVER_MARKER:?}"
+printf 'server stdout from exec\n'
+printf 'server stderr from exec\n' >&2
+printf 'executed' > "$SERVER_MARKER"
+exit 42
+"#,
+    )
+    .expect("write script");
+
+    let mut perms = fs::metadata(&script_path)
+        .expect("script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script_path, perms).expect("set script perms");
+
+    let mut command = if let Some(runner) = cargo_target_runner() {
+        let mut iter = runner.into_iter();
+        let mut runner_command = Command::new(iter.next().expect("runner binary"));
+        runner_command.args(iter);
+        runner_command.arg(&binary);
+        runner_command
+    } else {
+        Command::new(&binary)
+    };
+
+    command.args(["--server", "--sender", ".", "dest"]);
+    command.env(CLIENT_FALLBACK_ENV, &script_path);
+    command.env("SERVER_MARKER", &marker_path);
+
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run {PROGRAM_NAME}: {error}"));
+
+    assert_eq!(output.status.code(), Some(42));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("server stdout from exec"),
+        "stdout should come from fallback exec, got: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("server stderr from exec"),
+        "stderr should come from fallback exec, got: {stderr}"
+    );
+    assert_eq!(
+        fs::read(&marker_path).expect("read marker"),
+        b"executed",
+        "marker file should be written by fallback exec"
+    );
 }
 
 fn binary_command(name: &str) -> Command {
