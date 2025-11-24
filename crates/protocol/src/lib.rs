@@ -12,6 +12,7 @@ mod multiplex;
 mod negotiation;
 mod varint;
 mod version;
+pub mod wire;
 
 pub use compatibility::{
     CompatibilityFlags, KnownCompatibilityFlag, KnownCompatibilityFlagsIter,
