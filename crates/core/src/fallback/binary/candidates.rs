@@ -106,14 +106,12 @@ fn effective_path_env() -> Option<OsString> {
 
 fn read_path_env() -> Option<OsString> {
     #[cfg(windows)]
-    {
-        env::var_os("PATH").or_else(|| env::var_os("Path"))
-    }
+    let path = env::var_os("PATH").or_else(|| env::var_os("Path"));
 
     #[cfg(not(windows))]
-    {
-        env::var_os("PATH")
-    }
+    let path = env::var_os("PATH");
+
+    path.and_then(|value| if value.is_empty() { None } else { Some(value) })
 }
 
 #[cfg(unix)]

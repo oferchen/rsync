@@ -10,7 +10,7 @@ use core::{
         CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, FallbackOverride,
         describe_missing_fallback_binary, fallback_binary_available, fallback_override,
     },
-    message::Role,
+    message::{Message, Role, strings},
     rsync_error,
     version::VersionInfoReport,
 };
@@ -42,7 +42,7 @@ where
     match parse_args(args) {
         Ok(parsed) => execute(parsed, stdout, &mut stderr_sink),
         Err(error) => {
-            let message = rsync_error!(1, "{}", error).with_role(Role::Daemon);
+            let message = detail_with_exit_code(1, error.to_string()).with_role(Role::Daemon);
             if write_message(&message, &mut stderr_sink).is_err() {
                 let _ = writeln!(stderr_sink.writer_mut(), "{error}");
             }
@@ -195,7 +195,7 @@ where
             binary.as_os_str(),
             &[DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV],
         );
-        let message = rsync_error!(1, diagnostic).with_role(Role::Daemon);
+        let message = detail_with_exit_code(1, diagnostic.clone()).with_role(Role::Daemon);
         let fallback = message.to_string();
         if write_message(&message, stderr).is_err() {
             let _ = writeln!(stderr.writer_mut(), "{fallback}");
@@ -215,9 +215,9 @@ where
         Ok(child) => child,
         Err(error) => {
             let binary_display = Path::new(&binary).display();
-            let message = rsync_error!(
+            let message = detail_with_exit_code(
                 1,
-                format!("failed to launch system rsync daemon '{binary_display}': {error}")
+                format!("failed to launch system rsync daemon '{binary_display}': {error}"),
             )
             .with_role(Role::Daemon);
             if write_message(&message, stderr).is_err() {
@@ -236,9 +236,9 @@ where
                 0
             } else {
                 let code = status.code().unwrap_or(MAX_EXIT_CODE);
-                let message = rsync_error!(
+                let message = detail_with_exit_code(
                     code,
-                    format!("system rsync daemon exited with status {status}")
+                    format!("system rsync daemon exited with status {status}"),
                 )
                 .with_role(Role::Daemon);
                 if write_message(&message, stderr).is_err() {
@@ -251,9 +251,9 @@ where
             }
         }
         Err(error) => {
-            let message = rsync_error!(
+            let message = detail_with_exit_code(
                 1,
-                format!("failed to wait for system rsync daemon: {error}")
+                format!("failed to wait for system rsync daemon: {error}"),
             )
             .with_role(Role::Daemon);
             if write_message(&message, stderr).is_err() {
@@ -265,6 +265,12 @@ where
             1
         }
     }
+}
+
+fn detail_with_exit_code(code: i32, detail: impl Into<String>) -> Message {
+    let detail = detail.into();
+    strings::exit_code_message_with_detail(code, detail.clone())
+        .unwrap_or_else(|| rsync_error!(code, detail))
 }
 
 #[cfg(test)]

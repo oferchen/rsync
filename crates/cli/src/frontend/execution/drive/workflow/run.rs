@@ -369,8 +369,8 @@ where
     let recursive_effective = !matches!(recursive_override, Some(false));
     let batch_mode_requested =
         write_batch.is_some() || only_write_batch.is_some() || read_batch.is_some();
-    let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
-    let fallback_required = requires_remote_fallback || batch_mode_requested;
+    let has_remote_operands = transfer_requires_remote(&remainder, &file_list_operands);
+    let fallback_required = has_remote_operands || batch_mode_requested;
 
     let fallback_context = FallbackArgumentsContext {
         required: fallback_required,
@@ -532,7 +532,7 @@ where
     }
 
     if let Some(exit_code) = validation::validate_local_only_options(
-        fallback_required,
+        has_remote_operands,
         desired_protocol,
         password_file.as_ref(),
         connect_program.as_ref(),
