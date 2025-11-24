@@ -109,7 +109,10 @@ mod tests {
         assert_eq!(strong_sum_length, 8);
         assert_eq!(decoded_blocks.len(), 1);
         assert_eq!(decoded_blocks[0].rolling_sum, 0x12345678);
-        assert_eq!(decoded_blocks[0].strong_sum, vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]);
+        assert_eq!(
+            decoded_blocks[0].strong_sum,
+            vec![0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]
+        );
     }
 
     #[test]
@@ -162,7 +165,12 @@ mod tests {
         let result = write_signature(&mut buf, 1, 4096, 8, &blocks);
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("strong sum length mismatch"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("strong sum length mismatch")
+        );
     }
 
     #[test]
