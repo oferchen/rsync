@@ -98,6 +98,7 @@ pub(crate) struct ParsedArgs {
     pub(crate) name_level: NameOutputLevel,
     pub(crate) name_overridden: bool,
     pub(crate) stats: bool,
+    pub(crate) eight_bit_output: bool,
     pub(crate) partial: bool,
     pub(crate) preallocate: bool,
     pub(crate) fsync: Option<bool>,
