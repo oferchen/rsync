@@ -496,6 +496,7 @@ fn run_server_mode_generator_attempts_handshake() {
 }
 
 #[test]
+#[allow(unsafe_code)]
 fn run_server_mode_reports_parse_error_for_invalid_invocation() {
     let args = [OsString::from("oc-rsync"), OsString::from("--server")];
 
