@@ -76,7 +76,7 @@ pub fn read_delta_op<R: Read>(reader: &mut R) -> io::Result<DeltaOp> {
         }
         other => Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid delta opcode: 0x{:02X}", other),
+            format!("invalid delta opcode: 0x{other:02X}"),
         )),
     }
 }
