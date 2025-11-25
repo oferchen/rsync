@@ -47,7 +47,7 @@ impl SparseWriteState {
     ) -> Result<u64, LocalCopyError> {
         self.flush(writer, destination)?;
 
-        writer.seek(SeekFrom::Current(0)).map_err(|error| {
+        writer.stream_position().map_err(|error| {
             LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
         })
     }
