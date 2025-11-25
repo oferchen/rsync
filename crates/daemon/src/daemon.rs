@@ -54,7 +54,7 @@ use core::{
     },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
-    server::{ServerConfig, ServerRole, run_server_stdio},
+    server::{HandshakeResult, ServerConfig, ServerRole, run_server_with_handshake},
 };
 use logging::MessageSink;
 use protocol::{

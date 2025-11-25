@@ -1,5 +1,5 @@
 mod fallback_error_tests {
-    use super::fallback::runner::helpers::fallback_error;
+    use super::fallback::fallback_error;
 
     #[test]
     fn fallback_error_tracks_call_site() {

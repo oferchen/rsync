@@ -45,7 +45,24 @@ pub fn run_server_stdio(
 ) -> io::Result<i32> {
     // Perform protocol handshake
     let handshake = perform_handshake(stdin, stdout)?;
+    run_server_with_handshake(config, handshake, stdin, stdout)
+}
 
+/// Executes the native server with a pre-negotiated protocol version.
+///
+/// This variant is used when the handshake has already been performed (e.g., by
+/// the daemon after module authentication). The caller provides the negotiated
+/// `HandshakeResult` and this function dispatches directly to the role handler.
+///
+/// # Returns
+///
+/// Returns `Ok(0)` on successful transfer, or an error if transfer fails.
+pub fn run_server_with_handshake(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+) -> io::Result<i32> {
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config);
