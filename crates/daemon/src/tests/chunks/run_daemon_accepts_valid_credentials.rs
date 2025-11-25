@@ -1,8 +1,4 @@
-// TODO: This test expects the daemon to send an error message after successful auth,
-// but the module transfer implementation is incomplete. The daemon times out after 10s
-// (SOCKET_TIMEOUT) instead of sending the expected error message.
 #[test]
-#[ignore = "module transfer implementation incomplete"]
 fn run_daemon_accepts_valid_credentials() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -94,19 +90,16 @@ fn run_daemon_accepts_valid_credentials() {
         .expect("post-auth acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");
 
-    line.clear();
-    reader.read_line(&mut line).expect("unavailable message");
-    assert_eq!(
-        line.trim_end(),
-        "@ERROR: module 'secure' transfers are not yet implemented in this build"
-    );
-
-    line.clear();
-    reader.read_line(&mut line).expect("exit message");
-    assert_eq!(line, "@RSYNCD: EXIT\n");
-
+    // After successful authentication, the daemon starts the file transfer protocol.
+    // The server now enters binary protocol mode and waits for the client to send
+    // the file list or other transfer data. Since this test only verifies authentication,
+    // we close the connection here. The daemon should handle the closed connection
+    // gracefully without timing out.
+    drop(stream);
     drop(reader);
+
+    // Verify the daemon thread completes successfully (no panic or timeout)
     let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "daemon should handle connection close gracefully");
 }
 

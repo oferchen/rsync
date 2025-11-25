@@ -161,10 +161,12 @@ fn handle_legacy_session(
 
     let mut request = None;
     let mut refused_options = Vec::new();
+    let mut negotiated_protocol = None;
 
     while let Some(line) = read_trimmed_line(&mut reader)? {
         match parse_legacy_daemon_message(&line) {
-            Ok(LegacyDaemonMessage::Version(_)) => {
+            Ok(LegacyDaemonMessage::Version(version)) => {
+                negotiated_protocol = Some(version);
                 messages.write_ok(reader.get_mut(), &mut limiter)?;
                 reader.get_mut().flush()?;
                 continue;
@@ -230,6 +232,7 @@ fn handle_legacy_session(
             log_sink.as_ref(),
             reverse_lookup,
             &messages,
+            negotiated_protocol,
         )?;
     }
 
