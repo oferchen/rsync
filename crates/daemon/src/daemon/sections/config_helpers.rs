@@ -165,7 +165,7 @@ fn parse_max_connections_directive(value: &str) -> Option<Option<NonZeroU32>> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum HostPattern {
+pub(crate) enum HostPattern {
     Any,
     Ipv4 { network: Ipv4Addr, prefix: u8 },
     Ipv6 { network: Ipv6Addr, prefix: u8 },
