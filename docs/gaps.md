@@ -67,36 +67,67 @@ Daemon successfully handles:
 
 ### 2. Remote Shell Transport (SSH)
 
-**Status**: 🔧 IN PROGRESS
+**Status**: 🔧 INFRASTRUCTURE COMPLETE, INTEGRATION PENDING
 **Category**: transport
+**Estimated Effort**: High (5-10 days for full integration)
 
-**Description**:
-Remote transfers (e.g., `user@host:/path`) currently require fallback to system rsync:
-- Remote operand detection ✅ (working)
-- Fallback to system rsync ✅ (working)
-- Native SSH transport ❌ (not implemented)
-- `--rsync-path` forwarding ✅ (passed to fallback)
+**Architecture Analysis**: See `docs/SSH_TRANSPORT_ARCHITECTURE.md` for detailed implementation roadmap.
+
+**What Exists ✅**:
+- **SSH command builder** (`crates/transport/src/ssh/builder.rs`):
+  - Full builder API with user/host/port configuration
+  - Remote command argument setup
+  - Batch mode control, environment variables
+  - Remote shell specification parsing (`-e/--rsh` compatible)
+- **SSH connection** (`crates/transport/src/ssh/connection.rs`):
+  - `SshConnection` implementing `Read` + `Write`
+  - Spawns system `ssh` binary with stdio piping
+  - Proper child process cleanup
+- **Remote operand detection** (`crates/engine/src/local_copy/operands.rs`):
+  - `operand_is_remote()` detects `rsync://`, `host::module`, `user@host:path`
+  - Correctly ignores Windows drive letters
+  - Full test coverage
+- **Fallback mechanism** ✅:
+  - Detects remote operands
+  - Falls back to system rsync via `OC_RSYNC_FALLBACK` / `CLIENT_FALLBACK_ENV`
+  - Forwards `--rsync-path` and all other options correctly
+  - Works reliably when system rsync is available
+
+**What's Missing ❌**:
+1. **Client integration**: `crates/core/src/client/run.rs` returns `RemoteOperandUnsupported` error instead of using SSH infrastructure
+2. **Remote operand parsing**: Detection exists, but no parser to extract `user`, `host`, `port`, `path` components
+3. **Protocol over SSH**: No integration between `SshConnection` and rsync protocol negotiation
+4. **File list exchange**: Engine assumes local filesystem, needs abstraction for remote protocol messages
 
 **Current Behavior**:
-When a remote operand is detected (e.g., `ofer@172.16.1.74:/home/ofer/`):
-1. `transfer_requires_remote()` detects the remote operand
-2. Code falls back to system rsync via `OC_RSYNC_FALLBACK` or `CLIENT_FALLBACK_ENV`
-3. `--rsync-path` and other options are forwarded to fallback binary
-4. If no fallback binary is available, transfer fails with error message
+When remote operand detected (e.g., `user@host:/path`):
+1. `operand_is_remote()` detects remote syntax ✅
+2. Engine returns `RemoteOperandUnsupported` error
+3. Client catches error, invokes fallback to system rsync ✅
+4. Fallback forwards `--rsync-path` and options correctly ✅
+5. If no system rsync: transfer fails with clear error message ✅
 
-**Issue**: If system rsync is not installed or fallback env vars are set to "0", remote
-transfers will hang or fail. The `--rsync-path` option works correctly when passed to
-the fallback binary, but native SSH transport would eliminate the fallback requirement.
+**User Impact**:
+- **With system rsync installed**: Remote transfers work perfectly via fallback
+- **Without system rsync or `OC_RSYNC_FALLBACK=0`**: Remote transfers fail
+- `--rsync-path` option works correctly (forwarded to fallback)
 
-**Impact**: Users must have system rsync installed for remote transfers
+**Implementation Phases** (detailed in SSH_TRANSPORT_ARCHITECTURE.md):
+1. Phase 1: Remote operand parsing (1-2 days) - extract user/host/port/path
+2. Phase 2: Client SSH integration (2-3 days) - wire `SshCommand` to client flow
+3. Phase 3: Protocol negotiation (1-2 days) - run rsync protocol over `SshConnection`
+4. Phase 4: File list exchange (2-3 days) - abstract engine for remote streams
+5. Phase 5: Testing & validation (1-2 days) - interop tests with upstream
 
-**Estimated Effort**: High (requires implementing ssh stdio passthrough in `crates/transport`)
+**Technical Challenges**:
+- Engine abstraction (file list source, metadata access, content transfer)
+- Push vs pull role determination
+- `--rsync-path` remote binary invocation
+- Error propagation (connection/auth failures)
 
-**Next Steps**:
-1. Implement native SSH transport in `crates/transport`
-2. Wire SSH transport to client in `crates/core/src/client`
-3. Add remote shell tests matching upstream behavior
-4. Remove fallback requirement for remote transfers
+**Recommendation**:
+- **Short-term**: Document fallback behavior, ensure `--rsync-path` forwarding works (DONE ✅)
+- **Long-term**: Implement native SSH transport when time permits (infrastructure ready)
 
 ---
 
