@@ -200,7 +200,7 @@ fn advertise_capabilities(
     }
 }
 
-fn advertised_capability_lines(modules: &[ModuleRuntime]) -> Vec<String> {
+pub(crate) fn advertised_capability_lines(modules: &[ModuleRuntime]) -> Vec<String> {
     if modules.is_empty() {
         return Vec::new();
     }

@@ -69,7 +69,7 @@ mod help;
 use self::help::help_text;
 
 /// Exit code used when daemon functionality is unavailable.
-const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
+pub(crate) const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 /// Exit code returned when socket I/O fails.
 const SOCKET_IO_EXIT_CODE: i32 = 10;
 
@@ -89,7 +89,7 @@ const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Error payload returned to clients while daemon functionality is incomplete.
-const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailable in this build";
+pub(crate) const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailable in this build";
 const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";
 /// Error payload returned when a requested module does not exist.
 const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";

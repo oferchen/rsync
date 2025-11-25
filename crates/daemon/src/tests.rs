@@ -1,6 +1,12 @@
 use super::*;
-use core::fallback::DAEMON_AUTO_DELEGATE_ENV;
+use crate::daemon::{
+    advertised_capability_lines, clap_command, ModuleRuntime,
+    HANDSHAKE_ERROR_PAYLOAD, FEATURE_UNAVAILABLE_EXIT_CODE,
+};
+use core::branding::Brand;
+use core::fallback::{DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV};
 use core::version::VersionInfoReport;
+use protocol::{MessageCode, MessageFrame, ProtocolVersion};
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -37,7 +43,7 @@ include!("tests/chunks/default_config_candidates_prefer_oc_branding.rs");
 include!("tests/chunks/default_secrets_path_falls_back_to_secondary_candidate.rs");
 include!("tests/chunks/default_secrets_path_prefers_primary_candidate.rs");
 include!("tests/chunks/default_secrets_path_returns_none_when_absent.rs");
-include!("tests/chunks/delegate_system_daemon_fallback_env_triggers_delegation.rs");
+include!("tests/chunks/delegate_system_rsync_daemon_fallback_env_triggers_delegation.rs");
 include!("tests/chunks/delegate_system_rsync_env_false_skips_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_env_triggers_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_fallback_env_triggers_delegation.rs");
