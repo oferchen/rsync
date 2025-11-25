@@ -59,23 +59,23 @@ impl ModuleDefinition {
         !self.auth_users.is_empty()
     }
 
-    fn max_connections(&self) -> Option<NonZeroU32> {
+    pub(crate) fn max_connections(&self) -> Option<NonZeroU32> {
         self.max_connections
     }
 
-    fn bandwidth_limit(&self) -> Option<NonZeroU64> {
+    pub(crate) fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
     }
 
-    fn bandwidth_limit_specified(&self) -> bool {
+    pub(crate) fn bandwidth_limit_specified(&self) -> bool {
         self.bandwidth_limit_specified
     }
 
-    fn bandwidth_burst(&self) -> Option<NonZeroU64> {
+    pub(crate) fn bandwidth_burst(&self) -> Option<NonZeroU64> {
         self.bandwidth_burst
     }
 
-    fn bandwidth_burst_specified(&self) -> bool {
+    pub(crate) fn bandwidth_burst_specified(&self) -> bool {
         self.bandwidth_burst_specified
     }
 
@@ -169,7 +169,7 @@ pub(crate) struct ModuleRuntime {
 }
 
 #[derive(Debug)]
-enum ModuleConnectionError {
+pub(crate) enum ModuleConnectionError {
     Limit(NonZeroU32),
     Io(io::Error),
 }
@@ -244,12 +244,12 @@ impl ModuleRuntime {
     }
 }
 
-struct ConnectionLimiter {
+pub(crate) struct ConnectionLimiter {
     path: PathBuf,
 }
 
 impl ConnectionLimiter {
-    fn open(path: PathBuf) -> Result<Self, DaemonError> {
+    pub(crate) fn open(path: PathBuf) -> Result<Self, DaemonError> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).map_err(|error| lock_file_error(&path, error))?;
@@ -269,7 +269,7 @@ impl ConnectionLimiter {
         Ok(Self { path })
     }
 
-    fn acquire(
+    pub(crate) fn acquire(
         self: &Arc<Self>,
         module: &str,
         limit: NonZeroU32,
@@ -358,7 +358,7 @@ impl ConnectionLimiter {
     }
 }
 
-struct ConnectionLockGuard {
+pub(crate) struct ConnectionLockGuard {
     limiter: Arc<ConnectionLimiter>,
     module: String,
 }
@@ -414,7 +414,7 @@ impl<'a> Drop for ModuleConnectionGuard<'a> {
     }
 }
 
-fn module_peer_hostname<'a>(
+pub(crate) fn module_peer_hostname<'a>(
     module: &ModuleDefinition,
     cache: &'a mut Option<Option<String>>,
     peer_ip: IpAddr,
@@ -481,7 +481,7 @@ pub(crate) struct TestSecretsEnvOverride {
 
 #[cfg(test)]
 #[allow(dead_code)]
-fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
+pub(crate) fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
     TEST_HOSTNAME_OVERRIDES.with(|map| {
         map.borrow_mut()
             .insert(addr, hostname.map(|value| value.to_string()));
@@ -490,7 +490,7 @@ fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
 
 #[cfg(test)]
 #[allow(dead_code)]
-fn clear_test_hostname_overrides() {
+pub(crate) fn clear_test_hostname_overrides() {
     TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow_mut().clear());
 }
 
