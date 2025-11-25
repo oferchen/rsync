@@ -146,7 +146,7 @@ fn fallback_binary_candidates_use_default_path_when_path_missing() {
 }
 
 #[test]
-fn fallback_binary_candidates_use_default_path_when_path_empty() {
+fn fallback_binary_candidates_search_cwd_when_path_empty() {
     let _lock = env_lock().lock().expect("env lock");
     let _guard = EnvGuard::set_os("PATH", OsStr::new(""));
 
@@ -156,8 +156,13 @@ fn fallback_binary_candidates_use_default_path_when_path_empty() {
     let candidates = fallback_binary_candidates(OsStr::new("rsync"));
 
     assert!(
-        candidates.iter().all(|candidate| candidate.is_absolute()),
-        "empty PATH should fall back to the default search path instead of the current directory: {candidates:?}",
+        !candidates.is_empty(),
+        "empty PATH should search in current directory",
+    );
+
+    assert!(
+        candidates.iter().all(|candidate| !candidate.is_absolute()),
+        "empty PATH produces relative paths (current directory): {candidates:?}",
     );
 }
 
@@ -599,6 +604,11 @@ fn fallback_binary_available_rejects_missing_file() {
 #[test]
 fn fallback_binary_available_respects_path_changes() {
     let _lock = env_lock().lock().expect("lock env");
+
+    availability::availability_cache()
+        .lock()
+        .expect("fallback availability cache lock poisoned")
+        .clear();
 
     let temp_dir = TempDir::new().expect("tempdir");
     let binary_name = if cfg!(windows) { "rsync.exe" } else { "rsync" };
