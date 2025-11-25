@@ -6,6 +6,7 @@
 //! rsync 3.4.1's flist.c implementation.
 
 use std::io::{self, Read, Write};
+#[cfg(unix)]
 use std::path::Path;
 
 use crate::varint::{read_varint, write_varint};
