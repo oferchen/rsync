@@ -439,6 +439,8 @@ cleanup() {
 }
 
 # IMPORTANT: oc-rsync --daemon needs the port on CLI, otherwise it binds to 873 (privileged)
+# NOTE: Do NOT set OC_RSYNC_DAEMON_FALLBACK for the daemon itself - it should handle
+# connections natively. Fallback is only for the client when encountering remote operands.
 start_oc_daemon() {
   local config=$1
   local log_file=$2
@@ -449,8 +451,6 @@ start_oc_daemon() {
   oc_pid_file_current="$pid_file"
 
   RUST_BACKTRACE=1 \
-  OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
-  OC_RSYNC_FALLBACK="$fallback_client" \
     "$oc_binary" --daemon --config "$config" --port "$port" --log-file "$log_file" &
   oc_pid=$!
   sleep 1
