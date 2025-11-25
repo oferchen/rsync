@@ -370,27 +370,83 @@ fn respond_with_module_request(
                 send_daemon_ok(reader.get_mut(), limiter, messages)?;
             }
 
-            // DAEMON WIRING POINT: Replace MODULE_UNAVAILABLE_PAYLOAD with actual transfer
-            // TODO: Protocol negotiation (binary handshake for protocol 30+)
-            // TODO: Detect role (receiver vs generator) from client request
-            // TODO: Build ServerConfig from module settings and request
-            // TODO: Call core::server::run_server_stdio(config, reader, stream)
-            // TODO: Handle result and log completion
-            // For now, return unavailable error until protocol negotiation is implemented
+            // DAEMON WIRING: Wire core::server for daemon file transfers
+            // Determine role based on module configuration
+            // For read-only modules, daemon acts as Generator (sends files)
+            // For writable modules, daemon acts as Receiver (receives files)
+            let role = if module.read_only {
+                ServerRole::Generator
+            } else {
+                // Default to Receiver for read-write and write-only modules
+                ServerRole::Receiver
+            };
 
-            let module_display = sanitize_module_identifier(request);
-            let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", module_display.as_ref());
-            let stream = reader.get_mut();
-            write_limited(stream, limiter, payload.as_bytes())?;
-            write_limited(stream, limiter, b"\n")?;
-            if let Some(log) = log_sink {
-                log_module_unavailable(
-                    log,
-                    module_peer_host.or(session_peer_host),
-                    peer_ip,
-                    request,
-                );
+            // Build ServerConfig with module path as the target directory
+            let config = match ServerConfig::from_flag_string_and_args(
+                role,
+                String::new(), // Empty flag string for daemon mode
+                vec![OsString::from(&module.path)],
+            ) {
+                Ok(cfg) => cfg,
+                Err(err) => {
+                    let payload = format!("@ERROR: failed to configure server: {err}");
+                    let stream = reader.get_mut();
+                    write_limited(stream, limiter, payload.as_bytes())?;
+                    write_limited(stream, limiter, b"\n")?;
+                    messages.write_exit(stream, limiter)?;
+                    stream.flush()?;
+                    return Ok(());
+                }
+            };
+
+            // Clone the stream for concurrent read/write in server mode
+            let stream = reader.get_ref();
+            let mut read_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(err) => {
+                    let payload = format!("@ERROR: failed to clone stream: {err}");
+                    let stream_mut = reader.get_mut();
+                    write_limited(stream_mut, limiter, payload.as_bytes())?;
+                    write_limited(stream_mut, limiter, b"\n")?;
+                    messages.write_exit(stream_mut, limiter)?;
+                    stream_mut.flush()?;
+                    return Ok(());
+                }
+            };
+            let mut write_stream = reader.get_mut();
+
+            // Run the server transfer
+            match run_server_stdio(config, &mut read_stream, &mut write_stream) {
+                Ok(exit_code) => {
+                    if let Some(log) = log_sink {
+                        let text = format!(
+                            "transfer to {} ({}): module={} exit_code={}",
+                            module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                            peer_ip,
+                            request,
+                            exit_code
+                        );
+                        let message = rsync_info!(text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                }
+                Err(err) => {
+                    if let Some(log) = log_sink {
+                        let text = format!(
+                            "transfer failed to {} ({}): module={} error={}",
+                            module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                            peer_ip,
+                            request,
+                            err
+                        );
+                        let message = rsync_error!(1, text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                }
             }
+
+            // Note: Connection guard (_connection_guard) drops here, releasing the slot
+            return Ok(());
         } else {
             if let Some(log) = log_sink {
                 log_module_denied(
