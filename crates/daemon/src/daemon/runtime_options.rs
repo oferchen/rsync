@@ -75,8 +75,10 @@ impl RuntimeOptions {
         brand: Brand,
         load_defaults: bool,
     ) -> Result<Self, DaemonError> {
-        let mut options = Self::default();
-        options.brand = brand;
+        let mut options = Self {
+            brand,
+            ..Default::default()
+        };
         let mut seen_modules = HashSet::new();
         if load_defaults && !config_argument_present(arguments) {
             if let Some(path) = environment_config_override() {
