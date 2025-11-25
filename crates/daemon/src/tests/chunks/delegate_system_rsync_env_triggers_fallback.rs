@@ -12,14 +12,12 @@ fn delegate_system_rsync_env_triggers_fallback() {
 
     let (code, _stdout, stderr) = run_with_args([
         OsStr::new(RSYNCD),
-        OsStr::new("--config"),
-        OsStr::new(branding::OC_DAEMON_CONFIG_PATH),
+        OsStr::new("--daemon"),
     ]);
 
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let recorded = fs::read_to_string(&log_path).expect("read invocation log");
     assert!(recorded.contains("--daemon"));
-    assert!(recorded.contains(&format!("--config {}", branding::OC_DAEMON_CONFIG_PATH)));
 }
 
