@@ -1,4 +1,4 @@
-fn log_module_bandwidth_change(
+pub(crate) fn log_module_bandwidth_change(
     log: &SharedLogSink,
     host: Option<&str>,
     peer_ip: IpAddr,

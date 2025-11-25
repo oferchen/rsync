@@ -18,7 +18,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
             OsString::from("--bwlimit"),
             OsString::from("1K"),
             OsString::from("--module"),
-            OsString::from(format!("docs=/srv/docs,{}", comment)),
+            OsString::from(format!("docs=/srv/docs,{comment}")),
             OsString::from("--module"),
             OsString::from("logs=/var/log"),
             OsString::from("--once"),
@@ -52,7 +52,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
 
     line.clear();
     reader.read_line(&mut line).expect("first module");
-    assert_eq!(line.trim_end(), format!("docs\t{}", comment));
+    assert_eq!(line.trim_end(), format!("docs\t{comment}"));
     total_bytes += line.len();
 
     line.clear();
@@ -82,9 +82,7 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     let diff = total_sleep.abs_diff(expected);
     assert!(
         diff <= tolerance,
-        "expected sleep around {:?}, got {:?}",
-        expected,
-        total_sleep
+        "expected sleep around {expected:?}, got {total_sleep:?}"
     );
 }
 
