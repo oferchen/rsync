@@ -1,33 +1,33 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ModuleDefinition {
-    name: String,
-    path: PathBuf,
-    comment: Option<String>,
-    hosts_allow: Vec<HostPattern>,
-    hosts_deny: Vec<HostPattern>,
-    auth_users: Vec<String>,
-    secrets_file: Option<PathBuf>,
-    bandwidth_limit: Option<NonZeroU64>,
-    bandwidth_limit_specified: bool,
-    bandwidth_burst: Option<NonZeroU64>,
-    bandwidth_burst_specified: bool,
-    bandwidth_limit_configured: bool,
-    refuse_options: Vec<String>,
-    read_only: bool,
-    write_only: bool,
-    numeric_ids: bool,
-    uid: Option<u32>,
-    gid: Option<u32>,
-    timeout: Option<NonZeroU64>,
-    listable: bool,
-    use_chroot: bool,
-    max_connections: Option<NonZeroU32>,
-    incoming_chmod: Option<String>,
-    outgoing_chmod: Option<String>,
+pub(crate) struct ModuleDefinition {
+    pub(crate) name: String,
+    pub(crate) path: PathBuf,
+    pub(crate) comment: Option<String>,
+    pub(crate) hosts_allow: Vec<HostPattern>,
+    pub(crate) hosts_deny: Vec<HostPattern>,
+    pub(crate) auth_users: Vec<String>,
+    pub(crate) secrets_file: Option<PathBuf>,
+    pub(crate) bandwidth_limit: Option<NonZeroU64>,
+    pub(crate) bandwidth_limit_specified: bool,
+    pub(crate) bandwidth_burst: Option<NonZeroU64>,
+    pub(crate) bandwidth_burst_specified: bool,
+    pub(crate) bandwidth_limit_configured: bool,
+    pub(crate) refuse_options: Vec<String>,
+    pub(crate) read_only: bool,
+    pub(crate) write_only: bool,
+    pub(crate) numeric_ids: bool,
+    pub(crate) uid: Option<u32>,
+    pub(crate) gid: Option<u32>,
+    pub(crate) timeout: Option<NonZeroU64>,
+    pub(crate) listable: bool,
+    pub(crate) use_chroot: bool,
+    pub(crate) max_connections: Option<NonZeroU32>,
+    pub(crate) incoming_chmod: Option<String>,
+    pub(crate) outgoing_chmod: Option<String>,
 }
 
 impl ModuleDefinition {
-    fn permits(&self, addr: IpAddr, hostname: Option<&str>) -> bool {
+    pub(crate) fn permits(&self, addr: IpAddr, hostname: Option<&str>) -> bool {
         if !self.hosts_allow.is_empty()
             && !self
                 .hosts_allow
@@ -162,10 +162,10 @@ impl ModuleDefinition {
     }
 }
 
-struct ModuleRuntime {
-    definition: ModuleDefinition,
-    active_connections: AtomicU32,
-    connection_limiter: Option<Arc<ConnectionLimiter>>,
+pub(crate) struct ModuleRuntime {
+    pub(crate) definition: ModuleDefinition,
+    pub(crate) active_connections: AtomicU32,
+    pub(crate) connection_limiter: Option<Arc<ConnectionLimiter>>,
 }
 
 #[derive(Debug)]
@@ -462,19 +462,19 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
-    pub(super) static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> =
+    pub(crate) static TEST_SECRETS_CANDIDATES: RefCell<Option<Vec<PathBuf>>> =
         const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 thread_local! {
-    pub(super) static TEST_SECRETS_ENV: RefCell<Option<TestSecretsEnvOverride>> =
+    pub(crate) static TEST_SECRETS_ENV: RefCell<Option<TestSecretsEnvOverride>> =
         const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 #[derive(Clone, Debug, Default)]
-pub(super) struct TestSecretsEnvOverride {
+pub(crate) struct TestSecretsEnvOverride {
     pub(crate) branded: Option<OsString>,
     pub(crate) legacy: Option<OsString>,
 }

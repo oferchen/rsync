@@ -168,6 +168,9 @@ mod systemd;
 #[cfg(test)]
 mod test_env;
 
+#[cfg(test)]
+mod tests;
+
 pub use cli::{exit_code_from, run};
 pub use config::{DaemonConfig, DaemonConfigBuilder};
 pub use daemon::run_daemon;
