@@ -4,3 +4,12 @@ default-filter = "all()"
 status-level = "fail"
 final-status-level = "fail"
 failure-output = "immediate-final"
+
+[profile.ci]
+default-filter = "all()"
+status-level = "fail"
+final-status-level = "fail"
+failure-output = "immediate-final"
+success-output = "never"
+# Generate JUnit XML for CI dashboards (optional, not currently used)
+# junit.path = "junit.xml"
