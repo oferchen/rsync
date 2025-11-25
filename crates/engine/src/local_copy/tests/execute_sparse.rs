@@ -81,6 +81,7 @@ fn execute_inplace_disables_sparse_writes() {
     source_file
         .set_len(4 * 1024 * 1024)
         .expect("extend source");
+    drop(source_file);
 
     let dense_dest = temp.path().join("dense-inplace.bin");
     let sparse_dest = temp.path().join("sparse-inplace.bin");
