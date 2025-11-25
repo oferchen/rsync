@@ -27,6 +27,7 @@ pub(crate) enum FallbackStreamMessage {
     Finished(FallbackStreamKind),
 }
 
+#[track_caller]
 pub(crate) fn fallback_error(text: impl Into<String>) -> ClientError {
     let message = rsync_error!(1, "{}", text.into()).with_role(Role::Client);
     ClientError::new(1, message)
