@@ -62,6 +62,12 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
     Some(daemon_args)
 }
 
+/// Daemon mode is not supported on Windows.
+#[cfg(not(unix))]
+pub(crate) fn daemon_mode_arguments(_args: &[OsString]) -> Option<Vec<OsString>> {
+    None
+}
+
 /// Return `true` if `--server` appears in the argument vector (before `--`).
 pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
     let mut reached_double_dash = false;
