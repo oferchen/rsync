@@ -2,7 +2,7 @@
 fn log_module_bandwidth_change_logs_updates() {
     let dir = tempdir().expect("log dir");
     let path = dir.path().join("daemon.log");
-    let log = open_log_sink(&path).expect("open log");
+    let log = open_log_sink(&path, Brand::Oc).expect("open log");
     let limiter = BandwidthLimiter::with_burst(
         NonZeroU64::new(8 * 1024).expect("limit"),
         Some(NonZeroU64::new(64 * 1024).expect("burst")),

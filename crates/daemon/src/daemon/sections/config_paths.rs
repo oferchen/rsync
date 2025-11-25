@@ -56,7 +56,7 @@ where
     None
 }
 
-fn first_existing_config_path<I, P>(paths: I) -> Option<OsString>
+pub(crate) fn first_existing_config_path<I, P>(paths: I) -> Option<OsString>
 where
     I: IntoIterator<Item = P>,
     P: AsRef<Path>,
@@ -102,7 +102,7 @@ fn default_config_path_if_present(brand: Brand) -> Option<OsString> {
     first_existing_config_path(brand.config_path_candidate_strs())
 }
 
-fn default_secrets_path_if_present(brand: Brand) -> Option<OsString> {
+pub(crate) fn default_secrets_path_if_present(brand: Brand) -> Option<OsString> {
     #[cfg(test)]
     if let Some(paths) = TEST_SECRETS_CANDIDATES.with(|cell| cell.borrow().clone()) {
         return first_existing_path(paths.iter());

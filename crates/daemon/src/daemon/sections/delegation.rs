@@ -151,7 +151,7 @@ fn delegate_binary_session(
     Ok(())
 }
 
-fn legacy_daemon_greeting() -> String {
+pub(crate) fn legacy_daemon_greeting() -> String {
     let mut greeting =
         format_legacy_daemon_message(LegacyDaemonMessage::Version(ProtocolVersion::NEWEST));
     debug_assert!(greeting.ends_with('\n'));
@@ -166,7 +166,7 @@ fn legacy_daemon_greeting() -> String {
     greeting
 }
 
-fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
+pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
     let mut line = String::new();
     let bytes = reader.read_line(&mut line)?;
 
