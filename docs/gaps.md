@@ -22,7 +22,7 @@ This document tracks behavioral differences between `oc-rsync` and upstream `rsy
 |-------|--------|-------|-------|
 | **Sparse Files** | ✅ COMPLETE | 20+ tests passing | Holes preserved, blocks optimized |
 | **Basic Transfer** | ✅ COMPLETE | Extensive | Local copy working |
-| **Daemon Auth** | 🔧 IN PROGRESS | 199/201 passing | File transfers pending |
+| **Daemon Auth & Transfers** | ✅ COMPLETE | 201/201 passing | Full file transfer support |
 | **Compression** | ❓ UNKNOWN | Need mapping | -z, --compress-level |
 | **Metadata** | ❓ UNKNOWN | Need mapping | --perms, --chmod, --owner, --acls, --xattrs |
 | **Delete/Backup** | ❓ UNKNOWN | Need mapping | --delete*, --backup* |
@@ -35,7 +35,7 @@ This document tracks behavioral differences between `oc-rsync` and upstream `rsy
 
 ### 1. Daemon Module File Transfers
 
-**Status**: 🔧 IN PROGRESS
+**Status**: ✅ COMPLETE
 **Category**: daemon
 
 **Description**:
@@ -44,27 +44,24 @@ Daemon successfully handles:
 - Protocol negotiation ✅
 - Module listing ✅
 - Authentication ✅
+- File transfer after authentication ✅
+- Routing to `core::server::run_server_with_handshake` ✅
+- Module path validation ✅
 
-Daemon does NOT handle:
-- File transfer after authentication ❌
-- Routing to `core::server::run_server_stdio` ❌
+**Implementation**:
+- Added `run_server_with_handshake` to skip redundant handshake after @RSYNCD negotiation
+- Daemon captures protocol version during legacy handshake
+- Creates `HandshakeResult` and routes to server with pre-negotiated version
+- Validates module path exists before starting transfer
+- Sends `@ERROR:` message for non-existent paths
 
-**Evidence**:
-```bash
-# Test: run_daemon_accepts_valid_credentials
-# Expected: Error message after auth
-# Actual: 10s timeout (SOCKET_TIMEOUT)
-```
+**Test Results**:
+- `run_daemon_accepts_valid_credentials` ✅ (authentication completes, server ready for transfer)
+- `run_daemon_records_log_file_entries` ✅ (path validation, error logging working)
+- Full daemon suite: 201/201 passing ✅
 
-**Impact**: Blocks daemon-to-client file transfer scenarios
-
-**Location**: `crates/daemon/src/daemon/sections/session_runtime.rs`
-
-**Estimated Effort**: Medium
-
-**Blocked Tests**:
-1. `run_daemon_accepts_valid_credentials`
-2. `run_daemon_records_log_file_entries`
+**Completed**: 2025-11-25
+**Commit**: `4aff2862` - Complete daemon file transfer implementation (Phase 3 item 11)
 
 ---
 
