@@ -11,6 +11,12 @@ use std::time::{Duration, Instant};
 use std::os::unix::fs::PermissionsExt;
 
 pub(super) use crate::test_env::{EnvGuard, ENV_LOCK};
+use crate::daemon::{
+    ModuleDefinition, ModuleRuntime, HostPattern,
+    TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV, TestSecretsEnvOverride,
+    advertised_capability_lines, HANDSHAKE_ERROR_PAYLOAD, FEATURE_UNAVAILABLE_EXIT_CODE,
+};
+use core::branding;
 
 pub(super) const RSYNCD: &str = branding::daemon_program_name();
 pub(super) const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
