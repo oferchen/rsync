@@ -194,7 +194,7 @@ fn send_daemon_ok(
 /// The function returns the [`LimiterChange`] reported by
 /// [`apply_effective_limit`], allowing callers and tests to verify whether the
 /// limiter configuration changed as a result of the module overrides.
-fn apply_module_bandwidth_limit(
+pub(crate) fn apply_module_bandwidth_limit(
     limiter: &mut Option<BandwidthLimiter>,
     module_limit: Option<NonZeroU64>,
     module_limit_specified: bool,
@@ -475,7 +475,7 @@ fn respond_with_module_request(
     stream.flush()
 }
 
-fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
+pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -538,7 +538,7 @@ fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
 /// sequences or split log lines. The helper replaces ASCII control characters
 /// with a visible `'?'` marker while borrowing clean identifiers to avoid
 /// unnecessary allocations.
-fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
+pub(crate) fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
     if input.chars().all(|ch| !ch.is_control()) {
         return Cow::Borrowed(input);
     }
@@ -555,7 +555,7 @@ fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
     Cow::Owned(sanitized)
 }
 
-fn format_bandwidth_rate(value: NonZeroU64) -> String {
+pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = KIB * 1024;
     const GIB: u64 = MIB * 1024;

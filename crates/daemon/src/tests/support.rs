@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-pub(super) use crate::test_env::{EnvGuard, ENV_LOCK};
 use crate::daemon::{
-    ModuleDefinition, ModuleRuntime, HostPattern,
-    TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV, TestSecretsEnvOverride,
-    advertised_capability_lines, HANDSHAKE_ERROR_PAYLOAD, FEATURE_UNAVAILABLE_EXIT_CODE,
+    HostPattern, ModuleDefinition, TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV,
+    TestSecretsEnvOverride,
 };
+pub(super) use crate::test_env::{ENV_LOCK, EnvGuard};
 use core::branding;
+use fs2::FileExt;
 
 pub(super) const RSYNCD: &str = branding::daemon_program_name();
 pub(super) const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
@@ -182,7 +182,6 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).expect("set script permissions");
 }
-
 
 pub(super) fn connect_with_retries(port: u16) -> TcpStream {
     const INITIAL_BACKOFF: Duration = Duration::from_millis(20);
