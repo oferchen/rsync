@@ -1,8 +1,4 @@
-// TODO: This test expects the daemon to log entries and send messages after successful auth,
-// but the module transfer implementation is incomplete. The daemon times out after 10s
-// (SOCKET_TIMEOUT) instead of completing the expected protocol flow.
 #[test]
-#[ignore = "module transfer implementation incomplete"]
 fn run_daemon_records_log_file_entries() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -72,8 +68,8 @@ fn run_daemon_records_log_file_entries() {
     assert!(
         log_contents
             .lines()
-            .any(|line| line.contains("oc-rsyncd info: rsyncd version")),
-        "log should use oc-rsyncd branding: {log_contents:?}"
+            .any(|line| line.contains("oc-rsync info: rsyncd version")),
+        "log should use oc-rsync branding: {log_contents:?}"
     );
     assert!(log_contents.contains("connect from"));
     assert!(log_contents.contains("127.0.0.1"));
