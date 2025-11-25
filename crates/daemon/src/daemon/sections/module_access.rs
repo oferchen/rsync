@@ -240,6 +240,7 @@ fn respond_with_module_request(
     log_sink: Option<&SharedLogSink>,
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
+    negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         let change = apply_module_bandwidth_limit(
@@ -399,6 +400,32 @@ fn respond_with_module_request(
                 }
             };
 
+            // Validate that the module path exists and is accessible
+            if !Path::new(&module.path).exists() {
+                let payload = format!(
+                    "@ERROR: module '{}' path does not exist: {}",
+                    sanitize_module_identifier(request),
+                    module.path.display()
+                );
+                let stream = reader.get_mut();
+                write_limited(stream, limiter, payload.as_bytes())?;
+                write_limited(stream, limiter, b"\n")?;
+                messages.write_exit(stream, limiter)?;
+                stream.flush()?;
+                if let Some(log) = log_sink {
+                    let text = format!(
+                        "module '{}' path validation failed for {} ({}): path does not exist: {}",
+                        request,
+                        module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                        peer_ip,
+                        module.path.display()
+                    );
+                    let message = rsync_error!(1, text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                return Ok(());
+            }
+
             // Clone the stream for concurrent read/write in server mode
             let stream = reader.get_ref();
             let mut read_stream = match stream.try_clone() {
@@ -415,8 +442,16 @@ fn respond_with_module_request(
             };
             let mut write_stream = reader.get_mut();
 
-            // Run the server transfer
-            match run_server_stdio(config, &mut read_stream, &mut write_stream) {
+            // Create HandshakeResult from the negotiated protocol version
+            // Default to protocol 30 if no version was negotiated (shouldn't happen in practice)
+            let protocol = negotiated_protocol.unwrap_or(ProtocolVersion::V30);
+            let handshake = HandshakeResult {
+                protocol,
+                buffered: Vec::new(),
+            };
+
+            // Run the server transfer with pre-negotiated handshake
+            match run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream) {
                 Ok(exit_code) => {
                     if let Some(log) = log_sink {
                         let text = format!(
