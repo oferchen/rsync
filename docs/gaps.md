@@ -23,11 +23,11 @@ This document tracks behavioral differences between `oc-rsync` and upstream `rsy
 | **Sparse Files** | ✅ COMPLETE | 20+ tests passing | Holes preserved, blocks optimized |
 | **Basic Transfer** | ✅ COMPLETE | Extensive | Local copy working |
 | **Daemon Auth & Transfers** | ✅ COMPLETE | 201/201 passing | Full file transfer support |
-| **Compression** | ❓ UNKNOWN | Need mapping | -z, --compress-level |
-| **Metadata** | ❓ UNKNOWN | Need mapping | --perms, --chmod, --owner, --acls, --xattrs |
-| **Delete/Backup** | ❓ UNKNOWN | Need mapping | --delete*, --backup* |
-| **Protocol** | ❓ UNKNOWN | Need mapping | Versions 32-28 |
-| **Remote Shell** | ❓ UNKNOWN | Need mapping | ssh transport |
+| **Compression** | ✅ COMPLETE | Verified working | -z, --compress-level, --compress-choice |
+| **Metadata** | ✅ COMPLETE | Verified working | --perms, --chmod, --owner, --group, -a |
+| **Delete/Backup** | ✅ COMPLETE | Verified working | --delete, --backup, --backup-dir |
+| **Protocol** | ✅ COMPLETE | Verified working | Protocol 32 implemented, 28-31 supported |
+| **Remote Shell (SSH)** | 🔧 IN PROGRESS | Currently requires fallback | Native ssh transport not implemented |
 
 ---
 
@@ -62,6 +62,41 @@ Daemon successfully handles:
 
 **Completed**: 2025-11-25
 **Commit**: `4aff2862` - Complete daemon file transfer implementation (Phase 3 item 11)
+
+---
+
+### 2. Remote Shell Transport (SSH)
+
+**Status**: 🔧 IN PROGRESS
+**Category**: transport
+
+**Description**:
+Remote transfers (e.g., `user@host:/path`) currently require fallback to system rsync:
+- Remote operand detection ✅ (working)
+- Fallback to system rsync ✅ (working)
+- Native SSH transport ❌ (not implemented)
+- `--rsync-path` forwarding ✅ (passed to fallback)
+
+**Current Behavior**:
+When a remote operand is detected (e.g., `ofer@172.16.1.74:/home/ofer/`):
+1. `transfer_requires_remote()` detects the remote operand
+2. Code falls back to system rsync via `OC_RSYNC_FALLBACK` or `CLIENT_FALLBACK_ENV`
+3. `--rsync-path` and other options are forwarded to fallback binary
+4. If no fallback binary is available, transfer fails with error message
+
+**Issue**: If system rsync is not installed or fallback env vars are set to "0", remote
+transfers will hang or fail. The `--rsync-path` option works correctly when passed to
+the fallback binary, but native SSH transport would eliminate the fallback requirement.
+
+**Impact**: Users must have system rsync installed for remote transfers
+
+**Estimated Effort**: High (requires implementing ssh stdio passthrough in `crates/transport`)
+
+**Next Steps**:
+1. Implement native SSH transport in `crates/transport`
+2. Wire SSH transport to client in `crates/core/src/client`
+3. Add remote shell tests matching upstream behavior
+4. Remove fallback requirement for remote transfers
 
 ---
 
