@@ -1,4 +1,4 @@
-fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
+pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
     let mut users = Vec::new();
     let mut seen = HashSet::new();
 
@@ -22,7 +22,7 @@ fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
     Ok(users)
 }
 
-fn parse_refuse_option_list(value: &str) -> Result<Vec<String>, String> {
+pub(crate) fn parse_refuse_option_list(value: &str) -> Result<Vec<String>, String> {
     let mut options = Vec::new();
     let mut seen = HashSet::new();
 
@@ -119,7 +119,7 @@ fn ensure_secrets_file(path: &Path, metadata: &fs::Metadata) -> Result<(), Strin
     Ok(())
 }
 
-fn parse_boolean_directive(value: &str) -> Option<bool> {
+pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
@@ -128,7 +128,7 @@ fn parse_boolean_directive(value: &str) -> Option<bool> {
     }
 }
 
-fn parse_numeric_identifier(value: &str) -> Option<u32> {
+pub(crate) fn parse_numeric_identifier(value: &str) -> Option<u32> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
@@ -137,7 +137,7 @@ fn parse_numeric_identifier(value: &str) -> Option<u32> {
     trimmed.parse().ok()
 }
 
-fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
+pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
@@ -151,7 +151,7 @@ fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
     }
 }
 
-fn parse_max_connections_directive(value: &str) -> Option<Option<NonZeroU32>> {
+pub(crate) fn parse_max_connections_directive(value: &str) -> Option<Option<NonZeroU32>> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
@@ -173,7 +173,7 @@ pub(crate) enum HostPattern {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AddressFamily {
+pub(crate) enum AddressFamily {
     Ipv4,
     Ipv6,
 }
@@ -195,7 +195,7 @@ impl AddressFamily {
 }
 
 impl HostPattern {
-    fn parse(token: &str) -> Result<Self, String> {
+    pub(crate) fn parse(token: &str) -> Result<Self, String> {
         let token = token.trim();
         if token.is_empty() {
             return Err("host pattern must be non-empty".to_string());
@@ -316,7 +316,7 @@ impl HostPattern {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct HostnamePattern {
+pub(crate) struct HostnamePattern {
     kind: HostnamePatternKind,
 }
 

@@ -184,7 +184,7 @@ fn generate_fallback_config(
     }))
 }
 
-fn format_connection_status(active: usize) -> String {
+pub(crate) fn format_connection_status(active: usize) -> String {
     match active {
         0 => String::from("Idle; waiting for connections"),
         1 => String::from("Serving 1 connection"),

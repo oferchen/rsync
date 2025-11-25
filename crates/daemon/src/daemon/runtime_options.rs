@@ -1,10 +1,10 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct RuntimeOptions {
+pub(crate) struct RuntimeOptions {
     brand: Brand,
     bind_address: IpAddr,
     port: u16,
     max_sessions: Option<NonZeroUsize>,
-    modules: Vec<ModuleDefinition>,
+    pub(crate) modules: Vec<ModuleDefinition>,
     motd_lines: Vec<String>,
     bandwidth_limit: Option<NonZeroU64>,
     bandwidth_burst: Option<NonZeroU64>,
@@ -23,7 +23,7 @@ struct RuntimeOptions {
     reverse_lookup_configured: bool,
     lock_file: Option<PathBuf>,
     lock_file_from_config: bool,
-    delegate_arguments: Vec<OsString>,
+    pub(crate) delegate_arguments: Vec<OsString>,
     inline_modules: bool,
     global_incoming_chmod: Option<String>,
     global_outgoing_chmod: Option<String>,
@@ -66,7 +66,7 @@ impl Default for RuntimeOptions {
 impl RuntimeOptions {
     #[cfg(test)]
     #[allow(dead_code)]
-    fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
+    pub(crate) fn parse(arguments: &[OsString]) -> Result<Self, DaemonError> {
         Self::parse_with_brand(arguments, Brand::Oc, true)
     }
 
