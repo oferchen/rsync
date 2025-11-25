@@ -44,7 +44,7 @@ pub fn perform_handshake(
     let client_version = read_client_version(stdin)?;
 
     // Select highest mutually supported version
-    let negotiated = select_highest_mutual(&[client_version]).map_err(|e| {
+    let negotiated = select_highest_mutual([client_version]).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
@@ -120,7 +120,6 @@ pub fn perform_legacy_handshake(
     let version_str = trimmed
         .strip_prefix("@RSYNCD:")
         .unwrap()
-        .trim()
         .split_whitespace()
         .next()
         .ok_or_else(|| {
@@ -150,10 +149,10 @@ pub fn perform_legacy_handshake(
         )
     })?;
 
-    let negotiated = select_highest_mutual(&[client_version]).map_err(|e| {
+    let negotiated = select_highest_mutual([client_version]).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("protocol version {} is not supported: {e}", version_number),
+            format!("protocol version {version_number} is not supported: {e}"),
         )
     })?;
 

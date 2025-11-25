@@ -161,7 +161,7 @@ mod tests {
 
         assert_eq!(decoded.len(), ops.len());
         for (i, (decoded_op, expected_op)) in decoded.iter().zip(ops.iter()).enumerate() {
-            assert_eq!(decoded_op, expected_op, "mismatch at op {}", i);
+            assert_eq!(decoded_op, expected_op, "mismatch at op {i}");
         }
     }
 
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn delta_op_rejects_invalid_opcode() {
-        let buf = vec![0xFF, 0x00, 0x00, 0x00];
+        let buf = [0xFF, 0x00, 0x00, 0x00];
         let result = read_delta_op(&mut &buf[..]);
 
         assert!(result.is_err());
