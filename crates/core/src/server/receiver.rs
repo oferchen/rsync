@@ -79,10 +79,17 @@ impl ReceiverContext {
     pub fn run<R: Read + ?Sized, W: Write + ?Sized>(
         &mut self,
         reader: &mut R,
-        _writer: &mut W,
+        writer: &mut W,
     ) -> io::Result<TransferStats> {
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
+
+        // Send NDX_DONE (-1) to signal we're ready for transfer phase
+        // This is CRITICAL - the sender is blocked waiting for this!
+        // Mirrors upstream's write_ndx(f_out, NDX_DONE) in io.c:2259-2262
+        // For protocol >= 30, NDX_DONE is encoded as a single byte 0x00
+        writer.write_all(&[0])?;
+        writer.flush()?;
 
         // For now, just report what we received
         // Delta receiving and application will be implemented next
