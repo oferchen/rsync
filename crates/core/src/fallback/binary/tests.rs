@@ -20,29 +20,20 @@ struct EnvGuard {
 impl EnvGuard {
     fn set_os(key: &'static str, value: &OsStr) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::set_var(key, value);
-        }
+        env::set_var(key, value);
         Self { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::remove_var(key);
-        }
+        env::remove_var(key);
         Self { key, previous }
     }
 
     #[cfg(windows)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::set_var(key, value);
-        }
+        env::set_var(key, value);
         Self { key, previous }
     }
 }
@@ -50,15 +41,9 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            #[allow(unsafe_code)]
-            unsafe {
-                env::set_var(self.key, previous);
-            }
+            env::set_var(self.key, previous);
         } else {
-            #[allow(unsafe_code)]
-            unsafe {
-                env::remove_var(self.key);
-            }
+            env::remove_var(self.key);
         }
     }
 }
