@@ -195,15 +195,66 @@ impl GeneratorContext {
     /// 3. For each file: receive signature, generate delta, send delta
     pub fn run<R: Read + ?Sized, W: Write + ?Sized>(
         &mut self,
-        _reader: &mut R,
+        reader: &mut R,
         writer: &mut W,
         paths: &[PathBuf],
     ) -> io::Result<GeneratorStats> {
+        // Receive filter list from client (mirrors upstream recv_filter_list in exclude.c:1672)
+        // For daemon sender role, client sends filter rules followed by length 0 terminator
+        // Most clients send just the terminator (no filters)
+        eprintln!("[generator] Waiting for filter list from client...");
+        loop {
+            let mut len_bytes = [0u8; 4];
+            reader.read_exact(&mut len_bytes)?;
+            let filter_len = i32::from_le_bytes(len_bytes);
+            eprintln!("[generator] Received filter length: {} (bytes: {:02x} {:02x} {:02x} {:02x})",
+                filter_len, len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]);
+
+            if filter_len == 0 {
+                // Terminator - no more filters
+                eprintln!("[generator] Filter list complete");
+                break;
+            }
+
+            if filter_len < 0 || filter_len > 1024 * 1024 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid filter rule length: {filter_len}"),
+                ));
+            }
+
+            // Read and discard the filter rule (we don't support filters yet)
+            let mut filter_rule = vec![0u8; filter_len as usize];
+            reader.read_exact(&mut filter_rule)?;
+            // TODO: Parse and apply filter rules when implementing --filter support
+        }
+
         // Build file list
         self.build_file_list(paths)?;
+        eprintln!("[generator] Built file list with {} entries", self.file_list.len());
 
         // Send file list
+        eprintln!("[generator] Sending file list...");
         let file_count = self.send_file_list(writer)?;
+        eprintln!("[generator] File list sent ({} files)", file_count);
+
+        // Wait for client to send NDX_DONE (indicates file list received)
+        // Mirrors upstream sender.c:read_ndx_and_attrs() flow
+        // For protocol >= 30, NDX_DONE is encoded as single byte 0x00
+        let mut ndx_byte = [0u8; 1];
+        reader.read_exact(&mut ndx_byte)?;
+
+        if ndx_byte[0] != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected NDX_DONE (0x00), got 0x{:02x}", ndx_byte[0]),
+            ));
+        }
+
+        // Send NDX_DONE back to signal phase completion
+        // Mirrors upstream sender.c:256 (write_ndx(f_out, NDX_DONE))
+        writer.write_all(&[0])?;
+        writer.flush()?;
 
         // For now, just report what we sent
         // Delta generation and sending will be implemented next
