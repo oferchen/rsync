@@ -570,5 +570,20 @@ pub(crate) fn configured_fallback_binary() -> Option<OsString> {
     Some(OsString::from(Brand::Upstream.client_program_name()))
 }
 
+/// Returns the configured fallback binary for daemon mode.
+///
+/// Daemon mode always uses the internal Rust implementation and never
+/// delegates to system rsync. This ensures the @RSYNCD greeting is sent
+/// correctly by our code and matches the behavior expected by upstream
+/// rsync clients.
+///
+/// # Returns
+///
+/// Always returns `None` (use internal Rust implementation)
+pub(crate) fn configured_fallback_binary_for_daemon() -> Option<OsString> {
+    // Daemon mode never delegates - always use internal Rust implementation
+    None
+}
+
 #[cfg(test)]
 mod tests;
