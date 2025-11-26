@@ -234,7 +234,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         }
     }
 
-    let delegation = if let Some(binary) = configured_fallback_binary() {
+    // Daemon mode never delegates - always use internal Rust implementation
+    let delegation = if let Some(binary) = configured_fallback_binary_for_daemon() {
         if fallback_binary_available(binary.as_os_str()) {
             Some(SessionDelegation::new(binary, delegate_arguments))
         } else {
