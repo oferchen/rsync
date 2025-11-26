@@ -207,8 +207,10 @@ impl GeneratorContext {
             let mut len_bytes = [0u8; 4];
             reader.read_exact(&mut len_bytes)?;
             let filter_len = i32::from_le_bytes(len_bytes);
-            eprintln!("[generator] Received filter length: {} (bytes: {:02x} {:02x} {:02x} {:02x})",
-                filter_len, len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]);
+            eprintln!(
+                "[generator] Received filter length: {} (bytes: {:02x} {:02x} {:02x} {:02x})",
+                filter_len, len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]
+            );
 
             if filter_len == 0 {
                 // Terminator - no more filters
@@ -216,7 +218,7 @@ impl GeneratorContext {
                 break;
             }
 
-            if filter_len < 0 || filter_len > 1024 * 1024 {
+            if !(0..=1024 * 1024).contains(&filter_len) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("invalid filter rule length: {filter_len}"),
@@ -231,12 +233,15 @@ impl GeneratorContext {
 
         // Build file list
         self.build_file_list(paths)?;
-        eprintln!("[generator] Built file list with {} entries", self.file_list.len());
+        eprintln!(
+            "[generator] Built file list with {} entries",
+            self.file_list.len()
+        );
 
         // Send file list
         eprintln!("[generator] Sending file list...");
         let file_count = self.send_file_list(writer)?;
-        eprintln!("[generator] File list sent ({} files)", file_count);
+        eprintln!("[generator] File list sent ({file_count} files)");
 
         // Wait for client to send NDX_DONE (indicates file list received)
         // Mirrors upstream sender.c:read_ndx_and_attrs() flow
