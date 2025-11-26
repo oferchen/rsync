@@ -87,6 +87,7 @@ fn handle_session(
     }
 }
 
+#[allow(dead_code)]
 fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Result<SessionStyle> {
     stream.set_nonblocking(true)?;
     let mut peek_buf = [0u8; LEGACY_DAEMON_PREFIX_LEN];
@@ -120,6 +121,7 @@ fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Res
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SessionStyle {
     Legacy,
+    #[allow(dead_code)]
     Binary,
 }
 
