@@ -150,7 +150,10 @@ fn client_version_reports_branding_metadata() {
 
         let output = binary_output(binary, &["--version"]);
         assert!(output.status.success(), "{binary} --version should succeed");
-        assert!(output.stderr.is_empty(), "{binary} version output should not write to stderr");
+        assert!(
+            output.stderr.is_empty(),
+            "{binary} version output should not write to stderr"
+        );
         let combined = combined_utf8(&output);
 
         assert!(
