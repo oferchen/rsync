@@ -1,6 +1,7 @@
 use core::fallback::CLIENT_FALLBACK_ENV;
 use core::version::{
-    DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_PROGRAM_NAME, PROGRAM_NAME,
+    COPYRIGHT_NOTICE, DAEMON_PROGRAM_NAME, HIGHEST_PROTOCOL_VERSION, LEGACY_DAEMON_PROGRAM_NAME,
+    LEGACY_PROGRAM_NAME, PROGRAM_NAME, RUST_VERSION, SOURCE_URL,
 };
 use std::collections::{BTreeSet, HashSet};
 use std::env;
@@ -130,6 +131,86 @@ fn daemon_help_lists_usage() {
         assert!(
             stdout.contains(binary),
             "{binary} daemon help output should mention the binary name, got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn client_version_reports_branding_metadata() {
+    for binary in client_binaries() {
+        if locate_binary(binary).is_none() {
+            if binary == PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
+        let output = binary_output(binary, &["--version"]);
+        assert!(output.status.success(), "{binary} --version should succeed");
+        assert!(output.stderr.is_empty(), "{binary} version output should not write to stderr");
+        let combined = combined_utf8(&output);
+
+        assert!(
+            combined.contains(&format!("{binary} v{RUST_VERSION}")),
+            "{binary} version banner must include the Rust branded version, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(&format!("protocol version {HIGHEST_PROTOCOL_VERSION}")),
+            "{binary} version banner must report the negotiated protocol, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(SOURCE_URL),
+            "{binary} version banner must advertise the project source URL, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(COPYRIGHT_NOTICE),
+            "{binary} version banner must include the copyright notice, got:\n{combined}"
+        );
+    }
+}
+
+#[test]
+fn daemon_version_reports_branding_metadata() {
+    for binary in daemon_binaries() {
+        if locate_binary(binary).is_none() {
+            if binary == DAEMON_PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
+        let output = binary_output(binary, &["--daemon", "--version"]);
+        assert!(
+            output.status.success(),
+            "{binary} --daemon --version should succeed"
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{binary} daemon version output should not write to stderr"
+        );
+        let combined = combined_utf8(&output);
+
+        assert!(
+            combined.contains(&format!("{binary} v{RUST_VERSION}")),
+            "{binary} daemon version banner must include the Rust branded version, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(&format!("protocol version {HIGHEST_PROTOCOL_VERSION}")),
+            "{binary} daemon version banner must report the negotiated protocol, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(SOURCE_URL),
+            "{binary} daemon version banner must advertise the project source URL, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(COPYRIGHT_NOTICE),
+            "{binary} daemon version banner must include the copyright notice, got:\n{combined}"
         );
     }
 }
