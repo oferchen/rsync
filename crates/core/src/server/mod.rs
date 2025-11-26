@@ -18,6 +18,8 @@ pub mod handshake;
 pub mod receiver;
 /// Enumerations describing the role executed by the server process.
 pub mod role;
+/// Writer abstraction supporting plain and multiplex modes.
+mod writer;
 
 pub use self::config::ServerConfig;
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
@@ -57,28 +59,63 @@ pub fn run_server_stdio(
 /// # Returns
 ///
 /// Returns `Ok(0)` on successful transfer, or an error if transfer fails.
-pub fn run_server_with_handshake(
+pub fn run_server_with_handshake<W: Write>(
     config: ServerConfig,
-    handshake: HandshakeResult,
+    mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
-    stdout: &mut dyn Write,
+    mut stdout: W,
 ) -> io::Result<i32> {
+    eprintln!("[server] run_server_with_handshake: role={:?}, protocol={}",
+        config.role, handshake.protocol.as_u8());
+
+    // Protocol has already been negotiated via:
+    // - perform_handshake() for SSH mode (binary exchange)
+    // - @RSYNCD exchange for daemon mode
+    // So we just use the protocol from handshake and activate multiplex if needed.
+    // This mirrors upstream's setup_protocol() which skips the exchange when
+    // remote_protocol != 0 (already set by @RSYNCD).
+
+    // Activate multiplex for protocol >= 23 (mirrors upstream main.c:1247-1248)
+    let mut writer = writer::ServerWriter::new_plain(stdout);
+    if handshake.protocol.as_u8() >= 23 {
+        eprintln!("[server] Activating multiplex for protocol {}", handshake.protocol.as_u8());
+        writer = writer.activate_multiplex()?;
+        eprintln!("[server] Multiplex activated");
+    } else {
+        eprintln!("[server] Protocol {} < 23, not activating multiplex", handshake.protocol.as_u8());
+    }
+
+    // Extract buffered data before moving handshake
+    let buffered_data = std::mem::take(&mut handshake.buffered);
+    eprintln!("[server] Buffered data from handshake: {} bytes", buffered_data.len());
+
+    // If there's buffered data from the handshake/negotiation phase, prepend it to stdin
+    // This is critical for daemon mode where the BufReader may have read ahead
+    let buffered = std::io::Cursor::new(buffered_data);
+    let mut chained_stdin = buffered.chain(stdin);
+
     match config.role {
         ServerRole::Receiver => {
+            eprintln!("[server] Entering Receiver role");
             let mut ctx = ReceiverContext::new(&handshake, config);
-            let stats = ctx.run(stdin, stdout)?;
+            let stats = ctx.run(&mut chained_stdin, &mut writer)?;
 
             // Log statistics (for now, just return success)
             let _ = stats;
             Ok(0)
         }
         ServerRole::Generator => {
+            eprintln!("[server] Entering Generator role");
+
             // Convert OsString args to PathBuf for file walking
             let paths: Vec<std::path::PathBuf> =
                 config.args.iter().map(std::path::PathBuf::from).collect();
+            eprintln!("[server] Generator paths: {:?}", paths);
 
             let mut ctx = GeneratorContext::new(&handshake, config);
-            let stats = ctx.run(stdin, stdout, &paths)?;
+            eprintln!("[server] Generator context created, calling run()");
+            let stats = ctx.run(&mut chained_stdin, &mut writer, &paths)?;
+            eprintln!("[server] Generator run() completed");
 
             // Log statistics (for now, just return success)
             let _ = stats;
