@@ -197,7 +197,7 @@ fn read_client_arguments(
     reader: &mut BufReader<TcpStream>,
     protocol: Option<ProtocolVersion>,
 ) -> io::Result<Vec<String>> {
-    let use_nulls = protocol.map_or(false, |p| p.as_u8() >= 30);
+    let use_nulls = protocol.is_some_and(|p| p.as_u8() >= 30);
     let mut arguments = Vec::new();
 
     loop {
@@ -250,6 +250,7 @@ fn read_client_arguments(
 ///
 /// This must be called AFTER reading client arguments and BEFORE activating
 /// multiplexing, to match upstream's daemon flow.
+#[allow(dead_code)]
 fn perform_protocol_setup<S: Read + Write>(
     stream: &mut S,
     our_protocol: ProtocolVersion,
@@ -623,7 +624,7 @@ fn respond_with_module_request(
                     return Ok(());
                 }
             };
-            let mut write_stream = reader.get_mut();
+            let write_stream = reader.get_mut();
 
             // Create HandshakeResult from the negotiated protocol version
             // Protocol setup and multiplex activation handled inside run_server_with_handshake

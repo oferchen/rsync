@@ -63,10 +63,13 @@ pub fn run_server_with_handshake<W: Write>(
     config: ServerConfig,
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
-    mut stdout: W,
+    stdout: W,
 ) -> io::Result<i32> {
-    eprintln!("[server] run_server_with_handshake: role={:?}, protocol={}",
-        config.role, handshake.protocol.as_u8());
+    eprintln!(
+        "[server] run_server_with_handshake: role={:?}, protocol={}",
+        config.role,
+        handshake.protocol.as_u8()
+    );
 
     // Protocol has already been negotiated via:
     // - perform_handshake() for SSH mode (binary exchange)
@@ -78,16 +81,25 @@ pub fn run_server_with_handshake<W: Write>(
     // Activate multiplex for protocol >= 23 (mirrors upstream main.c:1247-1248)
     let mut writer = writer::ServerWriter::new_plain(stdout);
     if handshake.protocol.as_u8() >= 23 {
-        eprintln!("[server] Activating multiplex for protocol {}", handshake.protocol.as_u8());
+        eprintln!(
+            "[server] Activating multiplex for protocol {}",
+            handshake.protocol.as_u8()
+        );
         writer = writer.activate_multiplex()?;
         eprintln!("[server] Multiplex activated");
     } else {
-        eprintln!("[server] Protocol {} < 23, not activating multiplex", handshake.protocol.as_u8());
+        eprintln!(
+            "[server] Protocol {} < 23, not activating multiplex",
+            handshake.protocol.as_u8()
+        );
     }
 
     // Extract buffered data before moving handshake
     let buffered_data = std::mem::take(&mut handshake.buffered);
-    eprintln!("[server] Buffered data from handshake: {} bytes", buffered_data.len());
+    eprintln!(
+        "[server] Buffered data from handshake: {} bytes",
+        buffered_data.len()
+    );
 
     // If there's buffered data from the handshake/negotiation phase, prepend it to stdin
     // This is critical for daemon mode where the BufReader may have read ahead
@@ -110,7 +122,7 @@ pub fn run_server_with_handshake<W: Write>(
             // Convert OsString args to PathBuf for file walking
             let paths: Vec<std::path::PathBuf> =
                 config.args.iter().map(std::path::PathBuf::from).collect();
-            eprintln!("[server] Generator paths: {:?}", paths);
+            eprintln!("[server] Generator paths: {paths:?}");
 
             let mut ctx = GeneratorContext::new(&handshake, config);
             eprintln!("[server] Generator context created, calling run()");

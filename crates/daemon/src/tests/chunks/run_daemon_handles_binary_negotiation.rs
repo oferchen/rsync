@@ -1,6 +1,8 @@
 #[test]
 fn run_daemon_handles_binary_negotiation() {
-    use protocol::{BorrowedMessageFrames, MessageCode};
+    // This test verifies that daemon always uses Legacy (@RSYNCD) protocol,
+    // even when client attempts binary negotiation.
+    // The rsync daemon protocol is ALWAYS text-based (@RSYNCD), not binary.
 
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -27,36 +29,27 @@ fn run_daemon_handles_binary_negotiation() {
         .set_write_timeout(Some(Duration::from_secs(5)))
         .expect("set write timeout");
 
-    let advertisement = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
+    // Even if client sends binary data, daemon sends @RSYNCD greeting
+    let binary_data = u32::from(ProtocolVersion::NEWEST.as_u8()).to_be_bytes();
     stream
-        .write_all(&advertisement)
-        .expect("send client advertisement");
-    stream.flush().expect("flush advertisement");
+        .write_all(&binary_data)
+        .expect("send binary data");
+    stream.flush().expect("flush");
 
-    let mut response = [0u8; 4];
-    stream
-        .read_exact(&mut response)
-        .expect("read server advertisement");
-    assert_eq!(response, advertisement);
-
-    let mut frames = Vec::new();
-    stream.read_to_end(&mut frames).expect("read frames");
-
-    let mut iter = BorrowedMessageFrames::new(&frames);
-    let first = iter.next().expect("first frame").expect("decode frame");
-    assert_eq!(first.code(), MessageCode::Error);
-    assert_eq!(first.payload(), HANDSHAKE_ERROR_PAYLOAD.as_bytes());
-    let second = iter.next().expect("second frame").expect("decode frame");
-    assert_eq!(second.code(), MessageCode::ErrorExit);
-    assert_eq!(
-        second.payload(),
-        u32::try_from(FEATURE_UNAVAILABLE_EXIT_CODE)
-            .expect("feature unavailable exit code fits")
-            .to_be_bytes()
+    // Daemon should send @RSYNCD greeting (text protocol)
+    let mut greeting = String::new();
+    let mut reader = BufReader::new(&mut stream);
+    reader
+        .read_line(&mut greeting)
+        .expect("read greeting");
+    assert!(
+        greeting.starts_with("@RSYNCD:"),
+        "Expected @RSYNCD greeting, got: {greeting}"
     );
-    assert!(iter.next().is_none());
 
-    let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok());
+    // Daemon will fail after receiving invalid input (binary instead of @RSYNCD response)
+    // but that's expected behavior - the test verifies that daemon sends @RSYNCD first
+    let _result = handle.join().expect("daemon thread");
+    // Don't assert on result - daemon rightfully fails when client sends invalid data
 }
 
