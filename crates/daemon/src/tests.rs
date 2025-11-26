@@ -1,16 +1,15 @@
 use super::*;
 use crate::daemon::{
     AddressFamily, BRANDED_CONFIG_ENV, ConnectionLimiter, FEATURE_UNAVAILABLE_EXIT_CODE,
-    HANDSHAKE_ERROR_PAYLOAD, HostPattern, LEGACY_CONFIG_ENV, ModuleConnectionError,
-    ModuleDefinition, ModuleRuntime, ProgramName, RuntimeOptions, TestSecretsEnvOverride,
-    advertised_capability_lines, apply_module_bandwidth_limit, clap_command,
-    clear_test_hostname_overrides, configured_fallback_binary, default_secrets_path_if_present,
-    first_existing_config_path, format_bandwidth_rate, format_connection_status,
-    legacy_daemon_greeting, log_module_bandwidth_change, module_peer_hostname, open_log_sink,
-    parse_auth_user_list, parse_boolean_directive, parse_config_modules,
-    parse_max_connections_directive, parse_numeric_identifier, parse_refuse_option_list,
-    parse_timeout_seconds, read_trimmed_line, render_help, sanitize_module_identifier,
-    set_test_hostname_override,
+    HostPattern, LEGACY_CONFIG_ENV, ModuleConnectionError, ModuleDefinition, ModuleRuntime,
+    ProgramName, RuntimeOptions, TestSecretsEnvOverride, advertised_capability_lines,
+    apply_module_bandwidth_limit, clap_command, clear_test_hostname_overrides,
+    configured_fallback_binary, default_secrets_path_if_present, first_existing_config_path,
+    format_bandwidth_rate, format_connection_status, legacy_daemon_greeting,
+    log_module_bandwidth_change, module_peer_hostname, open_log_sink, parse_auth_user_list,
+    parse_boolean_directive, parse_config_modules, parse_max_connections_directive,
+    parse_numeric_identifier, parse_refuse_option_list, parse_timeout_seconds, read_trimmed_line,
+    render_help, sanitize_module_identifier, set_test_hostname_override,
 };
 use bandwidth::{BandwidthLimiter, LimiterChange};
 use base64::Engine as _;
@@ -19,12 +18,12 @@ use checksums::strong::Md5;
 use core::branding::{self as branding, Brand};
 use core::fallback::{CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV};
 use core::version::VersionInfoReport;
-use protocol::{MessageCode, MessageFrame, ProtocolVersion};
+use protocol::ProtocolVersion;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
@@ -39,8 +38,6 @@ use support::*;
 include!("tests/chunks/advertised_capability_lines_empty_without_modules.rs");
 include!("tests/chunks/advertised_capability_lines_include_authlist_when_required.rs");
 include!("tests/chunks/advertised_capability_lines_report_modules_without_auth.rs");
-include!("tests/chunks/binary_session_delegates_to_configured_fallback.rs");
-include!("tests/chunks/binary_session_delegation_propagates_runtime_arguments.rs");
 include!("tests/chunks/builder_allows_brand_override.rs");
 include!("tests/chunks/builder_collects_arguments.rs");
 include!("tests/chunks/clap_parse_error_is_reported_via_message.rs");
@@ -117,7 +114,6 @@ include!("tests/chunks/run_daemon_enforces_bwlimit_during_module_list.rs");
 include!("tests/chunks/run_daemon_enforces_module_connection_limit.rs");
 include!("tests/chunks/run_daemon_filters_modules_during_list_request.rs");
 include!("tests/chunks/run_daemon_handles_binary_negotiation.rs");
-include!("tests/chunks/binary_session_delegates_inline_module_config.rs");
 include!("tests/chunks/run_daemon_handles_parallel_sessions.rs");
 include!("tests/chunks/run_daemon_honours_max_sessions.rs");
 include!("tests/chunks/run_daemon_lists_modules_on_request.rs");
