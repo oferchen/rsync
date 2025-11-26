@@ -341,6 +341,8 @@ where
         relative.unwrap_or(false),
     );
 
+    let fallback_remainder = remainder.clone();
+
     if let Some(exit_code) = maybe_handle_module_listing(
         stdout,
         stderr,
@@ -489,7 +491,7 @@ where
         no_motd,
         address_mode,
         rsync_path: rsync_path.as_ref(),
-        remainder: &remainder,
+        remainder: &fallback_remainder,
         stop_request: stop_request.clone(),
         #[cfg(feature = "acl")]
         acls,
