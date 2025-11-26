@@ -14,6 +14,7 @@ pub struct MultiplexReader<R> {
 }
 
 impl<R: Read> MultiplexReader<R> {
+    #[allow(dead_code)]
     pub fn new(inner: R) -> Self {
         Self {
             inner,
@@ -22,6 +23,7 @@ impl<R: Read> MultiplexReader<R> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn into_inner(self) -> R {
         self.inner
     }
@@ -70,10 +72,12 @@ pub struct MultiplexWriter<W> {
 }
 
 impl<W: Write> MultiplexWriter<W> {
+    #[allow(dead_code)]
     pub fn new(inner: W) -> Self {
         Self { inner }
     }
 
+    #[allow(dead_code)]
     pub fn into_inner(self) -> W {
         self.inner
     }
