@@ -52,7 +52,12 @@ fn handle_session(
         }
     }
 
-    let style = detect_session_style(&stream, delegation.is_some())?;
+    // rsync daemon protocol is ALWAYS the legacy @RSYNCD protocol.
+    // Attempting to detect session style creates a deadlock: detect_session_style()
+    // peeks at the socket waiting for client data, but the client is waiting for
+    // the server to send the @RSYNCD greeting first!
+    // Always use Legacy mode for daemon connections.
+    let style = SessionStyle::Legacy;
     configure_stream(&stream)?;
 
     let peer_host = if reverse_lookup {
