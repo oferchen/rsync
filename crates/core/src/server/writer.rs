@@ -33,6 +33,7 @@ impl<W: Write> ServerWriter<W> {
     }
 
     /// Returns true if multiplex is active
+    #[allow(dead_code)]
     pub fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_))
     }
@@ -55,7 +56,7 @@ impl<W: Write> Write for ServerWriter<W> {
 }
 
 /// Writer that wraps data in multiplex MSG_DATA frames
-struct MultiplexWriter<W> {
+pub(super) struct MultiplexWriter<W> {
     inner: W,
 }
 
@@ -73,8 +74,15 @@ impl<W: Write> Write for MultiplexWriter<W> {
 
         // Send as MSG_DATA (code 0)
         let code = MessageCode::Data;
-        eprintln!("[multiplex] Writing {} bytes as MSG_DATA (code {})", buf.len(), code.as_u8());
-        eprintln!("[multiplex] First 16 bytes: {:02x?}", &buf[..buf.len().min(16)]);
+        eprintln!(
+            "[multiplex] Writing {} bytes as MSG_DATA (code {})",
+            buf.len(),
+            code.as_u8()
+        );
+        eprintln!(
+            "[multiplex] First 16 bytes: {:02x?}",
+            &buf[..buf.len().min(16)]
+        );
         protocol::send_msg(&mut self.inner, code, buf)?;
         eprintln!("[multiplex] Message sent successfully");
         Ok(buf.len())
