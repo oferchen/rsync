@@ -224,6 +224,8 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+prompt.md
+optimize.md
 CLAUDE.md
 .claude/
 
