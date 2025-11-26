@@ -65,6 +65,7 @@ use protocol::{
 use crate::{config::DaemonConfig, error::DaemonError, systemd};
 
 mod help;
+mod multiplex_stream;
 
 use self::help::help_text;
 
