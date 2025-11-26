@@ -95,7 +95,7 @@ pub(crate) use core::client::*;
 pub(crate) use core::version::VersionInfoReport;
 use core::{
     branding::Brand,
-    message::{Message, Role},
+    message::{Message, Role, strings},
     rsync_error,
 };
 use execution::execute;
@@ -303,7 +303,8 @@ where
             }
         }
         Err(error) => {
-            let mut message = rsync_error!(1, "{}", error);
+            let mut message = strings::exit_code_message_with_detail(1, error.to_string())
+                .unwrap_or_else(|| rsync_error!(1, "{}", error));
             message = message.with_role(Role::Client);
             if write_message(&message, &mut stderr_sink).is_err() {
                 let _ = writeln!(stderr_sink.writer_mut(), "{error}");

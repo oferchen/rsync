@@ -162,9 +162,8 @@ impl<'a> CopyContext<'a> {
         }
 
         if sparse {
-            sparse_state.finish(writer, destination)?;
-            let final_len = initial_bytes.saturating_add(total_bytes);
-            writer.set_len(final_len).map_err(|error| {
+            let final_position = sparse_state.finish(writer, destination)?;
+            writer.set_len(final_position).map_err(|error| {
                 LocalCopyError::io(
                     "truncate destination file",
                     destination.to_path_buf(),
