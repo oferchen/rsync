@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+use std::io;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -5,6 +7,7 @@ use std::sync::mpsc;
 
 use super::super::{ClientError, MAX_EXIT_CODE};
 use super::args::RemoteFallbackArgs;
+use crate::fallback::{CLIENT_FALLBACK_ENV, describe_missing_fallback_binary};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -49,12 +52,7 @@ where
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
 
-    let mut child = command.spawn().map_err(|error| {
-        fallback_error(format!(
-            "failed to launch fallback rsync binary '{}': {error}",
-            Path::new(&binary).display()
-        ))
-    })?;
+    let mut child = spawn_fallback_process(&mut command, binary.as_os_str())?;
 
     if let Some(mut password) = daemon_password.take() {
         let mut stdin = child
@@ -161,4 +159,41 @@ where
     };
 
     Ok(exit_code)
+}
+
+fn spawn_fallback_process(
+    command: &mut Command,
+    binary: &OsStr,
+) -> Result<std::process::Child, ClientError> {
+    command
+        .spawn()
+        .map_err(|error| fallback_spawn_error(binary, &error))
+}
+
+fn fallback_spawn_error(binary: &OsStr, error: &io::Error) -> ClientError {
+    let diagnostic = describe_missing_fallback_binary(binary, &[CLIENT_FALLBACK_ENV]);
+    let display = Path::new(binary).display();
+    let text = format!("failed to launch fallback rsync binary '{display}': {error}. {diagnostic}");
+    fallback_error(text)
+}
+
+#[cfg(test)]
+pub(crate) fn fallback_spawn_error_for_tests(binary: &OsStr, error: &io::Error) -> ClientError {
+    fallback_spawn_error(binary, error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fallback_spawn_error_for_tests;
+    use std::ffi::OsStr;
+    use std::io;
+
+    #[test]
+    fn spawn_error_includes_fallback_hint() {
+        let error = io::Error::new(io::ErrorKind::NotFound, "missing");
+        let rendered = fallback_spawn_error_for_tests(OsStr::new("rsync"), &error).to_string();
+
+        assert!(rendered.contains("fallback rsync binary 'rsync' is not available"));
+        assert!(rendered.contains("OC_RSYNC_FALLBACK"));
+    }
 }
