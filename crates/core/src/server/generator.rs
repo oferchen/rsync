@@ -187,8 +187,12 @@ impl GeneratorContext {
 
         // Hex dump the file list data to both stderr and file
         let hex_len = buffer.len().min(256);
-        eprintln!("[generator] File list data ({} total bytes, showing first {}): {:02x?}",
-                  buffer.len(), hex_len, &buffer[..hex_len]);
+        eprintln!(
+            "[generator] File list data ({} total bytes, showing first {}): {:02x?}",
+            buffer.len(),
+            hex_len,
+            &buffer[..hex_len]
+        );
 
         // Also write to file for easier analysis
         if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -229,7 +233,10 @@ impl GeneratorContext {
         if filter_end[0] != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("expected filter list terminator (0x00), got 0x{:02x}", filter_end[0]),
+                format!(
+                    "expected filter list terminator (0x00), got 0x{:02x}",
+                    filter_end[0]
+                ),
             ));
         }
         eprintln!("[generator] Filter list received (empty)");

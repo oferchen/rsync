@@ -3,9 +3,9 @@
 //! This module mirrors upstream rsync's `compat.c:setup_protocol()` function,
 //! handling protocol version negotiation and compatibility flags exchange.
 
+use protocol::{CompatibilityFlags, ProtocolVersion};
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
-use protocol::{CompatibilityFlags, ProtocolVersion};
 
 /// Exchanges compatibility flags directly on a TcpStream for daemon mode.
 ///
@@ -30,7 +30,10 @@ pub fn exchange_compat_flags_direct(
     stream: &mut TcpStream,
 ) -> io::Result<Option<CompatibilityFlags>> {
     if protocol.as_u8() < 30 {
-        eprintln!("[exchange_compat_flags_direct] Protocol {} < 30, skipping compat flags", protocol.as_u8());
+        eprintln!(
+            "[exchange_compat_flags_direct] Protocol {} < 30, skipping compat flags",
+            protocol.as_u8()
+        );
         return Ok(None);
     }
 
@@ -47,17 +50,26 @@ pub fn exchange_compat_flags_direct(
 
     // CRITICAL: Flush immediately to ensure data leaves application buffers
     stream.flush()?;
-    eprintln!("[exchange_compat_flags_direct] Sent compat flags: {:?}", our_flags);
+    eprintln!(
+        "[exchange_compat_flags_direct] Sent compat flags: {:?}",
+        our_flags
+    );
 
     // Read client's flags (upstream compat.c:740)
     // Use the SAME stream for reading - sockets are full-duplex
     let client_flags_value = protocol::read_varint(stream)?;
     let client_flags = CompatibilityFlags::from_bits(client_flags_value as u32);
-    eprintln!("[exchange_compat_flags_direct] Received client compat flags: {:?}", client_flags);
+    eprintln!(
+        "[exchange_compat_flags_direct] Received client compat flags: {:?}",
+        client_flags
+    );
 
     // Use intersection of both (upstream compat.c:745-778)
     let final_flags = our_flags & client_flags;
-    eprintln!("[exchange_compat_flags_direct] Final compat flags: {:?}", final_flags);
+    eprintln!(
+        "[exchange_compat_flags_direct] Final compat flags: {:?}",
+        final_flags
+    );
 
     Ok(Some(final_flags))
 }
@@ -92,8 +104,11 @@ pub fn setup_protocol(
     stdin: &mut dyn Read,
     skip_compat_exchange: bool,
 ) -> io::Result<()> {
-    eprintln!("[setup_protocol] Starting protocol setup for protocol {} (skip_compat_exchange={})",
-              protocol.as_u8(), skip_compat_exchange);
+    eprintln!(
+        "[setup_protocol] Starting protocol setup for protocol {} (skip_compat_exchange={})",
+        protocol.as_u8(),
+        skip_compat_exchange
+    );
 
     // For daemon mode, the binary 4-byte protocol exchange has already happened
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
@@ -121,7 +136,10 @@ pub fn setup_protocol(
         // Read client's flags (upstream compat.c:740)
         let client_flags_value = protocol::read_varint(stdin)?;
         let client_flags = CompatibilityFlags::from_bits(client_flags_value as u32);
-        eprintln!("[setup_protocol] Received client compat flags: {:?}", client_flags);
+        eprintln!(
+            "[setup_protocol] Received client compat flags: {:?}",
+            client_flags
+        );
 
         // Use intersection of both (upstream compat.c:745-778)
         let final_flags = our_flags & client_flags;
