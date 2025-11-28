@@ -42,7 +42,20 @@ impl<W: Write> ServerWriter<W> {
 impl<W: Write> Write for ServerWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            Self::Plain(w) => w.write(buf),
+            Self::Plain(w) => {
+                eprintln!("[ServerWriter::Plain] Writing {} bytes", buf.len());
+                eprintln!("[ServerWriter::Plain] Bytes: {:02x?}", buf);
+                // Also log to file
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/rsync-debug/server-writes.log")
+                {
+                    use std::io::Write as _;
+                    let _ = writeln!(f, "[PLAIN] {} bytes: {:02x?}", buf.len(), buf);
+                }
+                w.write(buf)
+            }
             Self::Multiplex(w) => w.write(buf),
         }
     }
@@ -80,9 +93,31 @@ impl<W: Write> Write for MultiplexWriter<W> {
             code.as_u8()
         );
         eprintln!(
-            "[multiplex] First 16 bytes: {:02x?}",
-            &buf[..buf.len().min(16)]
+            "[multiplex] Payload (first 64 bytes): {:02x?}",
+            &buf[..buf.len().min(64)]
         );
+
+        // Log to file what we're about to send (including the wire format)
+        // Wire format: 4-byte header [tag, len_byte1, len_byte2, len_byte3] + payload
+        let tag = code.as_u8() + 7; // MPLEX_BASE = 7
+        let len_bytes = [
+            (buf.len() & 0xFF) as u8,
+            ((buf.len() >> 8) & 0xFF) as u8,
+            ((buf.len() >> 16) & 0xFF) as u8,
+        ];
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/rsync-debug/server-writes.log")
+        {
+            use std::io::Write as _;
+            let _ = writeln!(f, "[MULTIPLEX] tag={} ({:#04x}), len={} ({:#08x})",
+                           tag, tag, buf.len(), buf.len());
+            let _ = writeln!(f, "[MULTIPLEX] Wire header: [{:#04x}, {:#04x}, {:#04x}, {:#04x}]",
+                           tag, len_bytes[0], len_bytes[1], len_bytes[2]);
+            let _ = writeln!(f, "[MULTIPLEX] Payload: {:02x?}", buf);
+        }
+
         protocol::send_msg(&mut self.inner, code, buf)?;
         eprintln!("[multiplex] Message sent successfully");
         Ok(buf.len())

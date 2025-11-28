@@ -21,6 +21,9 @@ pub struct HandshakeResult {
     pub protocol: ProtocolVersion,
     /// Any bytes that were buffered during version detection.
     pub buffered: Vec<u8>,
+    /// Whether compatibility flags have already been exchanged on the raw stream.
+    /// When true, setup_protocol() should skip the compat flags exchange.
+    pub compat_exchanged: bool,
 }
 
 /// Performs the server-side protocol version handshake.
@@ -61,6 +64,7 @@ pub fn perform_handshake(
     Ok(HandshakeResult {
         protocol: negotiated,
         buffered: Vec::new(),
+        compat_exchanged: false,
     })
 }
 
@@ -164,6 +168,7 @@ pub fn perform_legacy_handshake(
     Ok(HandshakeResult {
         protocol: negotiated,
         buffered: Vec::new(),
+        compat_exchanged: false,
     })
 }
 

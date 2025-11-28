@@ -130,6 +130,7 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
 /// Propagates any error returned by `writer` while writing the encoded bytes.
 pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
     let (len, bytes) = encode_bytes(value);
+    eprintln!("[varint::write_varint] Writing value {} as {} bytes: {:02x?}", value, len, &bytes[..len]);
     writer.write_all(&bytes[..len])
 }
 
@@ -173,7 +174,10 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
         buf[0] = first[0];
     }
 
-    Ok(i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]))
+    let value = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    eprintln!("[varint::read_varint] Read value {} from {} bytes: first={:02x}, extra={}, buf={:02x?}",
+              value, extra + 1, first[0], extra, &buf[..4]);
+    Ok(value)
 }
 
 /// Decodes a variable-length integer from the beginning of `bytes` and returns
