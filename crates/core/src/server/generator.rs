@@ -175,13 +175,34 @@ impl GeneratorContext {
 
     /// Sends the file list to the receiver.
     pub fn send_file_list<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
+        // Capture output to a buffer so we can hex dump it
+        let mut buffer = Vec::new();
         let mut flist_writer = FileListWriter::new(self.protocol);
 
         for entry in &self.file_list {
-            flist_writer.write_entry(writer, entry)?;
+            flist_writer.write_entry(&mut buffer, entry)?;
         }
 
-        flist_writer.write_end(writer)?;
+        flist_writer.write_end(&mut buffer)?;
+
+        // Hex dump the file list data to both stderr and file
+        let hex_len = buffer.len().min(256);
+        eprintln!("[generator] File list data ({} total bytes, showing first {}): {:02x?}",
+                  buffer.len(), hex_len, &buffer[..hex_len]);
+
+        // Also write to file for easier analysis
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/rsync-filelist-debug.log")
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "=== File list ({} bytes) ===", buffer.len());
+            let _ = writeln!(f, "{:02x?}", &buffer);
+        }
+
+        // Write to actual output
+        writer.write_all(&buffer)?;
         writer.flush()?;
 
         Ok(self.file_list.len())
@@ -199,37 +220,19 @@ impl GeneratorContext {
         writer: &mut W,
         paths: &[PathBuf],
     ) -> io::Result<GeneratorStats> {
-        // Receive filter list from client (mirrors upstream recv_filter_list in exclude.c:1672)
-        // For daemon sender role, client sends filter rules followed by length 0 terminator
-        // Most clients send just the terminator (no filters)
-        eprintln!("[generator] Waiting for filter list from client...");
-        loop {
-            let mut len_bytes = [0u8; 4];
-            reader.read_exact(&mut len_bytes)?;
-            let filter_len = i32::from_le_bytes(len_bytes);
-            eprintln!(
-                "[generator] Received filter length: {} (bytes: {:02x} {:02x} {:02x} {:02x})",
-                filter_len, len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]
-            );
-
-            if filter_len == 0 {
-                // Terminator - no more filters
-                eprintln!("[generator] Filter list complete");
-                break;
-            }
-
-            if !(0..=1024 * 1024).contains(&filter_len) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid filter rule length: {filter_len}"),
-                ));
-            }
-
-            // Read and discard the filter rule (we don't support filters yet)
-            let mut filter_rule = vec![0u8; filter_len as usize];
-            reader.read_exact(&mut filter_rule)?;
-            // TODO: Parse and apply filter rules when implementing --filter support
+        // Read filter list from client (mirrors upstream recv_filter_list at main.c:1256)
+        // For now, just read the terminating 0 byte for empty filter list
+        // TODO (Phase 3): Implement full filter list exchange
+        eprintln!("[generator] Reading filter list terminator...");
+        let mut filter_end = [0u8; 1];
+        reader.read_exact(&mut filter_end)?;
+        if filter_end[0] != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected filter list terminator (0x00), got 0x{:02x}", filter_end[0]),
+            ));
         }
+        eprintln!("[generator] Filter list received (empty)");
 
         // Build file list
         self.build_file_list(paths)?;

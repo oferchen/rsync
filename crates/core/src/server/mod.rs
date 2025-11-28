@@ -18,6 +18,10 @@ pub mod handshake;
 pub mod receiver;
 /// Enumerations describing the role executed by the server process.
 pub mod role;
+/// Server-side protocol setup utilities.
+pub mod setup;
+/// Reader abstraction supporting plain and multiplex modes.
+mod reader;
 /// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
@@ -63,7 +67,7 @@ pub fn run_server_with_handshake<W: Write>(
     config: ServerConfig,
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
-    stdout: W,
+    mut stdout: W,
 ) -> io::Result<i32> {
     eprintln!(
         "[server] run_server_with_handshake: role={:?}, protocol={}",
@@ -78,39 +82,58 @@ pub fn run_server_with_handshake<W: Write>(
     // This mirrors upstream's setup_protocol() which skips the exchange when
     // remote_protocol != 0 (already set by @RSYNCD).
 
-    // Activate multiplex for protocol >= 23 (mirrors upstream main.c:1247-1248)
-    let mut writer = writer::ServerWriter::new_plain(stdout);
-    if handshake.protocol.as_u8() >= 23 {
-        eprintln!(
-            "[server] Activating multiplex for protocol {}",
-            handshake.protocol.as_u8()
-        );
-        writer = writer.activate_multiplex()?;
-        eprintln!("[server] Multiplex activated");
-    } else {
-        eprintln!(
-            "[server] Protocol {} < 23, not activating multiplex",
-            handshake.protocol.as_u8()
-        );
-    }
-
-    // Extract buffered data before moving handshake
+    // Extract buffered data before calling setup_protocol
+    // This is critical for daemon mode where the BufReader may have read ahead
     let buffered_data = std::mem::take(&mut handshake.buffered);
     eprintln!(
         "[server] Buffered data from handshake: {} bytes",
         buffered_data.len()
     );
+    if !buffered_data.is_empty() {
+        let hex_len = buffered_data.len().min(128);
+        eprintln!("[server] Buffered data (first {} bytes): {:02x?}", hex_len, &buffered_data[..hex_len]);
+    }
 
-    // If there's buffered data from the handshake/negotiation phase, prepend it to stdin
-    // This is critical for daemon mode where the BufReader may have read ahead
+    // Chain buffered data with stdin BEFORE calling setup_protocol
+    // This ensures setup_protocol reads from the correct stream
     let buffered = std::io::Cursor::new(buffered_data);
     let mut chained_stdin = buffered.chain(stdin);
+
+    // Call setup_protocol() - mirrors upstream main.c:1245
+    // This is the FIRST thing start_server() does after setting file descriptors
+    // IMPORTANT: Parameter order matches upstream: f_out first, f_in second!
+    // For SSH mode, compat_exchanged is false (do compat exchange here).
+    // For daemon mode, compat_exchanged is true (already done on raw TcpStream before calling this function).
+    setup::setup_protocol(handshake.protocol, &mut stdout, &mut chained_stdin, handshake.compat_exchanged)?;
+
+    // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
+    // The setup_protocol() call above may have buffered data (compat flags varint).
+    // If we don't flush here, that buffered data will be written AFTER we activate
+    // multiplex, causing the client to interpret it as multiplexed data instead of
+    // plain data, resulting in "unexpected tag" errors.
+    stdout.flush()?;
+    eprintln!("[server] Flushed stdout after setup_protocol");
+
+    // Activate multiplex for protocol >= 23 (mirrors upstream main.c:1247-1248)
+    // This applies to BOTH daemon and SSH modes. The protocol was negotiated via:
+    // - @RSYNCD exchange for daemon mode (remote_protocol already set)
+    // - perform_handshake() binary exchange for SSH mode
+    // In both cases, upstream's setup_protocol() is called, then multiplex is activated.
+    let mut reader = reader::ServerReader::new_plain(chained_stdin);
+    let mut writer = writer::ServerWriter::new_plain(stdout);
+
+    if handshake.protocol.as_u8() >= 23 {
+        writer = writer.activate_multiplex()?;
+        eprintln!("[server] Multiplex activated (protocol {})", handshake.protocol.as_u8());
+    }
+
+    let mut chained_reader = reader;
 
     match config.role {
         ServerRole::Receiver => {
             eprintln!("[server] Entering Receiver role");
             let mut ctx = ReceiverContext::new(&handshake, config);
-            let stats = ctx.run(&mut chained_stdin, &mut writer)?;
+            let stats = ctx.run(&mut chained_reader, &mut writer)?;
 
             // Log statistics (for now, just return success)
             let _ = stats;
@@ -126,7 +149,7 @@ pub fn run_server_with_handshake<W: Write>(
 
             let mut ctx = GeneratorContext::new(&handshake, config);
             eprintln!("[server] Generator context created, calling run()");
-            let stats = ctx.run(&mut chained_stdin, &mut writer, &paths)?;
+            let stats = ctx.run(&mut chained_reader, &mut writer, &paths)?;
             eprintln!("[server] Generator run() completed");
 
             // Log statistics (for now, just return success)
