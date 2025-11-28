@@ -14,14 +14,14 @@ pub mod flags;
 pub mod generator;
 /// Server-side protocol handshake utilities.
 pub mod handshake;
+/// Reader abstraction supporting plain and multiplex modes.
+mod reader;
 /// Server-side Receiver role implementation.
 pub mod receiver;
 /// Enumerations describing the role executed by the server process.
 pub mod role;
 /// Server-side protocol setup utilities.
 pub mod setup;
-/// Reader abstraction supporting plain and multiplex modes.
-mod reader;
 /// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
@@ -91,7 +91,11 @@ pub fn run_server_with_handshake<W: Write>(
     );
     if !buffered_data.is_empty() {
         let hex_len = buffered_data.len().min(128);
-        eprintln!("[server] Buffered data (first {} bytes): {:02x?}", hex_len, &buffered_data[..hex_len]);
+        eprintln!(
+            "[server] Buffered data (first {} bytes): {:02x?}",
+            hex_len,
+            &buffered_data[..hex_len]
+        );
     }
 
     // Chain buffered data with stdin BEFORE calling setup_protocol
@@ -104,7 +108,12 @@ pub fn run_server_with_handshake<W: Write>(
     // IMPORTANT: Parameter order matches upstream: f_out first, f_in second!
     // For SSH mode, compat_exchanged is false (do compat exchange here).
     // For daemon mode, compat_exchanged is true (already done on raw TcpStream before calling this function).
-    setup::setup_protocol(handshake.protocol, &mut stdout, &mut chained_stdin, handshake.compat_exchanged)?;
+    setup::setup_protocol(
+        handshake.protocol,
+        &mut stdout,
+        &mut chained_stdin,
+        handshake.compat_exchanged,
+    )?;
 
     // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
     // The setup_protocol() call above may have buffered data (compat flags varint).
@@ -124,7 +133,10 @@ pub fn run_server_with_handshake<W: Write>(
 
     if handshake.protocol.as_u8() >= 23 {
         writer = writer.activate_multiplex()?;
-        eprintln!("[server] Multiplex activated (protocol {})", handshake.protocol.as_u8());
+        eprintln!(
+            "[server] Multiplex activated (protocol {})",
+            handshake.protocol.as_u8()
+        );
     }
 
     let mut chained_reader = reader;
