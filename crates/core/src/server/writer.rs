@@ -111,10 +111,19 @@ impl<W: Write> Write for MultiplexWriter<W> {
             .open("/tmp/rsync-debug/server-writes.log")
         {
             use std::io::Write as _;
-            let _ = writeln!(f, "[MULTIPLEX] tag={} ({:#04x}), len={} ({:#08x})",
-                           tag, tag, buf.len(), buf.len());
-            let _ = writeln!(f, "[MULTIPLEX] Wire header: [{:#04x}, {:#04x}, {:#04x}, {:#04x}]",
-                           tag, len_bytes[0], len_bytes[1], len_bytes[2]);
+            let _ = writeln!(
+                f,
+                "[MULTIPLEX] tag={} ({:#04x}), len={} ({:#08x})",
+                tag,
+                tag,
+                buf.len(),
+                buf.len()
+            );
+            let _ = writeln!(
+                f,
+                "[MULTIPLEX] Wire header: [{:#04x}, {:#04x}, {:#04x}, {:#04x}]",
+                tag, len_bytes[0], len_bytes[1], len_bytes[2]
+            );
             let _ = writeln!(f, "[MULTIPLEX] Payload: {:02x?}", buf);
         }
 
