@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 use core::{
     client::BindAddress,
-    message::{Message, Role},
+    message::{Message, Role, strings},
     rsync_error,
 };
 
@@ -24,7 +24,9 @@ impl UnsupportedOption {
         let text = format!(
             "unknown option '{option}': this build currently supports only {SUPPORTED_OPTIONS_LIST}"
         );
-        rsync_error!(1, text).with_role(Role::Client)
+        strings::exit_code_message_with_detail(1, text.clone())
+            .unwrap_or_else(|| rsync_error!(1, text))
+            .with_role(Role::Client)
     }
 
     pub(crate) fn fallback_text(&self) -> String {

@@ -42,69 +42,12 @@ fn parse_positive_usize_from_env(name: &str, value: &str) -> TaskResult<usize> {
 mod tests {
     use super::{parse_positive_usize_from_env, read_limit_env_var};
     use crate::error::TaskError;
-    use std::env;
-    use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        #[allow(unsafe_code)]
-        fn set(key: &'static str, value: &str) -> Self {
-            let guard = env_lock().lock().unwrap();
-            let previous = env::var_os(key);
-            unsafe {
-                env::set_var(key, value);
-            }
-            Self {
-                key,
-                previous,
-                _lock: guard,
-            }
-        }
-
-        #[allow(unsafe_code)]
-        fn remove(key: &'static str) -> Self {
-            let guard = env_lock().lock().unwrap();
-            let previous = env::var_os(key);
-            unsafe {
-                env::remove_var(key);
-            }
-            Self {
-                key,
-                previous,
-                _lock: guard,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        #[allow(unsafe_code)]
-        fn drop(&mut self) {
-            if let Some(previous) = self.previous.take() {
-                unsafe {
-                    env::set_var(self.key, previous);
-                }
-            } else {
-                unsafe {
-                    env::remove_var(self.key);
-                }
-            }
-        }
-    }
+    use crate::util::test_env::EnvGuard;
 
     #[test]
     fn read_limit_env_var_parses_positive_values() {
-        let _guard = EnvGuard::set("TEST_LIMIT", "42");
+        let mut guard = EnvGuard::new();
+        guard.set("TEST_LIMIT", "42");
         assert_eq!(
             read_limit_env_var("TEST_LIMIT").expect("read succeeds"),
             Some(42)
@@ -114,7 +57,8 @@ mod tests {
     #[test]
     fn read_limit_env_var_handles_missing_and_invalid_values() {
         {
-            let _guard = EnvGuard::remove("MISSING_LIMIT");
+            let mut guard = EnvGuard::new();
+            guard.remove("MISSING_LIMIT");
             assert!(
                 read_limit_env_var("MISSING_LIMIT")
                     .expect("missing is ok")
@@ -123,7 +67,8 @@ mod tests {
         }
 
         {
-            let _zero = EnvGuard::set("ZERO_LIMIT", "0");
+            let mut zero = EnvGuard::new();
+            zero.set("ZERO_LIMIT", "0");
             let zero_err = read_limit_env_var("ZERO_LIMIT").unwrap_err();
             assert!(matches!(
                 zero_err,
@@ -131,7 +76,8 @@ mod tests {
             ));
         }
 
-        let _invalid = EnvGuard::set("BAD_LIMIT", "not-a-number");
+        let mut invalid = EnvGuard::new();
+        invalid.set("BAD_LIMIT", "not-a-number");
         let invalid_err = read_limit_env_var("BAD_LIMIT").unwrap_err();
         assert!(matches!(
             invalid_err,

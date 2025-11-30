@@ -266,54 +266,15 @@ pub fn usage() -> String {
 mod tests {
     use super::config::parse_line_limits_config;
     use super::*;
-    use std::env;
+    use crate::util::test_env::EnvGuard;
     use std::io::Write;
-    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvGuard {
-        previous: Vec<(&'static str, Option<OsString>)>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        #[allow(unsafe_code)]
-        fn remove_many<const N: usize>(keys: [&'static str; N]) -> Self {
-            let guard = env_lock().lock().unwrap();
-            let mut previous = Vec::with_capacity(N);
-            for key in keys {
-                previous.push((key, env::var_os(key)));
-                unsafe {
-                    env::remove_var(key);
-                }
-            }
-            Self {
-                previous,
-                _lock: guard,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        #[allow(unsafe_code)]
-        fn drop(&mut self) {
-            while let Some((key, value)) = self.previous.pop() {
-                if let Some(value) = value {
-                    unsafe {
-                        env::set_var(key, value);
-                    }
-                } else {
-                    unsafe {
-                        env::remove_var(key);
-                    }
-                }
-            }
-        }
+    fn cleared_limits_env() -> EnvGuard {
+        let mut guard = EnvGuard::new();
+        guard.remove("MAX_RUST_LINES");
+        guard.remove("WARN_RUST_LINES");
+        guard
     }
 
     fn write_lines(path: &Path, lines: usize) {
@@ -459,7 +420,7 @@ max_lines = 900
     #[test]
     fn execute_succeeds_with_cli_limits() {
         let workspace = create_workspace_with_sources();
-        let _env = EnvGuard::remove_many(["MAX_RUST_LINES", "WARN_RUST_LINES"]);
+        let _env = cleared_limits_env();
 
         execute(
             workspace.path(),
@@ -475,7 +436,7 @@ max_lines = 900
     #[test]
     fn execute_warns_without_failing_when_above_warn_threshold() {
         let workspace = create_workspace_with_sources();
-        let _env = EnvGuard::remove_many(["MAX_RUST_LINES", "WARN_RUST_LINES"]);
+        let _env = cleared_limits_env();
 
         execute(
             workspace.path(),
@@ -491,7 +452,7 @@ max_lines = 900
     #[test]
     fn execute_reports_error_when_exceeding_max_lines() {
         let workspace = create_workspace_with_sources();
-        let _env = EnvGuard::remove_many(["MAX_RUST_LINES", "WARN_RUST_LINES"]);
+        let _env = cleared_limits_env();
 
         let error = execute(
             workspace.path(),

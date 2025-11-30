@@ -65,6 +65,12 @@ fn run_daemon_records_log_file_entries() {
     assert!(result.is_ok());
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
+    assert!(
+        log_contents
+            .lines()
+            .any(|line| line.contains("oc-rsync info: rsyncd version")),
+        "log should use oc-rsync branding: {log_contents:?}"
+    );
     assert!(log_contents.contains("connect from"));
     assert!(log_contents.contains("127.0.0.1"));
     assert!(log_contents.contains("module 'docs'"));
