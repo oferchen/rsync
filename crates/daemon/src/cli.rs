@@ -8,7 +8,8 @@ use core::{
     branding::{self, Brand},
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV, FallbackOverride,
-        describe_missing_fallback_binary, fallback_binary_available, fallback_override,
+        describe_missing_fallback_binary, fallback_binary_available, fallback_disabled_reason,
+        fallback_override,
     },
     message::Role,
     rsync_error,
@@ -87,7 +88,8 @@ where
         return run_delegate_mode(parsed.remainder.as_slice(), stderr);
     }
 
-    if !has_explicit_config
+    if fallback_disabled_reason().is_none()
+        && !has_explicit_config
         && (auto_delegate_system_rsync_enabled() || fallback_binary_configured())
     {
         // only env-based / auto delegation when we don't see a concrete config
@@ -139,6 +141,7 @@ fn auto_delegate_system_rsync_enabled() -> bool {
 pub(super) fn fallback_binary_configured() -> bool {
     if override_disables_fallback(DAEMON_FALLBACK_ENV)
         || override_disables_fallback(CLIENT_FALLBACK_ENV)
+        || fallback_disabled_reason().is_some()
     {
         return false;
     }
@@ -188,6 +191,12 @@ fn run_delegate_mode<Err>(args: &[OsString], stderr: &mut MessageSink<Err>) -> i
 where
     Err: Write,
 {
+    if let Some(reason) = fallback_disabled_reason() {
+        let message = rsync_error!(1, reason).with_role(Role::Daemon);
+        let _ = write_message(&message, stderr);
+        return 1;
+    }
+
     let binary = fallback_binary();
 
     if !fallback_binary_available(binary.as_os_str()) {

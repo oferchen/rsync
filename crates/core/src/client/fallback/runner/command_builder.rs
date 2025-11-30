@@ -8,7 +8,7 @@ use super::helpers::{fallback_error, prepare_file_list, push_human_readable, pus
 use crate::client::{AddressMode, ClientError, DeleteMode, IconvSetting, TransferTimeout};
 use crate::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_is_self, fallback_binary_path, fallback_override,
+    fallback_binary_is_self, fallback_binary_path, fallback_disabled_reason, fallback_override,
 };
 
 /// Prepared command invocation for the legacy fallback binary.
@@ -24,6 +24,12 @@ pub(crate) struct PreparedInvocation {
 pub(crate) fn prepare_invocation(
     args: RemoteFallbackArgs,
 ) -> Result<PreparedInvocation, ClientError> {
+    if let Some(reason) = fallback_disabled_reason() {
+        return Err(fallback_error(format!(
+            "remote transfers are unavailable because {reason}"
+        )));
+    }
+
     let RemoteFallbackArgs {
         dry_run,
         list_only,

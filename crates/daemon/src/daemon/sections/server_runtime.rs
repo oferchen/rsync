@@ -216,6 +216,10 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let mut delegate_arguments = delegate_arguments;
     let mut generated_config: Option<GeneratedFallbackConfig> = None;
 
+    if let Some(reason) = fallback_disabled_reason() {
+        fallback_warning_message = Some(rsync_warning!(reason).with_role(Role::Daemon));
+    }
+
     if inline_modules {
         generated_config = generate_fallback_config(&modules, &motd_lines).map_err(|error| {
             DaemonError::new(
@@ -233,15 +237,19 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         }
     }
 
-    let delegation = if let Some(binary) = configured_fallback_binary() {
-        if fallback_binary_available(binary.as_os_str()) {
-            Some(SessionDelegation::new(binary, delegate_arguments))
+    let delegation = if fallback_warning_message.is_none() {
+        if let Some(binary) = configured_fallback_binary() {
+            if fallback_binary_available(binary.as_os_str()) {
+                Some(SessionDelegation::new(binary, delegate_arguments))
+            } else {
+                let warning_text = describe_missing_fallback_binary(
+                    binary.as_os_str(),
+                    &[DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV],
+                );
+                fallback_warning_message = Some(rsync_warning!(warning_text).with_role(Role::Daemon));
+                None
+            }
         } else {
-            let warning_text = describe_missing_fallback_binary(
-                binary.as_os_str(),
-                &[DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV],
-            );
-            fallback_warning_message = Some(rsync_warning!(warning_text).with_role(Role::Daemon));
             None
         }
     } else {
