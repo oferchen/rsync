@@ -16,8 +16,6 @@ pub use types::DaemonAddress;
 
 #[allow(unused_imports)]
 pub(super) use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
-#[cfg(test)]
-pub(super) use auth::set_test_daemon_password;
 #[allow(unused_imports)]
 pub(super) use auth::{DaemonAuthContext, SensitiveBytes, send_daemon_auth_credentials};
 #[allow(unused_imports)]
@@ -27,5 +25,3 @@ pub(super) use connect::{
 };
 #[allow(unused_imports)]
 pub(super) use errors::map_daemon_handshake_error;
-#[cfg(test)]
-pub(crate) use socket_options::apply_socket_options;
