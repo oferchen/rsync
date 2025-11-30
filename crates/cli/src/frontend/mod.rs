@@ -7,7 +7,8 @@
 //! `--delete`/`--delete-excluded`, `--filter` (supporting `+`/`-` actions, the
 //! `!` clear directive, and `merge FILE` directives), `--files-from`, `--from0`,
 //! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
-//! `--append`/`--append-verify`, `--remote-option`, `--connect-program`, and `--sparse`) and delegates local copy operations to
+//! `--append`/`--append-verify`, `--remote-option`, `--connect-program`, and
+//! `--sparse`) and delegates transfer operations to
 //! [`core::client::run_client`]. Daemon invocations are forwarded to
 //! [`daemon::run`], while `--server` sessions surface a branded diagnostic until
 //! the native server implementation is fully wired. Higher layers will
