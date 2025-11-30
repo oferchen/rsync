@@ -8,8 +8,8 @@ use super::module_list::{
 use super::run::build_local_copy_options;
 use super::*;
 use crate::bandwidth;
-use crate::client::fallback::write_daemon_password;
 use crate::client::IconvSetting;
+use crate::version::RUST_VERSION;
 use compress::zlib::CompressionLevel;
 use engine::{LocalCopyError, signature::SignatureAlgorithm};
 use ::metadata::ChmodModifiers;
@@ -27,55 +27,6 @@ use std::time::Duration;
 use tempfile::tempdir;
 
 const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
-
-#[cfg(unix)]
-const CAPTURE_PASSWORD_SCRIPT: &str = r#"#!/bin/sh
-set -eu
-OUTPUT=""
-for arg in "$@"; do
-  case "$arg" in
-CAPTURE=*)
-  OUTPUT="${arg#CAPTURE=}"
-  ;;
-  esac
-done
-: "${OUTPUT:?}"
-cat > "$OUTPUT"
-"#;
-
-#[cfg(unix)]
-const CAPTURE_ARGS_SCRIPT: &str = r#"#!/bin/sh
-set -eu
-OUTPUT=""
-for arg in "$@"; do
-  case "$arg" in
-CAPTURE=*)
-  OUTPUT="${arg#CAPTURE=}"
-  ;;
-  esac
-done
-: "${OUTPUT:?}"
-: > "$OUTPUT"
-for arg in "$@"; do
-  case "$arg" in
-CAPTURE=*)
-  ;;
-*)
-  printf '%s\n' "$arg" >> "$OUTPUT"
-  ;;
-  esac
-done
-"#;
-
-#[cfg(unix)]
-fn capture_password_script() -> String {
-    CAPTURE_PASSWORD_SCRIPT.to_string()
-}
-
-#[cfg(unix)]
-fn capture_args_script() -> String {
-    CAPTURE_ARGS_SCRIPT.to_string()
-}
 
 #[test]
 fn sensitive_bytes_zeroizes_on_drop() {
@@ -186,6 +137,7 @@ fn resolve_destination_path_preserves_missing_entries() {
 use std::os::unix::fs::PermissionsExt;
 
 #[cfg(unix)]
+#[allow(dead_code)]
 const FALLBACK_SCRIPT: &str = r#"#!/bin/sh
 set -eu
 
@@ -211,184 +163,6 @@ exit 42
 "#;
 
 #[cfg(unix)]
-#[allow(dead_code)]
-const SIGNAL_EXIT_SCRIPT: &str = r#"#!/bin/sh
-set -eu
-
-kill -TERM "$$"
-while :; do
-  sleep 1
-done
-"#;
-
-static ENV_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
-
-fn env_lock() -> &'static Mutex<()> {
-    ENV_GUARD.get_or_init(|| Mutex::new(()))
-}
-
-#[cfg(unix)]
-#[allow(dead_code)]
-fn write_fallback_script(dir: &Path) -> PathBuf {
-    let path = dir.join("fallback.sh");
-    fs::write(&path, FALLBACK_SCRIPT).expect("script written");
-    let metadata = fs::metadata(&path).expect("script metadata");
-    let mut permissions = metadata.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&path, permissions).expect("script permissions set");
-    path
-}
-
-#[cfg(unix)]
-#[allow(dead_code)]
-fn write_signal_script(dir: &Path) -> PathBuf {
-    let path = dir.join("signal.sh");
-    fs::write(&path, SIGNAL_EXIT_SCRIPT).expect("script written");
-    let metadata = fs::metadata(&path).expect("script metadata");
-    let mut permissions = metadata.permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&path, permissions).expect("script permissions set");
-    path
-}
-
-fn baseline_fallback_args() -> RemoteFallbackArgs {
-    RemoteFallbackArgs {
-        dry_run: false,
-        list_only: false,
-        remote_shell: None,
-        remote_options: Vec::new(),
-        connect_program: None,
-        port: None,
-        bind_address: None,
-        sockopts: None,
-        blocking_io: None,
-        protect_args: None,
-        human_readable: None,
-        eight_bit_output: false,
-        address_mode: AddressMode::Default,
-        archive: false,
-        recursive: None,
-        inc_recursive: None,
-        dirs: None,
-        delete: false,
-        delete_mode: DeleteMode::Disabled,
-        delete_excluded: false,
-        delete_missing_args: false,
-        max_delete: None,
-        min_size: None,
-        max_size: None,
-        block_size: None,
-        checksum: None,
-        checksum_choice: None,
-        checksum_seed: None,
-        size_only: false,
-        ignore_times: false,
-        ignore_existing: false,
-        existing: false,
-        ignore_missing_args: false,
-        update: false,
-        modify_window: None,
-        compress: false,
-        compress_disabled: false,
-        compress_level: None,
-        compress_choice: None,
-        skip_compress: None,
-        open_noatime: None,
-        stop_after: None,
-        stop_at: None,
-        chown: None,
-        owner: None,
-        group: None,
-        usermap: None,
-        groupmap: None,
-        chmod: Vec::new(),
-        executability: None,
-        perms: None,
-        super_mode: None,
-        times: None,
-        omit_dir_times: None,
-        omit_link_times: None,
-        numeric_ids: None,
-        hard_links: None,
-        links: None,
-        copy_links: None,
-        copy_dirlinks: false,
-        copy_unsafe_links: None,
-        keep_dirlinks: None,
-        safe_links: false,
-        sparse: None,
-        fuzzy: None,
-        devices: None,
-        copy_devices: false,
-        write_devices: false,
-        specials: None,
-        relative: None,
-        one_file_system: None,
-        implied_dirs: None,
-        mkpath: false,
-        prune_empty_dirs: None,
-        verbosity: 0,
-        progress: false,
-        stats: false,
-        itemize_changes: false,
-        partial: false,
-        preallocate: false,
-        fsync: None,
-        delay_updates: false,
-        partial_dir: None,
-        temp_directory: None,
-        backup: false,
-        backup_dir: None,
-        backup_suffix: None,
-        link_dests: Vec::new(),
-        remove_source_files: false,
-        append: None,
-        append_verify: false,
-        inplace: None,
-        msgs_to_stderr: None,
-        outbuf: None,
-        whole_file: None,
-        bwlimit: None,
-        excludes: Vec::new(),
-        includes: Vec::new(),
-        exclude_from: Vec::new(),
-        include_from: Vec::new(),
-        filters: Vec::new(),
-        rsync_filter_shortcuts: 0,
-        compare_destinations: Vec::new(),
-        copy_destinations: Vec::new(),
-        link_destinations: Vec::new(),
-        cvs_exclude: false,
-        info_flags: Vec::new(),
-        debug_flags: Vec::new(),
-        files_from_used: false,
-        file_list_entries: Vec::new(),
-        from0: false,
-        password_file: None,
-        daemon_password: None,
-        protocol: None,
-        timeout: TransferTimeout::Default,
-        connect_timeout: TransferTimeout::Default,
-        out_format: None,
-        log_file: None,
-        log_file_format: None,
-        no_motd: false,
-        iconv: IconvSetting::Unspecified,
-        fallback_binary: None,
-        rsync_path: None,
-        remainder: Vec::new(),
-        write_batch: None,
-        only_write_batch: None,
-        read_batch: None,
-        #[cfg(feature = "acl")]
-        acls: None,
-        #[cfg(feature = "xattr")]
-        xattrs: None,
-    }
-}
-
-#[cfg(unix)]
-#[allow(dead_code)]
 struct FailingWriter;
 
 #[cfg(unix)]
@@ -556,4 +330,3 @@ fn builder_defaults_disable_compression() {
     assert!(!config.compress());
     assert!(config.compression_setting().is_disabled());
 }
-
