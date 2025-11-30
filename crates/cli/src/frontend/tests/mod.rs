@@ -4,7 +4,6 @@ use super::server;
 use super::*;
 use crate::password::set_password_stdin_input;
 use checksums::strong::Md5;
-use core::fallback::CLIENT_FALLBACK_ENV;
 use core::{
     branding::manifest,
     client::{ClientEventKind, FilterRuleKind},
@@ -74,8 +73,6 @@ mod invalid_tests;
 mod list_only_tests;
 #[path = "load.rs"]
 mod load_tests;
-#[path = "local.rs"]
-mod local_tests;
 #[path = "log_file.rs"]
 mod log_file_tests;
 #[path = "long.rs"]
@@ -250,6 +247,7 @@ mod progress_render_tests;
 mod progress_tests;
 #[path = "protocol.rs"]
 mod protocol_tests;
+<<<<<<< HEAD
 #[path = "remote_daemon.rs"]
 mod remote_daemon_tests;
 #[path = "remote_fallback_cli.rs"]
@@ -368,12 +366,12 @@ mod remote_fallback_streams_tests;
 mod remote_rsync_tests;
 #[path = "remote.rs"]
 mod remote_tests;
+=======
+>>>>>>> origin/implement-native-server-mode-in-rust
 #[path = "rsync.rs"]
 mod rsync_tests;
 #[path = "run.rs"]
 mod run_tests;
-#[path = "server.rs"]
-mod server_tests;
 #[path = "short.rs"]
 mod short_tests;
 #[path = "size.rs"]
