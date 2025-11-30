@@ -20,9 +20,9 @@ This document defines the internal actors (“agents”), their responsibilities
   must derive these values from the shared metadata via the `xtask branding`
   helpers or equivalent library APIs rather than hard-coding constants.
 
-- **Error Message Suffix (C→Rust remap)**  
-  Format:  
-  `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`  
+- **Error Message Suffix (C→Rust remap)**
+  Format:
+  `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`
   Implemented in `crates/core/src/message.rs` via:
   - `role: Role` enum (`Sender`, `Receiver`, `Generator`, `Server`, `Client`,
     `Daemon`) chosen at call-site.
@@ -34,21 +34,19 @@ This document defines the internal actors (“agents”), their responsibilities
   Roles in trailers **must** mirror upstream semantics exactly, with Rust-specific
   metadata only in the suffix trailer.
 
-- **Centralized message strings**  
+- **Centralized message strings**
   All info/warn/error/progress strings are centralized in
   `core::message::strings`. Snapshot tests assert that the shape and content of
   messages remains stable, except for the Rust source suffix and minor
   whitespace.
 
-- **No delegation to system rsync**
-  All roles (client, server, daemon) must run natively inside the single
-  `oc-rsync` binary. The workspace must not exec or depend on an upstream
-  `rsync` binary via environment toggles (`OC_RSYNC_FALLBACK`,
-  `OC_RSYNC_DAEMON_FALLBACK`, or similar) or auto-delegation. Any remaining
-  codepaths that probe for or attempt to launch a system `rsync` are bugs and
-  must be removed alongside their tests and documentation.
+- **No fallback to system rsync**
+  The workspace now runs **exclusively** via the native Rust engine. Client and
+  daemon flows must not attempt to spawn a system `rsync` binary or honour any
+  fallback environment variables. All code paths that previously delegated to
+  external helpers must be removed or replaced with native implementations.
 
-- **Workspace-wide nextest configuration**  
+- **Workspace-wide nextest configuration**
   The repository uses `cargo nextest` as the primary test runner. A
   `.config/nextest.toml` file configures the **default** profile so that:
 
@@ -60,12 +58,12 @@ This document defines the internal actors (“agents”), their responsibilities
   local developers should not need to remember crate lists or non-obvious
   arguments just to run the full suite.
 
-- **Standard-library-first**  
+- **Standard-library-first**
   Prefer the Rust standard library and well-supported, actively maintained
   crates. Avoid deprecated APIs, pseudo-code, or placeholder logic; every change
   must ship production-ready behaviour with tests and/or parity checks.
 
-- **CPU-accelerated hot paths**  
+- **CPU-accelerated hot paths**
 
   The rolling checksum and other hot paths use architecture-specific SIMD
   fast paths with scalar fallbacks:
@@ -139,16 +137,16 @@ This document defines the internal actors (“agents”), their responsibilities
   detection (where applicable) plus deterministic tests that compare against a
   scalar reference.
 
-- **Environment guardrails for tests**  
+- **Environment guardrails for tests**
   Environment-sensitive logic (fallback overrides, config paths, etc.) must use
   `EnvGuard`-style utilities so environment variables are always restored even if
   tests panic.
 
-- **CI workflow contract**  
+- **CI workflow contract**
 
   The GitHub Actions workflows are part of the public contract:
 
-  - `.github/workflows/ci.yml`  
+  - `.github/workflows/ci.yml`
     - Runs on `ubuntu-latest` for pushes to `master`/`main`, pull requests, and
       manual `workflow_dispatch`.
     - Jobs:
@@ -156,7 +154,7 @@ This document defines the internal actors (“agents”), their responsibilities
         `cargo clippy --workspace --all-targets --all-features --no-deps`,
         and `cargo nextest run --all-features --workspace` (with
         `RUSTFLAGS="-D warnings"` and `Swatinem/rust-cache`).
-  - `.github/workflows/build-cross.yml`  
+  - `.github/workflows/build-cross.yml`
     - Builds cross-platform release artifacts from a Linux host using a
       target matrix (Linux/macOS/Windows; x86_64 and aarch64 where applicable).
     - Delegates packaging & SBOM generation to `cargo xtask` commands wherever
@@ -166,7 +164,7 @@ This document defines the internal actors (“agents”), their responsibilities
   subcommands. CI jobs **must not** grow large ad-hoc shell or Python scripts
   that diverge from local tooling.
 
-- **`xtask docs` decomposition**  
+- **`xtask docs` decomposition**
   The former monolithic `docs.rs` handler now resides under
   `xtask/src/commands/docs/` with modules for:
   - argument parsing (`cli.rs`),
@@ -177,7 +175,7 @@ This document defines the internal actors (“agents”), their responsibilities
   future contributors can extend validation logic without reintroducing a single
   huge file.
 
-- **`xtask package` decomposition**  
+- **`xtask package` decomposition**
   The packaging command lives in `xtask/src/commands/package/`, split into:
   - `args.rs`,
   - `build.rs`,
@@ -187,7 +185,7 @@ This document defines the internal actors (“agents”), their responsibilities
   Extend argument handling or packaging logic only in these focused modules; do
   not recreate monolithic `package.rs`.
 
-- **CLI execution decomposition**  
+- **CLI execution decomposition**
   `crates/cli/src/frontend/execution` is split into dedicated submodules
   (`options`, `module_listing`, `validation`, etc.). The higher-level drive
   orchestration is in `drive/` and its children:
@@ -202,7 +200,7 @@ This document defines the internal actors (“agents”), their responsibilities
   New functionality must join these modules directly (or new siblings), not
   `drive/mod.rs`.
 
-- **Drive workflow layering**  
+- **Drive workflow layering**
   The orchestrator resides under
   `crates/cli/src/frontend/execution/drive/workflow/`:
 
@@ -213,7 +211,7 @@ This document defines the internal actors (“agents”), their responsibilities
   New flow-control helpers belong in these focused modules (or new siblings)
   instead of inflating `workflow/mod.rs`.
 
-- **CLI argument parser decomposition**  
+- **CLI argument parser decomposition**
   `crates/cli/src/frontend/arguments` is a module tree:
 
   - `program_name.rs`
@@ -225,7 +223,7 @@ This document defines the internal actors (“agents”), their responsibilities
   Parsing helpers and data structures must join the appropriate submodule so
   `parser.rs` remains orchestration-only.
 
-- **Filter rule decomposition**  
+- **Filter rule decomposition**
   CLI filter utilities live in `crates/cli/src/frontend/filter_rules/` covering:
 
   - filter arguments,
@@ -236,20 +234,20 @@ This document defines the internal actors (“agents”), their responsibilities
 
   New behaviour belongs in the relevant submodule.
 
-- **Local copy file executor decomposition**  
+- **Local copy file executor decomposition**
   The large `crates/engine/src/local_copy/executor/file.rs` has been split into
   a `file/` module tree (`copy/`, `links`, `transfer`, etc.). All new file
   transfer behaviour must extend those helpers instead of recreating monolithic
   logic.
 
-- **Bandwidth limiter decomposition**  
+- **Bandwidth limiter decomposition**
   Throttling logic is under `crates/bandwidth/src/limiter/`:
 
   - `change.rs` — configuration
   - `core.rs` — runtime behaviour
   - `sleep.rs` — sleep utilities
 
-- **Dir-merge parser decomposition**  
+- **Dir-merge parser decomposition**
   The dir-merge parser lives in `crates/engine/src/local_copy/dir_merge/parse/`
   (`types.rs`, `line.rs`, `merge.rs`, `dir_merge.rs`, `modifiers.rs`). Extend
   parsing via these modules, not via a new all-in-one file.
