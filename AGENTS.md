@@ -40,24 +40,11 @@ This document defines the internal actors (“agents”), their responsibilities
   messages remains stable, except for the Rust source suffix and minor
   whitespace.
 
-- **Remote fallback guardrails**  
-  Before spawning upstream helpers (`rsync` from the system), the client and
-  daemon paths must:
-  - Confirm that the selected fallback binary exists on `PATH` (or via explicit
-    overrides such as `OC_RSYNC_FALLBACK`).
-  - Confirm that it is executable.
-  - Surface a branded diagnostic when the check fails so operators can install
-    upstream `rsync` or adjust `OC_RSYNC_FALLBACK`.
-
-  Shared helpers:
-  - `core::fallback::fallback_binary_available`
-  - `core::fallback::describe_missing_fallback_binary`
-
-  The availability helper memoizes lookups for each `(binary, PATH[, PATHEXT])`
-  tuple while storing the resolved executable path. Cached hits are revalidated
-  when the file disappears, and negative entries expire after a short TTL so
-  newly installed binaries are picked up. Tests adjust environment variables via
-  `EnvGuard` utilities so cache entries stay coherent.
+- **No fallback delegation**
+  Remote and daemon flows must never spawn an external `rsync` binary. The
+  native Rust transport stack is responsible for all client/server/daemon roles;
+  any previous delegation hooks (for example `OC_RSYNC_FALLBACK`) are
+  deprecated and should be removed rather than refreshed.
 
 - **Workspace-wide nextest configuration**  
   The repository uses `cargo nextest` as the primary test runner. A
@@ -207,7 +194,7 @@ This document defines the internal actors (“agents”), their responsibilities
   - `config.rs` — client builder assembly
   - `filters.rs` — include/exclude wiring
   - `summary.rs` — progress & output rendering
-  - `fallback.rs` — remote invocation argument preparation
+  - `fallback.rs` — legacy remote invocation argument preparation (deprecated; replace with native server wiring)
   - `metadata.rs` — preservation flags
 
   New functionality must join these modules directly (or new siblings), not
@@ -218,7 +205,7 @@ This document defines the internal actors (“agents”), their responsibilities
   `crates/cli/src/frontend/execution/drive/workflow/`:
 
   - `preflight.rs` — argument validation
-  - `fallback_plan.rs` — remote-fallback assembly
+  - `fallback_plan.rs` — legacy remote-fallback assembly (deprecated; replace with native transport plan)
   - `operands.rs` — usage rendering & operand checks
 
   New flow-control helpers belong in these focused modules (or new siblings)
