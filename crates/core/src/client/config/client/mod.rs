@@ -93,7 +93,6 @@ pub struct ClientConfig {
     pub(super) force_replacements: bool,
     pub(super) fsync: bool,
     pub(super) force_event_collection: bool,
-    pub(super) force_fallback: bool,
     pub(super) preserve_devices: bool,
     pub(super) copy_devices: bool,
     pub(super) write_devices: bool,
@@ -196,7 +195,6 @@ impl Default for ClientConfig {
             force_replacements: false,
             fsync: false,
             force_event_collection: false,
-            force_fallback: false,
             preserve_devices: false,
             copy_devices: false,
             write_devices: false,
@@ -261,7 +259,6 @@ impl ClientConfig {
 
 mod arguments;
 mod deletion;
-mod fallback;
 mod filters;
 mod metadata;
 mod network;

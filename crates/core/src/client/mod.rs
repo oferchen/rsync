@@ -87,7 +87,6 @@
 
 mod config;
 mod error;
-mod fallback;
 mod module_list;
 mod outcome;
 mod progress;
@@ -104,15 +103,14 @@ pub use self::config::{
 pub use self::error::{
     ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, PARTIAL_TRANSFER_EXIT_CODE, SOCKET_IO_EXIT_CODE,
 };
-pub use self::fallback::{RemoteFallbackArgs, RemoteFallbackContext, run_remote_transfer_fallback};
 pub use self::module_list::{
     DaemonAddress, ModuleList, ModuleListEntry, ModuleListOptions, ModuleListRequest,
     run_module_list, run_module_list_with_options, run_module_list_with_password,
     run_module_list_with_password_and_options,
 };
-pub use self::outcome::{ClientOutcome, FallbackSummary};
+pub use self::outcome::ClientOutcome;
 pub use self::progress::{ClientProgressObserver, ClientProgressUpdate};
-pub use self::run::{run_client, run_client_or_fallback, run_client_with_observer};
+pub use self::run::{run_client, run_client_with_observer};
 pub use self::summary::{
     ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
 };
