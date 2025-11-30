@@ -32,7 +32,6 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) debug: &'a [OsString],
     pub(crate) itemize_changes: bool,
     pub(crate) out_format: Option<&'a OsString>,
-    pub(crate) fallback_out_format: Option<OsString>,
     pub(crate) initial_progress: ProgressSetting,
     pub(crate) initial_stats: bool,
     pub(crate) initial_name_level: NameOutputLevel,
@@ -55,7 +54,6 @@ pub(crate) struct SettingsInputs<'a> {
 /// Derived execution settings gathered from [`derive_settings`].
 pub(crate) struct DerivedSettings {
     pub(crate) out_format_template: Option<OutFormat>,
-    pub(crate) fallback_out_format: Option<OsString>,
     pub(crate) progress_setting: ProgressSetting,
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) stats: bool,
@@ -63,7 +61,6 @@ pub(crate) struct DerivedSettings {
     pub(crate) name_overridden: bool,
     pub(crate) debug_flags_list: Vec<OsString>,
     pub(crate) bandwidth_limit: Option<BandwidthLimit>,
-    pub(crate) fallback_bwlimit: Option<OsString>,
     pub(crate) max_delete_limit: Option<u64>,
     pub(crate) min_size_limit: Option<u64>,
     pub(crate) max_size_limit: Option<u64>,
@@ -108,12 +105,7 @@ where
         None => None,
     };
 
-    let mut fallback_out_format = inputs.fallback_out_format.clone();
-
     if inputs.itemize_changes {
-        if fallback_out_format.is_none() {
-            fallback_out_format = Some(OsString::from(ITEMIZE_CHANGES_FORMAT));
-        }
         if out_format_template.is_none() {
             out_format_template = Some(
                 parse_out_format(OsString::from(ITEMIZE_CHANGES_FORMAT).as_os_str())
@@ -184,17 +176,6 @@ where
             Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
         },
         Some(BandwidthArgument::Disabled) | None => None,
-    };
-
-    let fallback_bwlimit = match (bandwidth_limit.as_ref(), inputs.bwlimit.as_ref()) {
-        (Some(limit), _) => Some(limit.fallback_argument()),
-        (None, Some(BandwidthArgument::Limit(_))) => {
-            Some(BandwidthLimit::fallback_unlimited_argument())
-        }
-        (None, Some(BandwidthArgument::Disabled)) => {
-            Some(BandwidthLimit::fallback_unlimited_argument())
-        }
-        (None, None) => None,
     };
 
     let max_delete_limit = match inputs.max_delete {
@@ -367,7 +348,6 @@ where
 
     SettingsOutcome::Proceed(Box::new(DerivedSettings {
         out_format_template,
-        fallback_out_format,
         progress_setting,
         progress_mode,
         stats,
@@ -375,7 +355,6 @@ where
         name_overridden,
         debug_flags_list,
         bandwidth_limit,
-        fallback_bwlimit,
         max_delete_limit,
         min_size_limit,
         max_size_limit,
