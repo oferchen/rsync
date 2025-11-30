@@ -81,6 +81,7 @@ impl ModuleListRequest {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn from_components(
         address: DaemonAddress,
         username: Option<String>,

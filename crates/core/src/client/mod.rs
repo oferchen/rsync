@@ -128,7 +128,4 @@ pub(crate) use self::error::{
     daemon_listing_unavailable_error, daemon_protocol_error, socket_error,
 };
 pub(crate) const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
-pub(crate) const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
-#[cfg(test)]
-mod tests;
