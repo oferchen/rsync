@@ -559,15 +559,22 @@ fn network_error<T: fmt::Display>(action: &str, target: T, error: io::Error) -> 
 }
 
 pub(crate) fn configured_fallback_binary() -> Option<OsString> {
-    if let Some(selection) = fallback_override(DAEMON_FALLBACK_ENV) {
-        return selection.resolve_or_default(OsStr::new(Brand::Upstream.client_program_name()));
-    }
+    None
+}
 
-    if let Some(selection) = fallback_override(CLIENT_FALLBACK_ENV) {
-        return selection.resolve_or_default(OsStr::new(Brand::Upstream.client_program_name()));
-    }
-
-    Some(OsString::from(Brand::Upstream.client_program_name()))
+/// Returns the configured fallback binary for daemon mode.
+///
+/// Daemon mode always uses the internal Rust implementation and never
+/// delegates to system rsync. This ensures the @RSYNCD greeting is sent
+/// correctly by our code and matches the behavior expected by upstream
+/// rsync clients.
+///
+/// # Returns
+///
+/// Always returns `None` (use internal Rust implementation)
+pub(crate) fn configured_fallback_binary_for_daemon() -> Option<OsString> {
+    // Daemon mode never delegates - always use internal Rust implementation
+    None
 }
 
 #[cfg(test)]

@@ -40,6 +40,8 @@ pub struct RemoteFallbackArgs {
     pub protect_args: Option<bool>,
     /// Optional `--human-readable` level forwarded to the fallback binary.
     pub human_readable: Option<HumanReadableMode>,
+    /// Enables `--8-bit-output` for raw multibyte output.
+    pub eight_bit_output: bool,
     /// Enables archive mode (`-a`).
     pub archive: bool,
     /// Controls recursive traversal (`--recursive`/`--no-recursive`).
@@ -297,6 +299,7 @@ pub struct RemoteFallbackArgs {
 }
 
 /// Writer references and arguments required to invoke the fallback binary.
+#[allow(dead_code)]
 pub struct RemoteFallbackContext<'a, Out, Err>
 where
     Out: Write + 'a,
@@ -322,6 +325,7 @@ where
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn split(self) -> (&'a mut Out, &'a mut Err, RemoteFallbackArgs) {
         let Self {
             stdout,

@@ -119,6 +119,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-progress  Disable progress reporting.\n",
             "      --msgs2stderr  Send messages to standard error instead of standard output.\n",
             "      --no-msgs2stderr  Send messages to standard output instead of standard error.\n",
+            "      --8-bit-output  Leave high-bit characters unescaped in output.\n",
             "      --outbuf=N|L|B  Set stdout buffering to None, Line, or Block.\n",
             "  -i, --itemize-changes  Output a change summary for each updated entry.\n",
             "      --no-itemize-changes  Disable change summaries for updated entries.\n",
