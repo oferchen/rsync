@@ -10,6 +10,8 @@ mod env;
 mod filesystem;
 mod git;
 mod limits;
+#[cfg(test)]
+pub mod test_env;
 
 pub use cargo::cargo_metadata_json;
 pub use commands::{

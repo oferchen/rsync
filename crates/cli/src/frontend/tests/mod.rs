@@ -4,7 +4,6 @@ use super::server;
 use super::*;
 use crate::password::set_password_stdin_input;
 use checksums::strong::Md5;
-use core::fallback::CLIENT_FALLBACK_ENV;
 use core::{
     branding::manifest,
     client::{ClientEventKind, FilterRuleKind},
@@ -74,8 +73,6 @@ mod invalid_tests;
 mod list_only_tests;
 #[path = "load.rs"]
 mod load_tests;
-#[path = "local.rs"]
-mod local_tests;
 #[path = "log_file.rs"]
 mod log_file_tests;
 #[path = "long.rs"]
@@ -128,6 +125,8 @@ mod parse_args_recognises_cvs_tests;
 mod parse_args_recognises_delay_tests;
 #[path = "parse_args_recognises_devices.rs"]
 mod parse_args_recognises_devices_tests;
+#[path = "parse_args_recognises_eight_bit_output.rs"]
+mod parse_args_recognises_eight_bit_output_tests;
 #[path = "parse_args_recognises_executability.rs"]
 mod parse_args_recognises_executability_tests;
 #[path = "parse_args_recognises_existing.rs"]
@@ -248,128 +247,19 @@ mod progress_render_tests;
 mod progress_tests;
 #[path = "protocol.rs"]
 mod protocol_tests;
+<<<<<<< HEAD
 #[path = "remote_daemon.rs"]
 mod remote_daemon_tests;
-#[path = "remote_fallback_cli.rs"]
-mod remote_fallback_cli_tests;
-#[path = "remote_fallback_forwards_acls.rs"]
-mod remote_fallback_forwards_acls_tests;
-#[path = "remote_fallback_forwards_append.rs"]
-mod remote_fallback_forwards_append_tests;
-#[path = "remote_fallback_forwards_backup.rs"]
-mod remote_fallback_forwards_backup_tests;
-#[path = "remote_fallback_forwards_batch.rs"]
-mod remote_fallback_forwards_batch_tests;
-#[path = "remote_fallback_forwards_compress.rs"]
-mod remote_fallback_forwards_compress_tests;
-#[path = "remote_fallback_forwards_connect.rs"]
-mod remote_fallback_forwards_connect_tests;
-#[path = "remote_fallback_forwards_connection.rs"]
-mod remote_fallback_forwards_connection_tests;
-#[path = "remote_fallback_forwards_debug.rs"]
-mod remote_fallback_forwards_debug_tests;
-#[path = "remote_fallback_forwards_delete.rs"]
-mod remote_fallback_forwards_delete_tests;
-#[path = "remote_fallback_forwards_devices.rs"]
-mod remote_fallback_forwards_devices_tests;
-#[path = "remote_fallback_forwards_double.rs"]
-mod remote_fallback_forwards_double_tests;
-#[path = "remote_fallback_forwards_existing.rs"]
-mod remote_fallback_forwards_existing_tests;
-#[path = "remote_fallback_forwards_files.rs"]
-mod remote_fallback_forwards_files_tests;
-#[path = "remote_fallback_forwards_filter.rs"]
-mod remote_fallback_forwards_filter_tests;
-#[path = "remote_fallback_forwards_fsync.rs"]
-mod remote_fallback_forwards_fsync_tests;
-#[path = "remote_fallback_forwards_fuzzy.rs"]
-mod remote_fallback_forwards_fuzzy_tests;
-#[path = "remote_fallback_forwards_hard.rs"]
-mod remote_fallback_forwards_hard_tests;
-#[path = "remote_fallback_forwards_human.rs"]
-mod remote_fallback_forwards_human_tests;
-#[path = "remote_fallback_forwards_iconv.rs"]
-mod remote_fallback_forwards_iconv_tests;
-#[path = "remote_fallback_forwards_ignore_times.rs"]
-mod remote_fallback_forwards_ignore_times_tests;
-#[path = "remote_fallback_forwards_implied.rs"]
-mod remote_fallback_forwards_implied_tests;
-#[path = "remote_fallback_forwards_info.rs"]
-mod remote_fallback_forwards_info_tests;
-#[path = "remote_fallback_forwards_link.rs"]
-mod remote_fallback_forwards_link_tests;
-#[path = "remote_fallback_forwards_log.rs"]
-mod remote_fallback_forwards_log_tests;
-#[path = "remote_fallback_forwards_max.rs"]
-mod remote_fallback_forwards_max_tests;
-#[path = "remote_fallback_forwards_min.rs"]
-mod remote_fallback_forwards_min_tests;
-#[path = "remote_fallback_forwards_modify.rs"]
-mod remote_fallback_forwards_modify_tests;
-#[path = "remote_fallback_forwards_no.rs"]
-mod remote_fallback_forwards_no_tests;
-#[path = "remote_fallback_forwards_omit.rs"]
-mod remote_fallback_forwards_omit_tests;
-#[path = "remote_fallback_forwards_one.rs"]
-mod remote_fallback_forwards_one_tests;
-#[path = "remote_fallback_forwards_outbuf.rs"]
-mod remote_fallback_forwards_outbuf_tests;
-#[path = "remote_fallback_forwards_partial.rs"]
-mod remote_fallback_forwards_partial_tests;
-#[path = "remote_fallback_forwards_port.rs"]
-mod remote_fallback_forwards_port_tests;
-#[path = "remote_fallback_forwards_preallocate.rs"]
-mod remote_fallback_forwards_preallocate_tests;
-#[path = "remote_fallback_forwards_protect.rs"]
-mod remote_fallback_forwards_protect_tests;
-#[path = "remote_fallback_forwards_prune.rs"]
-mod remote_fallback_forwards_prune_tests;
-#[path = "remote_fallback_forwards_recursive.rs"]
-mod remote_fallback_forwards_recursive_tests;
-#[path = "remote_fallback_forwards_reference.rs"]
-mod remote_fallback_forwards_reference_tests;
-#[path = "remote_fallback_forwards_remote.rs"]
-mod remote_fallback_forwards_remote_tests;
-#[path = "remote_fallback_forwards_rsh.rs"]
-mod remote_fallback_forwards_rsh_tests;
-#[path = "remote_fallback_forwards_rsync.rs"]
-mod remote_fallback_forwards_rsync_tests;
-#[path = "remote_fallback_forwards_safe.rs"]
-mod remote_fallback_forwards_safe_tests;
-#[path = "remote_fallback_forwards_skip.rs"]
-mod remote_fallback_forwards_skip_tests;
-#[path = "remote_fallback_forwards_stop.rs"]
-mod remote_fallback_forwards_stop_tests;
-#[path = "remote_fallback_forwards_super.rs"]
-mod remote_fallback_forwards_super_tests;
-#[path = "remote_fallback_forwards_temp.rs"]
-mod remote_fallback_forwards_temp_tests;
-#[path = "remote_fallback_forwards_update.rs"]
-mod remote_fallback_forwards_update_tests;
-#[path = "remote_fallback_forwards_whole.rs"]
-mod remote_fallback_forwards_whole_tests;
-#[path = "remote_fallback_includes.rs"]
-mod remote_fallback_includes_tests;
-#[path = "remote_fallback_preserves.rs"]
-mod remote_fallback_preserves_tests;
-#[path = "remote_fallback_reads.rs"]
-mod remote_fallback_reads_tests;
-#[path = "remote_fallback_respects.rs"]
-mod remote_fallback_respects_tests;
-#[path = "remote_fallback_sanitises.rs"]
-mod remote_fallback_sanitises_tests;
-#[path = "remote_fallback_streams.rs"]
-mod remote_fallback_streams_tests;
 #[path = "remote_rsync.rs"]
 mod remote_rsync_tests;
 #[path = "remote.rs"]
 mod remote_tests;
+=======
+>>>>>>> origin/implement-native-server-mode-in-rust
 #[path = "rsync.rs"]
 mod rsync_tests;
 #[path = "run.rs"]
 mod run_tests;
-#[path = "server.rs"]
-mod server_tests;
 #[path = "short.rs"]
 mod short_tests;
 #[path = "size.rs"]

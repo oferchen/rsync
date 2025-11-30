@@ -1,9 +1,7 @@
-use crate::fallback::{CLIENT_FALLBACK_ENV, describe_missing_fallback_binary};
 use crate::message::{Message, Role};
 use crate::rsync_error;
 use engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
 use std::error::Error;
-use std::ffi::OsStr;
 use std::fmt;
 use std::io;
 use std::path::Path;
@@ -61,10 +59,12 @@ pub(crate) fn missing_operands_error() -> ClientError {
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
-pub(crate) fn fallback_context_missing_error() -> ClientError {
-    let diagnostic = describe_missing_fallback_binary(OsStr::new("rsync"), &[CLIENT_FALLBACK_ENV]);
-    let text = format!("legacy rsync fallback required for this transfer: {diagnostic}");
-    let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Client);
+pub(crate) fn fallback_disabled_error() -> ClientError {
+    let message = rsync_error!(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        "remote transfers require native support; fallback to system rsync is disabled"
+    )
+    .with_role(Role::Client);
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
