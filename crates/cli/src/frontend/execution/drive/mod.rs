@@ -1,5 +1,4 @@
 mod config;
-mod fallback;
 mod filters;
 mod messages;
 mod metadata;

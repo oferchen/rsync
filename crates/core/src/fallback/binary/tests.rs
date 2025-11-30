@@ -12,6 +12,24 @@ use std::thread;
 use std::time::Duration;
 use tempfile::{NamedTempFile, TempDir};
 
+#[allow(unsafe_code)]
+fn set_var_unchecked<K: AsRef<OsStr>, V: AsRef<OsStr>>(key: K, value: V) {
+    // SAFETY: tests serialise environment mutations via `env_lock` and restore
+    // the previous values through `EnvGuard`, preventing concurrent access from
+    // other threads within the same process.
+    unsafe {
+        env::set_var(key, value);
+    }
+}
+
+#[allow(unsafe_code)]
+fn remove_var_unchecked<K: AsRef<OsStr>>(key: K) {
+    // SAFETY: see `set_var_unchecked` for the synchronisation rationale.
+    unsafe {
+        env::remove_var(key);
+    }
+}
+
 struct EnvGuard {
     key: &'static str,
     previous: Option<OsString>,
@@ -20,29 +38,20 @@ struct EnvGuard {
 impl EnvGuard {
     fn set_os(key: &'static str, value: &OsStr) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::set_var(key, value);
-        }
+        set_var_unchecked(key, value);
         Self { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::remove_var(key);
-        }
+        remove_var_unchecked(key);
         Self { key, previous }
     }
 
     #[cfg(windows)]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = env::var_os(key);
-        #[allow(unsafe_code)]
-        unsafe {
-            env::set_var(key, value);
-        }
+        set_var_unchecked(key, value);
         Self { key, previous }
     }
 }
@@ -50,15 +59,9 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            #[allow(unsafe_code)]
-            unsafe {
-                env::set_var(self.key, previous);
-            }
+            set_var_unchecked(self.key, previous);
         } else {
-            #[allow(unsafe_code)]
-            unsafe {
-                env::remove_var(self.key);
-            }
+            remove_var_unchecked(self.key);
         }
     }
 }
@@ -140,6 +143,27 @@ fn fallback_binary_candidates_use_default_path_when_path_missing() {
     let candidates = fallback_binary_candidates(OsStr::new("rsync"));
 
     assert!(!candidates.is_empty());
+}
+
+#[test]
+fn fallback_binary_candidates_search_cwd_when_path_empty() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _guard = EnvGuard::set_os("PATH", OsStr::new(""));
+
+    #[cfg(windows)]
+    let _pathext_guard = EnvGuard::set("PATHEXT", ".exe");
+
+    let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+
+    assert!(
+        !candidates.is_empty(),
+        "empty PATH should search in current directory",
+    );
+
+    assert!(
+        candidates.iter().all(|candidate| !candidate.is_absolute()),
+        "empty PATH produces relative paths (current directory): {candidates:?}",
+    );
 }
 
 #[test]
@@ -491,6 +515,30 @@ fn fallback_binary_revalidates_removed_executable() {
     assert!(!fallback_binary_available(path.as_os_str()));
 }
 
+#[cfg(unix)]
+#[test]
+fn fallback_binary_revalidates_permission_changes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = NamedTempFile::new().expect("tempfile");
+    let path = temp.into_temp_path();
+
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("chmod +x");
+
+    assert!(fallback_binary_available(path.as_os_str()));
+
+    let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+    permissions.set_mode(0o644);
+    fs::set_permissions(&path, permissions).expect("chmod -x");
+
+    assert!(
+        !fallback_binary_available(path.as_os_str()),
+        "availability cache should revalidate executability after permission changes",
+    );
+}
+
 #[test]
 fn fallback_binary_negative_cache_expires() {
     let temp_dir = TempDir::new().expect("tempdir");
@@ -556,6 +604,11 @@ fn fallback_binary_available_rejects_missing_file() {
 #[test]
 fn fallback_binary_available_respects_path_changes() {
     let _lock = env_lock().lock().expect("lock env");
+
+    availability::availability_cache()
+        .lock()
+        .expect("fallback availability cache lock poisoned")
+        .clear();
 
     let temp_dir = TempDir::new().expect("tempdir");
     let binary_name = if cfg!(windows) { "rsync.exe" } else { "rsync" };

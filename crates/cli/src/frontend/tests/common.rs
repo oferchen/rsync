@@ -182,6 +182,7 @@ pub(super) fn assert_contains_client_trailer(rendered: &str) {
     );
 }
 
+#[allow(dead_code)]
 pub(super) fn assert_contains_server_trailer(rendered: &str) {
     let expected = format!("[server={}]", rust_version());
     assert!(
@@ -189,6 +190,7 @@ pub(super) fn assert_contains_server_trailer(rendered: &str) {
         "expected message to contain {expected:?}, got {rendered:?}"
     );
 }
+
 pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
@@ -213,6 +215,15 @@ impl EnvGuard {
         let previous = std::env::var_os(key);
         unsafe {
             std::env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+
+    /// Temporarily removes the environment variable for the duration of the guard.
+    pub(super) fn remove(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::remove_var(key);
         }
         Self { key, previous }
     }

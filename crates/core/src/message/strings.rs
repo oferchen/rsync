@@ -184,6 +184,37 @@ fn message_from_template(template: ExitCodeMessage) -> Message {
     Message::new(template.severity, template.text).with_code(template.code)
 }
 
+/// Returns the canonical template for the provided exit code while prefixing it with
+/// the supplied detail text.
+///
+/// This helper preserves the upstream wording associated with the exit code and
+/// appends a caller-provided description. It mirrors the style of rsync's
+/// diagnostics, which start with the stock `rerr_names` text and then include
+/// contextual details about the failure.
+///
+/// # Examples
+///
+/// ```
+/// use core::message::strings::exit_code_message_with_detail;
+///
+/// let message = exit_code_message_with_detail(1, "unrecognised flag --bad")
+///     .expect("exit code 1 is defined");
+///
+/// assert_eq!(message.code(), Some(1));
+/// assert!(message.text().starts_with("syntax or usage error: "));
+/// assert!(message.text().contains("unrecognised flag --bad"));
+/// ```
+#[must_use]
+pub fn exit_code_message_with_detail(code: i32, detail: impl Into<String>) -> Option<Message> {
+    exit_code_message(code).map(|template| {
+        Message::new(
+            template.severity(),
+            format!("{}: {}", template.text(), detail.into()),
+        )
+        .with_code(template.code())
+    })
+}
+
 /// Returns the canonical template for the provided exit code, if known.
 ///
 /// # Examples

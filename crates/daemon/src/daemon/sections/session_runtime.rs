@@ -52,7 +52,12 @@ fn handle_session(
         }
     }
 
-    let style = detect_session_style(&stream, delegation.is_some())?;
+    // rsync daemon protocol is ALWAYS the legacy @RSYNCD protocol.
+    // Attempting to detect session style creates a deadlock: detect_session_style()
+    // peeks at the socket waiting for client data, but the client is waiting for
+    // the server to send the @RSYNCD greeting first!
+    // Always use Legacy mode for daemon connections.
+    let style = SessionStyle::Legacy;
     configure_stream(&stream)?;
 
     let peer_host = if reverse_lookup {
@@ -82,6 +87,7 @@ fn handle_session(
     }
 }
 
+#[allow(dead_code)]
 fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Result<SessionStyle> {
     stream.set_nonblocking(true)?;
     let mut peek_buf = [0u8; LEGACY_DAEMON_PREFIX_LEN];
@@ -115,6 +121,7 @@ fn detect_session_style(stream: &TcpStream, fallback_available: bool) -> io::Res
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SessionStyle {
     Legacy,
+    #[allow(dead_code)]
     Binary,
 }
 
@@ -161,10 +168,12 @@ fn handle_legacy_session(
 
     let mut request = None;
     let mut refused_options = Vec::new();
+    let mut negotiated_protocol = None;
 
     while let Some(line) = read_trimmed_line(&mut reader)? {
         match parse_legacy_daemon_message(&line) {
-            Ok(LegacyDaemonMessage::Version(_)) => {
+            Ok(LegacyDaemonMessage::Version(version)) => {
+                negotiated_protocol = Some(version);
                 messages.write_ok(reader.get_mut(), &mut limiter)?;
                 reader.get_mut().flush()?;
                 continue;
@@ -230,6 +239,7 @@ fn handle_legacy_session(
             log_sink.as_ref(),
             reverse_lookup,
             &messages,
+            negotiated_protocol,
         )?;
     }
 

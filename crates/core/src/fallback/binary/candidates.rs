@@ -24,6 +24,10 @@ pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
         return Vec::new();
     };
 
+    // Empty PATH entries (from split_paths) map to current directory, mirroring
+    // Unix execvp behavior. The loop below handles this by checking is_empty()
+    // on each directory entry.
+
     let mut results = Vec::new();
     let mut seen = HashSet::new();
 
@@ -101,19 +105,41 @@ fn has_explicit_path(path: &Path) -> bool {
 }
 
 fn effective_path_env() -> Option<OsString> {
-    read_path_env().or_else(default_search_path)
+    // Distinguish between PATH being unset vs explicitly set to empty.
+    // Unset PATH -> use default search path
+    // Empty PATH -> treat as empty (will search in cwd via split_paths)
+    read_path_env().or_else(|| {
+        if path_env_is_set() {
+            // PATH is set but empty - return empty string so split_paths
+            // produces empty entries which map to current directory
+            Some(OsString::new())
+        } else {
+            // PATH is not set - use default search path
+            default_search_path()
+        }
+    })
 }
 
-fn read_path_env() -> Option<OsString> {
+fn path_env_is_set() -> bool {
     #[cfg(windows)]
     {
-        env::var_os("PATH").or_else(|| env::var_os("Path"))
+        env::var_os("PATH").is_some() || env::var_os("Path").is_some()
     }
 
     #[cfg(not(windows))]
     {
-        env::var_os("PATH")
+        env::var_os("PATH").is_some()
     }
+}
+
+fn read_path_env() -> Option<OsString> {
+    #[cfg(windows)]
+    let path = env::var_os("PATH").or_else(|| env::var_os("Path"));
+
+    #[cfg(not(windows))]
+    let path = env::var_os("PATH");
+
+    path.and_then(|value| if value.is_empty() { None } else { Some(value) })
 }
 
 #[cfg(unix)]
