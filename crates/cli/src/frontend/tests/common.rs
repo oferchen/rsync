@@ -182,6 +182,7 @@ pub(super) fn assert_contains_client_trailer(rendered: &str) {
     );
 }
 
+#[allow(dead_code)]
 pub(super) fn assert_contains_server_trailer(rendered: &str) {
     let expected = format!("[server={}]", rust_version());
     assert!(
