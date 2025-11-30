@@ -1,6 +1,5 @@
 #![deny(unsafe_code)]
 
-mod fallback_plan;
 mod operands;
 mod preflight;
 mod run;
