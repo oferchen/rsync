@@ -255,7 +255,7 @@ mod tests {
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
 
     fn workspace_root() -> &'static Path {
         static ROOT: OnceLock<PathBuf> = OnceLock::new();
@@ -267,47 +267,7 @@ mod tests {
         })
     }
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<OsString>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl EnvGuard {
-        #[allow(unsafe_code)]
-        fn set(key: &'static str, value: &str) -> Self {
-            let guard = env_lock().lock().unwrap();
-            let previous = env::var_os(key);
-            unsafe {
-                env::set_var(key, value);
-            }
-            Self {
-                key,
-                previous,
-                _lock: guard,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        #[allow(unsafe_code)]
-        fn drop(&mut self) {
-            if let Some(previous) = self.previous.take() {
-                unsafe {
-                    env::set_var(self.key, previous);
-                }
-            } else {
-                unsafe {
-                    env::remove_var(self.key);
-                }
-            }
-        }
-    }
+    use crate::util::test_env::EnvGuard;
 
     #[test]
     fn run_cargo_tool_succeeds_for_version_query() {
@@ -337,7 +297,8 @@ mod tests {
 
     #[test]
     fn run_cargo_tool_honours_forced_missing_configuration() {
-        let _env = EnvGuard::set(FORCE_MISSING_ENV, "cargo --version");
+        let mut env = EnvGuard::new();
+        env.set(FORCE_MISSING_ENV, "cargo --version");
         let err = run_cargo_tool(
             workspace_root(),
             vec![OsString::from("--version")],
@@ -378,7 +339,8 @@ mod tests {
 
     #[test]
     fn ensure_rust_target_installed_respects_forced_missing_env() {
-        let _guard = EnvGuard::set(FORCE_MISSING_ENV, "rustup target list --installed");
+        let mut guard = EnvGuard::new();
+        guard.set(FORCE_MISSING_ENV, "rustup target list --installed");
         let error = ensure_rust_target_installed("x86_64-unknown-linux-gnu").unwrap_err();
         assert!(matches!(
             error,
@@ -388,7 +350,8 @@ mod tests {
 
     #[test]
     fn ensure_rust_target_installed_respects_missing_add_command() {
-        let _guard = EnvGuard::set(FORCE_MISSING_ENV, "rustup target add");
+        let mut guard = EnvGuard::new();
+        guard.set(FORCE_MISSING_ENV, "rustup target add");
         let error = ensure_rust_target_installed("nonexistent-target").unwrap_err();
         assert!(matches!(
             error,

@@ -50,10 +50,11 @@ use core::{
     branding::{self, Brand, manifest},
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, describe_missing_fallback_binary,
-        fallback_binary_available, fallback_override,
+        fallback_binary_available,
     },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
+    server::{HandshakeResult, ServerConfig, ServerRole, run_server_with_handshake},
 };
 use logging::MessageSink;
 use protocol::{
@@ -64,11 +65,12 @@ use protocol::{
 use crate::{config::DaemonConfig, error::DaemonError, systemd};
 
 mod help;
+mod multiplex_stream;
 
 use self::help::help_text;
 
 /// Exit code used when daemon functionality is unavailable.
-const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
+pub(crate) const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 /// Exit code returned when socket I/O fails.
 const SOCKET_IO_EXIT_CODE: i32 = 10;
 
@@ -80,18 +82,16 @@ const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Default port used for the development daemon listener.
 const DEFAULT_PORT: u16 = 873;
 
-const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";
-const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
+pub(crate) const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";
+pub(crate) const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
 const BRANDED_SECRETS_ENV: &str = "OC_RSYNC_SECRETS";
 const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
 /// Timeout applied to accepted sockets to avoid hanging handshakes.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Error payload returned to clients while daemon functionality is incomplete.
-const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailable in this build";
-/// Error payload returned when a configured module is requested but file serving is unavailable.
-const MODULE_UNAVAILABLE_PAYLOAD: &str =
-    "@ERROR: module '{module}' transfers are not yet implemented in this build";
+pub(crate) const HANDSHAKE_ERROR_PAYLOAD: &str =
+    "@ERROR: daemon functionality is unavailable in this build";
 const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";
 /// Error payload returned when a requested module does not exist.
 const UNKNOWN_MODULE_PAYLOAD: &str = "@ERROR: Unknown module '{module}'";

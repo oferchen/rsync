@@ -144,6 +144,7 @@ where
         name_level: initial_name_level,
         name_overridden: initial_name_overridden,
         stats,
+        eight_bit_output,
         partial,
         preallocate,
         fsync: fsync_option,
@@ -341,6 +342,8 @@ where
         relative.unwrap_or(false),
     );
 
+    let fallback_remainder = remainder.clone();
+
     if let Some(exit_code) = maybe_handle_module_listing(
         stdout,
         stderr,
@@ -369,8 +372,8 @@ where
     let recursive_effective = !matches!(recursive_override, Some(false));
     let batch_mode_requested =
         write_batch.is_some() || only_write_batch.is_some() || read_batch.is_some();
-    let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
-    let fallback_required = requires_remote_fallback || batch_mode_requested;
+    let has_remote_operands = transfer_requires_remote(&remainder, &file_list_operands);
+    let fallback_required = has_remote_operands || batch_mode_requested;
 
     let fallback_context = FallbackArgumentsContext {
         required: fallback_required,
@@ -451,6 +454,7 @@ where
         verbosity,
         progress_enabled: progress_mode.is_some(),
         stats,
+        eight_bit_output,
         partial,
         preallocate,
         fsync: fsync_option,
@@ -489,7 +493,7 @@ where
         no_motd,
         address_mode,
         rsync_path: rsync_path.as_ref(),
-        remainder: &remainder,
+        remainder: &fallback_remainder,
         stop_request: stop_request.clone(),
         #[cfg(feature = "acl")]
         acls,
@@ -532,7 +536,7 @@ where
     }
 
     if let Some(exit_code) = validation::validate_local_only_options(
-        fallback_required,
+        has_remote_operands,
         desired_protocol,
         password_file.as_ref(),
         connect_program.as_ref(),
