@@ -559,15 +559,7 @@ fn network_error<T: fmt::Display>(action: &str, target: T, error: io::Error) -> 
 }
 
 pub(crate) fn configured_fallback_binary() -> Option<OsString> {
-    if let Some(selection) = fallback_override(DAEMON_FALLBACK_ENV) {
-        return selection.resolve_or_default(OsStr::new(Brand::Upstream.client_program_name()));
-    }
-
-    if let Some(selection) = fallback_override(CLIENT_FALLBACK_ENV) {
-        return selection.resolve_or_default(OsStr::new(Brand::Upstream.client_program_name()));
-    }
-
-    Some(OsString::from(Brand::Upstream.client_program_name()))
+    None
 }
 
 /// Returns the configured fallback binary for daemon mode.

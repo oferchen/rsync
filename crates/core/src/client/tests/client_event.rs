@@ -10,10 +10,8 @@ use super::*;
 use crate::bandwidth;
 use crate::client::fallback::write_daemon_password;
 use crate::client::IconvSetting;
-use crate::fallback::CLIENT_FALLBACK_ENV;
-use crate::version::RUST_VERSION;
 use compress::zlib::CompressionLevel;
-use engine::{LocalCopyError, SkipCompressList, signature::SignatureAlgorithm};
+use engine::{LocalCopyError, signature::SignatureAlgorithm};
 use ::metadata::ChmodModifiers;
 use protocol::{NegotiationError, ProtocolVersion};
 use std::env;
@@ -213,6 +211,7 @@ exit 42
 "#;
 
 #[cfg(unix)]
+#[allow(dead_code)]
 const SIGNAL_EXIT_SCRIPT: &str = r#"#!/bin/sh
 set -eu
 
@@ -229,6 +228,7 @@ fn env_lock() -> &'static Mutex<()> {
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 fn write_fallback_script(dir: &Path) -> PathBuf {
     let path = dir.join("fallback.sh");
     fs::write(&path, FALLBACK_SCRIPT).expect("script written");
@@ -240,6 +240,7 @@ fn write_fallback_script(dir: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 fn write_signal_script(dir: &Path) -> PathBuf {
     let path = dir.join("signal.sh");
     fs::write(&path, SIGNAL_EXIT_SCRIPT).expect("script written");
@@ -387,6 +388,7 @@ fn baseline_fallback_args() -> RemoteFallbackArgs {
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 struct FailingWriter;
 
 #[cfg(unix)]
