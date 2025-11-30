@@ -4,6 +4,7 @@ use super::server;
 use super::*;
 use crate::password::set_password_stdin_input;
 use checksums::strong::Md5;
+use core::fallback::CLIENT_FALLBACK_ENV;
 use core::{
     branding::manifest,
     client::{ClientEventKind, FilterRuleKind},
@@ -73,6 +74,8 @@ mod invalid_tests;
 mod list_only_tests;
 #[path = "load.rs"]
 mod load_tests;
+#[path = "local.rs"]
+mod local_tests;
 #[path = "log_file.rs"]
 mod log_file_tests;
 #[path = "long.rs"]
@@ -125,8 +128,6 @@ mod parse_args_recognises_cvs_tests;
 mod parse_args_recognises_delay_tests;
 #[path = "parse_args_recognises_devices.rs"]
 mod parse_args_recognises_devices_tests;
-#[path = "parse_args_recognises_eight_bit_output.rs"]
-mod parse_args_recognises_eight_bit_output_tests;
 #[path = "parse_args_recognises_executability.rs"]
 mod parse_args_recognises_executability_tests;
 #[path = "parse_args_recognises_existing.rs"]
@@ -247,10 +248,18 @@ mod progress_render_tests;
 mod progress_tests;
 #[path = "protocol.rs"]
 mod protocol_tests;
+#[path = "remote_daemon.rs"]
+mod remote_daemon_tests;
+#[path = "remote_rsync.rs"]
+mod remote_rsync_tests;
+#[path = "remote.rs"]
+mod remote_tests;
 #[path = "rsync.rs"]
 mod rsync_tests;
 #[path = "run.rs"]
 mod run_tests;
+#[path = "server.rs"]
+mod server_tests;
 #[path = "short.rs"]
 mod short_tests;
 #[path = "size.rs"]

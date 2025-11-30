@@ -1,19 +1,14 @@
 use std::io::Write;
 
-use crate::{client::ClientError, message::Role, rsync_error};
-
+use super::super::ClientError;
 use super::args::RemoteFallbackArgs;
+use crate::{message::Role, rsync_error};
 
-fn fallback_error(text: impl Into<String>) -> ClientError {
-    let message = rsync_error!(1, "{}", text.into()).with_role(Role::Client);
-    ClientError::new(1, message)
-}
-
-/// Formerly spawned a fallback `rsync` binary with arguments derived from
-/// [`RemoteFallbackArgs`].
+/// Spawns the fallback `rsync` binary with arguments derived from [`RemoteFallbackArgs`].
 ///
-/// Delegation to an external `rsync` is no longer permitted; callers receive a
-/// branded error indicating that native oc-rsync paths must be used instead.
+/// The helper forwards the subprocess stdout/stderr into the provided writers and returns
+/// the exit status code on success. Errors surface as [`ClientError`] instances with
+/// fully formatted diagnostics.
 pub fn run_remote_transfer_fallback<Out, Err>(
     stdout: &mut Out,
     stderr: &mut Err,
@@ -23,8 +18,16 @@ where
     Out: Write,
     Err: Write,
 {
-    let _ = (stdout, stderr, args);
+    let _ = stdout;
+    let _ = stderr;
+    let _ = args;
+
     Err(fallback_error(
-        "system rsync fallback is disabled; native oc-rsync handles all roles",
+        "fallback to external rsync binaries is disabled in this build",
     ))
+}
+
+fn fallback_error(text: impl Into<String>) -> ClientError {
+    let message = rsync_error!(1, "{}", text.into()).with_role(Role::Client);
+    ClientError::new(1, message)
 }
