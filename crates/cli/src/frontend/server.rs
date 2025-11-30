@@ -11,7 +11,7 @@ use std::thread;
 use core::branding::Brand;
 use core::fallback::{
     CLIENT_FALLBACK_ENV, FallbackOverride, describe_missing_fallback_binary,
-    fallback_binary_is_self, fallback_binary_path, fallback_override,
+    fallback_binary_is_self, fallback_binary_path, fallback_disabled_reason, fallback_override,
 };
 use core::message::Role;
 use core::rsync_error;
@@ -109,6 +109,13 @@ where
     let program_brand = super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
     let upstream_program = Brand::Upstream.client_program_name();
     let upstream_program_os = OsStr::new(upstream_program);
+    if let Some(reason) = fallback_disabled_reason() {
+        let text = format!(
+            "remote server mode is unavailable because {reason}; set {CLIENT_FALLBACK_ENV} to point to an upstream {upstream_program} binary"
+        );
+        write_server_fallback_error(stderr, program_brand, text);
+        return 1;
+    }
     let fallback = match fallback_override(CLIENT_FALLBACK_ENV) {
         Some(FallbackOverride::Disabled) => {
             let text = format!(

@@ -1,5 +1,5 @@
 mod error_helper_tests {
-    use super::error::{
+    use crate::client::error::{
         MAX_DELETE_EXIT_CODE, PROTOCOL_INCOMPATIBLE_EXIT_CODE, compile_filter_error,
         daemon_access_denied_error, daemon_authentication_failed_error,
         daemon_authentication_required_error, daemon_error, daemon_protocol_error,

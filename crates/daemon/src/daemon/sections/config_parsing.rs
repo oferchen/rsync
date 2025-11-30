@@ -5,7 +5,7 @@ struct ConfigDirectiveOrigin {
 }
 
 #[derive(Debug)]
-struct ParsedConfigModules {
+pub(crate) struct ParsedConfigModules {
     modules: Vec<ModuleDefinition>,
     global_refuse_options: Vec<(Vec<String>, ConfigDirectiveOrigin)>,
     motd_lines: Vec<String>,
@@ -18,7 +18,7 @@ struct ParsedConfigModules {
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
 }
 
-fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
+pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
     parse_config_modules_inner(path, &mut stack)
 }

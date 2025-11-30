@@ -50,7 +50,7 @@ use core::{
     branding::{self, Brand, manifest},
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, describe_missing_fallback_binary,
-        fallback_binary_available, fallback_override,
+        fallback_binary_available, fallback_disabled_reason, fallback_override,
     },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,

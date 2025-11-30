@@ -38,6 +38,7 @@ include!("tests/chunks/default_secrets_path_falls_back_to_secondary_candidate.rs
 include!("tests/chunks/default_secrets_path_prefers_primary_candidate.rs");
 include!("tests/chunks/default_secrets_path_returns_none_when_absent.rs");
 include!("tests/chunks/delegate_system_daemon_fallback_env_triggers_delegation.rs");
+include!("tests/chunks/delegate_system_rsync_disable_env_blocks_delegation.rs");
 include!("tests/chunks/delegate_system_rsync_env_false_skips_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_env_triggers_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_fallback_env_triggers_delegation.rs");
@@ -56,8 +57,12 @@ include!("tests/chunks/log_module_bandwidth_change_logs_updates.rs");
 include!("tests/chunks/module_bwlimit_burst_does_not_raise_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_can_lower_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_cannot_raise_daemon_cap.rs");
-include!("tests/chunks/module_bwlimit_configured_unlimited_with_burst_override_clears_daemon_cap.rs");
-include!("tests/chunks/module_bwlimit_configured_unlimited_without_specified_flag_clears_daemon_cap.rs");
+include!(
+    "tests/chunks/module_bwlimit_configured_unlimited_with_burst_override_clears_daemon_cap.rs"
+);
+include!(
+    "tests/chunks/module_bwlimit_configured_unlimited_without_specified_flag_clears_daemon_cap.rs"
+);
 include!("tests/chunks/module_bwlimit_configures_unlimited_daemon.rs");
 include!("tests/chunks/module_bwlimit_unlimited_clears_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_unlimited_is_noop_when_no_cap.rs");
@@ -156,7 +161,9 @@ include!("tests/chunks/runtime_options_module_definition_parses_inline_options.r
 include!("tests/chunks/runtime_options_module_definition_preserves_escaped_backslash.rs");
 include!("tests/chunks/runtime_options_module_definition_rejects_duplicate_inline_option.rs");
 include!("tests/chunks/runtime_options_module_definition_rejects_unknown_inline_option.rs");
-include!("tests/chunks/runtime_options_module_definition_requires_secrets_for_inline_auth_users.rs");
+include!(
+    "tests/chunks/runtime_options_module_definition_requires_secrets_for_inline_auth_users.rs"
+);
 include!("tests/chunks/runtime_options_module_definition_supports_escaped_commas.rs");
 include!("tests/chunks/runtime_options_inline_module_inherits_chmod.rs");
 include!("tests/chunks/runtime_options_inline_module_overrides_chmod.rs");
