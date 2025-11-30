@@ -373,9 +373,6 @@ mod tests {
 
     #[test]
     fn run_server_reports_exit_status() {
-        const ENV: &str = "OC_RSYNC_FALLBACK";
-        let _guard = EnvGuard::set(ENV, "0");
-
         let args = [
             client_program_name(),
             "--server",
@@ -386,8 +383,9 @@ mod tests {
         let error = run_server(args).expect_err("fallback disabled should fail");
         assert_eq!(error.exit_status(), 1);
         assert!(
-            !error.output().stderr().is_empty(),
-            "stderr should report fallback diagnostics"
+            String::from_utf8_lossy(error.output().stderr())
+                .contains("native --server mode is not yet implemented"),
+            "stderr should report server availability diagnostics"
         );
 
         let mut stdout = Vec::new();
@@ -395,38 +393,9 @@ mod tests {
         let status = run_server_with(args, &mut stdout, &mut stderr).unwrap_err();
         assert_eq!(status.exit_status(), 1);
         assert!(
-            !stderr.is_empty(),
-            "stderr should report fallback diagnostics"
+            String::from_utf8_lossy(&stderr)
+                .contains("native --server mode is not yet implemented"),
+            "stderr should report server availability diagnostics"
         );
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        #[allow(unsafe_code)]
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var_os(key);
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        #[allow(unsafe_code)]
-        fn drop(&mut self) {
-            match self.original.take() {
-                Some(value) => unsafe {
-                    std::env::set_var(self.key, value);
-                },
-                None => unsafe {
-                    std::env::remove_var(self.key);
-                },
-            }
-        }
     }
 }
