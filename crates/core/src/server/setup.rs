@@ -50,23 +50,17 @@ pub fn exchange_compat_flags_direct(
 
     // CRITICAL: Flush immediately to ensure data leaves application buffers
     stream.flush()?;
-    eprintln!(
-        "[exchange_compat_flags_direct] Sent compat flags: {our_flags:?}"
-    );
+    eprintln!("[exchange_compat_flags_direct] Sent compat flags: {our_flags:?}");
 
     // Read client's flags (upstream compat.c:740)
     // Use the SAME stream for reading - sockets are full-duplex
     let client_flags_value = protocol::read_varint(stream)?;
     let client_flags = CompatibilityFlags::from_bits(client_flags_value as u32);
-    eprintln!(
-        "[exchange_compat_flags_direct] Received client compat flags: {client_flags:?}"
-    );
+    eprintln!("[exchange_compat_flags_direct] Received client compat flags: {client_flags:?}");
 
     // Use intersection of both (upstream compat.c:745-778)
     let final_flags = our_flags & client_flags;
-    eprintln!(
-        "[exchange_compat_flags_direct] Final compat flags: {final_flags:?}"
-    );
+    eprintln!("[exchange_compat_flags_direct] Final compat flags: {final_flags:?}");
 
     Ok(Some(final_flags))
 }
@@ -133,9 +127,7 @@ pub fn setup_protocol(
         // Read client's flags (upstream compat.c:740)
         let client_flags_value = protocol::read_varint(stdin)?;
         let client_flags = CompatibilityFlags::from_bits(client_flags_value as u32);
-        eprintln!(
-            "[setup_protocol] Received client compat flags: {client_flags:?}"
-        );
+        eprintln!("[setup_protocol] Received client compat flags: {client_flags:?}");
 
         // Use intersection of both (upstream compat.c:745-778)
         let final_flags = our_flags & client_flags;
