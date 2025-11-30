@@ -247,15 +247,6 @@ mod progress_render_tests;
 mod progress_tests;
 #[path = "protocol.rs"]
 mod protocol_tests;
-<<<<<<< HEAD
-#[path = "remote_daemon.rs"]
-mod remote_daemon_tests;
-#[path = "remote_rsync.rs"]
-mod remote_rsync_tests;
-#[path = "remote.rs"]
-mod remote_tests;
-=======
->>>>>>> origin/implement-native-server-mode-in-rust
 #[path = "rsync.rs"]
 mod rsync_tests;
 #[path = "run.rs"]
