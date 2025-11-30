@@ -419,10 +419,16 @@ pub(crate) fn is_rsync_flag_tail(s: &str) -> bool {
 
 fn write_server_error_message<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
     let mut sink = MessageSink::with_brand(stderr, brand);
-    let mut message = rsync_error!(1, "{}", text);
+    let mut message = rsync_error!(
+        1,
+        "native server mode is not yet implemented; oc-rsync no longer delegates to upstream rsync binaries"
+    );
     message = message.with_role(Role::Server);
     if super::write_message(&message, &mut sink).is_err() {
-        let _ = writeln!(sink.writer_mut(), "{text}");
+        let _ = writeln!(
+            sink.writer_mut(),
+            "native server mode is not yet implemented; oc-rsync no longer delegates to upstream rsync binaries",
+        );
     }
 }
 
