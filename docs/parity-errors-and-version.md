@@ -16,7 +16,7 @@ This note captures how oc-rsync mirrors upstream rsync 3.4.1’s user-facing dia
 | 1 | Syntax or usage error | Raised when clap reports argument conflicts (e.g. multiple delete-timing flags).【F:crates/core/src/message/strings.rs†L90-L106】【F:crates/cli/src/frontend/arguments/parser.rs†L118-L147】 |
 | 23 | Partial transfer | Propagated when some files could not be copied even though the run continued.【F:crates/core/src/message/strings.rs†L110-L118】 |
 | 24 | Vanished source | Emitted when files disappear mid-transfer; surfaced as a warning in the native engine tests.【F:crates/core/src/message/strings.rs†L118-L124】 |
-| 124–127 | Remote shell failures | Set when the fallback runner cannot launch or communicate with the remote shell binary.【F:crates/core/src/message/strings.rs†L125-L133】【F:crates/core/src/client/fallback/runner/mod.rs†L1-L73】 |
+| 124–127 | Remote shell failures | Reserved for errors in the native remote shell transport (e.g. failed exec of the configured `--rsh` program or I/O errors while exchanging the rsync protocol).【F:crates/core/src/message/strings.rs†L125-L133】 |
 
 ## Message trailers and roles
 
