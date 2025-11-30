@@ -9,13 +9,12 @@
 //! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
 //! `--append`/`--append-verify`, `--remote-option`, `--connect-program`, and `--sparse`) and delegates local copy operations to
 //! [`core::client::run_client`]. Daemon invocations are forwarded to
-//! [`daemon::run`]. The hidden `--server` entry point now reports an explicit
-//! error until the native Rust server pipeline is wired end-to-end, avoiding
-//! delegation to an upstream `rsync` binary. Higher layers will eventually extend the
-//! parser to cover the full upstream surface (remote modules, incremental
-//! recursion, filters, etc.), but providing these entry points today allows
-//! downstream tooling to depend on a stable binary path (`oc-rsync`, or `rsync`
-//! via symlink) while development continues.
+//! [`daemon::run`], while `--server` sessions surface a branded diagnostic until
+//! the native server implementation is fully wired. Higher layers will
+//! eventually extend the parser to cover the full upstream surface (remote
+//! modules, incremental recursion, filters, etc.), but providing these entry
+//! points today allows downstream tooling to depend on a stable binary path
+//! (`oc-rsync`, or `rsync` via symlink) while development continues.
 //!
 //! # Design
 //!
@@ -94,7 +93,7 @@ pub(crate) use core::client::*;
 pub(crate) use core::version::VersionInfoReport;
 use core::{
     branding::Brand,
-    message::{Message, Role},
+    message::{Message, Role, strings},
     rsync_error,
 };
 use execution::execute;
@@ -302,7 +301,8 @@ where
             }
         }
         Err(error) => {
-            let mut message = rsync_error!(1, "{}", error);
+            let mut message = strings::exit_code_message_with_detail(1, error.to_string())
+                .unwrap_or_else(|| rsync_error!(1, "{}", error));
             message = message.with_role(Role::Client);
             if write_message(&message, &mut stderr_sink).is_err() {
                 let _ = writeln!(stderr_sink.writer_mut(), "{error}");

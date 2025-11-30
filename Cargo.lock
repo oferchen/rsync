@@ -78,6 +78,7 @@ name = "apple-fs"
 version = "3.4.1-rust"
 dependencies = [
  "libc",
+ "nix",
 ]
 
 [[package]]
@@ -125,6 +126,7 @@ dependencies = [
  "daemon",
  "libc",
  "openssl",
+ "tempfile",
  "windows-gnu-eh",
 ]
 
@@ -349,6 +351,7 @@ dependencies = [
  "socket2",
  "tempfile",
  "transport",
+ "walk",
 ]
 
 [[package]]
