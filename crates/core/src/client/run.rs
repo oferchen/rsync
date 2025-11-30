@@ -3,9 +3,8 @@ use std::io::{self, Write};
 use std::time::Duration;
 
 use engine::local_copy::{
-    DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyArgumentError,
-    LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
-    ReferenceDirectory as EngineReferenceDirectory,
+    DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyExecution,
+    LocalCopyOptions, LocalCopyPlan, ReferenceDirectory as EngineReferenceDirectory,
     ReferenceDirectoryKind as EngineReferenceDirectoryKind,
 };
 use filters::FilterRule as EngineFilterRule;
@@ -14,8 +13,7 @@ use super::config::{
     ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,
 };
 use super::error::{
-    ClientError, compile_filter_error, fallback_disabled_error, map_local_copy_error,
-    missing_operands_error,
+    ClientError, compile_filter_error, map_local_copy_error, missing_operands_error,
 };
 use super::fallback::RemoteFallbackContext;
 use super::outcome::ClientOutcome;
@@ -28,11 +26,7 @@ use super::summary::ClientSummary;
 /// work performed. Remote operands trigger a feature-unavailable error until
 /// SSH and daemon transports are wired into the native engine.
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
-    match run_client_internal::<io::Sink, io::Sink>(config, None) {
-        Ok(ClientOutcome::Local(summary)) => Ok(*summary),
-        Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
-        Err(error) => Err(error),
-    }
+    run_client_internal(config, None)
 }
 
 /// Runs the client orchestration while reporting progress events.
@@ -43,11 +37,7 @@ pub fn run_client_with_observer(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    match run_client_internal::<io::Sink, io::Sink>(config, observer) {
-        Ok(ClientOutcome::Local(summary)) => Ok(*summary),
-        Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
-        Err(error) => Err(error),
-    }
+    run_client_internal(config, observer)
 }
 
 /// Executes the client flow, delegating to a fallback `rsync` binary when provided.
@@ -64,38 +54,20 @@ where
     Out: Write,
     Err: Write,
 {
-    let _ = _fallback;
-    run_client_internal::<Out, Err>(config, observer)
+    run_client_internal(config, observer).map(|summary| ClientOutcome::Local(Box::new(summary)))
 }
 
-fn run_client_internal<Out, Err>(
+fn run_client_internal(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
-) -> Result<ClientOutcome, ClientError>
-where
-    Out: Write,
-    Err: Write,
-{
+) -> Result<ClientSummary, ClientError> {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
     }
 
     let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
         Ok(plan) => plan,
-        Err(error) => {
-            let requires_fallback =
-                matches!(
-                    error.kind(),
-                    LocalCopyErrorKind::InvalidArgument(
-                        LocalCopyArgumentError::RemoteOperandUnsupported
-                    )
-                ) || matches!(error.kind(), LocalCopyErrorKind::MissingSourceOperands);
-
-            if requires_fallback {
-                return Err(fallback_disabled_error());
-            }
-            return Err(map_local_copy_error(error));
-        }
+        Err(error) => return Err(map_local_copy_error(error)),
     };
 
     let filter_program = compile_filter_program(config.filter_rules())?;
@@ -137,9 +109,7 @@ where
         .map(ClientSummary::from_summary)
     };
 
-    summary
-        .map(|summary| ClientOutcome::Local(Box::new(summary)))
-        .map_err(map_local_copy_error)
+    summary.map_err(map_local_copy_error)
 }
 
 /// Builder for [`LocalCopyOptions`] derived from a [`ClientConfig`] and
