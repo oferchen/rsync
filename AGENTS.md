@@ -40,24 +40,9 @@ This document defines the internal actors (“agents”), their responsibilities
   messages remains stable, except for the Rust source suffix and minor
   whitespace.
 
-- **Remote fallback guardrails**  
-  Before spawning upstream helpers (`rsync` from the system), the client and
-  daemon paths must:
-  - Confirm that the selected fallback binary exists on `PATH` (or via explicit
-    overrides such as `OC_RSYNC_FALLBACK`).
-  - Confirm that it is executable.
-  - Surface a branded diagnostic when the check fails so operators can install
-    upstream `rsync` or adjust `OC_RSYNC_FALLBACK`.
-
-  Shared helpers:
-  - `core::fallback::fallback_binary_available`
-  - `core::fallback::describe_missing_fallback_binary`
-
-  The availability helper memoizes lookups for each `(binary, PATH[, PATHEXT])`
-  tuple while storing the resolved executable path. Cached hits are revalidated
-  when the file disappears, and negative entries expire after a short TTL so
-  newly installed binaries are picked up. Tests adjust environment variables via
-  `EnvGuard` utilities so cache entries stay coherent.
+// Removed: legacy system-rsync fallback guardrails. All roles must execute
+// natively within the single `oc-rsync` binary; delegation to an upstream
+// `rsync` executable is forbidden.
 
 - **Workspace-wide nextest configuration**  
   The repository uses `cargo nextest` as the primary test runner. A
