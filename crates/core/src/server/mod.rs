@@ -128,7 +128,7 @@ pub fn run_server_with_handshake<W: Write>(
     // - @RSYNCD exchange for daemon mode (remote_protocol already set)
     // - perform_handshake() binary exchange for SSH mode
     // In both cases, upstream's setup_protocol() is called, then multiplex is activated.
-    let mut reader = reader::ServerReader::new_plain(chained_stdin);
+    let reader = reader::ServerReader::new_plain(chained_stdin);
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
     if handshake.protocol.as_u8() >= 23 {
