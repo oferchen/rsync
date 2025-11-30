@@ -55,6 +55,11 @@ Preliminary packages (`.deb`, `.rpm`, Homebrew formula, and tarballs) are availa
   - Command-line surface modeled after `rsync`, including exit codes and user-facing messages.
   - `--version` and `--help` outputs are structured to closely match upstream while exposing Rust-specific details.
 
+- **Single native binary**
+
+  - Client, server (`--server`), and daemon (`--daemon`) roles are implemented in Rust within the `oc-rsync` binary.
+  - No delegation to a system `rsync` binary is required or supported for normal operation.
+
 - **Rust safety & performance**
 
   - Memory-safe implementation using idiomatic Rust.
