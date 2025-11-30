@@ -9,10 +9,8 @@
 //! `--compare-dest`, `--copy-dest`, `--link-dest`, `--bwlimit`,
 //! `--append`/`--append-verify`, `--remote-option`, `--connect-program`, and `--sparse`) and delegates local copy operations to
 //! [`core::client::run_client`]. Daemon invocations are forwarded to
-//! [`daemon::run`], while `--server` sessions immediately spawn the
-//! system `rsync` binary (controlled by the `OC_RSYNC_FALLBACK` environment
-//! variable) so remote-shell transports keep functioning while the native
-//! server implementation is completed. Higher layers will eventually extend the
+//! [`daemon::run`], while `--server` sessions currently surface a branded
+//! diagnostic until the native server implementation is completed. Higher layers will eventually extend the
 //! parser to cover the full upstream surface (remote modules, incremental
 //! recursion, filters, etc.), but providing these entry points today allows
 //! downstream tooling to depend on a stable binary path (`oc-rsync`, or `rsync`
