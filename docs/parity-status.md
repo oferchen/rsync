@@ -32,9 +32,10 @@ This report summarises the current behavioural coverage of oc-rsync relative to 
 
 ## Remote and daemon support
 
-* The CLI exposes the full remote shell and rsync daemon surface so operators can stage future interop tests, but those flags currently serve to produce clear diagnostics instead of delegating to an upstream binary.【F:crates/cli/src/frontend/help.rs†L29-L58】
-* Daemon mode (`--daemon`) is branded for oc-rsync and will run natively; configuration paths align with the workspace branding guidance.【F:crates/cli/src/frontend/help.rs†L19-L44】【F:crates/core/src/version/mod.rs†L1-L44】
-* Gaps: native server mode still needs the full network I/O and module negotiation pipeline. The parity harness needs end-to-end rsync:// fixtures to lock down behaviour before unifying the Rust daemon with upstream.
+* The CLI exposes the full remote shell and rsync daemon surface so operators can talk to upstream daemons today. Flags such as `--rsh`, `--rsync-path`, `--remote-option`, and authentication helpers are forwarded unchanged to the fallback invocation.【F:crates/cli/src/frontend/help.rs†L29-L58】【F:crates/core/src/client/fallback/runner/command_builder.rs†L319-L501】
+* Daemon mode (`--daemon`) is branded for oc-rsync but currently delegates to the unified binary entry-point defined in the workspace metadata; configuration paths align with the workspace branding guidance.【F:crates/cli/src/frontend/help.rs†L19-L44】【F:crates/core/src/version/mod.rs†L1-L44】
+* Gaps: native server mode still relies on the fallback implementation for network I/O and module negotiation. The parity harness needs end-to-end rsync:// fixtures to lock down behaviour before unifying the Rust daemon with upstream.
+* Removal plan: the mission brief requires eliminating delegation to the system `rsync` binary. Native server/daemon entrypoints must replace fallback invocations, with CI coverage that proves oc-rsync can operate when no upstream `rsync` is installed. As the native pipeline lands, the `remote_fallback_*` CLI tests and docs must be rewritten to exercise the Rust server instead of expecting delegation.
 
 ## Next steps
 

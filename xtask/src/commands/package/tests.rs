@@ -6,6 +6,7 @@ use super::tarball::{TarballPlatform, TarballSpec};
 
 use super::{DIST_PROFILE, PackageOptions, execute};
 use crate::error::TaskError;
+use crate::util::test_env::EnvGuard;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -20,65 +21,22 @@ fn workspace_root() -> &'static Path {
     })
 }
 
-fn env_lock() -> &'static std::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+type ScopedEnv = EnvGuard;
+
+fn scoped_env(keys: &[&'static str]) -> ScopedEnv {
+    let mut guard = EnvGuard::new();
+    for key in keys {
+        guard.track(key);
+    }
+    guard
 }
 
-struct ScopedEnv {
-    previous: Vec<(&'static str, Option<OsString>)>,
-    _lock: std::sync::MutexGuard<'static, ()>,
+fn set_os(env: &mut ScopedEnv, key: &'static str, value: &OsStr) {
+    env.set(key, value);
 }
 
-impl ScopedEnv {
-    fn new(keys: &[&'static str]) -> Self {
-        let lock = env_lock().lock().unwrap();
-        let mut previous = Vec::with_capacity(keys.len());
-        for key in keys {
-            previous.push((*key, env::var_os(key)));
-        }
-        Self {
-            previous,
-            _lock: lock,
-        }
-    }
-
-    fn ensure_tracked(&mut self, key: &'static str) {
-        if self.previous.iter().any(|(existing, _)| existing == &key) {
-            return;
-        }
-
-        self.previous.push((key, env::var_os(key)));
-    }
-
-    #[allow(unsafe_code)]
-    fn set_os(&mut self, key: &'static str, value: &OsStr) {
-        self.ensure_tracked(key);
-        unsafe {
-            env::set_var(key, value);
-        }
-    }
-
-    fn set_str(&mut self, key: &'static str, value: &str) {
-        self.set_os(key, OsStr::new(value));
-    }
-}
-
-impl Drop for ScopedEnv {
-    #[allow(unsafe_code)]
-    fn drop(&mut self) {
-        for (key, previous) in self.previous.drain(..).rev() {
-            if let Some(value) = previous {
-                unsafe {
-                    env::set_var(key, value);
-                }
-            } else {
-                unsafe {
-                    env::remove_var(key);
-                }
-            }
-        }
-    }
+fn set_str(env: &mut ScopedEnv, key: &'static str, value: &str) {
+    set_os(env, key, OsStr::new(value));
 }
 
 #[test]
@@ -98,12 +56,12 @@ fn execute_with_no_targets_returns_success() {
 
 #[test]
 fn execute_reports_missing_cargo_deb_tool() {
-    let mut env = ScopedEnv::new(&[
+    let mut env = scoped_env(&[
         "OC_RSYNC_PACKAGE_SKIP_BUILD",
         "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
     ]);
-    env.set_str("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
-    env.set_str("OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "cargo deb");
+    set_str(&mut env, "OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
+    set_str(&mut env, "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "cargo deb");
     let error = execute(
         workspace_root(),
         PackageOptions {
@@ -123,20 +81,24 @@ fn execute_reports_missing_cargo_deb_tool() {
 
 #[test]
 fn execute_reports_missing_cargo_rpm_tool() {
-    let mut env = ScopedEnv::new(&[
+    let mut env = scoped_env(&[
         "OC_RSYNC_PACKAGE_SKIP_BUILD",
         "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
         "PATH",
     ]);
-    env.set_str("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
-    env.set_str("OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "cargo rpm build");
+    set_str(&mut env, "OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
+    set_str(
+        &mut env,
+        "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
+        "cargo rpm build",
+    );
     let (fake_rpmbuild_dir, _fake_rpmbuild) = fake_rpmbuild_path();
     let mut path_entries = vec![fake_rpmbuild_dir.path().to_path_buf()];
     if let Some(existing) = env::var_os("PATH") {
         path_entries.extend(env::split_paths(&existing));
     }
     let joined_path = env::join_paths(path_entries).expect("compose PATH with fake rpmbuild");
-    env.set_os("PATH", joined_path.as_os_str());
+    set_os(&mut env, "PATH", joined_path.as_os_str());
     let error = execute(
         workspace_root(),
         PackageOptions {
@@ -156,12 +118,12 @@ fn execute_reports_missing_cargo_rpm_tool() {
 
 #[test]
 fn execute_reports_missing_rpmbuild_tool() {
-    let mut env = ScopedEnv::new(&[
+    let mut env = scoped_env(&[
         "OC_RSYNC_PACKAGE_SKIP_BUILD",
         "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
     ]);
-    env.set_str("OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
-    env.set_str("OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "rpmbuild");
+    set_str(&mut env, "OC_RSYNC_PACKAGE_SKIP_BUILD", "1");
+    set_str(&mut env, "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "rpmbuild");
     let error = execute(
         workspace_root(),
         PackageOptions {
@@ -182,8 +144,9 @@ fn execute_reports_missing_rpmbuild_tool() {
 #[cfg(all(test, target_os = "linux"))]
 #[test]
 fn execute_reports_missing_cross_compiler() {
-    let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
-    env.set_str(
+    let mut env = scoped_env(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    set_str(
+        &mut env,
         "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
         "aarch64-linux-gnu-gcc,zig",
     );
@@ -203,9 +166,9 @@ fn execute_reports_missing_cross_compiler() {
 #[test]
 fn cross_compiler_resolution_prefers_cross_gcc() {
     let (dir, _path) = fake_tool("aarch64-linux-gnu-gcc");
-    let mut env = ScopedEnv::new(&["PATH", "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    let mut env = scoped_env(&["PATH", "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
     prepend_path(&mut env, dir.path());
-    env.set_str("OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "zig");
+    set_str(&mut env, "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS", "zig");
 
     let override_value =
         resolve_cross_compiler_for_tests(workspace_root(), "aarch64-unknown-linux-gnu")
@@ -223,9 +186,10 @@ fn cross_compiler_resolution_prefers_cross_gcc() {
 #[test]
 fn cross_compiler_resolution_falls_back_to_zig() {
     let (dir, _path) = fake_tool("zig");
-    let mut env = ScopedEnv::new(&["PATH", "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    let mut env = scoped_env(&["PATH", "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
     prepend_path(&mut env, dir.path());
-    env.set_str(
+    set_str(
+        &mut env,
         "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
         "aarch64-linux-gnu-gcc",
     );
@@ -248,8 +212,9 @@ fn cross_compiler_resolution_falls_back_to_zig() {
 #[cfg(all(test, target_os = "linux"))]
 #[test]
 fn tarball_resolution_skips_targets_without_cross_tooling() {
-    let mut env = ScopedEnv::new(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
-    env.set_str(
+    let mut env = scoped_env(&["OC_RSYNC_FORCE_MISSING_CARGO_TOOLS"]);
+    set_str(
+        &mut env,
         "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS",
         "aarch64-linux-gnu-gcc,zig",
     );
@@ -360,7 +325,7 @@ fn prepend_path(env: &mut ScopedEnv, directory: &Path) {
         path_entries.extend(env::split_paths(&existing));
     }
     let joined = env::join_paths(path_entries).expect("compose PATH");
-    env.set_os("PATH", joined.as_os_str());
+    set_os(env, "PATH", joined.as_os_str());
 }
 
 #[cfg(all(test, target_os = "linux"))]

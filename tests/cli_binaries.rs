@@ -1,5 +1,7 @@
+use core::fallback::CLIENT_FALLBACK_ENV;
 use core::version::{
-    DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME, LEGACY_PROGRAM_NAME, PROGRAM_NAME,
+    COPYRIGHT_NOTICE, DAEMON_PROGRAM_NAME, HIGHEST_PROTOCOL_VERSION, LEGACY_DAEMON_PROGRAM_NAME,
+    LEGACY_PROGRAM_NAME, PROGRAM_NAME, RUST_VERSION, SOURCE_URL,
 };
 use std::collections::{BTreeSet, HashSet};
 use std::env;
@@ -134,6 +136,89 @@ fn daemon_help_lists_usage() {
 }
 
 #[test]
+fn client_version_reports_branding_metadata() {
+    for binary in client_binaries() {
+        if locate_binary(binary).is_none() {
+            if binary == PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
+        let output = binary_output(binary, &["--version"]);
+        assert!(output.status.success(), "{binary} --version should succeed");
+        assert!(
+            output.stderr.is_empty(),
+            "{binary} version output should not write to stderr"
+        );
+        let combined = combined_utf8(&output);
+
+        assert!(
+            combined.contains(&format!("{binary} v{RUST_VERSION}")),
+            "{binary} version banner must include the Rust branded version, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(&format!("protocol version {HIGHEST_PROTOCOL_VERSION}")),
+            "{binary} version banner must report the negotiated protocol, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(SOURCE_URL),
+            "{binary} version banner must advertise the project source URL, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(COPYRIGHT_NOTICE),
+            "{binary} version banner must include the copyright notice, got:\n{combined}"
+        );
+    }
+}
+
+#[test]
+fn daemon_version_reports_branding_metadata() {
+    for binary in daemon_binaries() {
+        if locate_binary(binary).is_none() {
+            if binary == DAEMON_PROGRAM_NAME {
+                panic!("expected {binary} to be available for testing");
+            }
+            println!(
+                "skipping {binary} compatibility wrapper tests because the binary was not built"
+            );
+            continue;
+        }
+
+        let output = binary_output(binary, &["--daemon", "--version"]);
+        assert!(
+            output.status.success(),
+            "{binary} --daemon --version should succeed"
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{binary} daemon version output should not write to stderr"
+        );
+        let combined = combined_utf8(&output);
+
+        assert!(
+            combined.contains(&format!("{binary} v{RUST_VERSION}")),
+            "{binary} daemon version banner must include the Rust branded version, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(&format!("protocol version {HIGHEST_PROTOCOL_VERSION}")),
+            "{binary} daemon version banner must report the negotiated protocol, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(SOURCE_URL),
+            "{binary} daemon version banner must advertise the project source URL, got:\n{combined}"
+        );
+        assert!(
+            combined.contains(COPYRIGHT_NOTICE),
+            "{binary} daemon version banner must include the copyright notice, got:\n{combined}"
+        );
+    }
+}
+
+#[test]
 fn daemon_rejects_unknown_flag() {
     for binary in daemon_binaries() {
         if locate_binary(binary).is_none() {
@@ -157,6 +242,74 @@ fn daemon_rejects_unknown_flag() {
             "{binary} daemon output for unknown flag should mention \"unknown option\", got:\n{combined}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn server_entry_execs_fallback_binary() {
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::tempdir;
+
+    let binary = locate_binary(PROGRAM_NAME)
+        .unwrap_or_else(|| panic!("expected {PROGRAM_NAME} binary to be available"));
+
+    let temp = tempdir().expect("tempdir");
+    let script_path = temp.path().join("server_exec.sh");
+    let marker_path = temp.path().join("marker.txt");
+
+    fs::write(
+        &script_path,
+        r#"#!/bin/sh
+set -eu
+: "${SERVER_MARKER:?}"
+printf 'server stdout from exec\n'
+printf 'server stderr from exec\n' >&2
+printf 'executed' > "$SERVER_MARKER"
+exit 42
+"#,
+    )
+    .expect("write script");
+
+    let mut perms = fs::metadata(&script_path)
+        .expect("script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&script_path, perms).expect("set script perms");
+
+    let mut command = if let Some(runner) = cargo_target_runner() {
+        let mut iter = runner.into_iter();
+        let mut runner_command = Command::new(iter.next().expect("runner binary"));
+        runner_command.args(iter);
+        runner_command.arg(&binary);
+        runner_command
+    } else {
+        Command::new(&binary)
+    };
+
+    command.args(["--server", "--sender", ".", "dest"]);
+    command.env(CLIENT_FALLBACK_ENV, &script_path);
+    command.env("SERVER_MARKER", &marker_path);
+
+    let output = command
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run {PROGRAM_NAME}: {error}"));
+
+    assert_eq!(output.status.code(), Some(42));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("server stdout from exec"),
+        "stdout should come from fallback exec, got: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("server stderr from exec"),
+        "stderr should come from fallback exec, got: {stderr}"
+    );
+    assert_eq!(
+        fs::read(&marker_path).expect("read marker"),
+        b"executed",
+        "marker file should be written by fallback exec"
+    );
 }
 
 fn binary_command(name: &str) -> Command {

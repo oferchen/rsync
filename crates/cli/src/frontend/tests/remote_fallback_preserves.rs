@@ -62,6 +62,121 @@ exit 0
 
 #[cfg(unix)]
 #[test]
+fn remote_fallback_preserves_trailing_slash_for_daemon_sources() {
+    use tempfile::tempdir;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+    let _rsh_guard = clear_rsync_rsh();
+    let temp = tempdir().expect("tempdir");
+
+    let source_dir = temp.path().join("src");
+    std::fs::create_dir_all(&source_dir).expect("create source");
+
+    let mut source_with_slash = source_dir.clone().into_os_string();
+    source_with_slash.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let args_path = temp.path().join("args.txt");
+    let script_path = temp.path().join("fallback.sh");
+
+    let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+    write_executable_script(&script_path, script);
+
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
+    let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+    let destination = "rsync://example.com/module";
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        source_with_slash,
+        OsString::from(destination),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+    let expected_source = format!("{}/", source_dir.display());
+    assert!(
+        recorded.lines().any(|line| line == expected_source),
+        "recorded arguments did not include trailing slash source: {recorded}"
+    );
+    assert!(
+        recorded.lines().any(|line| line == destination),
+        "destination argument missing: {recorded}"
+    );
+    let unexpected = format!(
+        "{destination}/{}",
+        source_dir.file_name().unwrap().to_string_lossy()
+    );
+    assert!(
+        !recorded.contains(&unexpected),
+        "destination should not include duplicated base directory: {recorded}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_fallback_preserves_non_trailing_daemon_sources() {
+    use tempfile::tempdir;
+
+    let _env_lock = ENV_LOCK.lock().expect("env lock");
+    let _rsh_guard = clear_rsync_rsh();
+    let temp = tempdir().expect("tempdir");
+
+    let source_dir = temp.path().join("src");
+    std::fs::create_dir_all(&source_dir).expect("create source");
+
+    let args_path = temp.path().join("args.txt");
+    let script_path = temp.path().join("fallback.sh");
+
+    let script = r#"#!/bin/sh
+printf "%s\n" "$@" > "$ARGS_FILE"
+exit 0
+"#;
+    write_executable_script(&script_path, script);
+
+    let _fallback_guard = EnvGuard::set(CLIENT_FALLBACK_ENV, script_path.as_os_str());
+    let _args_guard = EnvGuard::set("ARGS_FILE", args_path.as_os_str());
+
+    let destination = "rsync://example.com/module";
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        source_dir.clone().into_os_string(),
+        OsString::from(destination),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+
+    let recorded = std::fs::read_to_string(&args_path).expect("read args file");
+    let expected_source = source_dir.display().to_string();
+    assert!(
+        recorded.lines().any(|line| line == expected_source),
+        "recorded arguments did not include non-trailing source: {recorded}"
+    );
+    assert!(
+        recorded.lines().any(|line| line == destination),
+        "destination argument missing: {recorded}"
+    );
+    let unexpected = format!(
+        "{destination}/{}",
+        source_dir.file_name().unwrap().to_string_lossy()
+    );
+    assert!(
+        !recorded.contains(&unexpected),
+        "destination should not include duplicated base directory: {recorded}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn remote_fallback_resets_from0_with_no_from0_flag() {
     use tempfile::tempdir;
 

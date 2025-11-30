@@ -224,4 +224,9 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+prompt.md
+optimize.md
+CLAUDE.md
+.claude/
+
 # End of https://www.toptal.com/developers/gitignore/api/rust,linux,macos,windows,rust-analyzer,visualstudiocode,jetbrains
