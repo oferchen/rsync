@@ -44,7 +44,7 @@ impl<W: Write> Write for ServerWriter<W> {
         match self {
             Self::Plain(w) => {
                 eprintln!("[ServerWriter::Plain] Writing {} bytes", buf.len());
-                eprintln!("[ServerWriter::Plain] Bytes: {:02x?}", buf);
+                eprintln!("[ServerWriter::Plain] Bytes: {buf:02x?}");
                 // Also log to file
                 if let Ok(mut f) = std::fs::OpenOptions::new()
                     .create(true)
@@ -124,7 +124,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
                 "[MULTIPLEX] Wire header: [{:#04x}, {:#04x}, {:#04x}, {:#04x}]",
                 tag, len_bytes[0], len_bytes[1], len_bytes[2]
             );
-            let _ = writeln!(f, "[MULTIPLEX] Payload: {:02x?}", buf);
+            let _ = writeln!(f, "[MULTIPLEX] Payload: {buf:02x?}");
         }
 
         protocol::send_msg(&mut self.inner, code, buf)?;
