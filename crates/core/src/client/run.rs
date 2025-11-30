@@ -1,5 +1,5 @@
 use std::ffi::OsStr;
-use std::io::{self, Write};
+use std::io::Write;
 use std::time::Duration;
 
 use engine::local_copy::{
