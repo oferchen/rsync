@@ -30,24 +30,17 @@ pub(crate) fn tool_missing_error(display: &str, install_hint: &str) -> TaskError
 #[cfg(test)]
 mod tests {
     use super::{FORCE_MISSING_ENV, should_simulate_missing_tool};
+    use crate::util::test_env::EnvGuard;
     #[test]
     fn simulation_checks_match_exact_entries() {
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::remove_var(FORCE_MISSING_ENV);
-        }
+        let mut env = EnvGuard::new();
+        env.remove(FORCE_MISSING_ENV);
         assert!(!should_simulate_missing_tool("cargo fmt"));
 
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::set_var(FORCE_MISSING_ENV, "cargo fmt,git status");
-        }
+        env.set(FORCE_MISSING_ENV, "cargo fmt,git status");
         assert!(should_simulate_missing_tool("cargo fmt"));
         assert!(should_simulate_missing_tool("git status"));
         assert!(!should_simulate_missing_tool("cargo"));
-        #[allow(unsafe_code)]
-        unsafe {
-            std::env::remove_var(FORCE_MISSING_ENV);
-        }
+        env.remove(FORCE_MISSING_ENV);
     }
 }

@@ -34,12 +34,11 @@ pub(crate) struct ParsedArgs {
     pub(crate) program_name: ProgramName,
     pub(crate) show_help: bool,
     pub(crate) show_version: bool,
-    pub(crate) delegate_system_rsync: bool,
     pub(crate) remainder: Vec<OsString>,
 }
 
 /// Internal helper constructing the clap command used by [`parse_args`].
-fn clap_command(program_name: &'static str) -> Command {
+pub(crate) fn clap_command(program_name: &'static str) -> Command {
     Command::new(program_name)
         .disable_help_flag(true)
         .disable_version_flag(true)
@@ -55,12 +54,6 @@ fn clap_command(program_name: &'static str) -> Command {
                 .long("version")
                 .short('V')
                 .help("Output version information and exit.")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("delegate-system-rsync")
-                .long("delegate-system-rsync")
-                .help("Launch the system rsync daemon with the supplied arguments.")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -90,7 +83,6 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
-    let delegate_system_rsync = matches.get_flag("delegate-system-rsync");
     let remainder = matches
         .remove_many::<OsString>("args")
         .map(|values| values.collect())
@@ -100,7 +92,6 @@ where
         program_name,
         show_help,
         show_version,
-        delegate_system_rsync,
         remainder,
     })
 }

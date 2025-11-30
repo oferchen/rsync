@@ -375,57 +375,10 @@ fn resolve_command() -> TaskResult<CommandLocation> {
 mod tests {
     use super::*;
     use crate::test_support;
+    use crate::util::test_env::EnvGuard;
     use std::ffi::OsString;
     use std::io::Write;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
     use tempfile::TempDir;
-
-    struct ScopedEnv {
-        previous: Vec<(&'static str, Option<OsString>)>,
-        _guard: MutexGuard<'static, ()>,
-    }
-
-    impl ScopedEnv {
-        fn new() -> Self {
-            let guard = env_lock().lock().expect("env lock poisoned");
-            Self {
-                previous: Vec::new(),
-                _guard: guard,
-            }
-        }
-
-        #[allow(unsafe_code)]
-        fn set(&mut self, key: &'static str, value: OsString) {
-            if self.previous.iter().all(|(existing, _)| existing != &key) {
-                self.previous.push((key, env::var_os(key)));
-            }
-            unsafe {
-                env::set_var(key, &value);
-            }
-        }
-    }
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
-    impl Drop for ScopedEnv {
-        #[allow(unsafe_code)]
-        fn drop(&mut self) {
-            for (key, value) in self.previous.drain(..).rev() {
-                if let Some(value) = value {
-                    unsafe {
-                        env::set_var(key, value);
-                    }
-                } else {
-                    unsafe {
-                        env::remove_var(key);
-                    }
-                }
-            }
-        }
-    }
 
     fn sample_branding() -> WorkspaceBranding {
         test_support::workspace_branding_snapshot()
@@ -445,7 +398,7 @@ mod tests {
     #[test]
     fn resolve_repository_respects_override() {
         let branding = sample_branding();
-        let mut env = ScopedEnv::new();
+        let mut env = EnvGuard::new();
         env.set(REPOSITORY_ENV, OsString::from("custom/repo"));
         let repository = resolve_repository(&branding).expect("repository parsed");
         assert_eq!(repository, "custom/repo");
@@ -627,7 +580,7 @@ mod tests {
             fs::set_permissions(&script_path, permissions).expect("make script executable");
         }
 
-        let mut env = ScopedEnv::new();
+        let mut env = EnvGuard::new();
         env.set(COMMAND_ENV, script_path.clone().into_os_string());
         env.set(TAG_ENV, OsString::from("v3.4.1-rust"));
         env.set(REPOSITORY_ENV, OsString::from("example/rsync"));
