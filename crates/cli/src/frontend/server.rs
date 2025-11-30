@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 //! Server mode entry points and argument parsing for `--server` invocations.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write};
 
