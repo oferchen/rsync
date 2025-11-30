@@ -1,25 +1,21 @@
 use super::*;
-<<<<<<< HEAD
 use crate::daemon::{
     AddressFamily, BRANDED_CONFIG_ENV, ConnectionLimiter, FEATURE_UNAVAILABLE_EXIT_CODE,
     HostPattern, LEGACY_CONFIG_ENV, ModuleConnectionError, ModuleDefinition, ModuleRuntime,
     ProgramName, RuntimeOptions, TestSecretsEnvOverride, advertised_capability_lines,
     apply_module_bandwidth_limit, clap_command, clear_test_hostname_overrides,
-    configured_fallback_binary, default_secrets_path_if_present, first_existing_config_path,
-    format_bandwidth_rate, format_connection_status, legacy_daemon_greeting,
-    log_module_bandwidth_change, module_peer_hostname, open_log_sink, parse_auth_user_list,
-    parse_boolean_directive, parse_config_modules, parse_max_connections_directive,
-    parse_numeric_identifier, parse_refuse_option_list, parse_timeout_seconds, read_trimmed_line,
-    render_help, sanitize_module_identifier, set_test_hostname_override,
+    default_secrets_path_if_present, first_existing_config_path, format_bandwidth_rate,
+    format_connection_status, legacy_daemon_greeting, log_module_bandwidth_change,
+    module_peer_hostname, open_log_sink, parse_auth_user_list, parse_boolean_directive,
+    parse_config_modules, parse_max_connections_directive, parse_numeric_identifier,
+    parse_refuse_option_list, parse_timeout_seconds, read_trimmed_line, render_help,
+    sanitize_module_identifier, set_test_hostname_override,
 };
 use bandwidth::{BandwidthLimiter, LimiterChange};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use checksums::strong::Md5;
 use core::branding::{self as branding, Brand};
-use core::fallback::{CLIENT_FALLBACK_ENV, DAEMON_AUTO_DELEGATE_ENV, DAEMON_FALLBACK_ENV};
-=======
->>>>>>> origin/implement-native-server-mode-in-rust
 use core::version::VersionInfoReport;
 use protocol::ProtocolVersion;
 use std::borrow::Cow;
@@ -53,17 +49,6 @@ include!("tests/chunks/default_config_candidates_prefer_oc_branding.rs");
 include!("tests/chunks/default_secrets_path_falls_back_to_secondary_candidate.rs");
 include!("tests/chunks/default_secrets_path_prefers_primary_candidate.rs");
 include!("tests/chunks/default_secrets_path_returns_none_when_absent.rs");
-<<<<<<< HEAD
-include!("tests/chunks/delegate_system_rsync_daemon_fallback_env_triggers_delegation.rs");
-include!("tests/chunks/delegate_system_rsync_env_false_skips_fallback.rs");
-include!("tests/chunks/delegate_system_rsync_env_triggers_fallback.rs");
-include!("tests/chunks/delegate_system_rsync_fallback_env_triggers_delegation.rs");
-include!("tests/chunks/delegate_system_rsync_falls_back_to_client_override.rs");
-include!("tests/chunks/delegate_system_rsync_invokes_fallback_binary.rs");
-include!("tests/chunks/delegate_system_rsync_propagates_exit_code.rs");
-include!("tests/chunks/delegate_system_rsync_reports_missing_binary_diagnostic.rs");
-=======
->>>>>>> origin/implement-native-server-mode-in-rust
 include!("tests/chunks/first_existing_config_path_falls_back_to_legacy_candidate.rs");
 include!("tests/chunks/first_existing_config_path_prefers_primary_candidate.rs");
 include!("tests/chunks/first_existing_config_path_returns_none_when_absent.rs");
