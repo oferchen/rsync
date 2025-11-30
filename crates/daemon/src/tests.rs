@@ -38,6 +38,7 @@ include!("tests/chunks/default_secrets_path_falls_back_to_secondary_candidate.rs
 include!("tests/chunks/default_secrets_path_prefers_primary_candidate.rs");
 include!("tests/chunks/default_secrets_path_returns_none_when_absent.rs");
 include!("tests/chunks/delegate_system_daemon_fallback_env_triggers_delegation.rs");
+include!("tests/chunks/delegate_system_rsync_disable_env_blocks_delegation.rs");
 include!("tests/chunks/delegate_system_rsync_env_false_skips_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_env_triggers_fallback.rs");
 include!("tests/chunks/delegate_system_rsync_fallback_env_triggers_delegation.rs");

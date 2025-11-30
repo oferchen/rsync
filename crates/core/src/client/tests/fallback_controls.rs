@@ -1,3 +1,5 @@
+use crate::fallback::DISABLE_FALLBACK_ENV;
+
 #[cfg(unix)]
 #[test]
 fn remote_fallback_forwards_partial_dir_argument() {
@@ -297,6 +299,22 @@ fn remote_fallback_reports_disabled_override() {
     assert!(message.contains(&format!(
         "remote transfers are unavailable because {CLIENT_FALLBACK_ENV} is disabled"
     )));
+}
+
+#[test]
+fn remote_fallback_honours_disable_env() {
+    let _lock = env_lock().lock().expect("env mutex poisoned");
+    let _guard = EnvGuard::set_os(DISABLE_FALLBACK_ENV, OsStr::new("1"));
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    let args = baseline_fallback_args();
+    let error = run_remote_transfer_fallback(&mut stdout, &mut stderr, args)
+        .expect_err("fallback execution should be blocked");
+
+    assert_eq!(error.exit_code(), 1);
+    let message = format!("{error}");
+    assert!(message.contains(DISABLE_FALLBACK_ENV));
 }
 
 #[test]
