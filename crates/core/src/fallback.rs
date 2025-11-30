@@ -7,9 +7,10 @@
 //! upstream `rsync` binary. Both the client and daemon binaries honour the
 //! `OC_RSYNC_FALLBACK` and `OC_RSYNC_DAEMON_FALLBACK` overrides, allowing users
 //! to explicitly disable delegation, select the default `rsync` executable, or
-//! provide a custom path. Keeping the parsing logic in a shared module avoids
-//! subtle discrepancies across crates and ensures unit tests cover every
-//! interpretation rule.
+//! provide a custom path. Setting `OC_RSYNC_DISABLE_FALLBACK` to a truthy value
+//! hard-disables delegation regardless of per-role overrides. Keeping the
+//! parsing logic in a shared module avoids subtle discrepancies across crates
+//! and ensures unit tests cover every interpretation rule.
 //!
 //! # Design
 //!
@@ -100,6 +101,14 @@ pub const CLIENT_FALLBACK_ENV: &str = "OC_RSYNC_FALLBACK";
 /// workspace-wide client override ([`CLIENT_FALLBACK_ENV`]) while allowing
 /// operators to toggle delegation independently for the daemon process.
 pub const DAEMON_FALLBACK_ENV: &str = "OC_RSYNC_DAEMON_FALLBACK";
+
+/// Name of the workspace-wide environment flag that disables fallback execution.
+///
+/// When set to any truthy value the client and daemon refuse to spawn the system
+/// `rsync` binary, surfacing a clear diagnostic instead. Explicitly false values
+/// (`0`, `false`, `no`, or `off`) re-enable delegation, allowing operators to
+/// toggle the behaviour without editing CLI arguments.
+pub const DISABLE_FALLBACK_ENV: &str = "OC_RSYNC_DISABLE_FALLBACK";
 
 /// Name of the daemon auto-delegation environment variable.
 ///
@@ -201,6 +210,24 @@ pub fn interpret_override_value(raw: &OsStr) -> FallbackOverride {
     FallbackOverride::Explicit(raw.to_os_string())
 }
 
+/// Reports whether fallback execution is disabled via
+/// [`DISABLE_FALLBACK_ENV`].
+#[must_use]
+pub fn fallback_invocation_disabled() -> bool {
+    env::var_os(DISABLE_FALLBACK_ENV)
+        .as_deref()
+        .map(env_flag_truthy)
+        .unwrap_or(false)
+}
+
+/// Provides a human-readable explanation when fallback execution is disabled.
+#[must_use]
+pub fn fallback_disabled_reason() -> Option<String> {
+    fallback_invocation_disabled().then(|| {
+        format!("fallback to the system rsync binary is disabled via {DISABLE_FALLBACK_ENV}")
+    })
+}
+
 /// Parses the supplied environment variable into a [`FallbackOverride`].
 ///
 /// The helper returns [`None`] when the variable is unset and otherwise defers
@@ -214,6 +241,23 @@ fn matches_ascii_case(value: &str, options: &[&str]) -> bool {
     options
         .iter()
         .any(|candidate| value.eq_ignore_ascii_case(candidate))
+}
+
+fn env_flag_truthy(raw: &OsStr) -> bool {
+    if raw.is_empty() {
+        return true;
+    }
+
+    if let Some(text) = raw.to_str() {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return true;
+        }
+
+        return !matches_ascii_case(trimmed, &DISABLED_OVERRIDES);
+    }
+
+    true
 }
 
 fn strip_enclosing_quotes(value: &str) -> Option<&str> {
@@ -375,7 +419,31 @@ mod tests {
     fn fallback_env_constants_match_expected() {
         assert_eq!(CLIENT_FALLBACK_ENV, "OC_RSYNC_FALLBACK");
         assert_eq!(DAEMON_FALLBACK_ENV, "OC_RSYNC_DAEMON_FALLBACK");
+        assert_eq!(DISABLE_FALLBACK_ENV, "OC_RSYNC_DISABLE_FALLBACK");
         assert_eq!(DAEMON_AUTO_DELEGATE_ENV, "OC_RSYNC_DAEMON_AUTO_DELEGATE");
+    }
+
+    #[test]
+    fn disable_fallback_env_defaults_to_enabled() {
+        let _guard = EnvVarGuard::remove(DISABLE_FALLBACK_ENV);
+        assert!(!fallback_invocation_disabled());
+    }
+
+    #[test]
+    fn disable_fallback_env_respects_truthy_values() {
+        let _guard = EnvVarGuard::set(DISABLE_FALLBACK_ENV, "1");
+        assert!(fallback_invocation_disabled());
+        assert!(
+            fallback_disabled_reason()
+                .expect("reason present")
+                .contains(DISABLE_FALLBACK_ENV)
+        );
+    }
+
+    #[test]
+    fn disable_fallback_env_accepts_falsey_values() {
+        let _guard = EnvVarGuard::set(DISABLE_FALLBACK_ENV, "false");
+        assert!(!fallback_invocation_disabled());
     }
 
     impl Drop for EnvVarGuard {
