@@ -14,11 +14,11 @@ use super::config::{
     ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,
 };
 use super::error::{
-    ClientError, compile_filter_error, fallback_context_missing_error, map_local_copy_error,
+    ClientError, compile_filter_error, fallback_disabled_error, map_local_copy_error,
     missing_operands_error,
 };
-use super::fallback::{RemoteFallbackContext, run_remote_transfer_fallback};
-use super::outcome::{ClientOutcome, FallbackSummary};
+use super::fallback::RemoteFallbackContext;
+use super::outcome::ClientOutcome;
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
 use super::summary::ClientSummary;
 
@@ -28,7 +28,7 @@ use super::summary::ClientSummary;
 /// work performed. Remote operands trigger a feature-unavailable error until
 /// SSH and daemon transports are wired into the native engine.
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
-    match run_client_internal::<io::Sink, io::Sink>(config, None, None) {
+    match run_client_internal::<io::Sink, io::Sink>(config, None) {
         Ok(ClientOutcome::Local(summary)) => Ok(*summary),
         Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
         Err(error) => Err(error),
@@ -43,7 +43,7 @@ pub fn run_client_with_observer(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    match run_client_internal::<io::Sink, io::Sink>(config, observer, None) {
+    match run_client_internal::<io::Sink, io::Sink>(config, observer) {
         Ok(ClientOutcome::Local(summary)) => Ok(*summary),
         Ok(ClientOutcome::Fallback(_)) => unreachable!("fallback unavailable without context"),
         Err(error) => Err(error),
@@ -58,19 +58,19 @@ pub fn run_client_with_observer(
 pub fn run_client_or_fallback<Out, Err>(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
-    fallback: Option<RemoteFallbackContext<'_, Out, Err>>,
+    _fallback: Option<RemoteFallbackContext<'_, Out, Err>>,
 ) -> Result<ClientOutcome, ClientError>
 where
     Out: Write,
     Err: Write,
 {
-    run_client_internal(config, observer, fallback)
+    let _ = _fallback;
+    run_client_internal::<Out, Err>(config, observer)
 }
 
 fn run_client_internal<Out, Err>(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
-    fallback: Option<RemoteFallbackContext<'_, Out, Err>>,
 ) -> Result<ClientOutcome, ClientError>
 where
     Out: Write,
@@ -78,15 +78,6 @@ where
 {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
-    }
-
-    let mut fallback = fallback;
-
-    if config.force_fallback() {
-        return fallback
-            .take()
-            .map(invoke_fallback)
-            .unwrap_or_else(|| Err(fallback_context_missing_error()));
     }
 
     let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
@@ -100,10 +91,9 @@ where
                     )
                 ) || matches!(error.kind(), LocalCopyErrorKind::MissingSourceOperands);
 
-            if let Some(ctx) = requires_fallback.then(|| fallback.take()).flatten() {
-                return invoke_fallback(ctx);
+            if requires_fallback {
+                return Err(fallback_disabled_error());
             }
-
             return Err(map_local_copy_error(error));
         }
     };
@@ -390,18 +380,6 @@ pub fn build_local_copy_options(
     filter_program: Option<FilterProgram>,
 ) -> LocalCopyOptions {
     LocalCopyOptionsBuilder::new(config, filter_program).build()
-}
-
-fn invoke_fallback<Out, Err>(
-    ctx: RemoteFallbackContext<'_, Out, Err>,
-) -> Result<ClientOutcome, ClientError>
-where
-    Out: Write,
-    Err: Write,
-{
-    let (stdout, stderr, args) = ctx.split();
-    run_remote_transfer_fallback(stdout, stderr, args)
-        .map(|code| ClientOutcome::Fallback(FallbackSummary::new(code)))
 }
 
 fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgram>, ClientError> {

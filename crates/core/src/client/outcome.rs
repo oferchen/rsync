@@ -64,6 +64,7 @@ pub struct FallbackSummary {
 }
 
 impl FallbackSummary {
+    #[allow(dead_code)]
     pub(crate) const fn new(exit_code: i32) -> Self {
         Self { exit_code }
     }
