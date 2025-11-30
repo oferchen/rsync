@@ -1,4 +1,3 @@
-include!("client_event.rs");
 include!("builder_compress.rs");
 include!("builder_metadata.rs");
 include!("human_readable_mode.rs");

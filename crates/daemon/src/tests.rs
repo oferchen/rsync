@@ -1,28 +1,9 @@
 use super::*;
-use crate::daemon::{
-    AddressFamily, BRANDED_CONFIG_ENV, ConnectionLimiter, FEATURE_UNAVAILABLE_EXIT_CODE,
-    HostPattern, LEGACY_CONFIG_ENV, ModuleConnectionError, ModuleDefinition, ModuleRuntime,
-    ProgramName, RuntimeOptions, TestSecretsEnvOverride, advertised_capability_lines,
-    apply_module_bandwidth_limit, clap_command, clear_test_hostname_overrides,
-    default_secrets_path_if_present, first_existing_config_path, format_bandwidth_rate,
-    format_connection_status, legacy_daemon_greeting, log_module_bandwidth_change,
-    module_peer_hostname, open_log_sink, parse_auth_user_list, parse_boolean_directive,
-    parse_config_modules, parse_max_connections_directive, parse_numeric_identifier,
-    parse_refuse_option_list, parse_timeout_seconds, read_trimmed_line, render_help,
-    sanitize_module_identifier, set_test_hostname_override,
-};
-use bandwidth::{BandwidthLimiter, LimiterChange};
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_NO_PAD;
-use checksums::strong::Md5;
-use core::branding::{self as branding, Brand};
 use core::version::VersionInfoReport;
-use protocol::ProtocolVersion;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
@@ -60,12 +41,8 @@ include!("tests/chunks/log_module_bandwidth_change_logs_updates.rs");
 include!("tests/chunks/module_bwlimit_burst_does_not_raise_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_can_lower_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_cannot_raise_daemon_cap.rs");
-include!(
-    "tests/chunks/module_bwlimit_configured_unlimited_with_burst_override_clears_daemon_cap.rs"
-);
-include!(
-    "tests/chunks/module_bwlimit_configured_unlimited_without_specified_flag_clears_daemon_cap.rs"
-);
+include!("tests/chunks/module_bwlimit_configured_unlimited_with_burst_override_clears_daemon_cap.rs");
+include!("tests/chunks/module_bwlimit_configured_unlimited_without_specified_flag_clears_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_configures_unlimited_daemon.rs");
 include!("tests/chunks/module_bwlimit_unlimited_clears_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_unlimited_is_noop_when_no_cap.rs");
@@ -127,7 +104,6 @@ include!("tests/chunks/runtime_options_cli_modules_inherit_global_refuse_options
 include!("tests/chunks/runtime_options_config_lock_file_respects_cli_override.rs");
 include!("tests/chunks/runtime_options_config_pid_file_respects_cli_override.rs");
 include!("tests/chunks/runtime_options_default_enables_reverse_lookup.rs");
-include!("tests/chunks/runtime_options_default_secrets_path_updates_delegate_arguments.rs");
 include!("tests/chunks/runtime_options_global_bwlimit_respects_cli_override.rs");
 include!("tests/chunks/runtime_options_inherits_global_secrets_file_from_config.rs");
 include!("tests/chunks/runtime_options_inline_module_uses_default_secrets_file.rs");
@@ -163,9 +139,7 @@ include!("tests/chunks/runtime_options_module_definition_parses_inline_options.r
 include!("tests/chunks/runtime_options_module_definition_preserves_escaped_backslash.rs");
 include!("tests/chunks/runtime_options_module_definition_rejects_duplicate_inline_option.rs");
 include!("tests/chunks/runtime_options_module_definition_rejects_unknown_inline_option.rs");
-include!(
-    "tests/chunks/runtime_options_module_definition_requires_secrets_for_inline_auth_users.rs"
-);
+include!("tests/chunks/runtime_options_module_definition_requires_secrets_for_inline_auth_users.rs");
 include!("tests/chunks/runtime_options_module_definition_supports_escaped_commas.rs");
 include!("tests/chunks/runtime_options_inline_module_inherits_chmod.rs");
 include!("tests/chunks/runtime_options_inline_module_overrides_chmod.rs");

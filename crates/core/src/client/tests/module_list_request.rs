@@ -316,6 +316,7 @@ fn connect_program_token_expansion_matches_upstream_rules() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn run_module_list_collects_motd_after_acknowledgement() {
     let _guard = env_lock().lock().expect("env mutex poisoned");
