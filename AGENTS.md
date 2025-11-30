@@ -194,7 +194,7 @@ This document defines the internal actors (“agents”), their responsibilities
   - `config.rs` — client builder assembly
   - `filters.rs` — include/exclude wiring
   - `summary.rs` — progress & output rendering
-  - `fallback.rs` — remote invocation argument preparation
+  - `fallback.rs` — legacy remote invocation argument preparation (deprecated; replace with native server wiring)
   - `metadata.rs` — preservation flags
 
   New functionality must join these modules directly (or new siblings), not
@@ -205,7 +205,7 @@ This document defines the internal actors (“agents”), their responsibilities
   `crates/cli/src/frontend/execution/drive/workflow/`:
 
   - `preflight.rs` — argument validation
-  - `fallback_plan.rs` — remote-fallback assembly
+  - `fallback_plan.rs` — legacy remote-fallback assembly (deprecated; replace with native transport plan)
   - `operands.rs` — usage rendering & operand checks
 
   New flow-control helpers belong in these focused modules (or new siblings)
