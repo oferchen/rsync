@@ -182,8 +182,6 @@ pub(super) fn assert_contains_client_trailer(rendered: &str) {
     );
 }
 
-<<<<<<< HEAD
-=======
 #[allow(dead_code)]
 pub(super) fn assert_contains_server_trailer(rendered: &str) {
     let expected = format!("[server={}]", rust_version());
@@ -192,7 +190,7 @@ pub(super) fn assert_contains_server_trailer(rendered: &str) {
         "expected message to contain {expected:?}, got {rendered:?}"
     );
 }
->>>>>>> origin/implement-native-server-mode-in-rust
+
 pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 pub(super) fn run_with_args<I, S>(args: I) -> (i32, Vec<u8>, Vec<u8>)
