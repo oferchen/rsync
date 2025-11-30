@@ -184,7 +184,7 @@ fn generate_fallback_config(
     }))
 }
 
-fn format_connection_status(active: usize) -> String {
+pub(crate) fn format_connection_status(active: usize) -> String {
     match active {
         0 => String::from("Idle; waiting for connections"),
         1 => String::from("Serving 1 connection"),
@@ -196,6 +196,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let manifest = manifest();
     let version = manifest.rust_version();
     let RuntimeOptions {
+        brand,
         bind_address,
         port,
         max_sessions,
@@ -233,7 +234,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         }
     }
 
-    let delegation = if let Some(binary) = configured_fallback_binary() {
+    // Daemon mode never delegates - always use internal Rust implementation
+    let delegation = if let Some(binary) = configured_fallback_binary_for_daemon() {
         if fallback_binary_available(binary.as_os_str()) {
             Some(SessionDelegation::new(binary, delegate_arguments))
         } else {
@@ -257,11 +259,11 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     };
 
     if let Some(message) = fallback_warning_message.as_ref() {
-        eprintln!("{message}");
+        eprintln!("{}", message.clone().with_brand(brand));
     }
 
     let log_sink = if let Some(path) = log_file {
-        Some(open_log_sink(&path)?)
+        Some(open_log_sink(&path, brand)?)
     } else {
         None
     };

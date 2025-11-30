@@ -439,6 +439,8 @@ cleanup() {
 }
 
 # IMPORTANT: oc-rsync --daemon needs the port on CLI, otherwise it binds to 873 (privileged)
+# NOTE: Daemon defaults to delegating to system rsync. Set OC_RSYNC_DAEMON_FALLBACK=0
+# to force native handling (required for interop testing).
 start_oc_daemon() {
   local config=$1
   local log_file=$2
@@ -449,8 +451,7 @@ start_oc_daemon() {
   oc_pid_file_current="$pid_file"
 
   RUST_BACKTRACE=1 \
-  OC_RSYNC_DAEMON_FALLBACK="$fallback_client" \
-  OC_RSYNC_FALLBACK="$fallback_client" \
+  OC_RSYNC_DAEMON_FALLBACK=0 \
     "$oc_binary" --daemon --config "$config" --port "$port" --log-file "$log_file" &
   oc_pid=$!
   sleep 1

@@ -184,6 +184,130 @@ fn send_daemon_ok(
     stream.flush()
 }
 
+/// Reads client arguments sent after module approval.
+///
+/// After the daemon sends "@RSYNCD: OK", the client sends its command-line
+/// arguments (e.g., "--server", "-r", "-a", "."). This mirrors upstream's
+/// `read_args()` function in io.c:1292.
+///
+/// For protocol >= 30: arguments are null-byte terminated
+/// For protocol < 30: arguments are newline terminated
+/// An empty argument marks the end of the list.
+fn read_client_arguments(
+    reader: &mut BufReader<TcpStream>,
+    protocol: Option<ProtocolVersion>,
+) -> io::Result<Vec<String>> {
+    let use_nulls = protocol.is_some_and(|p| p.as_u8() >= 30);
+    let mut arguments = Vec::new();
+
+    loop {
+        if use_nulls {
+            // Protocol 30+: read null-terminated arguments
+            let mut buf = Vec::new();
+            let bytes_read = reader.read_until(b'\0', &mut buf)?;
+
+            if bytes_read == 0 {
+                break; // EOF
+            }
+
+            // Remove the null terminator
+            if buf.last() == Some(&b'\0') {
+                buf.pop();
+            }
+
+            // Empty argument signals end
+            if buf.is_empty() {
+                break;
+            }
+
+            let arg = String::from_utf8_lossy(&buf).into_owned();
+            arguments.push(arg);
+        } else {
+            // Protocol < 30: read newline-terminated arguments
+            let line = match read_trimmed_line(reader)? {
+                Some(line) => line,
+                None => break, // EOF
+            };
+
+            // Empty line signals end
+            if line.is_empty() {
+                break;
+            }
+
+            arguments.push(line);
+        }
+    }
+
+    Ok(arguments)
+}
+
+/// Performs protocol setup exchange after client arguments are received.
+///
+/// This mirrors upstream's `setup_protocol()` in compat.c:572. The exchange:
+/// 1. Writes our protocol version to the client
+/// 2. Reads the client's protocol version
+/// 3. For protocol >= 30: exchanges compatibility flags
+///
+/// This must be called AFTER reading client arguments and BEFORE activating
+/// multiplexing, to match upstream's daemon flow.
+#[allow(dead_code)]
+fn perform_protocol_setup<S: Read + Write>(
+    stream: &mut S,
+    our_protocol: ProtocolVersion,
+) -> io::Result<(ProtocolVersion, protocol::CompatibilityFlags)> {
+    // Write our protocol version (4-byte little-endian i32)
+    let our_version_bytes = (our_protocol.as_u8() as i32).to_le_bytes();
+    stream.write_all(&our_version_bytes)?;
+    stream.flush()?;
+
+    // Read client's protocol version (4-byte little-endian i32)
+    let mut remote_bytes = [0u8; 4];
+    stream.read_exact(&mut remote_bytes)?;
+    let remote_version_i32 = i32::from_le_bytes(remote_bytes);
+
+    if remote_version_i32 <= 0 || remote_version_i32 > 255 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid remote protocol version: {remote_version_i32}"),
+        ));
+    }
+
+    let remote_protocol = protocol::ProtocolVersion::try_from(remote_version_i32 as u8)
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unsupported protocol version: {e}"),
+            )
+        })?;
+
+    // Use the minimum of our version and the remote version
+    let negotiated = if remote_protocol.as_u8() < our_protocol.as_u8() {
+        remote_protocol
+    } else {
+        our_protocol
+    };
+
+    // For protocol >= 30, exchange compatibility flags
+    let compat_flags = if negotiated.as_u8() >= 30 {
+        // Server sends flags first
+        let our_flags = protocol::CompatibilityFlags::INC_RECURSE
+            | protocol::CompatibilityFlags::CHECKSUM_SEED_FIX
+            | protocol::CompatibilityFlags::VARINT_FLIST_FLAGS;
+        protocol::write_varint(stream, our_flags.bits() as i32)?;
+        stream.flush()?;
+
+        // Read client's flags
+        let client_flags = protocol::CompatibilityFlags::read_from(stream)?;
+
+        // Use the intersection of both flags (only features both sides support)
+        our_flags & client_flags
+    } else {
+        protocol::CompatibilityFlags::EMPTY
+    };
+
+    Ok((negotiated, compat_flags))
+}
+
 /// Applies the module-specific bandwidth directives to the active limiter.
 ///
 /// The helper mirrors upstream rsync's precedence rules: a module `bwlimit`
@@ -194,7 +318,7 @@ fn send_daemon_ok(
 /// The function returns the [`LimiterChange`] reported by
 /// [`apply_effective_limit`], allowing callers and tests to verify whether the
 /// limiter configuration changed as a result of the module overrides.
-fn apply_module_bandwidth_limit(
+pub(crate) fn apply_module_bandwidth_limit(
     limiter: &mut Option<BandwidthLimiter>,
     module_limit: Option<NonZeroU64>,
     module_limit_specified: bool,
@@ -240,6 +364,7 @@ fn respond_with_module_request(
     log_sink: Option<&SharedLogSink>,
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
+    negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
     if let Some(module) = modules.iter().find(|module| module.name == request) {
         let change = apply_module_bandwidth_limit(
@@ -370,19 +495,178 @@ fn respond_with_module_request(
                 send_daemon_ok(reader.get_mut(), limiter, messages)?;
             }
 
-            let module_display = sanitize_module_identifier(request);
-            let payload = MODULE_UNAVAILABLE_PAYLOAD.replace("{module}", module_display.as_ref());
-            let stream = reader.get_mut();
-            write_limited(stream, limiter, payload.as_bytes())?;
-            write_limited(stream, limiter, b"\n")?;
+            // Read client arguments sent after "@RSYNCD: OK"
+            // This mirrors upstream's read_args() in io.c:1292
+            let client_args = match read_client_arguments(reader, negotiated_protocol) {
+                Ok(args) => args,
+                Err(err) => {
+                    let payload = format!("@ERROR: failed to read client arguments: {err}");
+                    let stream = reader.get_mut();
+                    write_limited(stream, limiter, payload.as_bytes())?;
+                    write_limited(stream, limiter, b"\n")?;
+                    messages.write_exit(stream, limiter)?;
+                    stream.flush()?;
+                    return Ok(());
+                }
+            };
+
+            // Log received arguments for debugging
             if let Some(log) = log_sink {
-                log_module_unavailable(
-                    log,
-                    module_peer_host.or(session_peer_host),
-                    peer_ip,
+                let args_str = client_args.join(" ");
+                let text = format!(
+                    "module '{}' from {} ({}): client args: {}",
                     request,
+                    module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                    peer_ip,
+                    args_str
                 );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
             }
+
+            // DAEMON WIRING: Wire core::server for daemon file transfers
+            // Determine role based on client arguments (mirrors upstream daemon.c)
+            // Client with --sender flag → client is sending, server is receiving
+            // Client without --sender → client is receiving, server is sending
+            let is_client_sender = client_args.iter().any(|arg| arg == "--sender");
+            let role = if is_client_sender {
+                // Client is sending to us, so we receive
+                ServerRole::Receiver
+            } else {
+                // Client is receiving from us, so we send
+                ServerRole::Generator
+            };
+
+            // Build ServerConfig with module path as the target directory
+            // Parse client arguments to extract flags and additional paths
+            let config = match ServerConfig::from_flag_string_and_args(
+                role,
+                client_args.join(" "), // Use client-supplied arguments
+                vec![OsString::from(&module.path)],
+            ) {
+                Ok(cfg) => cfg,
+                Err(err) => {
+                    let payload = format!("@ERROR: failed to configure server: {err}");
+                    let stream = reader.get_mut();
+                    write_limited(stream, limiter, payload.as_bytes())?;
+                    write_limited(stream, limiter, b"\n")?;
+                    messages.write_exit(stream, limiter)?;
+                    stream.flush()?;
+                    return Ok(());
+                }
+            };
+
+            // Validate that the module path exists and is accessible
+            if !Path::new(&module.path).exists() {
+                let payload = format!(
+                    "@ERROR: module '{}' path does not exist: {}",
+                    sanitize_module_identifier(request),
+                    module.path.display()
+                );
+                let stream = reader.get_mut();
+                write_limited(stream, limiter, payload.as_bytes())?;
+                write_limited(stream, limiter, b"\n")?;
+                messages.write_exit(stream, limiter)?;
+                stream.flush()?;
+                if let Some(log) = log_sink {
+                    let text = format!(
+                        "module '{}' path validation failed for {} ({}): path does not exist: {}",
+                        request,
+                        module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                        peer_ip,
+                        module.path.display()
+                    );
+                    let message = rsync_error!(1, text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                return Ok(());
+            }
+
+            // For daemon success path, we do NOT perform protocol setup here!
+            // Upstream does setup_protocol INSIDE start_server() (main.c:1245)
+            // only calling it early for error reporting (clientserver.c:1136)
+            // We pass the negotiated protocol to run_server_with_handshake,
+            // which will perform setup_protocol internally
+            let final_protocol = negotiated_protocol.unwrap_or(ProtocolVersion::V30);
+            let compat_flags = protocol::CompatibilityFlags::from(0u32);
+
+            // Log the negotiated protocol and compatibility flags
+            if let Some(log) = log_sink {
+                let text = format!(
+                    "module '{}' from {} ({}): protocol {}, compat flags: {}, role: {:?}",
+                    request,
+                    module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                    peer_ip,
+                    final_protocol.as_u8(),
+                    compat_flags,
+                    role
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+
+            // Extract any buffered data from the BufReader before bypassing it
+            // This is critical: the BufReader may have read ahead during the module
+            // negotiation phase, and we must preserve this data for the file transfer
+            let buffered_data = reader.buffer().to_vec();
+
+            // Clone the stream for concurrent read/write in server mode
+            let stream = reader.get_ref();
+            let mut read_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(err) => {
+                    let payload = format!("@ERROR: failed to clone stream: {err}");
+                    let stream_mut = reader.get_mut();
+                    write_limited(stream_mut, limiter, payload.as_bytes())?;
+                    write_limited(stream_mut, limiter, b"\n")?;
+                    messages.write_exit(stream_mut, limiter)?;
+                    stream_mut.flush()?;
+                    return Ok(());
+                }
+            };
+            let write_stream = reader.get_mut();
+
+            // Create HandshakeResult from the negotiated protocol version
+            // Protocol setup and multiplex activation handled inside run_server_with_handshake
+            let handshake = HandshakeResult {
+                protocol: final_protocol,
+                buffered: buffered_data,
+            };
+
+            eprintln!("[daemon] Calling run_server_with_handshake");
+
+            // Run the server transfer - handles protocol setup and multiplex internally
+            match run_server_with_handshake(config, handshake, &mut read_stream, write_stream) {
+                Ok(exit_code) => {
+                    if let Some(log) = log_sink {
+                        let text = format!(
+                            "transfer to {} ({}): module={} exit_code={}",
+                            module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                            peer_ip,
+                            request,
+                            exit_code
+                        );
+                        let message = rsync_info!(text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                }
+                Err(err) => {
+                    if let Some(log) = log_sink {
+                        let text = format!(
+                            "transfer failed to {} ({}): module={} error={}",
+                            module_peer_host.or(session_peer_host).unwrap_or("unknown"),
+                            peer_ip,
+                            request,
+                            err
+                        );
+                        let message = rsync_error!(1, text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                }
+            }
+
+            // Note: Connection guard (_connection_guard) drops here, releasing the slot
+            return Ok(());
         } else {
             if let Some(log) = log_sink {
                 log_module_denied(
@@ -411,13 +695,13 @@ fn respond_with_module_request(
     stream.flush()
 }
 
-fn open_log_sink(path: &Path) -> Result<SharedLogSink, DaemonError> {
+pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .map_err(|error| log_file_error(path, error))?;
-    Ok(Arc::new(Mutex::new(MessageSink::new(file))))
+    Ok(Arc::new(Mutex::new(MessageSink::with_brand(file, brand))))
 }
 
 fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
@@ -474,7 +758,7 @@ fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
 /// sequences or split log lines. The helper replaces ASCII control characters
 /// with a visible `'?'` marker while borrowing clean identifiers to avoid
 /// unnecessary allocations.
-fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
+pub(crate) fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
     if input.chars().all(|ch| !ch.is_control()) {
         return Cow::Borrowed(input);
     }
@@ -491,7 +775,7 @@ fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
     Cow::Owned(sanitized)
 }
 
-fn format_bandwidth_rate(value: NonZeroU64) -> String {
+pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = KIB * 1024;
     const GIB: u64 = MIB * 1024;

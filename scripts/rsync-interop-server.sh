@@ -341,8 +341,9 @@ CONF
 
 start_oc_daemon() {
   local bin=$1 conf=$2 log=$3 pid_file=$4 port=$5 fallback=$6
-  OC_RSYNC_DAEMON_FALLBACK="${fallback}" \
-  OC_RSYNC_FALLBACK="${fallback}" \
+  # NOTE: Daemon defaults to delegating to system rsync. Set OC_RSYNC_DAEMON_FALLBACK=0
+  # to force native handling (required for interop testing).
+  OC_RSYNC_DAEMON_FALLBACK=0 \
     "${bin}" --daemon --config "${conf}" --port "${port}" --log-file "${log}" &
   oc_pid_list+=("$!")
   sleep 1

@@ -39,7 +39,7 @@ pub(crate) struct ParsedArgs {
 }
 
 /// Internal helper constructing the clap command used by [`parse_args`].
-fn clap_command(program_name: &'static str) -> Command {
+pub(crate) fn clap_command(program_name: &'static str) -> Command {
     Command::new(program_name)
         .disable_help_flag(true)
         .disable_version_flag(true)
