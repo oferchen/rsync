@@ -32,6 +32,7 @@ impl DaemonAuthContext {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn into_zeroized_secret(self) -> Vec<u8> {
         self.secret.into_zeroized_vec()
     }
@@ -53,6 +54,7 @@ impl SensitiveBytes {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn into_zeroized_vec(mut self) -> Vec<u8> {
         for byte in &mut self.0 {
             *byte = 0;
@@ -103,6 +105,7 @@ thread_local! {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn set_test_daemon_password(password: Option<Vec<u8>>) {
     TEST_PASSWORD_OVERRIDE.with(|slot| *slot.borrow_mut() = password);
 }
