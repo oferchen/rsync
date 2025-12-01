@@ -84,7 +84,8 @@ where
     let has_explicit_config = remainder_has_config(&parsed.remainder);
 
     // Native-only execution per CLAUDE.md: no fallback to system rsync
-    if false && fallback_disabled_reason().is_none()
+    if false
+        && fallback_disabled_reason().is_none()
         && !has_explicit_config
         && (auto_delegate_system_rsync_enabled() || fallback_binary_configured())
     {

@@ -141,7 +141,10 @@ fn test_ssh_push_recursive_directory() {
         assert!(dest_dir.path().join("subdir").join("file3.txt").exists());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("SSH recursive push test skipped (SSH not configured): {}", stderr);
+        eprintln!(
+            "SSH recursive push test skipped (SSH not configured): {}",
+            stderr
+        );
     }
 }
 
@@ -156,10 +159,16 @@ fn test_ssh_operand_detection() {
     // Test various SSH operand formats
     assert!(operand_is_remote(&OsString::from("host:path")));
     assert!(operand_is_remote(&OsString::from("user@host:path")));
-    assert!(operand_is_remote(&OsString::from("user@host:/absolute/path")));
+    assert!(operand_is_remote(&OsString::from(
+        "user@host:/absolute/path"
+    )));
     assert!(operand_is_remote(&OsString::from("[::1]:path")));
-    assert!(operand_is_remote(&OsString::from("user@[2001:db8::1]:path")));
-    assert!(operand_is_remote(&OsString::from("rsync://host/module/path")));
+    assert!(operand_is_remote(&OsString::from(
+        "user@[2001:db8::1]:path"
+    )));
+    assert!(operand_is_remote(&OsString::from(
+        "rsync://host/module/path"
+    )));
     assert!(operand_is_remote(&OsString::from("host::module/path")));
 
     // Test non-remote operands
@@ -197,10 +206,7 @@ fn test_transfer_role_detection() {
     assert_eq!(result.2, "host:remote.txt");
 
     // Test multiple local sources with remote destination
-    let sources = vec![
-        OsString::from("file1.txt"),
-        OsString::from("file2.txt"),
-    ];
+    let sources = vec![OsString::from("file1.txt"), OsString::from("file2.txt")];
     let destination = OsString::from("host:/dest/");
     let result = determine_transfer_role(&sources, &destination).expect("Should detect push");
     assert_eq!(result.0, RemoteRole::Sender);
@@ -229,7 +235,10 @@ fn test_transfer_role_detection() {
 
 #[test]
 fn test_remote_invocation_builder() {
-    use core::client::{ClientConfig, remote::{RemoteInvocationBuilder, RemoteRole}};
+    use core::client::{
+        ClientConfig,
+        remote::{RemoteInvocationBuilder, RemoteRole},
+    };
 
     // Test sender (push) invocation
     let config = ClientConfig::builder()
@@ -248,9 +257,15 @@ fn test_remote_invocation_builder() {
     // Flag string should contain r (recursive), t (times), p (permissions)
     let flag_string = args[3].to_string_lossy();
     assert!(flag_string.starts_with('-'));
-    assert!(flag_string.contains('r'), "Should contain 'r' for recursive");
+    assert!(
+        flag_string.contains('r'),
+        "Should contain 'r' for recursive"
+    );
     assert!(flag_string.contains('t'), "Should contain 't' for times");
-    assert!(flag_string.contains('p'), "Should contain 'p' for permissions");
+    assert!(
+        flag_string.contains('p'),
+        "Should contain 'p' for permissions"
+    );
 
     assert_eq!(args[args.len() - 2].to_string_lossy(), ".");
     assert_eq!(args[args.len() - 1].to_string_lossy(), "/remote/path");
