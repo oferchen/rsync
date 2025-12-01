@@ -18,13 +18,14 @@ use super::error::{
 use super::fallback::RemoteFallbackContext;
 use super::outcome::ClientOutcome;
 use super::progress::{ClientProgressForwarder, ClientProgressObserver};
+use super::remote;
 use super::summary::ClientSummary;
 
 /// Runs the client orchestration using the provided configuration.
 ///
-/// The helper executes the local copy engine and returns a summary of the
-/// work performed. Remote operands trigger a feature-unavailable error until
-/// SSH and daemon transports are wired into the native engine.
+/// The helper executes the local copy engine for local transfers, or the
+/// native SSH transport for remote transfers. Both paths return a summary
+/// of the work performed.
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     run_client_internal(config, None)
 }
@@ -65,6 +66,17 @@ fn run_client_internal(
         return Err(missing_operands_error());
     }
 
+    // Check for remote operands and dispatch to SSH transport
+    let has_remote = config
+        .transfer_args()
+        .iter()
+        .any(|arg| remote::operand_is_remote(arg));
+
+    if has_remote {
+        return remote::run_ssh_transfer(&config, observer);
+    }
+
+    // Local copy path
     let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
         Ok(plan) => plan,
         Err(error) => return Err(map_local_copy_error(error)),

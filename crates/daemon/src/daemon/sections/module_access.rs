@@ -631,6 +631,7 @@ fn respond_with_module_request(
             let handshake = HandshakeResult {
                 protocol: final_protocol,
                 buffered: buffered_data,
+                compat_exchanged: false,
             };
 
             eprintln!("[daemon] Calling run_server_with_handshake");
