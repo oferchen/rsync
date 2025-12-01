@@ -26,7 +26,12 @@ pub fn operand_is_remote(path: &OsStr) -> bool {
 
     if let Some(colon_index) = text.find(':') {
         #[cfg(windows)]
-        if colon_index == 1 && text.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) {
+        if colon_index == 1
+            && text
+                .chars()
+                .next()
+                .map_or(false, |c| c.is_ascii_alphabetic())
+        {
             return false; // Windows drive letter
         }
 
@@ -221,10 +226,7 @@ pub fn determine_transfer_role(
     let dest_is_remote = operand_is_remote(destination);
 
     // Check if any sources are remote
-    let remote_sources: Vec<_> = sources
-        .iter()
-        .filter(|s| operand_is_remote(s))
-        .collect();
+    let remote_sources: Vec<_> = sources.iter().filter(|s| operand_is_remote(s)).collect();
 
     let has_remote_source = !remote_sources.is_empty();
     let all_sources_remote = remote_sources.len() == sources.len();
@@ -239,10 +241,7 @@ pub fn determine_transfer_role(
         }
         (false, false) => {
             // Neither is remote - should use local copy
-            Err(invalid_argument_error(
-                "no remote operand found",
-                1,
-            ))
+            Err(invalid_argument_error("no remote operand found", 1))
         }
         (true, false) => {
             // Pull: remote source → local destination
@@ -380,10 +379,7 @@ mod tests {
 
     #[test]
     fn detects_push_with_multiple_sources() {
-        let sources = vec![
-            OsString::from("file1.txt"),
-            OsString::from("file2.txt"),
-        ];
+        let sources = vec![OsString::from("file1.txt"), OsString::from("file2.txt")];
         let destination = OsString::from("host:/dest/");
 
         let result = determine_transfer_role(&sources, &destination).unwrap();
