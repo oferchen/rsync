@@ -83,12 +83,8 @@ where
     // a real --config, prefer native Rust daemon over auto-delegate.
     let has_explicit_config = remainder_has_config(&parsed.remainder);
 
-    if parsed.delegate_system_rsync {
-        // explicit user request still wins
-        return run_delegate_mode(parsed.remainder.as_slice(), stderr);
-    }
-
-    if fallback_disabled_reason().is_none()
+    // Native-only execution per CLAUDE.md: no fallback to system rsync
+    if false && fallback_disabled_reason().is_none()
         && !has_explicit_config
         && (auto_delegate_system_rsync_enabled() || fallback_binary_configured())
     {
