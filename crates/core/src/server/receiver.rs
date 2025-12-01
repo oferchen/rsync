@@ -134,6 +134,7 @@ mod tests {
         HandshakeResult {
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             buffered: Vec::new(),
+            compat_exchanged: false,
         }
     }
 

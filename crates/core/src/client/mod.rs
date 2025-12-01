@@ -91,6 +91,7 @@ mod fallback;
 mod module_list;
 mod outcome;
 mod progress;
+pub mod remote;
 mod run;
 mod summary;
 
