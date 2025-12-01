@@ -7,6 +7,8 @@
 mod compatibility;
 mod envelope;
 mod error;
+/// Filter list wire protocol encoding and decoding.
+pub mod filters;
 /// File list encoding and decoding.
 pub mod flist;
 mod legacy;
