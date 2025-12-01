@@ -269,7 +269,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     let log_sink = if let Some(path) = log_file {
-        Some(open_log_sink(&path)?)
+        Some(open_log_sink(&path, Brand::Oc)?)
     } else {
         None
     };
