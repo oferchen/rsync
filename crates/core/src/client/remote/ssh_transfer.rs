@@ -12,11 +12,11 @@ use std::ffi::OsString;
 
 use transport::ssh::{SshCommand, SshConnection, parse_ssh_operand};
 
-use super::invocation::{RemoteInvocationBuilder, RemoteRole, determine_transfer_role};
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error};
-use super::super::summary::ClientSummary;
 use super::super::progress::ClientProgressObserver;
+use super::super::summary::ClientSummary;
+use super::invocation::{RemoteInvocationBuilder, RemoteRole, determine_transfer_role};
 use crate::server::{ServerConfig, ServerRole};
 
 /// Executes a transfer over SSH transport.
@@ -102,7 +102,7 @@ fn build_ssh_connection(
     host: &str,
     port: Option<u16>,
     invocation_args: &[OsString],
-    _config: &ClientConfig,  // Reserved for future --rsh option support
+    _config: &ClientConfig, // Reserved for future --rsh option support
 ) -> Result<SshConnection, ClientError> {
     let mut ssh = SshCommand::new(host);
 
@@ -124,9 +124,8 @@ fn build_ssh_connection(
     ssh.set_remote_command(invocation_args);
 
     // Spawn the SSH process
-    ssh.spawn().map_err(|e| {
-        invalid_argument_error(&format!("failed to spawn SSH connection: {e}"), 10)
-    })
+    ssh.spawn()
+        .map_err(|e| invalid_argument_error(&format!("failed to spawn SSH connection: {e}"), 10))
 }
 
 /// Executes a pull transfer (remote → local).
@@ -330,10 +329,7 @@ mod tests {
 
     #[test]
     fn builds_receiver_server_config() {
-        let config = ClientConfig::builder()
-            .recursive(true)
-            .times(true)
-            .build();
+        let config = ClientConfig::builder().recursive(true).times(true).build();
 
         let result = build_server_config_for_receiver(&config, &["dest/".to_string()]);
         assert!(result.is_ok());
@@ -346,10 +342,7 @@ mod tests {
 
     #[test]
     fn builds_generator_server_config() {
-        let config = ClientConfig::builder()
-            .recursive(true)
-            .times(true)
-            .build();
+        let config = ClientConfig::builder().recursive(true).times(true).build();
 
         let result = build_server_config_for_generator(
             &config,
