@@ -50,10 +50,11 @@ use core::{
     branding::{self, Brand, manifest},
     fallback::{
         CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV, describe_missing_fallback_binary,
-        fallback_binary_available, fallback_disabled_reason, fallback_override,
+        fallback_binary_available, fallback_disabled_reason,
     },
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
+    server::{HandshakeResult, ServerConfig, ServerRole, run_server_with_handshake},
 };
 use logging::MessageSink;
 use protocol::{
