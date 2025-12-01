@@ -149,9 +149,9 @@ impl FilterRuleWireFormat {
 
 /// Reads filter list from wire format.
 ///
-/// Reads a sequence of filter rules terminated by a 4-byte zero (varint 0).
-pub fn read_filter_list<R: Read>(
-    reader: &mut R,
+/// Reads a sequence of filter rules terminated by a single zero byte (varint 0).
+pub fn read_filter_list(
+    reader: &mut dyn Read,
     protocol: ProtocolVersion,
 ) -> io::Result<Vec<FilterRuleWireFormat>> {
     let mut rules = Vec::new();
