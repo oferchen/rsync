@@ -10,7 +10,9 @@
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use filters::{FilterRule, FilterSet};
 use protocol::ProtocolVersion;
+use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
 
 use super::config::ServerConfig;
@@ -25,6 +27,8 @@ pub struct GeneratorContext {
     config: ServerConfig,
     /// List of files to send.
     file_list: Vec<FileEntry>,
+    /// Filter rules received from client.
+    filters: Option<FilterSet>,
 }
 
 impl GeneratorContext {
@@ -34,6 +38,7 @@ impl GeneratorContext {
             protocol: handshake.protocol,
             config,
             file_list: Vec::new(),
+            filters: None,
         }
     }
 
@@ -218,28 +223,25 @@ impl GeneratorContext {
     /// 1. Build file list from paths
     /// 2. Send file list
     /// 3. For each file: receive signature, generate delta, send delta
-    pub fn run<R: Read + ?Sized, W: Write + ?Sized>(
+    pub fn run<R: Read, W: Write + ?Sized>(
         &mut self,
         reader: &mut R,
         writer: &mut W,
         paths: &[PathBuf],
     ) -> io::Result<GeneratorStats> {
         // Read filter list from client (mirrors upstream recv_filter_list at main.c:1256)
-        // For now, just read the terminating 0 byte for empty filter list
-        // TODO (Phase 3): Implement full filter list exchange
-        eprintln!("[generator] Reading filter list terminator...");
-        let mut filter_end = [0u8; 1];
-        reader.read_exact(&mut filter_end)?;
-        if filter_end[0] != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "expected filter list terminator (0x00), got 0x{:02x}",
-                    filter_end[0]
-                ),
-            ));
+        eprintln!("[generator] Reading filter list...");
+        let wire_rules = read_filter_list(reader, self.protocol)?;
+        eprintln!("[generator] Received {} filter rules", wire_rules.len());
+
+        // Convert wire format to FilterSet
+        if !wire_rules.is_empty() {
+            let filter_set = self.parse_received_filters(&wire_rules)?;
+            self.filters = Some(filter_set);
+            eprintln!("[generator] Filter set initialized");
+        } else {
+            eprintln!("[generator] No filters received (empty list)");
         }
-        eprintln!("[generator] Filter list received (empty)");
 
         // Build file list
         self.build_file_list(paths)?;
@@ -278,6 +280,67 @@ impl GeneratorContext {
             files_transferred: 0,
             bytes_sent: 0,
         })
+    }
+
+    /// Converts wire format rules to FilterSet.
+    ///
+    /// Maps the wire protocol representation to the filters crate's `FilterSet`
+    /// for use during file walking.
+    fn parse_received_filters(&self, wire_rules: &[FilterRuleWireFormat]) -> io::Result<FilterSet> {
+        let mut rules = Vec::new();
+
+        for wire_rule in wire_rules {
+            // Convert wire RuleType to FilterRule
+            let mut rule = match wire_rule.rule_type {
+                RuleType::Include => FilterRule::include(&wire_rule.pattern),
+                RuleType::Exclude => FilterRule::exclude(&wire_rule.pattern),
+                RuleType::Protect => FilterRule::protect(&wire_rule.pattern),
+                RuleType::Risk => FilterRule::risk(&wire_rule.pattern),
+                RuleType::Clear => {
+                    // Clear rule removes all previous rules
+                    rules.push(
+                        FilterRule::clear()
+                            .with_sides(wire_rule.sender_side, wire_rule.receiver_side),
+                    );
+                    continue;
+                }
+                RuleType::Merge | RuleType::DirMerge => {
+                    // Merge rules not yet supported in server mode
+                    // Skip for now; will be implemented in future phases
+                    eprintln!(
+                        "[generator] Skipping unsupported merge rule: {:?}",
+                        wire_rule.rule_type
+                    );
+                    continue;
+                }
+            };
+
+            // Apply modifiers
+            if wire_rule.sender_side || wire_rule.receiver_side {
+                rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
+            }
+
+            if wire_rule.perishable {
+                rule = rule.with_perishable(true);
+            }
+
+            if wire_rule.xattr_only {
+                rule = rule.with_xattr_only(true);
+            }
+
+            if wire_rule.anchored {
+                rule = rule.anchor_to_root();
+            }
+
+            // Note: directory_only, no_inherit, cvs_exclude, word_split, exclude_from_merge
+            // are pattern modifiers handled by the filters crate during compilation
+            // We store them in the pattern itself as upstream does
+
+            rules.push(rule);
+        }
+
+        FilterSet::from_rules(rules)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("filter error: {e}")))
     }
 }
 
@@ -391,5 +454,112 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(receiver.file_list()[0].name(), "file1.txt");
         assert_eq!(receiver.file_list()[1].name(), "file2.txt");
+    }
+
+    #[test]
+    fn parse_received_filters_empty() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        // Empty filter list
+        let wire_rules = vec![];
+        let result = ctx.parse_received_filters(&wire_rules);
+        assert!(result.is_ok());
+
+        let filter_set = result.unwrap();
+        assert!(filter_set.is_empty());
+    }
+
+    #[test]
+    fn parse_received_filters_single_exclude() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        use protocol::filters::FilterRuleWireFormat;
+
+        let wire_rules = vec![FilterRuleWireFormat::exclude("*.log".to_string())];
+        let result = ctx.parse_received_filters(&wire_rules);
+        assert!(result.is_ok());
+
+        let filter_set = result.unwrap();
+        assert!(!filter_set.is_empty());
+    }
+
+    #[test]
+    fn parse_received_filters_multiple_rules() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        use protocol::filters::FilterRuleWireFormat;
+
+        let wire_rules = vec![
+            FilterRuleWireFormat::exclude("*.log".to_string()),
+            FilterRuleWireFormat::include("*.txt".to_string()),
+            FilterRuleWireFormat::exclude("temp/".to_string()).with_directory_only(true),
+        ];
+
+        let result = ctx.parse_received_filters(&wire_rules);
+        assert!(result.is_ok());
+
+        let filter_set = result.unwrap();
+        assert!(!filter_set.is_empty());
+    }
+
+    #[test]
+    fn parse_received_filters_with_modifiers() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        use protocol::filters::FilterRuleWireFormat;
+
+        let wire_rules = vec![
+            FilterRuleWireFormat::exclude("*.tmp".to_string())
+                .with_sides(true, false)
+                .with_perishable(true),
+            FilterRuleWireFormat::include("/important".to_string()).with_anchored(true),
+        ];
+
+        let result = ctx.parse_received_filters(&wire_rules);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_received_filters_clear_rule() {
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        use protocol::filters::{FilterRuleWireFormat, RuleType};
+
+        let wire_rules = vec![
+            FilterRuleWireFormat::exclude("*.log".to_string()),
+            FilterRuleWireFormat {
+                rule_type: RuleType::Clear,
+                pattern: String::new(),
+                anchored: false,
+                directory_only: false,
+                no_inherit: false,
+                cvs_exclude: false,
+                word_split: false,
+                exclude_from_merge: false,
+                xattr_only: false,
+                sender_side: true,
+                receiver_side: true,
+                perishable: false,
+                negate: false,
+            },
+            FilterRuleWireFormat::include("*.txt".to_string()),
+        ];
+
+        let result = ctx.parse_received_filters(&wire_rules);
+        assert!(result.is_ok());
+
+        let filter_set = result.unwrap();
+        // Clear rule should have removed previous rules
+        assert!(!filter_set.is_empty()); // Only the include rule remains
     }
 }
