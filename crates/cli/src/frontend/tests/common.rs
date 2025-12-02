@@ -220,6 +220,7 @@ impl EnvGuard {
     }
 
     /// Temporarily removes the environment variable for the duration of the guard.
+    #[allow(dead_code)]
     pub(super) fn remove(key: &'static str) -> Self {
         let previous = std::env::var_os(key);
         unsafe {
