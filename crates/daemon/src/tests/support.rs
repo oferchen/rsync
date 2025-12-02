@@ -176,6 +176,7 @@ where
 }
 
 #[cfg(unix)]
+#[allow(dead_code)] // Used by disabled fallback tests
 pub(super) fn write_executable_script(path: &Path, contents: &str) {
     fs::write(path, contents).expect("write script");
     let mut permissions = fs::metadata(path).expect("script metadata").permissions();
