@@ -220,6 +220,7 @@ fn execute_without_inplace_replaces_destination_file() {
     let destination = dest_dir.join("target.txt");
     fs::write(&destination, b"original").expect("write destination");
 
+    use std::os::unix::fs::MetadataExt;
     let original_inode = fs::metadata(&destination)
         .expect("destination metadata")
         .ino();
