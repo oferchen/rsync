@@ -94,6 +94,20 @@ impl GeneratorContext {
             return Ok(());
         }
 
+        // Check filters if present
+        if let Some(ref filters) = self.filters {
+            let is_dir = metadata.is_dir();
+            if !filters.allows(&relative, is_dir) {
+                // Path is excluded by filters, skip it
+                eprintln!(
+                    "[generator] Excluding {} ({})",
+                    relative.display(),
+                    if is_dir { "dir" } else { "file" }
+                );
+                return Ok(());
+            }
+        }
+
         // Create file entry based on type
         let entry = self.create_entry(path, &relative, &metadata)?;
         self.file_list.push(entry);
@@ -561,5 +575,168 @@ mod tests {
         let filter_set = result.unwrap();
         // Clear rule should have removed previous rules
         assert!(!filter_set.is_empty()); // Only the include rule remains
+    }
+
+    #[test]
+    fn filter_application_excludes_files() {
+        use protocol::filters::FilterRuleWireFormat;
+        use tempfile::TempDir;
+
+        // Create temporary test directory
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        // Create test files
+        std::fs::write(base_path.join("include.txt"), b"included").unwrap();
+        std::fs::write(base_path.join("exclude.log"), b"excluded").unwrap();
+        std::fs::write(base_path.join("another.txt"), b"also included").unwrap();
+
+        // Set up generator with filter that excludes *.log
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(base_path)];
+        config.flags.recursive = false; // Don't recurse for this test
+
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        // Parse and set filters
+        let wire_rules = vec![FilterRuleWireFormat::exclude("*.log".to_string())];
+        let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
+        ctx.filters = Some(filter_set);
+
+        // Build file list
+        let paths = vec![base_path.to_path_buf()];
+        let count = ctx.build_file_list(&paths).unwrap();
+
+        // Should only have 2 files (the .txt files), not the .log file
+        assert_eq!(count, 2);
+        let file_list = ctx.file_list();
+        assert_eq!(file_list.len(), 2);
+
+        // Verify the .log file is not in the list
+        for entry in file_list {
+            assert!(!entry.name().contains(".log"));
+        }
+    }
+
+    #[test]
+    fn filter_application_includes_only_matching() {
+        use protocol::filters::FilterRuleWireFormat;
+        use tempfile::TempDir;
+
+        // Create temporary test directory
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        // Create test files
+        std::fs::write(base_path.join("data.txt"), b"text").unwrap();
+        std::fs::write(base_path.join("script.sh"), b"shell").unwrap();
+        std::fs::write(base_path.join("readme.md"), b"markdown").unwrap();
+
+        // Set up generator with filters: exclude all, then include only *.txt
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(base_path)];
+        config.flags.recursive = false;
+
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        // Parse and set filters: exclude *, include *.txt
+        let wire_rules = vec![
+            FilterRuleWireFormat::exclude("*".to_string()),
+            FilterRuleWireFormat::include("*.txt".to_string()),
+        ];
+        let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
+        ctx.filters = Some(filter_set);
+
+        // Build file list
+        let paths = vec![base_path.to_path_buf()];
+        let count = ctx.build_file_list(&paths).unwrap();
+
+        // Should only have 1 file (data.txt)
+        assert_eq!(count, 1);
+        let file_list = ctx.file_list();
+        assert_eq!(file_list.len(), 1);
+        assert_eq!(file_list[0].name(), "data.txt");
+    }
+
+    #[test]
+    fn filter_application_with_directories() {
+        use protocol::filters::FilterRuleWireFormat;
+        use tempfile::TempDir;
+
+        // Create temporary test directory structure
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        std::fs::create_dir(base_path.join("include_dir")).unwrap();
+        std::fs::write(base_path.join("include_dir/file.txt"), b"data").unwrap();
+
+        std::fs::create_dir(base_path.join("exclude_dir")).unwrap();
+        std::fs::write(base_path.join("exclude_dir/file.txt"), b"data").unwrap();
+
+        // Set up generator with filter that excludes exclude_dir/
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(base_path)];
+        config.flags.recursive = true;
+
+        let mut ctx = GeneratorContext::new(&handshake, config);
+
+        // Parse and set filters
+        let wire_rules = vec![
+            FilterRuleWireFormat::exclude("exclude_dir/".to_string()).with_directory_only(true),
+        ];
+        let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
+        ctx.filters = Some(filter_set);
+
+        // Build file list
+        let paths = vec![base_path.to_path_buf()];
+        let count = ctx.build_file_list(&paths).unwrap();
+
+        // Should have include_dir and its file, but not exclude_dir
+        assert!(count >= 2); // At least the directory and one file
+        let file_list = ctx.file_list();
+
+        // Verify exclude_dir is not in the list
+        for entry in file_list {
+            let name = entry.name();
+            assert!(
+                !name.contains("exclude_dir"),
+                "Found excluded dir: {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn filter_application_no_filters_includes_all() {
+        use tempfile::TempDir;
+
+        // Create temporary test directory
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path();
+
+        // Create test files
+        std::fs::write(base_path.join("file1.txt"), b"data1").unwrap();
+        std::fs::write(base_path.join("file2.log"), b"data2").unwrap();
+        std::fs::write(base_path.join("file3.md"), b"data3").unwrap();
+
+        // Set up generator with NO filters
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(base_path)];
+        config.flags.recursive = false;
+
+        let mut ctx = GeneratorContext::new(&handshake, config);
+        // No filters set (ctx.filters remains None)
+
+        // Build file list
+        let paths = vec![base_path.to_path_buf()];
+        let count = ctx.build_file_list(&paths).unwrap();
+
+        // Should have all 3 files when no filters are present
+        assert_eq!(count, 3);
+        assert_eq!(ctx.file_list().len(), 3);
     }
 }
