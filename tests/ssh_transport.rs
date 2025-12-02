@@ -141,9 +141,7 @@ fn test_ssh_push_recursive_directory() {
         assert!(dest_dir.path().join("subdir").join("file3.txt").exists());
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!(
-            "SSH recursive push test skipped (SSH not configured): {stderr}"
-        );
+        eprintln!("SSH recursive push test skipped (SSH not configured): {stderr}");
     }
 }
 
