@@ -91,6 +91,7 @@ const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 /// Error payload returned to clients while daemon functionality is incomplete.
 const HANDSHAKE_ERROR_PAYLOAD: &str = "@ERROR: daemon functionality is unavailable in this build";
 /// Error payload returned when a configured module is requested but file serving is unavailable.
+#[allow(dead_code)]
 const MODULE_UNAVAILABLE_PAYLOAD: &str =
     "@ERROR: module '{module}' transfers are not yet implemented in this build";
 const ACCESS_DENIED_PAYLOAD: &str = "@ERROR: access denied to module '{module}' from {addr}";

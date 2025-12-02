@@ -1,10 +1,9 @@
 use super::*;
-use core::fallback::DAEMON_AUTO_DELEGATE_ENV;
 use core::version::VersionInfoReport;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
