@@ -15,31 +15,51 @@ use tempfile::{NamedTempFile, tempdir};
 // Import daemon internal types and functions needed by tests
 // These are all included directly into the daemon module via include!()
 use crate::daemon::{
+    AddressFamily,
     // Constants from daemon.rs
-    BRANDED_CONFIG_ENV, FEATURE_UNAVAILABLE_EXIT_CODE, LEGACY_CONFIG_ENV,
+    BRANDED_CONFIG_ENV,
+    ConnectionLimiter,
+    FEATURE_UNAVAILABLE_EXIT_CODE,
+    HostPattern,
+    LEGACY_CONFIG_ENV,
+    ModuleConnectionError,
     // From module_state.rs
-    ModuleDefinition, ModuleRuntime, ModuleConnectionError, ConnectionLimiter,
-    module_peer_hostname, set_test_hostname_override, clear_test_hostname_overrides,
-    TestSecretsEnvOverride,
+    ModuleDefinition,
+    ModuleRuntime,
+    // From sections/cli_args.rs
+    ProgramName,
     // From runtime_options.rs
     RuntimeOptions,
-    // From sections/cli_args.rs
-    ProgramName, clap_command, render_help,
-    // From sections/config_helpers.rs
-    parse_auth_user_list, parse_refuse_option_list, parse_boolean_directive,
-    parse_numeric_identifier, parse_timeout_seconds, parse_max_connections_directive,
-    HostPattern, AddressFamily,
-    // From sections/config_parsing.rs
-    parse_config_modules,
-    // From sections/config_paths.rs
-    first_existing_config_path, default_secrets_path_if_present,
-    // From sections/delegation.rs
-    legacy_daemon_greeting, read_trimmed_line, advertised_capability_lines,
+    TestSecretsEnvOverride,
+    advertised_capability_lines,
     // From sections/module_access.rs
-    apply_module_bandwidth_limit, open_log_sink, sanitize_module_identifier,
-    format_bandwidth_rate, log_module_bandwidth_change,
+    apply_module_bandwidth_limit,
+    clap_command,
+    clear_test_hostname_overrides,
+    default_secrets_path_if_present,
+    // From sections/config_paths.rs
+    first_existing_config_path,
+    format_bandwidth_rate,
     // From sections/server_runtime.rs
     format_connection_status,
+    // From sections/delegation.rs
+    legacy_daemon_greeting,
+    log_module_bandwidth_change,
+    module_peer_hostname,
+    open_log_sink,
+    // From sections/config_helpers.rs
+    parse_auth_user_list,
+    parse_boolean_directive,
+    // From sections/config_parsing.rs
+    parse_config_modules,
+    parse_max_connections_directive,
+    parse_numeric_identifier,
+    parse_refuse_option_list,
+    parse_timeout_seconds,
+    read_trimmed_line,
+    render_help,
+    sanitize_module_identifier,
+    set_test_hostname_override,
 };
 
 // Import from core
