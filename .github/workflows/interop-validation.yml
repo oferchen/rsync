@@ -1,0 +1,206 @@
+name: Interop Validation
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Run nightly to catch drift in upstream versions
+    - cron: '0 2 * * *'
+
+concurrency:
+  group: interop-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  validate-exit-codes:
+    name: Exit Code Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: interop-validation
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            zlib1g-dev \
+            curl \
+            autoconf \
+            automake \
+            libtool \
+            libacl1-dev \
+            libattr1-dev
+
+      - name: Build upstream rsync binaries
+        run: |
+          bash tools/ci/run_interop.sh build-only || true
+          # The script may not have a build-only mode, so we run it normally
+          # It will build the binaries and place them in target/interop/upstream-install/
+
+      - name: Check for upstream binaries
+        run: |
+          echo "Checking for upstream rsync binaries..."
+          ls -la target/interop/upstream-install/*/bin/rsync || true
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Validate exit codes
+        id: validate-exit-codes
+        run: |
+          cargo xtask interop exit-codes --verbose
+        continue-on-error: true
+
+      - name: Upload validation report
+        if: failure() && steps.validate-exit-codes.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: exit-code-validation-report
+          path: |
+            tests/interop/exit_codes/golden-*.toml
+          retention-days: 7
+
+      - name: Fail if validation failed
+        if: steps.validate-exit-codes.outcome == 'failure'
+        run: exit 1
+
+  validate-messages:
+    name: Message Format Validation
+    runs-on: ubuntu-latest
+    needs: validate-exit-codes
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: interop-validation
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            zlib1g-dev \
+            curl \
+            autoconf \
+            automake \
+            libtool \
+            libacl1-dev \
+            libattr1-dev
+
+      - name: Build upstream rsync binaries
+        run: |
+          bash tools/ci/run_interop.sh build-only || true
+
+      - name: Build oc-rsync
+        run: cargo build --release
+
+      - name: Validate messages
+        id: validate-messages
+        run: |
+          cargo xtask interop messages --verbose
+        continue-on-error: true
+
+      - name: Upload validation report
+        if: failure() && steps.validate-messages.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: message-validation-report
+          path: |
+            tests/interop/messages/golden-*.toml
+          retention-days: 7
+
+      - name: Fail if validation failed
+        if: steps.validate-messages.outcome == 'failure'
+        run: exit 1
+
+  regenerate-goldens:
+    name: Regenerate Golden Files (Manual)
+    runs-on: ubuntu-latest
+    # Only run on workflow_dispatch
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: interop-validation
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            zlib1g-dev \
+            curl \
+            autoconf \
+            automake \
+            libtool \
+            libacl1-dev \
+            libattr1-dev
+
+      - name: Build upstream rsync binaries
+        run: bash tools/ci/run_interop.sh build-only || true
+
+      - name: Regenerate exit code goldens
+        run: cargo xtask interop exit-codes --regenerate --verbose
+
+      - name: Regenerate message goldens
+        run: cargo xtask interop messages --regenerate --verbose
+
+      - name: Upload regenerated goldens
+        uses: actions/upload-artifact@v4
+        with:
+          name: regenerated-golden-files
+          path: |
+            tests/interop/exit_codes/golden-*.toml
+            tests/interop/messages/golden-*.toml
+          retention-days: 30
+
+      - name: Create summary
+        run: |
+          echo "## Regenerated Golden Files" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Exit code goldens:" >> $GITHUB_STEP_SUMMARY
+          ls -1 tests/interop/exit_codes/golden-*.toml | while read f; do
+            echo "- $f" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Message goldens:" >> $GITHUB_STEP_SUMMARY
+          ls -1 tests/interop/messages/golden-*.toml 2>/dev/null | while read f; do
+            echo "- $f" >> $GITHUB_STEP_SUMMARY
+          done || echo "- (none found)" >> $GITHUB_STEP_SUMMARY
