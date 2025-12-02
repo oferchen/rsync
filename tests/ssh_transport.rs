@@ -88,7 +88,7 @@ fn test_ssh_push_single_file() {
     } else {
         // SSH not configured, test is informational only
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("SSH push test skipped (SSH not configured): {}", stderr);
+        eprintln!("SSH push test skipped (SSH not configured): {stderr}");
     }
 }
 
@@ -115,7 +115,7 @@ fn test_ssh_pull_single_file() {
         assert_eq!(content, "Test content 2");
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("SSH pull test skipped (SSH not configured): {}", stderr);
+        eprintln!("SSH pull test skipped (SSH not configured): {stderr}");
     }
 }
 
@@ -142,8 +142,7 @@ fn test_ssh_push_recursive_directory() {
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         eprintln!(
-            "SSH recursive push test skipped (SSH not configured): {}",
-            stderr
+            "SSH recursive push test skipped (SSH not configured): {stderr}"
         );
     }
 }
