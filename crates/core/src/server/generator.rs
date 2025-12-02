@@ -701,10 +701,7 @@ mod tests {
         // Verify exclude_dir is not in the list
         for entry in file_list {
             let name = entry.name();
-            assert!(
-                !name.contains("exclude_dir"),
-                "Found excluded dir: {name}"
-            );
+            assert!(!name.contains("exclude_dir"), "Found excluded dir: {name}");
         }
     }
 
