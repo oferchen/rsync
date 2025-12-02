@@ -66,3 +66,49 @@ assert!(
 The crate also re-exports `daemon::DaemonConfig` and
 `daemon::run_daemon` so long-running daemons can reuse the builder API
 without constructing a command-line argument list first.
+
+## Server Mode
+
+The embedding crate exposes server mode functionality for applications that need
+to run the rsync server protocol programmatically. This is useful for:
+
+- In-process testing of rsync protocol implementations
+- Custom rsync server implementations
+- Library usage scenarios where spawning a subprocess is not desirable
+
+The server API provides direct access to the native server implementation without
+CLI argument parsing:
+
+```rust
+use embedding::{ServerConfig, ServerRole, run_server_with_config};
+use std::io;
+
+// Build server configuration from flag string and arguments
+let config = ServerConfig::from_flag_string_and_args(
+    ServerRole::Receiver,
+    "-logDtpre.iLsfxC".to_string(),
+    vec![".".into()],
+).expect("valid server config");
+
+// Run server with stdio (typically connected to SSH or other transport)
+let mut stdin = io::stdin();
+let mut stdout = io::stdout();
+
+let stats = run_server_with_config(config, &mut stdin, &mut stdout)
+    .expect("server execution succeeds");
+
+// Inspect transfer statistics
+match stats {
+    embedding::ServerStats::Receiver(transfer_stats) => {
+        println!("Received {} bytes", transfer_stats.bytes_received);
+        println!("Files transferred: {}", transfer_stats.files_transferred);
+    }
+    embedding::ServerStats::Generator(generator_stats) => {
+        println!("Sent {} bytes", generator_stats.bytes_sent);
+        println!("Files transferred: {}", generator_stats.files_transferred);
+    }
+}
+```
+
+The crate re-exports `core::server::ServerConfig`, `ServerRole`, `ServerStats`,
+and related types for convenient server embedding.
