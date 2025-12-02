@@ -703,8 +703,7 @@ mod tests {
             let name = entry.name();
             assert!(
                 !name.contains("exclude_dir"),
-                "Found excluded dir: {}",
-                name
+                "Found excluded dir: {name}"
             );
         }
     }
