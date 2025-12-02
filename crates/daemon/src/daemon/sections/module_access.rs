@@ -638,14 +638,13 @@ fn respond_with_module_request(
 
             // Run the server transfer - handles protocol setup and multiplex internally
             match run_server_with_handshake(config, handshake, &mut read_stream, write_stream) {
-                Ok(exit_code) => {
+                Ok(_server_stats) => {
                     if let Some(log) = log_sink {
                         let text = format!(
-                            "transfer to {} ({}): module={} exit_code={}",
+                            "transfer to {} ({}): module={} status=success",
                             module_peer_host.or(session_peer_host).unwrap_or("unknown"),
                             peer_ip,
-                            request,
-                            exit_code
+                            request
                         );
                         let message = rsync_info!(text).with_role(Role::Daemon);
                         log_message(log, &message);

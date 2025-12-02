@@ -35,6 +35,18 @@ pub use self::role::ServerRole;
 #[cfg(test)]
 mod tests;
 
+/// Statistics returned from server execution.
+#[derive(Debug, Clone)]
+pub enum ServerStats {
+    /// Statistics from receiver role.
+    Receiver(TransferStats),
+    /// Statistics from generator role.
+    Generator(GeneratorStats),
+}
+
+/// Result type for server operations.
+pub type ServerResult = io::Result<ServerStats>;
+
 /// Executes the native server entry point over standard I/O.
 ///
 /// The implementation performs the protocol handshake before dispatching to the
@@ -43,12 +55,12 @@ mod tests;
 ///
 /// # Returns
 ///
-/// Returns `Ok(0)` on successful transfer, or an error if handshake or transfer fails.
+/// Returns `ServerStats` on successful transfer, or an error if handshake or transfer fails.
 pub fn run_server_stdio(
     config: ServerConfig,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
-) -> io::Result<i32> {
+) -> ServerResult {
     // Perform protocol handshake
     let handshake = perform_handshake(stdin, stdout)?;
     run_server_with_handshake(config, handshake, stdin, stdout)
@@ -62,13 +74,13 @@ pub fn run_server_stdio(
 ///
 /// # Returns
 ///
-/// Returns `Ok(0)` on successful transfer, or an error if transfer fails.
+/// Returns `ServerStats` on successful transfer, or an error if transfer fails.
 pub fn run_server_with_handshake<W: Write>(
     config: ServerConfig,
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
     mut stdout: W,
-) -> io::Result<i32> {
+) -> ServerResult {
     eprintln!(
         "[server] run_server_with_handshake: role={:?}, protocol={}",
         config.role,
@@ -147,9 +159,7 @@ pub fn run_server_with_handshake<W: Write>(
             let mut ctx = ReceiverContext::new(&handshake, config);
             let stats = ctx.run(&mut chained_reader, &mut writer)?;
 
-            // Log statistics (for now, just return success)
-            let _ = stats;
-            Ok(0)
+            Ok(ServerStats::Receiver(stats))
         }
         ServerRole::Generator => {
             eprintln!("[server] Entering Generator role");
@@ -164,9 +174,7 @@ pub fn run_server_with_handshake<W: Write>(
             let stats = ctx.run(&mut chained_reader, &mut writer, &paths)?;
             eprintln!("[server] Generator run() completed");
 
-            // Log statistics (for now, just return success)
-            let _ = stats;
-            Ok(0)
+            Ok(ServerStats::Generator(stats))
         }
     }
 }
