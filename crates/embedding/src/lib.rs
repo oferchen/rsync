@@ -252,6 +252,55 @@ pub use daemon::{DaemonConfig, DaemonConfigBuilder, DaemonError};
 /// Re-export the native daemon loop for direct embedding.
 pub use daemon::run_daemon as run_daemon_config;
 
+/// Re-export server configuration and types for direct server embedding.
+pub use core::server::{
+    GeneratorStats, HandshakeResult, ParsedServerFlags, ServerConfig, ServerResult, ServerRole,
+    ServerStats, TransferStats,
+};
+
+/// Re-export the native server entry point for direct embedding.
+///
+/// This allows embedders to run the server without constructing CLI arguments.
+/// The server can be invoked with a pre-built `ServerConfig` and stdio streams.
+pub use core::server::run_server_stdio;
+
+/// Executes the server with a pre-built configuration and stdio streams.
+///
+/// This is a convenience wrapper around `run_server_stdio` that provides
+/// a simpler API for embedders who want to run the server programmatically
+/// without constructing command-line arguments.
+///
+/// # Example
+///
+/// ```no_run
+/// use embedding::{ServerConfig, ServerRole, run_server_with_config};
+/// use std::io;
+/// use protocol::ProtocolVersion;
+///
+/// let config = ServerConfig::from_flag_string_and_args(
+///     ServerRole::Receiver,
+///     "-logDtpre.iLsfxC".to_string(),
+///     vec![".".into()],
+/// ).expect("valid server config");
+///
+/// let mut stdin = io::stdin();
+/// let mut stdout = io::stdout();
+///
+/// let stats = run_server_with_config(config, &mut stdin, &mut stdout)
+///     .expect("server execution succeeds");
+/// ```
+pub fn run_server_with_config<R, W>(
+    config: ServerConfig,
+    stdin: &mut R,
+    stdout: &mut W,
+) -> ServerResult
+where
+    R: std::io::Read,
+    W: std::io::Write,
+{
+    run_server_stdio(config, stdin, stdout)
+}
+
 fn run_with_capture<I, S, Runner>(
     kind: CommandKind,
     args: I,
@@ -471,5 +520,53 @@ mod tests {
         }
 
         assert_eq!(std::env::var_os(KEY), original);
+    }
+
+    #[test]
+    fn server_config_can_be_constructed() {
+        // Verify that ServerConfig can be constructed from flag string and args
+        let config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            "-logDtpre.iLsfxC".to_string(),
+            vec![".".into()],
+        );
+
+        assert!(
+            config.is_ok(),
+            "ServerConfig should be constructible from valid inputs"
+        );
+
+        let config = config.unwrap();
+        assert_eq!(config.role, ServerRole::Receiver);
+        assert_eq!(config.flag_string, "-logDtpre.iLsfxC");
+        assert_eq!(config.args, vec![OsString::from(".")]);
+    }
+
+    #[test]
+    fn server_config_rejects_empty_inputs() {
+        // Empty flag string and no args should be rejected
+        let config =
+            ServerConfig::from_flag_string_and_args(ServerRole::Receiver, String::new(), vec![]);
+
+        assert!(
+            config.is_err(),
+            "ServerConfig should reject empty flag string without args"
+        );
+        assert_eq!(config.unwrap_err(), "missing rsync server flag string");
+    }
+
+    #[test]
+    fn server_config_allows_empty_flags_with_args() {
+        // Empty flag string but with args (daemon mode pattern) should be accepted
+        let config = ServerConfig::from_flag_string_and_args(
+            ServerRole::Receiver,
+            String::new(),
+            vec!["module/path".into()],
+        );
+
+        assert!(
+            config.is_ok(),
+            "ServerConfig should accept empty flags when args are provided"
+        );
     }
 }
