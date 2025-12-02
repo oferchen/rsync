@@ -105,13 +105,12 @@ where
         None => None,
     };
 
-    if inputs.itemize_changes
-        && out_format_template.is_none() {
-            out_format_template = Some(
-                parse_out_format(OsString::from(ITEMIZE_CHANGES_FORMAT).as_os_str())
-                    .expect("default itemize-changes format parses"),
-            );
-        }
+    if inputs.itemize_changes && out_format_template.is_none() {
+        out_format_template = Some(
+            parse_out_format(OsString::from(ITEMIZE_CHANGES_FORMAT).as_os_str())
+                .expect("default itemize-changes format parses"),
+        );
+    }
 
     let mut progress_setting = inputs.initial_progress;
     let mut stats = inputs.initial_stats;
