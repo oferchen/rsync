@@ -69,7 +69,7 @@ mod help;
 use self::help::help_text;
 
 /// Exit code used when daemon functionality is unavailable.
-const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
+pub(crate) const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 /// Exit code returned when socket I/O fails.
 const SOCKET_IO_EXIT_CODE: i32 = 10;
 
@@ -81,10 +81,10 @@ const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Default port used for the development daemon listener.
 const DEFAULT_PORT: u16 = 873;
 
-const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";
-const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
-const BRANDED_SECRETS_ENV: &str = "OC_RSYNC_SECRETS";
-const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
+pub(crate) const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";
+pub(crate) const LEGACY_CONFIG_ENV: &str = "RSYNCD_CONFIG";
+pub(crate) const BRANDED_SECRETS_ENV: &str = "OC_RSYNC_SECRETS";
+pub(crate) const LEGACY_SECRETS_ENV: &str = "RSYNCD_SECRETS";
 /// Timeout applied to accepted sockets to avoid hanging handshakes.
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(10);
 

@@ -2,7 +2,7 @@ use super::*;
 use core::version::VersionInfoReport;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
-use std::fs;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::num::{NonZeroU32, NonZeroU64};
@@ -11,6 +11,53 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::{NamedTempFile, tempdir};
+
+// Import daemon internal types and functions needed by tests
+// These are all included directly into the daemon module via include!()
+use crate::daemon::{
+    // Constants from daemon.rs
+    BRANDED_CONFIG_ENV, FEATURE_UNAVAILABLE_EXIT_CODE, LEGACY_CONFIG_ENV,
+    // From module_state.rs
+    ModuleDefinition, ModuleRuntime, ModuleConnectionError, ConnectionLimiter,
+    module_peer_hostname, set_test_hostname_override, clear_test_hostname_overrides,
+    TestSecretsEnvOverride,
+    // From runtime_options.rs
+    RuntimeOptions,
+    // From sections/cli_args.rs
+    ProgramName, clap_command, render_help,
+    // From sections/config_helpers.rs
+    parse_auth_user_list, parse_refuse_option_list, parse_boolean_directive,
+    parse_numeric_identifier, parse_timeout_seconds, parse_max_connections_directive,
+    HostPattern, AddressFamily,
+    // From sections/config_parsing.rs
+    parse_config_modules,
+    // From sections/config_paths.rs
+    first_existing_config_path, default_secrets_path_if_present,
+    // From sections/delegation.rs
+    legacy_daemon_greeting, read_trimmed_line, advertised_capability_lines,
+    // From sections/module_access.rs
+    apply_module_bandwidth_limit, open_log_sink, sanitize_module_identifier,
+    format_bandwidth_rate, log_module_bandwidth_change,
+    // From sections/server_runtime.rs
+    format_connection_status,
+};
+
+// Import from core
+use core::{
+    bandwidth::{BandwidthLimiter, LimiterChange},
+    branding::{self, Brand},
+    fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV},
+};
+
+// Import from protocol
+use protocol::ProtocolVersion;
+
+// Import from checksums
+use checksums::strong::Md5;
+
+// Import from base64
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD_NO_PAD;
 
 mod support;
 use support::*;
@@ -40,7 +87,7 @@ include!("tests/chunks/default_secrets_path_prefers_primary_candidate.rs");
 include!("tests/chunks/default_secrets_path_returns_none_when_absent.rs");
 // Disabled per native-only execution requirement (CLAUDE.md):
 // include!("tests/chunks/delegate_system_daemon_fallback_env_triggers_delegation.rs");
-include!("tests/chunks/delegate_system_rsync_disable_env_blocks_delegation.rs");
+// include!("tests/chunks/delegate_system_rsync_disable_env_blocks_delegation.rs");
 // include!("tests/chunks/delegate_system_rsync_env_false_skips_fallback.rs");
 // include!("tests/chunks/delegate_system_rsync_env_triggers_fallback.rs");
 // include!("tests/chunks/delegate_system_rsync_fallback_env_triggers_delegation.rs");

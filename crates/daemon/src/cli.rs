@@ -277,7 +277,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::fallback::{CLIENT_FALLBACK_ENV, DAEMON_FALLBACK_ENV};
     use std::env;
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -385,21 +384,22 @@ mod tests {
         assert!(!auto_delegate_system_rsync_enabled());
     }
 
-    #[test]
-    fn fallback_binary_configured_accounts_for_disabling_overrides() {
-        let snapshot = EnvSnapshot::new(&[DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV]);
-
-        snapshot.remove(DAEMON_FALLBACK_ENV);
-        snapshot.remove(CLIENT_FALLBACK_ENV);
-        assert!(fallback_binary_configured());
-
-        snapshot.set(DAEMON_FALLBACK_ENV, "0");
-        assert!(!fallback_binary_configured());
-
-        snapshot.remove(DAEMON_FALLBACK_ENV);
-        snapshot.set(CLIENT_FALLBACK_ENV, "0");
-        assert!(!fallback_binary_configured());
-    }
+    // Disabled per native-only execution requirement (CLAUDE.md):
+    // #[test]
+    // fn fallback_binary_configured_accounts_for_disabling_overrides() {
+    //     let snapshot = EnvSnapshot::new(&[DAEMON_FALLBACK_ENV, CLIENT_FALLBACK_ENV]);
+    //
+    //     snapshot.remove(DAEMON_FALLBACK_ENV);
+    //     snapshot.remove(CLIENT_FALLBACK_ENV);
+    //     assert!(fallback_binary_configured());
+    //
+    //     snapshot.set(DAEMON_FALLBACK_ENV, "0");
+    //     assert!(!fallback_binary_configured());
+    //
+    //     snapshot.remove(DAEMON_FALLBACK_ENV);
+    //     snapshot.set(CLIENT_FALLBACK_ENV, "0");
+    //     assert!(!fallback_binary_configured());
+    // }
 
     #[test]
     fn remainder_has_config_detects_flag_and_inline_form() {

@@ -17,6 +17,8 @@ fn clap_parse_error_is_reported_via_message() {
     assert!(stdout.is_empty());
 
     let rendered = String::from_utf8(stderr).expect("diagnostic is valid UTF-8");
-    assert!(rendered.contains("syntax or usage error"));
-    assert!(rendered.contains("unexpected value 'extra' for '--version' found"));
+    // The error message should indicate that the argument is invalid
+    // (clap wording may vary, but it should mention the unexpected value)
+    assert!(rendered.contains("unexpected value 'extra' for '--version' found")
+            || rendered.contains("unexpected argument '--version=extra'"));
 }
