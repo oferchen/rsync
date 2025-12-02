@@ -364,15 +364,19 @@ where
     let recursive_effective = !matches!(recursive_override, Some(false));
     let batch_mode_requested =
         write_batch.is_some() || only_write_batch.is_some() || read_batch.is_some();
-    let requires_remote_fallback = transfer_requires_remote(&remainder, &file_list_operands);
-    if requires_remote_fallback || batch_mode_requested {
+
+    // Batch mode is not yet implemented
+    if batch_mode_requested {
         let message = rsync_error!(
             1,
-            "remote connections and batch modes are not yet supported by this oc-rsync build"
+            "batch modes (--write-batch, --only-write-batch, --read-batch) are not yet supported by this oc-rsync build"
         )
         .with_role(Role::Client);
         return fail_with_message(message, stderr);
     }
+
+    // Remote transfers are handled natively by the SSH transport in core::client::run_client_internal
+    // No fallback to system rsync is needed anymore
 
     let numeric_ids = numeric_ids_option.unwrap_or(false);
 
