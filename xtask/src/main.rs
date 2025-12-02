@@ -56,7 +56,7 @@ mod util;
 mod workspace;
 
 use crate::commands::{
-    branding, docs, enforce_limits, no_binaries, no_placeholders, package, preflight,
+    branding, docs, enforce_limits, interop, no_binaries, no_placeholders, package, preflight,
     readme_version, release, sbom, test,
 };
 use crate::error::TaskError;
@@ -120,6 +120,11 @@ where
             let options = enforce_limits::parse_args(args)?;
             let workspace = workspace_root()?;
             enforce_limits::execute(&workspace, options)
+        }
+        "interop" => {
+            let options = interop::parse_args(args)?;
+            let workspace = workspace_root()?;
+            interop::execute(&workspace, options)
         }
         "no-placeholders" => {
             let options = no_placeholders::parse_args(args)?;
