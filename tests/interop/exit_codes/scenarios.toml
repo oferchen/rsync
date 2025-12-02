@@ -1,0 +1,257 @@
+# Exit code validation scenarios for interop testing
+#
+# Each scenario defines a test case that should produce a specific exit code
+# when run with upstream rsync. These scenarios validate that oc-rsync
+# produces the same exit codes as upstream for compatibility.
+#
+# Format:
+# [[scenario]]
+# name = "unique_test_name"
+# exit_code = expected_code
+# args = ["rsync", "arguments"]
+# setup = "optional shell commands to run before test"
+# description = "what this scenario tests"
+
+# Exit Code 1: syntax or usage error
+[[scenario]]
+name = "missing_source"
+exit_code = 1
+args = ["rsync", "dest/"]
+description = "Missing source operand triggers usage error"
+
+[[scenario]]
+name = "invalid_option"
+exit_code = 1
+args = ["rsync", "--invalid-option-xyz", "src", "dest"]
+description = "Invalid option triggers syntax error"
+
+[[scenario]]
+name = "conflicting_options"
+exit_code = 1
+args = ["rsync", "--server", "--daemon"]
+description = "Conflicting --server and --daemon options"
+
+# Exit Code 2: protocol incompatibility
+[[scenario]]
+name = "protocol_version_mismatch"
+exit_code = 2
+args = ["rsync", "--protocol=99", "src", "dest"]
+description = "Unsupported protocol version"
+
+# Exit Code 3: errors selecting input/output files, dirs
+[[scenario]]
+name = "source_not_found"
+exit_code = 3
+setup = "true"  # no setup needed
+args = ["rsync", "/nonexistent/source/path", "dest/"]
+description = "Source path does not exist"
+
+[[scenario]]
+name = "exclude_all_files"
+exit_code = 3
+setup = "mkdir -p src && touch src/file.txt"
+args = ["rsync", "-r", "--exclude=*", "src/", "dest/"]
+description = "All files excluded, nothing to transfer"
+
+# Exit Code 4: requested action not supported
+# Note: This is tricky - most unsupported actions return error 1
+# Keeping this as a placeholder for future implementation
+[[scenario]]
+name = "unsupported_action"
+exit_code = 4
+args = ["rsync", "--fake-super", "src", "dest"]
+description = "Unsupported action (if --fake-super not compiled in)"
+skip = true  # May not be triggerable on all builds
+
+# Exit Code 5: error starting client-server protocol
+[[scenario]]
+name = "daemon_connection_refused"
+exit_code = 5
+args = ["rsync", "rsync://localhost:9999/module/"]
+description = "Cannot connect to rsync daemon (port closed)"
+
+# Exit Code 10: error in socket IO
+# This is difficult to trigger reliably; skipping for now
+[[scenario]]
+name = "socket_io_error"
+exit_code = 10
+skip = true
+description = "Socket I/O error (requires network failure simulation)"
+
+# Exit Code 11: error in file IO
+[[scenario]]
+name = "permission_denied_read"
+exit_code = 11
+setup = "mkdir -p src && touch src/secret && chmod 000 src/secret"
+args = ["rsync", "src/secret", "dest/"]
+description = "Cannot read source file (permission denied)"
+
+[[scenario]]
+name = "permission_denied_write"
+exit_code = 11
+setup = "mkdir -p src dest && touch src/file && chmod 000 dest"
+args = ["rsync", "src/file", "dest/"]
+description = "Cannot write to destination (permission denied)"
+
+# Exit Code 12: error in rsync protocol data stream
+# This is internal protocol corruption; hard to trigger externally
+[[scenario]]
+name = "protocol_data_error"
+exit_code = 12
+skip = true
+description = "Protocol data stream error (requires protocol corruption)"
+
+# Exit Code 13: errors with program diagnostics
+# This typically relates to logging/output errors
+[[scenario]]
+name = "log_file_error"
+exit_code = 13
+setup = "mkdir -p src dest && touch src/file && mkdir /tmp/logdir && chmod 000 /tmp/logdir"
+args = ["rsync", "--log-file=/tmp/logdir/cannot-write.log", "src/file", "dest/"]
+description = "Cannot write to log file"
+skip = true  # May require --log-file support
+
+# Exit Code 14: error in IPC code
+# Internal IPC error; very difficult to trigger
+[[scenario]]
+name = "ipc_error"
+exit_code = 14
+skip = true
+description = "IPC error (requires internal failure)"
+
+# Exit Code 15: sibling process crashed
+# Requires sender/receiver crash
+[[scenario]]
+name = "sibling_crashed"
+exit_code = 15
+skip = true
+description = "Sibling process crashed (requires process injection)"
+
+# Exit Code 16: sibling process terminated abnormally
+[[scenario]]
+name = "sibling_terminated"
+exit_code = 16
+skip = true
+description = "Sibling process killed (requires signal)"
+
+# Exit Code 19: received SIGUSR1
+[[scenario]]
+name = "sigusr1_signal"
+exit_code = 19
+skip = true
+description = "Received SIGUSR1 (requires signal during transfer)"
+
+# Exit Code 20: received SIGINT, SIGTERM, or SIGHUP
+[[scenario]]
+name = "sigint_signal"
+exit_code = 20
+skip = true
+description = "Received SIGINT (requires Ctrl-C during transfer)"
+
+# Exit Code 21: waitpid() failed
+[[scenario]]
+name = "waitpid_failed"
+exit_code = 21
+skip = true
+description = "waitpid() failed (internal error)"
+
+# Exit Code 22: error allocating core memory buffers
+[[scenario]]
+name = "memory_allocation_error"
+exit_code = 22
+skip = true
+description = "Memory allocation failure (requires OOM condition)"
+
+# Exit Code 23: some files/attrs were not transferred
+[[scenario]]
+name = "partial_transfer"
+exit_code = 23
+setup = "mkdir -p src dest && touch src/file1 src/file2 && chmod 000 src/file2"
+args = ["rsync", "-r", "src/", "dest/"]
+description = "Partial transfer due to error on one file"
+
+# Exit Code 24: some files vanished before they could be transferred
+[[scenario]]
+name = "files_vanished"
+exit_code = 24
+setup = "mkdir -p src && touch src/temp"
+args = ["rsync", "--delete-during", "src/", "dest/"]
+description = "Files vanished during transfer (warning, not error)"
+skip = true  # Requires timing-sensitive setup
+
+# Exit Code 25: the --max-delete limit stopped deletions
+[[scenario]]
+name = "max_delete_limit"
+exit_code = 25
+setup = "mkdir -p src dest && touch dest/f1 dest/f2 dest/f3 dest/f4 dest/f5"
+args = ["rsync", "--delete", "--max-delete=2", "src/", "dest/"]
+description = "Max delete limit exceeded"
+
+# Exit Code 30: timeout in data send/receive
+[[scenario]]
+name = "data_timeout"
+exit_code = 30
+setup = "mkdir -p src && dd if=/dev/zero of=src/bigfile bs=1M count=100 2>/dev/null"
+args = ["rsync", "--timeout=1", "src/bigfile", "dest/"]
+description = "Data transfer timeout"
+skip = true  # Timing-sensitive
+
+# Exit Code 35: timeout waiting for daemon connection
+[[scenario]]
+name = "daemon_timeout"
+exit_code = 35
+args = ["rsync", "--timeout=1", "rsync://localhost:9999/module/"]
+description = "Timeout connecting to daemon"
+skip = true  # Requires daemon setup
+
+# Exit Code 124: remote shell failed
+# Note: SSH-specific scenarios
+[[scenario]]
+name = "ssh_failed"
+exit_code = 124
+args = ["rsync", "-e", "/bin/false", "src", "remote:dest"]
+description = "Remote shell (/bin/false) fails immediately"
+skip = true  # Requires SSH setup
+
+# Exit Code 125: remote shell killed
+[[scenario]]
+name = "ssh_killed"
+exit_code = 125
+skip = true
+description = "Remote shell killed by signal"
+
+# Exit Code 126: remote command could not be run
+[[scenario]]
+name = "remote_not_executable"
+exit_code = 126
+setup = "mkdir -p src && touch /tmp/not-executable && chmod 644 /tmp/not-executable"
+args = ["rsync", "-e", "/tmp/not-executable", "src", "remote:dest"]
+description = "Remote shell not executable"
+skip = true  # May not work on all systems
+
+# Exit Code 127: remote command not found
+[[scenario]]
+name = "remote_not_found"
+exit_code = 127
+args = ["rsync", "-e", "/nonexistent/shell", "src", "remote:dest"]
+description = "Remote shell command not found"
+
+# Additional common scenarios for exit code 1
+[[scenario]]
+name = "help_requested"
+exit_code = 0
+args = ["rsync", "--help"]
+description = "Help output should exit successfully"
+
+[[scenario]]
+name = "version_requested"
+exit_code = 0
+args = ["rsync", "--version"]
+description = "Version output should exit successfully"
+
+[[scenario]]
+name = "dry_run_success"
+exit_code = 0
+setup = "mkdir -p src dest && touch src/file"
+args = ["rsync", "-n", "src/file", "dest/"]
+description = "Dry run should succeed"
