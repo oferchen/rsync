@@ -158,6 +158,8 @@ pub(crate) fn read_file_list_from_reader<R: BufRead>(
     Ok(())
 }
 
+/// Deprecated: Kept for reference, will be removed once native SSH is fully validated
+#[allow(dead_code)]
 pub(crate) fn transfer_requires_remote(
     remainder: &[OsString],
     file_list_operands: &[OsString],

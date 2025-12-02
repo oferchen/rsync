@@ -175,6 +175,8 @@ fn debug_flag_empty_error() -> Message {
     rsync_error!(1, "--debug flag must not be empty").with_role(Role::Client)
 }
 
+/// Deprecated: Kept for reference, will be removed once native SSH is fully validated
+#[allow(dead_code)]
 pub(crate) fn info_flags_include_progress(flags: &[OsString]) -> bool {
     flags.iter().any(|value| {
         value
