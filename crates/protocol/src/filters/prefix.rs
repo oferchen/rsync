@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn clear_rule_prefix() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let mut rule = FilterRuleWireFormat {
+        let rule = FilterRuleWireFormat {
             rule_type: RuleType::Clear,
             pattern: String::new(),
             anchored: false,
@@ -215,14 +215,14 @@ mod tests {
             negate: false,
         };
 
-        let prefix = build_rule_prefix(&mut rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, ": ");
     }
 
     #[test]
     fn protect_rule_prefix() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let mut rule = FilterRuleWireFormat {
+        let rule = FilterRuleWireFormat {
             rule_type: RuleType::Protect,
             pattern: "important".to_string(),
             anchored: false,
@@ -238,7 +238,7 @@ mod tests {
             negate: false,
         };
 
-        let prefix = build_rule_prefix(&mut rule, protocol);
+        let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "P ");
     }
 }

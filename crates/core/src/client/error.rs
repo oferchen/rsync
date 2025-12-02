@@ -59,6 +59,7 @@ pub(crate) fn missing_operands_error() -> ClientError {
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
+#[allow(dead_code)]
 pub(crate) fn fallback_disabled_error() -> ClientError {
     let message = rsync_error!(
         FEATURE_UNAVAILABLE_EXIT_CODE,

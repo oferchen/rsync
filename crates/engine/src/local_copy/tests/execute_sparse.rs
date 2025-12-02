@@ -1,7 +1,6 @@
 #[cfg(unix)]
 #[test]
 fn execute_with_sparse_enabled_creates_holes() {
-    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("sparse.bin");
@@ -42,6 +41,7 @@ fn execute_with_sparse_enabled_creates_holes() {
 
     assert_eq!(dense_meta.len(), sparse_meta.len());
 
+    use std::os::unix::fs::MetadataExt;
     let dense_blocks = dense_meta.blocks();
     let sparse_blocks = sparse_meta.blocks();
 
@@ -66,7 +66,6 @@ fn execute_with_sparse_enabled_creates_holes() {
 #[cfg(unix)]
 #[test]
 fn execute_inplace_disables_sparse_writes() {
-    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source-inplace.bin");
@@ -122,6 +121,7 @@ fn execute_inplace_disables_sparse_writes() {
         fs::read(&sparse_dest).expect("read sparse destination"),
     );
 
+    use std::os::unix::fs::MetadataExt;
     let dense_blocks = dense_meta.blocks();
     let sparse_blocks = sparse_meta.blocks();
     assert!(
@@ -210,7 +210,6 @@ fn execute_delta_with_sparse_counts_zero_literal_data() {
 #[cfg(unix)]
 #[test]
 fn execute_without_inplace_replaces_destination_file() {
-    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
@@ -303,7 +302,6 @@ fn execute_inplace_succeeds_with_read_only_directory() {
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_multiple_hole_patterns() {
-    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("multi-pattern.bin");
@@ -316,7 +314,7 @@ fn execute_sparse_with_multiple_hole_patterns() {
 
     // Hole 1: seek to 1MB (creating ~1014KB hole)
     source_file
-        .seek(SeekFrom::Start(1 * 1024 * 1024))
+        .seek(SeekFrom::Start(1024 * 1024))
         .expect("seek for hole 1");
 
     // Data block 2: 20KB at 1MB
@@ -375,6 +373,7 @@ fn execute_sparse_with_multiple_hole_patterns() {
     assert_eq!(dense_content, sparse_content);
 
     // Verify sparse file uses fewer blocks (platform-dependent)
+    use std::os::unix::fs::MetadataExt;
     let dense_blocks = dense_meta.blocks();
     let sparse_blocks = sparse_meta.blocks();
 
@@ -403,7 +402,7 @@ fn execute_sparse_verifies_hole_data_integrity() {
     // Specific pattern: known data at specific offsets
     source_file.write_all(b"START").expect("write start");
     source_file
-        .seek(SeekFrom::Start(1 * 1024 * 1024))
+        .seek(SeekFrom::Start(1024 * 1024))
         .expect("seek hole 1");
     source_file.write_all(b"MIDDLE").expect("write middle");
     source_file
@@ -435,7 +434,7 @@ fn execute_sparse_verifies_hole_data_integrity() {
     assert_eq!(&buffer, b"START");
 
     dest_file
-        .seek(SeekFrom::Start(1 * 1024 * 1024))
+        .seek(SeekFrom::Start(1024 * 1024))
         .expect("seek middle");
     let mut buffer_mid = vec![0u8; 6];
     dest_file.read_exact(&mut buffer_mid).expect("read middle");
@@ -463,7 +462,6 @@ fn execute_sparse_verifies_hole_data_integrity() {
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_small_holes() {
-    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("small-holes.bin");
@@ -523,7 +521,6 @@ fn execute_sparse_with_small_holes() {
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_aligned_holes() {
-    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("aligned.bin");
@@ -587,7 +584,6 @@ fn execute_sparse_with_aligned_holes() {
 #[cfg(unix)]
 #[test]
 fn execute_sparse_with_large_file() {
-    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("large-sparse.bin");
@@ -637,6 +633,7 @@ fn execute_sparse_with_large_file() {
     assert_eq!(meta.len(), file_size);
 
     // Verify minimal block allocation (platform-dependent)
+    use std::os::unix::fs::MetadataExt;
     let blocks = meta.blocks();
     let max_expected_blocks = 1024; // ~512KB for data + overhead
 

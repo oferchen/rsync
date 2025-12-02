@@ -51,7 +51,6 @@ impl<W: Write> Write for ServerWriter<W> {
                     .append(true)
                     .open("/tmp/rsync-debug/server-writes.log")
                 {
-                    use std::io::Write as _;
                     let _ = writeln!(f, "[PLAIN] {} bytes: {:02x?}", buf.len(), buf);
                 }
                 w.write(buf)
@@ -110,7 +109,6 @@ impl<W: Write> Write for MultiplexWriter<W> {
             .append(true)
             .open("/tmp/rsync-debug/server-writes.log")
         {
-            use std::io::Write as _;
             let _ = writeln!(
                 f,
                 "[MULTIPLEX] tag={} ({:#04x}), len={} ({:#08x})",
