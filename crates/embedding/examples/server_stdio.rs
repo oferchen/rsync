@@ -19,7 +19,7 @@ fn main() {
     ) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("Failed to create server config: {}", e);
+            eprintln!("Failed to create server config: {e}");
             std::process::exit(1);
         }
     };
@@ -41,7 +41,7 @@ fn main() {
             std::process::exit(0);
         }
         Err(e) => {
-            eprintln!("[example] Server execution failed: {}", e);
+            eprintln!("[example] Server execution failed: {e}");
             std::process::exit(1);
         }
     }

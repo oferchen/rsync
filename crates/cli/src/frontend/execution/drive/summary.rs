@@ -81,7 +81,7 @@ where
 
     match result {
         Ok(summary) => {
-            let summary = summary;
+            // let summary = summary;
             let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
             let suppress_updated_only_totals = itemize_changes && !stats && verbosity == 0;
 
