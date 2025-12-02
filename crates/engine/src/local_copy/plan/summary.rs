@@ -227,6 +227,36 @@ impl LocalCopySummary {
         self.file_list_transfer
     }
 
+    /// Creates a summary from server-side receiver statistics.
+    ///
+    /// This constructor is used when the local side acted as the receiver in a pull transfer.
+    /// It maps the available receiver statistics (files listed, files transferred, bytes received)
+    /// to the corresponding LocalCopySummary fields.
+    #[must_use]
+    pub fn from_receiver_stats(files_listed: usize, files_transferred: usize, bytes_received: u64) -> Self {
+        Self {
+            regular_files_total: files_listed as u64,
+            files_copied: files_transferred as u64,
+            bytes_received,
+            ..Default::default()
+        }
+    }
+
+    /// Creates a summary from server-side generator statistics.
+    ///
+    /// This constructor is used when the local side acted as the generator/sender in a push transfer.
+    /// It maps the available generator statistics (files listed, files transferred, bytes sent)
+    /// to the corresponding LocalCopySummary fields.
+    #[must_use]
+    pub fn from_generator_stats(files_listed: usize, files_transferred: usize, bytes_sent: u64) -> Self {
+        Self {
+            regular_files_total: files_listed as u64,
+            files_copied: files_transferred as u64,
+            bytes_sent,
+            ..Default::default()
+        }
+    }
+
     pub(in crate::local_copy) fn record_file(
         &mut self,
         file_size: u64,
