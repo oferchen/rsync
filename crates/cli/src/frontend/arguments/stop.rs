@@ -31,10 +31,14 @@ impl StopRequest {
         }
     }
 
+    /// Returns the kind of stop request
+    #[allow(dead_code)]
     pub(crate) const fn kind(&self) -> StopRequestKind {
         self.kind
     }
 
+    /// Returns the original CLI value
+    #[allow(dead_code)]
     pub(crate) fn cli_value(&self) -> &OsString {
         &self.value
     }

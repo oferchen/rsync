@@ -29,6 +29,8 @@ impl UnsupportedOption {
             .with_role(Role::Client)
     }
 
+    /// Deprecated: Kept for reference, will be removed once native SSH is fully validated
+    #[allow(dead_code)]
     pub(crate) fn fallback_text(&self) -> String {
         let option = self.option.to_string_lossy();
         format!(

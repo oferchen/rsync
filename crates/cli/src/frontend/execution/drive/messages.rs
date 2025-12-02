@@ -27,6 +27,8 @@ where
     message.code().unwrap_or(1)
 }
 
+/// Deprecated: Kept for reference, will be removed once native SSH is fully validated
+#[allow(dead_code)]
 pub(super) fn fail_with_custom_fallback<Err>(
     message: Message,
     fallback: String,

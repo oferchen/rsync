@@ -52,6 +52,7 @@ pub(crate) struct SettingsInputs<'a> {
 }
 
 /// Derived execution settings gathered from [`derive_settings`].
+#[allow(dead_code)]
 pub(crate) struct DerivedSettings {
     pub(crate) out_format_template: Option<OutFormat>,
     pub(crate) progress_setting: ProgressSetting,
