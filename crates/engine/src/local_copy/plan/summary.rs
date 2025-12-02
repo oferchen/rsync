@@ -233,7 +233,11 @@ impl LocalCopySummary {
     /// It maps the available receiver statistics (files listed, files transferred, bytes received)
     /// to the corresponding LocalCopySummary fields.
     #[must_use]
-    pub fn from_receiver_stats(files_listed: usize, files_transferred: usize, bytes_received: u64) -> Self {
+    pub fn from_receiver_stats(
+        files_listed: usize,
+        files_transferred: usize,
+        bytes_received: u64,
+    ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
@@ -248,7 +252,11 @@ impl LocalCopySummary {
     /// It maps the available generator statistics (files listed, files transferred, bytes sent)
     /// to the corresponding LocalCopySummary fields.
     #[must_use]
-    pub fn from_generator_stats(files_listed: usize, files_transferred: usize, bytes_sent: u64) -> Self {
+    pub fn from_generator_stats(
+        files_listed: usize,
+        files_transferred: usize,
+        bytes_sent: u64,
+    ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
