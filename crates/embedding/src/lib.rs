@@ -387,7 +387,11 @@ mod tests {
         let error = run_server(args).expect_err("server mode reports usage");
         // Server may return various error codes depending on where it fails
         // (1 for usage errors, 12 for protocol errors, etc.)
-        assert_ne!(error.exit_status(), 0, "server should fail with non-zero exit");
+        assert_ne!(
+            error.exit_status(),
+            0,
+            "server should fail with non-zero exit"
+        );
 
         let output = error.output();
         assert!(
@@ -407,7 +411,11 @@ mod tests {
         let mut stderr = Vec::new();
         let status = run_server_with(args, &mut stdout, &mut stderr).unwrap_err();
         // Server may return various error codes depending on where it fails
-        assert_ne!(status.exit_status(), 0, "server should fail with non-zero exit");
+        assert_ne!(
+            status.exit_status(),
+            0,
+            "server should fail with non-zero exit"
+        );
         // Server may write protocol bytes to stdout before failing
         // assert!(
         //     stdout.is_empty(),

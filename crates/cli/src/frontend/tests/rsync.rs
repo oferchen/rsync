@@ -44,7 +44,9 @@ fn rsync_path_rejected_for_batch_without_remote_operands() {
     assert_eq!(code, 1);
     assert!(stdout.is_empty());
     let message = String::from_utf8(stderr).expect("stderr utf8");
-    assert!(message.contains("the --rsync-path option may only be used with remote connections")
-            || message.contains("remote connections and batch modes are not yet supported"));
+    assert!(
+        message.contains("the --rsync-path option may only be used with remote connections")
+            || message.contains("remote connections and batch modes are not yet supported")
+    );
     assert!(!dest.exists());
 }
