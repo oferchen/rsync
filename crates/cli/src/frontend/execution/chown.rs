@@ -23,6 +23,8 @@ impl ParsedChown {
         self.group
     }
 
+    /// Returns the original spec string
+    #[allow(dead_code)]
     pub(crate) fn spec(&self) -> &OsString {
         &self.spec
     }

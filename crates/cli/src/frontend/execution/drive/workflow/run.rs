@@ -15,7 +15,7 @@ use crate::frontend::{
     arguments::{ParsedArgs, StopRequest},
     execution::{
         chown::ParsedChown, extract_operands, load_file_list_operands, parse_chown_argument,
-        resolve_file_list_entries, resolve_iconv_setting, transfer_requires_remote,
+        resolve_file_list_entries, resolve_iconv_setting,
     },
 };
 use core::{client::HumanReadableMode, message::Role, rsync_error};
@@ -45,12 +45,12 @@ where
         human_readable,
         dry_run,
         list_only,
-        remote_shell,
+        remote_shell: _,
         connect_program,
         daemon_port,
         remote_options,
         rsync_path,
-        protect_args,
+        protect_args: _,
         address_mode,
         bind_address: bind_address_raw,
         sockopts,
@@ -58,7 +58,7 @@ where
         archive,
         recursive: _recursive,
         recursive_override,
-        inc_recursive,
+        inc_recursive: _,
         dirs,
         delete_mode,
         delete_excluded,
@@ -68,7 +68,7 @@ where
         backup_suffix,
         checksum,
         checksum_choice,
-        checksum_choice_arg,
+        checksum_choice_arg: _,
         checksum_seed,
         size_only,
         ignore_times,
@@ -113,7 +113,7 @@ where
         include_from,
         filters,
         cvs_exclude,
-        rsync_filter_shortcuts,
+        rsync_filter_shortcuts: _,
         files_from,
         from0,
         info,
@@ -143,7 +143,7 @@ where
         name_level: initial_name_level,
         name_overridden: initial_name_overridden,
         stats,
-        eight_bit_output,
+        eight_bit_output: _,
         partial,
         preallocate,
         fsync: fsync_option,
@@ -161,7 +161,7 @@ where
         append,
         append_verify,
         msgs_to_stderr: msgs_to_stderr_option,
-        outbuf,
+        outbuf: _,
         itemize_changes,
         whole_file,
         xattrs,
@@ -260,7 +260,7 @@ where
 
     let options::DerivedSettings {
         out_format_template,
-        progress_setting,
+        progress_setting: _,
         progress_mode,
         stats,
         name_level,
@@ -273,15 +273,15 @@ where
         block_size_override,
         modify_window_setting,
         compress,
-        compress_disabled,
+        compress_disabled: _,
         compression_level_override,
-        compress_level_cli,
+        compress_level_cli: _,
         skip_compress_list,
         compression_setting,
-        compress_choice_cli,
+        compress_choice_cli: _,
         compression_algorithm,
         log_file_path,
-        log_file_format_cli,
+        log_file_format_cli: _,
         log_file_template,
     } = match options::derive_settings(stdout, stderr, settings_inputs) {
         options::SettingsOutcome::Proceed(settings) => *settings,
@@ -334,8 +334,6 @@ where
         relative.unwrap_or(false),
     );
 
-    let fallback_remainder = remainder.clone();
-
     if let Some(exit_code) = maybe_handle_module_listing(
         stdout,
         stderr,
@@ -358,7 +356,6 @@ where
         return exit_code;
     }
 
-    let files_from_used = !files_from.is_empty();
     let implied_dirs_option = implied_dirs;
     let implied_dirs = implied_dirs_option.unwrap_or(true);
     let recursive_effective = !matches!(recursive_override, Some(false));
