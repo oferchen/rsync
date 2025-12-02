@@ -572,6 +572,7 @@ pub(crate) fn configured_fallback_binary() -> Option<OsString> {
 /// # Returns
 ///
 /// Always returns `None` (use internal Rust implementation)
+#[allow(dead_code)]
 pub(crate) fn configured_fallback_binary_for_daemon() -> Option<OsString> {
     // Daemon mode never delegates - always use internal Rust implementation
     None

@@ -84,6 +84,7 @@ where
     let has_explicit_config = remainder_has_config(&parsed.remainder);
 
     // Native-only execution per CLAUDE.md: no fallback to system rsync
+    #[allow(clippy::overly_complex_bool_expr)]
     if false
         && fallback_disabled_reason().is_none()
         && !has_explicit_config

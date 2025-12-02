@@ -11,6 +11,7 @@ use std::io::{self, Read};
 ///
 /// Upstream rsync modifies global I/O buffer state via `io_start_multiplex_in()`.
 /// We achieve the same by wrapping the reader and delegating based on mode.
+#[allow(dead_code)]
 pub enum ServerReader<R: Read> {
     /// Plain mode - read data directly without demultiplexing
     Plain(R),
@@ -18,6 +19,7 @@ pub enum ServerReader<R: Read> {
     Multiplex(MultiplexReader<R>),
 }
 
+#[allow(dead_code)]
 impl<R: Read> ServerReader<R> {
     /// Creates a new plain-mode reader
     pub fn new_plain(reader: R) -> Self {
@@ -61,6 +63,7 @@ pub(super) struct MultiplexReader<R> {
     pos: usize,
 }
 
+#[allow(dead_code)]
 impl<R: Read> MultiplexReader<R> {
     fn new(inner: R) -> Self {
         Self {
