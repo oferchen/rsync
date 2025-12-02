@@ -152,18 +152,10 @@ fn run_pull_transfer(
 
     // We need to pass connection as both Read and Write to run_server_stdio.
     // Since we can't create two mutable borrows, we use a small wrapper function.
-    let exit_code = run_server_over_connection(server_config, &mut connection)?;
+    let server_stats = run_server_over_connection(server_config, &mut connection)?;
 
-    if exit_code != 0 {
-        return Err(invalid_argument_error(
-            &format!("transfer completed with exit code {exit_code}"),
-            exit_code,
-        ));
-    }
-
-    // TODO: Extract proper transfer stats from server receiver
-    // For now, return a minimal summary
-    Ok(ClientSummary::default())
+    // Convert server stats to client summary
+    Ok(convert_server_stats_to_summary(server_stats))
 }
 
 /// Executes a push transfer (local → remote).
@@ -182,18 +174,42 @@ fn run_push_transfer(
 
     // We need to pass connection as both Read and Write to run_server_stdio.
     // Since we can't create two mutable borrows, we use a small wrapper function.
-    let exit_code = run_server_over_connection(server_config, &mut connection)?;
+    let server_stats = run_server_over_connection(server_config, &mut connection)?;
 
-    if exit_code != 0 {
-        return Err(invalid_argument_error(
-            &format!("transfer completed with exit code {exit_code}"),
-            exit_code,
-        ));
-    }
+    // Convert server stats to client summary
+    Ok(convert_server_stats_to_summary(server_stats))
+}
 
-    // TODO: Extract proper transfer stats from server generator
-    // For now, return a minimal summary
-    Ok(ClientSummary::default())
+/// Converts server-side statistics to a client summary.
+///
+/// Maps the statistics returned by the server (receiver or generator) into the
+/// format expected by the client summary. Uses the available server statistics
+/// (files listed, files transferred, and bytes sent/received) to create a
+/// LocalCopySummary with the most relevant fields populated.
+fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientSummary {
+    use crate::server::ServerStats;
+    use engine::local_copy::LocalCopySummary;
+
+    let summary = match stats {
+        ServerStats::Receiver(transfer_stats) => {
+            // For pull transfers: we received files from remote
+            LocalCopySummary::from_receiver_stats(
+                transfer_stats.files_listed,
+                transfer_stats.files_transferred,
+                transfer_stats.bytes_received,
+            )
+        }
+        ServerStats::Generator(generator_stats) => {
+            // For push transfers: we sent files to remote
+            LocalCopySummary::from_generator_stats(
+                generator_stats.files_listed,
+                generator_stats.files_transferred,
+                generator_stats.bytes_sent,
+            )
+        }
+    };
+
+    ClientSummary::from_summary(summary)
 }
 
 /// Helper function to run server over a connection that implements both Read and Write.
@@ -211,7 +227,7 @@ fn run_push_transfer(
 fn run_server_over_connection<T>(
     config: ServerConfig,
     connection: &mut T,
-) -> Result<i32, ClientError>
+) -> Result<crate::server::ServerStats, ClientError>
 where
     T: std::io::Read + std::io::Write,
 {
