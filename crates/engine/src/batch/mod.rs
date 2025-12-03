@@ -66,7 +66,7 @@ pub mod writer;
 #[cfg(test)]
 mod tests;
 
-pub use format::{BatchFlags, BatchHeader};
+pub use format::{BatchFlags, BatchHeader, FileEntry};
 pub use reader::BatchReader;
 pub use writer::BatchWriter;
 

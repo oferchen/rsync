@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::local_copy::overrides::device_identifier;
 #[cfg(all(unix, feature = "acl"))]
@@ -19,6 +19,64 @@ use ::metadata::apply_directory_metadata_with_options;
 use super::super::non_empty_path;
 use super::planner::{EntryAction, apply_pre_transfer_deletions, plan_directory_entries};
 use super::support::read_directory_entries_sorted;
+
+/// Helper to capture a file entry to the batch file if batch mode is active.
+fn capture_batch_file_entry(
+    context: &CopyContext,
+    relative_path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), LocalCopyError> {
+    if let Some(batch_writer_arc) = context.batch_writer() {
+        // Extract metadata for the file entry
+        let path_str = relative_path.to_string_lossy().into_owned();
+
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+
+        #[cfg(unix)]
+        let mode = metadata.mode();
+
+        #[cfg(not(unix))]
+        let mode = if metadata.is_dir() {
+            0o040755 // Directory
+        } else if metadata.file_type().is_symlink() {
+            0o120777 // Symlink
+        } else {
+            0o100644 // Regular file
+        };
+
+        let size = metadata.len();
+
+        let mtime = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        // Create file entry
+        let mut entry = crate::batch::FileEntry::new(path_str, mode, size, mtime);
+
+        // Add uid/gid if preserving ownership
+        #[cfg(unix)]
+        {
+            entry.uid = Some(metadata.uid());
+            entry.gid = Some(metadata.gid());
+        }
+
+        // Write entry to batch file
+        let mut writer = batch_writer_arc.lock().unwrap();
+        writer.write_file_entry(&entry).map_err(|e| {
+            LocalCopyError::io(
+                "write batch file entry",
+                relative_path.to_path_buf(),
+                std::io::Error::new(std::io::ErrorKind::Other, e),
+            )
+        })?;
+    }
+
+    Ok(())
+}
 
 pub(crate) fn copy_directory_recursive(
     context: &mut CopyContext,
@@ -233,6 +291,10 @@ pub(crate) fn copy_directory_recursive(
             }
             EntryAction::CopyDirectory => {
                 ensure_directory(context)?;
+                // Capture directory entry to batch file
+                if let Some(rel_path) = record_relative {
+                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
+                }
                 let child_kept = copy_directory_recursive(
                     context,
                     planned.entry.path.as_path(),
@@ -247,6 +309,10 @@ pub(crate) fn copy_directory_recursive(
             }
             EntryAction::CopyFile => {
                 ensure_directory(context)?;
+                // Capture file entry to batch file
+                if let Some(rel_path) = record_relative {
+                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
+                }
                 copy_file(
                     context,
                     planned.entry.path.as_path(),
@@ -258,6 +324,10 @@ pub(crate) fn copy_directory_recursive(
             }
             EntryAction::CopySymlink => {
                 ensure_directory(context)?;
+                // Capture symlink entry to batch file
+                if let Some(rel_path) = record_relative {
+                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
+                }
                 let metadata_options = context.metadata_options();
                 copy_symlink(
                     context,
@@ -271,6 +341,10 @@ pub(crate) fn copy_directory_recursive(
             }
             EntryAction::CopyFifo => {
                 ensure_directory(context)?;
+                // Capture FIFO entry to batch file
+                if let Some(rel_path) = record_relative {
+                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
+                }
                 let metadata_options = context.metadata_options();
                 copy_fifo(
                     context,
@@ -284,6 +358,10 @@ pub(crate) fn copy_directory_recursive(
             }
             EntryAction::CopyDevice => {
                 ensure_directory(context)?;
+                // Capture device entry to batch file
+                if let Some(rel_path) = record_relative {
+                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
+                }
                 let metadata_options = context.metadata_options();
                 copy_device(
                     context,
@@ -297,6 +375,10 @@ pub(crate) fn copy_directory_recursive(
             }
             EntryAction::CopyDeviceAsFile => {
                 ensure_directory(context)?;
+                // Capture device-as-file entry to batch file
+                if let Some(rel_path) = record_relative {
+                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
+                }
                 copy_file(
                     context,
                     planned.entry.path.as_path(),

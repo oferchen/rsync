@@ -125,8 +125,42 @@ fn run_client_internal(
     let mut options = build_local_copy_options(&config, filter_program);
 
     // Attach batch writer to options if in batch write mode
-    if let Some(writer) = batch_writer {
-        options = options.batch_writer(Some(writer));
+    let batch_writer_for_options = if let Some(ref writer) = batch_writer {
+        // Write batch header with stream flags before starting transfer
+        let mut batch_flags = engine::batch::BatchFlags::default();
+        batch_flags.recurse = config.recursive();
+        batch_flags.preserve_uid = config.preserve_owner();
+        batch_flags.preserve_gid = config.preserve_group();
+        batch_flags.preserve_links = config.links();
+        batch_flags.preserve_hard_links = config.preserve_hard_links();
+        batch_flags.always_checksum = config.checksum();
+        batch_flags.xfer_dirs = config.dirs();
+        batch_flags.do_compression = config.compress();
+        batch_flags.preserve_xattrs = config.preserve_xattrs();
+        batch_flags.inplace = config.inplace();
+        batch_flags.append = config.append();
+        batch_flags.append_verify = config.append_verify();
+
+        {
+            let mut w = writer.lock().unwrap();
+            if let Err(e) = w.write_header(batch_flags) {
+                use crate::message::Role;
+                use crate::rsync_error;
+                let msg = format!("failed to write batch header: {}", e);
+                return Err(ClientError::new(
+                    1,
+                    rsync_error!(1, "{}", msg).with_role(Role::Client),
+                ));
+            }
+        }
+
+        Some(writer.clone())
+    } else {
+        None
+    };
+
+    if let Some(ref writer_arc) = batch_writer_for_options {
+        options = options.batch_writer(Some(writer_arc.clone()));
     }
 
     let mode = if config.dry_run() || config.list_only() {
