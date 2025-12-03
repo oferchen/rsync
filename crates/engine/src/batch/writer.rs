@@ -10,6 +10,7 @@ use std::io::{self, BufWriter, Write};
 ///
 /// Records file list and delta operations to a batch file that can be
 /// replayed later. This allows offline distribution of changes.
+#[derive(Debug)]
 pub struct BatchWriter {
     /// Configuration for this batch operation.
     config: BatchConfig,
