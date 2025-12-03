@@ -102,6 +102,37 @@ impl BatchWriter {
         }
     }
 
+    /// Write a file entry to the batch file.
+    ///
+    /// This records a single file/directory/link in the batch file's file
+    /// list section. The entry should be written during the file walk phase
+    /// before any delta operations are recorded for that file.
+    ///
+    /// The header must be written before calling this method.
+    pub fn write_file_entry(&mut self, entry: &super::format::FileEntry) -> EngineResult<()> {
+        if !self.header_written {
+            return Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Must write header before file entries",
+            )));
+        }
+
+        if let Some(ref mut writer) = self.batch_file {
+            entry.write_to(writer).map_err(|e| {
+                EngineError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to write file entry: {}", e),
+                ))
+            })?;
+            Ok(())
+        } else {
+            Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Batch file not open",
+            )))
+        }
+    }
+
     /// Flush any buffered data to disk.
     pub fn flush(&mut self) -> EngineResult<()> {
         if let Some(ref mut writer) = self.batch_file {

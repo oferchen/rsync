@@ -31,4 +31,11 @@ impl LocalCopyOptions {
         self.batch_writer = writer;
         self
     }
+
+    /// Gets a reference to the batch writer, if one is set.
+    ///
+    /// Returns `None` if batch mode is not active.
+    pub fn get_batch_writer(&self) -> Option<&Arc<Mutex<BatchWriter>>> {
+        self.batch_writer.as_ref()
+    }
 }

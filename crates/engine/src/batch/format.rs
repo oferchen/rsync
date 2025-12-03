@@ -267,6 +267,157 @@ fn read_varint<R: Read>(reader: &mut R) -> io::Result<u64> {
     Ok(result)
 }
 
+/// Write a variable-length string (length prefix + bytes).
+fn write_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
+    let bytes = s.as_bytes();
+    write_varint(writer, bytes.len() as u64)?;
+    writer.write_all(bytes)
+}
+
+/// Read a variable-length string (length prefix + bytes).
+fn read_string<R: Read>(reader: &mut R) -> io::Result<String> {
+    let len = read_varint(reader)? as usize;
+    if len > 1024 * 1024 {
+        // Sanity check: reject strings > 1 MB
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "string too long",
+        ));
+    }
+    let mut buf = vec![0u8; len];
+    reader.read_exact(&mut buf)?;
+    String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Write a 64-bit unsigned integer in little-endian byte order.
+fn write_u64<W: Write>(writer: &mut W, value: u64) -> io::Result<()> {
+    writer.write_all(&value.to_le_bytes())
+}
+
+/// Read a 64-bit unsigned integer in little-endian byte order.
+fn read_u64<R: Read>(reader: &mut R) -> io::Result<u64> {
+    let mut buf = [0u8; 8];
+    reader.read_exact(&mut buf)?;
+    Ok(u64::from_le_bytes(buf))
+}
+
+/// Write a 32-bit unsigned integer in little-endian byte order.
+fn write_u32<W: Write>(writer: &mut W, value: u32) -> io::Result<()> {
+    writer.write_all(&value.to_le_bytes())
+}
+
+/// Read a 32-bit unsigned integer in little-endian byte order.
+fn read_u32<R: Read>(reader: &mut R) -> io::Result<u32> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+/// File list entry in batch file.
+///
+/// This structure represents a single file/directory/link entry in the batch
+/// file, matching upstream rsync's flist format. The file list is written after
+/// the batch header and before the delta operations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileEntry {
+    /// Relative path from source root.
+    pub path: String,
+    /// File mode bits (permissions + type).
+    pub mode: u32,
+    /// File size in bytes.
+    pub size: u64,
+    /// Modification time (seconds since Unix epoch).
+    pub mtime: i64,
+    /// Owner user ID (if preserved).
+    pub uid: Option<u32>,
+    /// Owner group ID (if preserved).
+    pub gid: Option<u32>,
+}
+
+impl FileEntry {
+    /// Create a new file entry.
+    pub fn new(path: String, mode: u32, size: u64, mtime: i64) -> Self {
+        Self {
+            path,
+            mode,
+            size,
+            mtime,
+            uid: None,
+            gid: None,
+        }
+    }
+
+    /// Write the file entry to a writer.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        // Write path
+        write_string(writer, &self.path)?;
+
+        // Write mode
+        write_u32(writer, self.mode)?;
+
+        // Write size
+        write_u64(writer, self.size)?;
+
+        // Write mtime
+        write_i32(writer, self.mtime as i32)?;
+
+        // Write optional uid/gid (varint for space efficiency)
+        if let Some(uid) = self.uid {
+            write_varint(writer, 1)?; // Flag: uid present
+            write_u32(writer, uid)?;
+        } else {
+            write_varint(writer, 0)?; // Flag: uid not present
+        }
+
+        if let Some(gid) = self.gid {
+            write_varint(writer, 1)?; // Flag: gid present
+            write_u32(writer, gid)?;
+        } else {
+            write_varint(writer, 0)?; // Flag: gid not present
+        }
+
+        Ok(())
+    }
+
+    /// Read a file entry from a reader.
+    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        // Read path
+        let path = read_string(reader)?;
+
+        // Read mode
+        let mode = read_u32(reader)?;
+
+        // Read size
+        let size = read_u64(reader)?;
+
+        // Read mtime
+        let mtime = read_i32(reader)? as i64;
+
+        // Read optional uid
+        let uid = if read_varint(reader)? != 0 {
+            Some(read_u32(reader)?)
+        } else {
+            None
+        };
+
+        // Read optional gid
+        let gid = if read_varint(reader)? != 0 {
+            Some(read_u32(reader)?)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            path,
+            mode,
+            size,
+            mtime,
+            uid,
+            gid,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
