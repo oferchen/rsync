@@ -95,13 +95,7 @@ pub fn generate_script(
 fn shell_quote(s: &str) -> String {
     // Check if quoting is needed
     if s.chars().all(|c| {
-        c.is_alphanumeric()
-            || c == '-'
-            || c == '_'
-            || c == '/'
-            || c == '.'
-            || c == ':'
-            || c == '='
+        c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == ':' || c == '='
     }) {
         return s.to_string();
     }

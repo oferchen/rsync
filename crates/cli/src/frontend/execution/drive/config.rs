@@ -11,6 +11,8 @@ use core::client::{
     AddressMode, BandwidthLimit, ClientConfig, ClientConfigBuilder, CompressionSetting, DeleteMode,
     IconvSetting, SkipCompressList, StrongChecksumChoice, TransferTimeout,
 };
+use engine::batch;
+use transport::ssh;
 
 use crate::frontend::progress::{NameOutputLevel, ProgressMode};
 use crate::platform::{gid_t, uid_t};
@@ -119,6 +121,9 @@ pub(crate) struct ConfigInputs {
     pub(crate) log_file_template: Option<crate::frontend::out_format::OutFormat>,
     pub(crate) name_level: NameOutputLevel,
     pub(crate) iconv: IconvSetting,
+    pub(crate) remote_shell: Option<OsString>,
+    pub(crate) rsync_path: Option<OsString>,
+    pub(crate) batch_config: Option<batch::BatchConfig>,
 }
 
 /// Builds the base [`ClientConfigBuilder`] from the provided inputs.
@@ -220,6 +225,30 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .connect_timeout(inputs.connect_timeout)
         .stop_at(inputs.stop_deadline)
         .iconv(inputs.iconv.clone());
+
+    // Configure custom remote shell if specified
+    if let Some(ref shell_spec) = inputs.remote_shell {
+        match ssh::parse_remote_shell(shell_spec) {
+            Ok(args) => {
+                builder = builder.set_remote_shell(args);
+            }
+            Err(e) => {
+                // Invalid remote shell specification - this should have been caught
+                // during argument validation, but handle it gracefully here
+                eprintln!("warning: invalid remote shell specification: {}", e);
+            }
+        }
+    }
+
+    // Configure custom remote rsync path if specified
+    if let Some(ref path) = inputs.rsync_path {
+        builder = builder.set_rsync_path(path.clone());
+    }
+
+    // Configure batch mode if specified
+    if let Some(batch_cfg) = inputs.batch_config {
+        builder = builder.batch_config(Some(batch_cfg));
+    }
 
     if let Some(algorithm) = inputs.compression_algorithm {
         builder = builder.compression_algorithm(algorithm);

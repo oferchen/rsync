@@ -19,6 +19,7 @@ use crate::frontend::{
     },
 };
 use core::{client::HumanReadableMode, message::Role, rsync_error};
+use engine::batch;
 use logging::MessageSink;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
@@ -49,7 +50,7 @@ where
         connect_program,
         daemon_port,
         remote_options,
-        rsync_path,
+        rsync_path: _,
         protect_args: _,
         address_mode,
         bind_address: bind_address_raw,
@@ -359,30 +360,29 @@ where
     let implied_dirs_option = implied_dirs;
     let implied_dirs = implied_dirs_option.unwrap_or(true);
     let recursive_effective = !matches!(recursive_override, Some(false));
-    let batch_mode_requested =
-        write_batch.is_some() || only_write_batch.is_some() || read_batch.is_some();
 
-    // TODO(batch-integration): Full batch mode integration requires:
-    // 1. Add batch_config to ConfigInputs and ClientConfigBuilder
-    // 2. Create BatchConfig from write_batch/only_write_batch/read_batch args
-    // 3. Hook BatchWriter into the transfer I/O layer to capture file list and deltas
-    // 4. Hook BatchReader to replay captured operations
-    // 5. Generate .sh script via engine::batch::script::generate_script()
-    //
-    // The batch module (engine::batch) is complete and tested. Integration points:
-    // - engine::batch::BatchWriter::new() and write_header()/write_data()/finalize()
-    // - engine::batch::BatchReader::new() and read_header()/read_data()
-    // - engine::batch::script::generate_script() for .sh file generation
-    //
-    // See: crates/engine/src/batch/mod.rs for API documentation
-    if batch_mode_requested {
-        let message = rsync_error!(
-            1,
-            "batch modes (--write-batch, --only-write-batch, --read-batch) are not yet fully integrated with the transfer engine; the batch module is implemented but requires I/O layer coordination"
-        )
-        .with_role(Role::Client);
-        return fail_with_message(message, stderr);
-    }
+    // Create batch configuration if batch mode was requested
+    let batch_config = if let Some(ref path) = write_batch {
+        Some(batch::BatchConfig::new(
+            batch::BatchMode::Write,
+            path.to_string_lossy().into_owned(),
+            32, // Default protocol version
+        ))
+    } else if let Some(ref path) = only_write_batch {
+        Some(batch::BatchConfig::new(
+            batch::BatchMode::OnlyWrite,
+            path.to_string_lossy().into_owned(),
+            32, // Default protocol version
+        ))
+    } else if let Some(ref path) = read_batch {
+        Some(batch::BatchConfig::new(
+            batch::BatchMode::Read,
+            path.to_string_lossy().into_owned(),
+            32, // Default protocol version
+        ))
+    } else {
+        None
+    };
 
     // Remote transfers are handled natively by the SSH transport in core::client::run_client_internal
     // No fallback to system rsync is needed anymore
@@ -411,7 +411,7 @@ where
         desired_protocol,
         password_file.as_ref(),
         connect_program.as_ref(),
-        rsync_path.as_ref(),
+        parsed.rsync_path.as_ref(),
         &remote_options,
         stderr,
     ) {
@@ -574,7 +574,7 @@ where
         append: append_enabled,
         append_verify,
         whole_file: whole_file_enabled,
-        force_fallback: batch_mode_requested,
+        force_fallback: batch_config.is_some(),
         timeout: timeout_setting,
         connect_timeout: connect_timeout_setting,
         stop_deadline: stop_request.as_ref().map(StopRequest::deadline),
@@ -592,6 +592,9 @@ where
         log_file_template: log_file_template.clone(),
         name_level,
         iconv: iconv_setting.clone(),
+        remote_shell: parsed.remote_shell.clone(),
+        rsync_path: parsed.rsync_path.clone(),
+        batch_config,
     };
 
     let builder = config::build_base_config(config_inputs);

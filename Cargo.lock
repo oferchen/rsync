@@ -302,6 +302,7 @@ dependencies = [
  "compress",
  "core",
  "daemon",
+ "engine",
  "filetime",
  "filters",
  "libc",
@@ -312,6 +313,7 @@ dependencies = [
  "rustix 0.38.44",
  "tempfile",
  "time",
+ "transport",
  "users",
  "xattr",
 ]
