@@ -275,7 +275,6 @@ pub use core::server::run_server_stdio;
 /// ```no_run
 /// use embedding::{ServerConfig, ServerRole, run_server_with_config};
 /// use std::io;
-/// use protocol::ProtocolVersion;
 ///
 /// let config = ServerConfig::from_flag_string_and_args(
 ///     ServerRole::Receiver,
@@ -286,7 +285,7 @@ pub use core::server::run_server_stdio;
 /// let mut stdin = io::stdin();
 /// let mut stdout = io::stdout();
 ///
-/// let stats = run_server_with_config(config, &mut stdin, &mut stdout)
+/// let _stats = run_server_with_config(config, &mut stdin, &mut stdout)
 ///     .expect("server execution succeeds");
 /// ```
 pub fn run_server_with_config<R, W>(
