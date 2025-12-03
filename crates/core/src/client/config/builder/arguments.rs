@@ -28,4 +28,31 @@ impl ClientConfigBuilder {
         self.list_only = list_only;
         self
     }
+
+    /// Configures batch mode for offline/disconnected transfer workflows.
+    ///
+    /// This method accepts an optional `BatchConfig` which determines how the
+    /// transfer will interact with batch files.
+    ///
+    /// # Example
+    /// ```
+    /// # use core::client::ClientConfig;
+    /// # use engine::batch::{BatchMode, BatchConfig};
+    /// let batch_config = BatchConfig::new(
+    ///     BatchMode::Write,
+    ///     "mybatch".to_string(),
+    ///     32,
+    /// );
+    /// let config = ClientConfig::builder()
+    ///     .batch_config(Some(batch_config))
+    ///     .build();
+    /// ```
+    #[must_use]
+    #[doc(alias = "--write-batch")]
+    #[doc(alias = "--only-write-batch")]
+    #[doc(alias = "--read-batch")]
+    pub fn batch_config(mut self, config: Option<engine::batch::BatchConfig>) -> Self {
+        self.batch_config = config;
+        self
+    }
 }
