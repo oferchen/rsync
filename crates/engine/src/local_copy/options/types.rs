@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
@@ -8,6 +9,7 @@ use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use filters::FilterSet;
 
+use crate::batch::BatchWriter;
 use crate::local_copy::filter_program::FilterProgram;
 use crate::local_copy::skip_compress::SkipCompressList;
 use crate::signature::SignatureAlgorithm;
@@ -158,6 +160,7 @@ pub struct LocalCopyOptions {
     pub(super) chmod: Option<ChmodModifiers>,
     pub(super) user_mapping: Option<UserMapping>,
     pub(super) group_mapping: Option<GroupMapping>,
+    pub(super) batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 }
 
 impl LocalCopyOptions {
@@ -247,6 +250,7 @@ impl LocalCopyOptions {
             chmod: None,
             user_mapping: None,
             group_mapping: None,
+            batch_writer: None,
         }
     }
 }
