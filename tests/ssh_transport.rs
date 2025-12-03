@@ -183,7 +183,7 @@ fn test_ssh_operand_detection() {
 
 #[test]
 fn test_transfer_role_detection() {
-    use core::client::remote::{RemoteRole, determine_transfer_role};
+    use core::client::remote::{RemoteOperands, RemoteRole, determine_transfer_role};
     use std::ffi::OsString;
 
     // Test push detection (local → remote)
@@ -192,7 +192,10 @@ fn test_transfer_role_detection() {
     let result = determine_transfer_role(&sources, &destination).expect("Should detect push");
     assert_eq!(result.0, RemoteRole::Sender);
     assert_eq!(result.1, vec!["local.txt"]);
-    assert_eq!(result.2, "host:remote.txt");
+    assert_eq!(
+        result.2,
+        RemoteOperands::Single("host:remote.txt".to_string())
+    );
 
     // Test pull detection (remote → local)
     let sources = vec![OsString::from("host:remote.txt")];
@@ -200,7 +203,10 @@ fn test_transfer_role_detection() {
     let result = determine_transfer_role(&sources, &destination).expect("Should detect pull");
     assert_eq!(result.0, RemoteRole::Receiver);
     assert_eq!(result.1, vec!["local.txt"]);
-    assert_eq!(result.2, "host:remote.txt");
+    assert_eq!(
+        result.2,
+        RemoteOperands::Single("host:remote.txt".to_string())
+    );
 
     // Test multiple local sources with remote destination
     let sources = vec![OsString::from("file1.txt"), OsString::from("file2.txt")];
@@ -280,4 +286,249 @@ fn test_remote_invocation_builder() {
     // Flag string comes right after --server for receiver
     let flag_string = args[2].to_string_lossy();
     assert!(flag_string.starts_with('-'));
+}
+
+#[test]
+fn test_custom_remote_shell_config() {
+    use core::client::ClientConfig;
+
+    // Create config with custom remote shell
+    let config = ClientConfig::builder()
+        .set_remote_shell(vec!["ssh", "-p", "2222", "-i", "/path/to/key"])
+        .build();
+
+    // Verify the remote shell is stored correctly
+    let shell_args = config.remote_shell().expect("remote_shell should be Some");
+    assert_eq!(shell_args.len(), 5);
+    assert_eq!(shell_args[0].to_string_lossy(), "ssh");
+    assert_eq!(shell_args[1].to_string_lossy(), "-p");
+    assert_eq!(shell_args[2].to_string_lossy(), "2222");
+    assert_eq!(shell_args[3].to_string_lossy(), "-i");
+    assert_eq!(shell_args[4].to_string_lossy(), "/path/to/key");
+}
+
+#[test]
+fn test_custom_rsync_path_config() {
+    use core::client::ClientConfig;
+
+    // Create config with custom rsync path
+    let config = ClientConfig::builder()
+        .set_rsync_path("/opt/rsync/bin/rsync")
+        .build();
+
+    // Verify the rsync path is stored correctly
+    let rsync_path = config.rsync_path().expect("rsync_path should be Some");
+    assert_eq!(rsync_path.to_string_lossy(), "/opt/rsync/bin/rsync");
+}
+
+#[test]
+fn test_remote_invocation_with_custom_rsync_path() {
+    use core::client::{
+        ClientConfig,
+        remote::invocation::{RemoteInvocationBuilder, RemoteRole},
+    };
+
+    // Create config with custom rsync path
+    let config = ClientConfig::builder()
+        .set_rsync_path("/usr/local/bin/rsync")
+        .build();
+
+    // Build invocation for sender role
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/remote/path");
+
+    // First argument should be the custom rsync path, not "rsync"
+    assert_eq!(args[0].to_string_lossy(), "/usr/local/bin/rsync");
+    assert_eq!(args[1].to_string_lossy(), "--server");
+    assert_eq!(args[2].to_string_lossy(), "--sender");
+}
+
+#[test]
+fn test_remote_invocation_with_default_rsync_path() {
+    use core::client::{
+        ClientConfig,
+        remote::invocation::{RemoteInvocationBuilder, RemoteRole},
+    };
+
+    // Create config without custom rsync path
+    let config = ClientConfig::builder().build();
+
+    // Build invocation for sender role
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/remote/path");
+
+    // First argument should be default "rsync"
+    assert_eq!(args[0].to_string_lossy(), "rsync");
+    assert_eq!(args[1].to_string_lossy(), "--server");
+}
+
+#[test]
+#[ignore] // Requires SSH setup
+fn test_ssh_with_custom_port() {
+    // This test would require an actual SSH server setup
+    // It should:
+    // 1. Set up a test SSH server on a custom port
+    // 2. Create a config with custom remote shell: ssh -p <port>
+    // 3. Execute a transfer
+    // 4. Verify it works correctly
+    //
+    // For now, this is marked as ignored and serves as documentation
+    // for future integration testing.
+}
+
+#[test]
+fn test_multiple_sources_same_host() {
+    use core::client::remote::{RemoteOperands, determine_transfer_role};
+    use std::ffi::OsString;
+
+    let sources = vec![
+        OsString::from("host:/file1"),
+        OsString::from("host:/file2"),
+        OsString::from("host:/dir/file3"),
+    ];
+    let destination = OsString::from("local/");
+
+    let result = determine_transfer_role(&sources, &destination).expect("Should succeed");
+
+    assert_eq!(result.0, core::client::remote::RemoteRole::Receiver);
+    assert_eq!(result.1, vec!["local/"]);
+    assert_eq!(
+        result.2,
+        RemoteOperands::Multiple(vec![
+            "host:/file1".to_string(),
+            "host:/file2".to_string(),
+            "host:/dir/file3".to_string(),
+        ])
+    );
+}
+
+#[test]
+fn test_multiple_sources_with_user_same_host() {
+    use core::client::remote::{RemoteOperands, determine_transfer_role};
+    use std::ffi::OsString;
+
+    let sources = vec![
+        OsString::from("user@host:/file1"),
+        OsString::from("user@host:/file2"),
+    ];
+    let destination = OsString::from("local/");
+
+    let result = determine_transfer_role(&sources, &destination).expect("Should succeed");
+
+    assert_eq!(result.0, core::client::remote::RemoteRole::Receiver);
+    assert_eq!(result.1, vec!["local/"]);
+    assert_eq!(
+        result.2,
+        RemoteOperands::Multiple(vec![
+            "user@host:/file1".to_string(),
+            "user@host:/file2".to_string(),
+        ])
+    );
+}
+
+#[test]
+fn test_multiple_sources_different_hosts_error() {
+    use core::client::remote::determine_transfer_role;
+    use std::ffi::OsString;
+
+    let sources = vec![
+        OsString::from("host1:/file1"),
+        OsString::from("host2:/file2"),
+    ];
+    let destination = OsString::from("local/");
+
+    let result = determine_transfer_role(&sources, &destination);
+    assert!(result.is_err(), "Should reject different hosts");
+
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("same host") || err_msg.contains("host1") && err_msg.contains("host2"),
+        "Error should mention host mismatch: {err_msg}"
+    );
+}
+
+#[test]
+fn test_multiple_sources_user_mismatch_error() {
+    use core::client::remote::determine_transfer_role;
+    use std::ffi::OsString;
+
+    let sources = vec![
+        OsString::from("alice@host:/file1"),
+        OsString::from("bob@host:/file2"),
+    ];
+    let destination = OsString::from("local/");
+
+    let result = determine_transfer_role(&sources, &destination);
+    assert!(result.is_err(), "Should reject different usernames");
+
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("username") || err_msg.contains("alice") && err_msg.contains("bob"),
+        "Error should mention username mismatch: {err_msg}"
+    );
+}
+
+#[test]
+fn test_multiple_sources_mixed_explicit_implicit_user_error() {
+    use core::client::remote::determine_transfer_role;
+    use std::ffi::OsString;
+
+    let sources = vec![
+        OsString::from("user@host:/file1"),
+        OsString::from("host:/file2"),
+    ];
+    let destination = OsString::from("local/");
+
+    let result = determine_transfer_role(&sources, &destination);
+    assert!(
+        result.is_err(),
+        "Should reject mixed explicit/implicit username"
+    );
+
+    let err_msg = format!("{:?}", result.unwrap_err());
+    assert!(
+        err_msg.contains("username")
+            || err_msg.contains("explicit")
+            || err_msg.contains("implicit"),
+        "Error should mention username mixing: {err_msg}"
+    );
+}
+
+#[test]
+fn test_single_remote_source_returns_single_variant() {
+    use core::client::remote::{RemoteOperands, determine_transfer_role};
+    use std::ffi::OsString;
+
+    let sources = vec![OsString::from("host:/single/file")];
+    let destination = OsString::from("local/");
+
+    let result = determine_transfer_role(&sources, &destination).expect("Should succeed");
+
+    assert_eq!(result.0, core::client::remote::RemoteRole::Receiver);
+    assert_eq!(result.1, vec!["local/"]);
+    assert_eq!(
+        result.2,
+        RemoteOperands::Single("host:/single/file".to_string())
+    );
+}
+
+#[test]
+fn test_remote_invocation_with_multiple_paths() {
+    use core::client::{ClientConfig, remote::RemoteInvocationBuilder, remote::RemoteRole};
+
+    let config = ClientConfig::builder().build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build_with_paths(&["/path1", "/path2", "/path3"]);
+
+    assert_eq!(args[0].to_string_lossy(), "rsync");
+    assert_eq!(args[1].to_string_lossy(), "--server");
+    // No --sender for receiver role, so flags come next
+    let flags_idx = 2;
+    assert!(args[flags_idx].to_string_lossy().starts_with('-'));
+    let dot_idx = flags_idx + 1;
+    assert_eq!(args[dot_idx].to_string_lossy(), ".");
+    // Paths come after "."
+    assert_eq!(args[dot_idx + 1].to_string_lossy(), "/path1");
+    assert_eq!(args[dot_idx + 2].to_string_lossy(), "/path2");
+    assert_eq!(args[dot_idx + 3].to_string_lossy(), "/path3");
 }

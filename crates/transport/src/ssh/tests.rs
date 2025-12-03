@@ -229,3 +229,59 @@ fn configure_remote_shell_updates_program_and_options() {
     assert!(args.contains(&OsString::from("-p")));
     assert!(args.contains(&OsString::from("2222")));
 }
+
+#[test]
+fn parse_remote_shell_with_multiple_options() {
+    use super::parse_remote_shell;
+
+    let spec = OsStr::new("ssh -p 2222 -o StrictHostKeyChecking=no");
+    let args = parse_remote_shell(spec).expect("parsing should succeed");
+
+    assert_eq!(args.len(), 5);
+    assert_eq!(args[0].to_string_lossy(), "ssh");
+    assert_eq!(args[1].to_string_lossy(), "-p");
+    assert_eq!(args[2].to_string_lossy(), "2222");
+    assert_eq!(args[3].to_string_lossy(), "-o");
+    assert_eq!(args[4].to_string_lossy(), "StrictHostKeyChecking=no");
+}
+
+#[test]
+fn parse_remote_shell_with_quoted_arguments() {
+    use super::parse_remote_shell;
+
+    let spec = OsStr::new("ssh -i '/path/with spaces/key' -p 2222");
+    let args = parse_remote_shell(spec).expect("parsing should succeed");
+
+    assert_eq!(args.len(), 5);
+    assert_eq!(args[0].to_string_lossy(), "ssh");
+    assert_eq!(args[1].to_string_lossy(), "-i");
+    assert_eq!(args[2].to_string_lossy(), "/path/with spaces/key");
+    assert_eq!(args[3].to_string_lossy(), "-p");
+    assert_eq!(args[4].to_string_lossy(), "2222");
+}
+
+#[test]
+fn parse_remote_shell_preserves_empty_strings() {
+    use super::parse_remote_shell;
+
+    let spec = OsStr::new("ssh -o 'Option='");
+    let args = parse_remote_shell(spec).expect("parsing should succeed");
+
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[0].to_string_lossy(), "ssh");
+    assert_eq!(args[1].to_string_lossy(), "-o");
+    assert_eq!(args[2].to_string_lossy(), "Option=");
+}
+
+#[test]
+fn parse_remote_shell_handles_multiple_spaces() {
+    use super::parse_remote_shell;
+
+    let spec = OsStr::new("ssh   -p    2222");
+    let args = parse_remote_shell(spec).expect("parsing should succeed");
+
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[0].to_string_lossy(), "ssh");
+    assert_eq!(args[1].to_string_lossy(), "-p");
+    assert_eq!(args[2].to_string_lossy(), "2222");
+}

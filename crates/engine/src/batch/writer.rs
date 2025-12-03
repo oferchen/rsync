@@ -1,7 +1,7 @@
 //! Batch file writer for recording transfers.
 
-use super::format::{BatchFlags, BatchHeader};
 use super::BatchConfig;
+use super::format::{BatchFlags, BatchHeader};
 use crate::error::{EngineError, EngineResult};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
@@ -27,7 +27,11 @@ impl BatchWriter {
         let file = File::create(batch_path).map_err(|e| {
             EngineError::Io(io::Error::new(
                 e.kind(),
-                format!("Failed to create batch file '{}': {}", batch_path.display(), e),
+                format!(
+                    "Failed to create batch file '{}': {}",
+                    batch_path.display(),
+                    e
+                ),
             ))
         })?;
 
@@ -47,10 +51,7 @@ impl BatchWriter {
             )));
         }
 
-        let mut header = BatchHeader::new(
-            self.config.protocol_version,
-            self.config.checksum_seed,
-        );
+        let mut header = BatchHeader::new(self.config.protocol_version, self.config.checksum_seed);
         header.compat_flags = self.config.compat_flags;
         header.stream_flags = flags;
 

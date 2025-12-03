@@ -22,10 +22,12 @@ lz4 = ["core/lz4", "compress/lz4"]
 [dependencies]
 clap = { version = "4.5.17", features = ["std"] }
 core = { path = "../core" }
+engine = { path = "../engine" }
 logging = { path = "../logging" }
 protocol = { path = "../protocol" }
 compress = { path = "../compress" }
 metadata = { path = "../metadata" }
+transport = { path = "../transport" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = "3.10"
 

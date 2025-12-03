@@ -84,7 +84,7 @@ pub enum BatchMode {
 }
 
 /// Configuration for batch mode operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BatchConfig {
     /// The batch mode operation type.
     pub mode: BatchMode,
