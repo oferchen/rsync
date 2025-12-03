@@ -29,4 +29,13 @@ impl ClientConfig {
     pub fn has_transfer_request(&self) -> bool {
         !self.transfer_args.is_empty()
     }
+
+    /// Returns the configured batch mode settings, if any.
+    #[must_use]
+    #[doc(alias = "--write-batch")]
+    #[doc(alias = "--only-write-batch")]
+    #[doc(alias = "--read-batch")]
+    pub fn batch_config(&self) -> Option<&engine::batch::BatchConfig> {
+        self.batch_config.as_ref()
+    }
 }
