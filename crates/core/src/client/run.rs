@@ -1,7 +1,9 @@
 use std::ffi::OsStr;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use engine::batch::BatchWriter;
 use engine::local_copy::{
     DirMergeRule, ExcludeIfPresentRule, FilterProgram, FilterProgramEntry, LocalCopyExecution,
     LocalCopyOptions, LocalCopyPlan, ReferenceDirectory as EngineReferenceDirectory,
@@ -67,39 +69,41 @@ fn run_client_internal(
         return Err(missing_operands_error());
     }
 
-    // TODO(batch-engine-integration): Batch mode requires deep integration with the
-    // transfer engine to capture or replay file list and delta operations.
-    //
-    // For write modes (Write/OnlyWrite):
-    // 1. Create BatchWriter from config.batch_config()
-    // 2. Pass BatchWriter to LocalCopyOptions (requires engine modification)
-    // 3. Engine captures file list and delta data during execution
-    // 4. Finalize batch file and generate .sh script after successful transfer
-    //
-    // For read mode:
-    // 1. Create BatchReader from config.batch_config()
-    // 2. Read file list from batch file
-    // 3. Replay delta operations from batch file to destination
-    // 4. Skip normal file walking and delta generation
-    //
-    // Current state: Configuration plumbing complete, engine hooks pending.
-    // See: crates/engine/src/batch/ for BatchWriter/BatchReader API.
-    if let Some(ref batch_cfg) = config.batch_config() {
+    // Handle batch mode configuration
+    let batch_writer = if let Some(ref batch_cfg) = config.batch_config() {
         if batch_cfg.is_read_mode() {
             // TODO: Implement batch replay using BatchReader
+            // This requires reading the file list from the batch file instead of
+            // walking the filesystem, and replaying delta operations.
             return Err(invalid_argument_error(
-                "batch read mode (--read-batch) requires engine integration (not yet implemented)",
+                "batch read mode (--read-batch) requires full engine integration (not yet implemented)",
                 1,
             ));
         }
-        // For write modes, we would create the BatchWriter here and pass it through
-        // to the engine, but that requires LocalCopyOptions to accept it.
-        // For now, warn that it's not fully integrated.
-        eprintln!(
-            "warning: batch write mode requested but engine integration incomplete; \
-             batch file will not be created"
-        );
-    }
+
+        // For write modes, create the BatchWriter
+        match BatchWriter::new((*batch_cfg).clone()) {
+            Ok(writer) => {
+                // Wrap in Arc<Mutex<...>> for thread-safe shared access
+                Some(Arc::new(Mutex::new(writer)))
+            }
+            Err(e) => {
+                use crate::message::Role;
+                use crate::rsync_error;
+                let msg = format!(
+                    "failed to create batch file '{}': {}",
+                    batch_cfg.batch_file_path().display(),
+                    e
+                );
+                return Err(ClientError::new(
+                    1,
+                    rsync_error!(1, "{}", msg).with_role(Role::Client),
+                ));
+            }
+        }
+    } else {
+        None
+    };
 
     // Check for remote operands and dispatch to SSH transport
     let has_remote = config
@@ -119,6 +123,11 @@ fn run_client_internal(
 
     let filter_program = compile_filter_program(config.filter_rules())?;
     let mut options = build_local_copy_options(&config, filter_program);
+
+    // Attach batch writer to options if in batch write mode
+    if let Some(writer) = batch_writer {
+        options = options.batch_writer(Some(writer));
+    }
 
     let mode = if config.dry_run() || config.list_only() {
         LocalCopyExecution::DryRun

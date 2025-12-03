@@ -1,6 +1,7 @@
 //! Configuration structures and helpers for local copy execution.
 
 mod backup;
+mod batch;
 mod compression;
 mod deletion;
 mod filters;
