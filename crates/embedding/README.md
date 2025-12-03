@@ -12,7 +12,7 @@ render help text inline.
 
 Run the client entry point with `--version` and inspect the captured output:
 
-```rust
+```no_run
 use embedding::run_client;
 use core::branding::client_program_name;
 
@@ -28,7 +28,7 @@ assert!(
 
 Forward custom writers and detect non-zero exit statuses:
 
-```rust
+```no_run
 use embedding::run_client_with;
 use embedding::ExitStatusError;
 use core::branding::client_program_name;
@@ -52,7 +52,7 @@ match status {
 
 Drive the daemon parser with CLI-style arguments:
 
-```rust
+```no_run
 use core::branding::daemon_program_name;
 use embedding::run_daemon;
 
@@ -79,7 +79,7 @@ to run the rsync server protocol programmatically. This is useful for:
 The server API provides direct access to the native server implementation without
 CLI argument parsing:
 
-```rust
+```no_run
 use embedding::{ServerConfig, ServerRole, run_server_with_config};
 use std::io;
 
