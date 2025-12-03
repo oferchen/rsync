@@ -436,4 +436,14 @@ impl<'a> CopyContext<'a> {
             true
         }
     }
+
+    /// Access the batch writer for recording transfer operations.
+    ///
+    /// Returns a reference to the batch writer if batch mode is enabled,
+    /// or None if batch mode is not active.
+    pub(super) fn batch_writer(
+        &self,
+    ) -> Option<&std::sync::Arc<std::sync::Mutex<crate::batch::BatchWriter>>> {
+        self.options.get_batch_writer()
+    }
 }
