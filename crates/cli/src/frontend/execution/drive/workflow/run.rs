@@ -362,11 +362,23 @@ where
     let batch_mode_requested =
         write_batch.is_some() || only_write_batch.is_some() || read_batch.is_some();
 
-    // Batch mode is not yet implemented
+    // TODO(batch-integration): Full batch mode integration requires:
+    // 1. Add batch_config to ConfigInputs and ClientConfigBuilder
+    // 2. Create BatchConfig from write_batch/only_write_batch/read_batch args
+    // 3. Hook BatchWriter into the transfer I/O layer to capture file list and deltas
+    // 4. Hook BatchReader to replay captured operations
+    // 5. Generate .sh script via engine::batch::script::generate_script()
+    //
+    // The batch module (engine::batch) is complete and tested. Integration points:
+    // - engine::batch::BatchWriter::new() and write_header()/write_data()/finalize()
+    // - engine::batch::BatchReader::new() and read_header()/read_data()
+    // - engine::batch::script::generate_script() for .sh file generation
+    //
+    // See: crates/engine/src/batch/mod.rs for API documentation
     if batch_mode_requested {
         let message = rsync_error!(
             1,
-            "batch modes (--write-batch, --only-write-batch, --read-batch) are not yet supported by this oc-rsync build"
+            "batch modes (--write-batch, --only-write-batch, --read-batch) are not yet fully integrated with the transfer engine; the batch module is implemented but requires I/O layer coordination"
         )
         .with_role(Role::Client);
         return fail_with_message(message, stderr);

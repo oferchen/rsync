@@ -1,0 +1,245 @@
+//! Batch file reader for replaying transfers.
+
+use super::format::{BatchFlags, BatchHeader};
+use super::BatchConfig;
+use crate::error::{EngineError, EngineResult};
+use std::fs::File;
+use std::io::{self, BufReader, Read};
+
+/// Reader for batch mode operations.
+///
+/// Reads and replays a previously recorded batch file, applying the
+/// same changes to a different destination.
+pub struct BatchReader {
+    /// Configuration for this batch operation.
+    config: BatchConfig,
+    /// Reader for the binary batch file.
+    batch_file: Option<BufReader<File>>,
+    /// The header read from the file.
+    header: Option<BatchHeader>,
+}
+
+impl BatchReader {
+    /// Create a new batch reader.
+    pub fn new(config: BatchConfig) -> EngineResult<Self> {
+        // Open the batch file
+        let batch_path = config.batch_file_path();
+        let file = File::open(batch_path).map_err(|e| {
+            EngineError::Io(io::Error::new(
+                e.kind(),
+                format!("Failed to open batch file '{}': {}", batch_path.display(), e),
+            ))
+        })?;
+
+        Ok(Self {
+            config,
+            batch_file: Some(BufReader::new(file)),
+            header: None,
+        })
+    }
+
+    /// Read and validate the batch header.
+    ///
+    /// Returns the stream flags that were recorded in the batch.
+    pub fn read_header(&mut self) -> EngineResult<BatchFlags> {
+        if self.header.is_some() {
+            return Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Batch header already read",
+            )));
+        }
+
+        if let Some(ref mut reader) = self.batch_file {
+            let header = BatchHeader::read_from(reader).map_err(|e| {
+                EngineError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to read batch header: {}", e),
+                ))
+            })?;
+
+            // Validate protocol version
+            if header.protocol_version != self.config.protocol_version {
+                return Err(EngineError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Protocol version mismatch: batch has {}, expected {}",
+                        header.protocol_version, self.config.protocol_version
+                    ),
+                )));
+            }
+
+            let flags = header.stream_flags;
+            self.header = Some(header);
+            Ok(flags)
+        } else {
+            Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Batch file not open",
+            )))
+        }
+    }
+
+    /// Read data from the batch file.
+    ///
+    /// This reads the next chunk of data from the batch file, which
+    /// could be file list entries or delta operations.
+    pub fn read_data(&mut self, buf: &mut [u8]) -> EngineResult<usize> {
+        if self.header.is_none() {
+            return Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Must read header before data",
+            )));
+        }
+
+        if let Some(ref mut reader) = self.batch_file {
+            reader.read(buf).map_err(|e| {
+                EngineError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to read batch data: {}", e),
+                ))
+            })
+        } else {
+            Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Batch file not open",
+            )))
+        }
+    }
+
+    /// Read exact amount of data from the batch file.
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> EngineResult<()> {
+        if self.header.is_none() {
+            return Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Must read header before data",
+            )));
+        }
+
+        if let Some(ref mut reader) = self.batch_file {
+            reader.read_exact(buf).map_err(|e| {
+                EngineError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to read exact batch data: {}", e),
+                ))
+            })
+        } else {
+            Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Batch file not open",
+            )))
+        }
+    }
+
+    /// Get the header that was read from the batch file.
+    pub fn header(&self) -> Option<&BatchHeader> {
+        self.header.as_ref()
+    }
+
+    /// Get a reference to the batch configuration.
+    pub fn config(&self) -> &BatchConfig {
+        &self.config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::batch::{BatchMode, BatchWriter};
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn create_test_batch(path: &Path) {
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            path.to_string_lossy().to_string(),
+            30,
+        )
+        .with_checksum_seed(12345);
+
+        let mut writer = BatchWriter::new(config).unwrap();
+        let mut flags = BatchFlags::default();
+        flags.recurse = true;
+        writer.write_header(flags).unwrap();
+        writer.write_data(b"test data here").unwrap();
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn test_batch_reader_create() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+        create_test_batch(&batch_path);
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            30,
+        );
+
+        let reader = BatchReader::new(config);
+        assert!(reader.is_ok());
+    }
+
+    #[test]
+    fn test_batch_reader_read_header() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+        create_test_batch(&batch_path);
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            30,
+        );
+
+        let mut reader = BatchReader::new(config).unwrap();
+        let flags = reader.read_header().unwrap();
+
+        assert!(flags.recurse);
+        assert!(reader.header().is_some());
+    }
+
+    #[test]
+    fn test_batch_reader_read_data() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+        create_test_batch(&batch_path);
+
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            30,
+        );
+
+        let mut reader = BatchReader::new(config).unwrap();
+
+        // Must read header first
+        let mut buf = [0u8; 100];
+        assert!(reader.read_data(&mut buf).is_err());
+
+        reader.read_header().unwrap();
+
+        // Now data read should succeed
+        let n = reader.read_data(&mut buf).unwrap();
+        assert!(n > 0);
+        assert_eq!(&buf[..14], b"test data here");
+    }
+
+    #[test]
+    fn test_batch_reader_protocol_mismatch() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+        create_test_batch(&batch_path);
+
+        // Try to read with wrong protocol version
+        let config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            28, // Different from the 30 used to write
+        );
+
+        let mut reader = BatchReader::new(config).unwrap();
+        let result = reader.read_header();
+        assert!(result.is_err());
+    }
+}
