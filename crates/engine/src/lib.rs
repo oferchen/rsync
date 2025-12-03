@@ -72,15 +72,19 @@
 //!   layouts so forthcoming protocol layers can transmit signatures without
 //!   shelling out to upstream rsync.
 
+pub mod batch;
 pub mod delta;
+pub mod error;
 pub mod local_copy;
 pub mod signature;
 
+pub use batch::{BatchConfig, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchWriter};
 pub use delta::{
     DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayout,
     SignatureLayoutError, SignatureLayoutParams, apply_delta, calculate_signature_layout,
     generate_delta,
 };
+pub use error::{EngineError, EngineResult};
 pub use local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
     LocalCopySummary, SkipCompressList, SkipCompressParseError,
