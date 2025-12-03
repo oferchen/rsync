@@ -75,4 +75,46 @@ impl ClientConfigBuilder {
         self.iconv = setting;
         self
     }
+
+    /// Configures a custom remote shell command for SSH transfers.
+    ///
+    /// This method accepts an iterable of command arguments where the first element
+    /// is the program name and subsequent elements are its arguments.
+    ///
+    /// # Example
+    /// ```
+    /// # use core::client::ClientConfig;
+    /// let config = ClientConfig::builder()
+    ///     .set_remote_shell(vec!["ssh", "-p", "2222", "-i", "/path/to/key"])
+    ///     .build();
+    /// ```
+    #[must_use]
+    #[doc(alias = "--rsh")]
+    #[doc(alias = "-e")]
+    pub fn set_remote_shell<I, S>(mut self, spec: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.remote_shell = Some(spec.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Configures the path to the remote rsync binary.
+    ///
+    /// This overrides the default "rsync" command used on the remote host.
+    ///
+    /// # Example
+    /// ```
+    /// # use core::client::ClientConfig;
+    /// let config = ClientConfig::builder()
+    ///     .set_rsync_path("/opt/rsync/bin/rsync")
+    ///     .build();
+    /// ```
+    #[must_use]
+    #[doc(alias = "--rsync-path")]
+    pub fn set_rsync_path<S: Into<OsString>>(mut self, path: S) -> Self {
+        self.rsync_path = Some(path.into());
+        self
+    }
 }

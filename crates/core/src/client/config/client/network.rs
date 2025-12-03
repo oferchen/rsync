@@ -65,4 +65,19 @@ impl ClientConfig {
     pub const fn stop_at(&self) -> Option<SystemTime> {
         self.stop_at
     }
+
+    /// Returns the custom remote shell command arguments, if specified.
+    #[must_use]
+    #[doc(alias = "--rsh")]
+    #[doc(alias = "-e")]
+    pub fn remote_shell(&self) -> Option<&[OsString]> {
+        self.remote_shell.as_deref()
+    }
+
+    /// Returns the custom remote rsync binary path, if specified.
+    #[must_use]
+    #[doc(alias = "--rsync-path")]
+    pub fn rsync_path(&self) -> Option<&OsStr> {
+        self.rsync_path.as_deref()
+    }
 }

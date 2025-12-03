@@ -13,7 +13,8 @@ use super::config::{
     ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,
 };
 use super::error::{
-    ClientError, compile_filter_error, map_local_copy_error, missing_operands_error,
+    ClientError, compile_filter_error, invalid_argument_error, map_local_copy_error,
+    missing_operands_error,
 };
 use super::fallback::RemoteFallbackContext;
 use super::outcome::ClientOutcome;
@@ -64,6 +65,40 @@ fn run_client_internal(
 ) -> Result<ClientSummary, ClientError> {
     if !config.has_transfer_request() {
         return Err(missing_operands_error());
+    }
+
+    // TODO(batch-engine-integration): Batch mode requires deep integration with the
+    // transfer engine to capture or replay file list and delta operations.
+    //
+    // For write modes (Write/OnlyWrite):
+    // 1. Create BatchWriter from config.batch_config()
+    // 2. Pass BatchWriter to LocalCopyOptions (requires engine modification)
+    // 3. Engine captures file list and delta data during execution
+    // 4. Finalize batch file and generate .sh script after successful transfer
+    //
+    // For read mode:
+    // 1. Create BatchReader from config.batch_config()
+    // 2. Read file list from batch file
+    // 3. Replay delta operations from batch file to destination
+    // 4. Skip normal file walking and delta generation
+    //
+    // Current state: Configuration plumbing complete, engine hooks pending.
+    // See: crates/engine/src/batch/ for BatchWriter/BatchReader API.
+    if let Some(ref batch_cfg) = config.batch_config() {
+        if batch_cfg.is_read_mode() {
+            // TODO: Implement batch replay using BatchReader
+            return Err(invalid_argument_error(
+                "batch read mode (--read-batch) requires engine integration (not yet implemented)",
+                1,
+            ));
+        }
+        // For write modes, we would create the BatchWriter here and pass it through
+        // to the engine, but that requires LocalCopyOptions to accept it.
+        // For now, warn that it's not fully integrated.
+        eprintln!(
+            "warning: batch write mode requested but engine integration incomplete; \
+             batch file will not be created"
+        );
     }
 
     // Check for remote operands and dispatch to SSH transport

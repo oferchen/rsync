@@ -1,7 +1,7 @@
 //! Batch file reader for replaying transfers.
 
-use super::format::{BatchFlags, BatchHeader};
 use super::BatchConfig;
+use super::format::{BatchFlags, BatchHeader};
 use crate::error::{EngineError, EngineResult};
 use std::fs::File;
 use std::io::{self, BufReader, Read};
@@ -27,7 +27,11 @@ impl BatchReader {
         let file = File::open(batch_path).map_err(|e| {
             EngineError::Io(io::Error::new(
                 e.kind(),
-                format!("Failed to open batch file '{}': {}", batch_path.display(), e),
+                format!(
+                    "Failed to open batch file '{}': {}",
+                    batch_path.display(),
+                    e
+                ),
             ))
         })?;
 
@@ -149,12 +153,8 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_batch(path: &Path) {
-        let config = BatchConfig::new(
-            BatchMode::Write,
-            path.to_string_lossy().to_string(),
-            30,
-        )
-        .with_checksum_seed(12345);
+        let config = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 30)
+            .with_checksum_seed(12345);
 
         let mut writer = BatchWriter::new(config).unwrap();
         let mut flags = BatchFlags::default();

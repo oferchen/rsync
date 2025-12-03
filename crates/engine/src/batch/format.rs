@@ -343,10 +343,7 @@ mod tests {
         assert_eq!(header.protocol_version, restored.protocol_version);
         assert_eq!(header.compat_flags, restored.compat_flags);
         assert_eq!(header.checksum_seed, restored.checksum_seed);
-        assert_eq!(
-            header.stream_flags.recurse,
-            restored.stream_flags.recurse
-        );
+        assert_eq!(header.stream_flags.recurse, restored.stream_flags.recurse);
         assert_eq!(
             header.stream_flags.preserve_uid,
             restored.stream_flags.preserve_uid

@@ -110,6 +110,9 @@ pub struct ClientConfig {
     pub(super) sockopts: Option<OsString>,
     pub(super) blocking_io: Option<bool>,
     pub(super) iconv: IconvSetting,
+    pub(super) remote_shell: Option<Vec<OsString>>,
+    pub(super) rsync_path: Option<OsString>,
+    pub(super) batch_config: Option<engine::batch::BatchConfig>,
     #[cfg(feature = "acl")]
     pub(super) preserve_acls: bool,
     #[cfg(feature = "xattr")]
@@ -213,6 +216,9 @@ impl Default for ClientConfig {
             sockopts: None,
             blocking_io: None,
             iconv: IconvSetting::Unspecified,
+            remote_shell: None,
+            rsync_path: None,
+            batch_config: None,
             #[cfg(feature = "acl")]
             preserve_acls: false,
             #[cfg(feature = "xattr")]

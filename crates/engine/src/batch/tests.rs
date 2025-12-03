@@ -187,11 +187,7 @@ mod integration {
         let config = BatchConfig::new(BatchMode::Write, "mybatch".to_string(), 30);
         assert_eq!(config.script_file_path(), "mybatch.sh");
 
-        let config2 = BatchConfig::new(
-            BatchMode::Write,
-            "/tmp/test.batch".to_string(),
-            30,
-        );
+        let config2 = BatchConfig::new(BatchMode::Write, "/tmp/test.batch".to_string(), 30);
         assert_eq!(config2.script_file_path(), "/tmp/test.batch.sh");
     }
 

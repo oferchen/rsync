@@ -18,7 +18,9 @@ use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
 use super::super::error::{ClientError, invalid_argument_error};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
-use super::invocation::{RemoteInvocationBuilder, RemoteRole, determine_transfer_role};
+use super::invocation::{
+    RemoteInvocationBuilder, RemoteOperands, RemoteRole, determine_transfer_role,
+};
 use crate::server::{ServerConfig, ServerRole};
 
 /// Executes a transfer over SSH transport.
@@ -64,24 +66,57 @@ pub fn run_ssh_transfer(
     let destination = &destination[0];
 
     // Determine push vs pull
-    let (role, local_paths, remote_operand_str) = determine_transfer_role(sources, destination)?;
+    let (role, local_paths, remote_operands) = determine_transfer_role(sources, destination)?;
 
-    // Step 2: Parse remote operand
-    let remote_operand = parse_ssh_operand(remote_operand_str.as_ref())
-        .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
+    // Step 2: Parse remote operand(s) and build invocation
+    let (invocation_args, ssh_host, ssh_user, ssh_port) = match remote_operands {
+        RemoteOperands::Single(ref operand_str) => {
+            // Single source or destination
+            let operand = parse_ssh_operand(operand_str.as_ref())
+                .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
-    // Step 3: Build remote rsync invocation
-    let invocation_builder = RemoteInvocationBuilder::new(config, role);
-    let invocation_args = invocation_builder.build(remote_operand.path());
+            let invocation_builder = RemoteInvocationBuilder::new(config, role);
+            let args = invocation_builder.build(operand.path());
+
+            (
+                args,
+                operand.host().to_string(),
+                operand.user().map(String::from),
+                operand.port(),
+            )
+        }
+        RemoteOperands::Multiple(ref operand_strs) => {
+            // Multiple sources (pull operation)
+            // Parse first operand to get SSH connection details
+            let first_operand = parse_ssh_operand(operand_strs[0].as_ref())
+                .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
+
+            // Parse all operands to extract paths
+            let mut paths = Vec::new();
+            for operand_str in operand_strs {
+                let operand = parse_ssh_operand(operand_str.as_ref()).map_err(|e| {
+                    invalid_argument_error(&format!("invalid remote operand: {e}"), 1)
+                })?;
+                paths.push(operand.path().to_string());
+            }
+
+            // Build invocation with all paths
+            let invocation_builder = RemoteInvocationBuilder::new(config, role);
+            let path_refs: Vec<&str> = paths.iter().map(|s| s.as_ref()).collect();
+            let args = invocation_builder.build_with_paths(&path_refs);
+
+            (
+                args,
+                first_operand.host().to_string(),
+                first_operand.user().map(String::from),
+                first_operand.port(),
+            )
+        }
+    };
 
     // Step 4: Spawn SSH connection
-    let connection = build_ssh_connection(
-        &remote_operand.user().map(String::from),
-        remote_operand.host(),
-        remote_operand.port(),
-        &invocation_args,
-        config,
-    )?;
+    let connection =
+        build_ssh_connection(&ssh_user, &ssh_host, ssh_port, &invocation_args, config)?;
 
     // Step 5-6: Execute transfer based on role
     // We pass the connection directly to the transfer functions which will
@@ -104,7 +139,7 @@ fn build_ssh_connection(
     host: &str,
     port: Option<u16>,
     invocation_args: &[OsString],
-    _config: &ClientConfig, // Reserved for future --rsh option support
+    config: &ClientConfig,
 ) -> Result<SshConnection, ClientError> {
     let mut ssh = SshCommand::new(host);
 
@@ -118,9 +153,17 @@ fn build_ssh_connection(
         ssh.set_port(port);
     }
 
-    // TODO: Configure custom remote shell if specified (-e/--rsh option)
-    // The remote_shell() method doesn't exist yet in ClientConfig
-    // For now, we use the default ssh command
+    // Configure custom remote shell if specified
+    if let Some(shell_args) = config.remote_shell() {
+        if !shell_args.is_empty() {
+            // First argument is the program name
+            ssh.set_program(&shell_args[0]);
+            // Remaining arguments are SSH options
+            for arg in &shell_args[1..] {
+                ssh.push_option(arg.clone());
+            }
+        }
+    }
 
     // Set the remote command (rsync --server ...)
     ssh.set_remote_command(invocation_args);
