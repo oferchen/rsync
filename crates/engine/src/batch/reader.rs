@@ -143,6 +143,95 @@ impl BatchReader {
     pub fn config(&self) -> &BatchConfig {
         &self.config
     }
+
+    /// Read a file entry from the batch file.
+    ///
+    /// Returns the next file list entry, or None if end of file list is reached.
+    pub fn read_file_entry(&mut self) -> EngineResult<Option<super::format::FileEntry>> {
+        if self.header.is_none() {
+            return Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Must read header before file entries",
+            )));
+        }
+
+        if let Some(ref mut reader) = self.batch_file {
+            // Try to read the next file entry
+            // If we hit EOF or an empty path, we've reached the end of the file list
+            match super::format::FileEntry::read_from(reader) {
+                Ok(entry) => {
+                    if entry.path.is_empty() {
+                        Ok(None) // End of file list marker
+                    } else {
+                        Ok(Some(entry))
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
+                Err(e) => Err(EngineError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to read file entry: {}", e),
+                ))),
+            }
+        } else {
+            Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Batch file not open",
+            )))
+        }
+    }
+
+    /// Read all remaining delta operations from the batch file.
+    ///
+    /// Reads individual delta operations until EOF. This is a simplified
+    /// implementation for single-file batches. Multi-file batches need
+    /// more sophisticated parsing to detect file entry boundaries.
+    ///
+    /// TODO: Implement proper multi-file batch parsing with lookahead.
+    pub fn read_all_delta_ops(&mut self) -> EngineResult<Vec<protocol::wire::delta::DeltaOp>> {
+        if self.header.is_none() {
+            return Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Must read header before delta operations",
+            )));
+        }
+
+        let mut ops = Vec::new();
+
+        if let Some(ref mut reader) = self.batch_file {
+            // Read delta operations until EOF
+            loop {
+                match protocol::wire::delta::read_delta_op(reader) {
+                    Ok(op) => {
+                        ops.push(op);
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                        // End of delta operations
+                        break;
+                    }
+                    Err(e) => {
+                        // If we've already read some ops successfully, this might just be
+                        // the end of delta data. Otherwise it's a real error.
+                        if ops.is_empty() {
+                            return Err(EngineError::Io(io::Error::new(
+                                e.kind(),
+                                format!("Failed to read first delta operation: {}", e),
+                            )));
+                        } else {
+                            // Assume end of delta data
+                            break;
+                        }
+                    }
+                }
+            }
+
+            Ok(ops)
+        } else {
+            Err(EngineError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "Batch file not open",
+            )))
+        }
+    }
 }
 
 #[cfg(test)]

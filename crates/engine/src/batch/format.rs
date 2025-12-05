@@ -34,8 +34,17 @@ impl BatchHeader {
     }
 
     /// Write the header to a writer.
+    ///
+    /// Format matches upstream rsync batch.c:
+    /// 1. Stream flags bitmap (i32)
+    /// 2. Protocol version (i32)
+    /// 3. Compat flags (varint, if protocol >= 30)
+    /// 4. Checksum seed (i32)
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        // Write protocol version
+        // Write stream flags bitmap first (upstream batch.c:write_stream_flags)
+        self.stream_flags.write_to(writer)?;
+
+        // Write protocol version (upstream io.c batch initialization)
         write_i32(writer, self.protocol_version)?;
 
         // Write compat flags for protocol >= 30
@@ -46,14 +55,20 @@ impl BatchHeader {
         // Write checksum seed
         write_i32(writer, self.checksum_seed)?;
 
-        // Write stream flags
-        self.stream_flags.write_to(writer)?;
-
         Ok(())
     }
 
     /// Read the header from a reader.
+    ///
+    /// Format matches upstream rsync (same order as write_to):
+    /// 1. Stream flags bitmap (i32)
+    /// 2. Protocol version (i32)
+    /// 3. Compat flags (varint, if protocol >= 30)
+    /// 4. Checksum seed (i32)
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+        // Read stream flags bitmap first
+        let stream_flags = BatchFlags::read_from(reader)?;
+
         // Read protocol version
         let protocol_version = read_i32(reader)?;
 
@@ -66,9 +81,6 @@ impl BatchHeader {
 
         // Read checksum seed
         let checksum_seed = read_i32(reader)?;
-
-        // Read stream flags
-        let stream_flags = BatchFlags::read_from(reader)?;
 
         Ok(Self {
             protocol_version,
