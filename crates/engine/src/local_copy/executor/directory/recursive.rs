@@ -70,7 +70,7 @@ fn capture_batch_file_entry(
             LocalCopyError::io(
                 "write batch file entry",
                 relative_path.to_path_buf(),
-                std::io::Error::new(std::io::ErrorKind::Other, e),
+                std::io::Error::other(e),
             )
         })?;
     }

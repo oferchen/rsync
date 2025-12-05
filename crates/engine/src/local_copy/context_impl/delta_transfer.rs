@@ -223,7 +223,7 @@ impl<'a> CopyContext<'a> {
                 LocalCopyError::io(
                     "write batch literal",
                     destination.to_path_buf(),
-                    std::io::Error::new(std::io::ErrorKind::Other, e),
+                    std::io::Error::other(e),
                 )
             })?;
         }
@@ -291,7 +291,7 @@ impl<'a> CopyContext<'a> {
                 LocalCopyError::io(
                     "write batch copy",
                     destination.to_path_buf(),
-                    std::io::Error::new(std::io::ErrorKind::Other, e),
+                    std::io::Error::other(e),
                 )
             })?;
         }
