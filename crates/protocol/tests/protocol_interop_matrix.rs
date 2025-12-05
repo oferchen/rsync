@@ -290,7 +290,7 @@ fn test_protocol_matrix_negotiation_stability() {
     let client_advertises = [TestVersion(32), TestVersion(31), TestVersion(30)];
 
     for _ in 0..100 {
-        let result = select_highest_mutual(client_advertises.clone());
+        let result = select_highest_mutual(client_advertises);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap().as_u8(),
