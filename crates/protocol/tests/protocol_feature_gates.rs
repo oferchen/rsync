@@ -399,7 +399,7 @@ fn test_feature_gates_are_deterministic() {
 
         // Run negotiation 10 times
         for _ in 0..10 {
-            let result = select_highest_mutual(client_advertises.clone());
+            let result = select_highest_mutual(client_advertises);
             assert!(result.is_ok());
             let protocol = result.unwrap();
 
@@ -408,7 +408,7 @@ fn test_feature_gates_are_deterministic() {
             let uses_ascii = protocol.uses_legacy_ascii_negotiation();
 
             // Re-negotiate and verify same results
-            let result2 = select_highest_mutual(client_advertises.clone());
+            let result2 = select_highest_mutual(client_advertises);
             assert!(result2.is_ok());
             let protocol2 = result2.unwrap();
 
