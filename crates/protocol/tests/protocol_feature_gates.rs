@@ -4,8 +4,7 @@
 //! the negotiated protocol version, matching upstream rsync behavior.
 
 use protocol::{
-    select_highest_mutual, CompatibilityFlags, ProtocolVersionAdvertisement,
-    SUPPORTED_PROTOCOLS,
+    CompatibilityFlags, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOLS, select_highest_mutual,
 };
 
 /// Helper wrapper to implement ProtocolVersionAdvertisement for testing.
@@ -90,8 +89,7 @@ fn test_incremental_recursion_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -106,8 +104,7 @@ fn test_symlink_times_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -122,8 +119,7 @@ fn test_symlink_iconv_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -138,8 +134,7 @@ fn test_safe_flist_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -154,8 +149,7 @@ fn test_avoid_xattr_optim_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -170,8 +164,7 @@ fn test_chksum_seed_fix_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -181,13 +174,16 @@ fn test_inplace_partial_dir_flag() {
     // Available in protocol 30+
     let flag = CompatibilityFlags::INPLACE_PARTIAL_DIR;
 
-    assert_eq!(flag.bits(), 1 << 6, "CF_INPLACE_PARTIAL_DIR should be bit 6");
+    assert_eq!(
+        flag.bits(),
+        1 << 6,
+        "CF_INPLACE_PARTIAL_DIR should be bit 6"
+    );
 
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -202,8 +198,7 @@ fn test_varint_flist_flags_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -218,8 +213,7 @@ fn test_id0_names_flag() {
     let mut buf = Vec::new();
     flag.encode_to_vec(&mut buf).expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, flag);
 }
 
@@ -289,10 +283,11 @@ fn test_compatibility_flags_empty() {
 
     // Can encode and decode empty flags
     let mut buf = Vec::new();
-    empty.encode_to_vec(&mut buf).expect("encode should succeed");
+    empty
+        .encode_to_vec(&mut buf)
+        .expect("encode should succeed");
 
-    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-        .expect("decode should succeed");
+    let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf).expect("decode should succeed");
     assert_eq!(decoded, empty);
 }
 
@@ -354,9 +349,11 @@ fn test_protocol_feature_matrix() {
             // Protocol supports compat flags - can encode/decode them
             let test_flag = CompatibilityFlags::INC_RECURSE;
             let mut buf = Vec::new();
-            test_flag.encode_to_vec(&mut buf).expect("encode should work");
-            let (decoded, _) = CompatibilityFlags::decode_from_slice(&buf)
-                .expect("decode should work");
+            test_flag
+                .encode_to_vec(&mut buf)
+                .expect("encode should work");
+            let (decoded, _) =
+                CompatibilityFlags::decode_from_slice(&buf).expect("decode should work");
             assert_eq!(decoded, test_flag);
         }
     }
