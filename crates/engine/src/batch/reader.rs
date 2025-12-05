@@ -57,7 +57,7 @@ impl BatchReader {
             let header = BatchHeader::read_from(reader).map_err(|e| {
                 EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to read batch header: {}", e),
+                    format!("Failed to read batch header: {e}"),
                 ))
             })?;
 
@@ -76,10 +76,7 @@ impl BatchReader {
             self.header = Some(header);
             Ok(flags)
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -89,8 +86,7 @@ impl BatchReader {
     /// could be file list entries or delta operations.
     pub fn read_data(&mut self, buf: &mut [u8]) -> EngineResult<usize> {
         if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(EngineError::Io(io::Error::other(
                 "Must read header before data",
             )));
         }
@@ -99,22 +95,18 @@ impl BatchReader {
             reader.read(buf).map_err(|e| {
                 EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to read batch data: {}", e),
+                    format!("Failed to read batch data: {e}"),
                 ))
             })
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 
     /// Read exact amount of data from the batch file.
     pub fn read_exact(&mut self, buf: &mut [u8]) -> EngineResult<()> {
         if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(EngineError::Io(io::Error::other(
                 "Must read header before data",
             )));
         }
@@ -123,14 +115,11 @@ impl BatchReader {
             reader.read_exact(buf).map_err(|e| {
                 EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to read exact batch data: {}", e),
+                    format!("Failed to read exact batch data: {e}"),
                 ))
             })
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -149,8 +138,7 @@ impl BatchReader {
     /// Returns the next file list entry, or None if end of file list is reached.
     pub fn read_file_entry(&mut self) -> EngineResult<Option<super::format::FileEntry>> {
         if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(EngineError::Io(io::Error::other(
                 "Must read header before file entries",
             )));
         }
@@ -169,14 +157,11 @@ impl BatchReader {
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
                 Err(e) => Err(EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to read file entry: {}", e),
+                    format!("Failed to read file entry: {e}"),
                 ))),
             }
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -189,8 +174,7 @@ impl BatchReader {
     /// TODO: Implement proper multi-file batch parsing with lookahead.
     pub fn read_all_delta_ops(&mut self) -> EngineResult<Vec<protocol::wire::delta::DeltaOp>> {
         if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(EngineError::Io(io::Error::other(
                 "Must read header before delta operations",
             )));
         }
@@ -214,7 +198,7 @@ impl BatchReader {
                         if ops.is_empty() {
                             return Err(EngineError::Io(io::Error::new(
                                 e.kind(),
-                                format!("Failed to read first delta operation: {}", e),
+                                format!("Failed to read first delta operation: {e}"),
                             )));
                         } else {
                             // Assume end of delta data
@@ -226,10 +210,7 @@ impl BatchReader {
 
             Ok(ops)
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 }
@@ -241,6 +222,7 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
 
+    #[allow(clippy::field_reassign_with_default)]
     fn create_test_batch(path: &Path) {
         let config = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 30)
             .with_checksum_seed(12345);

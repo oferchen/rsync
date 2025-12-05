@@ -131,6 +131,7 @@ pub struct BatchFlags {
 
 impl BatchFlags {
     /// Create a new flags structure from a bitmap.
+    #[allow(clippy::field_reassign_with_default)]
     pub fn from_bitmap(bitmap: i32, protocol_version: i32) -> Self {
         let mut flags = Self::default();
         flags.recurse = (bitmap & (1 << 0)) != 0;
@@ -461,12 +462,14 @@ mod tests {
 
     #[test]
     fn test_batch_flags_bitmap_roundtrip() {
-        let mut flags = BatchFlags::default();
-        flags.recurse = true;
-        flags.preserve_uid = true;
-        flags.preserve_links = true;
-        flags.preserve_hard_links = true;
-        flags.always_checksum = true;
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            preserve_links: true,
+            preserve_hard_links: true,
+            always_checksum: true,
+            ..Default::default()
+        };
 
         let bitmap = flags.to_bitmap(30);
         let restored = BatchFlags::from_bitmap(bitmap, 30);
@@ -475,9 +478,11 @@ mod tests {
 
     #[test]
     fn test_batch_flags_protocol_29() {
-        let mut flags = BatchFlags::default();
-        flags.xfer_dirs = true;
-        flags.do_compression = true;
+        let flags = BatchFlags {
+            xfer_dirs: true,
+            do_compression: true,
+            ..Default::default()
+        };
 
         let bitmap = flags.to_bitmap(29);
         let restored = BatchFlags::from_bitmap(bitmap, 29);
