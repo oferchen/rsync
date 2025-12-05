@@ -9,11 +9,40 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 
-/// Generate a shell script for replaying a batch file.
+/// Generate a minimal shell script for replaying a batch file.
+///
+/// Creates a simple script that uses --read-batch with the destination placeholder.
+pub fn generate_script(config: &BatchConfig) -> EngineResult<()> {
+    let script_path = config.script_file_path();
+    let batch_name = config.batch_file_path().to_string_lossy();
+    let mut file = File::create(&script_path).map_err(|e| {
+        EngineError::Io(io::Error::new(
+            e.kind(),
+            format!("Failed to create script file '{}': {}", script_path, e),
+        ))
+    })?;
+
+    // Write a minimal replay script
+    writeln!(file, "#!/bin/sh")?;
+    writeln!(
+        file,
+        "oc-rsync --read-batch={} \"${{1:-.}}\"",
+        shell_quote(&batch_name)
+    )?;
+
+    file.flush()?;
+
+    // Make the script executable
+    make_executable(&script_path)?;
+
+    Ok(())
+}
+
+/// Generate a shell script for replaying a batch file with full argument preservation.
 ///
 /// The script converts the --write-batch command to a --read-batch command,
 /// preserving relevant options.
-pub fn generate_script(
+pub fn generate_script_with_args(
     config: &BatchConfig,
     original_args: &[String],
     filter_rules: Option<&str>,
@@ -188,15 +217,7 @@ mod tests {
             30,
         );
 
-        let args = vec![
-            "oc-rsync".to_string(),
-            "-av".to_string(),
-            "--write-batch=test.batch".to_string(),
-            "source/".to_string(),
-            "dest/".to_string(),
-        ];
-
-        let result = generate_script(&config, &args, None);
+        let result = generate_script(&config);
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -230,7 +251,7 @@ mod tests {
 
         let filter_rules = "- *.tmp\n+ */\n+ *.txt\n- *\n";
 
-        let result = generate_script(&config, &args, Some(filter_rules));
+        let result = generate_script_with_args(&config, &args, Some(filter_rules));
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -252,13 +273,7 @@ mod tests {
             30,
         );
 
-        let args = vec![
-            "oc-rsync".to_string(),
-            "--write-batch=test.batch".to_string(),
-            "source/".to_string(),
-        ];
-
-        generate_script(&config, &args, None).unwrap();
+        generate_script(&config).unwrap();
 
         let script_path = config.script_file_path();
         let metadata = fs::metadata(&script_path).unwrap();
