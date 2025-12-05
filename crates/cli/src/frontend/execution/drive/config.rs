@@ -235,7 +235,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
             Err(e) => {
                 // Invalid remote shell specification - this should have been caught
                 // during argument validation, but handle it gracefully here
-                eprintln!("warning: invalid remote shell specification: {}", e);
+                eprintln!("warning: invalid remote shell specification: {e}");
             }
         }
     }

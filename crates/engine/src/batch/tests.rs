@@ -7,6 +7,7 @@ mod integration {
     use tempfile::TempDir;
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_batch_roundtrip() {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("roundtrip.batch");
@@ -55,6 +56,7 @@ mod integration {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn test_batch_protocol_28() {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("protocol28.batch");

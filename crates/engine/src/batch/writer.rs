@@ -60,16 +60,13 @@ impl BatchWriter {
             header.write_to(writer).map_err(|e| {
                 EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to write batch header: {}", e),
+                    format!("Failed to write batch header: {e}"),
                 ))
             })?;
             self.header_written = true;
             Ok(())
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -80,8 +77,7 @@ impl BatchWriter {
     /// as it would be sent over the network.
     pub fn write_data(&mut self, data: &[u8]) -> EngineResult<()> {
         if !self.header_written {
-            return Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(EngineError::Io(io::Error::other(
                 "Must write header before data",
             )));
         }
@@ -90,15 +86,12 @@ impl BatchWriter {
             writer.write_all(data).map_err(|e| {
                 EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to write batch data: {}", e),
+                    format!("Failed to write batch data: {e}"),
                 ))
             })?;
             Ok(())
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -111,8 +104,7 @@ impl BatchWriter {
     /// The header must be written before calling this method.
     pub fn write_file_entry(&mut self, entry: &super::format::FileEntry) -> EngineResult<()> {
         if !self.header_written {
-            return Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(EngineError::Io(io::Error::other(
                 "Must write header before file entries",
             )));
         }
@@ -121,15 +113,12 @@ impl BatchWriter {
             entry.write_to(writer).map_err(|e| {
                 EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to write file entry: {}", e),
+                    format!("Failed to write file entry: {e}"),
                 ))
             })?;
             Ok(())
         } else {
-            Err(EngineError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "Batch file not open",
-            )))
+            Err(EngineError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -139,7 +128,7 @@ impl BatchWriter {
             writer.flush().map_err(|e| {
                 EngineError::Io(io::Error::new(
                     e.kind(),
-                    format!("Failed to flush batch file: {}", e),
+                    format!("Failed to flush batch file: {e}"),
                 ))
             })?;
         }
@@ -207,9 +196,11 @@ mod tests {
 
         let mut writer = BatchWriter::new(config).unwrap();
 
-        let mut flags = BatchFlags::default();
-        flags.recurse = true;
-        flags.preserve_uid = true;
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            ..Default::default()
+        };
 
         assert!(writer.write_header(flags).is_ok());
         assert!(writer.flush().is_ok());

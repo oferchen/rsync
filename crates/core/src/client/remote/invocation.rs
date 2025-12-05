@@ -321,19 +321,13 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
         match (&operand.user, &first.user) {
             (Some(u1), Some(u2)) if u1 != u2 => {
                 return Err(invalid_argument_error(
-                    &format!(
-                        "remote sources must use the same username (found '{}' and '{}')",
-                        u2, u1
-                    ),
+                    &format!("remote sources must use the same username (found '{u2}' and '{u1}')"),
                     1,
                 ));
             }
             (Some(u), None) | (None, Some(u)) => {
                 return Err(invalid_argument_error(
-                    &format!(
-                        "cannot mix explicit username ('{}') with implicit username",
-                        u
-                    ),
+                    &format!("cannot mix explicit username ('{u}') with implicit username"),
                     1,
                 ));
             }
