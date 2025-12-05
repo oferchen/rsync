@@ -4,7 +4,7 @@
 //! with each other and that feature availability is correctly determined by
 //! the negotiated version.
 
-use protocol::{select_highest_mutual, ProtocolVersionAdvertisement};
+use protocol::{ProtocolVersionAdvertisement, select_highest_mutual};
 
 /// Helper wrapper to implement ProtocolVersionAdvertisement for testing.
 #[derive(Clone, Copy, Debug)]
@@ -209,10 +209,7 @@ fn test_protocol_matrix_version_41_rejected() {
     // Protocol 41 is above MAX_ADVERTISEMENT (40) and should be rejected
     let client_advertises = [TestVersion(41)];
     let result = select_highest_mutual(client_advertises);
-    assert!(
-        result.is_err(),
-        "Protocol 41 should be rejected as too new"
-    );
+    assert!(result.is_err(), "Protocol 41 should be rejected as too new");
 }
 
 #[test]
@@ -227,17 +224,11 @@ fn test_protocol_matrix_version_range_validation() {
 
         if (28..=32).contains(&version) {
             // Versions in our supported range: accept as-is
-            assert!(
-                result.is_ok(),
-                "Protocol {version} should be supported"
-            );
+            assert!(result.is_ok(), "Protocol {version} should be supported");
             assert_eq!(result.unwrap().as_u8(), version as u8);
         } else if (33..=MAX_ADVERTISEMENT).contains(&version) {
             // Versions above our range but below MAX_ADVERTISEMENT: clamp to 32
-            assert!(
-                result.is_ok(),
-                "Protocol {version} should be clamped to 32"
-            );
+            assert!(result.is_ok(), "Protocol {version} should be clamped to 32");
             assert_eq!(
                 result.unwrap().as_u8(),
                 32,
@@ -245,10 +236,7 @@ fn test_protocol_matrix_version_range_validation() {
             );
         } else {
             // Versions 0-27 (too old) or > 40 (way too new): reject
-            assert!(
-                result.is_err(),
-                "Protocol {version} should be rejected"
-            );
+            assert!(result.is_err(), "Protocol {version} should be rejected");
         }
     }
 }
