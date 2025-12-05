@@ -374,14 +374,14 @@ where
             path.to_string_lossy().into_owned(),
             32, // Default protocol version
         ))
-    } else if let Some(ref path) = read_batch {
-        Some(batch::BatchConfig::new(
-            batch::BatchMode::Read,
-            path.to_string_lossy().into_owned(),
-            32, // Default protocol version
-        ))
     } else {
-        None
+        read_batch.as_ref().map(|path| {
+            batch::BatchConfig::new(
+                batch::BatchMode::Read,
+                path.to_string_lossy().into_owned(),
+                32, // Default protocol version
+            )
+        })
     };
 
     // Remote transfers are handled natively by the SSH transport in core::client::run_client_internal
