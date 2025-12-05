@@ -71,7 +71,7 @@ fn run_client_internal(
     }
 
     // Handle batch mode configuration
-    let batch_writer = if let Some(ref batch_cfg) = config.batch_config() {
+    let batch_writer = if let Some(batch_cfg) = config.batch_config() {
         if batch_cfg.is_read_mode() {
             // Replay the batch file instead of performing a normal transfer
             return replay_batch(batch_cfg, &config);
@@ -123,26 +123,28 @@ fn run_client_internal(
     // Attach batch writer to options if in batch write mode
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {
         // Write batch header with stream flags before starting transfer
-        let mut batch_flags = engine::batch::BatchFlags::default();
-        batch_flags.recurse = config.recursive();
-        batch_flags.preserve_uid = config.preserve_owner();
-        batch_flags.preserve_gid = config.preserve_group();
-        batch_flags.preserve_links = config.links();
-        batch_flags.preserve_hard_links = config.preserve_hard_links();
-        batch_flags.always_checksum = config.checksum();
-        batch_flags.xfer_dirs = config.dirs();
-        batch_flags.do_compression = config.compress();
-        batch_flags.preserve_xattrs = config.preserve_xattrs();
-        batch_flags.inplace = config.inplace();
-        batch_flags.append = config.append();
-        batch_flags.append_verify = config.append_verify();
+        let batch_flags = engine::batch::BatchFlags {
+            recurse: config.recursive(),
+            preserve_uid: config.preserve_owner(),
+            preserve_gid: config.preserve_group(),
+            preserve_links: config.links(),
+            preserve_hard_links: config.preserve_hard_links(),
+            always_checksum: config.checksum(),
+            xfer_dirs: config.dirs(),
+            do_compression: config.compress(),
+            preserve_xattrs: config.preserve_xattrs(),
+            inplace: config.inplace(),
+            append: config.append(),
+            append_verify: config.append_verify(),
+            ..Default::default()
+        };
 
         {
             let mut w = writer.lock().unwrap();
             if let Err(e) = w.write_header(batch_flags) {
                 use crate::message::Role;
                 use crate::rsync_error;
-                let msg = format!("failed to write batch header: {}", e);
+                let msg = format!("failed to write batch header: {e}");
                 return Err(ClientError::new(
                     1,
                     rsync_error!(1, "{}", msg).with_role(Role::Client),
@@ -206,7 +208,7 @@ fn run_client_internal(
                 if let Err(e) = writer.flush() {
                     use crate::message::Role;
                     use crate::rsync_error;
-                    let msg = format!("failed to flush batch file: {}", e);
+                    let msg = format!("failed to flush batch file: {e}");
                     return Err(ClientError::new(
                         1,
                         rsync_error!(1, "{}", msg).with_role(Role::Client),
@@ -218,7 +220,7 @@ fn run_client_internal(
             if let Err(e) = engine::batch::script::generate_script(batch_cfg) {
                 use crate::message::Role;
                 use crate::rsync_error;
-                let msg = format!("failed to generate batch script: {}", e);
+                let msg = format!("failed to generate batch script: {e}");
                 return Err(ClientError::new(
                     1,
                     rsync_error!(1, "{}", msg).with_role(Role::Client),
@@ -568,7 +570,7 @@ fn apply_batch_delta_ops(
             protocol::wire::delta::DeltaOp::Literal(data) => {
                 // Write literal data directly
                 output.write_all(&data).map_err(|e| {
-                    let msg = format!("failed to write literal data: {}", e);
+                    let msg = format!("failed to write literal data: {e}");
                     ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
                 })?;
             }
@@ -581,7 +583,7 @@ fn apply_batch_delta_ops(
 
                 // Seek to the block position
                 basis.seek(SeekFrom::Start(offset)).map_err(|e| {
-                    let msg = format!("failed to seek to offset {}: {}", offset, e);
+                    let msg = format!("failed to seek to offset {offset}: {e}");
                     ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
                 })?;
 
@@ -590,11 +592,11 @@ fn apply_batch_delta_ops(
                 while remaining > 0 {
                     let chunk_size = remaining.min(buffer.len());
                     basis.read_exact(&mut buffer[..chunk_size]).map_err(|e| {
-                        let msg = format!("failed to read from basis file: {}", e);
+                        let msg = format!("failed to read from basis file: {e}");
                         ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
                     })?;
                     output.write_all(&buffer[..chunk_size]).map_err(|e| {
-                        let msg = format!("failed to write to output file: {}", e);
+                        let msg = format!("failed to write to output file: {e}");
                         ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
                     })?;
                     remaining -= chunk_size;
@@ -605,7 +607,7 @@ fn apply_batch_delta_ops(
 
     // Flush output
     output.flush().map_err(|e| {
-        let msg = format!("failed to flush output file: {}", e);
+        let msg = format!("failed to flush output file: {e}");
         ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
     })?;
 
@@ -643,7 +645,7 @@ fn replay_batch(
 
     // Read and validate the batch header
     let flags = reader.read_header().map_err(|e| {
-        let msg = format!("failed to read batch header: {}", e);
+        let msg = format!("failed to read batch header: {e}");
         ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
     })?;
 
@@ -652,50 +654,42 @@ fn replay_batch(
     let mut file_count = 0u64;
     let mut total_size = 0u64;
 
-    loop {
-        match reader.read_file_entry().map_err(|e| {
-            let msg = format!("failed to read file entry: {}", e);
-            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-        })? {
-            Some(entry) => {
-                file_count += 1;
-                total_size += entry.size;
+    while let Some(entry) = reader.read_file_entry().map_err(|e| {
+        let msg = format!("failed to read file entry: {e}");
+        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+    })? {
+        file_count += 1;
+        total_size += entry.size;
 
-                // Log the file being processed
-                if config.verbosity() > 0 {
-                    println!("{}", entry.path);
-                }
-
-                // Read all delta operations for this file
-                // Note: This reads until EOF, suitable for single-file batches
-                // Multi-file batches need more sophisticated boundary detection
-                let delta_ops = reader.read_all_delta_ops().map_err(|e| {
-                    let msg = format!(
-                        "failed to read delta operations for '{}': {}",
-                        entry.path, e
-                    );
-                    ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-                })?;
-
-                if config.verbosity() > 0 {
-                    println!("  {} delta operations", delta_ops.len());
-                }
-
-                // Build file path in destination directory
-                let dest_path = dest_root.join(&entry.path);
-
-                // For batch replay, the basis file is the existing file at the destination
-                // (This is what we're transforming)
-                let basis_path = dest_path.clone();
-
-                // Apply delta operations to create/update the file
-                // Block length is typically 700 bytes for files ~100KB
-                // TODO: Calculate block_length from file size or store in batch header
-                const DEFAULT_BLOCK_LENGTH: usize = 700;
-                apply_batch_delta_ops(&basis_path, &dest_path, delta_ops, DEFAULT_BLOCK_LENGTH)?;
-            }
-            None => break, // End of file list (empty path marker)
+        // Log the file being processed
+        if config.verbosity() > 0 {
+            println!("{}", entry.path);
         }
+
+        // Read all delta operations for this file
+        // Note: This reads until EOF, suitable for single-file batches
+        // Multi-file batches need more sophisticated boundary detection
+        let delta_ops = reader.read_all_delta_ops().map_err(|e| {
+            let msg = format!("failed to read delta operations for '{}': {e}", entry.path);
+            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+        })?;
+
+        if config.verbosity() > 0 {
+            println!("  {} delta operations", delta_ops.len());
+        }
+
+        // Build file path in destination directory
+        let dest_path = dest_root.join(&entry.path);
+
+        // For batch replay, the basis file is the existing file at the destination
+        // (This is what we're transforming)
+        let basis_path = dest_path.clone();
+
+        // Apply delta operations to create/update the file
+        // Block length is typically 700 bytes for files ~100KB
+        // TODO: Calculate block_length from file size or store in batch header
+        const DEFAULT_BLOCK_LENGTH: usize = 700;
+        apply_batch_delta_ops(&basis_path, &dest_path, delta_ops, DEFAULT_BLOCK_LENGTH)?;
     }
 
     // TODO: Full implementation would:
@@ -713,10 +707,7 @@ fn replay_batch(
     if flags.recurse {
         eprintln!("Batch mode enabled: recurse");
     }
-    eprintln!(
-        "Batch replay: {} files ({} bytes total)",
-        file_count, total_size
-    );
+    eprintln!("Batch replay: {file_count} files ({total_size} bytes total)");
 
     // Return a summary with the file count
     use engine::local_copy::LocalCopySummary;

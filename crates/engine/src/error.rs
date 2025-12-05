@@ -20,9 +20,9 @@ pub enum EngineError {
 impl fmt::Display for EngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "I/O error: {}", e),
-            Self::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
-            Self::Unsupported(msg) => write!(f, "Unsupported operation: {}", msg),
+            Self::Io(e) => write!(f, "I/O error: {e}"),
+            Self::InvalidConfig(msg) => write!(f, "Invalid configuration: {msg}"),
+            Self::Unsupported(msg) => write!(f, "Unsupported operation: {msg}"),
         }
     }
 }

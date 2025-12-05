@@ -18,7 +18,7 @@ pub fn generate_script(config: &BatchConfig) -> EngineResult<()> {
     let mut file = File::create(&script_path).map_err(|e| {
         EngineError::Io(io::Error::new(
             e.kind(),
-            format!("Failed to create script file '{}': {}", script_path, e),
+            format!("Failed to create script file '{script_path}': {e}"),
         ))
     })?;
 
@@ -51,7 +51,7 @@ pub fn generate_script_with_args(
     let mut file = File::create(&script_path).map_err(|e| {
         EngineError::Io(io::Error::new(
             e.kind(),
-            format!("Failed to create script file '{}': {}", script_path, e),
+            format!("Failed to create script file '{script_path}': {e}"),
         ))
     })?;
 
@@ -61,13 +61,11 @@ pub fn generate_script_with_args(
 
     // Process arguments, converting write-batch to read-batch
     for arg in &original_args[1..] {
-        if arg.starts_with("--write-batch=") {
+        if let Some(batch_name) = arg.strip_prefix("--write-batch=") {
             // Extract batch name and convert to read-batch
-            let batch_name = &arg["--write-batch=".len()..];
             write!(file, " --read-batch={}", shell_quote(batch_name))?;
-        } else if arg.starts_with("--only-write-batch=") {
+        } else if let Some(batch_name) = arg.strip_prefix("--only-write-batch=") {
             // Extract batch name and convert to read-batch
-            let batch_name = &arg["--only-write-batch=".len()..];
             write!(file, " --read-batch={}", shell_quote(batch_name))?;
         } else if arg == "--write-batch" || arg == "--only-write-batch" {
             // Skip these, they'll be followed by a value
@@ -103,7 +101,7 @@ pub fn generate_script_with_args(
     // Embed filter rules if present
     if let Some(rules) = filter_rules {
         writeln!(file, " <<'#E#'")?;
-        write!(file, "{}", rules)?;
+        write!(file, "{rules}")?;
         if !rules.ends_with('\n') {
             writeln!(file)?;
         }
