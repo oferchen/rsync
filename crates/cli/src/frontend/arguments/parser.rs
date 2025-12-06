@@ -13,7 +13,14 @@ use core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumCho
 
 use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};
 
-pub(crate) fn parse_args<I, S>(arguments: I) -> Result<ParsedArgs, clap::Error>
+/// Parses command-line arguments into a structured [`ParsedArgs`] representation.
+///
+/// This function accepts an iterator of arguments (typically from `std::env::args_os()`)
+/// and returns a parsed structure or a Clap error if parsing fails.
+///
+/// **Warning**: This function is exposed via `cli::test_utils` for integration
+/// tests only. It is not part of the stable public API.
+pub fn parse_args<I, S>(arguments: I) -> Result<ParsedArgs, clap::Error>
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
