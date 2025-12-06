@@ -19,6 +19,18 @@ mod platform;
 
 pub use frontend::{exit_code_from, run};
 
+/// Test utilities exposed for integration tests.
+///
+/// This module provides access to internal parsing functions and types
+/// needed for comprehensive argument validation tests.
+///
+/// **Warning**: This is not part of the public API and may change without notice.
+#[doc(hidden)]
+pub mod test_utils {
+    pub use crate::frontend::arguments::{ParsedArgs, parse_args};
+    pub use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
+}
+
 #[allow(unused_imports)]
 pub(crate) use frontend::password;
 #[allow(unused_imports)]

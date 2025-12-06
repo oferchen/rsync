@@ -191,5 +191,4 @@ buildflags = ["--profile", "dist", "--bins"]
 inherits = "release"
 lto = "thin"
 codegen-units = 1
-#strip = "debuginfo"
 strip = true
