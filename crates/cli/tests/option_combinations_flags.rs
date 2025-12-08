@@ -30,23 +30,13 @@ fn test_backup_dir_implies_backup() {
 #[test]
 fn test_backup_suffix_implies_backup() {
     let args = parse_args(["oc-rsync", "--suffix=.bak", "src", "dest"]).unwrap();
-    assert!(
-        args.backup,
-        "--suffix should implicitly enable backup mode"
-    );
+    assert!(args.backup, "--suffix should implicitly enable backup mode");
     assert_eq!(args.backup_suffix, Some(".bak".into()));
 }
 
 #[test]
 fn test_backup_dir_and_suffix_together() {
-    let args = parse_args([
-        "oc-rsync",
-        "--backup-dir=/tmp",
-        "--suffix=~",
-        "src",
-        "dest",
-    ])
-    .unwrap();
+    let args = parse_args(["oc-rsync", "--backup-dir=/tmp", "--suffix=~", "src", "dest"]).unwrap();
     assert!(args.backup);
     assert_eq!(args.backup_dir, Some("/tmp".into()));
     assert_eq!(args.backup_suffix, Some("~".into()));
@@ -160,10 +150,7 @@ fn test_no_partial_overrides_partial_dir() {
         "dest",
     ])
     .unwrap();
-    assert!(
-        !args.partial,
-        "--no-partial should override --partial-dir"
-    );
+    assert!(!args.partial, "--no-partial should override --partial-dir");
     assert_eq!(
         args.partial_dir, None,
         "--no-partial should clear partial_dir"

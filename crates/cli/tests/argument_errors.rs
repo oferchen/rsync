@@ -6,8 +6,8 @@
 //! Note: Many value validations (like invalid numbers, sizes, etc.) happen
 //! during execution, not at parse time, so they are not tested here.
 
-use cli::test_utils::parse_args;
 use clap::error::ErrorKind;
+use cli::test_utils::parse_args;
 
 // ============================================================================
 // Conflicting Delete Modes
@@ -15,7 +15,13 @@ use clap::error::ErrorKind;
 
 #[test]
 fn test_delete_before_and_after_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-after", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-after",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err(), "Conflicting delete modes should fail");
     let err = result.unwrap_err();
     assert_eq!(
@@ -27,7 +33,13 @@ fn test_delete_before_and_after_conflict() {
 
 #[test]
 fn test_delete_before_and_during_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-during", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-during",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
@@ -35,7 +47,13 @@ fn test_delete_before_and_during_conflict() {
 
 #[test]
 fn test_delete_before_and_delay_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-delay", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-delay",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
@@ -43,7 +61,13 @@ fn test_delete_before_and_delay_conflict() {
 
 #[test]
 fn test_delete_during_and_after_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-during", "--delete-after", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-during",
+        "--delete-after",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
@@ -51,7 +75,13 @@ fn test_delete_during_and_after_conflict() {
 
 #[test]
 fn test_delete_during_and_delay_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-during", "--delete-delay", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-during",
+        "--delete-delay",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
@@ -59,7 +89,13 @@ fn test_delete_during_and_delay_conflict() {
 
 #[test]
 fn test_delete_after_and_delay_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-after", "--delete-delay", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-after",
+        "--delete-delay",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
@@ -71,13 +107,7 @@ fn test_delete_after_and_delay_conflict() {
 
 #[test]
 fn test_multiple_usermap_conflict() {
-    let result = parse_args([
-        "oc-rsync",
-        "--usermap=a:b",
-        "--usermap=c:d",
-        "src",
-        "dest",
-    ]);
+    let result = parse_args(["oc-rsync", "--usermap=a:b", "--usermap=c:d", "src", "dest"]);
     assert!(result.is_err(), "Multiple usermap should fail");
     let err = result.unwrap_err();
     assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
@@ -120,7 +150,13 @@ fn test_temp_dir_and_tmp_dir_conflict() {
 
 #[test]
 fn test_delete_conflict_error_message() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-after", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-after",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     // Error should mention delete or conflict
@@ -129,27 +165,18 @@ fn test_delete_conflict_error_message() {
             || err_msg.to_lowercase().contains("conflict")
             || err_msg.contains("--delete-before")
             || err_msg.contains("--delete-after"),
-        "Error message should mention conflicting delete options: {}",
-        err_msg
+        "Error message should mention conflicting delete options: {err_msg}"
     );
 }
 
 #[test]
 fn test_usermap_conflict_error_message() {
-    let result = parse_args([
-        "oc-rsync",
-        "--usermap=a:b",
-        "--usermap=c:d",
-        "src",
-        "dest",
-    ]);
+    let result = parse_args(["oc-rsync", "--usermap=a:b", "--usermap=c:d", "src", "dest"]);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.to_lowercase().contains("usermap")
-            || err_msg.to_lowercase().contains("conflict"),
-        "Error message should mention usermap or conflict: {}",
-        err_msg
+        err_msg.to_lowercase().contains("usermap") || err_msg.to_lowercase().contains("conflict"),
+        "Error message should mention usermap or conflict: {err_msg}"
     );
 }
 
@@ -165,10 +192,8 @@ fn test_groupmap_conflict_error_message() {
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.to_lowercase().contains("groupmap")
-            || err_msg.to_lowercase().contains("conflict"),
-        "Error message should mention groupmap or conflict: {}",
-        err_msg
+        err_msg.to_lowercase().contains("groupmap") || err_msg.to_lowercase().contains("conflict"),
+        "Error message should mention groupmap or conflict: {err_msg}"
     );
 }
 
