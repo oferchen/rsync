@@ -86,24 +86,9 @@ impl TestDir {
     /// List all files recursively (relative paths).
     pub fn list_files(&self) -> io::Result<Vec<PathBuf>> {
         let mut files = Vec::new();
-        self.collect_files(&self.path, &self.path, &mut files)?;
+        collect_files_for_listing(&self.path, &self.path, &mut files)?;
         files.sort();
         Ok(files)
-    }
-
-    fn collect_files(&self, base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
-        for entry in fs::read_dir(current)? {
-            let entry = entry?;
-            let path = entry.path();
-            let rel_path = path.strip_prefix(base).unwrap().to_path_buf();
-
-            if path.is_file() {
-                files.push(rel_path);
-            } else if path.is_dir() {
-                self.collect_files(base, &path, files)?;
-            }
-        }
-        Ok(())
     }
 }
 
@@ -244,11 +229,7 @@ fn cargo_target_runner() -> Option<Vec<String>> {
 
     // Simple split on whitespace (doesn't handle quoting)
     let words: Vec<String> = runner.split_whitespace().map(String::from).collect();
-    if words.is_empty() {
-        None
-    } else {
-        Some(words)
-    }
+    if words.is_empty() { None } else { Some(words) }
 }
 
 /// File tree builder for creating test fixtures.
@@ -295,14 +276,22 @@ pub fn assert_dirs_equal(left: &Path, right: &Path) {
     let left_files = collect_file_set(left).expect("failed to list left directory");
     let right_files = collect_file_set(right).expect("failed to list right directory");
 
+    let mut errors = Vec::new();
+
     // Check for files in left but not right
     for file in left_files.difference(&right_files) {
-        panic!("File exists in source but not dest: {}", file.display());
+        errors.push(format!(
+            "File exists in source but not dest: {}",
+            file.display()
+        ));
     }
 
     // Check for files in right but not left
     for file in right_files.difference(&left_files) {
-        panic!("File exists in dest but not source: {}", file.display());
+        errors.push(format!(
+            "File exists in dest but not source: {}",
+            file.display()
+        ));
     }
 
     // Compare content of common files
@@ -311,14 +300,36 @@ pub fn assert_dirs_equal(left: &Path, right: &Path) {
         let right_content = fs::read(right.join(file)).expect("failed to read dest file");
 
         if left_content != right_content {
-            panic!(
-                "File content differs: {}\nSource: {} bytes\nDest: {} bytes",
+            errors.push(format!(
+                "File content differs: {}\n  Source: {} bytes\n  Dest: {} bytes",
                 file.display(),
                 left_content.len(),
                 right_content.len()
-            );
+            ));
         }
     }
+
+    if !errors.is_empty() {
+        panic!(
+            "Directory comparison failed:\n{}",
+            errors.join("\n")
+        );
+    }
+}
+
+fn collect_files_for_listing(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel_path = path.strip_prefix(base).unwrap().to_path_buf();
+
+        if path.is_file() {
+            files.push(rel_path);
+        } else if path.is_dir() {
+            collect_files_for_listing(base, &path, files)?;
+        }
+    }
+    Ok(())
 }
 
 fn collect_file_set(base: &Path) -> io::Result<HashSet<PathBuf>> {
@@ -345,4 +356,3 @@ fn collect_files_recursive(
     }
     Ok(())
 }
-
