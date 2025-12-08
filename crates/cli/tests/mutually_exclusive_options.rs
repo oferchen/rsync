@@ -11,7 +11,13 @@ use cli::test_utils::parse_args;
 
 #[test]
 fn test_delete_before_and_during_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-during", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-during",
+        "src",
+        "dest",
+    ]);
     assert!(
         result.is_err(),
         "--delete-before and --delete-during should be mutually exclusive"
@@ -22,7 +28,13 @@ fn test_delete_before_and_during_conflict() {
 
 #[test]
 fn test_delete_before_and_after_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-after", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-after",
+        "src",
+        "dest",
+    ]);
     assert!(
         result.is_err(),
         "--delete-before and --delete-after should be mutually exclusive"
@@ -33,7 +45,13 @@ fn test_delete_before_and_after_conflict() {
 
 #[test]
 fn test_delete_before_and_delay_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-delay", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-delay",
+        "src",
+        "dest",
+    ]);
     assert!(
         result.is_err(),
         "--delete-before and --delete-delay should be mutually exclusive"
@@ -44,7 +62,13 @@ fn test_delete_before_and_delay_conflict() {
 
 #[test]
 fn test_delete_during_and_after_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-during", "--delete-after", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-during",
+        "--delete-after",
+        "src",
+        "dest",
+    ]);
     assert!(
         result.is_err(),
         "--delete-during and --delete-after should be mutually exclusive"
@@ -55,7 +79,13 @@ fn test_delete_during_and_after_conflict() {
 
 #[test]
 fn test_delete_during_and_delay_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-during", "--delete-delay", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-during",
+        "--delete-delay",
+        "src",
+        "dest",
+    ]);
     assert!(
         result.is_err(),
         "--delete-during and --delete-delay should be mutually exclusive"
@@ -66,7 +96,13 @@ fn test_delete_during_and_delay_conflict() {
 
 #[test]
 fn test_delete_after_and_delay_conflict() {
-    let result = parse_args(["oc-rsync", "--delete-after", "--delete-delay", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-after",
+        "--delete-delay",
+        "src",
+        "dest",
+    ]);
     assert!(
         result.is_err(),
         "--delete-after and --delete-delay should be mutually exclusive"
@@ -85,10 +121,7 @@ fn test_three_delete_modes_conflict() {
         "src",
         "dest",
     ]);
-    assert!(
-        result.is_err(),
-        "Multiple delete modes should be rejected"
-    );
+    assert!(result.is_err(), "Multiple delete modes should be rejected");
     let err = result.unwrap_err();
     assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
@@ -189,7 +222,13 @@ fn test_usermap_and_groupmap_together() {
 
 #[test]
 fn test_delete_conflict_error_message_contains_options() {
-    let result = parse_args(["oc-rsync", "--delete-before", "--delete-after", "src", "dest"]);
+    let result = parse_args([
+        "oc-rsync",
+        "--delete-before",
+        "--delete-after",
+        "src",
+        "dest",
+    ]);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     // Error message should mention the conflicting options
@@ -201,13 +240,7 @@ fn test_delete_conflict_error_message_contains_options() {
 
 #[test]
 fn test_usermap_too_many_error_message() {
-    let result = parse_args([
-        "oc-rsync",
-        "--usermap=a:b",
-        "--usermap=c:d",
-        "src",
-        "dest",
-    ]);
+    let result = parse_args(["oc-rsync", "--usermap=a:b", "--usermap=c:d", "src", "dest"]);
     assert!(result.is_err());
     let err_msg = result.unwrap_err().to_string();
     // Error message should mention usermap

@@ -12,10 +12,7 @@ use cli::test_utils::parse_args;
 #[test]
 fn test_old_dirs_alias_for_no_mkpath() {
     let args = parse_args(["oc-rsync", "--old-dirs", "src", "dest"]).unwrap();
-    assert!(
-        !args.mkpath,
-        "--old-dirs should behave like --no-mkpath"
-    );
+    assert!(!args.mkpath, "--old-dirs should behave like --no-mkpath");
 }
 
 #[test]
@@ -271,10 +268,7 @@ fn test_no_capital_h_alias_for_no_hard_links() {
 fn test_no_v_alias_for_no_verbose() {
     let args = parse_args(["oc-rsync", "--no-v", "src", "dest"]).unwrap();
     // no-verbose doesn't directly map but affects verbosity parsing
-    assert_eq!(
-        args.verbosity, 0,
-        "--no-v should behave like --no-verbose"
-    );
+    assert_eq!(args.verbosity, 0, "--no-v should behave like --no-verbose");
 }
 
 #[test]

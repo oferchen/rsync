@@ -15,7 +15,8 @@ use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 /// **Warning**: This type is exposed via `cli::test_utils` for integration
 /// tests only. It is not part of the stable public API.
 #[allow(clippy::struct_excessive_bools)]
-#[allow(missing_docs)]  // Fields are self-documenting; struct is test-only
+#[allow(missing_docs)] // Fields are self-documenting; struct is test-only
+#[allow(private_interfaces)] // ProgramName, BandwidthArgument are pub(crate) but exposed for tests
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedArgs {
     /// Program name detected from argv[0].

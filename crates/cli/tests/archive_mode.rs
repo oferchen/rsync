@@ -35,11 +35,7 @@ fn test_no_archive_by_default() {
 #[test]
 fn test_archive_does_not_enable_acls() {
     let args = parse_args(["oc-rsync", "-a", "src", "dest"]).unwrap();
-    assert_ne!(
-        args.acls,
-        Some(true),
-        "-a should NOT imply -A (ACLs)"
-    );
+    assert_ne!(args.acls, Some(true), "-a should NOT imply -A (ACLs)");
 }
 
 #[test]
@@ -206,15 +202,7 @@ fn test_archive_with_verbose() {
 
 #[test]
 fn test_archive_with_multiple_overrides() {
-    let args = parse_args([
-        "oc-rsync",
-        "-a",
-        "--no-perms",
-        "--no-owner",
-        "src",
-        "dest",
-    ])
-    .unwrap();
+    let args = parse_args(["oc-rsync", "-a", "--no-perms", "--no-owner", "src", "dest"]).unwrap();
     assert!(args.archive);
     assert_eq!(args.perms, Some(false));
     assert_eq!(args.owner, Some(false));
@@ -222,18 +210,14 @@ fn test_archive_with_multiple_overrides() {
 
 #[test]
 fn test_archive_with_mixed_overrides() {
-    let args = parse_args([
-        "oc-rsync",
-        "-a",
-        "--no-perms",
-        "-A",
-        "src",
-        "dest",
-    ])
-    .unwrap();
+    let args = parse_args(["oc-rsync", "-a", "--no-perms", "-A", "src", "dest"]).unwrap();
     assert!(args.archive);
     // Note: --no-perms stays disabled at parse time; -A will imply perms in execution logic
-    assert_eq!(args.perms, Some(false), "--no-perms should stay disabled at parse time");
+    assert_eq!(
+        args.perms,
+        Some(false),
+        "--no-perms should stay disabled at parse time"
+    );
     assert_eq!(args.acls, Some(true), "-A should enable ACLs");
 }
 

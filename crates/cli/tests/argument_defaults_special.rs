@@ -38,7 +38,10 @@ fn test_delay_updates_defaults_to_false() {
 #[test]
 fn test_remove_source_files_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.remove_source_files, "remove_source_files should default to false");
+    assert!(
+        !args.remove_source_files,
+        "remove_source_files should default to false"
+    );
 }
 
 #[test]
@@ -56,7 +59,10 @@ fn test_copy_devices_defaults_to_false() {
 #[test]
 fn test_copy_unsafe_links_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.copy_unsafe_links, None, "copy_unsafe_links should default to None");
+    assert_eq!(
+        args.copy_unsafe_links, None,
+        "copy_unsafe_links should default to None"
+    );
 }
 
 #[test]
@@ -86,7 +92,10 @@ fn test_ignore_times_defaults_to_false() {
 #[test]
 fn test_ignore_existing_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.ignore_existing, "ignore_existing should default to false");
+    assert!(
+        !args.ignore_existing,
+        "ignore_existing should default to false"
+    );
 }
 
 #[test]
@@ -98,19 +107,28 @@ fn test_existing_defaults_to_false() {
 #[test]
 fn test_ignore_missing_args_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.ignore_missing_args, "ignore_missing_args should default to false");
+    assert!(
+        !args.ignore_missing_args,
+        "ignore_missing_args should default to false"
+    );
 }
 
 #[test]
 fn test_delete_missing_args_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.delete_missing_args, "delete_missing_args should default to false");
+    assert!(
+        !args.delete_missing_args,
+        "delete_missing_args should default to false"
+    );
 }
 
 #[test]
 fn test_delete_excluded_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.delete_excluded, "delete_excluded should default to false");
+    assert!(
+        !args.delete_excluded,
+        "delete_excluded should default to false"
+    );
 }
 
 #[test]
@@ -140,25 +158,38 @@ fn test_stats_defaults_to_false() {
 #[test]
 fn test_eight_bit_output_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.eight_bit_output, "eight_bit_output should default to false");
+    assert!(
+        !args.eight_bit_output,
+        "eight_bit_output should default to false"
+    );
 }
 
 #[test]
 fn test_itemize_changes_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.itemize_changes, "itemize_changes should default to false");
+    assert!(
+        !args.itemize_changes,
+        "itemize_changes should default to false"
+    );
 }
 
 #[test]
 fn test_name_level_defaults_to_disabled() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.name_level, NameOutputLevel::Disabled, "name_level should default to Disabled");
+    assert_eq!(
+        args.name_level,
+        NameOutputLevel::Disabled,
+        "name_level should default to Disabled"
+    );
 }
 
 #[test]
 fn test_name_overridden_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.name_overridden, "name_overridden should default to false");
+    assert!(
+        !args.name_overridden,
+        "name_overridden should default to false"
+    );
 }
 
 #[test]
@@ -170,7 +201,11 @@ fn test_verbosity_defaults_to_zero() {
 #[test]
 fn test_progress_defaults_to_unspecified() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.progress, ProgressSetting::Unspecified, "progress should default to Unspecified");
+    assert_eq!(
+        args.progress,
+        ProgressSetting::Unspecified,
+        "progress should default to Unspecified"
+    );
 }
 
 #[test]
@@ -200,7 +235,10 @@ fn test_open_noatime_defaults_to_false() {
 #[test]
 fn test_no_open_noatime_defaults_to_false() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.no_open_noatime, "no_open_noatime should default to false");
+    assert!(
+        !args.no_open_noatime,
+        "no_open_noatime should default to false"
+    );
 }
 
 #[test]
@@ -235,7 +273,10 @@ fn test_remote_shell_defaults_to_none_without_env() {
     // remote_shell may be Some if RSYNC_RSH env var is set
     // We can only test that it's None if env is clean
     if std::env::var("RSYNC_RSH").is_err() {
-        assert_eq!(args.remote_shell, None, "remote_shell should default to None when RSYNC_RSH not set");
+        assert_eq!(
+            args.remote_shell, None,
+            "remote_shell should default to None when RSYNC_RSH not set"
+        );
     }
 }
 
@@ -244,14 +285,20 @@ fn test_partial_dir_defaults_to_none_without_env() {
     // This test assumes RSYNC_PARTIAL_DIR environment variable is not set
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     if std::env::var("RSYNC_PARTIAL_DIR").is_err() {
-        assert_eq!(args.partial_dir, None, "partial_dir should default to None when RSYNC_PARTIAL_DIR not set");
+        assert_eq!(
+            args.partial_dir, None,
+            "partial_dir should default to None when RSYNC_PARTIAL_DIR not set"
+        );
     }
 }
 
 #[test]
 fn test_human_readable_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.human_readable, None, "human_readable should default to None");
+    assert_eq!(
+        args.human_readable, None,
+        "human_readable should default to None"
+    );
 }
 
 #[test]
@@ -265,25 +312,37 @@ fn test_protect_args_defaults_to_environment_or_none() {
 #[test]
 fn test_link_dests_defaults_to_empty() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(args.link_dests.is_empty(), "link_dests should default to empty vec");
+    assert!(
+        args.link_dests.is_empty(),
+        "link_dests should default to empty vec"
+    );
 }
 
 #[test]
 fn test_excludes_defaults_to_empty() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(args.excludes.is_empty(), "excludes should default to empty vec");
+    assert!(
+        args.excludes.is_empty(),
+        "excludes should default to empty vec"
+    );
 }
 
 #[test]
 fn test_includes_defaults_to_empty() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(args.includes.is_empty(), "includes should default to empty vec");
+    assert!(
+        args.includes.is_empty(),
+        "includes should default to empty vec"
+    );
 }
 
 #[test]
 fn test_filters_defaults_to_empty() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(args.filters.is_empty(), "filters should default to empty vec");
+    assert!(
+        args.filters.is_empty(),
+        "filters should default to empty vec"
+    );
 }
 
 #[test]
@@ -295,7 +354,10 @@ fn test_chmod_defaults_to_empty() {
 #[test]
 fn test_remote_options_defaults_to_empty() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(args.remote_options.is_empty(), "remote_options should default to empty vec");
+    assert!(
+        args.remote_options.is_empty(),
+        "remote_options should default to empty vec"
+    );
 }
 
 #[test]
@@ -313,5 +375,8 @@ fn test_debug_defaults_to_empty() {
 #[test]
 fn test_files_from_defaults_to_empty() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(args.files_from.is_empty(), "files_from should default to empty vec");
+    assert!(
+        args.files_from.is_empty(),
+        "files_from should default to empty vec"
+    );
 }

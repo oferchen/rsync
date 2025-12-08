@@ -144,10 +144,7 @@ fn test_rsync_rsh_env_with_options() {
 fn test_rsync_rsh_empty_ignored() {
     let _guard = EnvGuard::set("RSYNC_RSH", "");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(
-        args.remote_shell, None,
-        "Empty RSYNC_RSH should be ignored"
-    );
+    assert_eq!(args.remote_shell, None, "Empty RSYNC_RSH should be ignored");
 }
 
 #[test]
@@ -265,14 +262,27 @@ fn test_flags_override_all_env_vars() {
     let args = parse_args([
         "oc-rsync",
         "--no-protect-args",
-        "-e", "rsh",
+        "-e",
+        "rsh",
         "--partial-dir=/var",
         "src",
         "dest",
     ])
     .unwrap();
 
-    assert_eq!(args.protect_args, Some(false), "Flag should override RSYNC_PROTECT_ARGS");
-    assert_eq!(args.remote_shell, Some("rsh".into()), "Flag should override RSYNC_RSH");
-    assert_eq!(args.partial_dir, Some("/var".into()), "Flag should override RSYNC_PARTIAL_DIR");
+    assert_eq!(
+        args.protect_args,
+        Some(false),
+        "Flag should override RSYNC_PROTECT_ARGS"
+    );
+    assert_eq!(
+        args.remote_shell,
+        Some("rsh".into()),
+        "Flag should override RSYNC_RSH"
+    );
+    assert_eq!(
+        args.partial_dir,
+        Some("/var".into()),
+        "Flag should override RSYNC_PARTIAL_DIR"
+    );
 }
