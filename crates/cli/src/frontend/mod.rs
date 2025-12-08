@@ -124,7 +124,7 @@ mod tests;
 pub(crate) use arguments::env_protect_args_default;
 #[allow(unused_imports)]
 pub(crate) use arguments::{
-    BandwidthArgument, ProgramName, detect_program_name, ParsedArgs, parse_args,
+    BandwidthArgument, ParsedArgs, ProgramName, detect_program_name, parse_args,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -150,8 +150,8 @@ pub(crate) use filter_rules::{
 };
 use help::help_text;
 pub(crate) use out_format::{OutFormat, OutFormatContext, emit_out_format, parse_out_format};
-#[allow(unused_imports)]  // NameOutputLevel and ProgressSetting are re-exported by wildcard
-pub(crate) use progress::{*, NameOutputLevel, ProgressSetting};
+#[allow(unused_imports)] // NameOutputLevel and ProgressSetting are re-exported by wildcard
+pub(crate) use progress::{NameOutputLevel, ProgressSetting, *};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use std::num::NonZeroU64;
