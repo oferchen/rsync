@@ -124,6 +124,7 @@ dependencies = [
  "cli",
  "core",
  "daemon",
+ "filetime",
  "libc",
  "openssl",
  "tempfile",
