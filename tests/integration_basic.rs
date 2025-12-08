@@ -209,8 +209,7 @@ fn update_flag_skips_newer_files() {
     // Make dest newer than source
     let src_mtime = fs::metadata(&src_file).unwrap().modified().unwrap();
     let newer_time = src_mtime + std::time::Duration::from_secs(10);
-    filetime::set_file_mtime(&dest_file, filetime::FileTime::from_system_time(newer_time))
-        .unwrap();
+    filetime::set_file_mtime(&dest_file, filetime::FileTime::from_system_time(newer_time)).unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -234,8 +233,7 @@ fn update_flag_transfers_when_source_newer() {
     // Make source newer than dest
     let src_mtime = fs::metadata(&src_file).unwrap().modified().unwrap();
     let older_time = src_mtime - std::time::Duration::from_secs(10);
-    filetime::set_file_mtime(&dest_file, filetime::FileTime::from_system_time(older_time))
-        .unwrap();
+    filetime::set_file_mtime(&dest_file, filetime::FileTime::from_system_time(older_time)).unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(10));
 
@@ -263,8 +261,7 @@ fn preserve_modification_times_with_times_flag() {
 
     // Set a specific mtime on source
     let target_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
-    filetime::set_file_mtime(&src_file, filetime::FileTime::from_system_time(target_time))
-        .unwrap();
+    filetime::set_file_mtime(&src_file, filetime::FileTime::from_system_time(target_time)).unwrap();
 
     let dest_file = test_dir.path().join("dest.txt");
 
@@ -288,8 +285,7 @@ fn preserve_modification_times_with_times_flag() {
 
     assert!(
         diff < std::time::Duration::from_secs(2),
-        "Modification time should be preserved (diff: {:?})",
-        diff
+        "Modification time should be preserved (diff: {diff:?})"
     );
 }
 
@@ -484,7 +480,9 @@ fn size_only_skips_files_with_same_size() {
 #[test]
 fn size_only_transfers_files_with_different_size() {
     let test_dir = TestDir::new().expect("create test dir");
-    let src_file = test_dir.write_file("source.txt", b"longer content").unwrap();
+    let src_file = test_dir
+        .write_file("source.txt", b"longer content")
+        .unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"short").unwrap();
 
     let mut cmd = RsyncCommand::new();
