@@ -8,37 +8,55 @@ use cli::test_utils::parse_args;
 #[test]
 fn test_preserve_owner_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.owner, None, "owner should default to None (disabled unless -a)");
+    assert_eq!(
+        args.owner, None,
+        "owner should default to None (disabled unless -a)"
+    );
 }
 
 #[test]
 fn test_preserve_group_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.group, None, "group should default to None (disabled unless -a)");
+    assert_eq!(
+        args.group, None,
+        "group should default to None (disabled unless -a)"
+    );
 }
 
 #[test]
 fn test_preserve_permissions_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.perms, None, "perms should default to None (disabled unless -a)");
+    assert_eq!(
+        args.perms, None,
+        "perms should default to None (disabled unless -a)"
+    );
 }
 
 #[test]
 fn test_preserve_times_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.times, None, "times should default to None (disabled unless -a)");
+    assert_eq!(
+        args.times, None,
+        "times should default to None (disabled unless -a)"
+    );
 }
 
 #[test]
 fn test_preserve_devices_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.devices, None, "devices should default to None (disabled unless -a)");
+    assert_eq!(
+        args.devices, None,
+        "devices should default to None (disabled unless -a)"
+    );
 }
 
 #[test]
 fn test_preserve_specials_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.specials, None, "specials should default to None (disabled unless -a)");
+    assert_eq!(
+        args.specials, None,
+        "specials should default to None (disabled unless -a)"
+    );
 }
 
 #[test]
@@ -50,7 +68,10 @@ fn test_preserve_hard_links_defaults_to_none() {
 #[test]
 fn test_preserve_symlinks_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.links, None, "links should default to None (disabled unless -a)");
+    assert_eq!(
+        args.links, None,
+        "links should default to None (disabled unless -a)"
+    );
 }
 
 #[test]
@@ -116,7 +137,10 @@ fn test_copy_links_defaults_to_none() {
 #[test]
 fn test_keep_dirlinks_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.keep_dirlinks, None, "keep_dirlinks should default to None");
+    assert_eq!(
+        args.keep_dirlinks, None,
+        "keep_dirlinks should default to None"
+    );
 }
 
 #[test]
@@ -134,19 +158,28 @@ fn test_relative_defaults_to_none() {
 #[test]
 fn test_one_file_system_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.one_file_system, None, "one_file_system should default to None");
+    assert_eq!(
+        args.one_file_system, None,
+        "one_file_system should default to None"
+    );
 }
 
 #[test]
 fn test_implied_dirs_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.implied_dirs, None, "implied_dirs should default to None");
+    assert_eq!(
+        args.implied_dirs, None,
+        "implied_dirs should default to None"
+    );
 }
 
 #[test]
 fn test_prune_empty_dirs_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.prune_empty_dirs, None, "prune_empty_dirs should default to None");
+    assert_eq!(
+        args.prune_empty_dirs, None,
+        "prune_empty_dirs should default to None"
+    );
 }
 
 #[test]
@@ -188,31 +221,46 @@ fn test_numeric_ids_defaults_to_none() {
 #[test]
 fn test_omit_dir_times_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.omit_dir_times, None, "omit_dir_times should default to None");
+    assert_eq!(
+        args.omit_dir_times, None,
+        "omit_dir_times should default to None"
+    );
 }
 
 #[test]
 fn test_omit_link_times_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.omit_link_times, None, "omit_link_times should default to None");
+    assert_eq!(
+        args.omit_link_times, None,
+        "omit_link_times should default to None"
+    );
 }
 
 #[test]
 fn test_write_devices_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.write_devices, None, "write_devices should default to None");
+    assert_eq!(
+        args.write_devices, None,
+        "write_devices should default to None"
+    );
 }
 
 #[test]
 fn test_executability_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.executability, None, "executability should default to None");
+    assert_eq!(
+        args.executability, None,
+        "executability should default to None"
+    );
 }
 
 #[test]
 fn test_inc_recursive_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.inc_recursive, None, "inc_recursive should default to None");
+    assert_eq!(
+        args.inc_recursive, None,
+        "inc_recursive should default to None"
+    );
 }
 
 #[test]
@@ -224,5 +272,8 @@ fn test_blocking_io_defaults_to_none() {
 #[test]
 fn test_msgs_to_stderr_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.msgs_to_stderr, None, "msgs_to_stderr should default to None");
+    assert_eq!(
+        args.msgs_to_stderr, None,
+        "msgs_to_stderr should default to None"
+    );
 }

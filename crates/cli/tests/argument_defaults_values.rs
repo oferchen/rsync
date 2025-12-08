@@ -33,7 +33,10 @@ fn test_block_size_defaults_to_none() {
 #[test]
 fn test_modify_window_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.modify_window, None, "modify_window should default to None");
+    assert_eq!(
+        args.modify_window, None,
+        "modify_window should default to None"
+    );
 }
 
 #[test]
@@ -59,31 +62,46 @@ fn test_bwlimit_defaults_to_none() {
 #[test]
 fn test_checksum_seed_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.checksum_seed, None, "checksum_seed should default to None");
+    assert_eq!(
+        args.checksum_seed, None,
+        "checksum_seed should default to None"
+    );
 }
 
 #[test]
 fn test_checksum_choice_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.checksum_choice, None, "checksum_choice should default to None");
+    assert_eq!(
+        args.checksum_choice, None,
+        "checksum_choice should default to None"
+    );
 }
 
 #[test]
 fn test_compress_level_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.compress_level, None, "compress_level should default to None");
+    assert_eq!(
+        args.compress_level, None,
+        "compress_level should default to None"
+    );
 }
 
 #[test]
 fn test_compress_choice_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.compress_choice, None, "compress_choice should default to None");
+    assert_eq!(
+        args.compress_choice, None,
+        "compress_choice should default to None"
+    );
 }
 
 #[test]
 fn test_skip_compress_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.skip_compress, None, "skip_compress should default to None");
+    assert_eq!(
+        args.skip_compress, None,
+        "skip_compress should default to None"
+    );
 }
 
 #[test]
@@ -107,14 +125,25 @@ fn test_stop_at_defaults_to_none() {
 #[test]
 fn test_delete_mode_defaults_to_disabled() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.delete_mode, DeleteMode::Disabled, "delete_mode should default to Disabled");
-    assert!(!args.delete_mode.is_enabled(), "delete_mode should not be enabled by default");
+    assert_eq!(
+        args.delete_mode,
+        DeleteMode::Disabled,
+        "delete_mode should default to Disabled"
+    );
+    assert!(
+        !args.delete_mode.is_enabled(),
+        "delete_mode should not be enabled by default"
+    );
 }
 
 #[test]
 fn test_address_mode_defaults_to_default() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.address_mode, AddressMode::Default, "address_mode should default to Default");
+    assert_eq!(
+        args.address_mode,
+        AddressMode::Default,
+        "address_mode should default to Default"
+    );
 }
 
 #[test]
@@ -126,7 +155,10 @@ fn test_backup_dir_defaults_to_none() {
 #[test]
 fn test_backup_suffix_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.backup_suffix, None, "backup_suffix should default to None");
+    assert_eq!(
+        args.backup_suffix, None,
+        "backup_suffix should default to None"
+    );
 }
 
 #[test]
@@ -144,7 +176,10 @@ fn test_log_file_defaults_to_none() {
 #[test]
 fn test_log_file_format_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.log_file_format, None, "log_file_format should default to None");
+    assert_eq!(
+        args.log_file_format, None,
+        "log_file_format should default to None"
+    );
 }
 
 #[test]
@@ -156,7 +191,10 @@ fn test_write_batch_defaults_to_none() {
 #[test]
 fn test_only_write_batch_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.only_write_batch, None, "only_write_batch should default to None");
+    assert_eq!(
+        args.only_write_batch, None,
+        "only_write_batch should default to None"
+    );
 }
 
 #[test]
@@ -180,7 +218,10 @@ fn test_outbuf_defaults_to_none() {
 #[test]
 fn test_password_file_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.password_file, None, "password_file should default to None");
+    assert_eq!(
+        args.password_file, None,
+        "password_file should default to None"
+    );
 }
 
 #[test]
@@ -210,7 +251,10 @@ fn test_iconv_defaults_to_none() {
 #[test]
 fn test_bind_address_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.bind_address, None, "bind_address should default to None");
+    assert_eq!(
+        args.bind_address, None,
+        "bind_address should default to None"
+    );
 }
 
 #[test]
@@ -228,7 +272,10 @@ fn test_rsync_path_defaults_to_none() {
 #[test]
 fn test_connect_program_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert_eq!(args.connect_program, None, "connect_program should default to None");
+    assert_eq!(
+        args.connect_program, None,
+        "connect_program should default to None"
+    );
 }
 
 #[test]

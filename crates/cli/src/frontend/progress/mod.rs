@@ -15,6 +15,6 @@ pub(crate) use self::format::{
     format_verbose_rate_human, is_progress_event, list_only_event,
 };
 pub(crate) use self::live::LiveProgress;
-pub use self::mode::{NameOutputLevel, ProgressSetting};  // Changed to pub for test_utils
 pub(crate) use self::mode::ProgressMode;
+pub use self::mode::{NameOutputLevel, ProgressSetting}; // Changed to pub for test_utils
 pub(crate) use self::render::emit_transfer_summary;
