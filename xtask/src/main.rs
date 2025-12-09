@@ -56,8 +56,8 @@ mod util;
 mod workspace;
 
 use crate::commands::{
-    branding, docs, enforce_limits, interop, no_binaries, no_placeholders, package, preflight,
-    readme_version, release, sbom, test,
+    branding, doc_package, docs, enforce_limits, interop, no_binaries, no_placeholders, package,
+    preflight, readme_version, release, sbom, test,
 };
 use crate::error::TaskError;
 use crate::util::is_help_flag;
@@ -110,6 +110,11 @@ where
             let options = docs::parse_args(args)?;
             let workspace = workspace_root()?;
             docs::execute(&workspace, options)
+        }
+        "doc-package" => {
+            let options = doc_package::parse_args(args)?;
+            let workspace = workspace_root()?;
+            doc_package::execute(&workspace, options)
         }
         "no-binaries" => {
             let options = no_binaries::parse_args(args)?;

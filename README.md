@@ -114,9 +114,20 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ End-to-end validation: Comprehensive integration tests
 - ⏳ Error handling: Basic implementation, hardening in progress
 
-For detailed implementation documentation, see:
-- `docs/SERVER_DELTA_IMPLEMENTATION.md` - Technical summary of all phases
-- `docs/DELTA_TRANSFER_GUIDE.md` - Developer guide for working with delta transfers
+For detailed implementation documentation:
+```bash
+# Generate and browse the documentation
+cargo doc --no-deps --open
+
+# Or view online (once published)
+# https://docs.rs/core/latest/core/server/delta_transfer/
+```
+
+**Key documentation modules**:
+- [`core::server::delta_transfer`](https://docs.rs/core/latest/core/server/delta_transfer/) - Comprehensive delta transfer implementation guide
+- [`core::server`](https://docs.rs/core/latest/core/server/) - Server module with implementation status
+- [`core::server::receiver`](https://docs.rs/core/latest/core/server/receiver/) - Receiver role implementation
+- [`core::server::generator`](https://docs.rs/core/latest/core/server/generator/) - Generator role implementation
 
 ---
 

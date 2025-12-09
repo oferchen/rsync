@@ -1,4 +1,5 @@
 pub mod branding;
+pub mod doc_package;
 pub mod docs;
 pub mod enforce_limits;
 pub mod interop;
