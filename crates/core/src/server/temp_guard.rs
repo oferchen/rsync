@@ -151,7 +151,7 @@ mod tests {
         {
             let mut guard = TempFileGuard::new(temp_path.clone());
             guard.keep(); // Mark as successful
-                          // Guard goes out of scope here
+            // Guard goes out of scope here
         }
 
         // File should still exist
@@ -189,10 +189,7 @@ mod tests {
         fn operation_that_fails(path: PathBuf) -> Result<(), std::io::Error> {
             let _guard = TempFileGuard::new(path);
             // Simulate error
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "operation failed",
-            ))
+            Err(std::io::Error::other("operation failed"))
         }
 
         let result = operation_that_fails(temp_path.clone());

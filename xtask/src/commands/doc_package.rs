@@ -45,8 +45,7 @@ where
             "--output" | "-o" => {
                 let Some(path) = iter.next() else {
                     return Err(TaskError::Usage(format!(
-                        "{} requires a path argument",
-                        arg_str
+                        "{arg_str} requires a path argument"
                     )));
                 };
                 opts.output = PathBuf::from(path);
@@ -55,7 +54,7 @@ where
                 opts.open = true;
             }
             _ => {
-                return Err(TaskError::Usage(format!("unknown flag: {}", arg_str)));
+                return Err(TaskError::Usage(format!("unknown flag: {arg_str}")));
             }
         }
     }
@@ -79,26 +78,19 @@ pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskE
         cmd.arg("--open");
     }
 
-    let status = cmd
-        .status()
-        .map_err(|e| TaskError::System(format!("Failed to run cargo doc: {}", e)))?;
+    let status = cmd.status()?;
 
     if !status.success() {
-        return Err(TaskError::System(String::from(
-            "cargo doc failed; see output above",
-        )));
+        return Err(TaskError::CommandFailed {
+            program: "cargo doc".to_string(),
+            status,
+        });
     }
 
     println!("Documentation built successfully");
 
     // Create output directory
-    std::fs::create_dir_all(&options.output).map_err(|e| {
-        TaskError::System(format!(
-            "Failed to create output directory {}: {}",
-            options.output.display(),
-            e
-        ))
-    })?;
+    std::fs::create_dir_all(&options.output)?;
 
     // Package documentation
     let doc_dir = workspace.join("target/doc");
@@ -116,13 +108,13 @@ pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskE
             "doc",
         ])
         .current_dir(workspace)
-        .status()
-        .map_err(|e| TaskError::System(format!("Failed to create tarball: {}", e)))?;
+        .status()?;
 
     if !status.success() {
-        return Err(TaskError::System(String::from(
-            "tar command failed; see output above",
-        )));
+        return Err(TaskError::CommandFailed {
+            program: "tar".to_string(),
+            status,
+        });
     }
 
     println!("✓ Documentation packaged: {}", tarball_path.display());

@@ -241,7 +241,7 @@ impl ReceiverContext {
                     let basis = fs::File::open(basis_path).map_err(|e| {
                         match categorize_io_error(e, basis_path, "open basis") {
                             DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => io_err,
-                            _ => io::Error::new(io::ErrorKind::Other, "failed to open basis file"),
+                            _ => io::Error::other("failed to open basis file"),
                         }
                     })?;
 
@@ -250,11 +250,14 @@ impl ReceiverContext {
                             DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
                                 io::Error::new(
                                     io::ErrorKind::StorageFull,
-                                    format!("Disk full creating temp file for {}", basis_path.display()),
+                                    format!(
+                                        "Disk full creating temp file for {}",
+                                        basis_path.display()
+                                    ),
                                 )
                             }
                             DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => io_err,
-                            _ => io::Error::new(io::ErrorKind::Other, "failed to create temp file"),
+                            _ => io::Error::other("failed to create temp file"),
                         }
                     })?;
 
@@ -271,10 +274,7 @@ impl ReceiverContext {
                                 return Err(io_err);
                             }
                             _ => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::Other,
-                                    "failed to apply delta",
-                                ));
+                                return Err(io::Error::other("failed to apply delta"));
                             }
                         }
                     }
@@ -292,7 +292,7 @@ impl ReceiverContext {
                                 return Err(io_err);
                             }
                             _ => {
-                                return Err(io::Error::new(io::ErrorKind::Other, "failed to sync"));
+                                return Err(io::Error::other("failed to sync"));
                             }
                         }
                     }
@@ -307,17 +307,17 @@ impl ReceiverContext {
                             DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
                                 return Err(io::Error::new(
                                     io::ErrorKind::StorageFull,
-                                    format!("Disk full during whole-file transfer to {}", basis_path.display()),
+                                    format!(
+                                        "Disk full during whole-file transfer to {}",
+                                        basis_path.display()
+                                    ),
                                 ));
                             }
                             DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => {
                                 return Err(io_err);
                             }
                             _ => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::Other,
-                                    "failed whole-file transfer",
-                                ));
+                                return Err(io::Error::other("failed whole-file transfer"));
                             }
                         }
                     }
@@ -331,17 +331,17 @@ impl ReceiverContext {
                         DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
                             return Err(io::Error::new(
                                 io::ErrorKind::StorageFull,
-                                format!("Disk full during whole-file transfer to {}", basis_path.display()),
+                                format!(
+                                    "Disk full during whole-file transfer to {}",
+                                    basis_path.display()
+                                ),
                             ));
                         }
                         DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => {
                             return Err(io_err);
                         }
                         _ => {
-                            return Err(io::Error::new(
-                                io::ErrorKind::Other,
-                                "failed whole-file transfer",
-                            ));
+                            return Err(io::Error::other("failed whole-file transfer"));
                         }
                     }
                 }
