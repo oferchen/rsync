@@ -16,6 +16,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
 
 jobs:
   lint-and-test:
