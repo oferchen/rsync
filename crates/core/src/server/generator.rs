@@ -7,6 +7,7 @@
 //! 3. Receives signatures from the client for existing files
 //! 4. Generates and sends deltas for each file
 
+use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,10 @@ use filters::{FilterRule, FilterSet};
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
+use protocol::wire::{read_signature, write_delta, DeltaOp};
+
+use engine::delta::{DeltaGenerator, DeltaSignatureIndex, DeltaScript, DeltaToken};
+use engine::signature::SignatureAlgorithm;
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
@@ -287,12 +292,58 @@ impl GeneratorContext {
         writer.write_all(&[0])?;
         writer.flush()?;
 
-        // For now, just report what we sent
-        // Delta generation and sending will be implemented next
+        // Delta generation loop: for each file, receive signature, generate delta, send
+        let mut files_transferred = 0;
+        let mut bytes_sent = 0u64;
+
+        for file_entry in &self.file_list {
+            let source_path = file_entry.path();
+
+            // Step 1: Receive signature from receiver (or no-basis marker)
+            let (block_length, block_count, strong_sum_length, sig_blocks) =
+                read_signature(&mut &mut *reader)?;
+
+            let has_basis = block_count > 0;
+
+            // Step 2: Open source file
+            let source_file = match fs::File::open(source_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("[generator] Cannot open {}: {}", source_path.display(), e);
+                    // Send empty delta to signal error
+                    write_delta(&mut &mut *writer, &[])?;
+                    continue;
+                }
+            };
+
+            // Step 3: Generate delta (or send whole file if no basis)
+            let delta_script = if has_basis {
+                // Receiver has basis, generate delta
+                generate_delta_from_signature(
+                    source_file,
+                    block_length,
+                    &sig_blocks,
+                    strong_sum_length,
+                )?
+            } else {
+                // Receiver has no basis, send whole file as literals
+                generate_whole_file_delta(source_file)?
+            };
+
+            // Step 4: Convert engine delta to wire format and send
+            let wire_ops = script_to_wire_delta(&delta_script);
+            write_delta(&mut &mut *writer, &wire_ops)?;
+            writer.flush()?;
+
+            // Step 5: Track stats
+            bytes_sent += delta_script.total_bytes();
+            files_transferred += 1;
+        }
+
         Ok(GeneratorStats {
             files_listed: file_count,
-            files_transferred: 0,
-            bytes_sent: 0,
+            files_transferred,
+            bytes_sent,
         })
     }
 
@@ -367,6 +418,97 @@ pub struct GeneratorStats {
     pub files_transferred: usize,
     /// Total bytes sent.
     pub bytes_sent: u64,
+}
+
+// Helper functions for delta generation
+
+/// Generates a delta script from a received signature.
+///
+/// Reconstructs the signature from wire format blocks, creates an index,
+/// and uses DeltaGenerator to produce the delta.
+fn generate_delta_from_signature<R: Read>(
+    source: R,
+    block_length: u32,
+    sig_blocks: &[protocol::wire::signature::SignatureBlock],
+    strong_sum_length: u8,
+) -> io::Result<DeltaScript> {
+    use checksums::RollingDigest;
+    use engine::delta::SignatureLayout;
+    use engine::signature::{FileSignature, SignatureBlock};
+    use std::num::{NonZeroU32, NonZeroU8};
+
+    // Reconstruct engine signature from wire format
+    let block_length_nz = NonZeroU32::new(block_length).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "block length must be non-zero")
+    })?;
+
+    let strong_sum_length_nz = NonZeroU8::new(strong_sum_length).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "strong sum length must be non-zero")
+    })?;
+
+    let block_count = sig_blocks.len() as u64;
+
+    // Reconstruct signature layout (remainder unknown, set to 0)
+    let layout = SignatureLayout::from_raw_parts(
+        block_length_nz,
+        0, // remainder unknown from wire format
+        block_count,
+        strong_sum_length_nz,
+    );
+
+    // Convert wire blocks to engine signature blocks
+    let engine_blocks: Vec<SignatureBlock> = sig_blocks
+        .iter()
+        .map(|wire_block| {
+            SignatureBlock::from_raw_parts(
+                wire_block.index as u64,
+                RollingDigest::from_value(wire_block.rolling_sum, block_length as usize),
+                wire_block.strong_sum.clone(),
+            )
+        })
+        .collect();
+
+    // Calculate total bytes (approximation since we don't know exact remainder)
+    let total_bytes = (block_count.saturating_sub(1)) * u64::from(block_length);
+    let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
+
+    // Create index for delta generation
+    let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md5)
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "failed to create signature index")
+        })?;
+
+    // Generate delta
+    let generator = DeltaGenerator::new();
+    generator.generate(source, &index).map_err(|e| {
+        io::Error::new(io::ErrorKind::Other, format!("delta generation failed: {e}"))
+    })
+}
+
+/// Generates a delta script containing the entire file as literals (whole-file transfer).
+fn generate_whole_file_delta<R: Read>(mut source: R) -> io::Result<DeltaScript> {
+    let mut data = Vec::new();
+    source.read_to_end(&mut data)?;
+
+    let total_bytes = data.len() as u64;
+    let tokens = vec![DeltaToken::Literal(data)];
+
+    Ok(DeltaScript::new(tokens, total_bytes, total_bytes))
+}
+
+/// Converts engine delta script to wire protocol delta operations.
+fn script_to_wire_delta(script: &DeltaScript) -> Vec<DeltaOp> {
+    script
+        .tokens()
+        .iter()
+        .map(|token| match token {
+            DeltaToken::Literal(data) => DeltaOp::Literal(data.clone()),
+            DeltaToken::Copy { index, len } => DeltaOp::Copy {
+                block_index: *index as u32,
+                length: *len as u32,
+            },
+        })
+        .collect()
 }
 
 #[cfg(test)]
