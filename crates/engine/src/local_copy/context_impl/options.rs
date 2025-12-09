@@ -381,6 +381,7 @@ impl<'a> CopyContext<'a> {
         self.options.inplace_enabled()
     }
 
+    #[cfg(unix)]
     #[cfg(feature = "xattr")]
     pub(super) fn xattrs_enabled(&self) -> bool {
         self.options.preserve_xattrs()
