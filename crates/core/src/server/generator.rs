@@ -529,7 +529,9 @@ fn generate_whole_file_delta<R: Read>(mut source: R) -> io::Result<DeltaScript> 
     if total_bytes > MAX_IN_MEMORY_SIZE {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("File too large for whole-file transfer: {total_bytes} bytes (max {MAX_IN_MEMORY_SIZE})"),
+            format!(
+                "File too large for whole-file transfer: {total_bytes} bytes (max {MAX_IN_MEMORY_SIZE})"
+            ),
         ));
     }
 
