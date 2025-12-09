@@ -6,6 +6,19 @@
 //! 2. Sends the file list to the client (receiver)
 //! 3. Receives signatures from the client for existing files
 //! 4. Generates and sends deltas for each file
+//!
+//! # Implementation Guide
+//!
+//! For comprehensive documentation on how the generator works within the delta transfer
+//! algorithm, see the [`crate::server::delta_transfer`] module documentation.
+//!
+//! # Related Components
+//!
+//! - [`crate::server::receiver`] - The receiver role that applies deltas from the generator
+//! - [`engine::delta::DeltaGenerator`] - Core delta generation engine
+//! - [`engine::delta::DeltaSignatureIndex`] - Fast block lookup for delta generation
+//! - [`engine::signature`] - Signature reconstruction from wire format
+//! - [`protocol::wire`] - Wire format for signatures and deltas
 
 use std::fs;
 use std::io::{self, Read, Write};
