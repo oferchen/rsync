@@ -103,10 +103,10 @@ pub enum DeltaRecoverableError {
 impl std::fmt::Display for DeltaTransferError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DeltaTransferError::Fatal(e) => write!(f, "Fatal: {}", e),
-            DeltaTransferError::Recoverable(e) => write!(f, "Recoverable: {}", e),
+            DeltaTransferError::Fatal(e) => write!(f, "Fatal: {e}"),
+            DeltaTransferError::Recoverable(e) => write!(f, "Recoverable: {e}"),
             DeltaTransferError::DataCorruption(msg) => {
-                write!(f, "Data corruption risk: {}", msg)
+                write!(f, "Data corruption risk: {msg}")
             }
         }
     }
@@ -115,12 +115,14 @@ impl std::fmt::Display for DeltaTransferError {
 impl std::fmt::Display for DeltaFatalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DeltaFatalError::DiskFull {
-                path,
-                bytes_needed,
-            } => {
+            DeltaFatalError::DiskFull { path, bytes_needed } => {
                 if let Some(bytes) = bytes_needed {
-                    write!(f, "Disk full at {} ({} bytes needed)", path.display(), bytes)
+                    write!(
+                        f,
+                        "Disk full at {} ({} bytes needed)",
+                        path.display(),
+                        bytes
+                    )
                 } else {
                     write!(f, "Disk full at {}", path.display())
                 }
@@ -129,9 +131,9 @@ impl std::fmt::Display for DeltaFatalError {
                 write!(f, "Read-only filesystem at {}", path.display())
             }
             DeltaFatalError::ProtocolError { message } => {
-                write!(f, "Protocol error: {}", message)
+                write!(f, "Protocol error: {message}")
             }
-            DeltaFatalError::Io(e) => write!(f, "I/O error: {}", e),
+            DeltaFatalError::Io(e) => write!(f, "I/O error: {e}"),
         }
     }
 }
@@ -200,11 +202,9 @@ pub fn categorize_io_error(
         }),
 
         // Recoverable - skip file
-        NotFound => {
-            DeltaTransferError::Recoverable(DeltaRecoverableError::FileNotFound {
-                path: path.to_path_buf(),
-            })
-        }
+        NotFound => DeltaTransferError::Recoverable(DeltaRecoverableError::FileNotFound {
+            path: path.to_path_buf(),
+        }),
         PermissionDenied => {
             DeltaTransferError::Recoverable(DeltaRecoverableError::PermissionDenied {
                 path: path.to_path_buf(),
@@ -317,7 +317,7 @@ mod tests {
             bytes_needed: Some(1024),
         };
 
-        let s = format!("{}", err);
+        let s = format!("{err}");
         assert!(s.contains("Disk full"));
         assert!(s.contains("/tmp/test.txt"));
         assert!(s.contains("1024"));
@@ -330,7 +330,7 @@ mod tests {
             operation: "open".to_string(),
         };
 
-        let s = format!("{}", err);
+        let s = format!("{err}");
         assert!(s.contains("Permission denied"));
         assert!(s.contains("open"));
         assert!(s.contains("/tmp/test.txt"));
