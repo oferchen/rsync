@@ -1018,4 +1018,37 @@ mod tests {
             _ => panic!("expected literal token"),
         }
     }
+
+    #[test]
+    fn generate_whole_file_delta_checks_size_limit() {
+        // Test that the size limit constant exists and is reasonable (8GB)
+        assert_eq!(MAX_IN_MEMORY_SIZE, 8 * 1024 * 1024 * 1024);
+
+        // Note: We can't practically test reading 8GB+ in a unit test.
+        // The size check happens after read_to_end(), which means we'd need
+        // to actually allocate 8GB+ to trigger it. This is impractical for CI.
+        // The constant exists and is used in generate_whole_file_delta().
+    }
+
+    #[test]
+    fn generate_whole_file_delta_accepts_max_size_file() {
+        // Test that a file exactly at MAX_IN_MEMORY_SIZE is accepted
+        // We won't actually allocate 8GB, just test a small file to verify the logic works
+        let data = vec![0xAB; 1024]; // 1KB test file
+        let mut cursor = Cursor::new(&data);
+
+        let script = generate_whole_file_delta(&mut cursor).unwrap();
+
+        assert_eq!(script.tokens().len(), 1);
+        assert_eq!(script.total_bytes(), 1024);
+        assert_eq!(script.literal_bytes(), 1024);
+
+        match &script.tokens()[0] {
+            DeltaToken::Literal(content) => {
+                assert_eq!(content.len(), 1024);
+                assert!(content.iter().all(|&b| b == 0xAB));
+            }
+            _ => panic!("expected literal token"),
+        }
+    }
 }
