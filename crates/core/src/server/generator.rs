@@ -15,9 +15,9 @@ use filters::{FilterRule, FilterSet};
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
-use protocol::wire::{read_signature, write_delta, DeltaOp};
+use protocol::wire::{DeltaOp, read_signature, write_delta};
 
-use engine::delta::{DeltaGenerator, DeltaSignatureIndex, DeltaScript, DeltaToken};
+use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
 use engine::signature::SignatureAlgorithm;
 
 use super::config::ServerConfig;
@@ -435,7 +435,7 @@ fn generate_delta_from_signature<R: Read>(
     use checksums::RollingDigest;
     use engine::delta::SignatureLayout;
     use engine::signature::{FileSignature, SignatureBlock};
-    use std::num::{NonZeroU32, NonZeroU8};
+    use std::num::{NonZeroU8, NonZeroU32};
 
     // Reconstruct engine signature from wire format
     let block_length_nz = NonZeroU32::new(block_length).ok_or_else(|| {
@@ -443,7 +443,10 @@ fn generate_delta_from_signature<R: Read>(
     })?;
 
     let strong_sum_length_nz = NonZeroU8::new(strong_sum_length).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "strong sum length must be non-zero")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "strong sum length must be non-zero",
+        )
     })?;
 
     let block_count = sig_blocks.len() as u64;
@@ -475,14 +478,17 @@ fn generate_delta_from_signature<R: Read>(
     // Create index for delta generation
     let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md5)
         .ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "failed to create signature index")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "failed to create signature index",
+            )
         })?;
 
     // Generate delta
     let generator = DeltaGenerator::new();
-    generator.generate(source, &index).map_err(|e| {
-        io::Error::new(io::ErrorKind::Other, format!("delta generation failed: {e}"))
-    })
+    generator
+        .generate(source, &index)
+        .map_err(|e| io::Error::other(format!("delta generation failed: {e}")))
 }
 
 /// Generates a delta script containing the entire file as literals (whole-file transfer).
@@ -908,10 +914,7 @@ mod tests {
                 len: 1024,
             },
             DeltaToken::Literal(vec![99]),
-            DeltaToken::Copy {
-                index: 1,
-                len: 512,
-            },
+            DeltaToken::Copy { index: 1, len: 512 },
         ];
         let script = DeltaScript::new(tokens, 1537, 1);
 
