@@ -55,6 +55,7 @@ fn capture_batch_file_entry(
             .unwrap_or(0);
 
         // Create file entry
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut entry = crate::batch::FileEntry::new(path_str, mode, size, mtime);
 
         // Add uid/gid if preserving ownership
