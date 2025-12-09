@@ -23,6 +23,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::num::NonZeroU8;
+use std::path::PathBuf;
 
 use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader};
@@ -155,6 +156,7 @@ impl ReceiverContext {
         // Transfer loop: for each file, generate signature, receive delta, apply
         let mut files_transferred = 0;
         let mut bytes_received = 0u64;
+        let mut metadata_errors = Vec::new();
 
         // Use MD5 for strong checksums (default for protocol >= 30)
         let checksum_length = NonZeroU8::new(16).expect("checksum length must be non-zero");
@@ -360,6 +362,8 @@ impl ReceiverContext {
                     basis_path.display(),
                     meta_err
                 );
+                // Collect error for final report
+                metadata_errors.push((basis_path.to_path_buf(), meta_err.to_string()));
             }
 
             // Step 7: Track stats
@@ -367,10 +371,22 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
+        // Report metadata errors summary if any occurred
+        if !metadata_errors.is_empty() {
+            eprintln!(
+                "[receiver] Metadata errors for {} files:",
+                metadata_errors.len()
+            );
+            for (path, err) in &metadata_errors {
+                eprintln!("  {}: {}", path.display(), err);
+            }
+        }
+
         Ok(TransferStats {
             files_listed: file_count,
             files_transferred,
             bytes_received,
+            metadata_errors,
         })
     }
 }
@@ -384,6 +400,8 @@ pub struct TransferStats {
     pub files_transferred: usize,
     /// Total bytes received.
     pub bytes_received: u64,
+    /// Metadata errors encountered (path, error message).
+    pub metadata_errors: Vec<(PathBuf, String)>,
 }
 
 // Helper functions for delta transfer
