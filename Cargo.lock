@@ -753,6 +753,7 @@ dependencies = [
  "apple-fs",
  "filetime",
  "libc",
+ "protocol",
  "rustix 0.38.44",
  "tempfile",
  "xattr",
