@@ -87,6 +87,41 @@ impl ReceiverContext {
     /// 1. Receive file list
     /// 2. For each file: generate signature, receive delta, apply
     /// 3. Set final metadata
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use core::server::{ReceiverContext, ServerConfig, HandshakeResult};
+    /// use core::server::role::ServerRole;
+    /// use core::server::flags::ParsedServerFlags;
+    /// use protocol::ProtocolVersion;
+    /// use std::io::{stdin, stdout};
+    /// use std::ffi::OsString;
+    ///
+    /// # fn example() -> std::io::Result<()> {
+    /// let handshake = HandshakeResult {
+    ///     protocol: ProtocolVersion::try_from(32u8).unwrap(),
+    ///     buffered: Vec::new(),
+    ///     compat_exchanged: false,
+    /// };
+    ///
+    /// let config = ServerConfig {
+    ///     role: ServerRole::Receiver,
+    ///     protocol: ProtocolVersion::try_from(32u8).unwrap(),
+    ///     flag_string: "-a".to_string(),
+    ///     flags: ParsedServerFlags::default(),
+    ///     args: vec![OsString::from(".")],
+    /// };
+    ///
+    /// let mut ctx = ReceiverContext::new(&handshake, config);
+    ///
+    /// // Run receiver role with stdin/stdout
+    /// let stats = ctx.run(&mut stdin().lock(), &mut stdout().lock())?;
+    /// eprintln!("Transferred {} files ({} bytes)",
+    ///           stats.files_transferred, stats.bytes_received);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn run<R: Read + ?Sized, W: Write + ?Sized>(
         &mut self,
         reader: &mut R,
