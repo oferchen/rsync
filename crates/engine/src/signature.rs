@@ -183,6 +183,12 @@ impl SignatureBlock {
         }
     }
 
+    /// Creates a block descriptor from raw components (for wire protocol reconstruction).
+    #[must_use]
+    pub const fn from_raw_parts(index: u64, rolling: RollingDigest, strong: Vec<u8>) -> Self {
+        Self::new(index, rolling, strong)
+    }
+
     /// Returns the zero-based index of the block within the signature.
     #[must_use]
     pub const fn index(&self) -> u64 {
@@ -230,6 +236,16 @@ impl FileSignature {
             blocks,
             total_bytes,
         }
+    }
+
+    /// Creates a signature from raw components (for wire protocol reconstruction).
+    #[must_use]
+    pub const fn from_raw_parts(
+        layout: SignatureLayout,
+        blocks: Vec<SignatureBlock>,
+        total_bytes: u64,
+    ) -> Self {
+        Self::new(layout, blocks, total_bytes)
     }
 
     /// Returns the layout used to generate the signature.

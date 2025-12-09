@@ -163,6 +163,22 @@ pub struct SignatureLayout {
 }
 
 impl SignatureLayout {
+    /// Creates a layout from raw components (for wire protocol reconstruction).
+    #[must_use]
+    pub const fn from_raw_parts(
+        block_length: NonZeroU32,
+        remainder: u32,
+        block_count: u64,
+        strong_sum_length: NonZeroU8,
+    ) -> Self {
+        Self {
+            block_length,
+            remainder,
+            block_count,
+            strong_sum_length,
+        }
+    }
+
     /// Returns the block length in bytes.
     #[must_use]
     pub const fn block_length(self) -> NonZeroU32 {
