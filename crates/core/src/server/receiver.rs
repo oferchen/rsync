@@ -238,12 +238,13 @@ impl ReceiverContext {
 
                 if let Some(index) = index {
                     // Open basis file for reading
-                    let basis = fs::File::open(basis_path).map_err(|e| {
-                        match categorize_io_error(e, basis_path, "open basis") {
-                            DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => io_err,
-                            _ => io::Error::other("failed to open basis file"),
-                        }
-                    })?;
+                    let basis =
+                        fs::File::open(basis_path).map_err(|e| {
+                            match categorize_io_error(e, basis_path, "open basis") {
+                                DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => io_err,
+                                _ => io::Error::other("failed to open basis file"),
+                            }
+                        })?;
 
                     let mut output = fs::File::create(&temp_path).map_err(|e| {
                         match categorize_io_error(e, &temp_path, "create temp") {
