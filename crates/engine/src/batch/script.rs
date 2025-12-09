@@ -7,6 +7,8 @@ use super::BatchConfig;
 use crate::error::{EngineError, EngineResult};
 use std::fs::File;
 use std::io::{self, Write};
+
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 /// Generate a minimal shell script for replaying a batch file.
