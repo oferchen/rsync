@@ -74,6 +74,10 @@ fn overwrite_existing_file() {
     let src_file = test_dir.write_file("source.txt", b"new content").unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"old content").unwrap();
 
+    // Ensure files are fully written before rsync reads them (CI buffering issue)
+    fs::File::open(&src_file).unwrap().sync_all().unwrap();
+    fs::File::open(&dest_file).unwrap().sync_all().unwrap();
+
     let mut cmd = RsyncCommand::new();
     cmd.args([src_file.to_str().unwrap(), dest_file.to_str().unwrap()]);
     cmd.assert_success();
