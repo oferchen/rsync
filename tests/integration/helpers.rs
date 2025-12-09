@@ -310,14 +310,15 @@ pub fn assert_dirs_equal(left: &Path, right: &Path) {
     }
 
     if !errors.is_empty() {
-        panic!(
-            "Directory comparison failed:\n{}",
-            errors.join("\n")
-        );
+        panic!("Directory comparison failed:\n{}", errors.join("\n"));
     }
 }
 
-fn collect_files_for_listing(base: &Path, current: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {
+fn collect_files_for_listing(
+    base: &Path,
+    current: &Path,
+    files: &mut Vec<PathBuf>,
+) -> io::Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let path = entry.path();
