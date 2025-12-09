@@ -462,6 +462,7 @@ fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
 
 #[cfg(test)]
 mod tests {
+    use super::super::error::DeltaRecoverableError;
     use super::super::flags::ParsedServerFlags;
     use super::super::role::ServerRole;
     use super::*;
@@ -627,5 +628,122 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn temp_file_guard_cleans_up_on_drop() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().join("test.tmp");
+
+        // Create temp file
+        std::fs::write(&temp_path, b"test data").unwrap();
+        assert!(temp_path.exists());
+
+        {
+            let _guard = TempFileGuard::new(temp_path.clone());
+            // Guard goes out of scope here, should delete file
+        }
+
+        // File should be deleted
+        assert!(!temp_path.exists());
+    }
+
+    #[test]
+    fn temp_file_guard_keeps_file_when_marked() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().join("test.tmp");
+
+        // Create temp file
+        std::fs::write(&temp_path, b"test data").unwrap();
+        assert!(temp_path.exists());
+
+        {
+            let mut guard = TempFileGuard::new(temp_path.clone());
+            guard.keep(); // Mark as successful
+            // Guard goes out of scope here
+        }
+
+        // File should still exist
+        assert!(temp_path.exists());
+    }
+
+    #[test]
+    fn error_categorization_disk_full_is_fatal() {
+        use std::path::Path;
+
+        let err = io::Error::from(io::ErrorKind::StorageFull);
+        let path = Path::new("/tmp/test.txt");
+
+        let categorized = categorize_io_error(err, path, "write");
+
+        match categorized {
+            DeltaTransferError::Fatal(DeltaFatalError::DiskFull { path: p, .. }) => {
+                assert_eq!(p, path);
+            }
+            _ => panic!("Expected fatal disk full error"),
+        }
+    }
+
+    #[test]
+    fn error_categorization_permission_denied_is_recoverable() {
+        use std::path::Path;
+
+        let err = io::Error::from(io::ErrorKind::PermissionDenied);
+        let path = Path::new("/tmp/test.txt");
+
+        let categorized = categorize_io_error(err, path, "open");
+
+        match categorized {
+            DeltaTransferError::Recoverable(DeltaRecoverableError::PermissionDenied {
+                path: p,
+                operation: op,
+            }) => {
+                assert_eq!(p, path);
+                assert_eq!(op, "open");
+            }
+            _ => panic!("Expected recoverable permission denied error"),
+        }
+    }
+
+    #[test]
+    fn error_categorization_not_found_is_recoverable() {
+        use std::path::Path;
+
+        let err = io::Error::from(io::ErrorKind::NotFound);
+        let path = Path::new("/tmp/test.txt");
+
+        let categorized = categorize_io_error(err, path, "open");
+
+        match categorized {
+            DeltaTransferError::Recoverable(DeltaRecoverableError::FileNotFound { path: p }) => {
+                assert_eq!(p, path);
+            }
+            _ => panic!("Expected recoverable file not found error"),
+        }
+    }
+
+    #[test]
+    fn transfer_stats_tracks_metadata_errors() {
+        let mut stats = TransferStats::default();
+
+        assert_eq!(stats.metadata_errors.len(), 0);
+
+        // Simulate collecting metadata errors
+        stats.metadata_errors.push((
+            PathBuf::from("/tmp/file1.txt"),
+            "Permission denied".to_string(),
+        ));
+        stats.metadata_errors.push((
+            PathBuf::from("/tmp/file2.txt"),
+            "Operation not permitted".to_string(),
+        ));
+
+        assert_eq!(stats.metadata_errors.len(), 2);
+        assert_eq!(stats.metadata_errors[0].0, PathBuf::from("/tmp/file1.txt"));
+        assert_eq!(stats.metadata_errors[0].1, "Permission denied");
     }
 }
