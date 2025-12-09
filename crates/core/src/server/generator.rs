@@ -517,6 +517,7 @@ mod tests {
     use super::super::role::ServerRole;
     use super::*;
     use std::ffi::OsString;
+    use std::io::Cursor;
 
     fn test_config() -> ServerConfig {
         ServerConfig {
@@ -876,5 +877,104 @@ mod tests {
         // Should have all 3 files when no filters are present
         assert_eq!(count, 3);
         assert_eq!(ctx.file_list().len(), 3);
+    }
+
+    #[test]
+    fn script_to_wire_delta_converts_literals() {
+        let tokens = vec![
+            DeltaToken::Literal(vec![1, 2, 3]),
+            DeltaToken::Literal(vec![4, 5, 6]),
+        ];
+        let script = DeltaScript::new(tokens, 6, 6);
+
+        let wire_ops = script_to_wire_delta(&script);
+
+        assert_eq!(wire_ops.len(), 2);
+        match &wire_ops[0] {
+            DeltaOp::Literal(data) => assert_eq!(data, &vec![1, 2, 3]),
+            _ => panic!("expected literal op"),
+        }
+        match &wire_ops[1] {
+            DeltaOp::Literal(data) => assert_eq!(data, &vec![4, 5, 6]),
+            _ => panic!("expected literal op"),
+        }
+    }
+
+    #[test]
+    fn script_to_wire_delta_converts_copy_operations() {
+        let tokens = vec![
+            DeltaToken::Copy {
+                index: 0,
+                len: 1024,
+            },
+            DeltaToken::Literal(vec![99]),
+            DeltaToken::Copy {
+                index: 1,
+                len: 512,
+            },
+        ];
+        let script = DeltaScript::new(tokens, 1537, 1);
+
+        let wire_ops = script_to_wire_delta(&script);
+
+        assert_eq!(wire_ops.len(), 3);
+        match &wire_ops[0] {
+            DeltaOp::Copy {
+                block_index,
+                length,
+            } => {
+                assert_eq!(*block_index, 0);
+                assert_eq!(*length, 1024);
+            }
+            _ => panic!("expected copy op"),
+        }
+        match &wire_ops[1] {
+            DeltaOp::Literal(data) => assert_eq!(data, &vec![99]),
+            _ => panic!("expected literal op"),
+        }
+        match &wire_ops[2] {
+            DeltaOp::Copy {
+                block_index,
+                length,
+            } => {
+                assert_eq!(*block_index, 1);
+                assert_eq!(*length, 512);
+            }
+            _ => panic!("expected copy op"),
+        }
+    }
+
+    #[test]
+    fn generate_whole_file_delta_reads_entire_file() {
+        let data = b"Hello, world! This is a test file.";
+        let mut cursor = Cursor::new(&data[..]);
+
+        let script = generate_whole_file_delta(&mut cursor).unwrap();
+
+        assert_eq!(script.tokens().len(), 1);
+        assert_eq!(script.total_bytes(), data.len() as u64);
+        assert_eq!(script.literal_bytes(), data.len() as u64);
+
+        match &script.tokens()[0] {
+            DeltaToken::Literal(content) => assert_eq!(content, &data.to_vec()),
+            _ => panic!("expected literal token"),
+        }
+    }
+
+    #[test]
+    fn generate_whole_file_delta_handles_empty_file() {
+        let data = b"";
+        let mut cursor = Cursor::new(&data[..]);
+
+        let script = generate_whole_file_delta(&mut cursor).unwrap();
+
+        assert_eq!(script.tokens().len(), 1);
+        assert_eq!(script.total_bytes(), 0);
+        assert_eq!(script.literal_bytes(), 0);
+
+        match &script.tokens()[0] {
+            DeltaToken::Literal(content) => assert!(content.is_empty()),
+            _ => panic!("expected literal token"),
+        }
     }
 }
