@@ -335,6 +335,26 @@ fn set_timestamp_like(
 ///
 /// # Errors
 /// Returns [`MetadataError`] if any filesystem operation fails.
+///
+/// # Examples
+///
+/// ```no_run
+/// use metadata::{apply_metadata_from_file_entry, MetadataOptions};
+/// use protocol::flist::FileEntry;
+/// use std::path::Path;
+///
+/// # fn example(file_entry: &FileEntry) -> Result<(), metadata::MetadataError> {
+/// let dest_path = Path::new("/path/to/reconstructed/file.txt");
+///
+/// // Apply metadata with permissions and timestamps
+/// let options = MetadataOptions::new()
+///     .preserve_permissions(true)
+///     .preserve_times(true);
+///
+/// apply_metadata_from_file_entry(dest_path, file_entry, options)?;
+/// # Ok(())
+/// # }
+/// ```
 pub fn apply_metadata_from_file_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,

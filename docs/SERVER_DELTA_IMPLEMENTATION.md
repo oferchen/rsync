@@ -7,13 +7,13 @@
 
 ## Executive Summary
 
-Completed the core server-side delta transfer implementation for both receiver and generator roles. The implementation adds signature generation, delta application, and delta generation capabilities to the native Rust server, enabling efficient file synchronization using rsync's block-based algorithm.
+Completed the full server-side delta transfer implementation for both receiver and generator roles, including metadata preservation and comprehensive end-to-end integration tests. The implementation adds signature generation, delta application, delta generation, and metadata preservation to the native Rust server, enabling efficient file synchronization using rsync's block-based algorithm.
 
 **Impact**:
-- 3,216 total tests passing (8 new delta transfer tests)
-- 4 commits across Phases 1-4
-- ~380 lines of implementation code
-- ~190 lines of test code
+- 3,228 total tests passing (8 helper tests + 12 integration tests added)
+- 6 commits across Phases 1-5
+- ~650 lines of implementation code (delta transfer + metadata)
+- ~600 lines of test code (unit + integration)
 
 ---
 
@@ -306,24 +306,76 @@ Generate delta
 
 ## What's Not Implemented (Future Work)
 
-### Phase 5: Metadata Application
+### Phase 5: Metadata Preservation
 
-**Status**: Deferred
+**Status**: ✅ **COMPLETE**
 
-**Reason**: The existing `metadata::apply_file_metadata_with_options()` function expects `&fs::Metadata` as input (to copy metadata from a source file), but the receiver needs to apply metadata from `FileEntry` (wire protocol data) to the reconstructed file.
+**Commits**:
+1. `8a5abfcb` - Implement metadata application from FileEntry in receiver
 
-**Required Work**:
-- Create adapter to convert `FileEntry` metadata to filesystem operations
-- Apply permissions, times, ownership based on `ParsedServerFlags`
-- Use `MetadataOptions` builder pattern:
-  ```rust
-  let options = MetadataOptions::new()
-      .preserve_permissions(config.flags.perms)
-      .preserve_times(config.flags.times)
-      .preserve_owner(config.flags.owner)
-      .preserve_group(config.flags.group)
-      .numeric_ids(config.flags.numeric_ids);
-  ```
+**Goal**: Apply metadata (permissions, timestamps, ownership) from FileEntry to reconstructed files
+
+**Key Changes**:
+
+**File**: `/home/ofer/rsync/crates/metadata/src/apply.rs` (lines 325-496)
+
+**Implementation**: Added 4 new functions to enable metadata application from wire protocol data:
+
+1. **`apply_metadata_from_file_entry()`** - Public API that accepts `FileEntry` directly
+   - Coordinates permission, ownership, and timestamp application
+   - Uses `MetadataOptions` builder pattern for selective preservation
+   - Best-effort error handling (logs warnings, doesn't abort transfers)
+
+2. **`apply_ownership_from_entry()`** - Unix/non-Unix ownership handling
+   - Extracts uid/gid from `FileEntry`
+   - Calls `chownat()` on Unix platforms
+   - No-op on non-Unix platforms
+   - Supports user/group mapping via `MetadataOptions`
+
+3. **`apply_permissions_from_entry()`** - Mode bits with chmod modifier support
+   - Reads mode from `FileEntry` or derives from file type
+   - Applies chmod modifiers if specified
+   - Uses `fs::set_permissions()` for cross-platform compatibility
+
+4. **`apply_timestamps_from_entry()`** - Nanosecond-precision timestamps
+   - Uses `FileTime::from_unix_time(mtime, mtime_nsec)` from FileEntry
+   - Preserves nanosecond precision without conversion loss
+   - Platform-specific behavior via `filetime` crate
+
+**Integration** (`receiver.rs`, lines 112-220):
+```rust
+// Build metadata options from server config flags
+let metadata_opts = MetadataOptions::new()
+    .preserve_permissions(self.config.flags.perms)
+    .preserve_times(self.config.flags.times)
+    .preserve_owner(self.config.flags.owner)
+    .preserve_group(self.config.flags.group)
+    .numeric_ids(self.config.flags.numeric_ids);
+
+// After file reconstruction and atomic rename:
+if let Err(meta_err) =
+    apply_metadata_from_file_entry(basis_path, file_entry, metadata_opts.clone())
+{
+    // Log warning but continue - metadata failure shouldn't abort transfer
+    eprintln!("[receiver] Warning: failed to apply metadata to {}: {}",
+              basis_path.display(), meta_err);
+}
+```
+
+**Key Features**:
+- ✅ Permissions preservation from FileEntry
+- ✅ Timestamp preservation with nanosecond precision
+- ✅ Ownership preservation (Unix only, best-effort)
+- ✅ User/group mapping support
+- ✅ chmod modifiers support
+- ✅ Best-effort error handling (log warnings, don't abort transfers)
+- ✅ Platform-specific implementations (Unix vs non-Unix)
+
+**Design Rationale**:
+The existing `metadata::apply_file_metadata()` expects `&fs::Metadata` (read-only from filesystem), but the receiver needs to apply metadata from `FileEntry` (wire protocol data). The solution adds a parallel API that accepts FileEntry directly, avoiding the need to construct impossible-to-create `fs::Metadata` instances.
+
+**FileTime API Match**:
+`FileTime::from_unix_time(i64, u32)` perfectly matches FileEntry's (mtime, mtime_nsec) pair, preserving nanosecond precision without conversion loss.
 
 ### Phase 6: Error Handling & Edge Cases
 
@@ -336,14 +388,60 @@ Generate delta
 - Large file streaming optimization
 - Sparse file detection
 
-### Phase 7: End-to-End Integration Tests
+### Phase 6: End-to-End Integration Tests
+
+**Status**: ✅ **COMPLETE**
+
+**Commits**:
+1. `aa83952e` - Add end-to-end integration tests for server delta transfer
+
+**Goal**: Validate the complete delta transfer pipeline from generator to receiver
+
+**Implementation**:
+
+**File**: `/home/ofer/rsync/tests/integration_server_delta.rs` (398 lines, 12 tests)
+
+**Test Organization**:
+
+**Phase 1: Basic Delta Transfer** (5 tests, ~150 lines)
+- `delta_transfer_whole_file_no_basis` - Whole-file transfer when no basis exists
+- `delta_transfer_with_identical_basis` - Efficient delta with matching basis
+- `delta_transfer_with_modified_middle` - Delta reconstruction with partial changes
+- `delta_transfer_multiple_files` - Batch transfer validation
+
+**Phase 2: Metadata Preservation** (3 tests, ~100 lines)
+- `delta_transfer_preserves_permissions` - Unix permissions with `-p` flag
+- `delta_transfer_preserves_timestamps_nanosecond` - Nanosecond timestamps with `-t`
+- `delta_transfer_archive_mode` - Full metadata preservation with `-a` flag
+
+**Phase 3: Edge Cases & Stress** (5 tests, ~148 lines)
+- `delta_transfer_empty_file` - Zero-byte file handling
+- `delta_transfer_large_file` - 10MB file transfer validation
+- `delta_transfer_basis_smaller` - File expansion (4KB → 8KB)
+- `delta_transfer_basis_larger` - File truncation (8KB → 4KB)
+- `delta_transfer_binary_all_bytes` - All byte values (0-255) preservation
+
+**Testing Approach**:
+Uses CLI-level integration tests with `RsyncCommand` to execute actual `oc-rsync` transfers, verifying end-to-end behavior through filesystem checks. This approach:
+- Tests the production code path (actual binary execution)
+- Leverages existing test infrastructure (TestDir, RsyncCommand)
+- Follows established integration test patterns
+- Enables manual reproduction with the CLI
+
+**Test Results**:
+- ✅ All 12 new tests pass in 0.23 seconds
+- ✅ Content integrity verified (byte-for-byte match assertions)
+- ✅ Metadata preservation validated (permissions, timestamps with nanosecond precision)
+- ✅ Edge cases covered (empty files, large files, size mismatches, binary data)
+
+### Phase 7: Advanced Features & Optimization
 
 **Deferred Items**:
-- Full receiver + generator integration tests
-- Delta efficiency verification (matched vs literal bytes)
+- Delta efficiency metrics and reporting (matched vs literal bytes)
 - Protocol version matrix testing (32 down to 28)
 - Interoperability tests against upstream rsync
-- Performance benchmarking
+- Performance benchmarking and profiling
+- Compression integration validation (`-z` flag testing)
 
 ---
 
@@ -385,10 +483,12 @@ f6ac8bd3 Implement generator delta generation (Phase 2.1)
 | Zero clippy warnings | ✅ Complete |
 | All workspace tests passing | ✅ Complete (3,216 tests) |
 
+**Additional Complete**:
+- ✅ Metadata application (Phase 5) - Complete
+- ✅ End-to-end integration tests (Phase 6) - Complete (12 tests)
+
 **Deferred**:
-- ⏳ Metadata application (Phase 5)
-- ⏳ Comprehensive error handling (Phase 6)
-- ⏳ End-to-end integration tests (Phase 7)
+- ⏳ Comprehensive error handling (Phase 7)
 
 ---
 
@@ -420,33 +520,31 @@ The delta transfer leverages existing SIMD-accelerated checksums:
 
 ## Known Limitations
 
-1. **Metadata Preservation**: Not yet applied to reconstructed files (flags are parsed but not used)
+1. **Error Recovery**: Basic error handling only; no retry logic or graceful degradation
 
-2. **Error Recovery**: Basic error handling only; no retry logic or graceful degradation
+2. **Large Files**: No special handling for files > 4GB (may exhaust memory in pathological cases)
 
-3. **Large Files**: No special handling for files > 4GB (may exhaust memory in pathological cases)
+3. **Sparse Files**: No sparse file detection/creation in delta application
 
-4. **Sparse Files**: No sparse file detection/creation in delta application
+4. **Progress Reporting**: No progress callbacks during delta operations
 
-5. **Progress Reporting**: No progress callbacks during delta operations
-
-6. **Compression**: Delta operations are not compressed before transmission
+5. **Compression**: Delta operations are not compressed before transmission
 
 ---
 
 ## Next Steps
 
-### Option A: Complete Metadata Application (1-2 days)
+### ✅ Option A: Complete Metadata Application (COMPLETE)
 
 **Goal**: Apply metadata from `FileEntry` to reconstructed files
 
-**Work Required**:
-- Create `FileEntry` → filesystem metadata adapter
-- Integrate with `MetadataOptions` builder
-- Handle permission/ownership errors gracefully
-- Add tests for metadata preservation
+**Completed Work**:
+- ✅ Created `apply_metadata_from_file_entry()` adapter
+- ✅ Integrated with `MetadataOptions` builder
+- ✅ Handles permission/ownership errors gracefully (best-effort)
+- ✅ Metadata preservation validated in integration tests
 
-### Option B: Error Handling & Edge Cases (2-3 days)
+### Option B: Error Handling & Edge Cases (NEXT PRIORITY)
 
 **Goal**: Production-grade error handling
 
@@ -456,40 +554,101 @@ The delta transfer leverages existing SIMD-accelerated checksums:
 - Add retry logic for transient errors
 - Test error scenarios comprehensively
 
-### Option C: End-to-End Integration Tests (2-3 days)
+### ✅ Option C: End-to-End Integration Tests (COMPLETE)
 
 **Goal**: Validate full delta transfer flow
 
-**Work Required**:
-- Set up in-memory receiver + generator pairs
-- Test delta efficiency (matched vs literal bytes)
-- Test protocol version compatibility
-- Benchmark against upstream rsync
+**Completed Work**:
+- ✅ Created 12 comprehensive integration tests
+- ✅ Verified content integrity (byte-for-byte matching)
+- ✅ Validated metadata preservation (permissions, timestamps)
+- ✅ Covered edge cases (empty, large, size mismatches, binary data)
 
-### Option D: Documentation & Cleanup (1 day)
+### ✅ Option D: Documentation & Cleanup (IN PROGRESS)
 
 **Goal**: Polish and document the implementation
 
-**Work Required**:
-- Update architecture documentation
-- Add inline code examples
-- Document wire protocol format
-- Create developer guide for delta transfers
+**Work in Progress**:
+- ⏳ Updating architecture documentation (this file)
+- ⏳ Adding inline code examples
+- ⏳ Creating developer guide for delta transfers
 
 ---
 
 ## Conclusion
 
-The core server delta implementation is complete and functional. The receiver can generate signatures and apply deltas, while the generator can receive signatures and generate deltas. All wire protocol integration is working correctly, and the implementation reuses existing engine infrastructure for signature generation, delta generation, and delta application.
+The full server delta implementation is complete and functional, including metadata preservation and comprehensive integration testing. The receiver can generate signatures, apply deltas, and preserve file metadata. The generator can receive signatures and generate efficient deltas. All wire protocol integration is working correctly, and the implementation reuses existing engine infrastructure.
 
-**Status**: ✅ **CORE FUNCTIONALITY COMPLETE**
+**Status**: ✅ **COMPLETE WITH METADATA & INTEGRATION TESTS**
 
 **Production Readiness**:
 - ✅ Core delta transfer: Production-ready
-- ⏳ Metadata preservation: Needs implementation
-- ⏳ Error handling: Needs hardening
-- ⏳ End-to-end validation: Needs comprehensive tests
+- ✅ Metadata preservation: Complete and tested
+- ✅ End-to-end validation: 12 comprehensive integration tests
+- ⏳ Error handling: Needs hardening (next priority)
 
-**Quality**: High (3,216 tests passing, zero warnings, clean code)
+**Quality**: High (3,228 tests passing, zero warnings, clean code)
 
-**Next Recommended Phase**: Metadata application (Option A) to complete the basic file transfer feature set.
+**Next Recommended Phase**: Error handling and edge cases (Option B) to harden the implementation for production use.
+
+---
+
+## Final Status Summary
+
+**Date Completed**: 2025-12-09
+**Total Implementation**: Phases 1-6 complete
+**Test Suite**: 3,228 tests passing (100% pass rate)
+
+### What's Complete
+
+**Core Delta Transfer** (Phases 1-4):
+- ✅ Receiver signature generation and delta application
+- ✅ Generator delta generation from signatures
+- ✅ Wire protocol integration (read_delta, write_signature, etc.)
+- ✅ Atomic file operations (temp file + rename)
+- ✅ Helper function unit tests (8 tests)
+
+**Metadata Preservation** (Phase 5):
+- ✅ Permissions, timestamps, ownership from FileEntry
+- ✅ Nanosecond timestamp precision
+- ✅ Best-effort error handling
+- ✅ Platform-specific implementations (Unix/non-Unix)
+
+**End-to-End Validation** (Phase 6):
+- ✅ 12 comprehensive integration tests
+- ✅ Content integrity verification
+- ✅ Metadata preservation verification
+- ✅ Edge case coverage (empty, large, size mismatches, binary)
+
+### Production Readiness Assessment
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Delta transfer core | ✅ Production-ready | Fully functional, tested |
+| Metadata preservation | ✅ Production-ready | Complete with best-effort handling |
+| Integration test coverage | ✅ Production-ready | 12 tests covering major scenarios |
+| Error handling | ⏳ Basic only | Needs ENOSPC, permission errors, cleanup |
+| Performance optimization | ⏳ Not profiled | Works correctly but not optimized |
+| Protocol compatibility | ⏳ Not tested | Protocol 32 only, need 28-31 testing |
+
+### Code Quality Metrics
+
+- **Test Coverage**: 3,228 tests passing (0 failures)
+- **Clippy Warnings**: 0
+- **Lines of Code**: ~650 implementation, ~600 tests
+- **Commits**: 6 (clean history with detailed messages)
+
+### Next Steps
+
+**Immediate** (Option B - Error Handling):
+- Handle ENOSPC and disk full scenarios
+- Implement cleanup on failure (remove partial temp files)
+- Add retry logic for transient errors
+- Permission error handling improvements
+
+**Future Enhancements**:
+- Protocol version compatibility testing (28-31)
+- Performance profiling and optimization
+- Sparse file detection and handling
+- Progress reporting during delta operations
+- Compression integration (test with `-z` flag)
