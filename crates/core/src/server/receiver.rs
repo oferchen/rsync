@@ -158,7 +158,14 @@ impl ReceiverContext {
         let mut bytes_received = 0u64;
         let mut metadata_errors = Vec::new();
 
-        // Use MD5 for strong checksums (default for protocol >= 30)
+        // Select checksum algorithm based on protocol version (matches upstream rsync)
+        // Protocol < 30: MD4 (historical)
+        // Protocol >= 30: MD5 (modern default)
+        let checksum_algorithm = if self.protocol.as_u8() >= 30 {
+            SignatureAlgorithm::Md5
+        } else {
+            SignatureAlgorithm::Md4
+        };
         let checksum_length = NonZeroU8::new(16).expect("checksum length must be non-zero");
 
         // Build metadata options from server config flags
@@ -196,7 +203,7 @@ impl ReceiverContext {
                     Err(_) => break 'sig None,
                 };
 
-                generate_file_signature(basis_file, layout, SignatureAlgorithm::Md5).ok()
+                generate_file_signature(basis_file, layout, checksum_algorithm).ok()
             };
 
             // Step 3: Send signature or no-basis marker
@@ -236,7 +243,7 @@ impl ReceiverContext {
             if let Some(signature) = signature_opt {
                 // Delta transfer: apply delta using basis file
                 let index =
-                    DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md5);
+                    DeltaSignatureIndex::from_signature(&signature, checksum_algorithm);
 
                 if let Some(index) = index {
                     // Open basis file for reading
