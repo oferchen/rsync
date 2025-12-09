@@ -322,9 +322,13 @@ impl GeneratorContext {
             let source_file = match fs::File::open(source_path) {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("[generator] Cannot open {}: {}", source_path.display(), e);
-                    // Send empty delta to signal error
-                    write_delta(&mut &mut *writer, &[])?;
+                    eprintln!(
+                        "[generator] Cannot open {}: {}, skipping file",
+                        source_path.display(),
+                        e
+                    );
+                    // TODO: Send error marker in wire protocol (future work)
+                    // For now, skip this file entirely
                     continue;
                 }
             };
@@ -504,12 +508,34 @@ fn generate_delta_from_signature<R: Read>(
         .map_err(|e| io::Error::other(format!("delta generation failed: {e}")))
 }
 
+/// Maximum file size for in-memory whole-file transfer (8 GB).
+///
+/// Files larger than this limit require streaming approaches that are not
+/// yet implemented. This limit prevents OOM from unbounded `read_to_end()`.
+const MAX_IN_MEMORY_SIZE: u64 = 8 * 1024 * 1024 * 1024;
+
 /// Generates a delta script containing the entire file as literals (whole-file transfer).
+///
+/// # Size Limit
+///
+/// This function reads the entire file into memory. Files larger than
+/// [`MAX_IN_MEMORY_SIZE`] (8 GB) will return an error to prevent OOM.
 fn generate_whole_file_delta<R: Read>(mut source: R) -> io::Result<DeltaScript> {
     let mut data = Vec::new();
     source.read_to_end(&mut data)?;
 
+    // Check size limit to prevent OOM
     let total_bytes = data.len() as u64;
+    if total_bytes > MAX_IN_MEMORY_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "File too large for whole-file transfer: {} bytes (max {})",
+                total_bytes, MAX_IN_MEMORY_SIZE
+            ),
+        ));
+    }
+
     let tokens = vec![DeltaToken::Literal(data)];
 
     Ok(DeltaScript::new(tokens, total_bytes, total_bytes))
