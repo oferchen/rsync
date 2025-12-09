@@ -13,13 +13,18 @@ use std::num::NonZeroU8;
 
 use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader};
-use protocol::wire::{read_delta, write_signature, DeltaOp};
+use protocol::wire::{DeltaOp, read_delta, write_signature};
 
-use engine::delta::{apply_delta, calculate_signature_layout, DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayoutParams};
-use engine::signature::{generate_file_signature, FileSignature, SignatureAlgorithm};
+use engine::delta::{
+    DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayoutParams, apply_delta,
+    calculate_signature_layout,
+};
+use engine::signature::{FileSignature, SignatureAlgorithm, generate_file_signature};
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
+
+use metadata::{MetadataOptions, apply_metadata_from_file_entry};
 
 /// Context for the receiver role during a transfer.
 #[derive(Debug)]
@@ -104,6 +109,14 @@ impl ReceiverContext {
         // Use MD5 for strong checksums (default for protocol >= 30)
         let checksum_length = NonZeroU8::new(16).expect("checksum length must be non-zero");
 
+        // Build metadata options from server config flags
+        let metadata_opts = MetadataOptions::new()
+            .preserve_permissions(self.config.flags.perms)
+            .preserve_times(self.config.flags.times)
+            .preserve_owner(self.config.flags.owner)
+            .preserve_group(self.config.flags.group)
+            .numeric_ids(self.config.flags.numeric_ids);
+
         for file_entry in &self.file_list {
             let basis_path = file_entry.path();
 
@@ -131,10 +144,7 @@ impl ReceiverContext {
                     Err(_) => break 'sig None,
                 };
 
-                match generate_file_signature(basis_file, layout, SignatureAlgorithm::Md5) {
-                    Ok(signature) => Some(signature),
-                    Err(_) => None,
-                }
+                generate_file_signature(basis_file, layout, SignatureAlgorithm::Md5).ok()
             };
 
             // Step 3: Send signature or no-basis marker
@@ -172,7 +182,8 @@ impl ReceiverContext {
 
             if let Some(signature) = signature_opt {
                 // Delta transfer: apply delta using basis file
-                let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md5);
+                let index =
+                    DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md5);
 
                 if let Some(index) = index {
                     // Open basis file for reading
@@ -196,7 +207,19 @@ impl ReceiverContext {
                 fs::rename(&temp_path, basis_path)?;
             }
 
-            // Step 6: Track stats
+            // Step 6: Apply metadata from FileEntry (best-effort)
+            if let Err(meta_err) =
+                apply_metadata_from_file_entry(basis_path, file_entry, metadata_opts.clone())
+            {
+                // Log warning but continue - metadata failure shouldn't abort transfer
+                eprintln!(
+                    "[receiver] Warning: failed to apply metadata to {}: {}",
+                    basis_path.display(),
+                    meta_err
+                );
+            }
+
+            // Step 7: Track stats
             bytes_received += delta_script.total_bytes();
             files_transferred += 1;
         }
@@ -432,7 +455,10 @@ mod tests {
         // Create a delta script with a copy operation (invalid for whole-file transfer)
         let tokens = vec![
             DeltaToken::Literal(b"data".to_vec()),
-            DeltaToken::Copy { index: 0, len: 1024 },
+            DeltaToken::Copy {
+                index: 0,
+                len: 1024,
+            },
         ];
         let script = DeltaScript::new(tokens, 1028, 4);
 
