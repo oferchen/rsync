@@ -15,8 +15,8 @@ use protocol::ProtocolVersion;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::wire::{read_delta, write_signature, DeltaOp};
 
-use engine::delta::{calculate_signature_layout, DeltaScript, DeltaToken, SignatureLayoutParams};
-use engine::signature::{generate_file_signature, SignatureAlgorithm};
+use engine::delta::{apply_delta, calculate_signature_layout, DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayoutParams};
+use engine::signature::{generate_file_signature, FileSignature, SignatureAlgorithm};
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
@@ -105,13 +105,19 @@ impl ReceiverContext {
         let checksum_length = NonZeroU8::new(16).expect("checksum length must be non-zero");
 
         for file_entry in &self.file_list {
-            // Step 1: Try to open existing basis file
             let basis_path = file_entry.path();
-            let basis_file_opt = fs::File::open(basis_path).ok();
 
-            // Step 2: Generate signature if basis exists
-            if let Some(basis_file) = basis_file_opt {
-                let file_size = basis_file.metadata()?.len();
+            // Step 1 & 2: Generate signature if basis file exists
+            let signature_opt: Option<FileSignature> = 'sig: {
+                let basis_file = match fs::File::open(basis_path) {
+                    Ok(f) => f,
+                    Err(_) => break 'sig None,
+                };
+
+                let file_size = match basis_file.metadata() {
+                    Ok(meta) => meta.len(),
+                    Err(_) => break 'sig None,
+                };
 
                 let params = SignatureLayoutParams::new(
                     file_size,
@@ -120,47 +126,41 @@ impl ReceiverContext {
                     checksum_length,
                 );
 
-                match calculate_signature_layout(params) {
-                    Ok(layout) => {
-                        // Generate the signature
-                        match generate_file_signature(basis_file, layout, SignatureAlgorithm::Md5) {
-                            Ok(signature) => {
-                                // Send signature to generator (inline to avoid ?Sized issues)
-                                use protocol::wire::signature::SignatureBlock as WireBlock;
-                                let sig_layout = signature.layout();
-                                let wire_blocks: Vec<WireBlock> = signature
-                                    .blocks()
-                                    .iter()
-                                    .map(|block| WireBlock {
-                                        index: block.index() as u32,
-                                        rolling_sum: block.rolling().value(),
-                                        strong_sum: block.strong().to_vec(),
-                                    })
-                                    .collect();
-                                write_signature(
-                                    &mut &mut *writer,
-                                    sig_layout.block_count() as u32,
-                                    sig_layout.block_length().get(),
-                                    sig_layout.strong_sum_length().get(),
-                                    &wire_blocks,
-                                )?;
-                            }
-                            Err(_) => {
-                                // If signature generation fails, fall back to whole-file transfer
-                                write_signature(&mut &mut *writer, 0, 0, 0, &[])?;
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        // Layout calculation failed, use whole-file transfer
-                        write_signature(&mut &mut *writer, 0, 0, 0, &[])?;
-                    }
+                let layout = match calculate_signature_layout(params) {
+                    Ok(layout) => layout,
+                    Err(_) => break 'sig None,
+                };
+
+                match generate_file_signature(basis_file, layout, SignatureAlgorithm::Md5) {
+                    Ok(signature) => Some(signature),
+                    Err(_) => None,
                 }
+            };
+
+            // Step 3: Send signature or no-basis marker
+            if let Some(ref signature) = signature_opt {
+                use protocol::wire::signature::SignatureBlock as WireBlock;
+                let sig_layout = signature.layout();
+                let wire_blocks: Vec<WireBlock> = signature
+                    .blocks()
+                    .iter()
+                    .map(|block| WireBlock {
+                        index: block.index() as u32,
+                        rolling_sum: block.rolling().value(),
+                        strong_sum: block.strong().to_vec(),
+                    })
+                    .collect();
+                write_signature(
+                    &mut &mut *writer,
+                    sig_layout.block_count() as u32,
+                    sig_layout.block_length().get(),
+                    sig_layout.strong_sum_length().get(),
+                    &wire_blocks,
+                )?;
             } else {
-                // Step 3: No basis file, send marker to request whole file
+                // No basis, request whole file
                 write_signature(&mut &mut *writer, 0, 0, 0, &[])?;
             }
-
             writer.flush()?;
 
             // Step 4: Receive delta operations from generator
@@ -168,8 +168,35 @@ impl ReceiverContext {
             let delta_script = wire_delta_to_script(wire_delta);
 
             // Step 5: Apply delta to reconstruct file
-            // TODO: Implement file reconstruction with temp files and metadata
-            // For now, track stats
+            let temp_path = basis_path.with_extension("oc-rsync.tmp");
+
+            if let Some(signature) = signature_opt {
+                // Delta transfer: apply delta using basis file
+                let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md5);
+
+                if let Some(index) = index {
+                    // Open basis file for reading
+                    let basis = fs::File::open(basis_path)?;
+                    let mut output = fs::File::create(&temp_path)?;
+
+                    // Apply the delta
+                    apply_delta(basis, &mut output, &index, &delta_script)?;
+                    output.sync_all()?;
+
+                    // Atomic rename
+                    fs::rename(&temp_path, basis_path)?;
+                } else {
+                    // Index creation failed (file too small?), fall back to whole-file
+                    apply_whole_file_delta(&temp_path, &delta_script)?;
+                    fs::rename(&temp_path, basis_path)?;
+                }
+            } else {
+                // Whole-file transfer: no basis, all literals
+                apply_whole_file_delta(&temp_path, &delta_script)?;
+                fs::rename(&temp_path, basis_path)?;
+            }
+
+            // Step 6: Track stats
             bytes_received += delta_script.total_bytes();
             files_transferred += 1;
         }
@@ -194,6 +221,30 @@ pub struct TransferStats {
 }
 
 // Helper functions for delta transfer
+
+/// Applies a delta script to create a new file (whole-file transfer, no basis).
+///
+/// All tokens must be Literal; Copy operations indicate a protocol error.
+fn apply_whole_file_delta(path: &std::path::Path, script: &DeltaScript) -> io::Result<()> {
+    let mut output = fs::File::create(path)?;
+
+    for token in script.tokens() {
+        match token {
+            DeltaToken::Literal(data) => {
+                output.write_all(data)?;
+            }
+            DeltaToken::Copy { .. } => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Copy operation in whole-file transfer (no basis exists)",
+                ));
+            }
+        }
+    }
+
+    output.sync_all()?;
+    Ok(())
+}
 
 /// Converts wire protocol delta operations to engine delta script.
 fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
