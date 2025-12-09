@@ -62,15 +62,17 @@ use std::io::{self, Read, Write};
 
 /// Server configuration derived from the compact `--server` flag string.
 pub mod config;
-/// Parser for the compact server flag string.
-pub mod flags;
-/// Server-side Generator role implementation.
-pub mod generator;
 /// Delta transfer implementation guide and documentation.
 ///
 /// **Start here** for comprehensive documentation on how the delta transfer algorithm works,
 /// including signature generation, delta creation, delta application, and metadata preservation.
 pub mod delta_transfer;
+/// Error categorization for delta transfer operations.
+pub mod error;
+/// Parser for the compact server flag string.
+pub mod flags;
+/// Server-side Generator role implementation.
+pub mod generator;
 /// Server-side protocol handshake utilities.
 pub mod handshake;
 /// Reader abstraction supporting plain and multiplex modes.
@@ -81,6 +83,8 @@ pub mod receiver;
 pub mod role;
 /// Server-side protocol setup utilities.
 pub mod setup;
+/// RAII guard for temporary file cleanup.
+pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
