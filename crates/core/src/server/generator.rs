@@ -341,6 +341,7 @@ impl GeneratorContext {
                     block_length,
                     &sig_blocks,
                     strong_sum_length,
+                    self.protocol,
                 )?
             } else {
                 // Receiver has no basis, send whole file as literals
@@ -448,6 +449,7 @@ fn generate_delta_from_signature<R: Read>(
     block_length: u32,
     sig_blocks: &[protocol::wire::signature::SignatureBlock],
     strong_sum_length: u8,
+    protocol: ProtocolVersion,
 ) -> io::Result<DeltaScript> {
     use checksums::RollingDigest;
     use engine::delta::SignatureLayout;
@@ -492,8 +494,17 @@ fn generate_delta_from_signature<R: Read>(
     let total_bytes = (block_count.saturating_sub(1)) * u64::from(block_length);
     let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
 
+    // Select checksum algorithm based on protocol version (matches upstream rsync)
+    // Protocol < 30: MD4 (historical)
+    // Protocol >= 30: MD5 (modern default)
+    let checksum_algorithm = if protocol.as_u8() >= 30 {
+        SignatureAlgorithm::Md5
+    } else {
+        SignatureAlgorithm::Md4
+    };
+
     // Create index for delta generation
-    let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md5)
+    let index = DeltaSignatureIndex::from_signature(&signature, checksum_algorithm)
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
