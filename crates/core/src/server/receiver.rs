@@ -349,4 +349,96 @@ mod tests {
         assert_eq!(ctx.file_list().len(), 1);
         assert_eq!(ctx.file_list()[0].name(), "test.txt");
     }
+
+    #[test]
+    fn wire_delta_to_script_converts_literals() {
+        use protocol::wire::DeltaOp;
+
+        let wire_ops = vec![
+            DeltaOp::Literal(vec![1, 2, 3, 4]),
+            DeltaOp::Literal(vec![5, 6, 7, 8]),
+        ];
+
+        let script = wire_delta_to_script(wire_ops);
+
+        assert_eq!(script.tokens().len(), 2);
+        assert_eq!(script.total_bytes(), 8);
+        assert_eq!(script.literal_bytes(), 8);
+
+        match &script.tokens()[0] {
+            DeltaToken::Literal(data) => assert_eq!(data, &vec![1, 2, 3, 4]),
+            _ => panic!("expected literal token"),
+        }
+    }
+
+    #[test]
+    fn wire_delta_to_script_converts_copy_operations() {
+        use protocol::wire::DeltaOp;
+
+        let wire_ops = vec![
+            DeltaOp::Copy {
+                block_index: 0,
+                length: 1024,
+            },
+            DeltaOp::Literal(vec![9, 10]),
+            DeltaOp::Copy {
+                block_index: 1,
+                length: 512,
+            },
+        ];
+
+        let script = wire_delta_to_script(wire_ops);
+
+        assert_eq!(script.tokens().len(), 3);
+        assert_eq!(script.total_bytes(), 1024 + 2 + 512);
+        assert_eq!(script.literal_bytes(), 2);
+
+        match &script.tokens()[0] {
+            DeltaToken::Copy { index, len } => {
+                assert_eq!(*index, 0);
+                assert_eq!(*len, 1024);
+            }
+            _ => panic!("expected copy token"),
+        }
+    }
+
+    #[test]
+    fn apply_whole_file_delta_accepts_only_literals() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("output.txt");
+
+        // Create a delta script with only literals
+        let tokens = vec![
+            DeltaToken::Literal(b"Hello, ".to_vec()),
+            DeltaToken::Literal(b"world!".to_vec()),
+        ];
+        let script = DeltaScript::new(tokens, 13, 13);
+
+        apply_whole_file_delta(&output_path, &script).unwrap();
+
+        let result = std::fs::read(&output_path).unwrap();
+        assert_eq!(result, b"Hello, world!");
+    }
+
+    #[test]
+    fn apply_whole_file_delta_rejects_copy_operations() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("output.txt");
+
+        // Create a delta script with a copy operation (invalid for whole-file transfer)
+        let tokens = vec![
+            DeltaToken::Literal(b"data".to_vec()),
+            DeltaToken::Copy { index: 0, len: 1024 },
+        ];
+        let script = DeltaScript::new(tokens, 1028, 4);
+
+        let result = apply_whole_file_delta(&output_path, &script);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
 }
