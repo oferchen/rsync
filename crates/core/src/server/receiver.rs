@@ -6,6 +6,19 @@
 //! 2. Generates signatures for existing local files
 //! 3. Receives delta data and applies it to create/update files
 //! 4. Sets metadata (permissions, times, ownership) on received files
+//!
+//! # Implementation Guide
+//!
+//! For comprehensive documentation on how the receiver works within the delta transfer
+//! algorithm, see the [`crate::server::delta_transfer`] module documentation.
+//!
+//! # Related Components
+//!
+//! - [`crate::server::generator`] - The generator role that sends deltas to the receiver
+//! - [`engine::delta`] - Delta generation and application engine
+//! - [`engine::signature`] - Signature generation utilities
+//! - [`metadata::apply_metadata_from_file_entry`] - Metadata preservation
+//! - [`protocol::wire`] - Wire format for signatures and deltas
 
 use std::fs;
 use std::io::{self, Read, Write};
