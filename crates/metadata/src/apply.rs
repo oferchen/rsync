@@ -322,6 +322,181 @@ fn set_timestamp_like(
     Ok(())
 }
 
+/// Applies metadata from a protocol FileEntry to the destination file.
+///
+/// This is the receiver-side counterpart to [`apply_file_metadata`] that works
+/// directly with FileEntry metadata from the wire protocol, avoiding the need
+/// to construct an [`fs::Metadata`] instance.
+///
+/// # Arguments
+/// - `destination`: Path to the file to apply metadata to
+/// - `entry`: FileEntry containing metadata from sender
+/// - `options`: Controls which metadata fields are preserved
+///
+/// # Errors
+/// Returns [`MetadataError`] if any filesystem operation fails.
+pub fn apply_metadata_from_file_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: MetadataOptions,
+) -> Result<(), MetadataError> {
+    // Step 1: Apply ownership (if requested)
+    apply_ownership_from_entry(destination, entry, &options)?;
+
+    // Step 2: Apply permissions (if requested)
+    apply_permissions_from_entry(destination, entry, &options)?;
+
+    // Step 3: Apply timestamps (if requested)
+    if options.times() {
+        apply_timestamps_from_entry(destination, entry)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn apply_ownership_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    use rustix::fs::{AtFlags, CWD, chownat};
+    use rustix::process::{RawGid, RawUid};
+
+    // Early return if no ownership preservation requested
+    if !options.owner()
+        && !options.group()
+        && options.owner_override().is_none()
+        && options.group_override().is_none()
+    {
+        return Ok(());
+    }
+
+    // Determine owner
+    let owner = if let Some(uid_override) = options.owner_override() {
+        Some(ownership::uid_from_raw(uid_override as RawUid))
+    } else if options.owner() {
+        entry.uid().and_then(|uid| {
+            let mut raw_uid = uid as RawUid;
+            // Apply user mapping if present
+            if let Some(mapping) = options.user_mapping() {
+                if let Ok(Some(mapped)) = mapping.map_uid(raw_uid) {
+                    raw_uid = mapped;
+                }
+            }
+            map_uid(raw_uid, options.numeric_ids_enabled())
+        })
+    } else {
+        None
+    };
+
+    // Determine group (similar structure)
+    let group = if let Some(gid_override) = options.group_override() {
+        Some(ownership::gid_from_raw(gid_override as RawGid))
+    } else if options.group() {
+        entry.gid().and_then(|gid| {
+            let mut raw_gid = gid as RawGid;
+            if let Some(mapping) = options.group_mapping() {
+                if let Ok(Some(mapped)) = mapping.map_gid(raw_gid) {
+                    raw_gid = mapped;
+                }
+            }
+            map_gid(raw_gid, options.numeric_ids_enabled())
+        })
+    } else {
+        None
+    };
+
+    // Apply ownership if at least one is set
+    if owner.is_some() || group.is_some() {
+        chownat(CWD, destination, owner, group, AtFlags::empty()).map_err(|error| {
+            MetadataError::new("preserve ownership", destination, io::Error::from(error))
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn apply_ownership_from_entry(
+    _destination: &Path,
+    _entry: &protocol::flist::FileEntry,
+    _options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    // Non-Unix platforms: ownership is not supported
+    Ok(())
+}
+
+fn apply_permissions_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if !options.permissions() && !options.executability() && options.chmod().is_none() {
+            return Ok(());
+        }
+
+        // Standard permission preservation
+        if options.permissions() {
+            let mode = entry.permissions();
+            let permissions = PermissionsExt::from_mode(mode);
+            fs::set_permissions(destination, permissions)
+                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+        }
+
+        // Apply chmod modifiers if present
+        if let Some(chmod) = options.chmod() {
+            // Get current permissions
+            let current_meta = fs::metadata(destination)
+                .map_err(|error| MetadataError::new("read permissions", destination, error))?;
+            let current_mode = current_meta.permissions().mode();
+
+            // Apply chmod modifiers
+            let new_mode = chmod.apply(current_mode, current_meta.file_type());
+            let new_permissions = PermissionsExt::from_mode(new_mode);
+            fs::set_permissions(destination, new_permissions)
+                .map_err(|error| MetadataError::new("apply chmod", destination, error))?;
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if options.permissions() {
+            // Non-Unix: only readonly flag
+            let readonly = entry.permissions() & 0o200 == 0;
+            let mut dest_perms = fs::metadata(destination)
+                .map_err(|error| {
+                    MetadataError::new("read destination permissions", destination, error)
+                })?
+                .permissions();
+            dest_perms.set_readonly(readonly);
+            fs::set_permissions(destination, dest_perms)
+                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_timestamps_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+) -> Result<(), MetadataError> {
+    // Build FileTime from FileEntry's (mtime, mtime_nsec)
+    // This preserves nanosecond precision!
+    let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
+    let atime = mtime; // Use mtime for both (rsync behavior)
+
+    set_file_times(destination, atime, mtime)
+        .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

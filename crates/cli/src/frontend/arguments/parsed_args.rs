@@ -19,7 +19,7 @@ use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 #[allow(private_interfaces)] // ProgramName, BandwidthArgument are pub(crate) but exposed for tests
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedArgs {
-    /// Program name detected from argv[0].
+    /// Program name detected from argv\[0\].
     pub program_name: ProgramName,
     pub show_help: bool,
     pub show_version: bool,
