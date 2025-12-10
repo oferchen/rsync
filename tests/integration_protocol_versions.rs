@@ -36,9 +36,9 @@ mod integration;
 
 use std::path::Path;
 
+use filetime::{FileTime, set_file_times};
 use integration::helpers::*;
 use std::fs;
-use filetime::{FileTime, set_file_times};
 
 /// Path to upstream rsync 3.0.9 binary (protocol 30).
 const UPSTREAM_RSYNC_3_0_9: &str = "target/interop/upstream-install/3.0.9/bin/rsync";
