@@ -37,14 +37,16 @@ pub fn exchange_compat_flags_direct(
         return Ok(None);
     }
 
-    eprintln!("[exchange_compat_flags_direct] Exchanging compatibility flags (protocol >= 30)...");
+    eprintln!("[exchange_compat_flags_direct] Sending compatibility flags (protocol >= 30)...");
 
     // Build our compat flags (server side)
+    // This mirrors upstream compat.c:712-732
     let our_flags = CompatibilityFlags::INC_RECURSE
         | CompatibilityFlags::CHECKSUM_SEED_FIX
         | CompatibilityFlags::VARINT_FLIST_FLAGS;
 
-    // Server sends flags FIRST (upstream compat.c:736-738)
+    // Server ONLY WRITES compat flags (upstream compat.c:736-738)
+    // The client reads but DOES NOT send anything back - it's unidirectional!
     // CRITICAL: Write directly to TcpStream, NOT through any trait abstraction!
     protocol::write_varint(stream, our_flags.bits() as i32)?;
 
@@ -52,17 +54,12 @@ pub fn exchange_compat_flags_direct(
     stream.flush()?;
     eprintln!("[exchange_compat_flags_direct] Sent compat flags: {our_flags:?}");
 
-    // Read client's flags (upstream compat.c:740)
-    // Use the SAME stream for reading - sockets are full-duplex
-    let client_flags_value = protocol::read_varint(stream)?;
-    let client_flags = CompatibilityFlags::from_bits(client_flags_value as u32);
-    eprintln!("[exchange_compat_flags_direct] Received client compat flags: {client_flags:?}");
+    // NOTE: In daemon mode, the server does NOT read anything back!
+    // The upstream code shows that when am_server=true, only write_varint is called.
+    // The client (am_server=false) reads the flags but doesn't send anything back.
+    // This is a UNIDIRECTIONAL send from server to client.
 
-    // Use intersection of both (upstream compat.c:745-778)
-    let final_flags = our_flags & client_flags;
-    eprintln!("[exchange_compat_flags_direct] Final compat flags: {final_flags:?}");
-
-    Ok(Some(final_flags))
+    Ok(Some(our_flags))
 }
 
 /// Performs protocol setup for the server side.
@@ -92,7 +89,7 @@ pub fn exchange_compat_flags_direct(
 pub fn setup_protocol(
     protocol: ProtocolVersion,
     stdout: &mut dyn Write,
-    stdin: &mut dyn Read,
+    _stdin: &mut dyn Read,
     skip_compat_exchange: bool,
 ) -> io::Result<()> {
     eprintln!(
@@ -105,12 +102,12 @@ pub fn setup_protocol(
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
     // We skip that exchange here since our HandshakeResult already contains the negotiated protocol.
 
-    // Perform compatibility flags exchange for protocol >= 30
+    // Send compatibility flags for protocol >= 30 (UNIDIRECTIONAL)
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
     // However, for daemon mode, this should be skipped if the exchange was already done
     // directly on the raw TcpStream via exchange_compat_flags_direct()
     if protocol.as_u8() >= 30 && !skip_compat_exchange {
-        eprintln!("[setup_protocol] Exchanging compatibility flags (protocol >= 30)...");
+        eprintln!("[setup_protocol] Sending compatibility flags (protocol >= 30)...");
 
         // Build our compat flags (server side)
         // This mirrors upstream compat.c:712-732 which builds flags from client_info string
@@ -118,26 +115,23 @@ pub fn setup_protocol(
             | CompatibilityFlags::CHECKSUM_SEED_FIX
             | CompatibilityFlags::VARINT_FLIST_FLAGS;
 
-        // Server sends flags FIRST (upstream compat.c:736-738)
+        // Server ONLY WRITES compat flags (upstream compat.c:736-738)
+        // The client reads but does NOT send anything back - it's unidirectional!
         // Upstream uses write_varint() or write_byte() depending on protocol version
         protocol::write_varint(stdout, our_flags.bits() as i32)?;
         stdout.flush()?;
         eprintln!("[setup_protocol] Sent compat flags: {our_flags:?}");
 
-        // Read client's flags (upstream compat.c:740)
-        let client_flags_value = protocol::read_varint(stdin)?;
-        let client_flags = CompatibilityFlags::from_bits(client_flags_value as u32);
-        eprintln!("[setup_protocol] Received client compat flags: {client_flags:?}");
+        // NOTE: Do NOT read anything back! The upstream code shows:
+        // - When am_server=true: only write_varint is called
+        // - When am_server=false: only read_varint is called
+        // This is a UNIDIRECTIONAL send from server to client.
 
-        // Use intersection of both (upstream compat.c:745-778)
-        let final_flags = our_flags & client_flags;
-        eprintln!("[setup_protocol] Final compat flags: {final_flags:?}");
-
-        // TODO: Store final_flags somewhere for use by role handlers
+        // TODO: Store our_flags for use by role handlers
         // Upstream stores these in global variables, but we'll need to pass them through
         // the HandshakeResult or ServerConfig
     } else if skip_compat_exchange {
-        eprintln!("[setup_protocol] Skipping compat flags exchange (already done on raw stream)");
+        eprintln!("[setup_protocol] Skipping compat flags send (already done on raw stream)");
     }
 
     eprintln!("[setup_protocol] Protocol setup complete");
