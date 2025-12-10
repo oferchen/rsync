@@ -4,6 +4,7 @@
 
 mod integration;
 
+use filetime::{set_file_times, FileTime};
 use integration::helpers::*;
 use std::fs;
 
@@ -74,13 +75,10 @@ fn overwrite_existing_file() {
     let src_file = test_dir.write_file("source.txt", b"new content").unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"old content").unwrap();
 
-    // Ensure files are fully written before rsync reads them (CI buffering issue)
-    fs::File::open(&src_file).unwrap().sync_all().unwrap();
-    fs::File::open(&dest_file).unwrap().sync_all().unwrap();
-
-    // Additional barrier: give CI filesystem time to commit after sync
-    // CI environments (tmpfs, high load) may have extra buffering layers
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    // Make destination explicitly older so rsync will transfer
+    // Both files have same size (11 bytes), so rsync uses mtime to decide
+    let old_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_times(&dest_file, old_time, old_time).unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([src_file.to_str().unwrap(), dest_file.to_str().unwrap()]);
