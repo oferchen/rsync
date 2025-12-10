@@ -626,15 +626,50 @@ fn respond_with_module_request(
             };
             let write_stream = reader.get_mut();
 
+            // Exchange compatibility flags on raw TcpStream for protocol >= 30
+            // This must be done BEFORE wrapping the stream in multiplex (which happens in run_server_with_handshake)
+            // to ensure the flags are sent as plain data, not multiplexed data.
+            let compat_flags_exchanged =
+                if final_protocol.as_u8() >= 30 {
+                    eprintln!(
+                        "[daemon] Exchanging compat flags on raw TcpStream for protocol {}",
+                        final_protocol.as_u8()
+                    );
+                    match core::server::setup::exchange_compat_flags_direct(
+                        final_protocol,
+                        write_stream,
+                    ) {
+                        Ok(flags) => {
+                            eprintln!("[daemon] Compat flags exchange complete: {flags:?}");
+                            true
+                        }
+                        Err(err) => {
+                            eprintln!("[daemon] Failed to exchange compat flags: {err}");
+                            let payload = format!("@ERROR: failed to exchange compatibility flags: {err}");
+                            write_limited(write_stream, limiter, payload.as_bytes())?;
+                            write_limited(write_stream, limiter, b"\n")?;
+                            messages.write_exit(write_stream, limiter)?;
+                            write_stream.flush()?;
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    eprintln!(
+                        "[daemon] Protocol {} < 30, skipping compat flags exchange",
+                        final_protocol.as_u8()
+                    );
+                    false
+                };
+
             // Create HandshakeResult from the negotiated protocol version
             // Protocol setup and multiplex activation handled inside run_server_with_handshake
             let handshake = HandshakeResult {
                 protocol: final_protocol,
                 buffered: buffered_data,
-                compat_exchanged: false,
+                compat_exchanged: compat_flags_exchanged,
             };
 
-            eprintln!("[daemon] Calling run_server_with_handshake");
+            eprintln!("[daemon] Calling run_server_with_handshake (compat_exchanged={compat_flags_exchanged})");
 
             // Run the server transfer - handles protocol setup and multiplex internally
             match run_server_with_handshake(config, handshake, &mut read_stream, write_stream) {
