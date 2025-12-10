@@ -223,7 +223,7 @@ fn legacy_greeting_format_consistency() {
         let greeting = format_legacy_daemon_greeting(protocol);
 
         // Format: "@RSYNCD: <version>.0\n"
-        let expected = format!("@RSYNCD: {}.0\n", protocol_num);
+        let expected = format!("@RSYNCD: {protocol_num}.0\n");
         assert_eq!(
             greeting, expected,
             "Protocol {protocol_num} greeting format mismatch"
@@ -276,8 +276,7 @@ fn all_supported_protocols_have_valid_advertisements() {
             assert_eq!(
                 bytes.len(),
                 4,
-                "Protocol {} binary advertisement must be 4 bytes",
-                protocol
+                "Protocol {protocol} binary advertisement must be 4 bytes"
             );
 
             // Must be parseable
@@ -285,21 +284,18 @@ fn all_supported_protocols_have_valid_advertisements() {
             assert_eq!(
                 parsed,
                 u32::from(protocol.as_u8()),
-                "Protocol {} advertisement must be parseable",
-                protocol
+                "Protocol {protocol} advertisement must be parseable"
             );
         } else {
             // Legacy protocols use ASCII greetings
             let greeting = format_legacy_daemon_greeting(*protocol);
             assert!(
                 greeting.starts_with("@RSYNCD: "),
-                "Protocol {} must use @RSYNCD: prefix",
-                protocol
+                "Protocol {protocol} must use @RSYNCD: prefix"
             );
             assert!(
                 greeting.ends_with(".0\n"),
-                "Protocol {} must end with .0\\n",
-                protocol
+                "Protocol {protocol} must end with .0\\n"
             );
         }
     }
@@ -338,8 +334,7 @@ fn binary_vs_legacy_protocol_boundary() {
 
         assert!(
             uses_binary != uses_legacy,
-            "Protocol {} must use exactly one negotiation method",
-            protocol
+            "Protocol {protocol} must use exactly one negotiation method"
         );
     }
 }
@@ -352,8 +347,7 @@ fn handshake_format_matches_protocol_version() {
             // Protocol 30+ should use binary format
             assert!(
                 protocol.uses_binary_negotiation(),
-                "Protocol {} should use binary negotiation",
-                protocol
+                "Protocol {protocol} should use binary negotiation"
             );
 
             // Binary format is 4-byte u32
@@ -363,8 +357,7 @@ fn handshake_format_matches_protocol_version() {
             // Protocol < 30 should use ASCII format
             assert!(
                 protocol.uses_legacy_ascii_negotiation(),
-                "Protocol {} should use legacy ASCII negotiation",
-                protocol
+                "Protocol {protocol} should use legacy ASCII negotiation"
             );
 
             // ASCII format starts with @RSYNCD:
@@ -385,8 +378,7 @@ fn compatibility_flags_only_for_binary_protocols() {
         if protocol.as_u8() >= 30 {
             assert!(
                 protocol.uses_binary_negotiation(),
-                "Protocol {} should support compatibility flags",
-                protocol
+                "Protocol {protocol} should support compatibility flags"
             );
         }
     }
