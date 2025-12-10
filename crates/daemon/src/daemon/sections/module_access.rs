@@ -606,12 +606,48 @@ fn respond_with_module_request(
                 log_message(log, &message);
             }
 
-            // Extract any buffered data from the BufReader before bypassing it
-            // This is critical: the BufReader may have read ahead during the module
-            // negotiation phase, and we must preserve this data for the file transfer
+            // Exchange compat flags on the unified stream BEFORE cloning
+            // This is required because compat exchange needs coordinated send-then-receive
+            // on the same bidirectional socket. After cloning into separate read/write
+            // handles, the exchange cannot work properly.
+            //
+            // IMPORTANT: Do this BEFORE extracting buffered data, because the exchange
+            // bypasses the BufReader and any subsequent data won't be buffered.
+            let compat_exchanged = if final_protocol.as_u8() >= 30 {
+                eprintln!(
+                    "[daemon] Exchanging compat flags on unified TcpStream for protocol {}",
+                    final_protocol.as_u8()
+                );
+                let stream = reader.get_mut();
+                match core::server::setup::exchange_compat_flags_direct(final_protocol, stream) {
+                    Ok(flags) => {
+                        eprintln!("[daemon] Compat flags exchange complete: {flags:?}");
+                        true
+                    }
+                    Err(err) => {
+                        eprintln!("[daemon] Failed to exchange compat flags: {err}");
+                        let payload = format!("@ERROR: failed to exchange compatibility flags: {err}");
+                        write_limited(stream, limiter, payload.as_bytes())?;
+                        write_limited(stream, limiter, b"\n")?;
+                        messages.write_exit(stream, limiter)?;
+                        stream.flush()?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                eprintln!(
+                    "[daemon] Protocol {} < 30, skipping compat flags exchange",
+                    final_protocol.as_u8()
+                );
+                false
+            };
+
+            // Extract any buffered data from the BufReader after the compat exchange
+            // The BufReader may have read ahead during the negotiation phase
             let buffered_data = reader.buffer().to_vec();
 
             // Clone the stream for concurrent read/write in server mode
+            // This must happen AFTER compat exchange
             let stream = reader.get_ref();
             let mut read_stream = match stream.try_clone() {
                 Ok(s) => s,
@@ -629,14 +665,17 @@ fn respond_with_module_request(
 
             // Create HandshakeResult from the negotiated protocol version
             // Protocol setup and multiplex activation handled inside run_server_with_handshake
-            // For daemon mode, compat flags will be exchanged inside setup_protocol()
+            // Compat flags have already been exchanged above
             let handshake = HandshakeResult {
                 protocol: final_protocol,
                 buffered: buffered_data,
-                compat_exchanged: false,
+                compat_exchanged,
             };
 
-            eprintln!("[daemon] Calling run_server_with_handshake");
+            eprintln!(
+                "[daemon] Calling run_server_with_handshake (compat_exchanged={})",
+                compat_exchanged
+            );
 
             // Run the server transfer - handles protocol setup and multiplex internally
             match run_server_with_handshake(config, handshake, &mut read_stream, write_stream) {
