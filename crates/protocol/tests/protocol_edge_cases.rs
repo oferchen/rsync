@@ -559,7 +559,7 @@ fn is_supported_protocol_number_comprehensive() {
     // Test all values from 0 to 255
     for value in 0u8..=255 {
         let is_supported = ProtocolVersion::is_supported_protocol_number(value);
-        let expected = matches!(value, 28 | 29 | 30 | 31 | 32);
+        let expected = matches!(value, 28..=32);
 
         assert_eq!(
             is_supported, expected,
@@ -582,8 +582,7 @@ fn round_trip_all_supported_protocols() {
 
         assert_eq!(
             parsed, *protocol,
-            "Protocol {} should round-trip through string",
-            protocol
+            "Protocol {protocol} should round-trip through string"
         );
     }
 }
@@ -598,8 +597,7 @@ fn round_trip_peer_advertisement() {
 
         assert_eq!(
             parsed, *protocol,
-            "Protocol {} should round-trip through advertisement",
-            protocol
+            "Protocol {protocol} should round-trip through advertisement"
         );
     }
 }
