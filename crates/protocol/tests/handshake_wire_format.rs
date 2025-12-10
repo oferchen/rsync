@@ -78,8 +78,8 @@ fn protocol_30_advertisement_format() {
 fn binary_advertisement_round_trip() {
     // Validate that protocol advertisements can be round-tripped
     for protocol_num in [28u8, 29, 30, 31, 32] {
-        let protocol = ProtocolVersion::from_supported(protocol_num)
-            .expect("protocol must be supported");
+        let protocol =
+            ProtocolVersion::from_supported(protocol_num).expect("protocol must be supported");
 
         // Generate advertisement
         let bytes = u32::from(protocol.as_u8()).to_be_bytes();
@@ -144,14 +144,8 @@ fn protocol_28_greeting_format() {
         greeting.starts_with(LEGACY_DAEMON_PREFIX),
         "Must start with @RSYNCD: prefix"
     );
-    assert!(
-        greeting.contains("28"),
-        "Must contain protocol version 28"
-    );
-    assert!(
-        greeting.ends_with(".0\n"),
-        "Must end with .0 and newline"
-    );
+    assert!(greeting.contains("28"), "Must contain protocol version 28");
+    assert!(greeting.ends_with(".0\n"), "Must end with .0 and newline");
     assert_eq!(
         greeting.as_bytes()[greeting.len() - 1],
         b'\n',
@@ -208,10 +202,7 @@ fn legacy_greeting_newline_terminated() {
 
         // Should have exactly one newline (at the end)
         let newline_count = greeting.chars().filter(|&c| c == '\n').count();
-        assert_eq!(
-            newline_count, 1,
-            "Must have exactly one newline character"
-        );
+        assert_eq!(newline_count, 1, "Must have exactly one newline character");
     }
 }
 
@@ -258,8 +249,16 @@ fn legacy_greeting_length() {
 
     // "@RSYNCD: 28.0\n" = 14 characters
     // "@RSYNCD: 29.0\n" = 14 characters
-    assert_eq!(greeting_28.len(), 14, "Protocol 28 greeting must be 14 bytes");
-    assert_eq!(greeting_29.len(), 14, "Protocol 29 greeting must be 14 bytes");
+    assert_eq!(
+        greeting_28.len(),
+        14,
+        "Protocol 28 greeting must be 14 bytes"
+    );
+    assert_eq!(
+        greeting_29.len(),
+        14,
+        "Protocol 29 greeting must be 14 bytes"
+    );
 }
 
 // ============================================================================

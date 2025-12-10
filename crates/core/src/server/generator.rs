@@ -504,8 +504,8 @@ fn generate_delta_from_signature<R: Read>(
     };
 
     // Create index for delta generation
-    let index = DeltaSignatureIndex::from_signature(&signature, checksum_algorithm)
-        .ok_or_else(|| {
+    let index =
+        DeltaSignatureIndex::from_signature(&signature, checksum_algorithm).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "failed to create signature index",

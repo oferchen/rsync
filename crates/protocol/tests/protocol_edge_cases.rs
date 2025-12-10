@@ -65,10 +65,7 @@ fn malformed_whitespace_only_version_string() {
     );
 
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind(),
-        ParseProtocolVersionErrorKind::Empty
-    ));
+    assert!(matches!(err.kind(), ParseProtocolVersionErrorKind::Empty));
 }
 
 #[test]
@@ -138,9 +135,9 @@ fn malformed_legacy_greeting_missing_newline() {
 fn malformed_truncated_binary_advertisement() {
     // Binary advertisement should be exactly 4 bytes
     let truncated_inputs = [
-        &[0u8][..],             // 1 byte
-        &[0u8, 0][..],          // 2 bytes
-        &[0u8, 0, 0][..],       // 3 bytes
+        &[0u8][..],              // 1 byte
+        &[0u8, 0][..],           // 2 bytes
+        &[0u8, 0, 0][..],        // 3 bytes
         &[0u8, 0, 0, 32, 0][..], // 5 bytes (extra byte)
     ];
 
@@ -152,10 +149,7 @@ fn malformed_truncated_binary_advertisement() {
         } else {
             // Cannot create valid u32 from wrong-sized input
             // This is a compile-time or runtime error depending on how it's used
-            eprintln!(
-                "Truncated input {i}: {} bytes (expected 4)",
-                input.len()
-            );
+            eprintln!("Truncated input {i}: {} bytes (expected 4)", input.len());
         }
     }
 }
@@ -277,11 +271,11 @@ fn boundary_protocol_u8_max() {
 fn boundary_protocol_u32_large() {
     // Very large u32 values should be rejected (above maximum advertisement)
     let large_values = [
-        256,        // Just above u8::MAX
-        1000,       // Moderately large
-        65536,      // u16::MAX + 1
-        1_000_000,  // Very large
-        u32::MAX,   // Maximum u32
+        256,       // Just above u8::MAX
+        1000,      // Moderately large
+        65536,     // u16::MAX + 1
+        1_000_000, // Very large
+        u32::MAX,  // Maximum u32
     ];
 
     for value in large_values {
@@ -316,7 +310,11 @@ fn boundary_from_str_overflow() {
 
         let err = result.unwrap_err();
         assert!(
-            matches!(err.kind(), ParseProtocolVersionErrorKind::Overflow | ParseProtocolVersionErrorKind::UnsupportedRange(_)),
+            matches!(
+                err.kind(),
+                ParseProtocolVersionErrorKind::Overflow
+                    | ParseProtocolVersionErrorKind::UnsupportedRange(_)
+            ),
             "Expected Overflow or UnsupportedRange for '{input}', got: {:?}",
             err.kind()
         );
@@ -561,10 +559,7 @@ fn is_supported_protocol_number_comprehensive() {
         let is_supported = ProtocolVersion::is_supported_protocol_number(value);
         let expected = matches!(value, 28..=32);
 
-        assert_eq!(
-            is_supported, expected,
-            "Protocol {value} support mismatch"
-        );
+        assert_eq!(is_supported, expected, "Protocol {value} support mismatch");
     }
 }
 
@@ -616,10 +611,7 @@ fn from_str_unsupported_in_range() {
     // For now, just document the expected behavior
     for value in 28u8..=32 {
         let result = ProtocolVersion::from_str(&value.to_string());
-        assert!(
-            result.is_ok(),
-            "Protocol {value} is currently supported"
-        );
+        assert!(result.is_ok(), "Protocol {value} is currently supported");
     }
 }
 
@@ -648,9 +640,6 @@ fn from_peer_advertisement_clamping() {
 
     for input in test_cases_rejected {
         let result = ProtocolVersion::from_peer_advertisement(input);
-        assert!(
-            result.is_err(),
-            "Protocol {input} (>40) should be rejected"
-        );
+        assert!(result.is_err(), "Protocol {input} (>40) should be rejected");
     }
 }
