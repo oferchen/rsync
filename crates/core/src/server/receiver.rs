@@ -242,8 +242,7 @@ impl ReceiverContext {
 
             if let Some(signature) = signature_opt {
                 // Delta transfer: apply delta using basis file
-                let index =
-                    DeltaSignatureIndex::from_signature(&signature, checksum_algorithm);
+                let index = DeltaSignatureIndex::from_signature(&signature, checksum_algorithm);
 
                 if let Some(index) = index {
                     // Open basis file for reading
