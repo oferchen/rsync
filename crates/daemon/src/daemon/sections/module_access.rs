@@ -526,15 +526,16 @@ fn respond_with_module_request(
 
             // DAEMON WIRING: Wire core::server for daemon file transfers
             // Determine role based on client arguments (mirrors upstream daemon.c)
-            // Client with --sender flag → client is sending, server is receiving
-            // Client without --sender → client is receiving, server is sending
-            let is_client_sender = client_args.iter().any(|arg| arg == "--sender");
-            let role = if is_client_sender {
-                // Client is sending to us, so we receive
-                ServerRole::Receiver
-            } else {
-                // Client is receiving from us, so we send
+            // The --sender flag indicates that the SERVER should act as sender (Generator)
+            // When absent, the SERVER should act as receiver (Receiver)
+            // This is counterintuitive: --sender means "I (the server) am the sender"
+            let server_is_sender = client_args.iter().any(|arg| arg == "--sender");
+            let role = if server_is_sender {
+                // Server is sending to client (client is receiving from us)
                 ServerRole::Generator
+            } else {
+                // Server is receiving from client (client is sending to us)
+                ServerRole::Receiver
             };
 
             // Build ServerConfig with module path as the target directory
@@ -626,50 +627,16 @@ fn respond_with_module_request(
             };
             let write_stream = reader.get_mut();
 
-            // Exchange compatibility flags on raw TcpStream for protocol >= 30
-            // This must be done BEFORE wrapping the stream in multiplex (which happens in run_server_with_handshake)
-            // to ensure the flags are sent as plain data, not multiplexed data.
-            let compat_flags_exchanged =
-                if final_protocol.as_u8() >= 30 {
-                    eprintln!(
-                        "[daemon] Exchanging compat flags on raw TcpStream for protocol {}",
-                        final_protocol.as_u8()
-                    );
-                    match core::server::setup::exchange_compat_flags_direct(
-                        final_protocol,
-                        write_stream,
-                    ) {
-                        Ok(flags) => {
-                            eprintln!("[daemon] Compat flags exchange complete: {flags:?}");
-                            true
-                        }
-                        Err(err) => {
-                            eprintln!("[daemon] Failed to exchange compat flags: {err}");
-                            let payload = format!("@ERROR: failed to exchange compatibility flags: {err}");
-                            write_limited(write_stream, limiter, payload.as_bytes())?;
-                            write_limited(write_stream, limiter, b"\n")?;
-                            messages.write_exit(write_stream, limiter)?;
-                            write_stream.flush()?;
-                            return Ok(());
-                        }
-                    }
-                } else {
-                    eprintln!(
-                        "[daemon] Protocol {} < 30, skipping compat flags exchange",
-                        final_protocol.as_u8()
-                    );
-                    false
-                };
-
             // Create HandshakeResult from the negotiated protocol version
             // Protocol setup and multiplex activation handled inside run_server_with_handshake
+            // For daemon mode, compat flags will be exchanged inside setup_protocol()
             let handshake = HandshakeResult {
                 protocol: final_protocol,
                 buffered: buffered_data,
-                compat_exchanged: compat_flags_exchanged,
+                compat_exchanged: false,
             };
 
-            eprintln!("[daemon] Calling run_server_with_handshake (compat_exchanged={compat_flags_exchanged})");
+            eprintln!("[daemon] Calling run_server_with_handshake");
 
             // Run the server transfer - handles protocol setup and multiplex internally
             match run_server_with_handshake(config, handshake, &mut read_stream, write_stream) {
