@@ -78,6 +78,10 @@ fn overwrite_existing_file() {
     fs::File::open(&src_file).unwrap().sync_all().unwrap();
     fs::File::open(&dest_file).unwrap().sync_all().unwrap();
 
+    // Additional barrier: give CI filesystem time to commit after sync
+    // CI environments (tmpfs, high load) may have extra buffering layers
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
     let mut cmd = RsyncCommand::new();
     cmd.args([src_file.to_str().unwrap(), dest_file.to_str().unwrap()]);
     cmd.assert_success();
