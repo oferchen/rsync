@@ -1,6 +1,6 @@
 //! Wire format encoding and decoding for filter rules.
 
-use crate::{ProtocolVersion, read_varint, write_varint};
+use crate::{ProtocolVersion, write_varint};
 use std::io::{self, Read, Write};
 
 /// Rule type prefix character.
@@ -167,39 +167,29 @@ pub fn read_filter_list(
     protocol: ProtocolVersion,
 ) -> io::Result<Vec<FilterRuleWireFormat>> {
     let mut rules = Vec::new();
-    let _ = std::fs::write("/tmp/read_filter_list_ENTRY", "1");
 
     loop {
         // Read 4-byte little-endian integer (matches upstream read_int())
         let len = read_i32_le(reader)?;
-        let _ = std::fs::write("/tmp/read_filter_list_INT", format!("{}", len));
 
         if len == 0 {
-            let _ = std::fs::write("/tmp/read_filter_list_ZERO_TERMINATOR", "1");
             break; // Terminator
         }
 
         if len < 0 {
-            let _ = std::fs::write("/tmp/read_filter_list_NEGATIVE", format!("{}", len));
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid filter rule length: {len}"),
             ));
         }
 
-        let _ = std::fs::write("/tmp/read_filter_list_BEFORE_READ", format!("len={}", len));
         let mut buf = vec![0u8; len as usize];
         reader.read_exact(&mut buf)?;
-        let _ = std::fs::write("/tmp/read_filter_list_READ_BYTES", format!("{:02x?}", buf));
 
         let rule = parse_wire_rule(&buf, protocol)?;
         rules.push(rule);
     }
 
-    let _ = std::fs::write(
-        "/tmp/read_filter_list_EXIT",
-        format!("{} rules", rules.len()),
-    );
     Ok(rules)
 }
 

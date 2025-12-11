@@ -117,11 +117,6 @@ impl GeneratorContext {
             let is_dir = metadata.is_dir();
             if !filters.allows(&relative, is_dir) {
                 // Path is excluded by filters, skip it
-                eprintln!(
-                    "[generator] Excluding {} ({})",
-                    relative.display(),
-                    if is_dir { "dir" } else { "file" }
-                );
                 return Ok(());
             }
         }
@@ -212,38 +207,13 @@ impl GeneratorContext {
 
     /// Sends the file list to the receiver.
     pub fn send_file_list<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
-        // Capture output to a buffer so we can hex dump it
-        let mut buffer = Vec::new();
         let mut flist_writer = FileListWriter::new(self.protocol);
 
         for entry in &self.file_list {
-            flist_writer.write_entry(&mut buffer, entry)?;
+            flist_writer.write_entry(writer, entry)?;
         }
 
-        flist_writer.write_end(&mut buffer)?;
-
-        // Hex dump the file list data to both stderr and file
-        let hex_len = buffer.len().min(256);
-        eprintln!(
-            "[generator] File list data ({} total bytes, showing first {}): {:02x?}",
-            buffer.len(),
-            hex_len,
-            &buffer[..hex_len]
-        );
-
-        // Also write to file for easier analysis
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/rsync-filelist-debug.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(f, "=== File list ({} bytes) ===", buffer.len());
-            let _ = writeln!(f, "{:02x?}", &buffer);
-        }
-
-        // Write to actual output
-        writer.write_all(&buffer)?;
+        flist_writer.write_end(writer)?;
         writer.flush()?;
 
         Ok(self.file_list.len())
@@ -262,30 +232,19 @@ impl GeneratorContext {
         paths: &[PathBuf],
     ) -> io::Result<GeneratorStats> {
         // Read filter list from client (mirrors upstream recv_filter_list at main.c:1256)
-        eprintln!("[generator] Reading filter list...");
         let wire_rules = read_filter_list(reader, self.protocol)?;
-        eprintln!("[generator] Received {} filter rules", wire_rules.len());
 
         // Convert wire format to FilterSet
         if !wire_rules.is_empty() {
             let filter_set = self.parse_received_filters(&wire_rules)?;
             self.filters = Some(filter_set);
-            eprintln!("[generator] Filter set initialized");
-        } else {
-            eprintln!("[generator] No filters received (empty list)");
         }
 
         // Build file list
         self.build_file_list(paths)?;
-        eprintln!(
-            "[generator] Built file list with {} entries",
-            self.file_list.len()
-        );
 
         // Send file list
-        eprintln!("[generator] Sending file list...");
         let file_count = self.send_file_list(writer)?;
-        eprintln!("[generator] File list sent ({file_count} files)");
 
         // Wait for client to send NDX_DONE (indicates file list received)
         // Mirrors upstream sender.c:read_ndx_and_attrs() flow
@@ -321,12 +280,7 @@ impl GeneratorContext {
             // Step 2: Open source file
             let source_file = match fs::File::open(source_path) {
                 Ok(f) => f,
-                Err(e) => {
-                    eprintln!(
-                        "[generator] Cannot open {}: {}, skipping file",
-                        source_path.display(),
-                        e
-                    );
+                Err(_e) => {
                     // TODO: Send error marker in wire protocol (future work)
                     // For now, skip this file entirely
                     continue;
@@ -390,10 +344,6 @@ impl GeneratorContext {
                 RuleType::Merge | RuleType::DirMerge => {
                     // Merge rules not yet supported in server mode
                     // Skip for now; will be implemented in future phases
-                    eprintln!(
-                        "[generator] Skipping unsupported merge rule: {:?}",
-                        wire_rule.rule_type
-                    );
                     continue;
                 }
             };

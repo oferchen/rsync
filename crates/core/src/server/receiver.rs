@@ -147,31 +147,27 @@ impl ReceiverContext {
         // The sender ALWAYS sends a filter list (even if empty, it sends a terminating 0)
         // This mirrors upstream recv_filter_list() in exclude.c:1673-1692
         // For now, we just read and discard all filter rules until we get the terminator (0)
-        eprintln!("[receiver] Reading filter list from sender...");
         loop {
             // Read filter rule length as 4-byte little-endian integer
             let mut len_bytes = [0u8; 4];
             reader.read_exact(&mut len_bytes)?;
             let len = i32::from_le_bytes(len_bytes);
-            eprintln!("[receiver] Filter list: read length = {}", len);
 
             if len == 0 {
                 // Terminator - end of filter list
-                eprintln!("[receiver] Filter list terminated");
                 break;
             }
 
-            if len < 0 || len > 10000 {
+            if !(0..=10000).contains(&len) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("invalid filter rule length: {}", len),
+                    format!("invalid filter rule length: {len}"),
                 ));
             }
 
             // Read and discard the filter rule data
             let mut rule_data = vec![0u8; len as usize];
             reader.read_exact(&mut rule_data)?;
-            eprintln!("[receiver] Discarded filter rule: {:?}", String::from_utf8_lossy(&rule_data));
         }
 
         // Receive file list from sender
@@ -393,13 +389,7 @@ impl ReceiverContext {
             if let Err(meta_err) =
                 apply_metadata_from_file_entry(basis_path, file_entry, metadata_opts.clone())
             {
-                // Log warning but continue - metadata failure shouldn't abort transfer
-                eprintln!(
-                    "[receiver] Warning: failed to apply metadata to {}: {}",
-                    basis_path.display(),
-                    meta_err
-                );
-                // Collect error for final report
+                // Collect error for final report - metadata failure shouldn't abort transfer
                 metadata_errors.push((basis_path.to_path_buf(), meta_err.to_string()));
             }
 
@@ -409,15 +399,7 @@ impl ReceiverContext {
         }
 
         // Report metadata errors summary if any occurred
-        if !metadata_errors.is_empty() {
-            eprintln!(
-                "[receiver] Metadata errors for {} files:",
-                metadata_errors.len()
-            );
-            for (path, err) in &metadata_errors {
-                eprintln!("  {}: {}", path.display(), err);
-            }
-        }
+        // (metadata_errors tracking remains for potential logging)
 
         Ok(TransferStats {
             files_listed: file_count,

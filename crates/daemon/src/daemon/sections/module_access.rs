@@ -366,9 +366,7 @@ fn respond_with_module_request(
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
-    let _ = std::fs::write("/tmp/respond_ENTRY", "1");
     if let Some(module) = modules.iter().find(|module| module.name == request) {
-        let _ = std::fs::write("/tmp/respond_FOUND_MODULE", "1");
         let change = apply_module_bandwidth_limit(
             limiter,
             module.bandwidth_limit(),
@@ -499,7 +497,6 @@ fn respond_with_module_request(
 
             // Read client arguments sent after "@RSYNCD: OK"
             // This mirrors upstream's read_args() in io.c:1292
-            let _ = std::fs::write("/tmp/respond_BEFORE_read_args", "1");
             let client_args = match read_client_arguments(reader, negotiated_protocol) {
                 Ok(args) => args,
                 Err(err) => {
@@ -512,7 +509,6 @@ fn respond_with_module_request(
                     return Ok(());
                 }
             };
-            let _ = std::fs::write("/tmp/respond_AFTER_read_args", format!("{} args", client_args.len()));
 
             // Log received arguments for debugging
             if let Some(log) = log_sink {
@@ -541,11 +537,9 @@ fn respond_with_module_request(
                 // Server is receiving from client (client is sending to us)
                 ServerRole::Receiver
             };
-            let _ = std::fs::write("/tmp/respond_ROLE_DETERMINED", format!("{:?}", role));
 
             // Build ServerConfig with module path as the target directory
             // Parse client arguments to extract flags and additional paths
-            let _ = std::fs::write("/tmp/respond_BEFORE_parse_args", "1");
             let config = match ServerConfig::from_flag_string_and_args(
                 role,
                 client_args.join(" "), // Use client-supplied arguments
@@ -553,7 +547,6 @@ fn respond_with_module_request(
             ) {
                 Ok(cfg) => cfg,
                 Err(err) => {
-                    let _ = std::fs::write("/tmp/respond_CONFIG_PARSE_ERROR", format!("{:?}", err));
                     let payload = format!("@ERROR: failed to configure server: {err}");
                     let stream = reader.get_mut();
                     write_limited(stream, limiter, payload.as_bytes())?;
@@ -563,7 +556,6 @@ fn respond_with_module_request(
                     return Ok(());
                 }
             };
-            let _ = std::fs::write("/tmp/respond_CONFIG_PARSED", "1");
 
             // Validate that the module path exists and is accessible
             if !Path::new(&module.path).exists() {
@@ -590,7 +582,6 @@ fn respond_with_module_request(
                 }
                 return Ok(());
             }
-            let _ = std::fs::write("/tmp/respond_PATH_VALIDATED", "1");
 
             // For daemon success path, we do NOT perform protocol setup here!
             // Upstream does setup_protocol INSIDE start_server() (main.c:1245)
@@ -619,15 +610,8 @@ fn respond_with_module_request(
                     stream,
                     &client_args,
                 ) {
-                    Ok(flags) => {
-                        let _ = std::fs::write(
-                            "/tmp/daemon_COMPAT_EXCHANGED",
-                            format!("flags: {:?}", flags),
-                        );
-                        flags
-                    }
+                    Ok(flags) => flags,
                     Err(err) => {
-                        let _ = std::fs::write("/tmp/daemon_COMPAT_EXCHANGE_ERROR", format!("{:?}", err));
                         let payload = format!("@ERROR: failed to exchange compat flags: {err}");
                         write_limited(stream, limiter, payload.as_bytes())?;
                         write_limited(stream, limiter, b"\n")?;
@@ -675,8 +659,7 @@ fn respond_with_module_request(
             let mut write_stream = match stream.try_clone() {
                 Ok(s) => s,
                 Err(err) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
+                    return Err(io::Error::other(
                         format!("failed to clone write stream: {err}"),
                     ));
                 }
@@ -690,21 +673,10 @@ fn respond_with_module_request(
                 compat_exchanged: true,  // Already exchanged above
             };
 
-            let _ = std::fs::write("/tmp/daemon_BEFORE_run_server_with_handshake", "1");
-
-            // DISABLED: Wrap streams with tracing for protocol debugging
-            // use crate::daemon::tracing_stream::TracingStream;
-            // let mut traced_read = TracingStream::new(read_stream, "daemon_read");
-            // let mut traced_write = TracingStream::new(write_stream.try_clone()?, "daemon_write");
-
-            let _ = std::fs::write("/tmp/daemon_CALLING_run_server_with_handshake", "1");
             // Run the server transfer - handles protocol setup and multiplex internally
             let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
-            let _ = std::fs::write("/tmp/daemon_RETURNED_from_run_server_with_handshake", "1");
-            let _ = std::fs::write("/tmp/daemon_AFTER_run_server_with_handshake", format!("result: {:?}\n", result.as_ref().map(|_| "Ok").map_err(|e| format!("{:?}", e))));
             match result {
                 Ok(_server_stats) => {
-                    let _ = std::fs::write("/tmp/daemon_run_server_SUCCESS", "1");
                     if let Some(log) = log_sink {
                         let text = format!(
                             "transfer to {} ({}): module={} status=success",
