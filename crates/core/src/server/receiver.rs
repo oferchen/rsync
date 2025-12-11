@@ -26,6 +26,7 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 
 use protocol::ProtocolVersion;
+use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::wire::{DeltaOp, read_delta, write_signature};
 
@@ -143,11 +144,17 @@ impl ReceiverContext {
         reader: &mut R,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
-        // CRITICAL: DO NOT read filter list in Receiver role!
-        // The filter list is only read by the Generator role (see generator.rs).
-        // The Receiver role receives an already-filtered file list from the Sender.
-        // If we try to read a filter list here, we'll read the file list instead,
-        // causing protocol desynchronization.
+        // Read filter list from sender (mirrors upstream recv_filter_list at main.c:1171)
+        // The client sender sends the filter list (main.c:1308) AFTER activating OUTPUT multiplex,
+        // so we MUST read it here to consume the multiplexed data from the wire.
+        // For receiver role with no delete/prune options, recv_filter_list() doesn't process
+        // any rules (receiver_wants_list is false), but it still reads the terminating zero.
+        let _wire_rules = read_filter_list(&mut &mut *reader, self.protocol).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("failed to read filter list: {}", e),
+            )
+        })?;
 
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
