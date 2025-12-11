@@ -611,8 +611,14 @@ fn respond_with_module_request(
             let buffered_data = reader.buffer().to_vec();
 
             // Clone the stream for concurrent read/write in server mode
-            // This must happen AFTER compat exchange
+            // Upstream rsync uses dup() to create independent file descriptors
+            // for read and write - we use try_clone() which is equivalent
             let stream = reader.get_ref();
+
+            // CRITICAL: Set TCP_NODELAY to disable Nagle's algorithm
+            // This prevents kernel buffering from reordering small writes
+            stream.set_nodelay(true)?;
+
             let mut read_stream = match stream.try_clone() {
                 Ok(s) => s,
                 Err(err) => {
@@ -625,7 +631,19 @@ fn respond_with_module_request(
                     return Ok(());
                 }
             };
-            let write_stream = reader.get_mut();
+
+            // Clone write stream - this creates another handle to the SAME socket
+            // Upstream rsync uses dup() which is equivalent to try_clone()
+            // The key is: both handles point to the same kernel socket, so no buffering issues
+            let mut write_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(err) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("failed to clone write stream: {err}"),
+                    ));
+                }
+            };
 
             // Create HandshakeResult from the negotiated protocol version
             // Protocol setup and multiplex activation handled inside run_server_with_handshake
@@ -639,7 +657,7 @@ fn respond_with_module_request(
             eprintln!("[daemon] Calling run_server_with_handshake");
 
             // Run the server transfer - handles protocol setup and multiplex internally
-            match run_server_with_handshake(config, handshake, &mut read_stream, write_stream) {
+            match run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream) {
                 Ok(_server_stats) => {
                     if let Some(log) = log_sink {
                         let text = format!(
