@@ -355,8 +355,8 @@ mod tests {
 
         write_filter_list(&mut buf, &[], protocol).unwrap();
 
-        // Should be single byte zero (varint encoding of 0)
-        assert_eq!(buf, vec![0]);
+        // Should be 4-byte little-endian zero (upstream write_int(0))
+        assert_eq!(buf, vec![0, 0, 0, 0]);
 
         let rules = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(rules, vec![]);
