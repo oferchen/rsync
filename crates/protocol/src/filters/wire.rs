@@ -147,35 +147,59 @@ impl FilterRuleWireFormat {
     }
 }
 
+/// Reads a 4-byte little-endian integer from the stream.
+///
+/// This mirrors upstream rsync's `read_int()` function in io.c:1774,
+/// which reads 4 bytes and interprets them as a little-endian int32.
+fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(i32::from_le_bytes(buf))
+}
+
 /// Reads filter list from wire format.
 ///
-/// Reads a sequence of filter rules terminated by a single zero byte (varint 0).
+/// Reads a sequence of filter rules terminated by a 4-byte integer 0.
+/// Upstream uses `read_int()` / `write_int()` which are 4-byte little-endian integers,
+/// NOT varints. This matches upstream's send_filter_list() in exclude.c:1658.
 pub fn read_filter_list(
     reader: &mut dyn Read,
     protocol: ProtocolVersion,
 ) -> io::Result<Vec<FilterRuleWireFormat>> {
     let mut rules = Vec::new();
+    let _ = std::fs::write("/tmp/read_filter_list_ENTRY", "1");
 
     loop {
-        let len = read_varint(reader)?;
+        // Read 4-byte little-endian integer (matches upstream read_int())
+        let len = read_i32_le(reader)?;
+        let _ = std::fs::write("/tmp/read_filter_list_INT", format!("{}", len));
+
         if len == 0 {
+            let _ = std::fs::write("/tmp/read_filter_list_ZERO_TERMINATOR", "1");
             break; // Terminator
         }
 
         if len < 0 {
+            let _ = std::fs::write("/tmp/read_filter_list_NEGATIVE", format!("{}", len));
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("invalid filter rule length: {len}"),
             ));
         }
 
+        let _ = std::fs::write("/tmp/read_filter_list_BEFORE_READ", format!("len={}", len));
         let mut buf = vec![0u8; len as usize];
         reader.read_exact(&mut buf)?;
+        let _ = std::fs::write("/tmp/read_filter_list_READ_BYTES", format!("{:02x?}", buf));
 
         let rule = parse_wire_rule(&buf, protocol)?;
         rules.push(rule);
     }
 
+    let _ = std::fs::write(
+        "/tmp/read_filter_list_EXIT",
+        format!("{} rules", rules.len()),
+    );
     Ok(rules)
 }
 
