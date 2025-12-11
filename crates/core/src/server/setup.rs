@@ -77,7 +77,10 @@ fn parse_client_info(client_args: &[String]) -> String {
 ///
 /// # Returns
 /// CompatibilityFlags with only the capabilities the client advertised
-fn build_compat_flags_from_client_info(client_info: &str, allow_inc_recurse: bool) -> CompatibilityFlags {
+fn build_compat_flags_from_client_info(
+    client_info: &str,
+    allow_inc_recurse: bool,
+) -> CompatibilityFlags {
     let mut flags = CompatibilityFlags::from_bits(0);
 
     // INC_RECURSE: enabled if we allow it AND client supports 'i'
@@ -126,50 +129,30 @@ pub fn exchange_compat_flags_direct(
     stream: &mut TcpStream,
     client_args: &[String],
 ) -> io::Result<Option<CompatibilityFlags>> {
-    let _ = std::fs::write(
-        "/tmp/exchange_compat_ENTRY",
-        format!("protocol={}", protocol.as_u8()),
-    );
-
     if protocol.as_u8() < 30 {
-        let _ = std::fs::write("/tmp/exchange_compat_EARLY_RETURN", "1");
         return Ok(None);
     }
 
     // Parse client capabilities from -e option (mirrors upstream compat.c:712-732)
     let client_info = parse_client_info(client_args);
-    let _ = std::fs::write(
-        "/tmp/exchange_compat_CLIENT_INFO",
-        format!("client_info='{}'", client_info),
-    );
 
     // Build compat flags based on client capabilities
     // For now, hardcode allow_inc_recurse=true (should come from config)
     let our_flags = build_compat_flags_from_client_info(&client_info, true);
 
-    let _ = std::fs::write(
-        "/tmp/exchange_compat_FLAGS_BUILT",
-        format!("{:#x} (client_info: {})", our_flags.bits(), client_info),
-    );
-
     // Server ONLY WRITES compat flags (upstream compat.c:736-738)
     // The client reads but DOES NOT send anything back - it's unidirectional!
     // CRITICAL: Write directly to TcpStream, NOT through any trait abstraction!
-    let _ = std::fs::write("/tmp/exchange_compat_BEFORE_VARINT", "1");
     protocol::write_varint(stream, our_flags.bits() as i32)?;
-    let _ = std::fs::write("/tmp/exchange_compat_AFTER_VARINT", "1");
 
     // CRITICAL: Flush immediately to ensure data leaves application buffers
-    let _ = std::fs::write("/tmp/exchange_compat_BEFORE_FLUSH", "1");
     stream.flush()?;
-    let _ = std::fs::write("/tmp/exchange_compat_AFTER_FLUSH", "1");
 
     // NOTE: In daemon mode, the server does NOT read anything back!
     // The upstream code shows that when am_server=true, only write_varint is called.
     // The client (am_server=false) reads the flags but doesn't send anything back.
     // This is a UNIDIRECTIONAL send from server to client.
 
-    let _ = std::fs::write("/tmp/exchange_compat_RETURNING_OK", "1");
     Ok(Some(our_flags))
 }
 
@@ -203,15 +186,6 @@ pub fn setup_protocol(
     _stdin: &mut dyn Read,
     skip_compat_exchange: bool,
 ) -> io::Result<()> {
-    let _ = std::fs::write(
-        "/tmp/setup_protocol_ENTRY",
-        format!(
-            "protocol={}, skip={}",
-            protocol.as_u8(),
-            skip_compat_exchange
-        ),
-    );
-
     // For daemon mode, the binary 4-byte protocol exchange has already happened
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
     // We skip that exchange here since our HandshakeResult already contains the negotiated protocol.
@@ -221,55 +195,17 @@ pub fn setup_protocol(
     // However, for daemon mode, this should be skipped if the exchange was already done
     // directly on the raw TcpStream via exchange_compat_flags_direct()
     if protocol.as_u8() >= 30 && !skip_compat_exchange {
-        let _ = std::fs::write("/tmp/setup_protocol_SENDING_COMPAT", "1");
         // Build our compat flags (server side)
         // This mirrors upstream compat.c:712-732 which builds flags from client_info string
         let our_flags = CompatibilityFlags::INC_RECURSE
             | CompatibilityFlags::CHECKSUM_SEED_FIX
             | CompatibilityFlags::VARINT_FLIST_FLAGS;
 
-        let _ = std::fs::write(
-            "/tmp/setup_protocol_COMPAT_FLAGS",
-            format!("{:#x}", our_flags.bits()),
-        );
-
         // Server ONLY WRITES compat flags (upstream compat.c:736-738)
         // The client reads but does NOT send anything back - it's unidirectional!
         // Upstream uses write_varint() or write_byte() depending on protocol version
-
-        // Log the actual bytes before encoding
-        let value = our_flags.bits() as i32;
-        let _ = std::fs::write(
-            "/tmp/setup_protocol_VARINT_VALUE",
-            format!("{} (0x{:x})", value, value),
-        );
-
-        // Encode to a buffer first so we can log the exact bytes
-        let mut varint_buf = Vec::new();
-        protocol::write_varint(&mut varint_buf, value)?;
-        let _ = std::fs::write(
-            "/tmp/setup_protocol_VARINT_BYTES",
-            format!("{:02x?}", varint_buf),
-        );
-
-        // Now write to stdout
-        let _ = std::fs::write(
-            "/tmp/setup_protocol_BEFORE_WRITE",
-            format!("Writing {} bytes", varint_buf.len()),
-        );
-        stdout.write_all(&varint_buf)?;
-        let _ = std::fs::write("/tmp/setup_protocol_AFTER_VARINT", "1");
-
-        // Log total bytes written (including any buffered data)
-        let _ = std::fs::write(
-            "/tmp/setup_protocol_BEFORE_FLUSH",
-            format!(
-                "About to flush after writing {} varint bytes",
-                varint_buf.len()
-            ),
-        );
+        protocol::write_varint(stdout, our_flags.bits() as i32)?;
         stdout.flush()?;
-        let _ = std::fs::write("/tmp/setup_protocol_AFTER_FLUSH", "1");
 
         // NOTE: Do NOT read anything back! The upstream code shows:
         // - When am_server=true: only write_varint is called
@@ -281,6 +217,5 @@ pub fn setup_protocol(
         // the HandshakeResult or ServerConfig
     }
 
-    let _ = std::fs::write("/tmp/setup_protocol_EXIT", "1");
     Ok(())
 }

@@ -43,8 +43,6 @@ impl<W: Write> Write for ServerWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Self::Plain(w) => {
-                eprintln!("[ServerWriter::Plain] Writing {} bytes", buf.len());
-                eprintln!("[ServerWriter::Plain] Bytes: {buf:02x?}");
                 // Also log to file
                 if let Ok(mut f) = std::fs::OpenOptions::new()
                     .create(true)
@@ -86,15 +84,6 @@ impl<W: Write> Write for MultiplexWriter<W> {
 
         // Send as MSG_DATA (code 0)
         let code = MessageCode::Data;
-        eprintln!(
-            "[multiplex] Writing {} bytes as MSG_DATA (code {})",
-            buf.len(),
-            code.as_u8()
-        );
-        eprintln!(
-            "[multiplex] Payload (first 64 bytes): {:02x?}",
-            &buf[..buf.len().min(64)]
-        );
 
         // Log to file what we're about to send (including the wire format)
         // Wire format: 4-byte header [tag, len_byte1, len_byte2, len_byte3] + payload
@@ -126,7 +115,6 @@ impl<W: Write> Write for MultiplexWriter<W> {
         }
 
         protocol::send_msg(&mut self.inner, code, buf)?;
-        eprintln!("[multiplex] Message sent successfully");
         Ok(buf.len())
     }
 
