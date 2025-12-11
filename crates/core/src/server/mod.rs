@@ -144,6 +144,8 @@ pub fn run_server_with_handshake<W: Write>(
     stdin: &mut dyn Read,
     mut stdout: W,
 ) -> ServerResult {
+    // VERY FIRST checkpoint
+
     // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
 
     // Protocol has already been negotiated via:
@@ -168,12 +170,13 @@ pub fn run_server_with_handshake<W: Write>(
     // IMPORTANT: Parameter order matches upstream: f_out first, f_in second!
     // For SSH mode, compat_exchanged is false (do compat exchange here).
     // For daemon mode, compat_exchanged is true (already done on raw TcpStream before calling this function).
-    setup::setup_protocol(
+    let setup_result = setup::setup_protocol(
         handshake.protocol,
         &mut stdout,
         &mut chained_stdin,
         handshake.compat_exchanged,
-    )?;
+    );
+    setup_result?;
 
     // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
     // The setup_protocol() call above may have buffered data (compat flags varint).
@@ -182,19 +185,27 @@ pub fn run_server_with_handshake<W: Write>(
     // plain data, resulting in "unexpected tag" errors.
     stdout.flush()?;
 
-    // Activate multiplex (mirrors upstream main.c:1247-1257)
+    // Activate multiplex (mirrors upstream main.c:1247-1260 and do_server_recv:1167)
     // Upstream start_server():
     //   - Always activates OUTPUT multiplex for protocol >= 23 (line 1248)
-    //   - Always activates INPUT multiplex for protocol >= 23 (to read client's multiplexed output)
-    //   - For protocol >= 30 with Generator role, need_messages_from_generator is always 1 (compat.c:776)
-    // CRITICAL: Both INPUT and OUTPUT multiplex must be activated for BOTH roles
-    // because the client activates both INPUT and OUTPUT multiplex at protocol >= 23,
-    // regardless of whether it's acting as sender or receiver
+    //   - For receiver: do_server_recv() activates INPUT multiplex at protocol >= 30 (line 1167)
+    //   - For sender: start_server() conditionally activates INPUT based on need_messages_from_generator
+    //
+    // Key insight from C code: For receiver at protocol >= 30, INPUT multiplex IS activated
+    // BEFORE recv_filter_list() is called. The recv_filter_list() may read nothing (if
+    // receiver_wants_list is false), but the stream is already in multiplex mode when
+    // the file list is subsequently read.
     let mut reader = reader::ServerReader::new_plain(chained_stdin);
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
+    // Always activate OUTPUT multiplex at protocol >= 23 (main.c:1248)
     if handshake.protocol.as_u8() >= 23 {
         writer = writer.activate_multiplex()?;
+    }
+
+    // Activate INPUT multiplex at protocol >= 30 (main.c:1167 for receiver, similar for sender)
+    // This matches upstream: both roles activate INPUT multiplex early for modern protocols
+    if handshake.protocol.as_u8() >= 30 {
         reader = reader.activate_multiplex()?;
     }
 
