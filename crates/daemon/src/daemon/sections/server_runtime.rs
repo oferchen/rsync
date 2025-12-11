@@ -264,9 +264,9 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         None
     };
 
-    if let Some(message) = fallback_warning_message.as_ref() {
-        eprintln!("{message}");
-    }
+    // Warning message removed - eprintln! crashes when stderr unavailable in daemon mode
+    // If fallback warning needs to be logged, use proper logging framework instead
+    let _ = fallback_warning_message;
 
     let log_sink = if let Some(path) = log_file {
         Some(open_log_sink(&path, Brand::Oc)?)
