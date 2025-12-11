@@ -1,6 +1,6 @@
 //! Wire format encoding and decoding for filter rules.
 
-use crate::{ProtocolVersion, write_varint};
+use crate::ProtocolVersion;
 use std::io::{self, Read, Write};
 
 /// Rule type prefix character.
@@ -157,6 +157,14 @@ fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
     Ok(i32::from_le_bytes(buf))
 }
 
+/// Writes a 4-byte little-endian integer to the stream.
+///
+/// This mirrors upstream rsync's `write_int()` function in io.c:1815,
+/// which writes 4 bytes as a little-endian int32.
+fn write_i32_le(writer: &mut dyn Write, value: i32) -> io::Result<()> {
+    writer.write_all(&value.to_le_bytes())
+}
+
 /// Reads filter list from wire format.
 ///
 /// Reads a sequence of filter rules terminated by a 4-byte integer 0.
@@ -196,6 +204,8 @@ pub fn read_filter_list(
 /// Writes filter list to wire format.
 ///
 /// Writes a sequence of filter rules followed by a 4-byte zero terminator.
+/// Upstream uses `write_int()` which is a 4-byte little-endian integer, NOT varint.
+/// This matches upstream's send_filter_list() in exclude.c:1658.
 pub fn write_filter_list<W: Write>(
     writer: &mut W,
     rules: &[FilterRuleWireFormat],
@@ -203,11 +213,11 @@ pub fn write_filter_list<W: Write>(
 ) -> io::Result<()> {
     for rule in rules {
         let bytes = serialize_rule(rule, protocol)?;
-        write_varint(writer, bytes.len() as i32)?;
+        write_i32_le(writer, bytes.len() as i32)?;
         writer.write_all(&bytes)?;
     }
 
-    write_varint(writer, 0)?; // Terminator
+    write_i32_le(writer, 0)?; // Terminator
     Ok(())
 }
 
