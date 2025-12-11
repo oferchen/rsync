@@ -144,11 +144,7 @@ pub fn run_server_with_handshake<W: Write>(
     stdin: &mut dyn Read,
     mut stdout: W,
 ) -> ServerResult {
-    eprintln!(
-        "[server] run_server_with_handshake: role={:?}, protocol={}",
-        config.role,
-        handshake.protocol.as_u8()
-    );
+    // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
 
     // Protocol has already been negotiated via:
     // - perform_handshake() for SSH mode (binary exchange)
@@ -160,18 +156,7 @@ pub fn run_server_with_handshake<W: Write>(
     // Extract buffered data before calling setup_protocol
     // This is critical for daemon mode where the BufReader may have read ahead
     let buffered_data = std::mem::take(&mut handshake.buffered);
-    eprintln!(
-        "[server] Buffered data from handshake: {} bytes",
-        buffered_data.len()
-    );
-    if !buffered_data.is_empty() {
-        let hex_len = buffered_data.len().min(128);
-        eprintln!(
-            "[server] Buffered data (first {} bytes): {:02x?}",
-            hex_len,
-            &buffered_data[..hex_len]
-        );
-    }
+    // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
 
     // Chain buffered data with stdin BEFORE calling setup_protocol
     // This ensures setup_protocol reads from the correct stream
@@ -220,24 +205,21 @@ pub fn run_server_with_handshake<W: Write>(
 
     match config.role {
         ServerRole::Receiver => {
-            eprintln!("[server] Entering Receiver role");
+            // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
             let mut ctx = ReceiverContext::new(&handshake, config);
             let stats = ctx.run(&mut chained_reader, &mut writer)?;
 
             Ok(ServerStats::Receiver(stats))
         }
         ServerRole::Generator => {
-            eprintln!("[server] Entering Generator role");
+            // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
 
             // Convert OsString args to PathBuf for file walking
             let paths: Vec<std::path::PathBuf> =
                 config.args.iter().map(std::path::PathBuf::from).collect();
-            eprintln!("[server] Generator paths: {paths:?}");
 
             let mut ctx = GeneratorContext::new(&handshake, config);
-            eprintln!("[server] Generator context created, calling run()");
             let stats = ctx.run(&mut chained_reader, &mut writer, &paths)?;
-            eprintln!("[server] Generator run() completed");
 
             Ok(ServerStats::Generator(stats))
         }
