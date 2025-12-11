@@ -149,12 +149,8 @@ impl ReceiverContext {
         // so we MUST read it here to consume the multiplexed data from the wire.
         // For receiver role with no delete/prune options, recv_filter_list() doesn't process
         // any rules (receiver_wants_list is false), but it still reads the terminating zero.
-        let _wire_rules = read_filter_list(&mut &mut *reader, self.protocol).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("failed to read filter list: {}", e),
-            )
-        })?;
+        let _wire_rules = read_filter_list(&mut &mut *reader, self.protocol)
+            .map_err(|e| io::Error::new(e.kind(), format!("failed to read filter list: {e}")))?;
 
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
