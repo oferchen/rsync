@@ -196,22 +196,24 @@ pub fn run_server_with_handshake<W: Write>(
     // multiplex, causing the client to interpret it as multiplexed data instead of
     // plain data, resulting in "unexpected tag" errors.
     stdout.flush()?;
-    eprintln!("[server] Flushed stdout after setup_protocol");
 
-    // Activate multiplex for protocol >= 23 (mirrors upstream main.c:1247-1248)
-    // This applies to BOTH daemon and SSH modes. The protocol was negotiated via:
-    // - @RSYNCD exchange for daemon mode (remote_protocol already set)
-    // - perform_handshake() binary exchange for SSH mode
-    // In both cases, upstream's setup_protocol() is called, then multiplex is activated.
-    let reader = reader::ServerReader::new_plain(chained_stdin);
+    // Activate multiplex (mirrors upstream main.c:1247-1257)
+    // Upstream start_server():
+    //   - Always activates OUTPUT multiplex for protocol >= 23 (line 1248)
+    //   - For sender (Generator): activates INPUT multiplex if need_messages_from_generator (lines 1254-1257)
+    //   - For receiver: NO INPUT multiplex activation
+    //   - For protocol >= 30, need_messages_from_generator is always 1 (compat.c:776)
+    let mut reader = reader::ServerReader::new_plain(chained_stdin);
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
     if handshake.protocol.as_u8() >= 23 {
         writer = writer.activate_multiplex()?;
-        eprintln!(
-            "[server] Multiplex activated (protocol {})",
-            handshake.protocol.as_u8()
-        );
+
+        // For Generator role with protocol >= 30, activate INPUT multiplex too
+        // (upstream: need_messages_from_generator is always 1 for protocol >= 30)
+        if matches!(config.role, ServerRole::Generator) && handshake.protocol.as_u8() >= 30 {
+            reader = reader.activate_multiplex()?;
+        }
     }
 
     let mut chained_reader = reader;
