@@ -366,7 +366,9 @@ fn respond_with_module_request(
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
+    let _ = std::fs::write("/tmp/respond_ENTRY", "1");
     if let Some(module) = modules.iter().find(|module| module.name == request) {
+        let _ = std::fs::write("/tmp/respond_FOUND_MODULE", "1");
         let change = apply_module_bandwidth_limit(
             limiter,
             module.bandwidth_limit(),
@@ -497,6 +499,7 @@ fn respond_with_module_request(
 
             // Read client arguments sent after "@RSYNCD: OK"
             // This mirrors upstream's read_args() in io.c:1292
+            let _ = std::fs::write("/tmp/respond_BEFORE_read_args", "1");
             let client_args = match read_client_arguments(reader, negotiated_protocol) {
                 Ok(args) => args,
                 Err(err) => {
@@ -509,6 +512,7 @@ fn respond_with_module_request(
                     return Ok(());
                 }
             };
+            let _ = std::fs::write("/tmp/respond_AFTER_read_args", format!("{} args", client_args.len()));
 
             // Log received arguments for debugging
             if let Some(log) = log_sink {
@@ -537,9 +541,11 @@ fn respond_with_module_request(
                 // Server is receiving from client (client is sending to us)
                 ServerRole::Receiver
             };
+            let _ = std::fs::write("/tmp/respond_ROLE_DETERMINED", format!("{:?}", role));
 
             // Build ServerConfig with module path as the target directory
             // Parse client arguments to extract flags and additional paths
+            let _ = std::fs::write("/tmp/respond_BEFORE_parse_args", "1");
             let config = match ServerConfig::from_flag_string_and_args(
                 role,
                 client_args.join(" "), // Use client-supplied arguments
@@ -547,6 +553,7 @@ fn respond_with_module_request(
             ) {
                 Ok(cfg) => cfg,
                 Err(err) => {
+                    let _ = std::fs::write("/tmp/respond_CONFIG_PARSE_ERROR", format!("{:?}", err));
                     let payload = format!("@ERROR: failed to configure server: {err}");
                     let stream = reader.get_mut();
                     write_limited(stream, limiter, payload.as_bytes())?;
@@ -556,6 +563,7 @@ fn respond_with_module_request(
                     return Ok(());
                 }
             };
+            let _ = std::fs::write("/tmp/respond_CONFIG_PARSED", "1");
 
             // Validate that the module path exists and is accessible
             if !Path::new(&module.path).exists() {
@@ -582,6 +590,7 @@ fn respond_with_module_request(
                 }
                 return Ok(());
             }
+            let _ = std::fs::write("/tmp/respond_PATH_VALIDATED", "1");
 
             // For daemon success path, we do NOT perform protocol setup here!
             // Upstream does setup_protocol INSIDE start_server() (main.c:1245)
@@ -589,12 +598,52 @@ fn respond_with_module_request(
             // We pass the negotiated protocol to run_server_with_handshake,
             // which will perform setup_protocol internally
             let final_protocol = negotiated_protocol.unwrap_or(ProtocolVersion::V30);
-            let compat_flags = protocol::CompatibilityFlags::from(0u32);
+
+            // Extract any buffered data from the BufReader before proceeding
+            // The BufReader may have read ahead during the negotiation phase
+            let buffered_data = reader.buffer().to_vec();
+
+            // Get mutable reference to stream to set TCP_NODELAY and exchange compat flags
+            let stream = reader.get_mut();
+
+            // CRITICAL: Set TCP_NODELAY to disable Nagle's algorithm
+            // This prevents kernel buffering from reordering small writes
+            stream.set_nodelay(true)?;
+
+            // CRITICAL: Exchange compat flags BEFORE wrapping streams in multiplex
+            // This must happen on the raw TcpStream before any buffering/multiplexing
+            // Mirrors upstream compat.c:736-738 which calls write_varint directly on f_out
+            let compat_flags = if final_protocol.as_u8() >= 30 {
+                match core::server::setup::exchange_compat_flags_direct(
+                    final_protocol,
+                    stream,
+                    &client_args,
+                ) {
+                    Ok(flags) => {
+                        let _ = std::fs::write(
+                            "/tmp/daemon_COMPAT_EXCHANGED",
+                            format!("flags: {:?}", flags),
+                        );
+                        flags
+                    }
+                    Err(err) => {
+                        let _ = std::fs::write("/tmp/daemon_COMPAT_EXCHANGE_ERROR", format!("{:?}", err));
+                        let payload = format!("@ERROR: failed to exchange compat flags: {err}");
+                        write_limited(stream, limiter, payload.as_bytes())?;
+                        write_limited(stream, limiter, b"\n")?;
+                        messages.write_exit(stream, limiter)?;
+                        stream.flush()?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                None
+            };
 
             // Log the negotiated protocol and compatibility flags
             if let Some(log) = log_sink {
                 let text = format!(
-                    "module '{}' from {} ({}): protocol {}, compat flags: {}, role: {:?}",
+                    "module '{}' from {} ({}): protocol {}, compat flags: {:?}, role: {:?}",
                     request,
                     module_peer_host.or(session_peer_host).unwrap_or("unknown"),
                     peer_ip,
@@ -606,19 +655,7 @@ fn respond_with_module_request(
                 log_message(log, &message);
             }
 
-            // Extract any buffered data from the BufReader before proceeding
-            // The BufReader may have read ahead during the negotiation phase
-            let buffered_data = reader.buffer().to_vec();
-
-            // Clone the stream for concurrent read/write in server mode
-            // Upstream rsync uses dup() to create independent file descriptors
-            // for read and write - we use try_clone() which is equivalent
-            let stream = reader.get_ref();
-
-            // CRITICAL: Set TCP_NODELAY to disable Nagle's algorithm
-            // This prevents kernel buffering from reordering small writes
-            stream.set_nodelay(true)?;
-
+            // Now clone the stream for concurrent read/write
             let mut read_stream = match stream.try_clone() {
                 Ok(s) => s,
                 Err(err) => {
@@ -646,19 +683,28 @@ fn respond_with_module_request(
             };
 
             // Create HandshakeResult from the negotiated protocol version
-            // Protocol setup and multiplex activation handled inside run_server_with_handshake
-            // Compat flags will be sent inside setup_protocol() (not here)
+            // Compat exchange happened above on raw TcpStream, so skip it in setup_protocol()
             let handshake = HandshakeResult {
                 protocol: final_protocol,
                 buffered: buffered_data,
-                compat_exchanged: false,  // Let setup_protocol handle it
+                compat_exchanged: true,  // Already exchanged above
             };
 
-            eprintln!("[daemon] Calling run_server_with_handshake");
+            let _ = std::fs::write("/tmp/daemon_BEFORE_run_server_with_handshake", "1");
 
+            // DISABLED: Wrap streams with tracing for protocol debugging
+            // use crate::daemon::tracing_stream::TracingStream;
+            // let mut traced_read = TracingStream::new(read_stream, "daemon_read");
+            // let mut traced_write = TracingStream::new(write_stream.try_clone()?, "daemon_write");
+
+            let _ = std::fs::write("/tmp/daemon_CALLING_run_server_with_handshake", "1");
             // Run the server transfer - handles protocol setup and multiplex internally
-            match run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream) {
+            let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
+            let _ = std::fs::write("/tmp/daemon_RETURNED_from_run_server_with_handshake", "1");
+            let _ = std::fs::write("/tmp/daemon_AFTER_run_server_with_handshake", format!("result: {:?}\n", result.as_ref().map(|_| "Ok").map_err(|e| format!("{:?}", e))));
+            match result {
                 Ok(_server_stats) => {
+                    let _ = std::fs::write("/tmp/daemon_run_server_SUCCESS", "1");
                     if let Some(log) = log_sink {
                         let text = format!(
                             "transfer to {} ({}): module={} status=success",
