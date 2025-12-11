@@ -143,32 +143,11 @@ impl ReceiverContext {
         reader: &mut R,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
-        // CRITICAL: Read and discard filter list before file list
-        // The sender ALWAYS sends a filter list (even if empty, it sends a terminating 0)
-        // This mirrors upstream recv_filter_list() in exclude.c:1673-1692
-        // For now, we just read and discard all filter rules until we get the terminator (0)
-        loop {
-            // Read filter rule length as 4-byte little-endian integer
-            let mut len_bytes = [0u8; 4];
-            reader.read_exact(&mut len_bytes)?;
-            let len = i32::from_le_bytes(len_bytes);
-
-            if len == 0 {
-                // Terminator - end of filter list
-                break;
-            }
-
-            if !(0..=10000).contains(&len) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid filter rule length: {len}"),
-                ));
-            }
-
-            // Read and discard the filter rule data
-            let mut rule_data = vec![0u8; len as usize];
-            reader.read_exact(&mut rule_data)?;
-        }
+        // CRITICAL: DO NOT read filter list in Receiver role!
+        // The filter list is only read by the Generator role (see generator.rs).
+        // The Receiver role receives an already-filtered file list from the Sender.
+        // If we try to read a filter list here, we'll read the file list instead,
+        // causing protocol desynchronization.
 
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
