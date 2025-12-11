@@ -187,13 +187,14 @@ pub fn run_server_with_handshake<W: Write>(
     //   - Always activates OUTPUT multiplex for protocol >= 23 (line 1248)
     //   - Always activates INPUT multiplex for protocol >= 23 (to read client's multiplexed output)
     //   - For protocol >= 30 with Generator role, need_messages_from_generator is always 1 (compat.c:776)
+    // CRITICAL: Both INPUT and OUTPUT multiplex must be activated for BOTH roles
+    // because the client activates both INPUT and OUTPUT multiplex at protocol >= 23,
+    // regardless of whether it's acting as sender or receiver
     let mut reader = reader::ServerReader::new_plain(chained_stdin);
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
     if handshake.protocol.as_u8() >= 23 {
         writer = writer.activate_multiplex()?;
-        // CRITICAL: Also activate INPUT multiplex because the client activates OUTPUT multiplex
-        // at protocol >= 23, so we must read multiplexed data from the client
         reader = reader.activate_multiplex()?;
     }
 
