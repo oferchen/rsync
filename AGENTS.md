@@ -58,6 +58,19 @@ This document defines the internal actors (“agents”), their responsibilities
   local developers should not need to remember crate lists or non-obvious
   arguments just to run the full suite.
 
+- **Complete test suite command**
+  Before committing changes, run the complete validation suite:
+
+  ```sh
+  cargo fmt --all -- --check \
+    && cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings \
+    && cargo nextest run --workspace --all-features \
+    && cargo xtask docs
+  ```
+
+  This ensures code formatting, lints, tests, and documentation all pass. See
+  section 3.0 for details.
+
 - **Standard-library-first**
   Prefer the Rust standard library and well-supported, actively maintained
   crates. Avoid deprecated APIs, pseudo-code, or placeholder logic; every change
@@ -626,6 +639,32 @@ New work touching local copy must follow this structure.
 
 ## Build & Test Agents
 
+### 3.0 Complete Test Suite
+
+* **Purpose:** Run the complete validation suite locally before committing or submitting PRs.
+
+* **Command:**
+
+  ```sh
+  cargo fmt --all -- --check \
+    && cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings \
+    && cargo nextest run --workspace --all-features \
+    && cargo xtask docs
+  ```
+
+  This command chain ensures:
+  1. Code formatting is correct (`cargo fmt --all -- --check`)
+  2. All clippy lints pass with warnings denied (`cargo clippy`)
+  3. All tests pass across the workspace (`cargo nextest run`)
+  4. Documentation builds without errors (`cargo xtask docs`)
+
+* **Usage notes:**
+
+  * Run this command before committing to catch issues early.
+  * The command uses `&&` so it stops at the first failure.
+  * If any step fails, fix the issue and re-run from the beginning.
+  * CI runs equivalent checks, so passing locally ensures CI will pass.
+
 ### 3.1 `lint` Agent (fmt + clippy)
 
 * **Invoker:** `ci.yml` (`lint-and-test` job).
@@ -723,6 +762,290 @@ New work touching local copy must follow this structure.
 
   * `build-cross.yml` should call these commands for Linux targets so SBOM and
     packages are produced from the same bits shipped to users.
+
+---
+
+## Troubleshooting & Debugging Agent
+
+### 4.0 Daemon Mode Debugging Principles
+
+When debugging daemon protocol issues, the standard debugging tools are unavailable:
+
+* **Stderr unavailable**: Daemon mode closes or redirects file descriptor 2 (stderr).
+  * ALL `eprintln!()` calls will **panic** when stderr is closed.
+  * This includes debug logging, error diagnostics, and trace output.
+  * The panic is **silent** from the daemon's perspective but causes worker threads to crash.
+
+* **Impact on debugging**:
+  * Traditional `dbg!()`, `println!()`, `eprintln!()` are unusable.
+  * Panic messages don't appear in daemon logs.
+  * Worker thread crashes manifest as protocol errors on the client side.
+
+### 4.1 File-Based Checkpoint Debugging
+
+The **only reliable** debugging technique for daemon worker threads is file-based checkpoints:
+
+```rust
+// Safe: writes succeed even when stderr is unavailable
+let _ = std::fs::write("/tmp/checkpoint_name", "payload");
+let _ = std::fs::write("/tmp/checkpoint_data", format!("{:?}", value));
+```
+
+**Checkpoint placement strategy**:
+
+1. **Entry points**: Start of every major function
+   ```rust
+   pub fn handle_session(...) -> io::Result<()> {
+       let _ = std::fs::write("/tmp/handle_session_ENTRY", "1");
+       // ... function body
+   }
+   ```
+
+2. **Before/after critical operations**: Bracket risky code
+   ```rust
+   let _ = std::fs::write("/tmp/BEFORE_operation", "1");
+   let result = risky_operation()?;
+   let _ = std::fs::write("/tmp/AFTER_operation", format!("{:?}", result));
+   ```
+
+3. **Branch points**: Track which code paths execute
+   ```rust
+   if protocol.as_u8() >= 30 {
+       let _ = std::fs::write("/tmp/compat_MODERN", "1");
+   } else {
+       let _ = std::fs::write("/tmp/compat_LEGACY", "1");
+   }
+   ```
+
+4. **Protocol data**: Log actual bytes sent/received
+   ```rust
+   let _ = std::fs::write("/tmp/varint_VALUE", format!("{}", value));
+   let _ = std::fs::write("/tmp/bytes_SENT", format!("{:02x?}", &buffer));
+   ```
+
+**Checkpoint analysis**:
+
+```bash
+# Clear all checkpoints before test
+rm -f /tmp/checkpoint_* /tmp/daemon_* /tmp/handle_*
+
+# Run daemon test
+rsync rsync://localhost:8873/testmodule/
+
+# Check which checkpoints were created
+ls -1t /tmp/*ENTRY* /tmp/*BEFORE* /tmp/*AFTER* | head -20
+
+# Find the LAST successful checkpoint
+ls -1t /tmp/* | head -1
+
+# Read checkpoint data
+cat /tmp/checkpoint_data
+```
+
+**Gap analysis**: If checkpoint A exists but checkpoint B (which should follow A) does not:
+* Code between A and B either crashed or never executed
+* Look for `eprintln!()`, `panic!()`, `unwrap()`, or early returns between A and B
+
+### 4.2 Systematic Bug Hunt Methodology
+
+**Phase 1: Establish baseline**
+1. Run interop test to confirm failure mode
+2. Document exact error message from client
+3. Identify which role/agent is reporting the error
+
+**Phase 2: Binary search for crash point**
+1. Add checkpoints at function entry points across suspected code path
+2. Run test and identify last successful checkpoint
+3. Add checkpoints between last successful and first missing
+4. Repeat until gap is < 10 lines of code
+
+**Phase 3: Root cause analysis**
+
+Common failure patterns in daemon mode:
+
+* **Pattern 1: Silent eprintln! crash**
+  * **Symptom**: Checkpoint A exists, checkpoint B never appears, no error logs
+  * **Cause**: `eprintln!()` between A and B
+  * **Fix**: Remove ALL `eprintln!()` from daemon code paths
+  * **Search**:
+    ```bash
+    git grep -n 'eprintln!' crates/daemon/ crates/core/src/server/ crates/protocol/
+    ```
+  * **Critical locations**:
+    * Low-level protocol functions (`varint.rs`, `multiplex.rs`)
+    * Server role implementations (`generator.rs`, `receiver.rs`, `setup.rs`)
+    * Daemon session handlers (`session_runtime.rs`, `module_access.rs`)
+
+* **Pattern 2: Protocol timing issue**
+  * **Symptom**: Client reports "unexpected tag N" or protocol parse errors
+  * **Cause**: Data sent in wrong order or multiplex activated at wrong time
+  * **Investigation**:
+    1. Add checkpoints before/after protocol writes
+    2. Log actual bytes written: `format!("{:02x?}", buffer)`
+    3. Verify order matches upstream rsync flow
+  * **Common issues**:
+    * Compat flags sent AFTER multiplex activation (should be BEFORE)
+    * Buffered data written after stream wrapped (flush before wrapping)
+    * Only writer activated for multiplex (must activate BOTH reader and writer)
+
+* **Pattern 3: Stream buffering issues**
+  * **Symptom**: Client receives partial data or reads at wrong offset
+  * **Cause**: Buffered data not flushed before stream mode changes
+  * **Fix**: Always `flush()` before:
+    * Activating multiplex
+    * Wrapping streams in new abstractions
+    * Handing off streams to different threads
+
+* **Pattern 4: Bidirectional protocol deadlock**
+  * **Symptom**: Process hangs, checkpoints stop appearing mid-protocol
+  * **Cause**: Only one direction activated for multiplex/buffering
+  * **Investigation**:
+    1. Check if BOTH reader and writer are activated consistently
+    2. Verify filter list/file list can be read/written simultaneously
+  * **Fix**: Mirror all stream transformations on both reader and writer:
+    ```rust
+    if protocol.as_u8() >= 23 {
+        reader = reader.activate_multiplex()?;  // Must activate BOTH
+        writer = writer.activate_multiplex()?;
+    }
+    ```
+
+### 4.3 Hidden Dependency Debugging
+
+Low-level protocol functions are **high-risk** for hidden `eprintln!()` calls:
+
+**Critical files to audit**:
+* `crates/protocol/src/varint.rs` — varint encoding (used by ALL protocol exchanges)
+* `crates/protocol/src/multiplex.rs` — message framing
+* `crates/protocol/src/filters/wire.rs` — filter list encoding
+* `crates/walk/src/wire/` — file list encoding
+
+**Audit technique**:
+```bash
+# Find all eprintln! in protocol-critical files
+git grep -n 'eprintln!' crates/protocol/ crates/walk/
+
+# Check if varint functions have debug code
+grep -A5 -B5 'pub fn write_varint' crates/protocol/src/varint.rs
+grep -A5 -B5 'pub fn read_varint' crates/protocol/src/varint.rs
+```
+
+**Impact of hidden failures**:
+* Varint write failure prevents compat flags exchange → client receives wrong data
+* Varint read failure prevents filter list parsing → server crashes on first read
+* Multiplex write failure sends unframed data → client interprets as wrong message type
+
+### 4.4 Protocol Trace Instrumentation
+
+For protocol-level debugging, wrap streams in tracing adapters:
+
+```rust
+// Example: TracingStream wrapper
+struct TracingStream<T> {
+    inner: T,
+    name: &'static str,
+}
+
+impl<T: Read> Read for TracingStream<T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        let _ = std::fs::write(
+            format!("/tmp/trace_{}_READ", self.name),
+            format!("{} bytes: {:02x?}", n, &buf[..n])
+        );
+        Ok(n)
+    }
+}
+
+impl<T: Write> Write for TracingStream<T> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let _ = std::fs::write(
+            format!("/tmp/trace_{}_WRITE", self.name),
+            format!("{} bytes: {:02x?}", buf.len(), buf)
+        );
+        self.inner.write(buf)
+    }
+}
+```
+
+**Usage**:
+```rust
+let traced_read = TracingStream { inner: read_stream, name: "daemon_read" };
+let traced_write = TracingStream { inner: write_stream, name: "daemon_write" };
+```
+
+**Analysis**: Trace files show exact byte sequences sent/received, making protocol mismatches visible.
+
+### 4.5 Interop Test Debugging Workflow
+
+When an interop test fails with upstream rsync client:
+
+1. **Capture client error**:
+   ```bash
+   rsync -vvv rsync://localhost:8873/testmodule/ 2>&1 | tee /tmp/client_error.log
+   ```
+
+2. **Add server checkpoints**:
+   * Entry points: `handle_session()`, `run_server_with_handshake()`, `Generator::run()`
+   * Protocol steps: before/after compat exchange, multiplex activation, filter list read, file list send
+
+3. **Run test and analyze gap**:
+   ```bash
+   rm -f /tmp/*ENTRY* /tmp/*BEFORE* /tmp/*AFTER*
+   rsync rsync://localhost:8873/testmodule/
+   ls -1t /tmp/* | head -20  # Find last successful checkpoint
+   ```
+
+4. **Focus search on gap**:
+   * Add checkpoints every 5-10 lines in the gap
+   * Log variable values: `format!("{:?}", value)`
+   * Log buffer contents: `format!("{:02x?}", buffer)`
+
+5. **Compare with upstream**:
+   * Check upstream rsync source for equivalent flow (e.g., `daemon.c`, `main.c`)
+   * Verify order of operations matches
+   * Confirm data encoding matches wire format expectations
+
+### 4.6 Debugging Checklist for Daemon Protocol Issues
+
+Before investigating complex protocol behavior, verify these common issues first:
+
+- [ ] **No eprintln! in daemon code paths** (search: `git grep 'eprintln!' crates/{daemon,core,protocol}/`)
+- [ ] **Varint functions are clean** (`crates/protocol/src/varint.rs` has NO eprintln!)
+- [ ] **Compat flags sent BEFORE multiplex** (if protocol >= 30)
+- [ ] **Both reader and writer activated for multiplex** (if protocol >= 23)
+- [ ] **Flush before activating multiplex** (`stdout.flush()` before wrapping)
+- [ ] **Buffered data extracted before stream handoff** (`handshake.buffered` chained correctly)
+- [ ] **File-based checkpoints at all critical points** (entry, before/after, branches)
+
+### 4.7 Post-Resolution Cleanup
+
+After fixing daemon issues, clean up temporary debugging code:
+
+**Remove checkpoints**:
+```bash
+# Find all checkpoint writes
+git grep -n 'std::fs::write.*tmp.*checkpoint' crates/
+
+# Remove the lines (after verifying fix works without them)
+# Keep only critical error-path logging that uses proper logging framework
+```
+
+**Remove tracing wrappers**:
+```bash
+# Find TracingStream usage
+git grep -n 'TracingStream' crates/
+
+# Remove wrapper instantiation and revert to plain streams
+```
+
+**Verify clean build**:
+```bash
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo nextest run --workspace --all-features
+```
+
+**Update investigation notes**: Document root cause and fix in `investigation.md` or commit message for future reference.
 
 ---
 
