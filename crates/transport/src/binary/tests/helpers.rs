@@ -140,3 +140,13 @@ pub(super) fn handshake_payload(version: ProtocolVersion, flags: CompatibilityFl
     }
     payload
 }
+
+pub(super) fn local_handshake_payload(version: ProtocolVersion) -> Vec<u8> {
+    let mut payload = handshake_bytes(version).to_vec();
+    if version.uses_binary_negotiation() {
+        crate::binary::local_compatibility_flags()
+            .encode_to_vec(&mut payload)
+            .expect("compatibility encoding succeeds");
+    }
+    payload
+}

@@ -7,6 +7,10 @@ fn sample_flags() -> CompatibilityFlags {
     CompatibilityFlags::INC_RECURSE | CompatibilityFlags::VARINT_FLIST_FLAGS
 }
 
+fn expected_outbound_handshake(version: ProtocolVersion) -> Vec<u8> {
+    super::helpers::local_handshake_payload(version)
+}
+
 #[test]
 fn negotiate_binary_session_exchanges_versions() {
     let remote_version = ProtocolVersion::from_supported(31).expect("31 supported");
@@ -37,7 +41,7 @@ fn negotiate_binary_session_exchanges_versions() {
     let transport = handshake.into_stream().into_inner();
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        expected_outbound_handshake(ProtocolVersion::NEWEST).as_slice()
     );
 }
 
@@ -76,7 +80,10 @@ fn negotiate_binary_session_clamps_future_protocols() {
     assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 
     let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), &handshake_bytes(desired));
+    assert_eq!(
+        transport.written(),
+        expected_outbound_handshake(desired).as_slice()
+    );
 }
 
 #[test]
@@ -172,7 +179,7 @@ fn negotiate_binary_session_flushes_advertisement() {
     assert_eq!(transport.flushes(), 1);
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        expected_outbound_handshake(ProtocolVersion::NEWEST).as_slice()
     );
 }
 

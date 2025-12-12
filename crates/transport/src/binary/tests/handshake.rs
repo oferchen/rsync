@@ -82,7 +82,7 @@ fn into_stream_parts_exposes_negotiation_state() {
     let transport = stream.into_inner();
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        super::helpers::local_handshake_payload(ProtocolVersion::NEWEST).as_slice()
     );
 }
 
@@ -161,7 +161,7 @@ fn from_stream_parts_rehydrates_binary_handshake() {
     let transport = rehydrated.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
 
-    let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = super::helpers::local_handshake_payload(ProtocolVersion::NEWEST);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.written(), expected.as_slice());
 }
@@ -201,7 +201,7 @@ fn into_parts_round_trips_binary_handshake() {
     let transport = rebuilt.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
 
-    let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = super::helpers::local_handshake_payload(ProtocolVersion::NEWEST);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.written(), expected.as_slice());
 }

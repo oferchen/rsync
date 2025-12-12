@@ -1,4 +1,5 @@
 use super::*;
+use crate::binary::local_compatibility_flags;
 
 #[derive(Clone, Debug)]
 pub(crate) struct MemoryTransport {
@@ -78,6 +79,12 @@ impl Write for InstrumentedTransport {
     }
 }
 
-pub(crate) fn binary_handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
-    u32::from(version.as_u8()).to_be_bytes()
+pub(crate) fn binary_handshake_bytes(version: ProtocolVersion) -> Vec<u8> {
+    let mut bytes = u32::from(version.as_u8()).to_be_bytes().to_vec();
+    if version.uses_binary_negotiation() {
+        local_compatibility_flags()
+            .encode_to_vec(&mut bytes)
+            .expect("compatibility encoding succeeds");
+    }
+    bytes
 }

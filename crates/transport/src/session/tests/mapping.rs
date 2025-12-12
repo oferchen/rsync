@@ -48,7 +48,7 @@ fn as_variant_mut_helpers_allow_mutating_streams() {
         .expect("handshake remains binary")
         .into_stream()
         .into_inner();
-    let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.writes(), expected.as_slice());
 
@@ -108,7 +108,7 @@ fn map_stream_inner_preserves_variant_and_metadata() {
         .into_stream()
         .into_inner();
 
-    let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.writes(), expected.as_slice());
     assert_eq!(transport.flushes(), 1);
@@ -171,6 +171,6 @@ fn try_map_stream_inner_preserves_original_handshake_on_error() {
         .into_inner();
     assert_eq!(
         transport.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
 }

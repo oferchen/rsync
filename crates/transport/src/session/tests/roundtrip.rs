@@ -78,7 +78,7 @@ fn session_handshake_parts_round_trip_binary_handshake() {
         .expect("write succeeds");
 
     let transport = binary.into_stream().into_inner();
-    let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = binary_handshake_bytes(ProtocolVersion::NEWEST);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.writes(), expected.as_slice());
     assert_eq!(transport.flushes(), 1);
@@ -146,7 +146,7 @@ fn session_handshake_parts_try_map_preserves_original_on_error() {
     let transport = original.into_stream().into_inner();
     assert_eq!(
         transport.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
 }
 

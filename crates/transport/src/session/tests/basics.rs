@@ -1,4 +1,5 @@
 use super::*;
+use crate::binary::local_compatibility_flags;
 
 #[test]
 fn negotiate_session_detects_binary_transport() {
@@ -38,7 +39,7 @@ fn negotiate_session_detects_binary_transport() {
 
     assert_eq!(
         transport.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
     assert_eq!(transport.flushes(), 1);
 }
@@ -169,7 +170,7 @@ fn negotiate_session_parts_exposes_binary_metadata() {
     assert_eq!(remote_protocol, remote_version);
     assert_eq!(local_advertised, ProtocolVersion::NEWEST);
     assert_eq!(negotiated_protocol, remote_version);
-    assert!(remote_flags.is_empty());
+    assert_eq!(remote_flags, local_compatibility_flags());
 
     let binary_parts = BinaryHandshakeParts::try_from(parts).expect("binary parts conversion");
     assert_eq!(binary_parts.remote_protocol(), remote_version);
@@ -178,13 +179,16 @@ fn negotiate_session_parts_exposes_binary_metadata() {
         binary_parts.local_advertised_protocol(),
         ProtocolVersion::NEWEST
     );
-    assert!(binary_parts.remote_compatibility_flags().is_empty());
+    assert_eq!(
+        binary_parts.remote_compatibility_flags(),
+        local_compatibility_flags()
+    );
 
     let stream_parts = binary_parts.into_stream_parts();
     let transport = stream_parts.into_stream().into_inner();
     assert_eq!(
         transport.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
     assert_eq!(transport.flushes(), 1);
 }
@@ -226,7 +230,7 @@ fn session_into_inner_returns_binary_transport() {
     let mut raw = handshake.into_inner();
     assert_eq!(
         raw.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
     assert_eq!(raw.flushes(), 1);
 
@@ -264,7 +268,7 @@ fn session_parts_into_inner_returns_binary_transport() {
     let mut raw = parts.into_inner();
     assert_eq!(
         raw.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
     assert_eq!(raw.flushes(), 1);
 
@@ -311,7 +315,7 @@ fn negotiate_session_parts_from_stream_handles_binary_transport() {
     let transport = parts.clone().into_handshake().into_inner();
     assert_eq!(
         transport.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
     assert_eq!(transport.flushes(), 1);
 }
@@ -393,7 +397,8 @@ fn negotiate_session_parts_exposes_legacy_metadata() {
 
 #[test]
 fn try_from_parts_rejects_mismatched_variant() {
-    let transport = MemoryTransport::new(&binary_handshake_bytes(ProtocolVersion::NEWEST));
+    let transport =
+        MemoryTransport::new(binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice());
     let parts =
         negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("binary parts succeed");
 
@@ -432,7 +437,7 @@ fn negotiate_session_parts_with_sniffer_supports_reuse() {
     let transport1 = stream_parts.into_stream().into_inner();
     assert_eq!(
         transport1.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
 
     let parts2 =
@@ -471,7 +476,7 @@ fn negotiate_session_with_sniffer_supports_reuse() {
         .into_inner();
     assert_eq!(
         transport1.writes(),
-        &binary_handshake_bytes(ProtocolVersion::NEWEST)
+        binary_handshake_bytes(ProtocolVersion::NEWEST).as_slice()
     );
 
     let handshake2 =
