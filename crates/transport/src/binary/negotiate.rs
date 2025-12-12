@@ -9,6 +9,16 @@ use std::io::{self, Read, Write};
 
 use super::BinaryHandshake;
 
+pub(super) fn local_compatibility_flags(protocol: ProtocolVersion) -> CompatibilityFlags {
+    if protocol.uses_binary_negotiation() {
+        CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS
+    } else {
+        CompatibilityFlags::EMPTY
+    }
+}
+
 /// Performs the binary rsync protocol negotiation against a fresh transport.
 ///
 /// The helper mirrors upstream rsync's behaviour when establishing a
@@ -104,6 +114,12 @@ where
     };
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);
     let remote_compatibility_flags = if negotiated_protocol.uses_binary_negotiation() {
+        let local_flags = local_compatibility_flags(negotiated_protocol);
+        {
+            let inner = stream.inner_mut();
+            local_flags.write_to(inner)?;
+            inner.flush()?;
+        }
         let mut first = [0u8; 1];
         match stream.read(&mut first)? {
             0 => CompatibilityFlags::EMPTY,
