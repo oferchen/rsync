@@ -1,4 +1,5 @@
-use super::helpers::{MemoryTransport, handshake_bytes, handshake_payload};
+use super::ADVERTISED_COMPATIBILITY_FLAGS;
+use super::helpers::{MemoryTransport, handshake_payload};
 use crate::RemoteProtocolAdvertisement;
 use protocol::{CompatibilityFlags, ProtocolVersion};
 use std::io::Write;
@@ -37,7 +38,7 @@ fn parts_stream_parts_mut_exposes_inner_transport() {
     assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 
     let inner = parts.into_handshake().into_stream().into_inner();
-    let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = handshake_payload(ProtocolVersion::NEWEST, ADVERTISED_COMPATIBILITY_FLAGS);
     expected.extend_from_slice(b"payload");
     assert_eq!(inner.written(), expected.as_slice());
 }
