@@ -1,4 +1,6 @@
-use super::helpers::{InstrumentedTransport, MemoryTransport, handshake_bytes, handshake_payload};
+use super::helpers::{
+    InstrumentedTransport, MemoryTransport, handshake_payload, local_handshake_payload,
+};
 use protocol::{CompatibilityFlags, ProtocolVersion};
 use std::io::{self, Write};
 
@@ -38,7 +40,7 @@ fn map_stream_inner_preserves_protocols_and_replays_transport() {
     assert_eq!(instrumented.flushes(), 1);
 
     let inner = instrumented.into_inner();
-    let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = local_handshake_payload(ProtocolVersion::NEWEST);
     expected.extend_from_slice(b"payload");
     assert_eq!(inner.written(), expected.as_slice());
 }
@@ -102,7 +104,7 @@ fn parts_map_stream_inner_transforms_transport() {
     assert_eq!(instrumented.flushes(), 1);
 
     let inner = instrumented.into_inner();
-    let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = local_handshake_payload(ProtocolVersion::NEWEST);
     expected.extend_from_slice(b"payload");
     assert_eq!(inner.written(), expected.as_slice());
 }
@@ -187,6 +189,6 @@ fn try_map_stream_inner_preserves_original_on_error() {
     let transport = original.into_stream().into_inner();
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        local_handshake_payload(ProtocolVersion::NEWEST)
     );
 }

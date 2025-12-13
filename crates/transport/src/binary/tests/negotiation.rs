@@ -1,4 +1,6 @@
-use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes, handshake_payload};
+use super::helpers::{
+    CountingTransport, MemoryTransport, handshake_bytes, handshake_payload, local_handshake_payload,
+};
 use crate::RemoteProtocolAdvertisement;
 use protocol::{CompatibilityFlags, NegotiationPrologueSniffer, ProtocolVersion};
 use std::io;
@@ -37,7 +39,7 @@ fn negotiate_binary_session_exchanges_versions() {
     let transport = handshake.into_stream().into_inner();
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        local_handshake_payload(ProtocolVersion::NEWEST)
     );
 }
 
@@ -76,7 +78,7 @@ fn negotiate_binary_session_clamps_future_protocols() {
     assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 
     let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), &handshake_bytes(desired));
+    assert_eq!(transport.written(), local_handshake_payload(desired));
 }
 
 #[test]
@@ -169,10 +171,10 @@ fn negotiate_binary_session_flushes_advertisement() {
     assert!(!handshake.local_protocol_was_capped());
     assert_eq!(handshake.remote_compatibility_flags(), sample_flags());
     let transport = handshake.into_stream().into_inner();
-    assert_eq!(transport.flushes(), 1);
+    assert_eq!(transport.flushes(), 2);
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        local_handshake_payload(ProtocolVersion::NEWEST)
     );
 }
 

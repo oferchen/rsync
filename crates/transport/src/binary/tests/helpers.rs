@@ -130,6 +130,14 @@ pub(super) fn handshake_bytes(version: ProtocolVersion) -> [u8; 4] {
     u32::from(version.as_u8()).to_be_bytes()
 }
 
+pub(super) fn default_local_flags(protocol: ProtocolVersion) -> CompatibilityFlags {
+    super::super::negotiate::local_compatibility_flags(protocol)
+}
+
+pub(super) fn local_handshake_payload(protocol: ProtocolVersion) -> Vec<u8> {
+    handshake_payload(protocol, default_local_flags(protocol))
+}
+
 #[must_use]
 pub(super) fn handshake_payload(version: ProtocolVersion, flags: CompatibilityFlags) -> Vec<u8> {
     let mut payload = handshake_bytes(version).to_vec();
