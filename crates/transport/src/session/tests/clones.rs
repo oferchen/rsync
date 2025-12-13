@@ -42,12 +42,12 @@ fn session_handshake_parts_clone_preserves_binary_stream_state() {
     let original_transport = binary.into_stream().into_inner();
     let cloned_transport = cloned.into_stream().into_inner();
 
-    let mut expected_original = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected_original = binary_handshake_bytes(ProtocolVersion::NEWEST);
     expected_original.extend_from_slice(b"original");
     assert_eq!(original_transport.writes(), expected_original.as_slice());
     assert_eq!(original_transport.flushes(), 1);
 
-    let mut expected_clone = binary_handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected_clone = binary_handshake_bytes(ProtocolVersion::NEWEST);
     expected_clone.extend_from_slice(b"clone");
     assert_eq!(cloned_transport.writes(), expected_clone.as_slice());
     assert_eq!(cloned_transport.flushes(), 1);

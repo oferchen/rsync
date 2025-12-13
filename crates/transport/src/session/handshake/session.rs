@@ -297,7 +297,9 @@ impl<R> SessionHandshake<R> {
     ///
     /// // The returned transport is the original stream, including any bytes the
     /// // client wrote while negotiating.
-    /// assert_eq!(raw.writes(), &u32::from(protocol.as_u8()).to_be_bytes());
+    /// let mut expected = u32::from(protocol.as_u8()).to_be_bytes().to_vec();
+    /// expected.extend_from_slice(&[128, 169]);
+    /// assert_eq!(raw.writes(), expected.as_slice());
     /// ```
     #[must_use]
     pub fn into_inner(self) -> R {
