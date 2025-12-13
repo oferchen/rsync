@@ -25,6 +25,7 @@ workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 target_dir="${workspace_root}/target/dist"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_install_root="${workspace_root}/target/interop/upstream-install"
+interop_log_dir="${workspace_root}/target/interop/logs"
 
 # Versions we test against
 versions=(3.0.9 3.1.3 3.4.1)
@@ -271,11 +272,14 @@ build_upstream_from_source() {
   local version=$1
   local src_dir="${upstream_src_root}/rsync-${version}"
   local install_dir="${upstream_install_root}/${version}"
+  local build_log="${interop_log_dir}/rsync-${version}-build.log"
 
   rm -rf "$src_dir"
   mkdir -p "$upstream_src_root" "$upstream_install_root"
+  mkdir -p "$interop_log_dir"
+  rm -f "$build_log"
 
-  echo "Fetching upstream rsync ${version} release tarball from ${rsync_tarball_base_url}"
+  echo "Fetching upstream rsync ${version} release tarball from ${rsync_tarball_base_url} (log: ${build_log})"
   if ! fetch_upstream_tarball "$version" "$src_dir"; then
     echo "Falling back to cloning upstream rsync ${version} from ${rsync_repo_url}" >&2
     if ! clone_upstream_source "$version" "$src_dir"; then
@@ -311,9 +315,23 @@ build_upstream_from_source() {
     configure_args+=("--disable-md2man")
   fi
 
-  ./configure "${configure_args[@]}" >/dev/null
-  make -j"$(build_jobs)" >/dev/null
-  make install >/dev/null
+  if ! ./configure "${configure_args[@]}" >"${build_log}" 2>&1; then
+    echo "Upstream rsync ${version} configure failed; see ${build_log}" >&2
+    tail -n 50 "${build_log}" >&2 || true
+    exit 1
+  fi
+
+  if ! make -j"$(build_jobs)" >>"${build_log}" 2>&1; then
+    echo "Upstream rsync ${version} build failed; see ${build_log}" >&2
+    tail -n 50 "${build_log}" >&2 || true
+    exit 1
+  fi
+
+  if ! make install >>"${build_log}" 2>&1; then
+    echo "Upstream rsync ${version} install failed; see ${build_log}" >&2
+    tail -n 50 "${build_log}" >&2 || true
+    exit 1
+  fi
 
   popd >/dev/null
 }
