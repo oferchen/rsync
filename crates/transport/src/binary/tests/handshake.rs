@@ -1,4 +1,5 @@
 use super::super::BinaryHandshake;
+use super::ADVERTISED_COMPATIBILITY_FLAGS;
 use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes, handshake_payload};
 use crate::RemoteProtocolAdvertisement;
 use protocol::{
@@ -82,7 +83,7 @@ fn into_stream_parts_exposes_negotiation_state() {
     let transport = stream.into_inner();
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        &handshake_payload(ProtocolVersion::NEWEST, ADVERTISED_COMPATIBILITY_FLAGS)
     );
 }
 
@@ -161,7 +162,7 @@ fn from_stream_parts_rehydrates_binary_handshake() {
     let transport = rehydrated.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
 
-    let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = handshake_payload(ProtocolVersion::NEWEST, ADVERTISED_COMPATIBILITY_FLAGS);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.written(), expected.as_slice());
 }
@@ -201,7 +202,7 @@ fn into_parts_round_trips_binary_handshake() {
     let transport = rebuilt.into_stream().into_inner();
     assert_eq!(transport.flushes(), 2);
 
-    let mut expected = handshake_bytes(ProtocolVersion::NEWEST).to_vec();
+    let mut expected = handshake_payload(ProtocolVersion::NEWEST, ADVERTISED_COMPATIBILITY_FLAGS);
     expected.extend_from_slice(b"payload");
     assert_eq!(transport.written(), expected.as_slice());
 }

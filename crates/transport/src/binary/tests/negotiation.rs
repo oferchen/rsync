@@ -1,3 +1,4 @@
+use super::ADVERTISED_COMPATIBILITY_FLAGS;
 use super::helpers::{CountingTransport, MemoryTransport, handshake_bytes, handshake_payload};
 use crate::RemoteProtocolAdvertisement;
 use protocol::{CompatibilityFlags, NegotiationPrologueSniffer, ProtocolVersion};
@@ -37,7 +38,7 @@ fn negotiate_binary_session_exchanges_versions() {
     let transport = handshake.into_stream().into_inner();
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        &handshake_payload(ProtocolVersion::NEWEST, ADVERTISED_COMPATIBILITY_FLAGS)
     );
 }
 
@@ -76,7 +77,10 @@ fn negotiate_binary_session_clamps_future_protocols() {
     assert_eq!(parts.remote_compatibility_flags(), sample_flags());
 
     let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), &handshake_bytes(desired));
+    assert_eq!(
+        transport.written(),
+        &handshake_payload(desired, ADVERTISED_COMPATIBILITY_FLAGS)
+    );
 }
 
 #[test]
@@ -172,7 +176,7 @@ fn negotiate_binary_session_flushes_advertisement() {
     assert_eq!(transport.flushes(), 1);
     assert_eq!(
         transport.written(),
-        &handshake_bytes(ProtocolVersion::NEWEST)
+        &handshake_payload(ProtocolVersion::NEWEST, ADVERTISED_COMPATIBILITY_FLAGS)
     );
 }
 

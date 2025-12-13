@@ -9,6 +9,15 @@ use std::io::{self, Read, Write};
 
 use super::BinaryHandshake;
 
+/// Compatibility flags advertised during the binary negotiation.
+///
+/// Upstream rsync transmits its supported compatibility bits immediately after
+/// exchanging protocol advertisements when speaking protocol 30 or newer. The
+/// Rust implementation mirrors that behaviour by advertising every
+/// compatibility flag recognised by this release, allowing peers to discover
+/// optional capabilities without guessing which subset is enabled.
+pub(crate) const ADVERTISED_COMPATIBILITY_FLAGS: CompatibilityFlags = CompatibilityFlags::ALL_KNOWN;
+
 /// Performs the binary rsync protocol negotiation against a fresh transport.
 ///
 /// The helper mirrors upstream rsync's behaviour when establishing a
@@ -89,7 +98,6 @@ where
     {
         let inner = stream.inner_mut();
         inner.write_all(&advertisement)?;
-        inner.flush()?;
     }
 
     let mut remote_buf = [0u8; 4];
@@ -103,6 +111,11 @@ where
         }
     };
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);
+    if negotiated_protocol.uses_binary_negotiation() {
+        ADVERTISED_COMPATIBILITY_FLAGS.write_to(stream.inner_mut())?;
+    }
+    stream.inner_mut().flush()?;
+
     let remote_compatibility_flags = if negotiated_protocol.uses_binary_negotiation() {
         let mut first = [0u8; 1];
         match stream.read(&mut first)? {
