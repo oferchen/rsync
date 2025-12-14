@@ -5,6 +5,8 @@
 #![doc = include_str!("../README.md")]
 
 mod compatibility;
+/// Debug tracing system for protocol analysis
+pub mod debug_trace;
 mod envelope;
 mod error;
 /// Filter list wire protocol encoding and decoding.
