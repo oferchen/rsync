@@ -6,7 +6,6 @@
 
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TRACE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -97,13 +96,13 @@ impl<R: Read> TracingReader<R> {
 
         match result {
             Ok(n) => {
-                let _ = writeln!(file, "[READ] {} bytes:", n);
+                let _ = writeln!(file, "[READ] {n} bytes:");
                 let _ = writeln!(file, "  Hex: {}", hex_dump(&buf[..*n]));
                 let _ = writeln!(file, "  ASCII: {}", ascii_dump(&buf[..*n]));
-                let _ = writeln!(file, "");
+                let _ = writeln!(file);
             }
             Err(e) => {
-                let _ = writeln!(file, "[READ ERROR] {}", e);
+                let _ = writeln!(file, "[READ ERROR] {e}");
             }
         }
     }
@@ -144,7 +143,10 @@ impl<W: Write> TracingWriter<W> {
             );
             let _ = std::fs::write(
                 &header_path,
-                format!("Write trace started at {:?}\n", std::time::SystemTime::now()),
+                format!(
+                    "Write trace started at {:?}\n",
+                    std::time::SystemTime::now()
+                ),
             );
         }
 
@@ -176,13 +178,13 @@ impl<W: Write> TracingWriter<W> {
 
         match result {
             Ok(n) => {
-                let _ = writeln!(file, "[WRITE] {} bytes:", n);
+                let _ = writeln!(file, "[WRITE] {n} bytes:");
                 let _ = writeln!(file, "  Hex: {}", hex_dump(&buf[..*n]));
                 let _ = writeln!(file, "  ASCII: {}", ascii_dump(&buf[..*n]));
-                let _ = writeln!(file, "");
+                let _ = writeln!(file);
             }
             Err(e) => {
-                let _ = writeln!(file, "[WRITE ERROR] {}", e);
+                let _ = writeln!(file, "[WRITE ERROR] {e}");
             }
         }
     }
@@ -204,7 +206,7 @@ impl<W: Write> Write for TracingWriter<W> {
 fn hex_dump(bytes: &[u8]) -> String {
     bytes
         .iter()
-        .map(|b| format!("{:02x}", b))
+        .map(|b| format!("{b:02x}"))
         .collect::<Vec<_>>()
         .chunks(16)
         .map(|chunk| chunk.join(" "))
@@ -217,7 +219,7 @@ fn ascii_dump(bytes: &[u8]) -> String {
     bytes
         .iter()
         .map(|&b| {
-            if b >= 0x20 && b <= 0x7E {
+            if (0x20..=0x7E).contains(&b) {
                 b as char
             } else {
                 '.'
