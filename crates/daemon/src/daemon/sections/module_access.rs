@@ -673,6 +673,11 @@ fn respond_with_module_request(
                 compat_exchanged: true,  // Already exchanged above
             };
 
+            // TODO: Enable protocol tracing for debugging
+            // The TracingReader/TracingWriter infrastructure exists in protocol::debug_trace
+            // but requires proper environment setup to work in daemon worker threads.
+            // For now, use strace or tcpdump for protocol analysis.
+
             // Run the server transfer - handles protocol setup and multiplex internally
             let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
             match result {
