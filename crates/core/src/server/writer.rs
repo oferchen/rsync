@@ -37,22 +37,32 @@ impl<W: Write> ServerWriter<W> {
     pub fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_))
     }
+
+    /// Sends a control message (non-DATA message) through the multiplexed stream.
+    ///
+    /// This is used for sending protocol messages like MSG_IO_TIMEOUT that need
+    /// to be sent as separate message types, not wrapped in MSG_DATA frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The writer is not in multiplex mode
+    /// - The underlying I/O operation fails
+    pub fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
+        match self {
+            Self::Multiplex(mux) => mux.send_message(code, payload),
+            Self::Plain(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cannot send control messages in plain mode",
+            )),
+        }
+    }
 }
 
 impl<W: Write> Write for ServerWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            Self::Plain(w) => {
-                // Also log to file
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open("/tmp/rsync-debug/server-writes.log")
-                {
-                    let _ = writeln!(f, "[PLAIN] {} bytes: {:02x?}", buf.len(), buf);
-                }
-                w.write(buf)
-            }
+            Self::Plain(w) => w.write(buf),
             Self::Multiplex(w) => w.write(buf),
         }
     }
@@ -66,13 +76,47 @@ impl<W: Write> Write for ServerWriter<W> {
 }
 
 /// Writer that wraps data in multiplex MSG_DATA frames
+///
+/// Buffers writes to avoid sending tiny multiplex frames for every write call.
+/// Mirrors upstream rsync's buffering behavior in io.c.
 pub(super) struct MultiplexWriter<W> {
     inner: W,
+    buffer: Vec<u8>,
+    /// Buffer size matching upstream rsync's IO_BUFFER_SIZE (default 4096)
+    buffer_size: usize,
 }
 
 impl<W: Write> MultiplexWriter<W> {
     fn new(inner: W) -> Self {
-        Self { inner }
+        const DEFAULT_BUFFER_SIZE: usize = 4096;
+        Self {
+            inner,
+            buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            buffer_size: DEFAULT_BUFFER_SIZE,
+        }
+    }
+
+    /// Flushes the internal buffer by sending it as a MSG_DATA frame
+    fn flush_buffer(&mut self) -> io::Result<()> {
+        if !self.buffer.is_empty() {
+            let code = MessageCode::Data;
+            protocol::send_msg(&mut self.inner, code, &self.buffer)?;
+            self.buffer.clear();
+        }
+        Ok(())
+    }
+
+    /// Sends a control message with the specified message code.
+    ///
+    /// Unlike the Write trait which always sends MSG_DATA, this method
+    /// allows sending other message types like MSG_IO_TIMEOUT.
+    /// Flushes buffered data first to maintain message ordering.
+    pub(super) fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
+        // Flush any buffered DATA first
+        self.flush_buffer()?;
+        // Send the control message
+        protocol::send_msg(&mut self.inner, code, payload)?;
+        self.inner.flush()
     }
 }
 
@@ -82,43 +126,25 @@ impl<W: Write> Write for MultiplexWriter<W> {
             return Ok(0);
         }
 
-        // Send as MSG_DATA (code 0)
-        let code = MessageCode::Data;
-
-        // Log to file what we're about to send (including the wire format)
-        // Wire format: 4-byte header [tag, len_byte1, len_byte2, len_byte3] + payload
-        let tag = code.as_u8() + 7; // MPLEX_BASE = 7
-        let len_bytes = [
-            (buf.len() & 0xFF) as u8,
-            ((buf.len() >> 8) & 0xFF) as u8,
-            ((buf.len() >> 16) & 0xFF) as u8,
-        ];
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/rsync-debug/server-writes.log")
-        {
-            let _ = writeln!(
-                f,
-                "[MULTIPLEX] tag={} ({:#04x}), len={} ({:#08x})",
-                tag,
-                tag,
-                buf.len(),
-                buf.len()
-            );
-            let _ = writeln!(
-                f,
-                "[MULTIPLEX] Wire header: [{:#04x}, {:#04x}, {:#04x}, {:#04x}]",
-                tag, len_bytes[0], len_bytes[1], len_bytes[2]
-            );
-            let _ = writeln!(f, "[MULTIPLEX] Payload: {buf:02x?}");
+        // If buffer would overflow, flush first
+        if self.buffer.len() + buf.len() > self.buffer_size {
+            self.flush_buffer()?;
         }
 
-        protocol::send_msg(&mut self.inner, code, buf)?;
+        // If buf is larger than buffer size, send directly
+        if buf.len() > self.buffer_size {
+            let code = MessageCode::Data;
+            protocol::send_msg(&mut self.inner, code, buf)?;
+            return Ok(buf.len());
+        }
+
+        // Buffer the data
+        self.buffer.extend_from_slice(buf);
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        self.flush_buffer()?;
         self.inner.flush()
     }
 }
