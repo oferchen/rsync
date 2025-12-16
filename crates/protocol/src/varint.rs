@@ -134,6 +134,51 @@ pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result
     writer.write_all(&bytes[..len])
 }
 
+/// Writes a variable-length 64-bit integer using rsync's varlong format.
+///
+/// This mirrors upstream's `write_varlong(int f, int64 x, uchar min_bytes)` from io.c.
+/// The encoding packs the value into the minimum number of bytes, with a leading
+/// byte that indicates how many bytes follow.
+///
+/// # Arguments
+///
+/// * `writer` - Destination for the encoded bytes
+/// * `value` - The 64-bit value to encode
+/// * `min_bytes` - Minimum number of bytes to use (typically 3 or 4 for file sizes/times)
+pub fn write_varlong<W: Write + ?Sized>(writer: &mut W, value: i64, min_bytes: u8) -> io::Result<()> {
+    // Convert to little-endian bytes
+    let bytes = value.to_le_bytes();
+
+    // Find the minimum number of significant bytes needed
+    let mut cnt = 8;
+    while cnt > min_bytes as usize && bytes[cnt - 1] == 0 {
+        cnt -= 1;
+    }
+
+    // Calculate the leading byte
+    let bit = 1u8 << (7 - cnt + min_bytes as usize);
+    let leading = if bytes[cnt - 1] >= bit {
+        cnt += 1;
+        !(bit - 1)
+    } else if cnt > min_bytes as usize {
+        bytes[cnt - 1] | !(bit * 2 - 1)
+    } else {
+        bytes[cnt - 1]
+    };
+
+    // Write leading byte followed by the lower bytes
+    writer.write_all(&[leading])?;
+    writer.write_all(&bytes[..cnt - 1])
+}
+
+/// Writes a variable-length integer using protocol 30+ varlong encoding.
+///
+/// This mirrors upstream's `write_varlong30(int f, int64 x, uchar min_bytes)` inline function.
+/// For protocol < 30, it would use write_longint, but we only support protocol 30+.
+pub fn write_varlong30<W: Write + ?Sized>(writer: &mut W, value: i64, min_bytes: u8) -> io::Result<()> {
+    write_varlong(writer, value, min_bytes)
+}
+
 /// Encodes `value` into `out` using rsync's variable-length integer format.
 ///
 /// The helper mirrors [`write_varint`] but appends the encoded bytes to a
