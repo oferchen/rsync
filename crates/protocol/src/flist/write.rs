@@ -6,7 +6,7 @@
 use std::io::{self, Write};
 
 use crate::ProtocolVersion;
-use crate::varint::write_varint;
+use crate::varint::{write_varint, write_varlong, write_varlong30};
 
 use super::entry::FileEntry;
 use super::flags::{
@@ -52,6 +52,9 @@ impl FileListWriter {
     }
 
     /// Writes a file entry to the stream.
+    ///
+    /// This mirrors upstream rsync's `send_file_entry()` from flist.c.
+    /// For protocol 32, flags are written as varint (VARINT_FLIST_FLAGS is set).
     pub fn write_entry<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -59,85 +62,91 @@ impl FileListWriter {
     ) -> io::Result<()> {
         let name = entry.name().as_bytes();
 
-        // Calculate name compression
+        // Calculate name compression (upstream flist.c:532-534)
         let same_len = common_prefix_len(&self.prev_name, name);
         let suffix_len = name.len() - same_len;
 
-        // Build flags
-        let mut flags: u8 = 0;
+        // Build xflags (upstream flist.c:406-540)
+        let mut xflags: u32 = 0;
 
+        // File type initialization
+        if entry.is_dir() && entry.flags().top_dir() {
+            xflags |= XMIT_TOP_DIR as u32;
+        }
+
+        // Mode comparison (upstream flist.c:438-440)
+        if entry.mode() == self.prev_mode {
+            xflags |= XMIT_SAME_MODE as u32;
+        } else {
+            self.prev_mode = entry.mode();
+        }
+
+        // Time comparison (upstream flist.c:494-496)
+        if entry.mtime() == self.prev_mtime {
+            xflags |= XMIT_SAME_TIME as u32;
+        } else {
+            self.prev_mtime = entry.mtime();
+        }
+
+        // Name compression (upstream flist.c:532-537)
         if same_len > 0 {
-            flags |= XMIT_SAME_NAME;
+            xflags |= XMIT_SAME_NAME as u32;
         }
 
         if suffix_len > 255 {
-            flags |= XMIT_LONG_NAME;
+            xflags |= XMIT_LONG_NAME as u32;
         }
 
-        if entry.mtime() == self.prev_mtime {
-            flags |= XMIT_SAME_TIME;
+        // Ensure xflags is non-zero - upstream flist.c:541-547
+        // For protocol 30+ with varint encoding, use XMIT_EXTENDED_FLAGS if xflags would be zero
+        let xflags_to_write = if xflags == 0 {
+            XMIT_EXTENDED_FLAGS as u32
+        } else {
+            xflags
+        };
+
+        // Write xflags as varint for protocol 30+ (upstream flist.c:549-559)
+        // Protocol 32 always has VARINT_FLIST_FLAGS set (0x80 in compat flags)
+        if self.protocol.as_u8() >= 30 {
+            write_varint(writer, xflags_to_write as i32)?;
+        } else {
+            // Older protocol support (not used for protocol 32, but included for completeness)
+            writer.write_all(&[xflags_to_write as u8])?;
         }
 
-        if entry.mode() == self.prev_mode {
-            flags |= XMIT_SAME_MODE;
-        }
-
-        if entry.is_dir() && entry.flags().top_dir() {
-            flags |= XMIT_TOP_DIR;
-        }
-
-        // Extended flags for protocol 28+
-        let need_extended = self.protocol.as_u8() >= 28 && flags == 0;
-        if need_extended {
-            flags |= XMIT_EXTENDED_FLAGS;
-        }
-
-        // Ensure flags byte is non-zero (0 = end of list)
-        if flags == 0 {
-            // Use any harmless flag to ensure non-zero
-            // XMIT_SAME_TIME is safe if we also write the time
-            flags = XMIT_EXTENDED_FLAGS;
-        }
-
-        // Write flags
-        writer.write_all(&[flags])?;
-
-        // Write extended flags if present
-        if flags & XMIT_EXTENDED_FLAGS != 0 && self.protocol.as_u8() >= 28 {
-            writer.write_all(&[0u8])?; // No extended flags set
-        }
-
-        // Write name compression info
-        if flags & XMIT_SAME_NAME != 0 {
+        // Write name compression info (upstream flist.c:560-569)
+        if xflags & (XMIT_SAME_NAME as u32) != 0 {
             writer.write_all(&[same_len as u8])?;
         }
 
         // Write suffix length
-        if flags & XMIT_LONG_NAME != 0 {
+        if xflags & (XMIT_LONG_NAME as u32) != 0 {
             write_varint(writer, suffix_len as i32)?;
         } else {
             writer.write_all(&[suffix_len as u8])?;
         }
 
-        // Write suffix bytes
+        // Write suffix bytes (upstream flist.c:570)
         writer.write_all(&name[same_len..])?;
 
-        // Write size
-        self.write_size(writer, entry.size())?;
+        // Write file length using varlong30 (upstream flist.c:580)
+        write_varlong30(writer, entry.size() as i64, 3)?;
 
-        // Write mtime if different
-        if flags & XMIT_SAME_TIME == 0 {
-            write_varint(writer, entry.mtime() as i32)?;
-            self.prev_mtime = entry.mtime();
+        // Write mtime if different (upstream flist.c:581-585)
+        if xflags & (XMIT_SAME_TIME as u32) == 0 {
+            // For protocol >= 30, use write_varlong with min_bytes=4
+            write_varlong(writer, entry.mtime(), 4)?;
         }
 
-        // Write mode if different
-        if flags & XMIT_SAME_MODE == 0 {
-            write_varint(writer, entry.mode() as i32)?;
-            self.prev_mode = entry.mode();
+        // Write mode if different (upstream flist.c:593-594)
+        if xflags & (XMIT_SAME_MODE as u32) == 0 {
+            // Upstream uses write_int(f, to_wire_mode(mode))
+            // to_wire_mode() is usually a no-op on Unix, just converts mode to i32
+            let wire_mode = entry.mode() as i32;
+            writer.write_all(&wire_mode.to_le_bytes())?;
         }
 
-        // Update previous name
+        // Update previous name (upstream flist.c:677)
         self.prev_name = name.to_vec();
 
         Ok(())
@@ -146,23 +155,6 @@ impl FileListWriter {
     /// Writes the end-of-list marker.
     pub fn write_end<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
         writer.write_all(&[0u8])
-    }
-
-    /// Writes the file size using varint encoding.
-    fn write_size<W: Write + ?Sized>(&self, writer: &mut W, size: u64) -> io::Result<()> {
-        if self.protocol.as_u8() >= 30 {
-            if size > u32::MAX as u64 - 1 {
-                // Extended size encoding
-                writer.write_all(&[0xFF, 0xFF, 0xFF, 0xFF])?; // Marker for extended
-                write_varint(writer, (size >> 32) as i32)?;
-                write_varint(writer, size as i32)?;
-            } else {
-                write_varint(writer, size as i32)?;
-            }
-        } else {
-            write_varint(writer, size as i32)?;
-        }
-        Ok(())
     }
 }
 
