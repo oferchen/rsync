@@ -227,18 +227,29 @@ impl GeneratorContext {
     /// 3. For each file: receive signature, generate delta, send delta
     pub fn run<R: Read, W: Write + ?Sized>(
         &mut self,
-        reader: &mut R,
+        mut reader: super::reader::ServerReader<R>,
         writer: &mut W,
         paths: &[PathBuf],
     ) -> io::Result<GeneratorStats> {
-        // Read filter list from client (mirrors upstream recv_filter_list at main.c:1256)
-        let wire_rules = read_filter_list(reader, self.protocol)?;
+        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30
+        // This matches upstream behavior where the generator/sender role also activates
+        // INPUT multiplex when protocol >= 30 to read multiplexed data from the receiver.
+        if self.protocol.as_u8() >= 30 {
+            reader = reader.activate_multiplex().map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
+            })?;
+        }
+
+        // Read filter list from client (multiplexed for protocol >= 30)
+        let wire_rules = read_filter_list(&mut reader, self.protocol)?;
 
         // Convert wire format to FilterSet
         if !wire_rules.is_empty() {
             let filter_set = self.parse_received_filters(&wire_rules)?;
             self.filters = Some(filter_set);
         }
+
+        let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
 
         // Build file list
         self.build_file_list(paths)?;
@@ -539,6 +550,8 @@ mod tests {
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             buffered: Vec::new(),
             compat_exchanged: false,
+            client_args: None, // Test mode doesn't need client args
+            io_timeout: None, // Test mode doesn't configure I/O timeouts
         }
     }
 

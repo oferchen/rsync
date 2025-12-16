@@ -169,12 +169,13 @@ pub fn run_server_with_handshake<W: Write>(
     // This is the FIRST thing start_server() does after setting file descriptors
     // IMPORTANT: Parameter order matches upstream: f_out first, f_in second!
     // For SSH mode, compat_exchanged is false (do compat exchange here).
-    // For daemon mode, compat_exchanged is true (already done on raw TcpStream before calling this function).
+    // For daemon mode, compat_exchanged is false (do compat exchange with client capabilities).
     let setup_result = setup::setup_protocol(
         handshake.protocol,
         &mut stdout,
         &mut chained_stdin,
         handshake.compat_exchanged,
+        handshake.client_args.as_deref(),
     );
     setup_result?;
 
@@ -195,7 +196,7 @@ pub fn run_server_with_handshake<W: Write>(
     // BEFORE recv_filter_list() is called. The recv_filter_list() may read nothing (if
     // receiver_wants_list is false), but the stream is already in multiplex mode when
     // the file list is subsequently read.
-    let mut reader = reader::ServerReader::new_plain(chained_stdin);
+    let reader = reader::ServerReader::new_plain(chained_stdin);
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
     // Always activate OUTPUT multiplex at protocol >= 23 (main.c:1248)
@@ -203,31 +204,40 @@ pub fn run_server_with_handshake<W: Write>(
         writer = writer.activate_multiplex()?;
     }
 
-    // Activate INPUT multiplex at protocol >= 30 (main.c:1167 for receiver, similar for sender)
-    // This matches upstream: both roles activate INPUT multiplex early for modern protocols
-    if handshake.protocol.as_u8() >= 30 {
-        reader = reader.activate_multiplex()?;
+    // Send MSG_IO_TIMEOUT for daemon mode with configured timeout (main.c:1249-1250)
+    // This tells the client about the server's I/O timeout value
+    if let Some(timeout_secs) = handshake.io_timeout {
+        if handshake.protocol.as_u8() >= 31 {
+            // Send MSG_IO_TIMEOUT with 4-byte little-endian timeout value
+            // Upstream uses SIVAL(numbuf, 0, num) which stores as little-endian
+            use protocol::MessageCode;
+            let timeout_bytes = (timeout_secs as i32).to_le_bytes();
+            writer.send_message(MessageCode::IoTimeout, &timeout_bytes)?;
+        }
     }
 
-    let mut chained_reader = reader;
+    // NOTE: INPUT multiplex activation is now handled by each role AFTER reading filter list.
+    // This prevents trying to read plain filter list data through a multiplexed stream.
+    // See receiver.rs and generator.rs for the activation points.
+
+    let chained_reader = reader;
 
     match config.role {
         ServerRole::Receiver => {
-            // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
             let mut ctx = ReceiverContext::new(&handshake, config);
-            let stats = ctx.run(&mut chained_reader, &mut writer)?;
+            // Pass reader by value - ReceiverContext::run now takes ownership and activates multiplex internally
+            let stats = ctx.run(chained_reader, &mut writer)?;
 
             Ok(ServerStats::Receiver(stats))
         }
         ServerRole::Generator => {
-            // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
-
             // Convert OsString args to PathBuf for file walking
             let paths: Vec<std::path::PathBuf> =
                 config.args.iter().map(std::path::PathBuf::from).collect();
 
             let mut ctx = GeneratorContext::new(&handshake, config);
-            let stats = ctx.run(&mut chained_reader, &mut writer, &paths)?;
+            // Pass reader by value - GeneratorContext::run now takes ownership and activates multiplex internally
+            let stats = ctx.run(chained_reader, &mut writer, &paths)?;
 
             Ok(ServerStats::Generator(stats))
         }

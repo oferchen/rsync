@@ -164,9 +164,7 @@ pub fn exchange_compat_flags_direct(
 /// the 4-byte binary protocol exchange is skipped (upstream compat.c:599-607).
 ///
 /// For protocol >= 30, compatibility flags are ALWAYS exchanged (upstream compat.c:710-743),
-/// regardless of whether the binary protocol exchange happened. However, for daemon mode,
-/// the compat flags exchange should be done BEFORE calling this function using
-/// `exchange_compat_flags_direct()` to ensure they're sent as plain data before multiplex.
+/// regardless of whether the binary protocol exchange happened.
 ///
 /// # Arguments
 ///
@@ -174,6 +172,7 @@ pub fn exchange_compat_flags_direct(
 /// * `stdout` - Output stream for sending server's compatibility flags (f_out in upstream)
 /// * `stdin` - Input stream for reading client's compatibility flags (f_in in upstream)
 /// * `skip_compat_exchange` - Set to true if compat flags were already exchanged (daemon mode)
+/// * `client_args` - Client arguments for parsing capabilities (daemon mode only)
 ///
 /// # Returns
 ///
@@ -185,6 +184,7 @@ pub fn setup_protocol(
     stdout: &mut dyn Write,
     _stdin: &mut dyn Read,
     skip_compat_exchange: bool,
+    client_args: Option<&[String]>,
 ) -> io::Result<()> {
     // For daemon mode, the binary 4-byte protocol exchange has already happened
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
@@ -192,14 +192,19 @@ pub fn setup_protocol(
 
     // Send compatibility flags for protocol >= 30 (UNIDIRECTIONAL)
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
-    // However, for daemon mode, this should be skipped if the exchange was already done
-    // directly on the raw TcpStream via exchange_compat_flags_direct()
     if protocol.as_u8() >= 30 && !skip_compat_exchange {
         // Build our compat flags (server side)
         // This mirrors upstream compat.c:712-732 which builds flags from client_info string
-        let our_flags = CompatibilityFlags::INC_RECURSE
-            | CompatibilityFlags::CHECKSUM_SEED_FIX
-            | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let our_flags = if let Some(args) = client_args {
+            // Daemon mode: parse client capabilities from -e option
+            let client_info = parse_client_info(args);
+            build_compat_flags_from_client_info(&client_info, true)
+        } else {
+            // SSH mode: use default flags
+            CompatibilityFlags::INC_RECURSE
+                | CompatibilityFlags::CHECKSUM_SEED_FIX
+                | CompatibilityFlags::VARINT_FLIST_FLAGS
+        };
 
         // Server ONLY WRITES compat flags (upstream compat.c:736-738)
         // The client reads but does NOT send anything back - it's unidirectional!
