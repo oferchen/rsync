@@ -620,7 +620,7 @@ fn respond_with_module_request(
             }
 
             // Now clone the stream for concurrent read/write
-            let read_stream = match stream.try_clone() {
+            let mut read_stream = match stream.try_clone() {
                 Ok(s) => s,
                 Err(err) => {
                     let payload = format!("@ERROR: failed to clone stream: {err}");
@@ -636,7 +636,7 @@ fn respond_with_module_request(
             // Clone write stream - this creates another handle to the SAME socket
             // Upstream rsync uses dup() which is equivalent to try_clone()
             // The key is: both handles point to the same kernel socket, so no buffering issues
-            let write_stream = match stream.try_clone() {
+            let mut write_stream = match stream.try_clone() {
                 Ok(s) => s,
                 Err(err) => {
                     return Err(io::Error::other(
@@ -655,16 +655,15 @@ fn respond_with_module_request(
                 io_timeout: module.timeout.map(|t| t.get()),  // Pass configured I/O timeout
             };
 
-            // Enable protocol tracing for debugging
-            // Trace files will be written to /tmp/rsync-trace/ directory
-            use protocol::debug_trace::{TraceConfig, TracingReader, TracingWriter};
-
-            let trace_config = TraceConfig::enabled("daemon");
-            let mut traced_read_stream = TracingReader::new(read_stream, trace_config.clone());
-            let mut traced_write_stream = TracingWriter::new(write_stream, trace_config);
+            // Disable protocol tracing temporarily to isolate protocol issues
+            // TODO: Re-enable after protocol 28 issue is resolved
+            // use protocol::debug_trace::{TraceConfig, TracingReader, TracingWriter};
+            // let trace_config = TraceConfig::enabled("daemon");
+            // let mut traced_read_stream = TracingReader::new(read_stream, trace_config.clone());
+            // let mut traced_write_stream = TracingWriter::new(write_stream, trace_config);
 
             // Run the server transfer - handles protocol setup and multiplex internally
-            let result = run_server_with_handshake(config, handshake, &mut traced_read_stream, &mut traced_write_stream);
+            let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
             match result {
                 Ok(_server_stats) => {
                     if let Some(log) = log_sink {
