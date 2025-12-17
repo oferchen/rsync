@@ -101,7 +101,7 @@ use std::io::{self, Read};
 use std::num::NonZeroUsize;
 
 use checksums::RollingDigest;
-use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+use checksums::strong::{Md4, Md5, Md5Seed, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
 use crate::delta::SignatureLayout;
 
@@ -111,7 +111,15 @@ pub enum SignatureAlgorithm {
     /// MD4, used by upstream rsync for historical protocol versions.
     Md4,
     /// MD5, negotiated when both peers enable the checksum.
-    Md5,
+    ///
+    /// Supports optional seeded hashing with configurable ordering for protocol
+    /// compatibility. The `seed_config` determines whether the seed is hashed
+    /// before or after the file data, controlled by the CHECKSUM_SEED_FIX
+    /// compatibility flag in protocol 30+.
+    Md5 {
+        /// Seed configuration for MD5 checksum calculation.
+        seed_config: Md5Seed,
+    },
     /// SHA-1, available when both peers advertise it.
     Sha1,
     /// XXH64, available in newer protocol combinations with an explicit seed.
@@ -136,7 +144,7 @@ impl SignatureAlgorithm {
     #[must_use]
     pub const fn digest_len(self) -> usize {
         match self {
-            SignatureAlgorithm::Md4 | SignatureAlgorithm::Md5 => 16,
+            SignatureAlgorithm::Md4 | SignatureAlgorithm::Md5 { .. } => 16,
             SignatureAlgorithm::Sha1 => Sha1::DIGEST_LEN,
             SignatureAlgorithm::Xxh64 { .. } | SignatureAlgorithm::Xxh3 { .. } => 8,
             SignatureAlgorithm::Xxh3_128 { .. } => 16,
@@ -147,7 +155,9 @@ impl SignatureAlgorithm {
     fn compute_full(self, data: &[u8]) -> Vec<u8> {
         match self {
             SignatureAlgorithm::Md4 => Md4::digest(data).as_ref().to_vec(),
-            SignatureAlgorithm::Md5 => Md5::digest(data).as_ref().to_vec(),
+            SignatureAlgorithm::Md5 { seed_config } => {
+                Md5::digest_with_seed(seed_config, data).as_ref().to_vec()
+            }
             SignatureAlgorithm::Sha1 => Sha1::digest(data).as_ref().to_vec(),
             SignatureAlgorithm::Xxh64 { seed } => Xxh64::digest(seed, data).as_ref().to_vec(),
             SignatureAlgorithm::Xxh3 { seed } => Xxh3::digest(seed, data).as_ref().to_vec(),
@@ -451,9 +461,14 @@ mod tests {
         assert_eq!(layout.block_count(), 3);
         assert_eq!(layout.remainder(), 111);
 
-        let signature =
-            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md5)
-                .expect("signature generation succeeds");
+        let signature = generate_file_signature(
+            Cursor::new(data.clone()),
+            layout,
+            SignatureAlgorithm::Md5 {
+                seed_config: Md5Seed::none(),
+            },
+        )
+        .expect("signature generation succeeds");
 
         assert_eq!(signature.blocks().len(), 3);
         assert_eq!(signature.total_bytes(), data.len() as u64);
