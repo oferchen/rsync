@@ -24,6 +24,13 @@ pub struct HandshakeResult {
     /// Whether compatibility flags have already been exchanged on the raw stream.
     /// When true, setup_protocol() should skip the compat flags exchange.
     pub compat_exchanged: bool,
+    /// Client arguments for daemon mode (includes -e option with capabilities).
+    /// None for SSH mode.
+    pub client_args: Option<Vec<String>>,
+    /// I/O timeout value in seconds for daemon mode.
+    /// When Some(_), daemon mode should send MSG_IO_TIMEOUT for protocol >= 31.
+    /// None for SSH mode or when no timeout is configured.
+    pub io_timeout: Option<u64>,
 }
 
 /// Performs the server-side protocol version handshake.
@@ -65,6 +72,8 @@ pub fn perform_handshake(
         protocol: negotiated,
         buffered: Vec::new(),
         compat_exchanged: false,
+        client_args: None, // SSH mode doesn't have daemon client args
+        io_timeout: None,  // SSH mode doesn't configure I/O timeouts
     })
 }
 
@@ -169,6 +178,8 @@ pub fn perform_legacy_handshake(
         protocol: negotiated,
         buffered: Vec::new(),
         compat_exchanged: false,
+        client_args: None, // SSH mode doesn't have daemon client args
+        io_timeout: None,  // SSH mode doesn't configure I/O timeouts
     })
 }
 
