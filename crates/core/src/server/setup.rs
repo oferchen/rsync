@@ -222,17 +222,19 @@ pub fn setup_protocol(
         // the HandshakeResult or ServerConfig
     }
 
-    // Protocol 30+ capability negotiation (upstream compat.c:534-585)
-    // This happens AFTER compatibility flags exchange
-    if protocol.as_u8() >= 30 && !skip_compat_exchange {
-        use protocol::negotiate_capabilities;
-
-        let _negotiated = negotiate_capabilities(protocol, _stdin, stdout)?;
-
-        // TODO: Store negotiated algorithms in HandshakeResult or ServerConfig
-        // Upstream stores these in global variables (checksum_choice, compress_choice),
-        // but we'll need to thread them through the context structures
-    }
+    // TODO: Protocol 30+ capability negotiation (upstream compat.c:534-585)
+    // This is currently disabled because the timing relative to multiplex activation
+    // needs to be corrected. The client activates multiplex before we send the
+    // negotiation strings, causing protocol errors ("unexpected tag 25").
+    //
+    // The negotiation implementation exists in protocol::negotiate_capabilities()
+    // but needs to be integrated at the correct point in the protocol flow.
+    // See investigation notes in crates/protocol/src/negotiation/capabilities.rs
+    //
+    // if protocol.as_u8() >= 30 && !skip_compat_exchange {
+    //     use protocol::negotiate_capabilities;
+    //     let _negotiated = negotiate_capabilities(protocol, _stdin, stdout)?;
+    // }
 
     Ok(())
 }
