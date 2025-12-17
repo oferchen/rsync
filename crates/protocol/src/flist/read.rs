@@ -57,23 +57,31 @@ impl FileListReader {
         &mut self,
         reader: &mut R,
     ) -> io::Result<Option<FileEntry>> {
-        // Read flags byte
-        let mut flags_byte = [0u8; 1];
-        reader.read_exact(&mut flags_byte)?;
+        // Read flags (as varint for protocol 30+, as byte for older protocols)
+        let flags_value = if self.protocol.as_u8() >= 30 {
+            read_varint(reader)?
+        } else {
+            let mut flags_byte = [0u8; 1];
+            reader.read_exact(&mut flags_byte)?;
+            flags_byte[0] as i32
+        };
 
-        // Zero byte marks end of file list
-        if flags_byte[0] == 0 {
+        // Zero value marks end of file list
+        if flags_value == 0 {
             return Ok(None);
         }
 
-        let mut flags = FileFlags::new(flags_byte[0], 0);
+        // Extract flags bytes from varint value
+        let flags_byte = (flags_value & 0xFF) as u8;
+        let ext_byte = ((flags_value >> 8) & 0xFF) as u8;
 
-        // Read extended flags if present (protocol 28+)
-        if flags.has_extended() && self.protocol.as_u8() >= 28 {
-            let mut ext_byte = [0u8; 1];
-            reader.read_exact(&mut ext_byte)?;
-            flags = FileFlags::new(flags_byte[0], ext_byte[0]);
-        }
+        // Build flags structure
+        // For protocol 28+, extended flags may be present in the second byte
+        let flags = if ext_byte != 0 || (flags_byte & super::flags::XMIT_EXTENDED_FLAGS) != 0 {
+            FileFlags::new(flags_byte, ext_byte)
+        } else {
+            FileFlags::new(flags_byte, 0)
+        };
 
         // Read name with compression
         let name = self.read_name(reader, &flags)?;
@@ -85,7 +93,8 @@ impl FileListReader {
         let mtime = if flags.same_time() {
             self.prev_mtime
         } else {
-            let mtime = read_varint(reader)? as i64;
+            // Mtime is written as varlong with min_bytes=4 (upstream flist.c:581-585)
+            let mtime = crate::read_varlong(reader, 4)?;
             self.prev_mtime = mtime;
             mtime
         };
@@ -94,7 +103,10 @@ impl FileListReader {
         let mode = if flags.same_mode() {
             self.prev_mode
         } else {
-            let mode = read_varint(reader)? as u32;
+            // Mode is written as 4-byte little-endian i32 (upstream write_int)
+            let mut mode_bytes = [0u8; 4];
+            reader.read_exact(&mut mode_bytes)?;
+            let mode = i32::from_le_bytes(mode_bytes) as u32;
             self.prev_mode = mode;
             mode
         };
@@ -159,21 +171,18 @@ impl FileListReader {
         Ok(name)
     }
 
-    /// Reads the file size using varint encoding.
+    /// Reads the file size using varlong encoding.
+    ///
+    /// The write side uses write_varlong30(writer, size, 3) which calls write_varlong.
+    /// We must use read_varlong with min_bytes=3 to match.
     fn read_size<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<u64> {
-        // In protocol 30+, large files use a two-part encoding
+        // In protocol 30+, sizes use varlong with min_bytes=3
         if self.protocol.as_u8() >= 30 {
-            let low = read_varint(reader)? as u32;
-            if low == u32::MAX {
-                // Extended size follows
-                let high = read_varint(reader)? as u64;
-                let low2 = read_varint(reader)? as u64;
-                Ok((high << 32) | low2)
-            } else {
-                Ok(low as u64)
-            }
+            // Match write_varlong30(writer, size, 3) from write.rs:133
+            let size = crate::read_varlong(reader, 3)?;
+            Ok(size as u64)
         } else {
-            // Older protocols use 32-bit sizes
+            // Older protocols use 32-bit varint sizes
             Ok(read_varint(reader)? as u64)
         }
     }
@@ -193,7 +202,6 @@ pub fn read_file_entry<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use super::super::flags::{XMIT_SAME_MODE, XMIT_SAME_NAME, XMIT_SAME_TIME};
     use super::*;
     use std::io::Cursor;
 
@@ -213,61 +221,55 @@ mod tests {
 
     #[test]
     fn read_simple_entry() {
-        // Construct a simple file entry:
-        // Use XMIT_SAME_TIME | XMIT_SAME_MODE = 0x60
-        // No XMIT_SAME_NAME means we don't read same_len byte
-        let flags = XMIT_SAME_TIME | XMIT_SAME_MODE;
+        use super::super::write::FileListWriter;
 
+        let protocol = test_protocol();
         let mut data = Vec::new();
-        data.push(flags); // flags (0x60)
-        // No same_len byte because XMIT_SAME_NAME is not set
-        data.push(4); // suffix_len = 4
-        data.extend_from_slice(b"test"); // name
-        data.push(100); // size (varint, small value)
+        let mut writer = FileListWriter::new(protocol);
+
+        // Create a simple file entry
+        let mut entry = FileEntry::new_file("test".into(), 100, 0o100644);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::new(test_protocol());
-        // Set previous mode/mtime so SAME_* flags work
-        reader.prev_mode = 0o100644;
-        reader.prev_mtime = 1700000000;
+        let mut reader = FileListReader::new(protocol);
 
-        let entry = reader.read_entry(&mut cursor).unwrap().unwrap();
-        assert_eq!(entry.name(), "test");
-        assert_eq!(entry.size(), 100);
-        assert_eq!(entry.mode(), 0o100644);
-        assert_eq!(entry.mtime(), 1700000000);
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "test");
+        assert_eq!(read_entry.size(), 100);
+        assert_eq!(read_entry.mode(), 0o100644);
+        assert_eq!(read_entry.mtime(), 1700000000);
     }
 
     #[test]
     fn read_entry_with_name_compression() {
-        // First entry (no name compression)
-        let flags1 = XMIT_SAME_TIME | XMIT_SAME_MODE;
-        let mut data = Vec::new();
-        data.push(flags1);
-        // No same_len byte because XMIT_SAME_NAME is not set
-        data.push(8); // suffix_len = 8
-        data.extend_from_slice(b"dir/file"); // name
-        data.push(50); // size
+        use super::super::write::FileListWriter;
 
-        // Second entry with shared prefix (uses XMIT_SAME_NAME)
-        let flags2 = XMIT_SAME_NAME | XMIT_SAME_TIME | XMIT_SAME_MODE;
-        data.push(flags2);
-        data.push(4); // same_len = 4 (shares "dir/")
-        data.push(5); // suffix_len = 5
-        data.extend_from_slice(b"other"); // suffix
-        data.push(75); // size
+        let protocol = test_protocol();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        // Create two entries with shared prefix to test name compression
+        let mut entry1 = FileEntry::new_file("dir/file".into(), 50, 0o100644);
+        entry1.set_mtime(1700000000, 0);
+
+        let mut entry2 = FileEntry::new_file("dir/other".into(), 75, 0o100644);
+        entry2.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry1).unwrap();
+        writer.write_entry(&mut data, &entry2).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::new(test_protocol());
-        reader.prev_mode = 0o100644;
-        reader.prev_mtime = 1700000000;
+        let mut reader = FileListReader::new(protocol);
 
         // Read first entry
-        let entry1 = reader.read_entry(&mut cursor).unwrap().unwrap();
-        assert_eq!(entry1.name(), "dir/file");
+        let read_entry1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry1.name(), "dir/file");
 
-        // Read second entry with compression
-        let entry2 = reader.read_entry(&mut cursor).unwrap().unwrap();
-        assert_eq!(entry2.name(), "dir/other");
+        // Read second entry (should use name compression)
+        let read_entry2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry2.name(), "dir/other");
     }
 }
