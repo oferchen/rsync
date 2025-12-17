@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use super::{ServerConfig, ServerRole};
+use crate::server::{ServerConfig, ServerRole};
 
 #[test]
 fn config_rejects_empty_flag_string() {
