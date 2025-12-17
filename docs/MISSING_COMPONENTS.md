@@ -234,20 +234,21 @@ if let Some(flags) = &self.compat_flags {
 - ✅ Compression config: 3 tests for ServerConfig.compression_level
 - ✅ Compression integration: 6 tests for end-to-end compression
 - ✅ Compat flags behavior: 14 tests for flag implementation (Phase 4)
-- ❌ Golden tests: Protocol handshakes need fixtures
-- ⚠️ Interop tests: Exit codes and messages validated, handshakes pending
-- **Total**: 3382/3382 tests passing ✅ (as of commit d1554f23)
+- ✅ Golden tests: Protocol handshakes complete (12 tests passing)
+- ✅ Interop tests: Exit codes and messages validated, handshakes complete
+- **Total**: 3382/3382 tests passing ✅ (as of commit 3887d08a)
 
 ---
 
 ## Implementation Roadmap
 
-### Phase 1: Testing Infrastructure
-**Status**: PENDING
+### Phase 1: ✅ Testing Infrastructure (COMPLETED)
+**Status**: COMPLETE
+**Commit**: 955761f5, 3887d08a
 **Priority**: HIGH
-1. Capture golden handshake files for protocols 28-32
-2. Verify golden tests pass
-3. Document handshake capture process
+1. ✅ Capture golden handshake files for protocols 28-32
+2. ✅ Verify golden tests pass (12 tests, all passing)
+3. ✅ Document handshake capture process (tools/strace-capture.sh)
 
 ### Phase 2: ✅ Checksum Algorithm Wiring (COMPLETED)
 **Status**: COMPLETE

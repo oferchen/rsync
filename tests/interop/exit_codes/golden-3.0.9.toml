@@ -1,0 +1,18 @@
+version = "3.0.9"
+
+[exit_codes]
+partial_transfer = 23
+exclude_all_files = 0
+protocol_version_mismatch = 2
+permission_denied_write = 12
+help_requested = 0
+max_delete_limit = 1
+missing_source = 23
+permission_denied_read = 23
+dry_run_success = 0
+source_not_found = 23
+invalid_option = 1
+daemon_connection_refused = 10
+version_requested = 0
+conflicting_options = 1
+remote_not_found = 14

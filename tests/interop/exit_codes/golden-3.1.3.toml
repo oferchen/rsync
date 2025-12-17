@@ -1,0 +1,18 @@
+version = "3.1.3"
+
+[exit_codes]
+daemon_connection_refused = 10
+permission_denied_read = 23
+help_requested = 0
+version_requested = 0
+invalid_option = 1
+missing_source = 23
+partial_transfer = 23
+conflicting_options = 1
+exclude_all_files = 0
+max_delete_limit = 1
+permission_denied_write = 3
+protocol_version_mismatch = 2
+dry_run_success = 0
+source_not_found = 23
+remote_not_found = 14
