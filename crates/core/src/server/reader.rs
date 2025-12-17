@@ -7,17 +7,25 @@
 
 use std::io::{self, Read};
 
+use compress::algorithm::CompressionAlgorithm;
+
+use super::compressed_reader::CompressedReader;
+
 /// Server reader abstraction that switches between plain and multiplex modes.
 ///
 /// Upstream rsync modifies global I/O buffer state via `io_start_multiplex_in()`.
 /// We achieve the same by wrapping the reader and delegating based on mode.
 #[allow(dead_code)]
 #[allow(private_interfaces)]
+#[allow(clippy::large_enum_variant)]
 pub enum ServerReader<R: Read> {
     /// Plain mode - read data directly without demultiplexing
     Plain(R),
     /// Multiplex mode - extract data from MSG_DATA frames
     Multiplex(MultiplexReader<R>),
+    /// Compressed+Multiplex mode - decompress then demultiplex
+    #[allow(dead_code)] // Used in production code once compression is integrated
+    Compressed(CompressedReader<MultiplexReader<R>>),
 }
 
 #[allow(dead_code)]
@@ -35,13 +43,47 @@ impl<R: Read> ServerReader<R> {
                 io::ErrorKind::AlreadyExists,
                 "multiplex already active",
             )),
+            Self::Compressed(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "compression already active",
+            )),
+        }
+    }
+
+    /// Activates decompression on top of multiplex mode.
+    ///
+    /// This must be called AFTER activate_multiplex() to match upstream behavior.
+    /// Upstream rsync activates decompression in io.c:io_start_buffering_in()
+    /// which wraps the already-multiplexed stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The reader is not in multiplex mode (decompression requires multiplex first)
+    /// - Compression is already active
+    /// - The compression algorithm is not supported in this build
+    #[allow(dead_code)] // Used in production code once compression is integrated
+    pub fn activate_compression(self, algorithm: CompressionAlgorithm) -> io::Result<Self> {
+        match self {
+            Self::Multiplex(mux) => {
+                let compressed = CompressedReader::new(mux, algorithm)?;
+                Ok(Self::Compressed(compressed))
+            }
+            Self::Plain(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "compression requires multiplex mode first",
+            )),
+            Self::Compressed(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "compression already active",
+            )),
         }
     }
 
     /// Returns true if multiplex mode is active
     #[allow(dead_code)]
     pub fn is_multiplexed(&self) -> bool {
-        matches!(self, Self::Multiplex(_))
+        matches!(self, Self::Multiplex(_) | Self::Compressed(_))
     }
 }
 
@@ -50,6 +92,7 @@ impl<R: Read> Read for ServerReader<R> {
         match self {
             Self::Plain(r) => r.read(buf),
             Self::Multiplex(r) => r.read(buf),
+            Self::Compressed(r) => r.read(buf),
         }
     }
 }
