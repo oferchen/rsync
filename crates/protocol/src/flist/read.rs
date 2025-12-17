@@ -58,6 +58,12 @@ impl FileListReader {
         reader: &mut R,
     ) -> io::Result<Option<FileEntry>> {
         // Read flags (as varint for protocol 30+, as byte for older protocols)
+        //
+        // This mirrors the write side's VARINT_FLIST_FLAGS behavior. Upstream rsync
+        // always sets this compatibility flag for protocol 30+ sessions (compat.c),
+        // so checking protocol >= 30 is equivalent to checking the flag. We mirror
+        // upstream's performance optimization of using the protocol version directly
+        // (flist.c:recv_file_entry) rather than testing compat_flags on every entry.
         let flags_value = if self.protocol.as_u8() >= 30 {
             read_varint(reader)?
         } else {
