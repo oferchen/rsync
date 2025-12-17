@@ -15,10 +15,21 @@
 //! 4. Server reads client's compression choice (single algorithm name)
 //! 5. Both sides select the first mutually supported algorithm
 //!
+//! # Character Set Encoding
+//!
+//! The negotiation strings (algorithm names) are ASCII and thus valid UTF-8.
+//! Upstream rsync also supports charset negotiation via iconv for filename
+//! encoding conversion, but that is a separate mechanism handled elsewhere.
+//!
+//! **Future extension**: Charset negotiation for filename encoding may be added
+//! to this module to support cross-platform filename compatibility (e.g.,
+//! macOS UTF-8 normalization, Windows codepages).
+//!
 //! # References
 //!
 //! - Upstream: `compat.c:534-585` (negotiate_the_strings)
 //! - Upstream: `compat.c:332-391` (parse_negotiate_str, recv_negotiate_str)
+//! - Upstream: `options.c` (iconv support for charset conversion)
 
 use std::io::{self, Read, Write};
 
@@ -224,6 +235,15 @@ fn send_string(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 ///
 /// This matches upstream's `read_buf()` behavior in negotiation context
 /// (compat.c:368-386).
+///
+/// # Encoding Notes
+///
+/// Negotiation strings are algorithm names (e.g., "md5", "zlib") which are
+/// pure ASCII and thus valid UTF-8. However, rsync also supports charset
+/// negotiation (iconv) for filename encoding, which is a separate mechanism.
+///
+/// The current implementation assumes UTF-8, which is safe for algorithm names
+/// but may need extension for charset negotiation in the future.
 fn recv_string(reader: &mut dyn Read) -> io::Result<String> {
     let len = read_varint(reader)? as usize;
 
@@ -239,6 +259,8 @@ fn recv_string(reader: &mut dyn Read) -> io::Result<String> {
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf)?;
 
+    // Algorithm names are ASCII (subset of UTF-8), but validate anyway
+    // to catch protocol errors early (e.g., reading from wrong stream layer)
     String::from_utf8(buf).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
