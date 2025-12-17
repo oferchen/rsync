@@ -24,6 +24,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+use checksums::strong::Md5Seed;
 use filters::{FilterRule, FilterSet};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
@@ -39,12 +40,31 @@ use super::handshake::HandshakeResult;
 /// Converts a negotiated checksum algorithm from the protocol layer to
 /// a signature algorithm for the engine layer.
 ///
-/// The seed parameter is used for XXHash variants and ignored for others.
-fn checksum_algorithm_to_signature(algorithm: ChecksumAlgorithm, seed: i32) -> SignatureAlgorithm {
+/// The seed parameter is used for XXHash variants and MD5 (when compat_flags are present).
+/// For MD5, the CHECKSUM_SEED_FIX compat flag determines hash ordering:
+/// - Flag set: seed hashed before data (proper order, protocol 30+)
+/// - Flag not set: seed hashed after data (legacy order)
+fn checksum_algorithm_to_signature(
+    algorithm: ChecksumAlgorithm,
+    seed: i32,
+    compat_flags: Option<&CompatibilityFlags>,
+) -> SignatureAlgorithm {
     let seed_u64 = seed as u64;
     match algorithm {
         ChecksumAlgorithm::MD4 => SignatureAlgorithm::Md4,
-        ChecksumAlgorithm::MD5 => SignatureAlgorithm::Md5,
+        ChecksumAlgorithm::MD5 => {
+            let seed_config = if let Some(flags) = compat_flags {
+                if flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX) {
+                    Md5Seed::proper(seed)
+                } else {
+                    Md5Seed::legacy(seed)
+                }
+            } else {
+                // No compat flags = legacy behavior (protocol < 30)
+                Md5Seed::legacy(seed)
+            };
+            SignatureAlgorithm::Md5 { seed_config }
+        }
         ChecksumAlgorithm::SHA1 => SignatureAlgorithm::Sha1,
         ChecksumAlgorithm::XXH64 => SignatureAlgorithm::Xxh64 { seed: seed_u64 },
         ChecksumAlgorithm::XXH128 => SignatureAlgorithm::Xxh3_128 { seed: seed_u64 },
@@ -361,6 +381,7 @@ impl GeneratorContext {
                     strong_sum_length,
                     self.protocol,
                     self.negotiated_algorithms.as_ref(),
+                    self.compat_flags.as_ref(),
                     self.checksum_seed,
                 )?
             } else {
@@ -460,6 +481,7 @@ pub struct GeneratorStats {
 ///
 /// Reconstructs the signature from wire format blocks, creates an index,
 /// and uses DeltaGenerator to produce the delta.
+#[allow(clippy::too_many_arguments)]
 fn generate_delta_from_signature<R: Read>(
     source: R,
     block_length: u32,
@@ -467,6 +489,7 @@ fn generate_delta_from_signature<R: Read>(
     strong_sum_length: u8,
     protocol: ProtocolVersion,
     negotiated_algorithms: Option<&NegotiationResult>,
+    compat_flags: Option<&CompatibilityFlags>,
     checksum_seed: i32,
 ) -> io::Result<DeltaScript> {
     use checksums::RollingDigest;
@@ -516,10 +539,13 @@ fn generate_delta_from_signature<R: Read>(
     // otherwise fall back to protocol-based defaults (matches upstream rsync)
     let checksum_algorithm = if let Some(negotiated) = negotiated_algorithms {
         // Use negotiated algorithm from Protocol 30+ capability negotiation
-        checksum_algorithm_to_signature(negotiated.checksum, checksum_seed)
+        checksum_algorithm_to_signature(negotiated.checksum, checksum_seed, compat_flags)
     } else if protocol.as_u8() >= 30 {
         // Protocol 30+ default: MD5 (when negotiation was skipped)
-        SignatureAlgorithm::Md5
+        // Legacy seed ordering when no compat flags exchanged
+        SignatureAlgorithm::Md5 {
+            seed_config: Md5Seed::legacy(checksum_seed),
+        }
     } else {
         // Protocol < 30: MD4 (historical)
         SignatureAlgorithm::Md4
