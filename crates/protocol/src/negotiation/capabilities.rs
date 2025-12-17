@@ -177,7 +177,7 @@ pub struct NegotiationResult {
 /// use std::io::{stdin, stdout};
 ///
 /// let protocol = ProtocolVersion::try_from(32)?;
-/// let result = negotiate_capabilities(protocol, &mut stdin(), &mut stdout())?;
+/// let result = negotiate_capabilities(protocol, &mut stdin(), &mut stdout(), true)?;
 /// println!("Using checksum: {:?}, compression: {:?}",
 ///          result.checksum, result.compression);
 /// # Ok::<(), std::io::Error>(())
@@ -186,11 +186,22 @@ pub fn negotiate_capabilities(
     protocol: ProtocolVersion,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
+    do_negotiation: bool,
 ) -> io::Result<NegotiationResult> {
-    // Protocol < 30 doesn't negotiate, use defaults
+    // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.as_u8() < 30 {
         return Ok(NegotiationResult {
             checksum: ChecksumAlgorithm::MD4,
+            compression: CompressionAlgorithm::Zlib,
+        });
+    }
+
+    // If client doesn't have VARINT_FLIST_FLAGS ('v' capability), skip negotiation
+    // This matches upstream's do_negotiated_strings check (compat.c:561-585)
+    if !do_negotiation {
+        // Use protocol 30+ defaults without negotiation
+        return Ok(NegotiationResult {
+            checksum: ChecksumAlgorithm::MD5,  // Protocol 30+ default
             compression: CompressionAlgorithm::Zlib,
         });
     }
@@ -308,7 +319,7 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout).unwrap();
+        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true).unwrap();
 
         // Protocol < 30 should use defaults without any I/O
         assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
@@ -329,7 +340,7 @@ mod tests {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout).unwrap();
+        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true).unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
@@ -356,7 +367,7 @@ mod tests {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout).unwrap();
+        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true).unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zstd);
