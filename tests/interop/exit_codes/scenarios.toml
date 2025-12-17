@@ -75,6 +75,7 @@ description = "Cannot connect to rsync daemon (port closed)"
 [[scenario]]
 name = "socket_io_error"
 exit_code = 10
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Socket I/O error (requires network failure simulation)"
 
@@ -98,6 +99,7 @@ description = "Cannot write to destination (permission denied)"
 [[scenario]]
 name = "protocol_data_error"
 exit_code = 12
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Protocol data stream error (requires protocol corruption)"
 
@@ -116,6 +118,7 @@ skip = true  # May require --log-file support
 [[scenario]]
 name = "ipc_error"
 exit_code = 14
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "IPC error (requires internal failure)"
 
@@ -124,6 +127,7 @@ description = "IPC error (requires internal failure)"
 [[scenario]]
 name = "sibling_crashed"
 exit_code = 15
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Sibling process crashed (requires process injection)"
 
@@ -131,6 +135,7 @@ description = "Sibling process crashed (requires process injection)"
 [[scenario]]
 name = "sibling_terminated"
 exit_code = 16
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Sibling process killed (requires signal)"
 
@@ -138,6 +143,7 @@ description = "Sibling process killed (requires signal)"
 [[scenario]]
 name = "sigusr1_signal"
 exit_code = 19
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Received SIGUSR1 (requires signal during transfer)"
 
@@ -145,6 +151,7 @@ description = "Received SIGUSR1 (requires signal during transfer)"
 [[scenario]]
 name = "sigint_signal"
 exit_code = 20
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Received SIGINT (requires Ctrl-C during transfer)"
 
@@ -152,6 +159,7 @@ description = "Received SIGINT (requires Ctrl-C during transfer)"
 [[scenario]]
 name = "waitpid_failed"
 exit_code = 21
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "waitpid() failed (internal error)"
 
@@ -159,6 +167,7 @@ description = "waitpid() failed (internal error)"
 [[scenario]]
 name = "memory_allocation_error"
 exit_code = 22
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Memory allocation failure (requires OOM condition)"
 
@@ -217,6 +226,7 @@ skip = true  # Requires SSH setup
 [[scenario]]
 name = "ssh_killed"
 exit_code = 125
+args = ["rsync", "/dev/null", "/dev/null"]
 skip = true
 description = "Remote shell killed by signal"
 
