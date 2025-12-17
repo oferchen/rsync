@@ -5,12 +5,12 @@
 
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm, NegotiationResult, ProtocolVersion};
 
+use crate::server::config::ServerConfig;
+use crate::server::flags::ParsedServerFlags;
+use crate::server::generator::GeneratorContext;
 use crate::server::handshake::HandshakeResult;
 use crate::server::receiver::ReceiverContext;
-use crate::server::generator::GeneratorContext;
-use crate::server::config::ServerConfig;
 use crate::server::role::ServerRole;
-use crate::server::flags::ParsedServerFlags;
 
 fn create_handshake(
     protocol: u8,
