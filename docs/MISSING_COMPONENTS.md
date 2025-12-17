@@ -211,7 +211,7 @@ if let Some(flags) = &self.compat_flags {
 - ✅ Compat flags tests: 3 integration tests for flag accessibility
 - ❌ Golden tests: Protocol handshakes need fixtures
 - ⚠️ Interop tests: Exit codes and messages validated, handshakes pending
-- **Total**: 3336/3338 tests passing (2 pre-existing failures)
+- **Total**: 3339/3339 tests passing ✅ (as of commit 2ec56d82)
 
 ---
 
