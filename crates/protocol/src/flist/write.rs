@@ -106,7 +106,16 @@ impl FileListWriter {
         };
 
         // Write xflags as varint for protocol 30+ (upstream flist.c:549-559)
-        // Protocol 32 always has VARINT_FLIST_FLAGS set (0x80 in compat flags)
+        //
+        // VARINT_FLIST_FLAGS compatibility flag (bit 7, 0x80) controls whether flags
+        // are encoded as varints or single bytes. Upstream rsync automatically sets
+        // this flag for all protocol 30+ sessions during capability negotiation
+        // (compat.c:setup_protocol), making it equivalent to a protocol version check.
+        //
+        // We mirror upstream by checking protocol >= 30 rather than testing the flag,
+        // because the flag is always present for these protocols and not checking it
+        // matches upstream's actual behavior (they also use protocol version checks
+        // in performance-critical paths like flist.c:send_file_entry).
         if self.protocol.as_u8() >= 30 {
             write_varint(writer, xflags_to_write as i32)?;
         } else {
