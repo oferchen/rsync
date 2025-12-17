@@ -97,7 +97,7 @@ tests/protocol_handshakes/
 5. Add tests for compressed data flow
 
 ### 4. Compat Flags Usage
-**Status**: Stored but not used for runtime behavior
+**Status**: Accessible but not used for runtime behavior
 **Location**: `crates/core/src/server/{receiver,generator}.rs`
 **Impact**: Protocol-specific optimizations and behaviors disabled
 
@@ -105,7 +105,9 @@ tests/protocol_handshakes/
 - ✅ Compat flags exchanged during Protocol 30+ setup
 - ✅ Stored in `HandshakeResult.compat_flags: Option<CompatibilityFlags>`
 - ✅ Passed to role contexts (ReceiverContext, GeneratorContext)
-- ❌ Not used to control protocol behaviors (marked with `#[allow(dead_code)]`)
+- ✅ Accessor methods: `ctx.compat_flags()` returns Option<CompatibilityFlags> (Commit: 52201448)
+- ✅ Integration tests verify flag accessibility and individual flag checks
+- ❌ Not used to control protocol behaviors
 
 **Required Implementation**:
 Use flags to control protocol behaviors in role contexts:
@@ -206,9 +208,10 @@ if let Some(flags) = &self.compat_flags {
 - ✅ Integration tests: Basic transfer scenarios work
 - ✅ Property tests: Checksums, filters have property tests
 - ✅ Algorithm tests: 14 integration tests for negotiated checksums
+- ✅ Compat flags tests: 3 integration tests for flag accessibility
 - ❌ Golden tests: Protocol handshakes need fixtures
 - ⚠️ Interop tests: Exit codes and messages validated, handshakes pending
-- **Total**: 3333/3335 tests passing (2 pre-existing failures)
+- **Total**: 3336/3338 tests passing (2 pre-existing failures)
 
 ---
 
@@ -239,12 +242,14 @@ if let Some(flags) = &self.compat_flags {
 5. Add tests for compressed data flow
 
 ### Phase 4: Runtime Flags Usage
-**Status**: PENDING
+**Status**: IN PROGRESS
 **Priority**: MEDIUM
-1. Use compat flags in role contexts for protocol behaviors
-2. Implement flag-dependent behavior (INC_RECURSE, SAFE_FILE_LIST, etc.)
-3. Test with various flag combinations
-4. Remove `#[allow(dead_code)]` annotations
+1. ✅ Add accessor methods for compat_flags (Commit: 52201448)
+2. ✅ Remove `#[allow(dead_code)]` annotations (Commit: 52201448)
+3. ✅ Add tests for flag accessibility (3 tests)
+4. ❌ Use compat flags in role contexts for protocol behaviors
+5. ❌ Implement flag-dependent behavior (INC_RECURSE, SAFE_FILE_LIST, etc.)
+6. ❌ Test with various flag combinations and behavioral changes
 
 ### Phase 5: Automation (optional)
 **Status**: PENDING
