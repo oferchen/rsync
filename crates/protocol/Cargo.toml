@@ -14,7 +14,13 @@ no-default-features = false
 rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
+[features]
+# Compression algorithm features (match compress crate features)
+lz4 = ["compress/lz4"]
+zstd = ["compress/zstd"]
+
 [dependencies]
+compress = { path = "../compress" }
 memchr = "2.7"
 
 [dev-dependencies]
