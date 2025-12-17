@@ -145,10 +145,20 @@ impl ReceiverContext {
     ///
     /// The file list is sent by the client in the rsync wire format with
     /// path compression and conditional fields based on flags.
+    ///
+    /// If the sender transmits an I/O error marker (SAFE_FILE_LIST mode), this
+    /// method propagates the error up to the caller for handling. The caller should
+    /// decide whether to continue or abort based on the error severity and context.
     pub fn receive_file_list<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
-        let mut flist_reader = FileListReader::new(self.protocol);
+        let mut flist_reader = if let Some(flags) = self.compat_flags {
+            FileListReader::with_compat_flags(self.protocol, flags)
+        } else {
+            FileListReader::new(self.protocol)
+        };
         let mut count = 0;
 
+        // Read entries until end marker or error
+        // If SAFE_FILE_LIST is enabled, sender may transmit I/O error marker
         while let Some(entry) = flist_reader.read_entry(reader)? {
             self.file_list.push(entry);
             count += 1;
@@ -628,7 +638,7 @@ mod tests {
 
         let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
         writer.write_entry(&mut data, &entry).unwrap();
-        writer.write_end(&mut data).unwrap();
+        writer.write_end(&mut data, None).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
         let count = ctx.receive_file_list(&mut cursor).unwrap();
