@@ -653,6 +653,8 @@ fn respond_with_module_request(
                 compat_exchanged: false,  // Let setup_protocol parse client_args and send compat flags
                 client_args: Some(client_args.clone()),  // Pass client args for capability parsing
                 io_timeout: module.timeout.map(|t| t.get()),  // Pass configured I/O timeout
+                negotiated_algorithms: None,  // Will be populated by setup_protocol()
+                compat_flags: None,  // Will be populated by setup_protocol()
             };
 
             // Disable protocol tracing temporarily to isolate protocol issues

@@ -25,7 +25,7 @@ use std::io::{self, Read, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
-use protocol::ProtocolVersion;
+use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::wire::{DeltaOp, read_delta, write_signature};
@@ -52,6 +52,12 @@ pub struct ReceiverContext {
     config: ServerConfig,
     /// List of files to receive.
     file_list: Vec<FileEntry>,
+    /// Negotiated checksum and compression algorithms from Protocol 30+ capability negotiation.
+    /// None for protocols < 30 or when negotiation was skipped.
+    negotiated_algorithms: Option<NegotiationResult>,
+    /// Compatibility flags exchanged during protocol setup.
+    /// None for protocols < 30 or when compat exchange was skipped.
+    compat_flags: Option<CompatibilityFlags>,
 }
 
 impl ReceiverContext {
@@ -61,6 +67,8 @@ impl ReceiverContext {
             protocol: handshake.protocol,
             config,
             file_list: Vec::new(),
+            negotiated_algorithms: handshake.negotiated_algorithms.clone(),
+            compat_flags: handshake.compat_flags.clone(),
         }
     }
 
@@ -498,6 +506,8 @@ mod tests {
             compat_exchanged: false,
             client_args: None, // Test mode doesn't need client args
             io_timeout: None,  // Test mode doesn't configure I/O timeouts
+            negotiated_algorithms: None, // Test mode uses defaults
+            compat_flags: None, // Test mode uses defaults
         }
     }
 
