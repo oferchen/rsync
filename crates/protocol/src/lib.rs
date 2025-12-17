@@ -46,12 +46,15 @@ pub use multiplex::{
     send_msg,
 };
 pub use negotiation::{
-    BufferedPrefixTooSmall, NegotiationPrologue, NegotiationPrologueDetector,
-    NegotiationPrologueSniffer, ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind,
-    detect_negotiation_prologue, read_and_parse_legacy_daemon_greeting,
+    BufferedPrefixTooSmall, ChecksumAlgorithm, CompressionAlgorithm, NegotiationPrologue,
+    NegotiationPrologueDetector, NegotiationPrologueSniffer, NegotiationResult,
+    ParseNegotiationPrologueError, ParseNegotiationPrologueErrorKind, detect_negotiation_prologue,
+    negotiate_capabilities, read_and_parse_legacy_daemon_greeting,
     read_and_parse_legacy_daemon_greeting_details, read_legacy_daemon_line,
 };
-pub use varint::{decode_varint, encode_varint_to_vec, read_varint, write_varint};
+pub use varint::{
+    decode_varint, encode_varint_to_vec, read_varint, write_varint, write_varlong, write_varlong30,
+};
 pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,
     ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP, SUPPORTED_PROTOCOL_BOUNDS,
