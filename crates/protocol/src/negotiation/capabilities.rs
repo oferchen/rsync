@@ -141,7 +141,9 @@ impl CompressionAlgorithm {
     ///
     /// Returns an error if the algorithm requires a feature that is not enabled
     /// (e.g., LZ4 or Zstd without the corresponding feature flag).
-    pub fn to_compress_algorithm(&self) -> io::Result<Option<compress::algorithm::CompressionAlgorithm>> {
+    pub fn to_compress_algorithm(
+        &self,
+    ) -> io::Result<Option<compress::algorithm::CompressionAlgorithm>> {
         match self {
             Self::None => Ok(None),
             Self::Zlib | Self::ZlibX => Ok(Some(compress::algorithm::CompressionAlgorithm::Zlib)),

@@ -3,6 +3,7 @@
 
 use std::ffi::OsString;
 
+use compress::zlib::CompressionLevel;
 use protocol::ProtocolVersion;
 
 use super::flags::ParsedServerFlags;
@@ -21,6 +22,10 @@ pub struct ServerConfig {
     pub flags: ParsedServerFlags,
     /// Remaining positional arguments passed to the server.
     pub args: Vec<OsString>,
+    /// Optional compression level for zlib compression (0-9).
+    /// When None, defaults to level 6 (upstream default).
+    /// Sourced from daemon configuration or environment.
+    pub compression_level: Option<CompressionLevel>,
 }
 
 impl ServerConfig {
@@ -51,6 +56,7 @@ impl ServerConfig {
             flag_string,
             flags,
             args,
+            compression_level: None,
         })
     }
 }
