@@ -266,13 +266,19 @@ impl GeneratorContext {
 
     /// Sends the file list to the receiver.
     pub fn send_file_list<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
-        let mut flist_writer = FileListWriter::new(self.protocol);
+        let mut flist_writer = if let Some(flags) = self.compat_flags {
+            FileListWriter::with_compat_flags(self.protocol, flags)
+        } else {
+            FileListWriter::new(self.protocol)
+        };
 
         for entry in &self.file_list {
             flist_writer.write_entry(writer, entry)?;
         }
 
-        flist_writer.write_end(writer)?;
+        // Write end marker with no error (SAFE_FILE_LIST support)
+        // Future: track I/O errors during file list building and pass them here
+        flist_writer.write_end(writer, None)?;
         writer.flush()?;
 
         Ok(self.file_list.len())
