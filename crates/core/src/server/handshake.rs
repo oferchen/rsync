@@ -12,7 +12,7 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 
-use protocol::{ProtocolVersion, select_highest_mutual};
+use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion, select_highest_mutual};
 
 /// Result of a successful server-side handshake.
 #[derive(Debug, Clone)]
@@ -31,6 +31,12 @@ pub struct HandshakeResult {
     /// When Some(_), daemon mode should send MSG_IO_TIMEOUT for protocol >= 31.
     /// None for SSH mode or when no timeout is configured.
     pub io_timeout: Option<u64>,
+    /// Negotiated checksum and compression algorithms from Protocol 30+ capability negotiation.
+    /// None for protocols < 30 or when negotiation was skipped.
+    pub negotiated_algorithms: Option<NegotiationResult>,
+    /// Compatibility flags exchanged during protocol setup.
+    /// None for protocols < 30 or when compat exchange was skipped.
+    pub compat_flags: Option<CompatibilityFlags>,
 }
 
 /// Performs the server-side protocol version handshake.
@@ -74,6 +80,8 @@ pub fn perform_handshake(
         compat_exchanged: false,
         client_args: None, // SSH mode doesn't have daemon client args
         io_timeout: None,  // SSH mode doesn't configure I/O timeouts
+        negotiated_algorithms: None, // Will be populated by setup_protocol()
+        compat_flags: None, // Will be populated by setup_protocol()
     })
 }
 
@@ -180,6 +188,8 @@ pub fn perform_legacy_handshake(
         compat_exchanged: false,
         client_args: None, // SSH mode doesn't have daemon client args
         io_timeout: None,  // SSH mode doesn't configure I/O timeouts
+        negotiated_algorithms: None, // Will be populated by setup_protocol()
+        compat_flags: None, // Will be populated by setup_protocol()
     })
 }
 

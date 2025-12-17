@@ -25,7 +25,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use filters::{FilterRule, FilterSet};
-use protocol::ProtocolVersion;
+use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
 use protocol::wire::{DeltaOp, read_signature, write_delta};
@@ -47,6 +47,12 @@ pub struct GeneratorContext {
     file_list: Vec<FileEntry>,
     /// Filter rules received from client.
     filters: Option<FilterSet>,
+    /// Negotiated checksum and compression algorithms from Protocol 30+ capability negotiation.
+    /// None for protocols < 30 or when negotiation was skipped.
+    negotiated_algorithms: Option<NegotiationResult>,
+    /// Compatibility flags exchanged during protocol setup.
+    /// None for protocols < 30 or when compat exchange was skipped.
+    compat_flags: Option<CompatibilityFlags>,
 }
 
 impl GeneratorContext {
@@ -57,6 +63,8 @@ impl GeneratorContext {
             config,
             file_list: Vec::new(),
             filters: None,
+            negotiated_algorithms: handshake.negotiated_algorithms.clone(),
+            compat_flags: handshake.compat_flags.clone(),
         }
     }
 
@@ -552,6 +560,8 @@ mod tests {
             compat_exchanged: false,
             client_args: None, // Test mode doesn't need client args
             io_timeout: None,  // Test mode doesn't configure I/O timeouts
+            negotiated_algorithms: None, // Test mode uses defaults
+            compat_flags: None, // Test mode uses defaults
         }
     }
 

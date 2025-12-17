@@ -3,9 +3,20 @@
 //! This module mirrors upstream rsync's `compat.c:setup_protocol()` function,
 //! handling protocol version negotiation and compatibility flags exchange.
 
-use protocol::{CompatibilityFlags, ProtocolVersion};
+use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
+
+/// Result of protocol setup containing negotiated algorithms and compatibility flags.
+#[derive(Debug, Clone)]
+pub struct SetupResult {
+    /// Negotiated checksum and compression algorithms from Protocol 30+ capability negotiation.
+    /// None for protocols < 30 or when negotiation was skipped.
+    pub negotiated_algorithms: Option<NegotiationResult>,
+    /// Compatibility flags exchanged during protocol setup.
+    /// None for protocols < 30 or when compat exchange was skipped.
+    pub compat_flags: Option<CompatibilityFlags>,
+}
 
 /// Parses client capabilities from the `-e` option argument.
 ///
@@ -214,7 +225,7 @@ pub fn setup_protocol(
     stdin: &mut dyn Read,
     skip_compat_exchange: bool,
     client_args: Option<&[String]>,
-) -> io::Result<Option<protocol::NegotiationResult>> {
+) -> io::Result<SetupResult> {
     // For daemon mode, the binary 4-byte protocol exchange has already happened
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
     // We skip that exchange here since our HandshakeResult already contains the negotiated protocol.
@@ -225,7 +236,7 @@ pub fn setup_protocol(
 
     // Build compat flags and perform negotiation for protocol >= 30
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
-    let negotiated = if protocol.as_u8() >= 30 && !skip_compat_exchange {
+    let (compat_flags, negotiated_algorithms) = if protocol.as_u8() >= 30 && !skip_compat_exchange {
         // Build our compat flags (server side)
         // This mirrors upstream compat.c:712-732 which builds flags from client_info string
         let our_flags = if let Some(args) = client_args {
@@ -250,10 +261,6 @@ pub fn setup_protocol(
         // - When am_server=false: only read_varint is called
         // This is a UNIDIRECTIONAL send from server to client.
 
-        // TODO: Store our_flags for use by role handlers
-        // Upstream stores these in global variables, but we'll need to pass them through
-        // the HandshakeResult or ServerConfig
-
         // Protocol 30+ capability negotiation (upstream compat.c:534-585)
         // This MUST happen inside setup_protocol(), BEFORE the function returns,
         // so negotiation completes in RAW mode BEFORE multiplex activation.
@@ -266,9 +273,11 @@ pub fn setup_protocol(
 
         // Check if client supports negotiated strings (has 'v' capability)
         let do_negotiation = our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS);
-        Some(protocol::negotiate_capabilities(protocol, stdin, stdout, do_negotiation)?)
+        let algorithms = protocol::negotiate_capabilities(protocol, stdin, stdout, do_negotiation)?;
+
+        (Some(our_flags), Some(algorithms))
     } else {
-        None  // Protocol < 30 uses default algorithms
+        (None, None)  // Protocol < 30 uses default algorithms and no compat flags
     };
 
     // Send checksum seed (ALL protocols, upstream compat.c:750)
@@ -285,5 +294,8 @@ pub fn setup_protocol(
     stdout.write_all(&checksum_seed.to_le_bytes())?;
     stdout.flush()?;
 
-    Ok(negotiated)
+    Ok(SetupResult {
+        negotiated_algorithms,
+        compat_flags,
+    })
 }
