@@ -25,16 +25,31 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use filters::{FilterRule, FilterSet};
-use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
 use protocol::wire::{DeltaOp, read_signature, write_delta};
+use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
 use engine::signature::SignatureAlgorithm;
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
+
+/// Converts a negotiated checksum algorithm from the protocol layer to
+/// a signature algorithm for the engine layer.
+///
+/// The seed parameter is used for XXHash variants and ignored for others.
+fn checksum_algorithm_to_signature(algorithm: ChecksumAlgorithm, seed: i32) -> SignatureAlgorithm {
+    let seed_u64 = seed as u64;
+    match algorithm {
+        ChecksumAlgorithm::MD4 => SignatureAlgorithm::Md4,
+        ChecksumAlgorithm::MD5 => SignatureAlgorithm::Md5,
+        ChecksumAlgorithm::SHA1 => SignatureAlgorithm::Sha1,
+        ChecksumAlgorithm::XXH64 => SignatureAlgorithm::Xxh64 { seed: seed_u64 },
+        ChecksumAlgorithm::XXH128 => SignatureAlgorithm::Xxh3_128 { seed: seed_u64 },
+    }
+}
 
 /// Context for the generator role during a transfer.
 #[derive(Debug)]
@@ -52,7 +67,11 @@ pub struct GeneratorContext {
     negotiated_algorithms: Option<NegotiationResult>,
     /// Compatibility flags exchanged during protocol setup.
     /// None for protocols < 30 or when compat exchange was skipped.
+    /// TODO: Use compat_flags to control protocol behaviors (INC_RECURSE, CHECKSUM_SEED_FIX, etc.)
+    #[allow(dead_code)]
     compat_flags: Option<CompatibilityFlags>,
+    /// Checksum seed for XXHash algorithms.
+    checksum_seed: i32,
 }
 
 impl GeneratorContext {
@@ -63,8 +82,9 @@ impl GeneratorContext {
             config,
             file_list: Vec::new(),
             filters: None,
-            negotiated_algorithms: handshake.negotiated_algorithms.clone(),
-            compat_flags: handshake.compat_flags.clone(),
+            negotiated_algorithms: handshake.negotiated_algorithms,
+            compat_flags: handshake.compat_flags,
+            checksum_seed: handshake.checksum_seed,
         }
     }
 
@@ -315,6 +335,8 @@ impl GeneratorContext {
                     &sig_blocks,
                     strong_sum_length,
                     self.protocol,
+                    self.negotiated_algorithms.as_ref(),
+                    self.checksum_seed,
                 )?
             } else {
                 // Receiver has no basis, send whole file as literals
@@ -419,6 +441,8 @@ fn generate_delta_from_signature<R: Read>(
     sig_blocks: &[protocol::wire::signature::SignatureBlock],
     strong_sum_length: u8,
     protocol: ProtocolVersion,
+    negotiated_algorithms: Option<&NegotiationResult>,
+    checksum_seed: i32,
 ) -> io::Result<DeltaScript> {
     use checksums::RollingDigest;
     use engine::delta::SignatureLayout;
@@ -463,12 +487,16 @@ fn generate_delta_from_signature<R: Read>(
     let total_bytes = (block_count.saturating_sub(1)) * u64::from(block_length);
     let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
 
-    // Select checksum algorithm based on protocol version (matches upstream rsync)
-    // Protocol < 30: MD4 (historical)
-    // Protocol >= 30: MD5 (modern default)
-    let checksum_algorithm = if protocol.as_u8() >= 30 {
+    // Select checksum algorithm: use negotiated algorithm if available,
+    // otherwise fall back to protocol-based defaults (matches upstream rsync)
+    let checksum_algorithm = if let Some(negotiated) = negotiated_algorithms {
+        // Use negotiated algorithm from Protocol 30+ capability negotiation
+        checksum_algorithm_to_signature(negotiated.checksum, checksum_seed)
+    } else if protocol.as_u8() >= 30 {
+        // Protocol 30+ default: MD5 (when negotiation was skipped)
         SignatureAlgorithm::Md5
     } else {
+        // Protocol < 30: MD4 (historical)
         SignatureAlgorithm::Md4
     };
 
@@ -558,11 +586,11 @@ mod tests {
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             buffered: Vec::new(),
             compat_exchanged: false,
-            client_args: None, // Test mode doesn't need client args
-            io_timeout: None,  // Test mode doesn't configure I/O timeouts
+            client_args: None,           // Test mode doesn't need client args
+            io_timeout: None,            // Test mode doesn't configure I/O timeouts
             negotiated_algorithms: None, // Test mode uses defaults
-            compat_flags: None, // Test mode uses defaults
-            checksum_seed: 0, // Test mode uses dummy seed
+            compat_flags: None,          // Test mode uses defaults
+            checksum_seed: 0,            // Test mode uses dummy seed
         }
     }
 
