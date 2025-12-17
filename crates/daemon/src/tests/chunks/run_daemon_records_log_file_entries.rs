@@ -44,10 +44,8 @@ fn run_daemon_records_log_file_entries() {
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-
+    // Daemon responds directly with OK for module requests
+    // (CAP is only sent for #list requests)
     line.clear();
     reader.read_line(&mut line).expect("module acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");

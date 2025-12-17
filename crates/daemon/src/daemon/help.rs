@@ -22,6 +22,7 @@ pub(crate) fn help_text(brand: Brand) -> String {
             "  --port PORT         Listen on the supplied TCP port (default 873).\n",
             "  --once              Accept a single connection and exit.\n",
             "  --max-sessions N    Accept N connections before exiting (N > 0).\n",
+            "  --no-detach         Run in foreground (no-op; daemon doesn't fork by default).\n",
             "  --config FILE      Load module definitions from FILE (packages install {default_config}).\n",
             "  --module SPEC      Register an in-memory module (NAME=PATH[,COMMENT]).\n",
             "  --motd-file FILE   Append MOTD lines from FILE before module listings.\n",

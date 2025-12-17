@@ -42,10 +42,8 @@ fn run_daemon_denies_module_when_host_not_allowed() {
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-
+    // Daemon responds directly with error for denied access
+    // (CAP is only sent for #list requests)
     line.clear();
     reader.read_line(&mut line).expect("error message");
     assert_eq!(
