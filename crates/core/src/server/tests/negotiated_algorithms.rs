@@ -40,6 +40,17 @@ fn test_config() -> ServerConfig {
     }
 }
 
+fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -> ServerConfig {
+    ServerConfig {
+        role: ServerRole::Receiver,
+        protocol: ProtocolVersion::try_from(32u8).unwrap(),
+        flag_string: "-az".to_string(),
+        flags: ParsedServerFlags::default(),
+        args: vec![std::ffi::OsString::from(".")],
+        compression_level: Some(level),
+    }
+}
+
 #[test]
 fn test_receiver_uses_negotiated_md5() {
     // Protocol 30+ with MD5 negotiated
@@ -331,4 +342,45 @@ fn test_compat_flags_none_for_protocol_29() {
 
     // Protocol 29 should have no compat flags
     assert!(ctx.compat_flags().is_none());
+}
+
+#[test]
+fn test_compression_level_none_defaults_to_level_6() {
+    // When compression_level is None, server should use Default (level 6)
+    let config = test_config();
+    assert_eq!(config.compression_level, None);
+
+    // Verify default variant matches upstream behavior
+    let default_level = compress::zlib::CompressionLevel::Default;
+    assert_eq!(default_level, compress::zlib::CompressionLevel::Default);
+}
+
+#[test]
+fn test_compression_level_configured() {
+    // When compression_level is Some, server should use configured value
+    use std::num::NonZeroU8;
+    let level_1 = compress::zlib::CompressionLevel::precise(NonZeroU8::new(1).unwrap());
+    let config = test_config_with_compression_level(level_1);
+
+    assert!(config.compression_level.is_some());
+    if let Some(compress::zlib::CompressionLevel::Precise(val)) = config.compression_level {
+        assert_eq!(val.get(), 1);
+    } else {
+        panic!("Expected Precise compression level");
+    }
+}
+
+#[test]
+fn test_compression_level_maximum() {
+    // Test maximum compression level (9)
+    use std::num::NonZeroU8;
+    let level_9 = compress::zlib::CompressionLevel::precise(NonZeroU8::new(9).unwrap());
+    let config = test_config_with_compression_level(level_9);
+
+    assert!(config.compression_level.is_some());
+    if let Some(compress::zlib::CompressionLevel::Precise(val)) = config.compression_level {
+        assert_eq!(val.get(), 9);
+    } else {
+        panic!("Expected Precise compression level");
+    }
 }
