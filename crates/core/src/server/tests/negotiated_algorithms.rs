@@ -258,3 +258,76 @@ fn test_all_checksum_algorithms_supported() {
         assert_eq!(ctx.protocol().as_u8(), 32);
     }
 }
+
+#[test]
+fn test_compat_flags_accessible_in_receiver() {
+    use protocol::CompatibilityFlags;
+
+    let negotiated = NegotiationResult {
+        checksum: ChecksumAlgorithm::MD5,
+        compression: CompressionAlgorithm::Zlib,
+    };
+    let compat_flags = Some(
+        CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS,
+    );
+    let mut handshake = create_handshake(30, Some(negotiated), 12345);
+    handshake.compat_flags = compat_flags;
+
+    let config = test_config();
+    let ctx = ReceiverContext::new(&handshake, config);
+
+    // Verify compat_flags are accessible via accessor
+    assert_eq!(ctx.compat_flags(), compat_flags);
+
+    // Verify we can check individual flags
+    if let Some(flags) = ctx.compat_flags() {
+        assert!(flags.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX));
+        assert!(flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
+        assert!(!flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
+    }
+}
+
+#[test]
+fn test_compat_flags_accessible_in_generator() {
+    use protocol::CompatibilityFlags;
+
+    let negotiated = NegotiationResult {
+        checksum: ChecksumAlgorithm::MD5,
+        compression: CompressionAlgorithm::Zlib,
+    };
+    let compat_flags = Some(
+        CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::VARINT_FLIST_FLAGS,
+    );
+    let mut handshake = create_handshake(30, Some(negotiated), 12345);
+    handshake.compat_flags = compat_flags;
+
+    let mut config = test_config();
+    config.role = ServerRole::Generator;
+    let ctx = GeneratorContext::new(&handshake, config);
+
+    // Verify compat_flags are accessible via accessor
+    assert_eq!(ctx.compat_flags(), compat_flags);
+
+    // Verify we can check individual flags
+    if let Some(flags) = ctx.compat_flags() {
+        assert!(flags.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX));
+        assert!(flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
+        assert!(!flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
+    }
+}
+
+#[test]
+fn test_compat_flags_none_for_protocol_29() {
+    let handshake = create_handshake(29, None, 0);
+    let config = test_config();
+    let ctx = ReceiverContext::new(&handshake, config);
+
+    // Protocol 29 should have no compat flags
+    assert!(ctx.compat_flags().is_none());
+}
