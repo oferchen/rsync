@@ -219,6 +219,10 @@ pub fn setup_protocol(
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
     // We skip that exchange here since our HandshakeResult already contains the negotiated protocol.
 
+    // CRITICAL ORDER (upstream compat.c):
+    // 1. Compat flags (protocol >= 30)
+    // 2. Checksum seed (ALL protocols)
+
     // Build compat flags and perform negotiation for protocol >= 30
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
     let negotiated = if protocol.as_u8() >= 30 && !skip_compat_exchange {
@@ -262,11 +266,24 @@ pub fn setup_protocol(
 
         // Check if client supports negotiated strings (has 'v' capability)
         let do_negotiation = our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS);
-        let _ = std::fs::write("/tmp/debug_negotiation", format!("our_flags={} has_v={} do_neg={}", our_flags.bits(), our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS), do_negotiation));
         Some(protocol::negotiate_capabilities(protocol, stdin, stdout, do_negotiation)?)
     } else {
         None  // Protocol < 30 uses default algorithms
     };
+
+    // Send checksum seed (ALL protocols, upstream compat.c:750)
+    // IMPORTANT: This comes AFTER compat flags but applies to all protocols
+    let checksum_seed = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i32;
+        let pid = std::process::id() as i32;
+        timestamp ^ (pid << 6)
+    };
+    stdout.write_all(&checksum_seed.to_le_bytes())?;
+    stdout.flush()?;
 
     Ok(negotiated)
 }
