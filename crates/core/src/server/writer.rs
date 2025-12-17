@@ -2,17 +2,25 @@
 
 use std::io::{self, Write};
 
+use compress::algorithm::CompressionAlgorithm;
+use compress::zlib::CompressionLevel;
 use protocol::MessageCode;
+
+use super::compressed_writer::CompressedWriter;
 
 /// Writer that can switch from plain to multiplex mode after protocol setup.
 ///
 /// Upstream rsync modifies global I/O buffer state via `io_start_multiplex_out()`.
 /// We achieve the same by wrapping the writer and delegating based on mode.
+#[allow(clippy::large_enum_variant)]
 pub enum ServerWriter<W: Write> {
     /// Plain mode - write data directly without framing
     Plain(W),
     /// Multiplex mode - wrap data in MSG_DATA frames
     Multiplex(MultiplexWriter<W>),
+    /// Compressed+Multiplex mode - compress then multiplex
+    #[allow(dead_code)] // Used in production code once compression is integrated
+    Compressed(CompressedWriter<MultiplexWriter<W>>),
 }
 
 impl<W: Write> ServerWriter<W> {
@@ -29,19 +37,60 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::AlreadyExists,
                 "multiplex already active",
             )),
+            Self::Compressed(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "compression already active",
+            )),
+        }
+    }
+
+    /// Activates compression on top of multiplex mode.
+    ///
+    /// This must be called AFTER activate_multiplex() to match upstream behavior.
+    /// Upstream rsync activates compression in io.c:io_start_buffering_out()
+    /// which wraps the already-multiplexed stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The writer is not in multiplex mode (compression requires multiplex first)
+    /// - Compression is already active
+    /// - The compression algorithm is not supported in this build
+    #[allow(dead_code)] // Used in production code once compression is integrated
+    pub fn activate_compression(
+        self,
+        algorithm: CompressionAlgorithm,
+        level: CompressionLevel,
+    ) -> io::Result<Self> {
+        match self {
+            Self::Multiplex(mux) => {
+                let compressed = CompressedWriter::new(mux, algorithm, level)?;
+                Ok(Self::Compressed(compressed))
+            }
+            Self::Plain(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "compression requires multiplex mode first",
+            )),
+            Self::Compressed(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "compression already active",
+            )),
         }
     }
 
     /// Returns true if multiplex is active
     #[allow(dead_code)]
     pub fn is_multiplexed(&self) -> bool {
-        matches!(self, Self::Multiplex(_))
+        matches!(self, Self::Multiplex(_) | Self::Compressed(_))
     }
 
     /// Sends a control message (non-DATA message) through the multiplexed stream.
     ///
     /// This is used for sending protocol messages like MSG_IO_TIMEOUT that need
     /// to be sent as separate message types, not wrapped in MSG_DATA frames.
+    ///
+    /// Control messages bypass the compression layer (if active) to match upstream
+    /// rsync behavior where they go directly through the multiplex layer.
     ///
     /// # Errors
     ///
@@ -51,6 +100,10 @@ impl<W: Write> ServerWriter<W> {
     pub fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
         match self {
             Self::Multiplex(mux) => mux.send_message(code, payload),
+            Self::Compressed(compressed) => {
+                // Control messages bypass compression layer - send directly to multiplex
+                compressed.inner_mut().send_message(code, payload)
+            }
             Self::Plain(_) => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "cannot send control messages in plain mode",
@@ -64,6 +117,7 @@ impl<W: Write> Write for ServerWriter<W> {
         match self {
             Self::Plain(w) => w.write(buf),
             Self::Multiplex(w) => w.write(buf),
+            Self::Compressed(w) => w.write(buf),
         }
     }
 
@@ -71,6 +125,7 @@ impl<W: Write> Write for ServerWriter<W> {
         match self {
             Self::Plain(w) => w.flush(),
             Self::Multiplex(w) => w.flush(),
+            Self::Compressed(w) => w.flush(),
         }
     }
 }
