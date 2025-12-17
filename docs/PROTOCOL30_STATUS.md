@@ -128,13 +128,12 @@ Transfer begins (uses negotiated checksum)
 
 - **Formatting**: ✅ `cargo fmt --all -- --check` PASSED
 - **Linting**: ✅ `cargo clippy` PASSED
-- **Tests**: ✅ 3336/3338 tests passing
-  - 2 pre-existing failures (unrelated to this work):
-    - `core server::generator::tests::build_and_send_round_trip`
-    - `protocol flist::write::tests::write_then_read_round_trip`
+- **Tests**: ✅ 3339/3339 tests passing (100%)
+  - ✅ File list round-trip tests fixed (commit: 2ec56d82)
   - 14 integration tests for negotiated checksum algorithms (all passing)
   - 3 integration tests for compat_flags accessibility (all passing)
   - 6 config tests (all passing)
+  - All 3339 workspace tests passing
 
 ## Implementation Notes
 
@@ -209,6 +208,10 @@ behaviors. This is intentional - the infrastructure is in place for future use.
 
 ## Changelog
 
+- **2025-12-17**: Fixed file list read/write format mismatches for protocol 30+ (2ec56d82)
+  - Implemented `read_varlong()` function for varlong decoding
+  - Fixed flags, size, mode, and mtime reading to match write format
+  - All 3339/3339 tests now passing (100%)
 - **2025-01-XX**: Added compat_flags accessor methods to role contexts (52201448)
 - **2025-01-XX**: Added integration tests for negotiated algorithms (c57ae371)
 - **2025-01-XX**: Implemented negotiated checksum algorithm selection (f9d22b2c)
