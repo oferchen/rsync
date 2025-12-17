@@ -65,7 +65,7 @@ fn should_skip_copy_requires_exact_mtime_when_window_zero() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5,
+        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::ZERO,
     }));
 }
@@ -95,7 +95,7 @@ fn should_skip_copy_allows_difference_within_window() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5,
+        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::from_secs(5),
     }));
 
@@ -110,7 +110,7 @@ fn should_skip_copy_allows_difference_within_window() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5,
+        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::from_secs(5),
     }));
 }
@@ -138,7 +138,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5,
+        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::ZERO,
     }));
 
@@ -150,7 +150,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         size_only: false,
         ignore_times: true,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5,
+        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::ZERO,
     }));
 }
@@ -199,7 +199,9 @@ fn local_copy_options_checksum_algorithm_round_trip() {
     );
     assert_eq!(
         LocalCopyOptions::default().checksum_algorithm(),
-        SignatureAlgorithm::Md5
+        SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none()
+        }
     );
 }
 
@@ -220,7 +222,9 @@ fn files_checksum_match_respects_algorithm_selection() {
 
     let algorithms = [
         SignatureAlgorithm::Md4,
-        SignatureAlgorithm::Md5,
+        SignatureAlgorithm::Md5 {
+            seed_config: checksums::strong::Md5Seed::none(),
+        },
         SignatureAlgorithm::Sha1,
         SignatureAlgorithm::Xxh64 { seed: 7 },
         SignatureAlgorithm::Xxh3 { seed: 13 },

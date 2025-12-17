@@ -210,7 +210,9 @@ impl LocalCopyOptions {
             numeric_ids: false,
             sparse: false,
             checksum: false,
-            checksum_algorithm: SignatureAlgorithm::Md5,
+            checksum_algorithm: SignatureAlgorithm::Md5 {
+                seed_config: checksums::strong::Md5Seed::none(),
+            },
             size_only: false,
             ignore_times: false,
             ignore_existing: false,

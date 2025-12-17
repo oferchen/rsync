@@ -15,7 +15,7 @@ mod sha512;
 mod xxhash;
 
 pub use md4::Md4;
-pub use md5::Md5;
+pub use md5::{Md5, Md5Seed};
 
 #[cfg(feature = "openssl")]
 pub use openssl_support::openssl_acceleration_available;

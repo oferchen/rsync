@@ -177,8 +177,13 @@ impl StrongChecksumAlgorithm {
     /// Converts the selection into the [`SignatureAlgorithm`] used by the transfer engine.
     #[must_use]
     pub const fn to_signature_algorithm(self) -> SignatureAlgorithm {
+        use checksums::strong::Md5Seed;
         match self {
-            StrongChecksumAlgorithm::Auto | StrongChecksumAlgorithm::Md5 => SignatureAlgorithm::Md5,
+            StrongChecksumAlgorithm::Auto | StrongChecksumAlgorithm::Md5 => {
+                SignatureAlgorithm::Md5 {
+                    seed_config: Md5Seed::none(),
+                }
+            }
             StrongChecksumAlgorithm::Md4 => SignatureAlgorithm::Md4,
             StrongChecksumAlgorithm::Sha1 => SignatureAlgorithm::Sha1,
             StrongChecksumAlgorithm::Xxh64 => SignatureAlgorithm::Xxh64 { seed: 0 },

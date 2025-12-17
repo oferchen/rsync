@@ -175,9 +175,12 @@ pub(crate) enum StrongHasher {
 
 impl StrongHasher {
     fn new(algorithm: SignatureAlgorithm) -> Self {
+        use checksums::strong::StrongDigest;
         match algorithm {
             SignatureAlgorithm::Md4 => StrongHasher::Md4(Md4::new()),
-            SignatureAlgorithm::Md5 => StrongHasher::Md5(Md5::new()),
+            SignatureAlgorithm::Md5 { seed_config } => {
+                StrongHasher::Md5(Md5::with_seed(seed_config))
+            }
             SignatureAlgorithm::Sha1 => StrongHasher::Sha1(Sha1::new()),
             SignatureAlgorithm::Xxh64 { seed } => StrongHasher::Xxh64(Xxh64::new(seed)),
             SignatureAlgorithm::Xxh3 { seed } => StrongHasher::Xxh3(Xxh3::new(seed)),
@@ -280,7 +283,9 @@ mod tests {
             size_only: false,
             ignore_times: false,
             checksum: true,
-            checksum_algorithm: SignatureAlgorithm::Md5,
+            checksum_algorithm: SignatureAlgorithm::Md5 {
+                seed_config: checksums::strong::Md5Seed::none(),
+            },
             modify_window: Duration::ZERO,
         };
 
@@ -309,7 +314,9 @@ mod tests {
             size_only: false,
             ignore_times: false,
             checksum: false,
-            checksum_algorithm: SignatureAlgorithm::Md5,
+            checksum_algorithm: SignatureAlgorithm::Md5 {
+                seed_config: checksums::strong::Md5Seed::none(),
+            },
             modify_window: Duration::ZERO,
         };
 
@@ -338,7 +345,9 @@ mod tests {
             size_only: true,
             ignore_times: true,
             checksum: false,
-            checksum_algorithm: SignatureAlgorithm::Md5,
+            checksum_algorithm: SignatureAlgorithm::Md5 {
+                seed_config: checksums::strong::Md5Seed::none(),
+            },
             modify_window: Duration::ZERO,
         };
 
