@@ -203,9 +203,8 @@ fn handle_legacy_session(
 
     let request = request.unwrap_or_default();
 
-    advertise_capabilities(reader.get_mut(), modules, &messages)?;
-
     if request == "#list" {
+        advertise_capabilities(reader.get_mut(), modules, &messages)?;
         if let Some(log) = log_sink.as_ref() {
             log_list_request(log, peer_host.as_deref(), peer_addr);
         }

@@ -551,7 +551,7 @@ mod tests {
             buffered: Vec::new(),
             compat_exchanged: false,
             client_args: None, // Test mode doesn't need client args
-            io_timeout: None, // Test mode doesn't configure I/O timeouts
+            io_timeout: None,  // Test mode doesn't configure I/O timeouts
         }
     }
 

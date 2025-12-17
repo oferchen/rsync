@@ -601,38 +601,18 @@ fn respond_with_module_request(
             // This prevents kernel buffering from reordering small writes
             stream.set_nodelay(true)?;
 
-            // CRITICAL: Exchange compat flags BEFORE wrapping streams in multiplex
-            // This must happen on the raw TcpStream before any buffering/multiplexing
-            // Mirrors upstream compat.c:736-738 which calls write_varint directly on f_out
-            let compat_flags = if final_protocol.as_u8() >= 30 {
-                match core::server::setup::exchange_compat_flags_direct(
-                    final_protocol,
-                    stream,
-                    &client_args,
-                ) {
-                    Ok(flags) => flags,
-                    Err(err) => {
-                        let payload = format!("@ERROR: failed to exchange compat flags: {err}");
-                        write_limited(stream, limiter, payload.as_bytes())?;
-                        write_limited(stream, limiter, b"\n")?;
-                        messages.write_exit(stream, limiter)?;
-                        stream.flush()?;
-                        return Ok(());
-                    }
-                }
-            } else {
-                None
-            };
+            // NOTE: Compat flags exchange moved to setup_protocol() to ensure correct timing
+            // relative to OUTPUT multiplex activation. The compat flags must be sent BEFORE
+            // multiplex is activated, but AFTER the stream is set up properly in run_server_with_handshake.
 
-            // Log the negotiated protocol and compatibility flags
+            // Log the negotiated protocol
             if let Some(log) = log_sink {
                 let text = format!(
-                    "module '{}' from {} ({}): protocol {}, compat flags: {:?}, role: {:?}",
+                    "module '{}' from {} ({}): protocol {}, role: {:?}",
                     request,
                     module_peer_host.or(session_peer_host).unwrap_or("unknown"),
                     peer_ip,
                     final_protocol.as_u8(),
-                    compat_flags,
                     role
                 );
                 let message = rsync_info!(text).with_role(Role::Daemon);
@@ -640,7 +620,7 @@ fn respond_with_module_request(
             }
 
             // Now clone the stream for concurrent read/write
-            let mut read_stream = match stream.try_clone() {
+            let read_stream = match stream.try_clone() {
                 Ok(s) => s,
                 Err(err) => {
                     let payload = format!("@ERROR: failed to clone stream: {err}");
@@ -656,7 +636,7 @@ fn respond_with_module_request(
             // Clone write stream - this creates another handle to the SAME socket
             // Upstream rsync uses dup() which is equivalent to try_clone()
             // The key is: both handles point to the same kernel socket, so no buffering issues
-            let mut write_stream = match stream.try_clone() {
+            let write_stream = match stream.try_clone() {
                 Ok(s) => s,
                 Err(err) => {
                     return Err(io::Error::other(
@@ -666,20 +646,25 @@ fn respond_with_module_request(
             };
 
             // Create HandshakeResult from the negotiated protocol version
-            // Compat exchange happened above on raw TcpStream, so skip it in setup_protocol()
+            // Let setup_protocol() handle compat exchange with client capabilities
             let handshake = HandshakeResult {
                 protocol: final_protocol,
                 buffered: buffered_data,
-                compat_exchanged: true,  // Already exchanged above
+                compat_exchanged: false,  // Let setup_protocol parse client_args and send compat flags
+                client_args: Some(client_args.clone()),  // Pass client args for capability parsing
+                io_timeout: module.timeout.map(|t| t.get()),  // Pass configured I/O timeout
             };
 
-            // TODO: Enable protocol tracing for debugging
-            // The TracingReader/TracingWriter infrastructure exists in protocol::debug_trace
-            // but requires proper environment setup to work in daemon worker threads.
-            // For now, use strace or tcpdump for protocol analysis.
+            // Enable protocol tracing for debugging
+            // Trace files will be written to /tmp/rsync-trace/ directory
+            use protocol::debug_trace::{TraceConfig, TracingReader, TracingWriter};
+
+            let trace_config = TraceConfig::enabled("daemon");
+            let mut traced_read_stream = TracingReader::new(read_stream, trace_config.clone());
+            let mut traced_write_stream = TracingWriter::new(write_stream, trace_config);
 
             // Run the server transfer - handles protocol setup and multiplex internally
-            let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
+            let result = run_server_with_handshake(config, handshake, &mut traced_read_stream, &mut traced_write_stream);
             match result {
                 Ok(_server_stats) => {
                     if let Some(log) = log_sink {

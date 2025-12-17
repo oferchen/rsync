@@ -151,6 +151,10 @@ impl RuntimeOptions {
                 options.delegate_arguments.push(OsString::from("0"));
             } else if argument == "--once" {
                 options.set_max_sessions(NonZeroUsize::new(1).unwrap())?;
+            } else if argument == "--no-detach" {
+                // Accepted for compatibility with CI and tests, but currently a no-op
+                // since the daemon doesn't fork/detach by default anyway
+                options.delegate_arguments.push(OsString::from("--no-detach"));
             } else if let Some(value) = take_option_value(argument, &mut iter, "--max-sessions")? {
                 let max = parse_max_sessions(&value)?;
                 options.set_max_sessions(max)?;

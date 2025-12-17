@@ -63,10 +63,8 @@ fn run_daemon_accepts_valid_credentials() {
     stream.write_all(b"secure\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules authlist\n");
-
+    // Daemon responds directly with AUTHREQD for protected modules
+    // (CAP is only sent for #list requests)
     line.clear();
     reader.read_line(&mut line).expect("auth request");
     let challenge = line

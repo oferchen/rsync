@@ -64,12 +64,8 @@ fn run_daemon_enforces_module_connection_limit() {
         .expect("send module request");
     first_stream.flush().expect("flush module");
 
-    line.clear();
-    first_reader
-        .read_line(&mut line)
-        .expect("capabilities for first client");
-    assert_eq!(line.trim_end(), "@RSYNCD: CAP modules authlist");
-
+    // Daemon responds directly with AUTHREQD for protected modules
+    // (CAP is only sent for #list requests)
     line.clear();
     first_reader
         .read_line(&mut line)
@@ -99,12 +95,8 @@ fn run_daemon_enforces_module_connection_limit() {
         .expect("send second module");
     second_stream.flush().expect("flush second module");
 
-    line.clear();
-    second_reader
-        .read_line(&mut line)
-        .expect("second capabilities");
-    assert_eq!(line.trim_end(), "@RSYNCD: CAP modules authlist");
-
+    // Daemon responds directly with connection limit error
+    // (CAP is only sent for #list requests)
     line.clear();
     second_reader.read_line(&mut line).expect("limit error");
     assert_eq!(

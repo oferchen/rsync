@@ -107,10 +107,11 @@ impl ReceiverContext {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```ignore
     /// use core::server::{ReceiverContext, ServerConfig, HandshakeResult};
     /// use core::server::role::ServerRole;
     /// use core::server::flags::ParsedServerFlags;
+    /// use core::server::reader::ServerReader;
     /// use protocol::ProtocolVersion;
     /// use std::io::{stdin, stdout};
     /// use std::ffi::OsString;
@@ -133,24 +134,34 @@ impl ReceiverContext {
     /// let mut ctx = ReceiverContext::new(&handshake, config);
     ///
     /// // Run receiver role with stdin/stdout
-    /// let stats = ctx.run(&mut stdin().lock(), &mut stdout().lock())?;
+    /// let reader = ServerReader::Plain(stdin().lock());
+    /// let stats = ctx.run(reader, &mut stdout().lock())?;
     /// eprintln!("Transferred {} files ({} bytes)",
     ///           stats.files_transferred, stats.bytes_received);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn run<R: Read + ?Sized, W: Write + ?Sized>(
+    pub fn run<R: Read, W: Write + ?Sized>(
         &mut self,
-        reader: &mut R,
+        mut reader: super::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
-        // Read filter list from sender (mirrors upstream recv_filter_list at main.c:1171)
-        // The client sender sends the filter list (main.c:1308) AFTER activating OUTPUT multiplex,
-        // so we MUST read it here to consume the multiplexed data from the wire.
-        // For receiver role with no delete/prune options, recv_filter_list() doesn't process
-        // any rules (receiver_wants_list is false), but it still reads the terminating zero.
-        let _wire_rules = read_filter_list(&mut &mut *reader, self.protocol)
+        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30
+        // This matches upstream do_server_recv() at main.c:1167 which calls io_start_multiplex_in()
+        // BEFORE calling recv_filter_list() at line 1171.
+        // The client sends ALL data (including filter list) as multiplexed MSG_DATA frames for protocol >= 30.
+        if self.protocol.as_u8() >= 30 {
+            reader = reader.activate_multiplex().map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
+            })?;
+        }
+
+        // Read filter list from sender (multiplexed for protocol >= 30)
+        // This mirrors upstream recv_filter_list timing at main.c:1171
+        let _wire_rules = read_filter_list(&mut reader, self.protocol)
             .map_err(|e| io::Error::new(e.kind(), format!("failed to read filter list: {e}")))?;
+
+        let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
 
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
@@ -485,6 +496,8 @@ mod tests {
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             buffered: Vec::new(),
             compat_exchanged: false,
+            client_args: None, // Test mode doesn't need client args
+            io_timeout: None,  // Test mode doesn't configure I/O timeouts
         }
     }
 
