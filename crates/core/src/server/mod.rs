@@ -222,9 +222,13 @@ pub fn run_server_with_handshake<W: Write>(
     // Note: Reader compression is activated later in role contexts after INPUT multiplex
     if let Some(ref negotiated) = handshake.negotiated_algorithms {
         if let Some(compress_alg) = negotiated.compression.to_compress_algorithm()? {
-            // Use compression level 6 (upstream default for zlib)
-            // TODO: Get from configuration (--compress-level flag)
-            let level = compress::zlib::CompressionLevel::Default;
+            // Use configured compression level or default to level 6 (upstream default)
+            // Compression level comes from:
+            // - Daemon configuration (rsyncd.conf compress-level setting)
+            // - Environment or other server-side configuration
+            let level = config
+                .compression_level
+                .unwrap_or(compress::zlib::CompressionLevel::Default);
 
             writer = writer.activate_compression(compress_alg, level)?;
         }
