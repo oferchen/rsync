@@ -5,13 +5,14 @@
 
 use std::io::{self, Write};
 
+use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
 use crate::varint::{write_varint, write_varlong, write_varlong30};
 
 use super::entry::FileEntry;
 use super::flags::{
-    XMIT_EXTENDED_FLAGS, XMIT_LONG_NAME, XMIT_SAME_MODE, XMIT_SAME_NAME, XMIT_SAME_TIME,
-    XMIT_TOP_DIR,
+    XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_SAME_MODE, XMIT_SAME_NAME,
+    XMIT_SAME_TIME, XMIT_TOP_DIR,
 };
 
 /// State maintained while writing a file list.
@@ -23,6 +24,8 @@ use super::flags::{
 pub struct FileListWriter {
     /// Protocol version being used.
     protocol: ProtocolVersion,
+    /// Compatibility flags for this session.
+    compat_flags: Option<CompatibilityFlags>,
     /// Previous entry's path (for name compression).
     prev_name: Vec<u8>,
     /// Previous entry's mode.
@@ -43,6 +46,21 @@ impl FileListWriter {
     pub fn new(protocol: ProtocolVersion) -> Self {
         Self {
             protocol,
+            compat_flags: None,
+            prev_name: Vec::new(),
+            prev_mode: 0,
+            prev_mtime: 0,
+            prev_uid: 0,
+            prev_gid: 0,
+        }
+    }
+
+    /// Creates a new file list writer with compatibility flags.
+    #[must_use]
+    pub fn with_compat_flags(protocol: ProtocolVersion, compat_flags: CompatibilityFlags) -> Self {
+        Self {
+            protocol,
+            compat_flags: Some(compat_flags),
             prev_name: Vec::new(),
             prev_mode: 0,
             prev_mtime: 0,
@@ -162,7 +180,42 @@ impl FileListWriter {
     }
 
     /// Writes the end-of-list marker.
-    pub fn write_end<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
+    ///
+    /// When `io_error` is provided and the `SAFE_FILE_LIST` flag is enabled,
+    /// writes an error marker followed by the error code (mirroring upstream
+    /// rsync's `write_end_of_flist(f, send_io_error_list)` from flist.c).
+    /// Otherwise writes a simple zero byte marker.
+    ///
+    /// The SAFE_FILE_LIST flag is automatically enabled for protocol 31+ or
+    /// when explicitly negotiated via compat flags (upstream compat.c:775).
+    pub fn write_end<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        io_error: Option<i32>,
+    ) -> io::Result<()> {
+        // Check if safe file list mode is enabled (compat.c:775):
+        // use_safe_inc_flist = (compat_flags & CF_SAFE_FLIST) || protocol_version >= 31
+        let use_safe_inc_flist = if let Some(flags) = self.compat_flags {
+            flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
+        } else {
+            false
+        } || self.protocol.as_u8() >= 31;
+
+        if let Some(error) = io_error {
+            if use_safe_inc_flist {
+                // Send error marker with code (upstream flist.c:send_end_of_flist)
+                let error_flags =
+                    (XMIT_EXTENDED_FLAGS as i32) | ((XMIT_IO_ERROR_ENDLIST as i32) << 8);
+                write_varint(writer, error_flags)?;
+                write_varint(writer, error)?;
+                return Ok(());
+            }
+            // If not in safe mode, caller should have avoided sending error or
+            // handled it differently (upstream would call fatal_unsafe_io_error).
+            // We fall through to write normal end marker.
+        }
+
+        // Normal end of list marker
         writer.write_all(&[0u8])
     }
 }
@@ -222,7 +275,7 @@ mod tests {
     fn write_end_marker() {
         let mut buf = Vec::new();
         let writer = FileListWriter::new(test_protocol());
-        writer.write_end(&mut buf).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
         assert_eq!(buf, vec![0u8]);
     }
 
@@ -278,7 +331,7 @@ mod tests {
         entry.set_mtime(1700000000, 0);
 
         writer.write_entry(&mut buf, &entry).unwrap();
-        writer.write_end(&mut buf).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
 
         // Now read it back
         let mut cursor = Cursor::new(&buf[..]);
@@ -287,5 +340,64 @@ mod tests {
         let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read_entry.name(), "test.txt");
         assert_eq!(read_entry.size(), 1024);
+    }
+
+    #[test]
+    fn write_end_with_safe_file_list_enabled_transmits_error() {
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::SAFE_FILE_LIST;
+        let writer = FileListWriter::with_compat_flags(protocol, flags);
+
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, Some(23)).unwrap();
+
+        // Should have written error marker + error code, not simple 0 byte
+        assert_ne!(buf, vec![0u8], "should not write simple end marker");
+        assert!(buf.len() > 1, "should have error marker and error code");
+
+        // Verify error marker format:
+        // First varint should be XMIT_EXTENDED_FLAGS | (XMIT_IO_ERROR_ENDLIST << 8)
+        use crate::varint::decode_varint;
+        let cursor = &buf[..];
+        let (flags_value, cursor) = decode_varint(cursor).unwrap();
+        let expected_marker = (XMIT_EXTENDED_FLAGS as i32) | ((XMIT_IO_ERROR_ENDLIST as i32) << 8);
+        assert_eq!(flags_value, expected_marker);
+
+        // Second varint should be the error code
+        let (error_code, _) = decode_varint(cursor).unwrap();
+        assert_eq!(error_code, 23);
+    }
+
+    #[test]
+    fn write_end_without_safe_file_list_writes_normal_marker_even_with_error() {
+        // Use protocol 30 to avoid automatic safe mode (protocol >= 31)
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let writer = FileListWriter::new(protocol);
+
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, Some(23)).unwrap();
+
+        // Without SAFE_FILE_LIST, should write normal end marker even with error
+        assert_eq!(buf, vec![0u8]);
+    }
+
+    #[test]
+    fn write_end_with_protocol_31_enables_safe_mode_automatically() {
+        let protocol = ProtocolVersion::try_from(31u8).unwrap();
+        let writer = FileListWriter::new(protocol); // No explicit compat flags
+
+        let mut buf = Vec::new();
+        writer.write_end(&mut buf, Some(42)).unwrap();
+
+        // Protocol 31+ automatically enables safe mode
+        assert_ne!(buf, vec![0u8]);
+        assert!(buf.len() > 1);
+
+        // Verify error code
+        use crate::varint::decode_varint;
+        let cursor = &buf[..];
+        let (_, cursor) = decode_varint(cursor).unwrap(); // Skip marker
+        let (error_code, _) = decode_varint(cursor).unwrap();
+        assert_eq!(error_code, 42);
     }
 }
