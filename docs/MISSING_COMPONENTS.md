@@ -74,27 +74,35 @@ tests/protocol_handshakes/
   - Requires creating compression wrapper layers in ServerWriter/ServerReader
   - Architectural work to add Plain → Multiplex → Compress stream stack
 
-### 3. Compression Stream Implementation
-**Status**: Negotiated but not applied
-**Location**: `crates/core/src/server/mod.rs`, `crates/compress/`
-**Impact**: Compression algorithm negotiated but defaults used
+### 3. ✅ Compression Stream Implementation (COMPLETED)
+**Status**: COMPLETE - Compression streams fully integrated
+**Commits**: 78b69abe, e6f7dae6
+**Impact**: Protocol 30+ compression working end-to-end
 
-**Current State**:
-- ✅ Compression negotiation works (Zlib, ZlibX, LZ4, Zstd)
-- ✅ Algorithm stored in `NegotiationResult.compression`
-- ✅ `ActiveCompressor` exists in engine layer
-- ❌ Server streams don't create compression wrappers
-- ❌ `ServerWriter` only handles Plain → Multiplex
-
-**Required Architecture**:
-1. Create `CompressedWriter` and `CompressedReader` wrappers
-2. Integrate into server stream stack:
+**Completed Work**:
+1. ✅ Created `CompressedWriter` and `CompressedReader` wrappers (Commit: 78b69abe)
+   - EncoderVariant/DecoderVariant for zlib, LZ4, zstd
+   - Proper stream lifecycle (init, write, flush, finish)
+   - Control message bypass for protocol compatibility
+   - 7 comprehensive tests for compression streams
+2. ✅ Extended `ServerWriter` and `ServerReader` enums (Commit: 78b69abe)
+   - Added Compressed variants
+   - activate_compression() methods
+   - Updated Write/Read trait implementations
+3. ✅ Integrated into server stream stack (Commit: e6f7dae6)
+   - Writer compression in `run_server_with_handshake()`
+   - Reader compression in ReceiverContext and GeneratorContext
+   - Activated AFTER multiplex (matches upstream)
+   - Protocol conversion method for algorithm enums
+4. ✅ Full stream stack implemented:
    ```
    Plain → Multiplex → Compress (for protocol 30+)
    ```
-3. Wire negotiated compression algorithm to wrappers
-4. Handle compression lifecycle (init, write, flush, finish)
-5. Add tests for compressed data flow
+
+**Remaining Work**:
+- ❌ Configuration for compression level (--compress-level flag)
+- ❌ Skip-compress patterns support
+- ❌ Compression-specific integration tests
 
 ### 4. Compat Flags Usage
 **Status**: Accessible but not used for runtime behavior
@@ -209,9 +217,10 @@ if let Some(flags) = &self.compat_flags {
 - ✅ Property tests: Checksums, filters have property tests
 - ✅ Algorithm tests: 14 integration tests for negotiated checksums
 - ✅ Compat flags tests: 3 integration tests for flag accessibility
+- ✅ Compression streams: 7 tests for compression wrappers
 - ❌ Golden tests: Protocol handshakes need fixtures
 - ⚠️ Interop tests: Exit codes and messages validated, handshakes pending
-- **Total**: 3339/3339 tests passing ✅ (as of commit 2ec56d82)
+- **Total**: 3346/3346 tests passing ✅ (as of commit e6f7dae6)
 
 ---
 
@@ -232,14 +241,14 @@ if let Some(flags) = &self.compat_flags {
 3. ✅ Update checksum selection in delta operations
 4. ✅ Add tests for algorithm selection (14 integration tests)
 
-### Phase 3: Compression Stream Implementation
-**Status**: PENDING
-**Priority**: MEDIUM
-1. Create CompressedWriter and CompressedReader wrappers
-2. Integrate into server stream stack (Plain → Multiplex → Compress)
-3. Wire negotiated compression algorithm to wrappers
-4. Handle compression lifecycle
-5. Add tests for compressed data flow
+### Phase 3: ✅ Compression Stream Implementation (COMPLETED)
+**Status**: COMPLETE
+**Commits**: 78b69abe, e6f7dae6
+1. ✅ Created CompressedWriter and CompressedReader wrappers
+2. ✅ Integrated into server stream stack (Plain → Multiplex → Compress)
+3. ✅ Wired negotiated compression algorithm to wrappers
+4. ✅ Handled compression lifecycle (init, write, flush, finish)
+5. ✅ Added 7 comprehensive tests for compressed data flow
 
 ### Phase 4: Runtime Flags Usage
 **Status**: IN PROGRESS
