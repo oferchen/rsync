@@ -102,7 +102,9 @@ fn build_compat_flags_from_client_info(
         flags |= CompatibilityFlags::INC_RECURSE;
     }
 
-    // SYMLINK_TIMES: client advertises 'L'
+    // SYMLINK_TIMES: client advertises 'L' AND server platform supports it
+    // (mirrors upstream CAN_SET_SYMLINK_TIMES check at compat.c:713-714)
+    #[cfg(unix)]
     if client_info.contains('L') {
         flags |= CompatibilityFlags::SYMLINK_TIMES;
     }
@@ -247,10 +249,19 @@ pub fn setup_protocol(
             let client_info = parse_client_info(args);
             build_compat_flags_from_client_info(&client_info, true)
         } else {
-            // SSH mode: use default flags
-            CompatibilityFlags::INC_RECURSE
+            // SSH mode: use default flags based on platform capabilities
+            let mut flags = CompatibilityFlags::INC_RECURSE
                 | CompatibilityFlags::CHECKSUM_SEED_FIX
-                | CompatibilityFlags::VARINT_FLIST_FLAGS
+                | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+            // Advertise symlink timestamp support on Unix platforms
+            // (mirrors upstream CAN_SET_SYMLINK_TIMES at compat.c:713-714)
+            #[cfg(unix)]
+            {
+                flags |= CompatibilityFlags::SYMLINK_TIMES;
+            }
+
+            flags
         };
 
         // Server ONLY WRITES compat flags (upstream compat.c:736-738)
@@ -302,4 +313,89 @@ pub fn setup_protocol(
         compat_flags,
         checksum_seed,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_client_info_extracts_capabilities_from_separate_args() {
+        let args = vec!["-e".to_string(), "fxCIvu".to_string()];
+        let info = parse_client_info(&args);
+        assert_eq!(info, "fxCIvu");
+    }
+
+    #[test]
+    fn parse_client_info_extracts_capabilities_from_combined_args() {
+        let args = vec!["-efxCIvu".to_string()];
+        let info = parse_client_info(&args);
+        assert_eq!(info, "fxCIvu");
+    }
+
+    #[test]
+    fn parse_client_info_handles_version_placeholder() {
+        let args = vec!["-e.LsfxCIvu".to_string()];
+        let info = parse_client_info(&args);
+        assert_eq!(info, "LsfxCIvu");
+    }
+
+    #[test]
+    fn parse_client_info_returns_empty_when_not_found() {
+        let args = vec!["--server".to_string(), "--sender".to_string()];
+        let info = parse_client_info(&args);
+        assert_eq!(info, "");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn build_compat_flags_enables_symlink_times_when_client_advertises_l() {
+        let flags = build_compat_flags_from_client_info("LfxCIvu", true);
+        assert!(
+            flags.contains(CompatibilityFlags::SYMLINK_TIMES),
+            "SYMLINK_TIMES should be enabled when client advertises 'L' on Unix"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_skips_symlink_times_when_client_missing_l() {
+        let flags = build_compat_flags_from_client_info("fxCIvu", true);
+        assert!(
+            !flags.contains(CompatibilityFlags::SYMLINK_TIMES),
+            "SYMLINK_TIMES should not be enabled when client doesn't advertise 'L'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_enables_safe_file_list_when_client_advertises_f() {
+        let flags = build_compat_flags_from_client_info("fxCIvu", true);
+        assert!(
+            flags.contains(CompatibilityFlags::SAFE_FILE_LIST),
+            "SAFE_FILE_LIST should be enabled when client advertises 'f'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_enables_checksum_seed_fix_when_client_advertises_c() {
+        let flags = build_compat_flags_from_client_info("fxCIvu", true);
+        assert!(
+            flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+            "CHECKSUM_SEED_FIX should be enabled when client advertises 'C'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_respects_inc_recurse_gate() {
+        let flags_allowed = build_compat_flags_from_client_info("ifxCIvu", true);
+        assert!(
+            flags_allowed.contains(CompatibilityFlags::INC_RECURSE),
+            "INC_RECURSE should be enabled when allowed and client advertises 'i'"
+        );
+
+        let flags_forbidden = build_compat_flags_from_client_info("ifxCIvu", false);
+        assert!(
+            !flags_forbidden.contains(CompatibilityFlags::INC_RECURSE),
+            "INC_RECURSE should not be enabled when not allowed even if client advertises 'i'"
+        );
+    }
 }
