@@ -954,6 +954,7 @@ dependencies = [
 name = "protocol"
 version = "3.4.1-rust"
 dependencies = [
+ "compress",
  "memchr",
  "proptest",
 ]
