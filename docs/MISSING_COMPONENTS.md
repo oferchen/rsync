@@ -100,9 +100,13 @@ tests/protocol_handshakes/
    ```
 
 **Remaining Work**:
-- ❌ Configuration for compression level (--compress-level flag)
+- ✅ Configuration infrastructure for compression level (Commits: 36954c8b, 2214a80c)
+  - ServerConfig has compression_level: Option<CompressionLevel>
+  - run_server_with_handshake uses configured level or defaults to 6
+  - Unit tests verify configuration plumbing (3 tests)
+- ⏸️ Daemon configuration parsing (--compress-level in rsyncd.conf) - deferred
 - ❌ Skip-compress patterns support
-- ❌ Compression-specific integration tests
+- ❌ Compression-specific integration tests (full transfer with compression ratio verification)
 
 ### 4. Compat Flags Usage
 **Status**: Accessible but not used for runtime behavior
@@ -218,9 +222,10 @@ if let Some(flags) = &self.compat_flags {
 - ✅ Algorithm tests: 14 integration tests for negotiated checksums
 - ✅ Compat flags tests: 3 integration tests for flag accessibility
 - ✅ Compression streams: 7 tests for compression wrappers
+- ✅ Compression config: 3 tests for ServerConfig.compression_level
 - ❌ Golden tests: Protocol handshakes need fixtures
 - ⚠️ Interop tests: Exit codes and messages validated, handshakes pending
-- **Total**: 3346/3346 tests passing ✅ (as of commit e6f7dae6)
+- **Total**: 3349/3349 tests passing ✅ (as of commit 2214a80c)
 
 ---
 
