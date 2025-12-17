@@ -173,7 +173,7 @@ pub fn run_server_with_handshake<W: Write>(
     // 1. Compatibility flags exchange (protocol >= 30)
     // 2. Capability negotiation for checksums and compression (protocol >= 30)
     // Both happen in RAW mode, BEFORE multiplex activation.
-    let negotiated = setup::setup_protocol(
+    let setup_result = setup::setup_protocol(
         handshake.protocol,
         &mut stdout,
         &mut chained_stdin,
@@ -181,14 +181,10 @@ pub fn run_server_with_handshake<W: Write>(
         handshake.client_args.as_deref(),
     )?;
 
-    // TODO: Wire negotiated algorithms through to transfer engine
-    // For now, we successfully negotiate but don't yet use the results.
-    // Future work (Phase 6) will wire these through to actual checksum/compression operations.
-    if let Some(result) = negotiated {
-        // Algorithms negotiated: result.checksum and result.compression
-        // These should be stored in context and used by the transfer engine
-        let _ = result; // Suppress unused warning for now
-    }
+    // Store negotiated algorithms and compat flags in handshake for use by role contexts
+    // The role contexts will extract these and use them for checksum/compression operations
+    handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
+    handshake.compat_flags = setup_result.compat_flags;
 
     // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
     // The setup_protocol() call above may have buffered data (compat flags varint).
