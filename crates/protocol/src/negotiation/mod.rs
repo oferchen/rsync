@@ -1,7 +1,11 @@
+mod capabilities;
 mod detector;
 mod sniffer;
 mod types;
 
+pub use capabilities::{
+    ChecksumAlgorithm, CompressionAlgorithm, NegotiationResult, negotiate_capabilities,
+};
 pub use detector::NegotiationPrologueDetector;
 pub use sniffer::{
     NegotiationPrologueSniffer, read_and_parse_legacy_daemon_greeting,
