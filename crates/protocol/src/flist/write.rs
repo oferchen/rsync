@@ -278,6 +278,5 @@ mod tests {
         let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read_entry.name(), "test.txt");
         assert_eq!(read_entry.size(), 1024);
-        // Mode and mtime depend on flags encoding
     }
 }

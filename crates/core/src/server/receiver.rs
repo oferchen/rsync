@@ -574,18 +574,19 @@ mod tests {
 
     #[test]
     fn receiver_single_file() {
+        use protocol::flist::{FileEntry, FileListWriter};
+
         let handshake = test_handshake();
         let config = test_config();
         let mut ctx = ReceiverContext::new(&handshake, config);
 
-        // Single file entry followed by end marker
-        // flags: XMIT_SAME_TIME | XMIT_SAME_MODE = 0x60
+        // Create a proper file list using FileListWriter for protocol 32
         let mut data = Vec::new();
-        data.push(0x60); // flags
-        data.push(8); // name length
-        data.extend_from_slice(b"test.txt"); // name
-        data.push(100); // size
-        data.push(0); // end marker
+        let mut writer = FileListWriter::new(handshake.protocol);
+
+        let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        writer.write_entry(&mut data, &entry).unwrap();
+        writer.write_end(&mut data).unwrap();
 
         let mut cursor = Cursor::new(&data[..]);
         let count = ctx.receive_file_list(&mut cursor).unwrap();
