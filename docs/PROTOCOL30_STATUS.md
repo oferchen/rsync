@@ -125,10 +125,12 @@ Transfer begins (uses negotiated checksum)
 
 - **Formatting**: ✅ `cargo fmt --all -- --check` PASSED
 - **Linting**: ✅ `cargo clippy` PASSED
-- **Tests**: ✅ 3319/3321 tests passing
+- **Tests**: ✅ 3333/3335 tests passing
   - 2 pre-existing failures (unrelated to this work):
     - `core server::generator::tests::build_and_send_round_trip`
     - `protocol flist::write::tests::write_then_read_round_trip`
+  - 14 new integration tests for negotiated algorithms (all passing)
+  - 6 existing config tests (all passing)
 
 ## Implementation Notes
 
@@ -156,10 +158,12 @@ behaviors. This is intentional - the infrastructure is in place for future use.
 
 ### Short Term
 
-1. **Add integration tests** for negotiated algorithm usage
-   - Test that MD5/SHA1/XXH64/XXH128 are actually used when negotiated
-   - Test fallback behavior for protocols < 30
-   - Test checksum seed propagation to XXHash
+1. ✅ **Add integration tests** for negotiated algorithm usage (COMPLETED: c57ae371)
+   - ✅ Test that MD5/SHA1/XXH64/XXH128 are actually used when negotiated
+   - ✅ Test fallback behavior for protocols < 30
+   - ✅ Test checksum seed propagation to XXHash
+   - ✅ Test all ChecksumAlgorithm enum variants
+   - ✅ 14 integration tests in `crates/core/src/server/tests/negotiated_algorithms.rs`
 
 2. **Implement compatibility flags usage**
    - Use INC_RECURSE flag for incremental recursion mode
@@ -201,6 +205,7 @@ behaviors. This is intentional - the infrastructure is in place for future use.
 
 ## Changelog
 
+- **2025-01-XX**: Added integration tests for negotiated algorithms (c57ae371)
 - **2025-01-XX**: Implemented negotiated checksum algorithm selection (f9d22b2c)
 - **2025-01-XX**: Added checksum seed to protocol setup (350c88dd)
 - **2025-01-XX**: Wired negotiated algorithms to role contexts (db41d62e)
