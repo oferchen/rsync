@@ -53,7 +53,8 @@ pub use negotiation::{
     read_and_parse_legacy_daemon_greeting_details, read_legacy_daemon_line,
 };
 pub use varint::{
-    decode_varint, encode_varint_to_vec, read_varint, write_varint, write_varlong, write_varlong30,
+    decode_varint, encode_varint_to_vec, read_varint, read_varlong, write_varint, write_varlong,
+    write_varlong30,
 };
 pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,

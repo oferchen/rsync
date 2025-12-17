@@ -160,7 +160,8 @@ pub fn write_varlong<W: Write + ?Sized>(
     }
 
     // Calculate the leading byte
-    let bit = 1u8 << (7 - cnt + min_bytes as usize);
+    // Use wrapping arithmetic to avoid overflow when cnt > 7
+    let bit = 1u8 << ((7 + min_bytes as usize).wrapping_sub(cnt));
     let leading = if bytes[cnt - 1] >= bit {
         cnt += 1;
         !(bit - 1)
@@ -173,6 +174,64 @@ pub fn write_varlong<W: Write + ?Sized>(
     // Write leading byte followed by the lower bytes
     writer.write_all(&[leading])?;
     writer.write_all(&bytes[..cnt - 1])
+}
+
+/// Reads a variable-length 64-bit integer using rsync's varlong format.
+///
+/// This is the inverse of `write_varlong`, mirroring upstream's `read_varlong(int f, uchar min_bytes)` from io.c.
+/// The function reads a leading byte that encodes the total byte count, then reads the remaining bytes.
+///
+/// The encoding pattern:
+/// - When cnt == min_bytes: leading byte < (1 << 7), all 8 bits are data
+/// - When cnt == min_bytes+1: leading byte has bit 7 set, bits 0-5 are data
+/// - When cnt == min_bytes+2: leading byte has bits 7-6 set, bits 0-4 are data
+/// - And so on...
+///
+/// # Arguments
+///
+/// * `reader` - Source of the encoded bytes
+/// * `min_bytes` - Minimum number of bytes used in encoding (must match the write call)
+pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
+    // Read leading byte
+    let mut leading_buf = [0u8; 1];
+    reader.read_exact(&mut leading_buf)?;
+    let leading = leading_buf[0];
+
+    // Determine cnt by counting consecutive high bits set in the leading byte
+    // Start with bit 7 and work down
+    let mut cnt = min_bytes as usize;
+    let mut bit = 1u8 << 7;
+
+    // Each consecutive high bit set indicates one more byte beyond min_bytes
+    while cnt < 8 && (leading & bit) != 0 {
+        cnt += 1;
+        bit >>= 1;
+    }
+
+    // Determine mask for extracting data bits from leading byte
+    let mask = if cnt == min_bytes as usize {
+        // No flag bits set - all 8 bits of leading byte are data
+        0xFF
+    } else if cnt == 8 {
+        // All bits set - special case
+        0xFF
+    } else {
+        // 'bit' is the first zero bit we encountered
+        // All bits below it are data bits
+        bit - 1
+    };
+
+    // Read the lower bytes (bytes 0..cnt-1)
+    let mut bytes = [0u8; 8];
+    if cnt > 1 {
+        reader.read_exact(&mut bytes[..cnt - 1])?;
+    }
+
+    // Set the highest byte from the leading byte (applying mask to extract data bits)
+    bytes[cnt - 1] = leading & mask;
+
+    // Convert from little-endian
+    Ok(i64::from_le_bytes(bytes))
 }
 
 /// Writes a variable-length integer using protocol 30+ varlong encoding.
@@ -360,6 +419,39 @@ mod tests {
                 remaining = tail;
             }
             prop_assert!(remaining.is_empty());
+        }
+    }
+
+    #[test]
+    fn varlong_round_trip_basic_values() {
+        // Test positive values only - varlong is used for file sizes and timestamps
+        let test_cases = [
+            (0i64, 3u8),
+            (1i64, 3u8),
+            (255i64, 3u8),
+            (65536i64, 3u8),
+            (16777215i64, 3u8),   // Max value that fits in 3 bytes
+            (16777216i64, 3u8),   // Requires 4 bytes
+            (1700000000i64, 4u8), // Typical Unix timestamp
+            (i64::MAX, 8u8),      // Maximum positive value
+        ];
+
+        for (value, min_bytes) in test_cases {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, value, min_bytes).expect("encoding succeeds");
+
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("decoding succeeds");
+
+            assert_eq!(
+                decoded, value,
+                "Round-trip failed for value={value} min_bytes={min_bytes}: encoded={encoded:02x?}"
+            );
+            assert_eq!(
+                cursor.position() as usize,
+                encoded.len(),
+                "Cursor position mismatch for value={value} min_bytes={min_bytes}"
+            );
         }
     }
 }
