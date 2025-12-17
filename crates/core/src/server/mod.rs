@@ -216,6 +216,20 @@ pub fn run_server_with_handshake<W: Write>(
         writer = writer.activate_multiplex()?;
     }
 
+    // Activate compression on writer if negotiated (Protocol 30+ with compression algorithm)
+    // This mirrors upstream io.c:io_start_buffering_out()
+    // Compression is activated AFTER multiplex, wrapping the multiplexed stream
+    // Note: Reader compression is activated later in role contexts after INPUT multiplex
+    if let Some(ref negotiated) = handshake.negotiated_algorithms {
+        if let Some(compress_alg) = negotiated.compression.to_compress_algorithm()? {
+            // Use compression level 6 (upstream default for zlib)
+            // TODO: Get from configuration (--compress-level flag)
+            let level = compress::zlib::CompressionLevel::Default;
+
+            writer = writer.activate_compression(compress_alg, level)?;
+        }
+    }
+
     // Send MSG_IO_TIMEOUT for daemon mode with configured timeout (main.c:1249-1250)
     // This tells the client about the server's I/O timeout value
     if let Some(timeout_secs) = handshake.io_timeout {

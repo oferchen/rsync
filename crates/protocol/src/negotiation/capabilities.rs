@@ -131,6 +131,36 @@ impl CompressionAlgorithm {
             )),
         }
     }
+
+    /// Converts to the compression crate's algorithm enum.
+    ///
+    /// Returns `None` if this is the `None` variant (no compression).
+    /// Returns an error if the algorithm is not supported in this build.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the algorithm requires a feature that is not enabled
+    /// (e.g., LZ4 or Zstd without the corresponding feature flag).
+    pub fn to_compress_algorithm(&self) -> io::Result<Option<compress::algorithm::CompressionAlgorithm>> {
+        match self {
+            Self::None => Ok(None),
+            Self::Zlib | Self::ZlibX => Ok(Some(compress::algorithm::CompressionAlgorithm::Zlib)),
+            #[cfg(feature = "lz4")]
+            Self::LZ4 => Ok(Some(compress::algorithm::CompressionAlgorithm::Lz4)),
+            #[cfg(not(feature = "lz4"))]
+            Self::LZ4 => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LZ4 compression not available (feature not enabled)",
+            )),
+            #[cfg(feature = "zstd")]
+            Self::Zstd => Ok(Some(compress::algorithm::CompressionAlgorithm::Zstd)),
+            #[cfg(not(feature = "zstd"))]
+            Self::Zstd => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Zstd compression not available (feature not enabled)",
+            )),
+        }
+    }
 }
 
 /// Result of capability negotiation.
