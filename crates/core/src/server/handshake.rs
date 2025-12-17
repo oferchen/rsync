@@ -37,6 +37,9 @@ pub struct HandshakeResult {
     /// Compatibility flags exchanged during protocol setup.
     /// None for protocols < 30 or when compat exchange was skipped.
     pub compat_flags: Option<CompatibilityFlags>,
+    /// Checksum seed for XXHash algorithms.
+    /// Generated during setup_protocol() and used when creating XXHash instances.
+    pub checksum_seed: i32,
 }
 
 /// Performs the server-side protocol version handshake.
@@ -82,6 +85,7 @@ pub fn perform_handshake(
         io_timeout: None,  // SSH mode doesn't configure I/O timeouts
         negotiated_algorithms: None, // Will be populated by setup_protocol()
         compat_flags: None, // Will be populated by setup_protocol()
+        checksum_seed: 0, // Will be populated by setup_protocol()
     })
 }
 
@@ -190,6 +194,7 @@ pub fn perform_legacy_handshake(
         io_timeout: None,  // SSH mode doesn't configure I/O timeouts
         negotiated_algorithms: None, // Will be populated by setup_protocol()
         compat_flags: None, // Will be populated by setup_protocol()
+        checksum_seed: 0, // Will be populated by setup_protocol()
     })
 }
 
