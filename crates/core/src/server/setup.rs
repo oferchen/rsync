@@ -219,9 +219,9 @@ pub fn setup_protocol(
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
     // We skip that exchange here since our HandshakeResult already contains the negotiated protocol.
 
-    // Send compatibility flags for protocol >= 30 (UNIDIRECTIONAL)
+    // Build compat flags and perform negotiation for protocol >= 30
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
-    if protocol.as_u8() >= 30 && !skip_compat_exchange {
+    let negotiated = if protocol.as_u8() >= 30 && !skip_compat_exchange {
         // Build our compat flags (server side)
         // This mirrors upstream compat.c:712-732 which builds flags from client_info string
         let our_flags = if let Some(args) = client_args {
@@ -249,16 +249,21 @@ pub fn setup_protocol(
         // TODO: Store our_flags for use by role handlers
         // Upstream stores these in global variables, but we'll need to pass them through
         // the HandshakeResult or ServerConfig
-    }
 
-    // Protocol 30+ capability negotiation (upstream compat.c:534-585)
-    // This MUST happen inside setup_protocol(), BEFORE the function returns,
-    // so negotiation completes in RAW mode BEFORE multiplex activation.
-    //
-    // The negotiation implementation is in protocol::negotiate_capabilities(),
-    // which mirrors upstream's negotiate_the_strings() function.
-    let negotiated = if protocol.as_u8() >= 30 && !skip_compat_exchange {
-        Some(protocol::negotiate_capabilities(protocol, stdin, stdout)?)
+        // Protocol 30+ capability negotiation (upstream compat.c:534-585)
+        // This MUST happen inside setup_protocol(), BEFORE the function returns,
+        // so negotiation completes in RAW mode BEFORE multiplex activation.
+        //
+        // The negotiation implementation is in protocol::negotiate_capabilities(),
+        // which mirrors upstream's negotiate_the_strings() function.
+        //
+        // Negotiation only happens if client has VARINT_FLIST_FLAGS ('v') capability.
+        // This matches upstream's do_negotiated_strings check.
+
+        // Check if client supports negotiated strings (has 'v' capability)
+        let do_negotiation = our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS);
+        let _ = std::fs::write("/tmp/debug_negotiation", format!("our_flags={} has_v={} do_neg={}", our_flags.bits(), our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS), do_negotiation));
+        Some(protocol::negotiate_capabilities(protocol, stdin, stdout, do_negotiation)?)
     } else {
         None  // Protocol < 30 uses default algorithms
     };
