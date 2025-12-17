@@ -178,6 +178,7 @@ fn top_level_usage() -> String {
         "  branding         Validate workspace branding metadata\n",
         "  docs            Build API docs and run doctests\n",
         "  enforce-limits   Enforce source line and comment hygiene limits\n",
+        "  interop          Validate interoperability with upstream rsync\n",
         "  no-binaries      Assert the git index contains no binary artifacts\n",
         "  no-placeholders  Ensure Rust sources are free from placeholder code\n",
         "  package         Build distribution artifacts (deb/rpm)\n",
