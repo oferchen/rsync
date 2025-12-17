@@ -89,7 +89,10 @@ for oc-rsync, following the upstream rsync protocol specification.
 - **Status**: Flags are exchanged and stored, but not yet used for protocol behavior
 - **What Works**:
   - Flags negotiated and stored in `HandshakeResult.compat_flags`
-  - Available to role contexts
+  - Available to role contexts (ReceiverContext, GeneratorContext)
+  - Accessor methods: `ctx.compat_flags()` returns `Option<CompatibilityFlags>` (Commit: 52201448)
+  - Individual flags can be checked: `flags.contains(CompatibilityFlags::INC_RECURSE)`
+  - Integration tests verify flag accessibility (3 tests)
 - **What's Missing**:
   - Flags not yet used to control protocol behaviors
   - Examples: INC_RECURSE for incremental recursion
@@ -125,12 +128,13 @@ Transfer begins (uses negotiated checksum)
 
 - **Formatting**: ✅ `cargo fmt --all -- --check` PASSED
 - **Linting**: ✅ `cargo clippy` PASSED
-- **Tests**: ✅ 3333/3335 tests passing
+- **Tests**: ✅ 3336/3338 tests passing
   - 2 pre-existing failures (unrelated to this work):
     - `core server::generator::tests::build_and_send_round_trip`
     - `protocol flist::write::tests::write_then_read_round_trip`
-  - 14 new integration tests for negotiated algorithms (all passing)
-  - 6 existing config tests (all passing)
+  - 14 integration tests for negotiated checksum algorithms (all passing)
+  - 3 integration tests for compat_flags accessibility (all passing)
+  - 6 config tests (all passing)
 
 ## Implementation Notes
 
@@ -205,6 +209,7 @@ behaviors. This is intentional - the infrastructure is in place for future use.
 
 ## Changelog
 
+- **2025-01-XX**: Added compat_flags accessor methods to role contexts (52201448)
 - **2025-01-XX**: Added integration tests for negotiated algorithms (c57ae371)
 - **2025-01-XX**: Implemented negotiated checksum algorithm selection (f9d22b2c)
 - **2025-01-XX**: Added checksum seed to protocol setup (350c88dd)
