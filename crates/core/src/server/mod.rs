@@ -181,10 +181,11 @@ pub fn run_server_with_handshake<W: Write>(
         handshake.client_args.as_deref(),
     )?;
 
-    // Store negotiated algorithms and compat flags in handshake for use by role contexts
+    // Store negotiated algorithms, compat flags, and checksum seed in handshake for use by role contexts
     // The role contexts will extract these and use them for checksum/compression operations
     handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
     handshake.compat_flags = setup_result.compat_flags;
+    handshake.checksum_seed = setup_result.checksum_seed;
 
     // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
     // The setup_protocol() call above may have buffered data (compat flags varint).
