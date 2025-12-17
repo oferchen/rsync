@@ -64,7 +64,7 @@ impl ChecksumAlgorithm {
     }
 
     /// Parses an algorithm from its wire protocol name.
-    pub fn from_str(name: &str) -> io::Result<Self> {
+    pub fn parse(name: &str) -> io::Result<Self> {
         match name {
             "md4" => Ok(Self::MD4),
             "md5" => Ok(Self::MD5),
@@ -73,7 +73,7 @@ impl ChecksumAlgorithm {
             "xxh128" => Ok(Self::XXH128),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unsupported checksum algorithm: {}", name),
+                format!("unsupported checksum algorithm: {name}"),
             )),
         }
     }
@@ -107,7 +107,7 @@ impl CompressionAlgorithm {
     }
 
     /// Parses an algorithm from its wire protocol name.
-    pub fn from_str(name: &str) -> io::Result<Self> {
+    pub fn parse(name: &str) -> io::Result<Self> {
         match name {
             "none" => Ok(Self::None),
             "zlib" => Ok(Self::Zlib),
@@ -116,7 +116,7 @@ impl CompressionAlgorithm {
             "zstd" => Ok(Self::Zstd),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unsupported compression algorithm: {}", name),
+                format!("unsupported compression algorithm: {name}"),
             )),
         }
     }
@@ -162,7 +162,7 @@ pub struct NegotiationResult {
 /// # Examples
 ///
 /// ```no_run
-/// use protocol::{ProtocolVersion, negotiation::negotiate_capabilities};
+/// use protocol::{ProtocolVersion, negotiate_capabilities};
 /// use std::io::{stdin, stdout};
 ///
 /// let protocol = ProtocolVersion::try_from(32)?;
@@ -195,10 +195,10 @@ pub fn negotiate_capabilities(
 
     // Step 3 & 4: Read client's choices (upstream compat.c:549-585)
     let client_checksum = recv_string(stdin)?;
-    let checksum = ChecksumAlgorithm::from_str(client_checksum.trim())?;
+    let checksum = ChecksumAlgorithm::parse(client_checksum.trim())?;
 
     let client_compression = recv_string(stdin)?;
-    let compression = CompressionAlgorithm::from_str(client_compression.trim())?;
+    let compression = CompressionAlgorithm::parse(client_compression.trim())?;
 
     Ok(NegotiationResult {
         checksum,
@@ -232,7 +232,7 @@ fn recv_string(reader: &mut dyn Read) -> io::Result<String> {
     if len > 8192 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("negotiation string too long: {} bytes", len),
+            format!("negotiation string too long: {len} bytes"),
         ));
     }
 
@@ -242,7 +242,7 @@ fn recv_string(reader: &mut dyn Read) -> io::Result<String> {
     String::from_utf8(buf).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid UTF-8 in negotiation string: {}", e),
+            format!("invalid UTF-8 in negotiation string: {e}"),
         )
     })
 }
@@ -254,29 +254,29 @@ mod tests {
     #[test]
     fn test_checksum_algorithm_roundtrip() {
         for &name in &["md4", "md5", "sha1", "xxh64", "xxh128"] {
-            let algo = ChecksumAlgorithm::from_str(name).unwrap();
+            let algo = ChecksumAlgorithm::parse(name).unwrap();
             // Note: xxh64 wire name is "xxh64" but as_str returns "xxh64"
             // This is correct as the parsing accepts both "xxh" and "xxh64"
             let roundtrip = algo.as_str();
-            let reparsed = ChecksumAlgorithm::from_str(roundtrip).unwrap();
-            assert_eq!(algo, reparsed, "roundtrip failed for {}", name);
+            let reparsed = ChecksumAlgorithm::parse(roundtrip).unwrap();
+            assert_eq!(algo, reparsed, "roundtrip failed for {name}");
         }
     }
 
     #[test]
     fn test_compression_algorithm_roundtrip() {
         for &name in &["none", "zlib", "zlibx", "lz4", "zstd"] {
-            let algo = CompressionAlgorithm::from_str(name).unwrap();
+            let algo = CompressionAlgorithm::parse(name).unwrap();
             let roundtrip = algo.as_str();
-            let reparsed = CompressionAlgorithm::from_str(roundtrip).unwrap();
-            assert_eq!(algo, reparsed, "roundtrip failed for {}", name);
+            let reparsed = CompressionAlgorithm::parse(roundtrip).unwrap();
+            assert_eq!(algo, reparsed, "roundtrip failed for {name}");
         }
     }
 
     #[test]
     fn test_xxh_alias() {
         // "xxh" should parse to XXH64
-        let algo = ChecksumAlgorithm::from_str("xxh").unwrap();
+        let algo = ChecksumAlgorithm::parse("xxh").unwrap();
         assert_eq!(algo, ChecksumAlgorithm::XXH64);
     }
 
@@ -291,7 +291,10 @@ mod tests {
         // Protocol < 30 should use defaults without any I/O
         assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
-        assert!(stdout.is_empty(), "no data should be sent for protocol < 30");
+        assert!(
+            stdout.is_empty(),
+            "no data should be sent for protocol < 30"
+        );
     }
 
     #[test]
@@ -311,8 +314,14 @@ mod tests {
 
         // Verify we sent our lists
         let output = String::from_utf8_lossy(&stdout);
-        assert!(output.contains("md5"), "should send checksum list containing md5");
-        assert!(output.contains("zlib"), "should send compression list containing zlib");
+        assert!(
+            output.contains("md5"),
+            "should send checksum list containing md5"
+        );
+        assert!(
+            output.contains("zlib"),
+            "should send compression list containing zlib"
+        );
     }
 
     #[test]
@@ -349,7 +358,7 @@ mod tests {
         // Create a varint that claims 10000 bytes
         let mut buffer = Vec::new();
         write_varint(&mut buffer, 10000).unwrap();
-        buffer.extend_from_slice(&vec![b'x'; 100]); // But only provide 100
+        buffer.extend_from_slice(&[b'x'; 100]); // But only provide 100
 
         let mut reader = &buffer[..];
         let result = recv_string(&mut reader);
@@ -360,21 +369,25 @@ mod tests {
 
     #[test]
     fn test_unsupported_checksum() {
-        let result = ChecksumAlgorithm::from_str("blake2");
+        let result = ChecksumAlgorithm::parse("blake2");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported checksum algorithm"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported checksum algorithm")
+        );
     }
 
     #[test]
     fn test_unsupported_compression() {
-        let result = CompressionAlgorithm::from_str("bzip2");
+        let result = CompressionAlgorithm::parse("bzip2");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported compression algorithm"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported compression algorithm")
+        );
     }
 }
