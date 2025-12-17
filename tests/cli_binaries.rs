@@ -246,6 +246,7 @@ fn daemon_rejects_unknown_flag() {
 
 #[cfg(unix)]
 #[test]
+#[ignore = "Obsolete: Server now uses native implementation instead of fallback delegation (gatekeeper bug fix)"]
 fn server_entry_execs_fallback_binary() {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
