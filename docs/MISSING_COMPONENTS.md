@@ -51,62 +51,82 @@ tests/protocol_handshakes/
 
 ## MEDIUM Priority - Protocol Implementation
 
-### 2. Negotiated Algorithms Wiring
-**Status**: Negotiation works, results not used
-**Location**: `crates/core/src/server/mod.rs:184`
-**Impact**: Defaults used regardless of negotiation outcome
+### 2. ✅ Negotiated Checksum Algorithms (COMPLETED)
+**Status**: COMPLETE - Checksum algorithms fully wired and tested
+**Commits**: f9d22b2c, db41d62e, 350c88dd, c57ae371
+**Impact**: Protocol 30+ checksum negotiation working correctly
 
-**Current Behavior**:
-```rust
-let negotiated = setup::setup_protocol(...)?;
+**Completed Work**:
+1. ✅ Added `negotiated_algorithms: Option<NegotiationResult>` to `HandshakeResult`
+2. ✅ Pass negotiated algorithms to role contexts:
+   - `GeneratorContext` - stores and uses negotiated checksum
+   - `ReceiverContext` - stores and uses negotiated checksum
+3. ✅ Checksum selection with proper fallback chain:
+   - Negotiated algorithm (Protocol 30+ with 'v' capability)
+   - MD5 default (Protocol 30+ without negotiation)
+   - MD4 default (Protocol < 30)
+4. ✅ Checksum seed generation and transmission (all protocols)
+5. ✅ XXHash variants support with seed propagation
+6. ✅ Integration tests: 14 tests validating algorithm usage
 
-// TODO: Wire negotiated algorithms through to transfer engine
-if let Some(result) = negotiated {
-    // Algorithms negotiated: result.checksum and result.compression
-    // These should be stored in context and used by the transfer engine
-    let _ = result; // Suppress unused warning for now
-}
-```
+**Remaining Work**:
+- ❌ Compression algorithm application (negotiated but not yet applied to streams)
+  - Requires creating compression wrapper layers in ServerWriter/ServerReader
+  - Architectural work to add Plain → Multiplex → Compress stream stack
+
+### 3. Compression Stream Implementation
+**Status**: Negotiated but not applied
+**Location**: `crates/core/src/server/mod.rs`, `crates/compress/`
+**Impact**: Compression algorithm negotiated but defaults used
+
+**Current State**:
+- ✅ Compression negotiation works (Zlib, ZlibX, LZ4, Zstd)
+- ✅ Algorithm stored in `NegotiationResult.compression`
+- ✅ `ActiveCompressor` exists in engine layer
+- ❌ Server streams don't create compression wrappers
+- ❌ `ServerWriter` only handles Plain → Multiplex
 
 **Required Architecture**:
-1. Add `negotiated_algorithms: Option<NegotiationResult>` to `ServerConfig` or create new `ServerContext`
-2. Pass negotiated algorithms to role contexts:
-   - `GeneratorContext`
-   - `ReceiverContext`
-   - `SenderContext`
-3. Use negotiated checksum algorithm when creating `StrongDigest` instances
-4. Use negotiated compression algorithm when creating compressors
-5. Update checksum selection logic in:
-   - `crates/checksums/src/strong/mod.rs`
-   - Delta generation/application code
-6. Update compression selection logic in:
-   - `crates/compress/src/`
-   - Transfer pipeline
+1. Create `CompressedWriter` and `CompressedReader` wrappers
+2. Integrate into server stream stack:
+   ```
+   Plain → Multiplex → Compress (for protocol 30+)
+   ```
+3. Wire negotiated compression algorithm to wrappers
+4. Handle compression lifecycle (init, write, flush, finish)
+5. Add tests for compressed data flow
 
-**Design Considerations**:
-- Backward compatibility: Default to MD4/zlib for protocols < 30
-- Thread safety: Multiple roles may access algorithms concurrently
-- Testing: Unit tests for algorithm selection at each protocol version
+### 4. Compat Flags Usage
+**Status**: Stored but not used for runtime behavior
+**Location**: `crates/core/src/server/{receiver,generator}.rs`
+**Impact**: Protocol-specific optimizations and behaviors disabled
 
-### 3. Compat Flags Storage
-**Status**: Exchanged but not stored for runtime use
-**Location**: `crates/core/src/server/setup.rs:253`
-**Impact**: Protocol-specific behavior can't check negotiated flags
+**Current State**:
+- ✅ Compat flags exchanged during Protocol 30+ setup
+- ✅ Stored in `HandshakeResult.compat_flags: Option<CompatibilityFlags>`
+- ✅ Passed to role contexts (ReceiverContext, GeneratorContext)
+- ❌ Not used to control protocol behaviors (marked with `#[allow(dead_code)]`)
 
-**Current**:
+**Required Implementation**:
+Use flags to control protocol behaviors in role contexts:
+- `INC_RECURSE` - Enable incremental recursion mode
+- `SAFE_FILE_LIST` - Change file list validation rules
+- `AVOID_XATTR_OPTIMIZATION` - Disable xattr shortcuts
+- `CHECKSUM_SEED_FIX` - Handle seed order variations
+- `SYMLINK_TIMES` - Preserve symlink timestamps
+- `SYMLINK_ICONV` - Character set conversion for symlinks
+- `INPLACE_PARTIAL_DIR` - Allow in-place with partial-dir
+- `VARINT_FLIST_FLAGS` - Use varint encoding for file list flags
+- `ID0_NAMES` - Send user/group names for ID 0
+
+**Example Usage**:
 ```rust
-// TODO: Store our_flags for use by role handlers
-// Upstream stores these in global variables, but we'll need to pass them through
-// the HandshakeResult or ServerConfig
+if let Some(flags) = &self.compat_flags {
+    if flags.has(CompatFlag::INC_RECURSE) {
+        // Use incremental recursion
+    }
+}
 ```
-
-**Solution**:
-- Add `compat_flags: CompatibilityFlags` to `HandshakeResult` or `ServerConfig`
-- Pass flags to role contexts for runtime checks
-- Examples where flags affect behavior:
-  - `INC_RECURSE`: Enables incremental recursion
-  - `SAFE_FILE_LIST`: Changes file list validation
-  - `AVOID_XATTR_OPTIMIZATION`: Disables xattr shortcuts
 
 ---
 
@@ -176,45 +196,66 @@ if let Some(result) = negotiated {
 
 ### Missing Test Categories
 1. **Protocol Interoperability**: Golden handshake fixtures (HIGH)
-2. **Algorithm Selection**: Verify negotiated algorithms are used (MEDIUM)
+2. ✅ **Algorithm Selection**: Verify negotiated algorithms are used (COMPLETED)
 3. **Compat Flags**: Runtime behavior based on negotiated flags (MEDIUM)
 4. **Batch Mode**: End-to-end batch application (LOW)
+5. **Compression Streams**: Verify compressed data flow (MEDIUM)
 
 ### Current Test Status
 - ✅ Unit tests: Good coverage in most crates
 - ✅ Integration tests: Basic transfer scenarios work
 - ✅ Property tests: Checksums, filters have property tests
+- ✅ Algorithm tests: 14 integration tests for negotiated checksums
 - ❌ Golden tests: Protocol handshakes need fixtures
 - ⚠️ Interop tests: Exit codes and messages validated, handshakes pending
+- **Total**: 3333/3335 tests passing (2 pre-existing failures)
 
 ---
 
 ## Implementation Roadmap
 
-### Phase 1: Testing Infrastructure (1-2 days)
+### Phase 1: Testing Infrastructure
+**Status**: PENDING
+**Priority**: HIGH
 1. Capture golden handshake files for protocols 28-32
 2. Verify golden tests pass
 3. Document handshake capture process
 
-### Phase 2: Algorithm Wiring (2-3 days)
-1. Design context structure for negotiated algorithms
-2. Pass negotiation results through role contexts
-3. Update checksum selection in delta operations
-4. Update compression selection in transfer pipeline
-5. Add tests for algorithm selection
+### Phase 2: ✅ Checksum Algorithm Wiring (COMPLETED)
+**Status**: COMPLETE
+**Commits**: f9d22b2c, db41d62e, 350c88dd, c57ae371
+1. ✅ Design context structure for negotiated algorithms
+2. ✅ Pass negotiation results through role contexts
+3. ✅ Update checksum selection in delta operations
+4. ✅ Add tests for algorithm selection (14 integration tests)
 
-### Phase 3: Runtime Flags (1-2 days)
-1. Store compat flags in server context
-2. Pass flags to role contexts
-3. Implement flag-dependent behavior
-4. Test with various flag combinations
+### Phase 3: Compression Stream Implementation
+**Status**: PENDING
+**Priority**: MEDIUM
+1. Create CompressedWriter and CompressedReader wrappers
+2. Integrate into server stream stack (Plain → Multiplex → Compress)
+3. Wire negotiated compression algorithm to wrappers
+4. Handle compression lifecycle
+5. Add tests for compressed data flow
 
-### Phase 4: Automation (1 day)
+### Phase 4: Runtime Flags Usage
+**Status**: PENDING
+**Priority**: MEDIUM
+1. Use compat flags in role contexts for protocol behaviors
+2. Implement flag-dependent behavior (INC_RECURSE, SAFE_FILE_LIST, etc.)
+3. Test with various flag combinations
+4. Remove `#[allow(dead_code)]` annotations
+
+### Phase 5: Automation (optional)
+**Status**: PENDING
+**Priority**: LOW
 1. Implement capture-handshakes xtask command
 2. Automate pcap parsing with tshark
 3. Integrate into CI pipeline
 
-### Phase 5: Batch Mode (optional, 2-3 days)
+### Phase 6: Batch Mode (optional)
+**Status**: PENDING
+**Priority**: LOW
 1. Complete directory/symlink/device handling
 2. Full metadata preservation
 3. End-to-end batch tests
