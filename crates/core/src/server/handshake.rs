@@ -81,11 +81,11 @@ pub fn perform_handshake(
         protocol: negotiated,
         buffered: Vec::new(),
         compat_exchanged: false,
-        client_args: None, // SSH mode doesn't have daemon client args
-        io_timeout: None,  // SSH mode doesn't configure I/O timeouts
+        client_args: None,           // SSH mode doesn't have daemon client args
+        io_timeout: None,            // SSH mode doesn't configure I/O timeouts
         negotiated_algorithms: None, // Will be populated by setup_protocol()
-        compat_flags: None, // Will be populated by setup_protocol()
-        checksum_seed: 0, // Will be populated by setup_protocol()
+        compat_flags: None,          // Will be populated by setup_protocol()
+        checksum_seed: 0,            // Will be populated by setup_protocol()
     })
 }
 
@@ -190,11 +190,11 @@ pub fn perform_legacy_handshake(
         protocol: negotiated,
         buffered: Vec::new(),
         compat_exchanged: false,
-        client_args: None, // SSH mode doesn't have daemon client args
-        io_timeout: None,  // SSH mode doesn't configure I/O timeouts
+        client_args: None,           // SSH mode doesn't have daemon client args
+        io_timeout: None,            // SSH mode doesn't configure I/O timeouts
         negotiated_algorithms: None, // Will be populated by setup_protocol()
-        compat_flags: None, // Will be populated by setup_protocol()
-        checksum_seed: 0, // Will be populated by setup_protocol()
+        compat_flags: None,          // Will be populated by setup_protocol()
+        checksum_seed: 0,            // Will be populated by setup_protocol()
     })
 }
 

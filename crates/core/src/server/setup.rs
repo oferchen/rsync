@@ -280,7 +280,7 @@ pub fn setup_protocol(
 
         (Some(our_flags), Some(algorithms))
     } else {
-        (None, None)  // Protocol < 30 uses default algorithms and no compat flags
+        (None, None) // Protocol < 30 uses default algorithms and no compat flags
     };
 
     // Send checksum seed (ALL protocols, upstream compat.c:750)
