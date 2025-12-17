@@ -145,7 +145,11 @@ pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result
 /// * `writer` - Destination for the encoded bytes
 /// * `value` - The 64-bit value to encode
 /// * `min_bytes` - Minimum number of bytes to use (typically 3 or 4 for file sizes/times)
-pub fn write_varlong<W: Write + ?Sized>(writer: &mut W, value: i64, min_bytes: u8) -> io::Result<()> {
+pub fn write_varlong<W: Write + ?Sized>(
+    writer: &mut W,
+    value: i64,
+    min_bytes: u8,
+) -> io::Result<()> {
     // Convert to little-endian bytes
     let bytes = value.to_le_bytes();
 
@@ -175,7 +179,11 @@ pub fn write_varlong<W: Write + ?Sized>(writer: &mut W, value: i64, min_bytes: u
 ///
 /// This mirrors upstream's `write_varlong30(int f, int64 x, uchar min_bytes)` inline function.
 /// For protocol < 30, it would use write_longint, but we only support protocol 30+.
-pub fn write_varlong30<W: Write + ?Sized>(writer: &mut W, value: i64, min_bytes: u8) -> io::Result<()> {
+pub fn write_varlong30<W: Write + ?Sized>(
+    writer: &mut W,
+    value: i64,
+    min_bytes: u8,
+) -> io::Result<()> {
     write_varlong(writer, value, min_bytes)
 }
 
