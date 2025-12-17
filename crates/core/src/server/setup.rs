@@ -120,16 +120,21 @@ fn build_compat_flags_from_client_info(
     }
 
     // AVOID_XATTR_OPTIMIZATION: client advertises 'x'
+    // Disables xattr hardlink optimization (mirrors upstream compat.c:730)
+    // When enabled, xattr data is transmitted even for hardlinked files
     if client_info.contains('x') {
         flags |= CompatibilityFlags::AVOID_XATTR_OPTIMIZATION;
     }
 
     // CHECKSUM_SEED_FIX: client advertises 'C'
+    // Ensures proper seed ordering for MD5 checksums (fully implemented)
     if client_info.contains('C') {
         flags |= CompatibilityFlags::CHECKSUM_SEED_FIX;
     }
 
     // INPLACE_PARTIAL_DIR: client advertises 'I'
+    // Enables --inplace behavior when basis file is in partial directory
+    // (mirrors upstream compat.c:732, receiver.c:797, sender.c:331)
     if client_info.contains('I') {
         flags |= CompatibilityFlags::INPLACE_PARTIAL_DIR;
     }
@@ -140,6 +145,8 @@ fn build_compat_flags_from_client_info(
     }
 
     // ID0_NAMES: client advertises 'u'
+    // Controls whether uid/gid 0 names are included in the uid/gid list
+    // (mirrors upstream compat.c:734, uidlist.c:400-408)
     if client_info.contains('u') {
         flags |= CompatibilityFlags::ID0_NAMES;
     }
@@ -396,6 +403,60 @@ mod tests {
         assert!(
             !flags_forbidden.contains(CompatibilityFlags::INC_RECURSE),
             "INC_RECURSE should not be enabled when not allowed even if client advertises 'i'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_enables_id0_names_when_client_advertises_u() {
+        let flags = build_compat_flags_from_client_info("ufxCIv", true);
+        assert!(
+            flags.contains(CompatibilityFlags::ID0_NAMES),
+            "ID0_NAMES should be enabled when client advertises 'u'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_skips_id0_names_when_client_missing_u() {
+        let flags = build_compat_flags_from_client_info("fxCIv", true);
+        assert!(
+            !flags.contains(CompatibilityFlags::ID0_NAMES),
+            "ID0_NAMES should not be enabled when client doesn't advertise 'u'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_enables_inplace_partial_dir_when_client_advertises_i_cap() {
+        let flags = build_compat_flags_from_client_info("fxCIvu", true);
+        assert!(
+            flags.contains(CompatibilityFlags::INPLACE_PARTIAL_DIR),
+            "INPLACE_PARTIAL_DIR should be enabled when client advertises 'I'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_skips_inplace_partial_dir_when_client_missing_i_cap() {
+        let flags = build_compat_flags_from_client_info("fxCvu", true);
+        assert!(
+            !flags.contains(CompatibilityFlags::INPLACE_PARTIAL_DIR),
+            "INPLACE_PARTIAL_DIR should not be enabled when client doesn't advertise 'I'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_enables_avoid_xattr_optimization_when_client_advertises_x() {
+        let flags = build_compat_flags_from_client_info("xfCIvu", true);
+        assert!(
+            flags.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+            "AVOID_XATTR_OPTIMIZATION should be enabled when client advertises 'x'"
+        );
+    }
+
+    #[test]
+    fn build_compat_flags_skips_avoid_xattr_optimization_when_client_missing_x() {
+        let flags = build_compat_flags_from_client_info("fCIvu", true);
+        assert!(
+            !flags.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION),
+            "AVOID_XATTR_OPTIMIZATION should not be enabled when client doesn't advertise 'x'"
         );
     }
 }
