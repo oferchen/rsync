@@ -655,6 +655,7 @@ fn respond_with_module_request(
                 io_timeout: module.timeout.map(|t| t.get()),  // Pass configured I/O timeout
                 negotiated_algorithms: None,  // Will be populated by setup_protocol()
                 compat_flags: None,  // Will be populated by setup_protocol()
+                checksum_seed: 0,  // Will be populated by setup_protocol()
             };
 
             // Disable protocol tracing temporarily to isolate protocol issues

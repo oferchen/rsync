@@ -508,6 +508,7 @@ mod tests {
             io_timeout: None,  // Test mode doesn't configure I/O timeouts
             negotiated_algorithms: None, // Test mode uses defaults
             compat_flags: None, // Test mode uses defaults
+            checksum_seed: 0, // Test mode uses dummy seed
         }
     }
 

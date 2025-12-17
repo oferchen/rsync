@@ -16,6 +16,9 @@ pub struct SetupResult {
     /// Compatibility flags exchanged during protocol setup.
     /// None for protocols < 30 or when compat exchange was skipped.
     pub compat_flags: Option<CompatibilityFlags>,
+    /// Checksum seed sent to client for XXHash algorithms.
+    /// This seed is sent for all protocols and should be used when creating XXHash instances.
+    pub checksum_seed: i32,
 }
 
 /// Parses client capabilities from the `-e` option argument.
@@ -297,5 +300,6 @@ pub fn setup_protocol(
     Ok(SetupResult {
         negotiated_algorithms,
         compat_flags,
+        checksum_seed,
     })
 }
