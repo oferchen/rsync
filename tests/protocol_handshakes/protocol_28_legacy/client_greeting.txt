@@ -1,0 +1,1 @@
+@RSYNCD: 28.0 sha512 sha256 sha1 md5 md4
