@@ -284,14 +284,12 @@ impl GeneratorContext {
         // Compression is activated AFTER multiplex, wrapping the multiplexed stream
         if let Some(ref negotiated) = self.negotiated_algorithms {
             if let Some(compress_alg) = negotiated.compression.to_compress_algorithm()? {
-                reader = reader
-                    .activate_compression(compress_alg)
-                    .map_err(|e| {
-                        io::Error::new(
-                            e.kind(),
-                            format!("failed to activate INPUT compression: {e}"),
-                        )
-                    })?;
+                reader = reader.activate_compression(compress_alg).map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("failed to activate INPUT compression: {e}"),
+                    )
+                })?;
             }
         }
 
@@ -605,6 +603,7 @@ mod tests {
             flag_string: "-logDtpre.".to_string(),
             flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
+            compression_level: None,
         }
     }
 

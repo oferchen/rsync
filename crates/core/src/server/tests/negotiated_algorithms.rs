@@ -36,6 +36,7 @@ fn test_config() -> ServerConfig {
         flag_string: "-a".to_string(),
         flags: ParsedServerFlags::default(),
         args: vec![std::ffi::OsString::from(".")],
+        compression_level: None,
     }
 }
 
