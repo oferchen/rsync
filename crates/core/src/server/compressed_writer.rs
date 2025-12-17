@@ -93,7 +93,7 @@ impl<W: Write> CompressedWriter<W> {
                         "compression algorithm {} is not supported",
                         algorithm.name()
                     ),
-                ))
+                ));
             }
         };
 
@@ -302,12 +302,9 @@ mod tests {
 
         let mut buf = Vec::new();
         {
-            let mut writer = CompressedWriter::new(
-                &mut buf,
-                CompressionAlgorithm::Zlib,
-                CompressionLevel::Fast,
-            )
-            .unwrap();
+            let mut writer =
+                CompressedWriter::new(&mut buf, CompressionAlgorithm::Zlib, CompressionLevel::Fast)
+                    .unwrap();
 
             writer.write_all(&data).unwrap();
             writer.finish().unwrap();

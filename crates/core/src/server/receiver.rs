@@ -195,6 +195,22 @@ impl ReceiverContext {
             })?;
         }
 
+        // Activate compression on reader if negotiated (Protocol 30+ with compression algorithm)
+        // This mirrors upstream io.c:io_start_buffering_in()
+        // Compression is activated AFTER multiplex, wrapping the multiplexed stream
+        if let Some(ref negotiated) = self.negotiated_algorithms {
+            if let Some(compress_alg) = negotiated.compression.to_compress_algorithm()? {
+                reader = reader
+                    .activate_compression(compress_alg)
+                    .map_err(|e| {
+                        io::Error::new(
+                            e.kind(),
+                            format!("failed to activate INPUT compression: {e}"),
+                        )
+                    })?;
+            }
+        }
+
         // Read filter list from sender (multiplexed for protocol >= 30)
         // This mirrors upstream recv_filter_list timing at main.c:1171
         let _wire_rules = read_filter_list(&mut reader, self.protocol)

@@ -62,9 +62,7 @@ impl<R: Read> CompressedReader<R> {
     /// (e.g., LZ4 or Zstd without the corresponding feature flag).
     pub fn new(inner: R, algorithm: CompressionAlgorithm) -> io::Result<Self> {
         let decoder = match algorithm {
-            CompressionAlgorithm::Zlib => {
-                DecoderVariant::Zlib(CountingZlibDecoder::new(inner))
-            }
+            CompressionAlgorithm::Zlib => DecoderVariant::Zlib(CountingZlibDecoder::new(inner)),
             #[cfg(feature = "lz4")]
             CompressionAlgorithm::Lz4 => DecoderVariant::Lz4(CountingLz4Decoder::new(inner)),
             #[cfg(feature = "zstd")]
@@ -77,7 +75,7 @@ impl<R: Read> CompressedReader<R> {
                         "compression algorithm {} is not supported",
                         algorithm.name()
                     ),
-                ))
+                ));
             }
         };
 
@@ -114,7 +112,7 @@ impl<R: Read> Read for CompressedReader<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use compress::zlib::{compress_to_vec, CompressionLevel};
+    use compress::zlib::{CompressionLevel, compress_to_vec};
     use std::io::Cursor;
 
     #[test]
