@@ -51,10 +51,8 @@ fn run_daemon_refuses_disallowed_module_options() {
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-
+    // Daemon responds directly with error for refused option
+    // (CAP is only sent for #list requests)
     line.clear();
     reader.read_line(&mut line).expect("refusal message");
     assert_eq!(

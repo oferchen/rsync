@@ -104,9 +104,9 @@ where
     let is_receiver = args.iter().any(|a| a == "--receiver");
 
     let role = if is_sender {
-        ServerRole::Generator  // Server sends files to client (generator role)
+        ServerRole::Generator // Server sends files to client (generator role)
     } else if is_receiver {
-        ServerRole::Receiver   // Server receives files from client
+        ServerRole::Receiver // Server receives files from client
     } else {
         // Default to receiver if neither specified (upstream behavior)
         ServerRole::Receiver
@@ -151,7 +151,11 @@ where
     let config = match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
         Ok(cfg) => cfg,
         Err(e) => {
-            write_server_error(stderr, program_brand, format!("invalid server arguments: {e}"));
+            write_server_error(
+                stderr,
+                program_brand,
+                format!("invalid server arguments: {e}"),
+            );
             return 1;
         }
     };
@@ -171,11 +175,7 @@ where
     }
 }
 
-fn write_server_error<Err: Write>(
-    stderr: &mut Err,
-    brand: Brand,
-    text: impl fmt::Display,
-) {
+fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt::Display) {
     let mut sink = MessageSink::with_brand(stderr, brand);
     let mut message = rsync_error!(1, "{}", text);
     message = message.with_role(Role::Server);
