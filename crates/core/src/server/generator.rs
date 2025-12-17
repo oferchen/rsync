@@ -66,9 +66,10 @@ pub struct GeneratorContext {
     /// None for protocols < 30 or when negotiation was skipped.
     negotiated_algorithms: Option<NegotiationResult>,
     /// Compatibility flags exchanged during protocol setup.
+    ///
+    /// Controls protocol-specific behaviors like incremental recursion (`INC_RECURSE`),
+    /// checksum seed ordering (`CHECKSUM_SEED_FIX`), and file list encoding (`VARINT_FLIST_FLAGS`).
     /// None for protocols < 30 or when compat exchange was skipped.
-    /// TODO: Use compat_flags to control protocol behaviors (INC_RECURSE, CHECKSUM_SEED_FIX, etc.)
-    #[allow(dead_code)]
     compat_flags: Option<CompatibilityFlags>,
     /// Checksum seed for XXHash algorithms.
     checksum_seed: i32,
@@ -98,6 +99,16 @@ impl GeneratorContext {
     #[must_use]
     pub const fn config(&self) -> &ServerConfig {
         &self.config
+    }
+
+    /// Returns the negotiated compatibility flags.
+    ///
+    /// Returns `None` for protocols < 30 or when compat exchange was skipped.
+    /// The flags control protocol-specific behaviors like incremental recursion,
+    /// checksum seed ordering, and file list encoding.
+    #[must_use]
+    pub const fn compat_flags(&self) -> Option<protocol::CompatibilityFlags> {
+        self.compat_flags
     }
 
     /// Returns the generated file list.
