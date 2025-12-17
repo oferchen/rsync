@@ -144,8 +144,6 @@ pub fn run_server_with_handshake<W: Write>(
     stdin: &mut dyn Read,
     mut stdout: W,
 ) -> ServerResult {
-    // VERY FIRST checkpoint
-
     // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
 
     // Protocol has already been negotiated via:
@@ -170,14 +168,27 @@ pub fn run_server_with_handshake<W: Write>(
     // IMPORTANT: Parameter order matches upstream: f_out first, f_in second!
     // For SSH mode, compat_exchanged is false (do compat exchange here).
     // For daemon mode, compat_exchanged is false (do compat exchange with client capabilities).
-    let setup_result = setup::setup_protocol(
+    //
+    // This call performs:
+    // 1. Compatibility flags exchange (protocol >= 30)
+    // 2. Capability negotiation for checksums and compression (protocol >= 30)
+    // Both happen in RAW mode, BEFORE multiplex activation.
+    let negotiated = setup::setup_protocol(
         handshake.protocol,
         &mut stdout,
         &mut chained_stdin,
         handshake.compat_exchanged,
         handshake.client_args.as_deref(),
-    );
-    setup_result?;
+    )?;
+
+    // TODO: Wire negotiated algorithms through to transfer engine
+    // For now, we successfully negotiate but don't yet use the results.
+    // Future work (Phase 6) will wire these through to actual checksum/compression operations.
+    if let Some(result) = negotiated {
+        // Algorithms negotiated: result.checksum and result.compression
+        // These should be stored in context and used by the transfer engine
+        let _ = result; // Suppress unused warning for now
+    }
 
     // CRITICAL: Flush stdout BEFORE wrapping it in ServerWriter!
     // The setup_protocol() call above may have buffered data (compat flags varint).

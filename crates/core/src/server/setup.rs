@@ -88,9 +88,24 @@ fn build_compat_flags_from_client_info(
         flags |= CompatibilityFlags::INC_RECURSE;
     }
 
+    // SYMLINK_TIMES: client advertises 'L'
+    if client_info.contains('L') {
+        flags |= CompatibilityFlags::SYMLINK_TIMES;
+    }
+
+    // SYMLINK_ICONV: client advertises 's'
+    if client_info.contains('s') {
+        flags |= CompatibilityFlags::SYMLINK_ICONV;
+    }
+
     // SAFE_FILE_LIST: client advertises 'f'
     if client_info.contains('f') {
         flags |= CompatibilityFlags::SAFE_FILE_LIST;
+    }
+
+    // AVOID_XATTR_OPTIMIZATION: client advertises 'x'
+    if client_info.contains('x') {
+        flags |= CompatibilityFlags::AVOID_XATTR_OPTIMIZATION;
     }
 
     // CHECKSUM_SEED_FIX: client advertises 'C'
@@ -98,9 +113,19 @@ fn build_compat_flags_from_client_info(
         flags |= CompatibilityFlags::CHECKSUM_SEED_FIX;
     }
 
+    // INPLACE_PARTIAL_DIR: client advertises 'I'
+    if client_info.contains('I') {
+        flags |= CompatibilityFlags::INPLACE_PARTIAL_DIR;
+    }
+
     // VARINT_FLIST_FLAGS: client advertises 'v'
     if client_info.contains('v') {
         flags |= CompatibilityFlags::VARINT_FLIST_FLAGS;
+    }
+
+    // ID0_NAMES: client advertises 'u'
+    if client_info.contains('u') {
+        flags |= CompatibilityFlags::ID0_NAMES;
     }
 
     flags
@@ -166,26 +191,30 @@ pub fn exchange_compat_flags_direct(
 /// For protocol >= 30, compatibility flags are ALWAYS exchanged (upstream compat.c:710-743),
 /// regardless of whether the binary protocol exchange happened.
 ///
+/// For protocol >= 30, capability negotiation (checksum and compression algorithms) also
+/// happens inside this function, matching upstream compat.c:534-585 (negotiate_the_strings).
+///
 /// # Arguments
 ///
 /// * `protocol` - The negotiated protocol version
 /// * `stdout` - Output stream for sending server's compatibility flags (f_out in upstream)
-/// * `stdin` - Input stream for reading client's compatibility flags (f_in in upstream)
+/// * `stdin` - Input stream for reading client's algorithm choices (f_in in upstream)
 /// * `skip_compat_exchange` - Set to true if compat flags were already exchanged (daemon mode)
 /// * `client_args` - Client arguments for parsing capabilities (daemon mode only)
 ///
 /// # Returns
 ///
-/// Returns `Ok(())` on successful setup, or an I/O error if the exchange fails.
+/// Returns the negotiated algorithms (or `None` for protocol < 30), or an I/O error if
+/// the exchange fails.
 ///
 /// **IMPORTANT:** Parameter order matches upstream: f_out first, f_in second!
 pub fn setup_protocol(
     protocol: ProtocolVersion,
     stdout: &mut dyn Write,
-    _stdin: &mut dyn Read,
+    stdin: &mut dyn Read,
     skip_compat_exchange: bool,
     client_args: Option<&[String]>,
-) -> io::Result<()> {
+) -> io::Result<Option<protocol::NegotiationResult>> {
     // For daemon mode, the binary 4-byte protocol exchange has already happened
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
     // We skip that exchange here since our HandshakeResult already contains the negotiated protocol.
@@ -222,19 +251,17 @@ pub fn setup_protocol(
         // the HandshakeResult or ServerConfig
     }
 
-    // TODO: Protocol 30+ capability negotiation (upstream compat.c:534-585)
-    // This is currently disabled because the timing relative to multiplex activation
-    // needs to be corrected. The client activates multiplex before we send the
-    // negotiation strings, causing protocol errors ("unexpected tag 25").
+    // Protocol 30+ capability negotiation (upstream compat.c:534-585)
+    // This MUST happen inside setup_protocol(), BEFORE the function returns,
+    // so negotiation completes in RAW mode BEFORE multiplex activation.
     //
-    // The negotiation implementation exists in protocol::negotiate_capabilities()
-    // but needs to be integrated at the correct point in the protocol flow.
-    // See investigation notes in crates/protocol/src/negotiation/capabilities.rs
-    //
-    // if protocol.as_u8() >= 30 && !skip_compat_exchange {
-    //     use protocol::negotiate_capabilities;
-    //     let _negotiated = negotiate_capabilities(protocol, _stdin, stdout)?;
-    // }
+    // The negotiation implementation is in protocol::negotiate_capabilities(),
+    // which mirrors upstream's negotiate_the_strings() function.
+    let negotiated = if protocol.as_u8() >= 30 && !skip_compat_exchange {
+        Some(protocol::negotiate_capabilities(protocol, stdin, stdout)?)
+    } else {
+        None  // Protocol < 30 uses default algorithms
+    };
 
-    Ok(())
+    Ok(negotiated)
 }
