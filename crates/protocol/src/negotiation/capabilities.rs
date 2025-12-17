@@ -201,7 +201,7 @@ pub fn negotiate_capabilities(
     if !do_negotiation {
         // Use protocol 30+ defaults without negotiation
         return Ok(NegotiationResult {
-            checksum: ChecksumAlgorithm::MD5,  // Protocol 30+ default
+            checksum: ChecksumAlgorithm::MD5, // Protocol 30+ default
             compression: CompressionAlgorithm::Zlib,
         });
     }
