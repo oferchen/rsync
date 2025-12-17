@@ -60,6 +60,10 @@
 
 use std::io::{self, Read, Write};
 
+/// Compressed reader wrapping multiplexed streams.
+mod compressed_reader;
+/// Compressed writer wrapping multiplexed streams.
+mod compressed_writer;
 /// Server configuration derived from the compact `--server` flag string.
 pub mod config;
 /// Delta transfer implementation guide and documentation.
