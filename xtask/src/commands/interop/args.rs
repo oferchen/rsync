@@ -30,6 +30,8 @@ pub struct ExitCodesOptions {
     pub version: Option<String>,
     /// Enable verbose output.
     pub verbose: bool,
+    /// Implementation to test: "upstream" (default) or "oc-rsync".
+    pub implementation: Option<String>,
 }
 
 /// Options for message format validation.
@@ -41,6 +43,8 @@ pub struct MessagesOptions {
     pub version: Option<String>,
     /// Enable verbose output.
     pub verbose: bool,
+    /// Implementation to test: "upstream" (default) or "oc-rsync".
+    pub implementation: Option<String>,
 }
 
 /// Parse interop command arguments.
@@ -67,6 +71,7 @@ where
                 regenerate: opts.regenerate,
                 version: opts.version,
                 verbose: opts.verbose,
+                implementation: opts.implementation,
             })
         }
         "messages" => {
@@ -75,6 +80,7 @@ where
                 regenerate: opts.regenerate,
                 version: opts.version,
                 verbose: opts.verbose,
+                implementation: opts.implementation,
             })
         }
         "all" => InteropCommand::All,
@@ -94,13 +100,15 @@ struct CommonOptions {
     regenerate: bool,
     version: Option<String>,
     verbose: bool,
+    implementation: Option<String>,
 }
 
-/// Parse common options (--regenerate, --version, --verbose).
+/// Parse common options (--regenerate, --version, --verbose, --impl).
 fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
     let mut regenerate = false;
     let mut version = None;
     let mut verbose = false;
+    let mut implementation = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -116,6 +124,15 @@ fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
                     )));
                 }
                 version = Some(args[i + 1].to_string_lossy().into_owned());
+                i += 2;
+            }
+            "--impl" => {
+                if i + 1 >= args.len() {
+                    return Err(TaskError::Usage(String::from(
+                        "--impl requires an argument (upstream or oc-rsync)",
+                    )));
+                }
+                implementation = Some(args[i + 1].to_string_lossy().into_owned());
                 i += 2;
             }
             "--verbose" | "-v" => {
@@ -135,6 +152,7 @@ fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
         regenerate,
         version,
         verbose,
+        implementation,
     })
 }
 
@@ -152,6 +170,7 @@ SUBCOMMANDS:
 OPTIONS:
     --regenerate     Regenerate golden files instead of validating
     --version VER    Test against specific upstream version (3.0.9, 3.1.3, 3.4.1)
+    --impl IMPL      Implementation to test: "upstream" (default) or "oc-rsync"
     --verbose, -v    Enable verbose output
     --help, -h       Show this help message
 
@@ -159,11 +178,17 @@ EXAMPLES:
     # Validate exit codes against all upstream versions
     cargo xtask interop exit-codes
 
+    # Validate oc-rsync against golden files
+    cargo xtask interop exit-codes --impl oc-rsync
+
     # Regenerate golden files for exit codes
     cargo xtask interop exit-codes --regenerate
 
     # Validate messages for specific upstream version
     cargo xtask interop messages --version 3.4.1
+
+    # Validate oc-rsync messages
+    cargo xtask interop messages --impl oc-rsync
 
     # Run all validations (exit codes + messages)
     cargo xtask interop all
