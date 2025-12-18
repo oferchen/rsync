@@ -4,7 +4,10 @@
 //! negotiating the rsync protocol, and executing transfers using the server
 //! infrastructure.
 
-// TODO: Remove this once we refactor run_server_stdio to accept a single Read+Write parameter
+// Note: This module uses separate stdin/stdout handles for the SSH subprocess.
+// Future refactoring: Unify run_server_stdio to accept a single bidirectional
+// Read+Write stream, which would simplify the interface and reduce code duplication
+// between SSH and daemon transports. See crates/core/src/server/mod.rs
 // Currently we need unsafe code to split the borrow for stdin/stdout
 #![allow(unsafe_code)]
 

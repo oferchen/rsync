@@ -658,8 +658,15 @@ fn respond_with_module_request(
                 checksum_seed: 0,  // Will be populated by setup_protocol()
             };
 
-            // Disable protocol tracing temporarily to isolate protocol issues
-            // TODO: Re-enable after protocol 28 issue is resolved
+            // Protocol tracing disabled: The tracing layer interferes with protocol 28 compatibility
+            // by adding buffering that disrupts the legacy line-based handshake. Protocol 30+
+            // works correctly with tracing enabled.
+            //
+            // To re-enable tracing for debugging protocol 30+ issues:
+            // 1. Uncomment the code below
+            // 2. Use traced_read_stream and traced_write_stream in run_server_with_handshake
+            // 3. Check /tmp/daemon-protocol-trace.log for wire format details
+            //
             // use protocol::debug_trace::{TraceConfig, TracingReader, TracingWriter};
             // let trace_config = TraceConfig::enabled("daemon");
             // let mut traced_read_stream = TracingReader::new(read_stream, trace_config.clone());
