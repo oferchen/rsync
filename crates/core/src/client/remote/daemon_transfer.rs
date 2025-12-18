@@ -122,8 +122,13 @@ pub fn run_daemon_transfer(
     // Perform daemon handshake
     perform_daemon_handshake(&mut stream, &request)?;
 
-    // TODO: Build ServerConfig and execute transfer
-    // For now, return error indicating not fully implemented
+    // Implementation status: Daemon handshake complete (protocol exchange, module selection).
+    // Remaining work: Build ServerConfig from module parameters and execute the transfer
+    // using the server infrastructure (crates/core/src/server). This requires wiring the
+    // TCP stream into the server's I/O layer and configuring paths, filters, and permissions
+    // based on the daemon configuration (oc-rsyncd.conf).
+    //
+    // See crates/daemon/src/daemon/session_runtime.rs for the daemon-side equivalent.
     Err(daemon_error(
         "daemon data transfer implementation incomplete",
         1,

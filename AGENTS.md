@@ -267,6 +267,78 @@ This document defines the internal actors (“agents”), their responsibilities
 
 ---
 
+## Terminology Mapping: Upstream Rsync ↔ oc-rsync
+
+This section cross-references upstream rsync C source with the Rust implementation to aid contributors familiar with the original codebase.
+
+### Module/File Mapping
+
+| Upstream File | oc-rsync Location | Notes |
+|---------------|-------------------|-------|
+| `flist.c` | `crates/walk/` | File list building and traversal. Aliased as `core::flist` for upstream compatibility. |
+| `generator.c` | `crates/core/src/server/generator.rs` | Generator role (sender) implementation |
+| `receiver.c` | `crates/core/src/server/receiver.rs` | Receiver role implementation |
+| `sender.c` | `crates/engine/` (partial) | Delta generation, mixed with local copy logic |
+| `match.c` | `crates/checksums/src/rolling/` | Block matching via rolling checksum |
+| `checksum.c` | `crates/checksums/src/strong/` | Strong checksums (MD4/MD5/SHA1/XXH) |
+| `io.c` | `crates/transport/` | Multiplexed I/O layer |
+| `compat.c` | `crates/protocol/src/compat.rs` | Compatibility flags negotiation |
+| `clientserver.c` | `crates/daemon/` | Daemon protocol implementation |
+| `authenticate.c` | `crates/core/src/auth/` | Daemon authentication |
+| `options.c` | `crates/cli/` | CLI argument parsing |
+| `log.c` | `crates/logging/` | Logging and message output |
+| `rsync.h` | `crates/protocol/src/constants.rs` | Protocol constants and magic numbers |
+
+### Type/Concept Mapping
+
+| Upstream Term | oc-rsync Term | Location |
+|---------------|---------------|----------|
+| `file_list` | `FileList` | `crates/walk/` |
+| `file_struct` | `FileEntry` | `crates/walk/` |
+| `sum_struct` | `Signature` / `FileSignature` | `crates/checksums/` |
+| `map_struct` | `MappedFile` | `crates/engine/` |
+| `stats` | `TransferStats` | Various |
+| `rsum` | `RollingChecksum` | `crates/checksums/src/rolling/` |
+
+### Function Mapping (Key Functions)
+
+| Upstream Function | oc-rsync Equivalent | Location |
+|-------------------|---------------------|----------|
+| `send_file_list()` | `build_file_list()` | `crates/core/src/server/generator.rs:151` |
+| `recv_file_list()` | `receive_file_list()` | `crates/core/src/server/receiver.rs` |
+| `generate_files()` | `Generator::run()` | `crates/core/src/server/generator.rs` |
+| `receive_data()` | Delta application in receiver | `crates/core/src/server/receiver.rs:13` |
+| `send_files()` | `engine::send_files()` | `crates/engine/` |
+| `match_sums()` | `DeltaGenerator` with `DeltaSignatureIndex` | `crates/engine/src/delta/` |
+| `get_checksum1()` | `RollingChecksum::update()` | `crates/checksums/src/rolling/checksum/mod.rs:53` |
+
+### Constant Mapping
+
+| Upstream Constant | oc-rsync Constant | Location |
+|-------------------|-------------------|----------|
+| `PROTOCOL_VERSION` | `ProtocolVersion::NEWEST` | `crates/protocol/` |
+| `CF_*` flags | `CompatibilityFlags::*` | `crates/protocol/src/compat.rs` |
+| `XMIT_*` flags | `TransmitFlags::*` | `crates/protocol/` |
+| `RERR_*` codes | `*_EXIT_CODE` constants | `crates/core/src/client/error.rs` |
+| `MSG_*` tags | `MessageTag::*` | `crates/protocol/` |
+
+### Version Handling
+
+Version strings follow the format `x.y.z[-rust]`:
+- `upstream_version`: Base rsync version (e.g., `3.4.1`)
+- `rust_version`: Branded version with suffix (e.g., `3.4.1-rust`)
+- Each component (x, y, z) may have leading zeros
+- Centralized in `crates/branding/src/workspace/version.rs`
+- Validated at build time via `crates/branding/build.rs`
+
+### Transitional Aliases
+
+To aid navigation for contributors familiar with upstream:
+- `pub use walk as flist;` in `crates/core/src/lib.rs` (line 45)
+- Both `core::walk` and `core::flist` access the same module
+
+---
+
 ## Agents Overview
 
 ### 1) Client & Daemon Entrypoint (CLI Binary)
