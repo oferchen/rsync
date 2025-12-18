@@ -160,7 +160,6 @@ pub fn run_server_with_handshake<W: Write>(
     // Extract buffered data before calling setup_protocol
     // This is critical for daemon mode where the BufReader may have read ahead
     let buffered_data = std::mem::take(&mut handshake.buffered);
-    // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
 
     // Chain buffered data with stdin BEFORE calling setup_protocol
     // This ensures setup_protocol reads from the correct stream

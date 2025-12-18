@@ -83,6 +83,8 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 ### Implementation Status
 
+**Daemon Interoperability**: ✅ **Working with upstream rsync 3.4.1 clients**
+
 **Server Delta Transfer**: ✅ **Complete with metadata preservation**
 
 The native Rust server (`--server` mode) fully implements rsync's delta transfer algorithm:
