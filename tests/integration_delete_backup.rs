@@ -121,11 +121,12 @@ fn delete_with_trailing_slash_works_without_recursive() {
     let mut cmd = RsyncCommand::new();
     cmd.args([
         "--delete",
+        "--dirs", // Mirror upstream: --delete requires --recursive or --dirs
         &format!("{}/", src_dir.display()),
         &format!("{}/", dest_dir.display()),
     ]);
 
-    // Delete with trailing slash works even without -r
+    // Delete with --dirs works with trailing slashes
     cmd.assert_success();
 
     assert!(dest_dir.join("file.txt").exists());
