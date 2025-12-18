@@ -54,9 +54,11 @@ fn test_contimeout_defaults_to_none() {
 #[test]
 fn test_bwlimit_defaults_to_none() {
     let _args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    // BandwidthArgument is pub(crate), cannot be accessed from integration tests
-    // TODO: Make BandwidthArgument pub if needed for testing
-    // assert!(args.bwlimit.is_none(), "bwlimit should default to None");
+    // Note: BandwidthArgument is pub(crate), so we cannot directly assert its value
+    // from integration tests. The default behavior is verified via unit tests in
+    // the cli crate. If BandwidthArgument needs to be exposed for testing, it should
+    // be made public with proper documentation.
+    // Verification: Unit tests in crates/cli/src/frontend/arguments/bandwidth.rs
 }
 
 #[test]
