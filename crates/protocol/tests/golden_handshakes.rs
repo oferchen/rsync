@@ -48,7 +48,12 @@ macro_rules! read_golden_or_skip {
 fn test_protocol_32_client_hello_golden() {
     let golden = read_golden_or_skip!("protocol_32_binary", "client_hello.bin");
 
-    // TODO: Generate client hello for protocol 32
+    // Test implementation pending: Generate protocol 32 client hello and compare
+    // with golden file to detect wire format drift.
+    //
+    // Requires: generate_client_hello() function that constructs the binary
+    // handshake per protocol 32 spec (capability negotiation, compat flags).
+    //
     // let generated = generate_client_hello(ProtocolVersion::V32);
     // assert_eq!(generated, golden, "Protocol 32 client hello drift detected");
 
@@ -62,7 +67,8 @@ fn test_protocol_32_client_hello_golden() {
 fn test_protocol_32_server_response_golden() {
     let golden = read_golden_or_skip!("protocol_32_binary", "server_response.bin");
 
-    // TODO: Generate and validate server response
+    // Test implementation pending: Validate server response format.
+    // Requires server-side handshake generation matching protocol 32 spec.
     eprintln!(
         "Protocol 32 server response golden file exists ({} bytes). Implementation validation pending.",
         golden.len()
@@ -73,7 +79,8 @@ fn test_protocol_32_server_response_golden() {
 fn test_protocol_32_compatibility_exchange_golden() {
     let golden = read_golden_or_skip!("protocol_32_binary", "compatibility_exchange.bin");
 
-    // TODO: Validate compatibility flags exchange
+    // Test implementation pending: Validate compatibility flags exchange format.
+    // Requires compat flags encoding/decoding matching protocol 32 wire format.
     eprintln!(
         "Protocol 32 compatibility exchange golden file exists ({} bytes). Implementation validation pending.",
         golden.len()
@@ -88,7 +95,7 @@ fn test_protocol_32_compatibility_exchange_golden() {
 fn test_protocol_31_client_hello_golden() {
     let golden = read_golden_or_skip!("protocol_31_binary", "client_hello.bin");
 
-    // TODO: Generate client hello for protocol 31
+    // Test implementation pending: Generate and validate protocol 31 client hello.
     eprintln!(
         "Protocol 31 client hello golden file exists ({} bytes). Implementation validation pending.",
         golden.len()
@@ -99,7 +106,7 @@ fn test_protocol_31_client_hello_golden() {
 fn test_protocol_31_server_response_golden() {
     let golden = read_golden_or_skip!("protocol_31_binary", "server_response.bin");
 
-    // TODO: Generate and validate server response
+    // Test implementation pending: Generate and validate protocol 31 server response.
     eprintln!(
         "Protocol 31 server response golden file exists ({} bytes). Implementation validation pending.",
         golden.len()
@@ -114,7 +121,7 @@ fn test_protocol_31_server_response_golden() {
 fn test_protocol_30_client_hello_golden() {
     let golden = read_golden_or_skip!("protocol_30_binary", "client_hello.bin");
 
-    // TODO: Generate client hello for protocol 30
+    // Test implementation pending: Generate and validate protocol 30 client hello.
     eprintln!(
         "Protocol 30 client hello golden file exists ({} bytes). Implementation validation pending.",
         golden.len()
@@ -125,7 +132,7 @@ fn test_protocol_30_client_hello_golden() {
 fn test_protocol_30_server_response_golden() {
     let golden = read_golden_or_skip!("protocol_30_binary", "server_response.bin");
 
-    // TODO: Generate and validate server response
+    // Test implementation pending: Generate and validate protocol 30 server response.
     eprintln!(
         "Protocol 30 server response golden file exists ({} bytes). Implementation validation pending.",
         golden.len()
@@ -157,7 +164,8 @@ fn test_protocol_29_client_greeting_golden() {
         "Protocol 29 greeting must end with newline"
     );
 
-    // TODO: Generate and compare full greeting
+    // Test implementation pending: Generate full greeting programmatically and compare
+    // byte-for-byte with golden file to detect formatting drift.
     eprintln!(
         "Protocol 29 client greeting validated: {:?}",
         greeting.trim()

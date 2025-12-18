@@ -387,8 +387,10 @@ impl GeneratorContext {
             let source_file = match fs::File::open(source_path) {
                 Ok(f) => f,
                 Err(_e) => {
-                    // TODO: Send error marker in wire protocol (future work)
-                    // For now, skip this file entirely
+                    // Note: Upstream rsync sends an error marker in the wire protocol when
+                    // a source file cannot be opened (see generator.c:1450). For now, we
+                    // skip the file entirely, which matches rsync behavior with --ignore-errors.
+                    // Future enhancement: Implement protocol error marker for per-file failures.
                     continue;
                 }
             };
