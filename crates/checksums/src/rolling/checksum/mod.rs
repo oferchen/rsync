@@ -47,6 +47,15 @@ fn simd_available_arch() -> bool {
 ///
 /// Mirrors upstream rsync's Adler-32 style weak checksum: `s1` accumulates the byte sum,
 /// `s2` accumulates prefix sums, both truncated to 16 bits.
+///
+/// # Upstream Reference
+///
+/// - `checksum.c:82` - `get_checksum1()` - Rolling checksum computation
+/// - `match.c:39` - `build_hash_table()` - Block hash table construction
+/// - `match.c:193` - `hash_search()` - Fast block lookup using rolling checksum
+///
+/// This implementation provides CPU-accelerated SIMD variants (AVX2, SSE2, NEON)
+/// with scalar fallback, maintaining byte-for-byte compatibility with upstream.
 #[doc(alias = "rsum")]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RollingChecksum {

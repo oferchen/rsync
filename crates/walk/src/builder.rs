@@ -3,6 +3,14 @@ use crate::walker::Walker;
 use std::path::PathBuf;
 
 /// Configures a filesystem traversal rooted at a specific path.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:2192` - `send_file_list()` - Recursive directory scanning
+/// - `flist.c:1080` - `send_file_name()` - Per-entry traversal
+///
+/// This builder configures deterministic filesystem traversal matching
+/// upstream rsync's file list construction behavior.
 #[derive(Clone, Debug)]
 pub struct WalkBuilder {
     root: PathBuf,

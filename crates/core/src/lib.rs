@@ -23,3 +23,23 @@ pub mod server;
 pub mod version;
 /// Workspace metadata derived from the repository `Cargo.toml`.
 pub use ::branding::workspace;
+
+/// Upstream-compatible alias for the `walk` crate.
+///
+/// This provides a transitional alias matching upstream rsync terminology,
+/// where file list operations are grouped under `flist.c`. The alias helps
+/// maintainers familiar with the C codebase locate functionality without
+/// breaking existing code using the `walk` name.
+///
+/// # Upstream Reference
+///
+/// - `flist.c` - Upstream file list building and transmission
+///
+/// # Examples
+///
+/// ```
+/// // Both names access the same functionality
+/// use core::walk::WalkBuilder;
+/// // use core::flist::WalkBuilder;  // Equivalent
+/// ```
+pub use walk as flist;
