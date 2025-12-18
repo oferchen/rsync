@@ -169,8 +169,13 @@ fn build_ssh_connection(
     ssh.set_remote_command(invocation_args);
 
     // Spawn the SSH process
-    ssh.spawn()
-        .map_err(|e| invalid_argument_error(&format!("failed to spawn SSH connection: {e}"), 10))
+    // Mirror upstream: SSH spawn failures return IPC error code (pipe.c:85)
+    ssh.spawn().map_err(|e| {
+        invalid_argument_error(
+            &format!("failed to spawn SSH connection: {e}"),
+            super::super::IPC_EXIT_CODE,
+        )
+    })
 }
 
 /// Executes a pull transfer (remote → local).
