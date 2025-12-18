@@ -39,7 +39,8 @@ use crate::{ProtocolVersion, read_varint, write_varint};
 ///
 /// This list matches upstream rsync 3.4.1's default order.
 /// The client will select the first algorithm in this list that it also supports.
-const SUPPORTED_CHECKSUMS: &[&str] = &["md5", "md4", "sha1", "xxh128"];
+/// Upstream order: xxh128 xxh3 xxh64 md5 md4 sha1 none
+const SUPPORTED_CHECKSUMS: &[&str] = &["xxh128", "xxh3", "xxh64", "md5", "md4", "sha1", "none"];
 
 /// Supported compression algorithms in preference order.
 ///
@@ -50,6 +51,8 @@ const SUPPORTED_COMPRESSIONS: &[&str] = &["zstd", "lz4", "zlibx", "zlib", "none"
 /// Checksum algorithm choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChecksumAlgorithm {
+    /// No checksum (for listing directories, etc.)
+    None,
     /// MD4 checksum (legacy, protocol < 30 default)
     MD4,
     /// MD5 checksum (protocol 30+ default)
@@ -58,6 +61,8 @@ pub enum ChecksumAlgorithm {
     SHA1,
     /// XXHash 64-bit
     XXH64,
+    /// XXHash 3 (fast)
+    XXH3,
     /// XXHash 128-bit
     XXH128,
 }
@@ -66,10 +71,12 @@ impl ChecksumAlgorithm {
     /// Returns the wire protocol name for this algorithm.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::None => "none",
             Self::MD4 => "md4",
             Self::MD5 => "md5",
             Self::SHA1 => "sha1",
             Self::XXH64 => "xxh64",
+            Self::XXH3 => "xxh3",
             Self::XXH128 => "xxh128",
         }
     }
@@ -77,10 +84,12 @@ impl ChecksumAlgorithm {
     /// Parses an algorithm from its wire protocol name.
     pub fn parse(name: &str) -> io::Result<Self> {
         match name {
+            "none" => Ok(Self::None),
             "md4" => Ok(Self::MD4),
             "md5" => Ok(Self::MD5),
             "sha1" => Ok(Self::SHA1),
             "xxh" | "xxh64" => Ok(Self::XXH64),
+            "xxh3" => Ok(Self::XXH3),
             "xxh128" => Ok(Self::XXH128),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -214,11 +223,20 @@ pub struct NegotiationResult {
 ///          result.checksum, result.compression);
 /// # Ok::<(), std::io::Error>(())
 /// ```
+///
+/// # Daemon Mode vs SSH Mode
+///
+/// - **SSH mode** (bidirectional): Both sides send lists, then both sides read lists
+/// - **Daemon mode** (unidirectional): Server sends lists, client does NOT respond
+///
+/// The `is_daemon_mode` parameter controls whether we expect responses from the client.
 pub fn negotiate_capabilities(
     protocol: ProtocolVersion,
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     do_negotiation: bool,
+    send_compression: bool,
+    is_daemon_mode: bool,
 ) -> io::Result<NegotiationResult> {
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.as_u8() < 30 {
@@ -228,36 +246,121 @@ pub fn negotiate_capabilities(
         });
     }
 
-    // If client doesn't have VARINT_FLIST_FLAGS ('v' capability), skip negotiation
-    // This matches upstream's do_negotiated_strings check (compat.c:561-585)
+    // CRITICAL: If client doesn't have VARINT_FLIST_FLAGS ('v' capability), it doesn't
+    // support negotiate_the_strings() at all. We must NOT send negotiation strings to
+    // such clients - they will interpret the varint length as a multiplex tag and fail
+    // with "unexpected tag N" errors.
+    //
+    // This matches upstream's do_negotiated_strings check (compat.c:561-585) where
+    // negotiate_the_strings is ONLY CALLED when do_negotiated_strings is TRUE.
+    // When FALSE, upstream uses pre-filled defaults without any wire protocol exchange.
     if !do_negotiation {
-        // Use protocol 30+ defaults without negotiation
+        // Use protocol 30+ defaults without sending or reading anything
+        // Upstream default when compression is not negotiated is CPRES_NONE (compat.c:234)
         return Ok(NegotiationResult {
-            checksum: ChecksumAlgorithm::MD5, // Protocol 30+ default
-            compression: CompressionAlgorithm::Zlib,
+            checksum: ChecksumAlgorithm::MD5,
+            compression: CompressionAlgorithm::None,
         });
     }
 
-    // Step 1 & 2: Send our supported algorithms (upstream compat.c:541-544)
-    let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
-    send_string(stdout, &checksum_list)?;
+    // CRITICAL: Negotiation is SYMMETRIC! Both sides send their lists, then both sides read
+    // each other's lists, then both independently choose the first match.
+    // Comment from upstream compat.c: "We send all the negotiation strings before we start
+    // to read them to help avoid a slow startup."
 
-    let compression_list = SUPPORTED_COMPRESSIONS.join(" ");
-    send_string(stdout, &compression_list)?;
+    // Step 1: Send our supported algorithm lists (upstream compat.c:541-544)
+    // Server sends checksum list (unless already chosen via env/config)
+    let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
+
+    // Log the exact bytes we're sending
+    let mut checksum_bytes = Vec::new();
+    send_string(&mut checksum_bytes, &checksum_list).ok();
+
+    match send_string(stdout, &checksum_list) {
+        Ok(()) => {}
+        Err(e) => {
+            return Err(e);
+        }
+    }
+
+    // Server sends compression list only if do_compression is TRUE
+    if send_compression {
+        let compression_list = SUPPORTED_COMPRESSIONS.join(" ");
+        send_string(stdout, &compression_list)?;
+    }
 
     stdout.flush()?;
 
-    // Step 3 & 4: Read client's choices (upstream compat.c:549-585)
-    let client_checksum = recv_string(stdin)?;
-    let checksum = ChecksumAlgorithm::parse(client_checksum.trim())?;
+    // Step 2: Read client's supported algorithm lists (upstream compat.c:549-585)
+    // CRITICAL: Negotiation is BIDIRECTIONAL in BOTH daemon and SSH modes!
+    // Upstream negotiate_the_strings() calls recv_negotiate_str() for both sides.
+    // We must read the client's algorithm lists to keep the stream in sync.
+    let client_checksum_list = recv_string(stdin)?;
 
-    let client_compression = recv_string(stdin)?;
-    let compression = CompressionAlgorithm::parse(client_compression.trim())?;
+    let client_compression_list = if send_compression {
+        let list = recv_string(stdin)?;
+        Some(list)
+    } else {
+        None
+    };
+
+    // Step 3: Choose algorithms - pick first from CLIENT's list that WE also support
+    // Upstream logic: "the client picks the first name in the server's list that is
+    // also in the client's list" - but from server perspective, we pick the first
+    // in the CLIENT's list that's in OUR list.
+    let checksum = choose_checksum_algorithm(&client_checksum_list)?;
+
+    let compression = if let Some(ref list) = client_compression_list {
+        choose_compression_algorithm(list)?
+    } else {
+        CompressionAlgorithm::None
+    };
+
+    let _ = is_daemon_mode; // Suppress unused warning - both modes now use bidirectional negotiation
 
     Ok(NegotiationResult {
         checksum,
         compression,
     })
+}
+
+/// Chooses a checksum algorithm from the client's list.
+///
+/// Selects the first algorithm in the client's list that we also support.
+/// This matches upstream's algorithm selection logic where "the client picks
+/// the first name in the server's list that is also in the client's list"
+/// (from server perspective: pick first in client's list we support).
+fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm> {
+    for algo in client_list.split_whitespace() {
+        // Try to parse each algorithm the client supports
+        if let Ok(checksum) = ChecksumAlgorithm::parse(algo) {
+            // Check if we support it
+            if SUPPORTED_CHECKSUMS.contains(&algo) {
+                return Ok(checksum);
+            }
+        }
+    }
+
+    // No common algorithm found - use protocol 30+ default
+    Ok(ChecksumAlgorithm::MD5)
+}
+
+/// Chooses a compression algorithm from the client's list.
+///
+/// Selects the first algorithm in the client's list that we also support.
+fn choose_compression_algorithm(client_list: &str) -> io::Result<CompressionAlgorithm> {
+    for algo in client_list.split_whitespace() {
+        // Try to parse each algorithm the client supports
+        if let Ok(compression) = CompressionAlgorithm::parse(algo) {
+            // Check if we support it
+            if SUPPORTED_COMPRESSIONS.contains(&algo) {
+                return Ok(compression);
+            }
+        }
+    }
+
+    // No common algorithm found - use "none"
+    Ok(CompressionAlgorithm::None)
 }
 
 /// Sends a negotiation string to the remote side.
@@ -351,7 +454,8 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true).unwrap();
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false).unwrap();
 
         // Protocol < 30 should use defaults without any I/O
         assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
@@ -372,7 +476,8 @@ mod tests {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true).unwrap();
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false).unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
@@ -399,7 +504,8 @@ mod tests {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(protocol, &mut stdin, &mut stdout, true).unwrap();
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false).unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zstd);

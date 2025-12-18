@@ -13,6 +13,7 @@ use super::compressed_writer::CompressedWriter;
 /// Upstream rsync modifies global I/O buffer state via `io_start_multiplex_out()`.
 /// We achieve the same by wrapping the writer and delegating based on mode.
 #[allow(clippy::large_enum_variant)]
+#[allow(private_interfaces)]
 pub enum ServerWriter<W: Write> {
     /// Plain mode - write data directly without framing
     Plain(W),
@@ -110,6 +111,39 @@ impl<W: Write> ServerWriter<W> {
             )),
         }
     }
+
+    /// Writes raw bytes directly to the underlying stream, bypassing multiplexing.
+    ///
+    /// This is used for protocol exchanges like the final goodbye handshake where
+    /// upstream rsync's write_ndx() writes directly without MSG_DATA framing.
+    ///
+    /// IMPORTANT: Flushes any buffered multiplexed data before writing raw bytes
+    /// to maintain proper message ordering.
+    ///
+    /// # Arguments
+    /// * `data` - Raw bytes to write directly to the stream
+    ///
+    /// # Errors
+    /// Returns an error if the underlying I/O operation fails.
+    pub fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
+        // First flush any buffered data
+        self.flush()?;
+
+        match self {
+            Self::Plain(w) => {
+                w.write_all(data)?;
+                w.flush()
+            }
+            Self::Multiplex(mux) => {
+                // Write directly to inner writer, bypassing multiplex framing
+                mux.write_raw(data)
+            }
+            Self::Compressed(compressed) => {
+                // Write directly to the multiplex layer's inner writer
+                compressed.inner_mut().write_raw(data)
+            }
+        }
+    }
 }
 
 impl<W: Write> Write for ServerWriter<W> {
@@ -171,6 +205,18 @@ impl<W: Write> MultiplexWriter<W> {
         self.flush_buffer()?;
         // Send the control message
         protocol::send_msg(&mut self.inner, code, payload)?;
+        self.inner.flush()
+    }
+
+    /// Writes raw bytes directly to the inner writer, bypassing multiplex framing.
+    ///
+    /// This is used for protocol exchanges like goodbye handshakes where upstream
+    /// rsync writes directly without MSG_DATA wrapping.
+    pub(super) fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
+        // Flush any buffered data first
+        self.flush_buffer()?;
+        // Write directly without framing
+        self.inner.write_all(data)?;
         self.inner.flush()
     }
 }

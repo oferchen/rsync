@@ -60,6 +60,7 @@ fn checksum_algorithm_to_signature(
 ) -> SignatureAlgorithm {
     let seed_u64 = seed as u64;
     match algorithm {
+        ChecksumAlgorithm::None => SignatureAlgorithm::Md4, // Fallback to MD4 when no checksum requested
         ChecksumAlgorithm::MD4 => SignatureAlgorithm::Md4,
         ChecksumAlgorithm::MD5 => {
             let seed_config = if let Some(flags) = compat_flags {
@@ -76,6 +77,7 @@ fn checksum_algorithm_to_signature(
         }
         ChecksumAlgorithm::SHA1 => SignatureAlgorithm::Sha1,
         ChecksumAlgorithm::XXH64 => SignatureAlgorithm::Xxh64 { seed: seed_u64 },
+        ChecksumAlgorithm::XXH3 => SignatureAlgorithm::Xxh3 { seed: seed_u64 },
         ChecksumAlgorithm::XXH128 => SignatureAlgorithm::Xxh3_128 { seed: seed_u64 },
     }
 }
@@ -288,7 +290,7 @@ impl GeneratorContext {
             FileListWriter::new(self.protocol)
         };
 
-        for entry in &self.file_list {
+        for entry in self.file_list.iter() {
             flist_writer.write_entry(writer, entry)?;
         }
 
@@ -306,36 +308,38 @@ impl GeneratorContext {
     /// 1. Build file list from paths
     /// 2. Send file list
     /// 3. For each file: receive signature, generate delta, send delta
-    pub fn run<R: Read, W: Write + ?Sized>(
+    ///
+    /// The writer must be a ServerWriter to support `write_raw` for protocol
+    /// messages that bypass multiplexing (like the goodbye NDX_DONE).
+    pub fn run<R: Read, W: Write>(
         &mut self,
         mut reader: super::reader::ServerReader<R>,
-        writer: &mut W,
+        writer: &mut super::writer::ServerWriter<W>,
         paths: &[PathBuf],
     ) -> io::Result<GeneratorStats> {
-        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30
-        // This matches upstream behavior where the generator/sender role also activates
-        // INPUT multiplex when protocol >= 30 to read multiplexed data from the receiver.
+        // Activate INPUT multiplex for protocol >= 30 with incremental recursion
+        //
+        // Upstream rsync (main.c:1252-1257) in start_server():
+        //   if (am_sender) {
+        //       if (need_messages_from_generator)
+        //           io_start_multiplex_in(f_in);
+        //       else
+        //           io_start_buffering_in(f_in);
+        //   }
+        //
+        // For protocol >= 30, incremental recursion (inc_recurse) is enabled by default.
+        // When inc_recurse is enabled, need_messages_from_generator = 1 (compat.c).
+        // This means the client multiplexes its output to the server.
+        //
+        // CRITICAL: For protocol 30+, the client sends MULTIPLEXED data!
+        // The filter list and other data come wrapped in MSG_DATA frames.
         if self.protocol.as_u8() >= 30 {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
             })?;
         }
 
-        // Activate compression on reader if negotiated (Protocol 30+ with compression algorithm)
-        // This mirrors upstream io.c:io_start_buffering_in()
-        // Compression is activated AFTER multiplex, wrapping the multiplexed stream
-        if let Some(ref negotiated) = self.negotiated_algorithms {
-            if let Some(compress_alg) = negotiated.compression.to_compress_algorithm()? {
-                reader = reader.activate_compression(compress_alg).map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!("failed to activate INPUT compression: {e}"),
-                    )
-                })?;
-            }
-        }
-
-        // Read filter list from client (multiplexed for protocol >= 30)
+        // Read filter list from client (MULTIPLEXED for protocol >= 30)
         let wire_rules = read_filter_list(&mut reader, self.protocol)?;
 
         // Convert wire format to FilterSet
@@ -352,29 +356,86 @@ impl GeneratorContext {
         // Send file list
         let file_count = self.send_file_list(writer)?;
 
-        // Wait for client to send NDX_DONE (indicates file list received)
-        // Mirrors upstream sender.c:read_ndx_and_attrs() flow
-        // For protocol >= 30, NDX_DONE is encoded as single byte 0x00
-        let mut ndx_byte = [0u8; 1];
-        reader.read_exact(&mut ndx_byte)?;
+        // Main transfer loop: read file indices from receiver until NDX_DONE
+        //
+        // Protocol 30+ NDX encoding (upstream io.c:read_ndx/write_ndx):
+        // - 0x00 = NDX_DONE (-1): signals end of file requests
+        // - 0xFF prefix = other negative values (NDX_FLIST_EOF, etc.)
+        // - 1-253 = delta-encoded positive index
+        // - 0xFE prefix = larger index encoding
+        //
+        // Upstream sender.c:send_files() phase handling (lines 210, 236-258, 462):
+        //   - phase = 0, max_phase = protocol_version >= 29 ? 2 : 1
+        //   - On NDX_DONE: if (++phase > max_phase) break; else write_ndx(NDX_DONE), continue
+        //   - After loop: write_ndx(NDX_DONE)
+        //
+        // For a simple listing operation (no files to transfer), the receiver
+        // sends multiple NDX_DONEs for each phase transition.
 
-        if ndx_byte[0] != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("expected NDX_DONE (0x00), got 0x{:02x}", ndx_byte[0]),
-            ));
-        }
+        // Transfer loop: read file indices from receiver until all phases complete
+        //
+        // Upstream sender.c line 210: max_phase = protocol_version >= 29 ? 2 : 1
+        let mut phase: i32 = 0;
+        let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
 
-        // Send NDX_DONE back to signal phase completion
-        // Mirrors upstream sender.c:256 (write_ndx(f_out, NDX_DONE))
-        writer.write_all(&[0])?;
-        writer.flush()?;
-
-        // Delta generation loop: for each file, receive signature, generate delta, send
         let mut files_transferred = 0;
         let mut bytes_sent = 0u64;
+        let mut prev_positive: i32 = -1; // For NDX delta decoding
 
-        for file_entry in &self.file_list {
+        loop {
+            // Read first byte of NDX encoding
+            let mut ndx_byte = [0u8; 1];
+            reader.read_exact(&mut ndx_byte)?;
+
+            // Decode NDX value (protocol 30+ encoding from upstream io.c:read_ndx)
+            let ndx = if ndx_byte[0] == 0 {
+                // NDX_DONE: phase transition (upstream sender.c lines 236-258)
+                phase += 1;
+
+                if phase > max_phase {
+                    // All phases complete, exit loop
+                    break;
+                }
+
+                // Echo NDX_DONE back and continue to next phase
+                // Upstream sender.c line 256: write_ndx(f_out, NDX_DONE)
+                writer.write_all(&[0x00])?;
+                writer.flush()?;
+                continue;
+            } else if ndx_byte[0] == 0xFF {
+                // Negative number prefix (NDX_FLIST_EOF, etc.) - not yet supported
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "negative NDX values (other than NDX_DONE) not yet implemented",
+                ));
+            } else if ndx_byte[0] == 0xFE {
+                // Extended encoding - read 2 or 4 more bytes
+                // TODO: Implement full NDX decoding for large file lists
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "extended NDX encoding not yet implemented",
+                ));
+            } else {
+                // Simple delta encoding: ndx = prev_positive + byte_value
+                let delta = ndx_byte[0] as i32;
+                let ndx = prev_positive.saturating_add(delta);
+                prev_positive = ndx;
+                ndx as usize
+            };
+
+            // Validate file index
+            if ndx >= self.file_list.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid file index {}, file list has {} entries",
+                        ndx,
+                        self.file_list.len()
+                    ),
+                ));
+            }
+
+            let file_entry = &self.file_list[ndx];
             let source_path = file_entry.path();
 
             // Step 1: Receive signature from receiver (or no-basis marker)
@@ -421,6 +482,70 @@ impl GeneratorContext {
             // Step 5: Track stats
             bytes_sent += delta_script.total_bytes();
             files_transferred += 1;
+        }
+
+        // Upstream do_server_sender flow (main.c):
+        // 1. send_files() - ends with write_ndx(NDX_DONE)
+        // 2. io_flush(FULL_FLUSH)
+        // 3. handle_stats(f_out) - writes 5 varlong30 values
+        // 4. read_final_goodbye() - for protocol >= 24
+        // 5. io_flush(FULL_FLUSH)
+        // 6. exit
+
+        // Step 1: Send NDX_DONE to indicate end of file transfer phase
+        // write_ndx(f_out, NDX_DONE) from sender.c line 462
+        writer.write_all(&[0x00])?;
+        writer.flush()?; // io_flush(FULL_FLUSH) after send_files
+
+        // Step 2: Send statistics (handle_stats from main.c lines 347-354)
+        let total_size: i64 = self.file_list.iter().map(|e| e.size() as i64).sum();
+        protocol::write_varlong30(writer, 0, 3)?; // total_read
+        protocol::write_varlong30(writer, bytes_sent as i64, 3)?; // total_written
+        protocol::write_varlong30(writer, total_size, 3)?; // total_size
+        if self.protocol.as_u8() >= 29 {
+            protocol::write_varlong30(writer, 0, 3)?; // flist_buildtime
+            protocol::write_varlong30(writer, 0, 3)?; // flist_xfertime
+        }
+        // NOTE: Upstream auto-flushes during read; we must explicitly flush
+        // before trying to read the client's goodbye message
+        writer.flush()?;
+
+        // Step 3: read_final_goodbye (main.c lines 880-905)
+        // For protocol >= 24
+        if self.protocol.as_u8() >= 24 {
+            let mut goodbye_byte = [0u8; 1];
+
+            // Read first NDX_DONE from client
+            reader.read_exact(&mut goodbye_byte)?;
+
+            // Handle both write_ndx(0x00) and write_int(0xFFFFFFFF) formats
+            if goodbye_byte[0] == 0xFF {
+                let mut extra = [0u8; 3];
+                reader.read_exact(&mut extra)?;
+            } else if goodbye_byte[0] != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("expected NDX_DONE, got 0x{:02x}", goodbye_byte[0]),
+                ));
+            }
+
+            // For protocol 31+: write NDX_DONE back, then read again
+            if self.protocol.as_u8() >= 31 {
+                writer.write_all(&[0x00])?;
+                writer.flush()?; // Must flush before reading final goodbye
+
+                // Read final NDX_DONE
+                reader.read_exact(&mut goodbye_byte)?;
+                if goodbye_byte[0] == 0xFF {
+                    let mut extra = [0u8; 3];
+                    reader.read_exact(&mut extra)?;
+                } else if goodbye_byte[0] != 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("expected final NDX_DONE, got 0x{:02x}", goodbye_byte[0]),
+                    ));
+                }
+            }
         }
 
         Ok(GeneratorStats {
