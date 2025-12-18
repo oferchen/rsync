@@ -171,7 +171,14 @@ impl BatchReader {
     /// implementation for single-file batches. Multi-file batches need
     /// more sophisticated parsing to detect file entry boundaries.
     ///
-    /// TODO: Implement proper multi-file batch parsing with lookahead.
+    /// # Implementation Note
+    ///
+    /// Multi-file batch parsing requires lookahead to detect when one file's
+    /// delta stream ends and the next begins. Upstream rsync handles this via
+    /// a state machine in batch.c that tracks file list indices.
+    ///
+    /// Current implementation: Single-file batches only (reads until EOF).
+    /// Future enhancement: Add file boundary detection for multi-file batches.
     pub fn read_all_delta_ops(&mut self) -> EngineResult<Vec<protocol::wire::delta::DeltaOp>> {
         if self.header.is_none() {
             return Err(EngineError::Io(io::Error::other(
