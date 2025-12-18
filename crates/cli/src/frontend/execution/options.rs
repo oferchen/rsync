@@ -60,8 +60,11 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersio
             }
             full_detail.push_str(&format!("supported protocols are {supported}"));
 
-            Err(rsync_error!(exit_code, format!("invalid protocol version '{display}': {full_detail}"))
-                .with_role(Role::Client))
+            Err(rsync_error!(
+                exit_code,
+                format!("invalid protocol version '{display}': {full_detail}")
+            )
+            .with_role(Role::Client))
         }
     }
 }
