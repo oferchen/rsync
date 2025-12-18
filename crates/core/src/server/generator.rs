@@ -7,6 +7,15 @@
 //! 3. Receives signatures from the client for existing files
 //! 4. Generates and sends deltas for each file
 //!
+//! # Upstream Reference
+//!
+//! - `generator.c` - Upstream generator role implementation
+//! - `flist.c` - File list building and transmission
+//! - `match.c` - Block matching and delta generation
+//!
+//! This module mirrors upstream rsync's generator behavior while leveraging
+//! Rust's type system for safety.
+//!
 //! # Implementation Guide
 //!
 //! For comprehensive documentation on how the generator works within the delta transfer
@@ -141,6 +150,13 @@ impl GeneratorContext {
     ///
     /// This walks the filesystem starting from each path in the arguments
     /// and builds a sorted file list for transmission.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2192` - `send_file_list()` - Main file list builder
+    /// - `flist.c:1456` - `send_file_entry()` - Per-file encoding
+    ///
+    /// Mirrors upstream recursive directory scanning and file list construction behavior.
     pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize> {
         self.file_list.clear();
 
