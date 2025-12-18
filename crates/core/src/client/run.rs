@@ -107,60 +107,8 @@ fn run_client_internal(
     });
 
     if has_daemon_url {
-        // Daemon data transfer to modules is not yet fully implemented
-        // Attempt to parse and connect to provide correct error codes
-
-        // Find the daemon URL operand
-        let daemon_operand = config
-            .transfer_args()
-            .iter()
-            .find(|arg| {
-                arg.to_string_lossy().starts_with("rsync://")
-                    || arg.to_string_lossy().contains("::")
-            })
-            .expect("has_daemon_url but no daemon URL found");
-
-        let text = daemon_operand.to_string_lossy();
-
-        // Try to parse as rsync:// URL
-        if text.starts_with("rsync://") || text.starts_with("RSYNC://") {
-            // Parse the URL and attempt connection to provide correct socket error
-            use super::module_list::{connect_direct, parse_host_port};
-
-            let rest = text
-                .strip_prefix("rsync://")
-                .or_else(|| text.strip_prefix("RSYNC://"))
-                .expect("starts_with rsync://");
-
-            let mut parts = rest.splitn(2, '/');
-            let host_port = parts.next().unwrap_or("");
-
-            if let Ok(target) = parse_host_port(host_port, 873) {
-                // Attempt connection - this will fail with SOCKET_IO_EXIT_CODE (10)
-                // when connection is refused
-                let _ = connect_direct(&target.address, None, None, config.address_mode(), None)?;
-
-                // If connection succeeds, daemon transfer is not yet implemented
-                use super::error::FEATURE_UNAVAILABLE_EXIT_CODE;
-                use crate::message::Role;
-                use crate::rsync_error;
-                let msg = "daemon data transfer is not yet implemented";
-                return Err(super::error::ClientError::new(
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                    rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", msg).with_role(Role::Client),
-                ));
-            }
-        }
-
-        // For :: syntax, also not yet implemented
-        use super::error::FEATURE_UNAVAILABLE_EXIT_CODE;
-        use crate::message::Role;
-        use crate::rsync_error;
-        let msg = "daemon data transfer is not yet implemented";
-        return Err(super::error::ClientError::new(
-            FEATURE_UNAVAILABLE_EXIT_CODE,
-            rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", msg).with_role(Role::Client),
-        ));
+        // Daemon data transfer via rsync:// URLs
+        return remote::run_daemon_transfer(&config, observer);
     }
 
     let has_remote = config

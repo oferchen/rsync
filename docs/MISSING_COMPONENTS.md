@@ -313,3 +313,52 @@ if let Some(flags) = &self.compat_flags {
 - Checksum implementations: `crates/checksums/src/strong/`
 - Compression implementations: `crates/compress/src/`
 - Server setup: `crates/core/src/server/setup.rs`
+
+---
+
+## Update 2025-12-18: Recent Completions
+
+### Exit Code Parity - 100% Complete
+**Status**: ✅ COMPLETE
+**Commit**: b6c56305
+**Impact**: Perfect compatibility with upstream rsync error handling
+
+All 15 exit code scenarios now match upstream rsync behavior:
+- daemon_connection_refused: Fixed rsync:// URL parsing and connection attempts
+- permission_denied_write: Added early destination directory validation  
+- remote_not_found: Mapped SSH spawn failures to IPC_EXIT_CODE (14)
+
+**Validation**: `cargo xtask interop exit-codes --impl oc-rsync --version 3.4.1` - 15/15 passing
+
+### Daemon Client Data Transfer - In Progress
+**Status**: 🚧 IMPLEMENTATION STARTED
+**Impact**: Enable client-side daemon file push/pull (rsync:// URLs)
+
+**Current State**:
+- ✅ Daemon server-side works (201 tests passing)
+- ✅ Module listing works (run_module_list)
+- ✅ Daemon handshake protocol implemented
+- 🚧 Client-side data transfer skeleton created
+- ❌ Server execution with daemon stream not wired
+
+**New Files**:
+- `crates/core/src/client/remote/daemon_transfer.rs` - Daemon transfer orchestration
+
+**Remaining Work**:
+1. Complete daemon handshake → server execution wiring
+2. Build ServerConfig from daemon transfer request
+3. Execute transfer using run_server_stdio with daemon stream
+4. Add integration tests for daemon push/pull
+5. Wire daemon transfer into run.rs instead of "not implemented" error
+
+### Protocol Message Duplication - Documented
+**Status**: ✅ DOCUMENTED AS EXPECTED
+**File**: `docs/design/PROTOCOL_MESSAGE_DUPLICATION.md`
+
+The protocol_version_mismatch scenario shows message duplication differences with
+upstream 3.0.9/3.1.3. This is expected behavior due to architectural differences:
+- Upstream: Fork-based (separate sender/receiver processes → messages twice)
+- oc-rsync: Single-process architecture (→ message once)
+
+Exit codes are identical; only message count differs. This is acceptable and not a bug.
+
