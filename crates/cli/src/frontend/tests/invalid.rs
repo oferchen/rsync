@@ -10,7 +10,7 @@ fn invalid_protocol_value_reports_error() {
         OsString::from("dest"),
     ]);
 
-    assert_eq!(code, 1);
+    assert_eq!(code, 2); // Mirror upstream: protocol incompatibility returns exit code 2
     assert!(stdout.is_empty());
     let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
     assert!(rendered.contains("invalid protocol version '27'"));

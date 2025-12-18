@@ -4,8 +4,8 @@ use std::str::FromStr;
 
 use core::{
     client::{
-        HumanReadableMode, IconvParseError, IconvSetting, PROTOCOL_INCOMPATIBLE_EXIT_CODE,
-        TransferTimeout,
+        FEATURE_UNAVAILABLE_EXIT_CODE, HumanReadableMode, IconvParseError, IconvSetting,
+        PROTOCOL_INCOMPATIBLE_EXIT_CODE, TransferTimeout,
     },
     message::{Message, Role},
     rsync_error,
@@ -25,36 +25,43 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersio
         Ok(version) => Ok(version),
         Err(error) => {
             let supported = supported_protocols_list();
-            let mut detail = match error.kind() {
-                ParseProtocolVersionErrorKind::Empty => {
-                    "protocol value must not be empty".to_string()
-                }
-                ParseProtocolVersionErrorKind::InvalidDigit => {
-                    "protocol version must be an unsigned integer".to_string()
-                }
-                ParseProtocolVersionErrorKind::Negative => {
-                    "protocol version cannot be negative".to_string()
-                }
-                ParseProtocolVersionErrorKind::Overflow => {
-                    "protocol version value exceeds 255".to_string()
-                }
+            // Mirror upstream: syntax errors (non-numeric) use exit code 1,
+            // protocol incompatibility (numeric but out of range) uses exit code 2
+            let (exit_code, detail) = match error.kind() {
+                ParseProtocolVersionErrorKind::Empty => (
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    "protocol value must not be empty".to_string(),
+                ),
+                ParseProtocolVersionErrorKind::InvalidDigit => (
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    "protocol version must be an unsigned integer".to_string(),
+                ),
+                ParseProtocolVersionErrorKind::Negative => (
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    "protocol version cannot be negative".to_string(),
+                ),
+                ParseProtocolVersionErrorKind::Overflow => (
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    "protocol version value exceeds 255".to_string(),
+                ),
                 ParseProtocolVersionErrorKind::UnsupportedRange(value) => {
                     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
-                    format!(
-                        "protocol version {value} is outside the supported range {oldest}-{newest}"
+                    (
+                        PROTOCOL_INCOMPATIBLE_EXIT_CODE,
+                        format!(
+                            "protocol version {value} is outside the supported range {oldest}-{newest}"
+                        ),
                     )
                 }
             };
-            if !detail.is_empty() {
-                detail.push_str("; ");
+            let mut full_detail = detail;
+            if !full_detail.is_empty() {
+                full_detail.push_str("; ");
             }
-            detail.push_str(&format!("supported protocols are {supported}"));
+            full_detail.push_str(&format!("supported protocols are {supported}"));
 
-            Err(rsync_error!(
-                PROTOCOL_INCOMPATIBLE_EXIT_CODE,
-                format!("invalid protocol version '{display}': {detail}")
-            )
-            .with_role(Role::Client))
+            Err(rsync_error!(exit_code, format!("invalid protocol version '{display}': {full_detail}"))
+                .with_role(Role::Client))
         }
     }
 }

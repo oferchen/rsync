@@ -150,6 +150,7 @@ fn transfer_request_with_filter_protect_preserves_destination_entry() {
         OsString::from("--delete"),
         OsString::from("--filter"),
         OsString::from("protect keep.txt"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         source_root.clone().into_os_string(),
         dest_root.clone().into_os_string(),
     ]);

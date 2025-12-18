@@ -203,7 +203,7 @@ fn test_groupmap_conflict_error_message() {
 
 #[test]
 fn test_single_delete_mode_valid() {
-    let result = parse_args(["oc-rsync", "--delete-before", "src", "dest"]);
+    let result = parse_args(["oc-rsync", "--delete-before", "--dirs", "src", "dest"]);
     assert!(result.is_ok(), "Single delete mode should be valid");
 }
 
