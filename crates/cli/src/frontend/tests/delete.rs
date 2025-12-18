@@ -6,6 +6,7 @@ fn delete_flag_is_parsed() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),
         OsString::from("--delete"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])
@@ -20,6 +21,7 @@ fn delete_alias_del_is_parsed() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),
         OsString::from("--del"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])
@@ -34,6 +36,7 @@ fn delete_after_flag_is_parsed() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),
         OsString::from("--delete-after"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])
@@ -48,6 +51,7 @@ fn delete_before_flag_is_parsed() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),
         OsString::from("--delete-before"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])
@@ -62,6 +66,7 @@ fn delete_during_flag_is_parsed() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),
         OsString::from("--delete-during"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])
@@ -76,6 +81,7 @@ fn delete_delay_flag_is_parsed() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),
         OsString::from("--delete-delay"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])
@@ -104,6 +110,7 @@ fn delete_excluded_flag_implies_delete() {
     let parsed = super::parse_args([
         OsString::from(RSYNC),
         OsString::from("--delete-excluded"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])

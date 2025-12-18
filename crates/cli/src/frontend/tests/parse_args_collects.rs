@@ -182,6 +182,7 @@ fn parse_args_collects_max_delete_value() {
     let parsed = parse_args([
         OsString::from(RSYNC),
         OsString::from("--max-delete=12"),
+        OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
         OsString::from("source"),
         OsString::from("dest"),
     ])
