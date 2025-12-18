@@ -294,7 +294,15 @@ fn test_old_dirs_works_with_other_options() {
 
 #[test]
 fn test_del_works_with_delete_mode() {
-    let args = parse_args(["oc-rsync", "--del", "--delete-before", "--dirs", "src", "dest"]).unwrap();
+    let args = parse_args([
+        "oc-rsync",
+        "--del",
+        "--delete-before",
+        "--dirs",
+        "src",
+        "dest",
+    ])
+    .unwrap();
     // --delete-before should take precedence over --del
     assert!(
         args.delete_mode.is_enabled(),
