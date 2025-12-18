@@ -153,6 +153,15 @@ where
     if max_delete.is_some() && !delete_mode.is_enabled() {
         delete_mode = DeleteMode::During;
     }
+
+    // Mirror upstream: --delete requires --recursive or --dirs
+    if delete_mode.is_enabled() && !recursive && dirs != Some(true) {
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "--delete does not work without --recursive (-r) or --dirs (-d).\n",
+        ));
+    }
+
     let mut backup = matches.get_flag("backup");
     let backup_dir = matches.remove_one::<OsString>("backup-dir");
     let backup_suffix = matches.remove_one::<OsString>("suffix");
