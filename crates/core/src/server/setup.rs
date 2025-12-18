@@ -251,10 +251,22 @@ pub fn setup_protocol(
     let (compat_flags, negotiated_algorithms) = if protocol.as_u8() >= 30 && !skip_compat_exchange {
         // Build our compat flags (server side)
         // This mirrors upstream compat.c:712-732 which builds flags from client_info string
-        let our_flags = if let Some(args) = client_args {
+        let flags_and_compression_and_client_info = if let Some(args) = client_args {
             // Daemon mode: parse client capabilities from -e option
             let client_info = parse_client_info(args);
-            build_compat_flags_from_client_info(&client_info, true)
+
+            // Check if client has compression enabled (looks for -z flag)
+            // This determines whether we send compression negotiation lists
+            // (mirrors upstream's do_compression check in negotiate_the_strings)
+            let client_has_compression = args
+                .iter()
+                .any(|arg| arg.contains('z') && arg.starts_with('-'));
+
+            (
+                build_compat_flags_from_client_info(&client_info, true),
+                client_has_compression,
+                Some(client_info),
+            )
         } else {
             // SSH mode: use default flags based on platform capabilities
             #[cfg(unix)]
@@ -273,13 +285,23 @@ pub fn setup_protocol(
                 flags |= CompatibilityFlags::SYMLINK_TIMES;
             }
 
-            flags
+            // SSH mode: assume compression is available (default true)
+            // This matches upstream behavior where compression is opt-out via --no-z
+            (flags, true, None)
         };
+
+        let (our_flags, send_compression, client_info) = flags_and_compression_and_client_info;
 
         // Server ONLY WRITES compat flags (upstream compat.c:736-738)
         // The client reads but does NOT send anything back - it's unidirectional!
         // Upstream uses write_varint() or write_byte() depending on protocol version
-        protocol::write_varint(stdout, our_flags.bits() as i32)?;
+        let compat_value = our_flags.bits() as i32;
+
+        // Capture the exact varint bytes for compat flags
+        let mut compat_bytes = Vec::new();
+        protocol::write_varint(&mut compat_bytes, compat_value).ok();
+
+        protocol::write_varint(stdout, compat_value)?;
         stdout.flush()?;
 
         // NOTE: Do NOT read anything back! The upstream code shows:
@@ -297,9 +319,44 @@ pub fn setup_protocol(
         // Negotiation only happens if client has VARINT_FLIST_FLAGS ('v') capability.
         // This matches upstream's do_negotiated_strings check.
 
-        // Check if client supports negotiated strings (has 'v' capability)
-        let do_negotiation = our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS);
-        let algorithms = protocol::negotiate_capabilities(protocol, stdin, stdout, do_negotiation)?;
+        // CRITICAL: Daemon mode and SSH mode have different negotiation flows!
+        // - SSH mode: Bidirectional - both sides exchange algorithm lists
+        // - Daemon mode: Unidirectional - server advertises, client selects silently
+        //
+        // For daemon mode, capability negotiation happens during @RSYNCD handshake,
+        // NOT here in setup_protocol. The client never sends algorithm responses back
+        // during setup_protocol in daemon mode.
+        //
+        // Upstream reference:
+        // - SSH mode: negotiate_the_strings() in compat.c (bidirectional)
+        // - Daemon mode: output_daemon_greeting() advertises, no response expected
+        // Protocol 30+ capability negotiation (upstream compat.c:534-585)
+        // This is called in BOTH daemon and SSH modes.
+        // The do_negotiation flag controls whether actual string exchange happens.
+        let do_negotiation = client_info.as_ref().map_or(
+            our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            |info| info.contains('v'),
+        );
+
+        // Daemon mode (client_args.is_some()) uses unidirectional negotiation
+        // SSH mode (client_args.is_none()) uses bidirectional negotiation
+        let is_daemon_mode = client_args.is_some();
+
+        // CRITICAL: Both daemon and SSH modes need to call negotiate_capabilities when
+        // do_negotiation is true (client has 'v' capability). The difference is:
+        // - Daemon mode (is_daemon_mode=true): Server sends lists, client doesn't respond back
+        // - SSH mode (is_daemon_mode=false): Both sides send lists, then both read each other's
+        //
+        // The is_daemon_mode flag inside negotiate_capabilities controls whether we read
+        // the client's response after sending our lists.
+        let algorithms = protocol::negotiate_capabilities(
+            protocol,
+            stdin,
+            stdout,
+            do_negotiation,
+            send_compression,
+            is_daemon_mode,
+        )?;
 
         (Some(our_flags), Some(algorithms))
     } else {
@@ -317,7 +374,8 @@ pub fn setup_protocol(
         let pid = std::process::id() as i32;
         timestamp ^ (pid << 6)
     };
-    stdout.write_all(&checksum_seed.to_le_bytes())?;
+    let seed_bytes = checksum_seed.to_le_bytes();
+    stdout.write_all(&seed_bytes)?;
     stdout.flush()?;
 
     Ok(SetupResult {
