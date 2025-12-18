@@ -7,6 +7,15 @@
 //! 3. Receives delta data and applies it to create/update files
 //! 4. Sets metadata (permissions, times, ownership) on received files
 //!
+//! # Upstream Reference
+//!
+//! - `receiver.c:340` - `receive_data()` - Delta application logic
+//! - `receiver.c:720` - `recv_files()` - Main file reception loop
+//! - `generator.c:1450` - `recv_generator()` - Signature generation
+//!
+//! Mirrors upstream rsync's receiver behavior with block-by-block delta
+//! application and atomic file updates via temporary files.
+//!
 //! # Implementation Guide
 //!
 //! For comprehensive documentation on how the receiver works within the delta transfer
