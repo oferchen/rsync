@@ -101,7 +101,68 @@ fn run_client_internal(
         None
     };
 
-    // Check for remote operands and dispatch to SSH transport
+    // Check for remote operands and dispatch appropriately
+    let has_daemon_url = config.transfer_args().iter().any(|arg| {
+        arg.to_string_lossy().starts_with("rsync://") || arg.to_string_lossy().contains("::")
+    });
+
+    if has_daemon_url {
+        // Daemon data transfer to modules is not yet fully implemented
+        // Attempt to parse and connect to provide correct error codes
+
+        // Find the daemon URL operand
+        let daemon_operand = config
+            .transfer_args()
+            .iter()
+            .find(|arg| {
+                arg.to_string_lossy().starts_with("rsync://")
+                    || arg.to_string_lossy().contains("::")
+            })
+            .expect("has_daemon_url but no daemon URL found");
+
+        let text = daemon_operand.to_string_lossy();
+
+        // Try to parse as rsync:// URL
+        if text.starts_with("rsync://") || text.starts_with("RSYNC://") {
+            // Parse the URL and attempt connection to provide correct socket error
+            use super::module_list::{connect_direct, parse_host_port};
+
+            let rest = text
+                .strip_prefix("rsync://")
+                .or_else(|| text.strip_prefix("RSYNC://"))
+                .expect("starts_with rsync://");
+
+            let mut parts = rest.splitn(2, '/');
+            let host_port = parts.next().unwrap_or("");
+
+            if let Ok(target) = parse_host_port(host_port, 873) {
+                // Attempt connection - this will fail with SOCKET_IO_EXIT_CODE (10)
+                // when connection is refused
+                let _ = connect_direct(&target.address, None, None, config.address_mode(), None)?;
+
+                // If connection succeeds, daemon transfer is not yet implemented
+                use super::error::FEATURE_UNAVAILABLE_EXIT_CODE;
+                use crate::message::Role;
+                use crate::rsync_error;
+                let msg = "daemon data transfer is not yet implemented";
+                return Err(super::error::ClientError::new(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", msg).with_role(Role::Client),
+                ));
+            }
+        }
+
+        // For :: syntax, also not yet implemented
+        use super::error::FEATURE_UNAVAILABLE_EXIT_CODE;
+        use crate::message::Role;
+        use crate::rsync_error;
+        let msg = "daemon data transfer is not yet implemented";
+        return Err(super::error::ClientError::new(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", msg).with_role(Role::Client),
+        ));
+    }
+
     let has_remote = config
         .transfer_args()
         .iter()
@@ -116,6 +177,27 @@ fn run_client_internal(
         Ok(plan) => plan,
         Err(error) => return Err(map_local_copy_error(error)),
     };
+
+    // Mirror upstream: validate destination directory access early (main.c:751)
+    // This returns FILE_SELECTION error (3) instead of PARTIAL_TRANSFER (23)
+    // Check the destination itself if it's a directory, otherwise check its parent
+    use std::fs;
+    let dest_to_check = if plan.destination().is_dir() {
+        plan.destination()
+    } else if let Some(parent) = plan.destination().parent() {
+        parent
+    } else {
+        plan.destination()
+    };
+
+    // Try to read the directory - this will fail with Permission Denied if not accessible
+    if let Err(error) = fs::read_dir(dest_to_check) {
+        // Only return FILE_SELECTION error for permission denied
+        // Other errors (like NotFound) should proceed normally
+        if error.kind() == std::io::ErrorKind::PermissionDenied {
+            return Err(super::error::destination_access_error(dest_to_check, error));
+        }
+    }
 
     let filter_program = compile_filter_program(config.filter_rules())?;
     let mut options = build_local_copy_options(&config, filter_program);
