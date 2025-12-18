@@ -103,7 +103,9 @@ pub use self::config::{
     force_no_compress_from_env, parse_skip_compress_list, skip_compress_from_env,
 };
 pub use self::error::{
-    ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, PARTIAL_TRANSFER_EXIT_CODE, SOCKET_IO_EXIT_CODE,
+    ClientError, CLIENT_SERVER_PROTOCOL_EXIT_CODE, FEATURE_UNAVAILABLE_EXIT_CODE,
+    FILE_IO_EXIT_CODE, FILE_SELECTION_EXIT_CODE, PARTIAL_TRANSFER_EXIT_CODE,
+    PROTOCOL_INCOMPATIBLE_EXIT_CODE, REMOTE_COMMAND_NOT_FOUND_EXIT_CODE, SOCKET_IO_EXIT_CODE,
 };
 pub use self::fallback::{RemoteFallbackArgs, RemoteFallbackContext, run_remote_transfer_fallback};
 pub use self::module_list::{
@@ -124,8 +126,8 @@ use std::time::Duration;
 
 #[allow(unused_imports)]
 pub(crate) use self::error::{
-    MAX_DELETE_EXIT_CODE, PROTOCOL_INCOMPATIBLE_EXIT_CODE, daemon_access_denied_error,
-    daemon_authentication_failed_error, daemon_authentication_required_error, daemon_error,
-    daemon_listing_unavailable_error, daemon_protocol_error, socket_error,
+    MAX_DELETE_EXIT_CODE, daemon_access_denied_error, daemon_authentication_failed_error,
+    daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
+    daemon_protocol_error, socket_error,
 };
 pub(crate) const DAEMON_SOCKET_TIMEOUT: Duration = Duration::from_secs(10);

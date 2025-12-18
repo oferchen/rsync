@@ -8,14 +8,22 @@ use std::path::Path;
 
 /// Exit code returned when client functionality is unavailable.
 pub const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
-/// Exit code used when a copy partially or wholly fails.
-pub const PARTIAL_TRANSFER_EXIT_CODE: i32 = 23;
+/// Exit code returned when a daemon violates the protocol.
+pub const PROTOCOL_INCOMPATIBLE_EXIT_CODE: i32 = 2;
+/// Exit code returned for errors selecting input/output files or directories.
+pub const FILE_SELECTION_EXIT_CODE: i32 = 3;
+/// Exit code returned when starting client-server protocol fails.
+pub const CLIENT_SERVER_PROTOCOL_EXIT_CODE: i32 = 5;
 /// Exit code returned when socket I/O fails.
 pub const SOCKET_IO_EXIT_CODE: i32 = 10;
+/// Exit code returned when file I/O fails.
+pub const FILE_IO_EXIT_CODE: i32 = 11;
+/// Exit code used when a copy partially or wholly fails.
+pub const PARTIAL_TRANSFER_EXIT_CODE: i32 = 23;
 /// Exit code returned when the `--max-delete` limit stops deletions.
 pub(crate) const MAX_DELETE_EXIT_CODE: i32 = 25;
-/// Exit code returned when a daemon violates the protocol.
-pub(crate) const PROTOCOL_INCOMPATIBLE_EXIT_CODE: i32 = 2;
+/// Exit code returned when remote command is not found.
+pub const REMOTE_COMMAND_NOT_FOUND_EXIT_CODE: i32 = 127;
 
 /// Error returned when the client orchestration fails.
 #[derive(Clone, Debug)]
@@ -118,6 +126,8 @@ pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> C
 pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
     let path_display = path.display();
     let text = format!("failed to {action} '{path_display}': {error}");
+    // Mirror upstream: use PARTIAL_TRANSFER_EXIT_CODE (23) for file I/O errors
+    // Upstream uses exit code 23 broadly for any transfer errors
     let message = rsync_error!(PARTIAL_TRANSFER_EXIT_CODE, text).with_role(Role::Client);
     ClientError::new(PARTIAL_TRANSFER_EXIT_CODE, message)
 }
