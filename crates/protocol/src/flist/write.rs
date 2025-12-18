@@ -193,6 +193,14 @@ impl FileListWriter {
         writer: &mut W,
         io_error: Option<i32>,
     ) -> io::Result<()> {
+        // Check if varint flist flags mode is enabled (xfer_flags_as_varint in upstream)
+        // This is set when VARINT_FLIST_FLAGS compat flag is negotiated
+        let xfer_flags_as_varint = if let Some(flags) = self.compat_flags {
+            flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+        } else {
+            false
+        };
+
         // Check if safe file list mode is enabled (compat.c:775):
         // use_safe_inc_flist = (compat_flags & CF_SAFE_FLIST) || protocol_version >= 31
         let use_safe_inc_flist = if let Some(flags) = self.compat_flags {
@@ -200,6 +208,23 @@ impl FileListWriter {
         } else {
             false
         } || self.protocol.as_u8() >= 31;
+
+        // Upstream write_end_of_flist() logic (flist.c):
+        // if (xfer_flags_as_varint) {
+        //     write_varint(f, 0);
+        //     write_varint(f, send_io_error ? io_error : 0);
+        // } else if (send_io_error) {
+        //     write_shortint(f, XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST);
+        //     write_varint(f, io_error);
+        // } else
+        //     write_byte(f, 0);
+
+        if xfer_flags_as_varint {
+            // Protocol 30+ with VARINT_FLIST_FLAGS: always write two varints
+            write_varint(writer, 0)?; // End marker
+            write_varint(writer, io_error.unwrap_or(0))?; // Error code (0 = success)
+            return Ok(());
+        }
 
         if let Some(error) = io_error {
             if use_safe_inc_flist {
@@ -215,7 +240,7 @@ impl FileListWriter {
             // We fall through to write normal end marker.
         }
 
-        // Normal end of list marker
+        // Normal end of list marker (legacy mode)
         writer.write_all(&[0u8])
     }
 }
