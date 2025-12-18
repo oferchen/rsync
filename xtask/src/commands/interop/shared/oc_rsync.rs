@@ -30,18 +30,8 @@ pub struct OcRsyncBinary {
 }
 
 impl OcRsyncBinary {
-    /// Check if this binary exists and is executable.
-    pub fn is_available(&self) -> bool {
-        self.path.exists() && self.path.is_file()
-    }
-
     /// Get path to the binary.
     pub fn binary_path(&self) -> &Path {
         &self.path
-    }
-
-    /// Get a display name for this binary.
-    pub fn name(&self) -> &str {
-        "oc-rsync"
     }
 }
