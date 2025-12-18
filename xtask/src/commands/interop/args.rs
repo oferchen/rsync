@@ -44,6 +44,7 @@ pub struct MessagesOptions {
     /// Enable verbose output.
     pub verbose: bool,
     /// Implementation to test: "upstream" (default) or "oc-rsync".
+    #[allow(dead_code)]
     pub implementation: Option<String>,
 }
 

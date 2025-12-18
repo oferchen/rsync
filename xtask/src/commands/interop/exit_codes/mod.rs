@@ -87,8 +87,6 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
 
 /// Validate exit codes against golden files.
 fn validate_exit_codes(workspace: &Path, options: ExitCodesOptions) -> TaskResult<()> {
-    use super::shared::{oc_rsync, upstream};
-
     // Load test scenarios
     let all_scenarios = scenarios::load_scenarios(workspace)?;
     let runnable_scenarios = scenarios::filter_runnable(all_scenarios);
@@ -129,7 +127,10 @@ fn validate_oc_rsync(
 
     // Detect oc-rsync binary
     let oc_binary = oc_rsync::detect_oc_rsync_binary(workspace)?;
-    eprintln!("[interop] Found oc-rsync at: {}", oc_binary.binary_path().display());
+    eprintln!(
+        "[interop] Found oc-rsync at: {}",
+        oc_binary.binary_path().display()
+    );
 
     // We need to validate against all upstream versions' golden files
     let upstream_versions = super::shared::upstream::UPSTREAM_VERSIONS;
@@ -142,25 +143,33 @@ fn validate_oc_rsync(
     let mut validation_failed = false;
 
     for version in versions_to_test {
-        eprintln!("\n[interop] Validating oc-rsync against upstream {} golden file...", version);
+        eprintln!(
+            "\n[interop] Validating oc-rsync against upstream {} golden file...",
+            version
+        );
 
         // Load golden file for this upstream version
         let golden = golden::load_golden(workspace, version)?;
 
         // Run scenarios with oc-rsync
-        let results = runner::run_scenarios(
-            runnable_scenarios,
-            oc_binary.binary_path(),
-            options.verbose,
-        )?;
+        let results =
+            runner::run_scenarios(runnable_scenarios, oc_binary.binary_path(), options.verbose)?;
 
         // Validate results against golden
         let errors = golden::validate_against_golden(&results, &golden);
 
         if errors.is_empty() {
-            eprintln!("[interop] ✓ All {} scenarios passed for upstream {} baseline!", results.len(), version);
+            eprintln!(
+                "[interop] ✓ All {} scenarios passed for upstream {} baseline!",
+                results.len(),
+                version
+            );
         } else {
-            eprintln!("[interop] ✗ {} validation errors against upstream {} baseline:", errors.len(), version);
+            eprintln!(
+                "[interop] ✗ {} validation errors against upstream {} baseline:",
+                errors.len(),
+                version
+            );
             for error in &errors {
                 eprintln!("  - {}", error);
             }
