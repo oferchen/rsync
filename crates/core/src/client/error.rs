@@ -60,11 +60,12 @@ impl Error for ClientError {}
 
 pub(crate) fn missing_operands_error() -> ClientError {
     let message = rsync_error!(
-        FEATURE_UNAVAILABLE_EXIT_CODE,
+        PARTIAL_TRANSFER_EXIT_CODE,
         "missing source operands: supply at least one source and a destination"
     )
     .with_role(Role::Client);
-    ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+    // Mirror upstream: return exit code 23 for missing source operands
+    ClientError::new(PARTIAL_TRANSFER_EXIT_CODE, message)
 }
 
 #[allow(dead_code)]
