@@ -3,7 +3,7 @@ use std::num::{IntErrorKind, NonZeroU32, NonZeroU64};
 use std::str::FromStr;
 
 use core::{
-    client::{HumanReadableMode, IconvParseError, IconvSetting, TransferTimeout},
+    client::{HumanReadableMode, IconvParseError, IconvSetting, TransferTimeout, PROTOCOL_INCOMPATIBLE_EXIT_CODE},
     message::{Message, Role},
     rsync_error,
 };
@@ -48,7 +48,7 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersio
             detail.push_str(&format!("supported protocols are {supported}"));
 
             Err(
-                rsync_error!(1, format!("invalid protocol version '{display}': {detail}"))
+                rsync_error!(PROTOCOL_INCOMPATIBLE_EXIT_CODE, format!("invalid protocol version '{display}': {detail}"))
                     .with_role(Role::Client),
             )
         }
