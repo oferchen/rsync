@@ -1,0 +1,119 @@
+version = "3.1.3"
+
+[[messages]]
+text = 'rsync: change_dir "<path> failed: No such file or directory (2)'
+scenario = "missing_source"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1205) [sender]"
+role = "sender"
+scenario = "missing_source"
+
+[[messages]]
+text = "rsync: --invalid-option-xyz: unknown option"
+scenario = "invalid_option"
+
+[[messages]]
+text = "rsync error: syntax or usage error (code 1) at main.c(1601) [client]"
+role = "client"
+scenario = "invalid_option"
+
+[[messages]]
+text = "protocol version mismatch -- is your shell clean?"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "(see the rsync man page for an explanation)"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "protocol version mismatch -- is your shell clean?"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "(see the rsync man page for an explanation)"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "rsync error: protocol incompatibility (code 2) at compat.c(178) [Receiver=3.1.3]"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "rsync error: protocol incompatibility (code 2) at compat.c(178) [sender]"
+role = "sender"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = 'rsync: change_dir "/nonexistent/source" failed: No such file or directory (2)'
+scenario = "source_not_found"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1205) [sender]"
+role = "sender"
+scenario = "source_not_found"
+
+[[messages]]
+text = "rsync: failed to connect to localhost (127.0.0.1): Connection refused (111)"
+scenario = "daemon_connection_refused"
+
+[[messages]]
+text = "rsync: failed to connect to localhost (::1): Network is unreachable (101)"
+scenario = "daemon_connection_refused"
+
+[[messages]]
+text = "rsync error: error in socket IO (code 10) at clientserver.c(128) [Receiver=3.1.3]"
+scenario = "daemon_connection_refused"
+
+[[messages]]
+text = 'rsync: send_files failed to open "<path>: Permission denied (13)'
+scenario = "permission_denied_read"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1205) [sender]"
+role = "sender"
+scenario = "permission_denied_read"
+
+[[messages]]
+text = 'rsync: change_dir#1 "<path> failed: Permission denied (13)'
+scenario = "permission_denied_write"
+
+[[messages]]
+text = "rsync error: errors selecting input/output files, dirs (code 3) at main.c(636) [Receiver=3.1.3]"
+scenario = "permission_denied_write"
+
+[[messages]]
+text = 'rsync: send_files failed to open "<path>: Permission denied (13)'
+scenario = "partial_transfer"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1205) [sender]"
+role = "sender"
+scenario = "partial_transfer"
+
+[[messages]]
+text = "rsync: --delete does not work without --recursive (-r) or --dirs (-d)."
+scenario = "max_delete_limit"
+
+[[messages]]
+text = "rsync error: syntax or usage error (code 1) at main.c(1601) [client]"
+role = "client"
+scenario = "max_delete_limit"
+
+[[messages]]
+text = "rsync: Failed to exec /nonexistent/shell: No such file or directory (2)"
+scenario = "remote_not_found"
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at pipe.c(85) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+
+[[messages]]
+text = "rsync: connection unexpectedly closed (0 bytes received so far) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at io.c(235) [sender]"
+role = "sender"
+scenario = "remote_not_found"

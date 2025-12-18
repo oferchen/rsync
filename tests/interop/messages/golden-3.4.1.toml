@@ -1,0 +1,844 @@
+version = "3.4.1"
+
+[[messages]]
+text = 'rsync: [sender] change_dir "<path> failed: No such file or directory (2)'
+role = "sender"
+scenario = "missing_source"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+role = "sender"
+scenario = "missing_source"
+
+[[messages]]
+text = "rsync: --invalid-option-xyz: unknown option"
+scenario = "invalid_option"
+
+[[messages]]
+text = "rsync error: syntax or usage error (code 1) at main.c(1782) [client]"
+role = "client"
+scenario = "invalid_option"
+
+[[messages]]
+text = "rsync version 3.4.1 protocol version 32"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Copyright (C) 1996-2025 by Andrew Tridgell, Wayne Davison, and others."
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Web site: https://rsync.samba.org/"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Capabilities:"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "64-bit files, 64-bit inums, 64-bit timestamps, 64-bit long ints,"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "socketpairs, symlinks, symtimes, hardlinks, hardlink-specials,"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "hardlink-symlinks, IPv6, atimes, batchfiles, inplace, append, ACLs,"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "xattrs, optional secluded-args, iconv, prealloc, stop-at, no crtimes"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Optimizations:"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "SIMD-roll, no asm-roll, openssl-crypto, no asm-MD5"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Checksum list:"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "md5 md4 sha1 none"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Compress list:"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "zstd zlibx zlib none"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Daemon auth list:"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "sha512 sha256 sha1 md5 md4"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "rsync comes with ABSOLUTELY NO WARRANTY. This is free software, and you"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "are welcome to redistribute it under certain conditions. See the GNU"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "General Public Licence for details."
+scenario = "conflicting_options"
+
+[[messages]]
+text = "rsync is a file transfer program capable of efficient remote update"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "via a fast differencing algorithm."
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Usage: rsync [OPTION]... SRC [SRC]... DEST"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "or rsync [OPTION]... SRC [SRC]... [USER@]HOST:DEST"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "or rsync [OPTION]... SRC [SRC]... [USER@]HOST::DEST"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "or rsync [OPTION]... SRC [SRC]... rsync://[USER@]HOST[:PORT]/DEST"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "or rsync [OPTION]... [USER@]HOST:SRC [DEST]"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "or rsync [OPTION]... [USER@]HOST::SRC [DEST]"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "or rsync [OPTION]... rsync://[USER@]HOST[:PORT]/SRC [DEST]"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "The ':' usages connect via remote shell, while '::' & 'rsync://' usages connect"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "to an rsync daemon, and require SRC or DEST to start with a module name."
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Options"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--verbose, -v increase verbosity"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--info=FLAGS fine-grained informational verbosity"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--debug=FLAGS fine-grained debug verbosity"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--stderr=e|a|c change stderr output mode (default: errors)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--quiet, -q suppress non-error messages"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--no-motd suppress daemon-mode MOTD"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--checksum, -c skip based on checksum, not mod-time & size"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--archive, -a archive mode is -rlptgoD (no -A,-X,-U,-N,-H)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--no-OPTION turn off an implied OPTION (e.g. --no-D)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--recursive, -r recurse into directories"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--relative, -R use relative path names"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--no-implied-dirs don't send implied dirs with --relative"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--backup, -b make backups (see --suffix & --backup-dir)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--backup-dir=DIR make backups into hierarchy based in DIR"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--suffix=SUFFIX backup suffix (default ~ w/o --backup-dir)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--update, -u skip files that are newer on the receiver"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--inplace update destination files in-place"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--append append data onto shorter files"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--append-verify --append w/old data in file checksum"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--dirs, -d transfer directories without recursing"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--old-dirs, --old-d works like --dirs when talking to old rsync"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--mkpath create destination's missing path components"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--links, -l copy symlinks as symlinks"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--copy-links, -L transform symlink into referent file/dir"
+scenario = "conflicting_options"
+
+[[messages]]
+text = '--copy-unsafe-links only "unsafe" symlinks are transformed'
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--safe-links ignore symlinks that point outside the tree"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--munge-links munge symlinks to make them safe & unusable"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--copy-dirlinks, -k transform symlink to dir into referent dir"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--keep-dirlinks, -K treat symlinked dir on receiver as dir"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--hard-links, -H preserve hard links"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--perms, -p preserve permissions"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--executability, -E preserve executability"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--chmod=CHMOD affect file and/or directory permissions"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--acls, -A preserve ACLs (implies --perms)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--xattrs, -X preserve extended attributes"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--owner, -o preserve owner (super-user only)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--group, -g preserve group"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--devices preserve device files (super-user only)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--copy-devices copy device contents as a regular file"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--write-devices write to devices as files (implies --inplace)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--specials preserve special files"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "-D same as --devices --specials"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--times, -t preserve modification times"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--atimes, -U preserve access (use) times"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--open-noatime avoid changing the atime on opened files"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--crtimes, -N preserve create times (newness)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--omit-dir-times, -O omit directories from --times"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--omit-link-times, -J omit symlinks from --times"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--super receiver attempts super-user activities"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--fake-super store/recover privileged attrs using xattrs"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--sparse, -S turn sequences of nulls into sparse blocks"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--preallocate allocate dest files before writing them"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--dry-run, -n perform a trial run with no changes made"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--whole-file, -W copy files whole (w/o delta-xfer algorithm)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--checksum-choice=STR choose the checksum algorithm (aka --cc)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--one-file-system, -x don't cross filesystem boundaries"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--block-size=SIZE, -B force a fixed checksum block-size"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--rsh=COMMAND, -e specify the remote shell to use"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--rsync-path=PROGRAM specify the rsync to run on remote machine"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--existing skip creating new files on receiver"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--ignore-existing skip updating files that exist on receiver"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--remove-source-files sender removes synchronized files (non-dir)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--del an alias for --delete-during"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delete delete extraneous files from dest dirs"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delete-before receiver deletes before xfer, not during"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delete-during receiver deletes during the transfer"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delete-delay find deletions during, delete after"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delete-after receiver deletes after transfer, not during"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delete-excluded also delete excluded files from dest dirs"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--ignore-missing-args ignore missing source args without error"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delete-missing-args delete missing source args from destination"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--ignore-errors delete even if there are I/O errors"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--force force deletion of dirs even if not empty"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--max-delete=NUM don't delete more than NUM files"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--max-size=SIZE don't transfer any file larger than SIZE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--min-size=SIZE don't transfer any file smaller than SIZE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--max-alloc=SIZE change a limit relating to memory alloc"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--partial keep partially transferred files"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--partial-dir=DIR put a partially transferred file into DIR"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--delay-updates put all updated files into place at end"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--prune-empty-dirs, -m prune empty directory chains from file-list"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--numeric-ids don't map uid/gid values by user/group name"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--usermap=STRING custom username mapping"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--groupmap=STRING custom groupname mapping"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--chown=USER:GROUP simple username/groupname mapping"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--timeout=SECONDS set I/O timeout in seconds"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--contimeout=SECONDS set daemon connection timeout in seconds"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--ignore-times, -I don't skip files that match size and time"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--size-only skip files that match in size"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--modify-window=NUM, -@ set the accuracy for mod-time comparisons"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--temp-dir=DIR, -T create temporary files in directory DIR"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--fuzzy, -y find similar file for basis if no dest file"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--compare-dest=DIR also compare destination files relative to DIR"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--copy-dest=DIR ... and include copies of unchanged files"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--link-dest=DIR hardlink to files in DIR when unchanged"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--compress, -z compress file data during the transfer"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--compress-choice=STR choose the compression algorithm (aka --zc)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--compress-level=NUM explicitly set compression level (aka --zl)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--skip-compress=LIST skip compressing files with suffix in LIST"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--cvs-exclude, -C auto-ignore files in the same way CVS does"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--filter=RULE, -f add a file-filtering RULE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "-F same as --filter='dir-merge /.rsync-filter'"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "repeated: --filter='- .rsync-filter'"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--exclude=PATTERN exclude files matching PATTERN"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--exclude-from=FILE read exclude patterns from FILE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--include=PATTERN don't exclude files matching PATTERN"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--include-from=FILE read include patterns from FILE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--files-from=FILE read list of source-file names from FILE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--from0, -0 all *-from/filter files are delimited by 0s"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--old-args disable the modern arg-protection idiom"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--secluded-args, -s use the protocol to safely send the args"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--trust-sender trust the remote sender's file list"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--copy-as=USER[:GROUP] specify user & optional group for the copy"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--address=ADDRESS bind address for outgoing socket to daemon"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--port=PORT specify double-colon alternate port number"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--sockopts=OPTIONS specify custom TCP options"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--blocking-io use blocking I/O for the remote shell"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--outbuf=N|L|B set out buffering to None, Line, or Block"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--stats give some file-transfer stats"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--8-bit-output, -8 leave high-bit chars unescaped in output"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--human-readable, -h output numbers in a human-readable format"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--progress show progress during transfer"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "-P same as --partial --progress"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--itemize-changes, -i output a change-summary for all updates"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--remote-option=OPT, -M send OPTION to the remote side only"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--out-format=FORMAT output updates using the specified FORMAT"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--log-file=FILE log what we're doing to the specified FILE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--log-file-format=FMT log updates using the specified FMT"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--password-file=FILE read daemon-access password from FILE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--early-input=FILE use FILE for daemon's early exec input"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--list-only list the files instead of copying them"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--bwlimit=RATE limit socket I/O bandwidth"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--stop-after=MINS Stop rsync after MINS minutes have elapsed"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--stop-at=y-m-dTh:m Stop rsync at the specified point in time"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--fsync fsync every written file"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--write-batch=FILE write a batched update to FILE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--only-write-batch=FILE like --write-batch but w/o updating dest"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--read-batch=FILE read a batched update from FILE"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--protocol=NUM force an older protocol version to be used"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--iconv=CONVERT_SPEC request charset conversion of filenames"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--checksum-seed=NUM set block/file checksum seed (advanced)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--ipv4, -4 prefer IPv4"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--ipv6, -6 prefer IPv6"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--version, -V print the version + other info and exit"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "--help, -h (*) show this help (* -h is help only on its own)"
+scenario = "conflicting_options"
+
+[[messages]]
+text = 'Use "rsync --daemon --help" to see the daemon-mode command-line options.'
+scenario = "conflicting_options"
+
+[[messages]]
+text = "Please see the rsync(1) and rsyncd.conf(5) manpages for full documentation."
+scenario = "conflicting_options"
+
+[[messages]]
+text = "See https://rsync.samba.org/ for updates, bug reports, and answers"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "rsync error: syntax or usage error (code 1) at main.c(1837) [Receiver=3.4.1]"
+scenario = "conflicting_options"
+
+[[messages]]
+text = "protocol version mismatch -- is your shell clean?"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "protocol version mismatch -- is your shell clean?"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "(see the rsync manpage for an explanation)"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "(see the rsync manpage for an explanation)"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [Receiver=3.4.1]"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [sender]"
+role = "sender"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = 'rsync: [sender] change_dir "/nonexistent/source" failed: No such file or directory (2)'
+role = "sender"
+scenario = "source_not_found"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+role = "sender"
+scenario = "source_not_found"
+
+[[messages]]
+text = "rsync: [Receiver] failed to connect to localhost (127.0.0.1): Connection refused (111)"
+scenario = "daemon_connection_refused"
+
+[[messages]]
+text = "rsync: [Receiver] failed to connect to localhost (::1): Network is unreachable (101)"
+scenario = "daemon_connection_refused"
+
+[[messages]]
+text = "rsync error: error in socket IO (code 10) at clientserver.c(139) [Receiver=3.4.1]"
+scenario = "daemon_connection_refused"
+
+[[messages]]
+text = 'rsync: [sender] send_files failed to open "<path>: Permission denied (13)'
+role = "sender"
+scenario = "permission_denied_read"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+role = "sender"
+scenario = "permission_denied_read"
+
+[[messages]]
+text = 'rsync: [Receiver] change_dir#1 "<path> failed: Permission denied (13)'
+scenario = "permission_denied_write"
+
+[[messages]]
+text = "rsync error: errors selecting input/output files, dirs (code 3) at main.c(751) [Receiver=3.4.1]"
+scenario = "permission_denied_write"
+
+[[messages]]
+text = 'rsync: [sender] send_files failed to open "<path>: Permission denied (13)'
+role = "sender"
+scenario = "partial_transfer"
+
+[[messages]]
+text = "rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1338) [sender]"
+role = "sender"
+scenario = "partial_transfer"
+
+[[messages]]
+text = "rsync: --delete does not work without --recursive (-r) or --dirs (-d)."
+scenario = "max_delete_limit"
+
+[[messages]]
+text = "rsync error: syntax or usage error (code 1) at main.c(1782) [client]"
+role = "client"
+scenario = "max_delete_limit"
+
+[[messages]]
+text = "rsync: [sender] Failed to exec /nonexistent/shell: No such file or directory (2)"
+role = "sender"
+scenario = "remote_not_found"
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at pipe.c(85) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+
+[[messages]]
+text = "rsync: connection unexpectedly closed (0 bytes received so far) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at io.c(232) [sender]"
+role = "sender"
+scenario = "remote_not_found"
