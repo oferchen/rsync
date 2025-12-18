@@ -25,3 +25,5 @@ pub(super) use connect::{
 };
 #[allow(unused_imports)]
 pub(super) use errors::map_daemon_handshake_error;
+#[allow(unused_imports)]
+pub(super) use parsing::parse_host_port;
