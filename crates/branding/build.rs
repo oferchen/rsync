@@ -235,8 +235,36 @@ impl WorkspaceMetadata {
     }
 
     fn validate_versions(&self, manifest_path: &Path) {
-        let expected = format!("{}-rust", self.upstream_version);
-        expect_eq(&self.rust_version, &expected, manifest_path, "rust_version");
+        // Parse upstream_version to ensure it's valid x.y.z format
+        let upstream_parsed =
+            parse_version(&self.upstream_version, manifest_path, "upstream_version");
+        if upstream_parsed.is_rust_branded {
+            panic!(
+                "workspace.metadata.oc_rsync.upstream_version ('{}') must not include -rust suffix in {}",
+                self.upstream_version,
+                manifest_path.display()
+            );
+        }
+
+        // Parse rust_version to ensure it's valid x.y.z-rust format
+        let rust_parsed = parse_version(&self.rust_version, manifest_path, "rust_version");
+        if !rust_parsed.is_rust_branded {
+            panic!(
+                "workspace.metadata.oc_rsync.rust_version ('{}') must include -rust suffix in {}",
+                self.rust_version,
+                manifest_path.display()
+            );
+        }
+
+        // Ensure rust_version base matches upstream_version
+        if upstream_parsed.base != rust_parsed.base {
+            panic!(
+                "workspace.metadata.oc_rsync.rust_version base ('{}') must match upstream_version ('{}') in {}",
+                format_version_triple(&rust_parsed.base),
+                format_version_triple(&upstream_parsed.base),
+                manifest_path.display()
+            );
+        }
     }
 
     fn validate_protocol(&self, manifest_path: &Path) {
@@ -446,4 +474,79 @@ fn sanitize_revision(input: &str) -> String {
     } else {
         cleaned.to_owned()
     }
+}
+
+struct ParsedVersion {
+    base: (u32, u32, u32),
+    is_rust_branded: bool,
+}
+
+fn parse_version(version_str: &str, manifest_path: &Path, field: &str) -> ParsedVersion {
+    let trimmed = version_str.trim();
+    if trimmed.is_empty() {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} must not be empty in {}",
+            manifest_path.display()
+        );
+    }
+
+    // Split on optional -rust suffix
+    let (base, is_rust_branded) = match trimmed.rsplit_once("-rust") {
+        Some((base, "")) => (base, true),
+        Some(_) => {
+            panic!(
+                "workspace.metadata.oc_rsync.{field} ('{}') has invalid format: -rust suffix must appear at the end in {}",
+                version_str,
+                manifest_path.display()
+            );
+        }
+        None => (trimmed, false),
+    };
+
+    // Parse x.y.z components
+    let parts: Vec<&str> = base.split('.').collect();
+    if parts.len() != 3 {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} ('{}') must have exactly three components (x.y.z) in {}",
+            version_str,
+            manifest_path.display()
+        );
+    }
+
+    let major = parse_version_component(parts[0], version_str, manifest_path, field, "major");
+    let minor = parse_version_component(parts[1], version_str, manifest_path, field, "minor");
+    let patch = parse_version_component(parts[2], version_str, manifest_path, field, "patch");
+
+    ParsedVersion {
+        base: (major, minor, patch),
+        is_rust_branded,
+    }
+}
+
+fn parse_version_component(
+    s: &str,
+    version_str: &str,
+    manifest_path: &Path,
+    field: &str,
+    component_name: &str,
+) -> u32 {
+    if s.is_empty() {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} ('{}') has empty {component_name} component in {}",
+            version_str,
+            manifest_path.display()
+        );
+    }
+
+    s.parse::<u32>().unwrap_or_else(|_| {
+        panic!(
+            "workspace.metadata.oc_rsync.{field} ('{}') has invalid {component_name} component: must be a non-negative integer in {}",
+            version_str,
+            manifest_path.display()
+        )
+    })
+}
+
+fn format_version_triple(triple: &(u32, u32, u32)) -> String {
+    format!("{}.{}.{}", triple.0, triple.1, triple.2)
 }

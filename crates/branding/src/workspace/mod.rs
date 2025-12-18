@@ -16,6 +16,7 @@ mod json;
 mod metadata;
 mod paths;
 mod protocol;
+mod version;
 
 pub use constants::{
     BRAND, CLIENT_PROGRAM_NAME, DAEMON_CONFIG_DIR, DAEMON_CONFIG_PATH, DAEMON_PROGRAM_NAME,
@@ -32,6 +33,7 @@ pub use paths::{
     legacy_daemon_config_path, legacy_daemon_secrets_path,
 };
 pub use protocol::{PROTOCOL_VERSION, protocol_version_nonzero_u8, protocol_version_u8};
+pub use version::{Version, VersionParseError};
 
 #[cfg(test)]
 mod tests;
