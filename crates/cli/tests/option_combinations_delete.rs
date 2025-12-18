@@ -8,7 +8,7 @@ use core::client::DeleteMode;
 
 #[test]
 fn test_delete_excluded_enables_delete_during() {
-    let args = parse_args(["oc-rsync", "--delete-excluded", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--delete-excluded", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(
         args.delete_mode,
         DeleteMode::During,
@@ -19,7 +19,7 @@ fn test_delete_excluded_enables_delete_during() {
 
 #[test]
 fn test_max_delete_enables_delete_during() {
-    let args = parse_args(["oc-rsync", "--max-delete=100", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--max-delete=100", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(
         args.delete_mode,
         DeleteMode::During,
@@ -38,6 +38,7 @@ fn test_explicit_delete_mode_takes_precedence_over_delete_excluded() {
         "oc-rsync",
         "--delete-before",
         "--delete-excluded",
+        "--dirs",
         "src",
         "dest",
     ])
@@ -56,6 +57,7 @@ fn test_explicit_delete_mode_takes_precedence_over_max_delete() {
         "oc-rsync",
         "--delete-after",
         "--max-delete=50",
+        "--dirs",
         "src",
         "dest",
     ])
@@ -70,7 +72,7 @@ fn test_explicit_delete_mode_takes_precedence_over_max_delete() {
 
 #[test]
 fn test_delete_excluded_without_delete_mode() {
-    let args = parse_args(["oc-rsync", "--delete-excluded", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--delete-excluded", "--dirs", "src", "dest"]).unwrap();
     assert!(
         args.delete_mode.is_enabled(),
         "--delete-excluded alone should enable delete mode"
@@ -79,7 +81,7 @@ fn test_delete_excluded_without_delete_mode() {
 
 #[test]
 fn test_max_delete_without_delete_mode() {
-    let args = parse_args(["oc-rsync", "--max-delete=10", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--max-delete=10", "--dirs", "src", "dest"]).unwrap();
     assert!(
         args.delete_mode.is_enabled(),
         "--max-delete alone should enable delete mode"
@@ -104,6 +106,7 @@ fn test_delete_excluded_and_max_delete_together() {
         "oc-rsync",
         "--delete-excluded",
         "--max-delete=20",
+        "--dirs",
         "src",
         "dest",
     ])
@@ -119,7 +122,7 @@ fn test_delete_excluded_and_max_delete_together() {
 
 #[test]
 fn test_delete_flag_enables_during_mode() {
-    let args = parse_args(["oc-rsync", "--delete", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--delete", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(
         args.delete_mode,
         DeleteMode::During,
@@ -129,24 +132,24 @@ fn test_delete_flag_enables_during_mode() {
 
 #[test]
 fn test_delete_during_explicit() {
-    let args = parse_args(["oc-rsync", "--delete-during", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--delete-during", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(args.delete_mode, DeleteMode::During);
 }
 
 #[test]
 fn test_delete_before_explicit() {
-    let args = parse_args(["oc-rsync", "--delete-before", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--delete-before", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(args.delete_mode, DeleteMode::Before);
 }
 
 #[test]
 fn test_delete_after_explicit() {
-    let args = parse_args(["oc-rsync", "--delete-after", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--delete-after", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(args.delete_mode, DeleteMode::After);
 }
 
 #[test]
 fn test_delete_delay_explicit() {
-    let args = parse_args(["oc-rsync", "--delete-delay", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--delete-delay", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(args.delete_mode, DeleteMode::Delay);
 }
