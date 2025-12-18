@@ -40,25 +40,6 @@ fn write_validated_message<W: Write + ?Sized>(
 ) -> io::Result<()> {
     let header_bytes = header.encode();
 
-    // Log the actual bytes being sent to the wire
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("/tmp/multiplex_wire_bytes.log")
-    {
-        use std::io::Write as _;
-        let _ = writeln!(
-            f,
-            "[WIRE] code={:?}, len={}, header_bytes=[0x{:02x}, 0x{:02x}, 0x{:02x}, 0x{:02x}]",
-            header.code(),
-            header.payload_len(),
-            header_bytes[0],
-            header_bytes[1],
-            header_bytes[2],
-            header_bytes[3]
-        );
-    }
-
     if payload.is_empty() {
         writer.write_all(&header_bytes)?;
         return Ok(());

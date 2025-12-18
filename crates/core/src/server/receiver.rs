@@ -67,6 +67,7 @@ fn checksum_algorithm_to_signature(
 ) -> SignatureAlgorithm {
     let seed_u64 = seed as u64;
     match algorithm {
+        ChecksumAlgorithm::None => SignatureAlgorithm::Md4, // Fallback to MD4 when no checksum requested
         ChecksumAlgorithm::MD4 => SignatureAlgorithm::Md4,
         ChecksumAlgorithm::MD5 => {
             let seed_config = if let Some(flags) = compat_flags {
@@ -83,6 +84,7 @@ fn checksum_algorithm_to_signature(
         }
         ChecksumAlgorithm::SHA1 => SignatureAlgorithm::Sha1,
         ChecksumAlgorithm::XXH64 => SignatureAlgorithm::Xxh64 { seed: seed_u64 },
+        ChecksumAlgorithm::XXH3 => SignatureAlgorithm::Xxh3 { seed: seed_u64 },
         ChecksumAlgorithm::XXH128 => SignatureAlgorithm::Xxh3_128 { seed: seed_u64 },
     }
 }

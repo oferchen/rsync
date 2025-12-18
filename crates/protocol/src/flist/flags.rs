@@ -1,70 +1,115 @@
 //! File entry flags for the rsync flist wire format.
 //!
 //! The flags byte indicates which fields are present in a file entry and how
-//! they are encoded. These constants match upstream rsync's `flist.c`.
+//! they are encoded. These constants match upstream rsync's `rsync.h`.
+//!
+//! # Upstream Reference
+//!
+//! Flag bit positions from rsync.h (protocol 28+):
+//! - Bits 0-7: Primary flags (first byte/varint)
+//! - Bits 8-15: Extended flags (second byte, protocol 28+)
+//! - Bits 16+: Additional extended flags (protocol 30+)
 
 #![allow(dead_code)] // Many constants reserved for future protocol features
 
-/// Flag indicating that extended flags follow the first byte.
-///
-/// When set, an additional byte is read to get more flag bits.
-/// Used in protocol versions 28+.
-pub const XMIT_EXTENDED_FLAGS: u8 = 1 << 0;
-
-/// Flag indicating the entry has the same UID as the previous entry.
-pub const XMIT_SAME_UID: u8 = 1 << 1;
-
-/// Flag indicating the entry has the same GID as the previous entry.
-pub const XMIT_SAME_GID: u8 = 1 << 2;
-
-/// Flag indicating the entry has the same file name as the previous entry.
-///
-/// When set, only a length byte follows to indicate how many bytes differ.
-pub const XMIT_SAME_NAME: u8 = 1 << 3;
-
-/// Flag indicating the name length uses a 32-bit integer instead of 8-bit.
-///
-/// Used for paths longer than 255 bytes.
-pub const XMIT_LONG_NAME: u8 = 1 << 4;
-
-/// Flag indicating the entry has the same modification time as the previous entry.
-pub const XMIT_SAME_TIME: u8 = 1 << 5;
-
-/// Flag indicating the entry has the same mode as the previous entry.
-pub const XMIT_SAME_MODE: u8 = 1 << 6;
+// Primary flags (bits 0-7) - matches upstream rsync.h
 
 /// Flag indicating this is the top-level directory in the transfer.
 ///
 /// Used to mark directories that should not be deleted during `--delete`.
-pub const XMIT_TOP_DIR: u8 = 1 << 7;
+/// Upstream: `XMIT_TOP_DIR (1<<0)`
+pub const XMIT_TOP_DIR: u8 = 1 << 0;
 
-// Extended flags (second byte, protocol 28+):
-
-/// Extended flag indicating the entry has a high bit set in its mode.
+/// Flag indicating the entry has the same mode as the previous entry.
 ///
-/// Used for device files and other special modes.
-pub const XMIT_SAME_HIGH_RDEV: u8 = 1 << 0;
+/// Upstream: `XMIT_SAME_MODE (1<<1)`
+pub const XMIT_SAME_MODE: u8 = 1 << 1;
 
-/// Extended flag indicating the entry has a different rdev major number.
-pub const XMIT_SAME_RDEV_MAJOR: u8 = 1 << 1;
+/// Flag indicating that extended flags follow the first byte.
+///
+/// When set in protocol 28+, additional flag bits are encoded.
+/// With VARINT_FLIST_FLAGS, flags are encoded as a single varint.
+/// Upstream: `XMIT_EXTENDED_FLAGS (1<<2)` for protocol 28+
+pub const XMIT_EXTENDED_FLAGS: u8 = 1 << 2;
 
-/// Extended flag indicating the entry has hardlink information.
-pub const XMIT_HLINKED: u8 = 1 << 2;
+/// Flag indicating the entry has the same UID as the previous entry.
+///
+/// Upstream: `XMIT_SAME_UID (1<<3)`
+pub const XMIT_SAME_UID: u8 = 1 << 3;
 
-/// Extended flag indicating the entry uses hardlink first information.
-pub const XMIT_HLINK_FIRST: u8 = 1 << 3;
+/// Flag indicating the entry has the same GID as the previous entry.
+///
+/// Upstream: `XMIT_SAME_GID (1<<4)`
+pub const XMIT_SAME_GID: u8 = 1 << 4;
 
-/// Extended flag indicating I/O error or special handling needed.
+/// Flag indicating the entry has the same file name as the previous entry.
+///
+/// When set, a same_len byte follows to indicate how many prefix bytes match.
+/// Upstream: `XMIT_SAME_NAME (1<<5)`
+pub const XMIT_SAME_NAME: u8 = 1 << 5;
+
+/// Flag indicating the name length uses a varint instead of 8-bit.
+///
+/// Used for paths longer than 255 bytes.
+/// Upstream: `XMIT_LONG_NAME (1<<6)`
+pub const XMIT_LONG_NAME: u8 = 1 << 6;
+
+/// Flag indicating the entry has the same modification time as the previous entry.
+///
+/// Upstream: `XMIT_SAME_TIME (1<<7)`
+pub const XMIT_SAME_TIME: u8 = 1 << 7;
+
+// Extended flags (bits 8-15 in varint, or second byte in protocol 28-29)
+//
+// These correspond to upstream bits (1<<8) through (1<<15).
+// When stored as a separate byte, these are bits 0-7 of that byte.
+// When encoded as a varint with VARINT_FLIST_FLAGS, they occupy bits 8-15.
+
+/// Extended flag: same rdev major as previous (bit 8).
+///
+/// Upstream: `XMIT_SAME_RDEV_MAJOR (1<<8)` for protocol 28+ devices
+pub const XMIT_SAME_RDEV_MAJOR: u8 = 1 << 0;
+
+/// Extended flag: entry has hardlink information (bit 9).
+///
+/// Upstream: `XMIT_HLINKED (1<<9)` for protocol 28+ non-directories
+pub const XMIT_HLINKED: u8 = 1 << 1;
+
+/// Extended flag: user name follows (bit 10, protocol 30+).
+///
+/// Upstream: `XMIT_USER_NAME_FOLLOWS (1<<10)`
+pub const XMIT_USER_NAME_FOLLOWS: u8 = 1 << 2;
+
+/// Extended flag: group name follows (bit 11, protocol 30+).
+///
+/// Upstream: `XMIT_GROUP_NAME_FOLLOWS (1<<11)`
+pub const XMIT_GROUP_NAME_FOLLOWS: u8 = 1 << 3;
+
+/// Extended flag: hardlink first / I/O error end list (bit 12).
+///
+/// Upstream: `XMIT_HLINK_FIRST (1<<12)` for protocol 30+ non-dirs
+/// Upstream: `XMIT_IO_ERROR_ENDLIST (1<<12)` for protocol 31+ end marker
+pub const XMIT_HLINK_FIRST: u8 = 1 << 4;
 pub const XMIT_IO_ERROR_ENDLIST: u8 = 1 << 4;
 
-/// Extended flag indicating modification time uses 32-bit seconds only.
+/// Extended flag: mtime has nanoseconds (bit 13, protocol 31+).
+///
+/// Upstream: `XMIT_MOD_NSEC (1<<13)`
 pub const XMIT_MOD_NSEC: u8 = 1 << 5;
 
-/// Extended flag indicating same ACL as previous entry.
+/// Extended flag: same ACL as previous entry (bit 14).
+///
+/// Upstream: `XMIT_SAME_ACL (1<<14)` (restricted feature)
 pub const XMIT_SAME_ACL: u8 = 1 << 6;
 
-/// Extended flag indicating same xattr as previous entry.
+/// Extended flag: same xattr as previous entry (bit 15).
+///
+/// Upstream: `XMIT_SAME_XATTR (1<<15)` (restricted feature)
 pub const XMIT_SAME_XATTR: u8 = 1 << 7;
+
+// Legacy alias for backward compatibility
+#[allow(dead_code)]
+pub const XMIT_SAME_HIGH_RDEV: u8 = XMIT_SAME_RDEV_MAJOR;
 
 /// Parsed file entry flags from the wire format.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
@@ -136,10 +181,10 @@ impl FileFlags {
         self.extended & XMIT_HLINKED != 0
     }
 
-    /// Returns true if the entry has high rdev bits.
+    /// Returns true if the entry shares rdev major with the previous entry (device).
     #[must_use]
     pub const fn same_high_rdev(&self) -> bool {
-        self.extended & XMIT_SAME_HIGH_RDEV != 0
+        self.extended & XMIT_SAME_RDEV_MAJOR != 0
     }
 
     /// Returns true if the entry shares rdev major with previous.

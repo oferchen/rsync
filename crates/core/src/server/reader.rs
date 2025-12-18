@@ -140,11 +140,10 @@ impl<R: Read> Read for MultiplexReader<R> {
         self.buffer.clear();
         self.pos = 0;
 
-        let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
+        let _code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
 
         // For now, only handle MSG_DATA (7). Other messages should be handled by higher layers.
         // If it's not MSG_DATA, we'll just return the payload anyway for compatibility.
-        let _ = code; // Ignore message type for now
 
         // Copy from buffer to output
         let to_copy = self.buffer.len().min(buf.len());
