@@ -87,7 +87,7 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
 
 /// Validate exit codes against golden files.
 fn validate_exit_codes(workspace: &Path, options: ExitCodesOptions) -> TaskResult<()> {
-    use super::shared::upstream;
+    use super::shared::{oc_rsync, upstream};
 
     // Load test scenarios
     let all_scenarios = scenarios::load_scenarios(workspace)?;
@@ -97,6 +97,94 @@ fn validate_exit_codes(workspace: &Path, options: ExitCodesOptions) -> TaskResul
         "[interop] Loaded {} runnable scenarios",
         runnable_scenarios.len()
     );
+
+    // Check which implementation to test
+    let impl_name = options.implementation.as_deref().unwrap_or("upstream");
+
+    match impl_name {
+        "oc-rsync" => {
+            // Test our oc-rsync implementation against all upstream golden files
+            validate_oc_rsync(workspace, &runnable_scenarios, options)
+        }
+        "upstream" => {
+            // Test upstream rsync (original behavior)
+            validate_upstream(workspace, &runnable_scenarios, options)
+        }
+        other => Err(crate::error::TaskError::Usage(format!(
+            "Unknown implementation '{}'. Use 'upstream' or 'oc-rsync'",
+            other
+        ))),
+    }
+}
+
+/// Validate oc-rsync implementation against upstream golden files.
+fn validate_oc_rsync(
+    workspace: &Path,
+    runnable_scenarios: &[scenarios::Scenario],
+    options: ExitCodesOptions,
+) -> TaskResult<()> {
+    use super::shared::oc_rsync;
+
+    eprintln!("[interop] Validating oc-rsync against upstream golden files...");
+
+    // Detect oc-rsync binary
+    let oc_binary = oc_rsync::detect_oc_rsync_binary(workspace)?;
+    eprintln!("[interop] Found oc-rsync at: {}", oc_binary.binary_path().display());
+
+    // We need to validate against all upstream versions' golden files
+    let upstream_versions = super::shared::upstream::UPSTREAM_VERSIONS;
+    let versions_to_test: Vec<_> = if let Some(ref version) = options.version {
+        vec![version.as_str()]
+    } else {
+        upstream_versions.to_vec()
+    };
+
+    let mut validation_failed = false;
+
+    for version in versions_to_test {
+        eprintln!("\n[interop] Validating oc-rsync against upstream {} golden file...", version);
+
+        // Load golden file for this upstream version
+        let golden = golden::load_golden(workspace, version)?;
+
+        // Run scenarios with oc-rsync
+        let results = runner::run_scenarios(
+            runnable_scenarios,
+            oc_binary.binary_path(),
+            options.verbose,
+        )?;
+
+        // Validate results against golden
+        let errors = golden::validate_against_golden(&results, &golden);
+
+        if errors.is_empty() {
+            eprintln!("[interop] ✓ All {} scenarios passed for upstream {} baseline!", results.len(), version);
+        } else {
+            eprintln!("[interop] ✗ {} validation errors against upstream {} baseline:", errors.len(), version);
+            for error in &errors {
+                eprintln!("  - {}", error);
+            }
+            validation_failed = true;
+        }
+    }
+
+    if validation_failed {
+        Err(crate::error::TaskError::Validation(
+            "oc-rsync exit code validation failed - does not match upstream behavior".to_string(),
+        ))
+    } else {
+        eprintln!("\n[interop] oc-rsync validation complete - matches upstream behavior!");
+        Ok(())
+    }
+}
+
+/// Validate upstream rsync (original behavior).
+fn validate_upstream(
+    workspace: &Path,
+    runnable_scenarios: &[scenarios::Scenario],
+    options: ExitCodesOptions,
+) -> TaskResult<()> {
+    use super::shared::upstream;
 
     // Detect upstream binaries
     let upstream_binaries = upstream::detect_upstream_binaries(workspace)?;
@@ -134,7 +222,7 @@ fn validate_exit_codes(workspace: &Path, options: ExitCodesOptions) -> TaskResul
 
         // Run scenarios
         let results =
-            runner::run_scenarios(&runnable_scenarios, binary.binary_path(), options.verbose)?;
+            runner::run_scenarios(runnable_scenarios, binary.binary_path(), options.verbose)?;
 
         // Validate results
         let errors = golden::validate_against_golden(&results, &golden);
