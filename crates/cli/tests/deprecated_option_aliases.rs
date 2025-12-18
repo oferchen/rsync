@@ -33,7 +33,7 @@ fn test_tmp_dir_alias_for_temp_dir() {
 
 #[test]
 fn test_del_alias_for_delete() {
-    let args = parse_args(["oc-rsync", "--del", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--del", "--dirs", "src", "dest"]).unwrap();
     assert!(
         args.delete_mode.is_enabled(),
         "--del should behave like --delete"
@@ -294,7 +294,7 @@ fn test_old_dirs_works_with_other_options() {
 
 #[test]
 fn test_del_works_with_delete_mode() {
-    let args = parse_args(["oc-rsync", "--del", "--delete-before", "src", "dest"]).unwrap();
+    let args = parse_args(["oc-rsync", "--del", "--delete-before", "--dirs", "src", "dest"]).unwrap();
     // --delete-before should take precedence over --del
     assert!(
         args.delete_mode.is_enabled(),
