@@ -257,7 +257,12 @@ pub fn setup_protocol(
             build_compat_flags_from_client_info(&client_info, true)
         } else {
             // SSH mode: use default flags based on platform capabilities
+            #[cfg(unix)]
             let mut flags = CompatibilityFlags::INC_RECURSE
+                | CompatibilityFlags::CHECKSUM_SEED_FIX
+                | CompatibilityFlags::VARINT_FLIST_FLAGS;
+            #[cfg(not(unix))]
+            let flags = CompatibilityFlags::INC_RECURSE
                 | CompatibilityFlags::CHECKSUM_SEED_FIX
                 | CompatibilityFlags::VARINT_FLIST_FLAGS;
 

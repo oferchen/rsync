@@ -18,6 +18,8 @@ pub const CLIENT_SERVER_PROTOCOL_EXIT_CODE: i32 = 5;
 pub const SOCKET_IO_EXIT_CODE: i32 = 10;
 /// Exit code returned when file I/O fails.
 pub const FILE_IO_EXIT_CODE: i32 = 11;
+/// Exit code returned for IPC errors (inter-process communication).
+pub const IPC_EXIT_CODE: i32 = 14;
 /// Exit code used when a copy partially or wholly fails.
 pub const PARTIAL_TRANSFER_EXIT_CODE: i32 = 23;
 /// Exit code returned when the `--max-delete` limit stops deletions.
@@ -131,6 +133,15 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
     // Upstream uses exit code 23 broadly for any transfer errors
     let message = rsync_error!(PARTIAL_TRANSFER_EXIT_CODE, text).with_role(Role::Client);
     ClientError::new(PARTIAL_TRANSFER_EXIT_CODE, message)
+}
+
+pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientError {
+    let path_display = path.display();
+    let text = format!("failed to access destination directory '{path_display}': {error}");
+    // Mirror upstream: destination directory access errors return FILE_SELECTION_EXIT_CODE (3)
+    // This matches upstream main.c:751 change_dir validation
+    let message = rsync_error!(FILE_SELECTION_EXIT_CODE, text).with_role(Role::Client);
+    ClientError::new(FILE_SELECTION_EXIT_CODE, message)
 }
 
 pub(crate) fn socket_error(
