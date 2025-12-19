@@ -176,12 +176,46 @@ pub fn run_server_with_handshake<W: Write>(
     // 1. Compatibility flags exchange (protocol >= 30)
     // 2. Capability negotiation for checksums and compression (protocol >= 30)
     // Both happen in RAW mode, BEFORE multiplex activation.
+    //
+    // is_server controls compat flags + checksum seed direction:
+    // - Normal server mode (client_mode=false): we are server, WRITE compat/seed
+    // - Daemon client mode (client_mode=true): we act as client, READ compat/seed
+    let is_server = !config.client_mode;
+
+    // is_daemon_mode controls capability negotiation direction:
+    // - Daemon mode: unidirectional (server sends lists, client reads silently)
+    // - SSH mode: bidirectional (both sides exchange)
+    // We're in daemon mode if:
+    // - We're a daemon client (client_mode=true, connecting to remote daemon) OR
+    // - We're a server receiving from a daemon client (client_args is Some)
+    let is_daemon_mode = config.client_mode || handshake.client_args.is_some();
+
+    // do_compression controls whether compression algorithm negotiation happens.
+    // Both sides must have the same value (based on -z flag).
+    // - For client mode: check our config for compression_level
+    // - For server mode: check if client passed -z in their args
+    let do_compression = if config.client_mode {
+        // Daemon client: check our own compression setting
+        config.compression_level.is_some()
+    } else if let Some(args) = handshake.client_args.as_deref() {
+        // Daemon server: check if client has -z in their args
+        args.iter()
+            .any(|arg| arg.contains('z') && arg.starts_with('-'))
+    } else {
+        // SSH server mode: assume no compression by default
+        // (will be refined when we parse client's -z flag properly)
+        false
+    };
+
     let setup_result = setup::setup_protocol(
         handshake.protocol,
         &mut stdout,
         &mut chained_stdin,
         handshake.compat_exchanged,
         handshake.client_args.as_deref(),
+        is_server,
+        is_daemon_mode,
+        do_compression,
     )?;
 
     // Store negotiated algorithms, compat flags, and checksum seed in handshake for use by role contexts
@@ -198,21 +232,39 @@ pub fn run_server_with_handshake<W: Write>(
     stdout.flush()?;
 
     // Activate multiplex (mirrors upstream main.c:1247-1260 and do_server_recv:1167)
-    // Upstream start_server():
-    //   - Always activates OUTPUT multiplex for protocol >= 23 (line 1248)
-    //   - For receiver: do_server_recv() activates INPUT multiplex at protocol >= 30 (line 1167)
-    //   - For sender: start_server() conditionally activates INPUT based on need_messages_from_generator
     //
-    // Key insight from C code: For receiver at protocol >= 30, INPUT multiplex IS activated
-    // BEFORE recv_filter_list() is called. The recv_filter_list() may read nothing (if
-    // receiver_wants_list is false), but the stream is already in multiplex mode when
-    // the file list is subsequently read.
+    // For NORMAL SERVER mode (not client_mode):
+    // - Server always activates OUTPUT multiplex for protocol >= 23 (start_server line 1248)
+    // - For receiver: do_server_recv() activates INPUT multiplex at protocol >= 30
+    // - For sender: start_server() conditionally activates INPUT
+    //
+    // For CLIENT MODE (daemon client connecting to remote daemon):
+    // - Client does NOT activate OUTPUT multiplex (client_run doesn't call io_start_multiplex_out)
+    // - Client activates INPUT multiplex to receive multiplexed data from server
+    // - Filter list is sent through PLAIN output (not multiplexed)
+    // - The remote daemon (server) will have OUTPUT multiplex active and send us multiplexed data
     let reader = reader::ServerReader::new_plain(chained_stdin);
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
-    // Always activate OUTPUT multiplex at protocol >= 23 (main.c:1248)
-    if handshake.protocol.as_u8() >= 23 {
+    // Activate OUTPUT multiplex at protocol >= 30 for BOTH server and client modes
+    // Evidence from strace shows upstream client sends filter list as MSG_DATA frames.
+    //
+    // For server mode: io_start_multiplex_out at main.c:1248 (protocol >= 23)
+    // For client mode: io_start_multiplex_out is called conditionally based on
+    //   need_messages_from_generator, but strace evidence shows it IS activated
+    //   for typical receiver operations. For protocol >= 30, always activate.
+    if handshake.protocol.as_u8() >= 30 {
         writer = writer.activate_multiplex()?;
+    } else if !config.client_mode && handshake.protocol.as_u8() >= 23 {
+        // Legacy server mode: activate multiplex for protocol >= 23
+        writer = writer.activate_multiplex()?;
+    }
+
+    // For client_mode: Send filter list AFTER activating output multiplex
+    // The filter list is sent through the multiplexed channel as MSG_DATA frames
+    if config.client_mode {
+        protocol::filters::write_filter_list(&mut writer, &config.filter_rules, handshake.protocol)?;
+        writer.flush()?;
     }
 
     // Activate compression on writer if negotiated (Protocol 30+ with compression algorithm)
@@ -235,13 +287,16 @@ pub fn run_server_with_handshake<W: Write>(
 
     // Send MSG_IO_TIMEOUT for daemon mode with configured timeout (main.c:1249-1250)
     // This tells the client about the server's I/O timeout value
-    if let Some(timeout_secs) = handshake.io_timeout {
-        if handshake.protocol.as_u8() >= 31 {
-            // Send MSG_IO_TIMEOUT with 4-byte little-endian timeout value
-            // Upstream uses SIVAL(numbuf, 0, num) which stores as little-endian
-            use protocol::MessageCode;
-            let timeout_bytes = (timeout_secs as i32).to_le_bytes();
-            writer.send_message(MessageCode::IoTimeout, &timeout_bytes)?;
+    // Only for server mode, not client mode
+    if !config.client_mode {
+        if let Some(timeout_secs) = handshake.io_timeout {
+            if handshake.protocol.as_u8() >= 31 {
+                // Send MSG_IO_TIMEOUT with 4-byte little-endian timeout value
+                // Upstream uses SIVAL(numbuf, 0, num) which stores as little-endian
+                use protocol::MessageCode;
+                let timeout_bytes = (timeout_secs as i32).to_le_bytes();
+                writer.send_message(MessageCode::IoTimeout, &timeout_bytes)?;
+            }
         }
     }
 
