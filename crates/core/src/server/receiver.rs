@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use checksums::strong::Md5Seed;
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader};
-use protocol::wire::{DeltaOp, read_delta, write_signature};
+use protocol::wire::{DeltaOp, read_delta};
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::delta::{
@@ -252,20 +252,24 @@ impl ReceiverContext {
 
         // Read filter list from sender (multiplexed for protocol >= 30)
         // This mirrors upstream recv_filter_list timing at main.c:1171
-        let _wire_rules = read_filter_list(&mut reader, self.protocol)
-            .map_err(|e| io::Error::new(e.kind(), format!("failed to read filter list: {e}")))?;
+        //
+        // In client mode (daemon client), skip reading filter list because:
+        // - The client already sent filter list to the daemon
+        // - The daemon (as generator) already consumed it
+        // - There's no filter list coming back on this stream
+        if !self.config.client_mode {
+            let _wire_rules = read_filter_list(&mut reader, self.protocol)
+                .map_err(|e| io::Error::new(e.kind(), format!("failed to read filter list: {e}")))?;
+        }
 
         let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
 
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
 
-        // Send NDX_DONE (-1) to signal we're ready for transfer phase
-        // This is CRITICAL - the sender is blocked waiting for this!
-        // Mirrors upstream's write_ndx(f_out, NDX_DONE) in io.c:2259-2262
-        // For protocol >= 30, NDX_DONE is encoded as a single byte 0x00
-        writer.write_all(&[0])?;
-        writer.flush()?;
+        // NOTE: Do NOT send NDX_DONE here!
+        // The receiver/generator should immediately start sending file indices
+        // for files it wants. NDX_DONE is sent at the END of the transfer phase.
 
         // Transfer loop: for each file, generate signature, receive delta, apply
         let mut files_transferred = 0;
@@ -301,12 +305,101 @@ impl ReceiverContext {
             .preserve_group(self.config.flags.group)
             .numeric_ids(self.config.flags.numeric_ids);
 
+        // Extract destination directory from config args
+        // For receiver, args[0] is the destination path where files should be written
+        let dest_dir = self
+            .config
+            .args
+            .first()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        // First pass: create directories from file list
+        // Directories don't go through delta transfer
         for file_entry in &self.file_list {
-            let basis_path = file_entry.path();
+            if file_entry.is_dir() {
+                let relative_path = file_entry.path();
+                let dir_path = if relative_path.as_os_str() == "." {
+                    dest_dir.clone()
+                } else {
+                    dest_dir.join(relative_path)
+                };
+                if !dir_path.exists() {
+                    fs::create_dir_all(&dir_path)?;
+                }
+                if let Err(meta_err) =
+                    apply_metadata_from_file_entry(&dir_path, file_entry, metadata_opts.clone())
+                {
+                    metadata_errors.push((dir_path.to_path_buf(), meta_err.to_string()));
+                }
+            }
+        }
+
+        // Transfer loop: iterate through file list and request each file from sender
+        // The receiver (generator side) drives the transfer by sending file indices
+        // to the sender, which responds with delta data.
+        //
+        // Mirrors upstream recv_generator() which:
+        // 1. Iterates through file list
+        // 2. For each file to transfer: sends ndx, then signature
+        // 3. Waits for sender to send delta
+        //
+        // NDX encoding (write_ndx/read_ndx in io.c):
+        // - 0x00 = NDX_DONE (-1)
+        // - 0xFF = negative number prefix (other negative values)
+        // - 0xFE = extended encoding (large deltas)
+        // - Other bytes: delta from previous positive index
+        //   (e.g., for sequential files: prev=-1, send 1 for idx 0, then 1 for each next)
+        let mut prev_positive_ndx: i32 = -1; // Track last positive index sent
+
+        for (file_idx, file_entry) in self.file_list.iter().enumerate() {
+            let relative_path = file_entry.path();
+
+            // Compute actual file path
+            let file_path = if relative_path.as_os_str() == "." {
+                dest_dir.clone()
+            } else {
+                dest_dir.join(relative_path)
+            };
+
+            // Skip directories (already handled above)
+            if file_entry.is_dir() {
+                continue;
+            }
+
+            // Send file index using NDX delta encoding
+            // Delta = current_index - prev_positive_ndx
+            let ndx = file_idx as i32;
+            let delta = ndx - prev_positive_ndx;
+            prev_positive_ndx = ndx;
+
+            // For small deltas (1-253), send as single byte
+            // For larger deltas, would need 0xFE prefix + 2 or 4 bytes
+            if delta >= 1 && delta <= 253 {
+                writer.write_all(&[delta as u8])?;
+            } else if delta == 0 {
+                // Zero delta: 0xFE + 2-byte value
+                writer.write_all(&[0xFE, 0x00, 0x00])?;
+            } else {
+                // For larger values, use extended encoding
+                // 0xFE + 2-byte delta (or 4-byte if high bit set)
+                let delta_u16 = delta as u16;
+                writer.write_all(&[0xFE])?;
+                writer.write_all(&delta_u16.to_le_bytes())?;
+            }
+
+            // For protocol >= 29, sender expects iflags after NDX
+            // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta
+            // See upstream read_ndx_and_attrs() in rsync.c:383
+            if self.protocol.as_u8() >= 29 {
+                const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
+                writer.write_all(&ITEM_TRANSFER.to_le_bytes())?;
+            }
+            writer.flush()?;
 
             // Step 1 & 2: Generate signature if basis file exists
             let signature_opt: Option<FileSignature> = 'sig: {
-                let basis_file = match fs::File::open(basis_path) {
+                let basis_file = match fs::File::open(&file_path) {
                     Ok(f) => f,
                     Err(_) => break 'sig None,
                 };
@@ -331,170 +424,181 @@ impl ReceiverContext {
                 generate_file_signature(basis_file, layout, checksum_algorithm).ok()
             };
 
-            // Step 3: Send signature or no-basis marker
+            // Step 3: Send sum_head (signature header) matching upstream wire format
+            // upstream write_sum_head() sends: count, blength, s2length (proto>=27), remainder
+            // All as 32-bit little-endian integers (write_int)
             if let Some(ref signature) = signature_opt {
-                use protocol::wire::signature::SignatureBlock as WireBlock;
                 let sig_layout = signature.layout();
-                let wire_blocks: Vec<WireBlock> = signature
-                    .blocks()
-                    .iter()
-                    .map(|block| WireBlock {
-                        index: block.index() as u32,
-                        rolling_sum: block.rolling().value(),
-                        strong_sum: block.strong().to_vec(),
-                    })
-                    .collect();
-                write_signature(
-                    &mut &mut *writer,
-                    sig_layout.block_count() as u32,
-                    sig_layout.block_length().get(),
-                    sig_layout.strong_sum_length().get(),
-                    &wire_blocks,
-                )?;
+                let count = sig_layout.block_count() as u32;
+                let blength = sig_layout.block_length().get();
+                let s2length = sig_layout.strong_sum_length().get() as u32;
+                let remainder = sig_layout.remainder();
+
+                // Write sum_head: count, blength, s2length, remainder (all int32 LE)
+                writer.write_all(&(count as i32).to_le_bytes())?;
+                writer.write_all(&(blength as i32).to_le_bytes())?;
+                writer.write_all(&(s2length as i32).to_le_bytes())?;
+                writer.write_all(&(remainder as i32).to_le_bytes())?;
+
+                // Write each block: rolling_sum (int32 LE) + strong_sum (s2length bytes)
+                for block in signature.blocks() {
+                    writer.write_all(&(block.rolling().value() as i32).to_le_bytes())?;
+                    let strong_bytes = block.strong();
+                    // Truncate or pad to s2length
+                    let mut sum_buf = vec![0u8; s2length as usize];
+                    let copy_len = std::cmp::min(strong_bytes.len(), s2length as usize);
+                    sum_buf[..copy_len].copy_from_slice(&strong_bytes[..copy_len]);
+                    writer.write_all(&sum_buf)?;
+                }
             } else {
-                // No basis, request whole file
-                write_signature(&mut &mut *writer, 0, 0, 0, &[])?;
+                // No basis, request whole file: send sum_head with count=0
+                // count=0, blength=0, s2length=0, remainder=0
+                writer.write_all(&0i32.to_le_bytes())?; // count
+                writer.write_all(&0i32.to_le_bytes())?; // blength
+                writer.write_all(&0i32.to_le_bytes())?; // s2length
+                writer.write_all(&0i32.to_le_bytes())?; // remainder
             }
             writer.flush()?;
 
-            // Step 4: Receive delta operations from generator
-            let wire_delta = read_delta(&mut &mut *reader)?;
-            let delta_script = wire_delta_to_script(wire_delta);
+            // Step 4: Read ndx_and_attrs from sender
+            // The sender echoes back: ndx (delta encoded), iflags (shortint for proto>=29)
+            // Then possibly: fnamecmp_type, xname depending on flags
+            // See upstream write_ndx_and_attrs() in sender.c:180
+
+            // Read echoed NDX from sender (delta encoded)
+            let mut ndx_byte = [0u8; 1];
+            reader.read_exact(&mut ndx_byte)?;
+
+            // For protocol >= 29, read iflags (shortint = 2 bytes LE)
+            let iflags = if self.protocol.as_u8() >= 29 {
+                let mut iflags_buf = [0u8; 2];
+                reader.read_exact(&mut iflags_buf)?;
+                u16::from_le_bytes(iflags_buf)
+            } else {
+                0x8000 // ITEM_TRANSFER | ITEM_MISSING_DATA for older protocols
+            };
+
+            // Read optional fields based on iflags
+            const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11; // 0x0800
+            const ITEM_XNAME_FOLLOWS: u16 = 1 << 12; // 0x1000
+
+            if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
+                // Skip fnamecmp_type byte
+                let mut fnamecmp_type = [0u8; 1];
+                reader.read_exact(&mut fnamecmp_type)?;
+            }
+
+            if iflags & ITEM_XNAME_FOLLOWS != 0 {
+                // Read vstring (xname): upstream io.c:1944-1960 read_vstring()
+                // Format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
+                // Then read that many bytes of string data
+                let mut len_byte = [0u8; 1];
+                reader.read_exact(&mut len_byte)?;
+                let xname_len = if len_byte[0] & 0x80 != 0 {
+                    let mut second_byte = [0u8; 1];
+                    reader.read_exact(&mut second_byte)?;
+                    ((len_byte[0] & 0x7F) as usize) * 256 + second_byte[0] as usize
+                } else {
+                    len_byte[0] as usize
+                };
+                // Skip the xname string bytes
+                if xname_len > 0 {
+                    let mut xname_buf = vec![0u8; xname_len];
+                    reader.read_exact(&mut xname_buf)?;
+                }
+            }
+
+            // Read sum_head echoed by sender (16 bytes: count, blength, s2length, remainder)
+            // We read but don't use these values since we already know the signature layout
+            let mut sum_head_buf = [0u8; 16];
+            reader.read_exact(&mut sum_head_buf)?;
 
             // Step 5: Apply delta to reconstruct file
-            let temp_path = basis_path.with_extension("oc-rsync.tmp");
+            let temp_path = file_path.with_extension("oc-rsync.tmp");
             let mut temp_guard = TempFileGuard::new(temp_path.clone());
+            let mut output = fs::File::create(&temp_path)?;
+            let mut total_bytes: u64 = 0;
 
-            if let Some(signature) = signature_opt {
-                // Delta transfer: apply delta using basis file
-                let index = DeltaSignatureIndex::from_signature(&signature, checksum_algorithm);
+            // Read tokens in a loop
+            loop {
+                let mut token_buf = [0u8; 4];
+                reader.read_exact(&mut token_buf)?;
+                let token = i32::from_le_bytes(token_buf);
 
-                if let Some(index) = index {
-                    // Open basis file for reading
-                    let basis =
-                        fs::File::open(basis_path).map_err(|e| {
-                            match categorize_io_error(e, basis_path, "open basis") {
-                                DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => io_err,
-                                _ => io::Error::other("failed to open basis file"),
-                            }
-                        })?;
-
-                    let mut output = fs::File::create(&temp_path).map_err(|e| {
-                        match categorize_io_error(e, &temp_path, "create temp") {
-                            DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
-                                io::Error::new(
-                                    io::ErrorKind::StorageFull,
-                                    format!(
-                                        "Disk full creating temp file for {}",
-                                        basis_path.display()
-                                    ),
-                                )
-                            }
-                            DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => io_err,
-                            _ => io::Error::other("failed to create temp file"),
-                        }
-                    })?;
-
-                    // Apply the delta with ENOSPC detection
-                    if let Err(e) = apply_delta(basis, &mut output, &index, &delta_script) {
-                        match categorize_io_error(e, basis_path, "apply_delta") {
-                            DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::StorageFull,
-                                    format!("Disk full applying delta to {}", basis_path.display()),
-                                ));
-                            }
-                            DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => {
-                                return Err(io_err);
-                            }
-                            _ => {
-                                return Err(io::Error::other("failed to apply delta"));
-                            }
-                        }
-                    }
-
-                    // Sync with ENOSPC detection
-                    if let Err(e) = output.sync_all() {
-                        match categorize_io_error(e, basis_path, "sync") {
-                            DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::StorageFull,
-                                    format!("Disk full syncing {}", basis_path.display()),
-                                ));
-                            }
-                            DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => {
-                                return Err(io_err);
-                            }
-                            _ => {
-                                return Err(io::Error::other("failed to sync"));
-                            }
-                        }
-                    }
-
-                    // Atomic rename (crash-safe)
-                    fs::rename(&temp_path, basis_path)?;
-                    temp_guard.keep(); // Success! Keep the file (now renamed)
+                if token == 0 {
+                    // End of file delta tokens
+                    // Read file checksum from sender - upstream receiver.c:408
+                    // The sender sends xfer_sum_len bytes after all delta tokens.
+                    // Length depends on negotiated checksum algorithm:
+                    // - MD4/MD5/XXH128: 16 bytes
+                    // - SHA1: 20 bytes
+                    // - XXH64/XXH3: 8 bytes
+                    let checksum_len = match &self.negotiated_algorithms {
+                        Some(negotiated) => match negotiated.checksum {
+                            ChecksumAlgorithm::SHA1 => 20,
+                            ChecksumAlgorithm::XXH64 | ChecksumAlgorithm::XXH3 => 8,
+                            _ => 16, // MD4, MD5, XXH128, None
+                        },
+                        None => 16, // Default to 16 for legacy protocols
+                    };
+                    let mut file_checksum = vec![0u8; checksum_len];
+                    reader.read_exact(&mut file_checksum)?;
+                    // TODO: Optionally verify checksum matches computed hash
+                    break;
+                } else if token > 0 {
+                    // Literal data: token bytes follow
+                    let mut data = vec![0u8; token as usize];
+                    reader.read_exact(&mut data)?;
+                    output.write_all(&data)?;
+                    total_bytes += token as u64;
                 } else {
-                    // Index creation failed (file too small?), fall back to whole-file
-                    if let Err(e) = apply_whole_file_delta(&temp_path, &delta_script) {
-                        match categorize_io_error(e, basis_path, "whole_file_delta") {
-                            DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::StorageFull,
-                                    format!(
-                                        "Disk full during whole-file transfer to {}",
-                                        basis_path.display()
-                                    ),
-                                ));
-                            }
-                            DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => {
-                                return Err(io_err);
-                            }
-                            _ => {
-                                return Err(io::Error::other("failed whole-file transfer"));
-                            }
-                        }
-                    }
-                    fs::rename(&temp_path, basis_path)?;
-                    temp_guard.keep(); // Success! Keep the file (now renamed)
-                }
-            } else {
-                // Whole-file transfer: no basis, all literals
-                if let Err(e) = apply_whole_file_delta(&temp_path, &delta_script) {
-                    match categorize_io_error(e, basis_path, "whole_file_delta") {
-                        DeltaTransferError::Fatal(DeltaFatalError::DiskFull { .. }) => {
-                            return Err(io::Error::new(
-                                io::ErrorKind::StorageFull,
-                                format!(
-                                    "Disk full during whole-file transfer to {}",
-                                    basis_path.display()
-                                ),
-                            ));
-                        }
-                        DeltaTransferError::Fatal(DeltaFatalError::Io(io_err)) => {
-                            return Err(io_err);
-                        }
-                        _ => {
-                            return Err(io::Error::other("failed whole-file transfer"));
-                        }
+                    // Negative: block reference = -(token+1)
+                    // For new files (no basis), this shouldn't happen
+                    let block_idx = -(token + 1) as usize;
+                    if let Some(ref sig) = signature_opt {
+                        // We have a basis file - copy the block
+                        let layout = sig.layout();
+                        let block_len = layout.block_length().get() as u64;
+                        let _offset = block_idx as u64 * block_len;
+                        // Read from basis file at offset and write to output
+                        // For now, return error as we don't have basis file mapped
+                        return Err(io::Error::new(
+                            io::ErrorKind::Unsupported,
+                            format!("block copy not yet implemented (block {})", block_idx),
+                        ));
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("block reference {} without basis file", block_idx),
+                        ));
                     }
                 }
-                fs::rename(&temp_path, basis_path)?;
-                temp_guard.keep(); // Success! Keep the file (now renamed)
             }
+
+            // Sync the output file
+            output.sync_all()?;
+
+            // Atomic rename (crash-safe)
+            fs::rename(&temp_path, &file_path)?;
+            temp_guard.keep(); // Success! Keep the file (now renamed)
 
             // Step 6: Apply metadata from FileEntry (best-effort)
             if let Err(meta_err) =
-                apply_metadata_from_file_entry(basis_path, file_entry, metadata_opts.clone())
+                apply_metadata_from_file_entry(&file_path, file_entry, metadata_opts.clone())
             {
                 // Collect error for final report - metadata failure shouldn't abort transfer
-                metadata_errors.push((basis_path.to_path_buf(), meta_err.to_string()));
+                metadata_errors.push((file_path.to_path_buf(), meta_err.to_string()));
             }
 
             // Step 7: Track stats
-            bytes_received += delta_script.total_bytes();
+            bytes_received += total_bytes;
             files_transferred += 1;
         }
+
+        // Send NDX_DONE (wire value 0x00) to signal end of transfer
+        // This tells the sender we don't want any more files
+        writer.write_all(&[0x00])?;
+        writer.flush()?;
 
         // Report metadata errors summary if any occurred
         // (metadata_errors tracking remains for potential logging)
@@ -594,6 +698,8 @@ mod tests {
             flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
             compression_level: None,
+            client_mode: false,
+            filter_rules: Vec::new(),
         }
     }
 

@@ -779,6 +779,8 @@ mod tests {
             flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
             compression_level: None,
+            client_mode: false,
+            filter_rules: Vec::new(),
         }
     }
 

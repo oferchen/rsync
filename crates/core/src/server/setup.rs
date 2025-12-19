@@ -231,12 +231,28 @@ pub fn exchange_compat_flags_direct(
 /// the exchange fails.
 ///
 /// **IMPORTANT:** Parameter order matches upstream: f_out first, f_in second!
+///
+/// The `is_server` parameter controls compat flags exchange direction:
+/// - `true`: Server mode - WRITE compat flags (upstream am_server=true)
+/// - `false`: Client mode - READ compat flags (upstream am_server=false)
+///
+/// The `is_daemon_mode` parameter controls capability negotiation direction:
+/// - `true`: Daemon mode - server sends lists, client reads silently (rsync://)
+/// - `false`: SSH mode - bidirectional exchange (rsync over SSH)
+///
+/// The `do_compression` parameter controls whether compression algorithm negotiation happens:
+/// - `true`: Exchange compression algorithm lists (both sides send/receive)
+/// - `false`: Skip compression negotiation, use defaults
+/// This must match on both sides based on whether `-z` flag was passed.
 pub fn setup_protocol(
     protocol: ProtocolVersion,
     stdout: &mut dyn Write,
     stdin: &mut dyn Read,
     skip_compat_exchange: bool,
     client_args: Option<&[String]>,
+    is_server: bool,
+    is_daemon_mode: bool,
+    do_compression: bool,
 ) -> io::Result<SetupResult> {
     // For daemon mode, the binary 4-byte protocol exchange has already happened
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
@@ -251,24 +267,15 @@ pub fn setup_protocol(
     let (compat_flags, negotiated_algorithms) = if protocol.as_u8() >= 30 && !skip_compat_exchange {
         // Build our compat flags (server side)
         // This mirrors upstream compat.c:712-732 which builds flags from client_info string
-        let flags_and_compression_and_client_info = if let Some(args) = client_args {
-            // Daemon mode: parse client capabilities from -e option
+        let (our_flags, client_info) = if let Some(args) = client_args {
+            // Daemon server mode: parse client capabilities from -e option
             let client_info = parse_client_info(args);
-
-            // Check if client has compression enabled (looks for -z flag)
-            // This determines whether we send compression negotiation lists
-            // (mirrors upstream's do_compression check in negotiate_the_strings)
-            let client_has_compression = args
-                .iter()
-                .any(|arg| arg.contains('z') && arg.starts_with('-'));
-
             (
                 build_compat_flags_from_client_info(&client_info, true),
-                client_has_compression,
                 Some(client_info),
             )
         } else {
-            // SSH mode: use default flags based on platform capabilities
+            // SSH/client mode: use default flags based on platform capabilities
             #[cfg(unix)]
             let mut flags = CompatibilityFlags::INC_RECURSE
                 | CompatibilityFlags::CHECKSUM_SEED_FIX
@@ -285,29 +292,28 @@ pub fn setup_protocol(
                 flags |= CompatibilityFlags::SYMLINK_TIMES;
             }
 
-            // SSH mode: assume compression is available (default true)
-            // This matches upstream behavior where compression is opt-out via --no-z
-            (flags, true, None)
+            (flags, None)
         };
 
-        let (our_flags, send_compression, client_info) = flags_and_compression_and_client_info;
+        // Compression negotiation is controlled by the `do_compression` parameter
+        // which is passed from the caller based on whether -z flag was used.
+        // Both sides MUST have the same value for this to work correctly.
+        let send_compression = do_compression;
 
-        // Server ONLY WRITES compat flags (upstream compat.c:736-738)
-        // The client reads but does NOT send anything back - it's unidirectional!
-        // Upstream uses write_varint() or write_byte() depending on protocol version
-        let compat_value = our_flags.bits() as i32;
-
-        // Capture the exact varint bytes for compat flags
-        let mut compat_bytes = Vec::new();
-        protocol::write_varint(&mut compat_bytes, compat_value).ok();
-
-        protocol::write_varint(stdout, compat_value)?;
-        stdout.flush()?;
-
-        // NOTE: Do NOT read anything back! The upstream code shows:
-        // - When am_server=true: only write_varint is called
-        // - When am_server=false: only read_varint is called
-        // This is a UNIDIRECTIONAL send from server to client.
+        // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
+        // - Server (am_server=true): WRITES compat flags
+        // - Client (am_server=false): READS compat flags
+        let compat_flags = if is_server {
+            // Server: build and WRITE our compat flags
+            let compat_value = our_flags.bits() as i32;
+            protocol::write_varint(stdout, compat_value)?;
+            stdout.flush()?;
+            our_flags
+        } else {
+            // Client: READ compat flags from server
+            let compat_value = protocol::read_varint(stdin)?;
+            CompatibilityFlags::from_bits(compat_value as u32)
+        };
 
         // Protocol 30+ capability negotiation (upstream compat.c:534-585)
         // This MUST happen inside setup_protocol(), BEFORE the function returns,
@@ -330,17 +336,30 @@ pub fn setup_protocol(
         // Upstream reference:
         // - SSH mode: negotiate_the_strings() in compat.c (bidirectional)
         // - Daemon mode: output_daemon_greeting() advertises, no response expected
+        //
         // Protocol 30+ capability negotiation (upstream compat.c:534-585)
         // This is called in BOTH daemon and SSH modes.
         // The do_negotiation flag controls whether actual string exchange happens.
-        let do_negotiation = client_info.as_ref().map_or(
-            our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
-            |info| info.contains('v'),
-        );
+        //
+        // CRITICAL: When acting as CLIENT (is_server=false), we must check the SERVER's
+        // compat flags (compat_flags), not our own flags! Upstream compat.c:740-742:
+        //   "compat_flags = read_varint(f_in);
+        //    if (compat_flags & CF_VARINT_FLIST_FLAGS) do_negotiated_strings = 1;"
+        let do_negotiation = if is_server {
+            // Server: check if client has 'v' capability
+            client_info.as_ref().map_or(
+                our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+                |info| info.contains('v'),
+            )
+        } else {
+            // Client: check if SERVER's compat flags include VARINT_FLIST_FLAGS
+            // This mirrors upstream compat.c:740-742 where client reads server's flags
+            compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+        };
 
-        // Daemon mode (client_args.is_some()) uses unidirectional negotiation
-        // SSH mode (client_args.is_none()) uses bidirectional negotiation
-        let is_daemon_mode = client_args.is_some();
+        // Daemon mode uses unidirectional negotiation (server sends, client reads silently)
+        // SSH mode uses bidirectional negotiation (both sides exchange)
+        // The caller tells us which mode via the is_daemon_mode parameter
 
         // CRITICAL: Both daemon and SSH modes need to call negotiate_capabilities when
         // do_negotiation is true (client has 'v' capability). The difference is:
@@ -356,27 +375,38 @@ pub fn setup_protocol(
             do_negotiation,
             send_compression,
             is_daemon_mode,
+            is_server,
         )?;
 
-        (Some(our_flags), Some(algorithms))
+        (Some(compat_flags), Some(algorithms))
     } else {
         (None, None) // Protocol < 30 uses default algorithms and no compat flags
     };
 
-    // Send checksum seed (ALL protocols, upstream compat.c:750)
-    // IMPORTANT: This comes AFTER compat flags but applies to all protocols
-    let checksum_seed = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i32;
-        let pid = std::process::id() as i32;
-        timestamp ^ (pid << 6)
+    // Checksum seed exchange (ALL protocols, upstream compat.c:750)
+    // - Server: generates and WRITES the seed
+    // - Client: READS the seed from server
+    let checksum_seed = if is_server {
+        // Server: generate and send seed
+        let seed = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i32;
+            let pid = std::process::id() as i32;
+            timestamp ^ (pid << 6)
+        };
+        let seed_bytes = seed.to_le_bytes();
+        stdout.write_all(&seed_bytes)?;
+        stdout.flush()?;
+        seed
+    } else {
+        // Client: read seed from server
+        let mut seed_bytes = [0u8; 4];
+        stdin.read_exact(&mut seed_bytes)?;
+        i32::from_le_bytes(seed_bytes)
     };
-    let seed_bytes = checksum_seed.to_le_bytes();
-    stdout.write_all(&seed_bytes)?;
-    stdout.flush()?;
 
     Ok(SetupResult {
         negotiated_algorithms,

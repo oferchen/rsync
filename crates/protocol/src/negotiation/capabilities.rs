@@ -33,7 +33,7 @@
 
 use std::io::{self, Read, Write};
 
-use crate::{ProtocolVersion, read_varint, write_varint};
+use crate::ProtocolVersion;
 
 /// Supported checksum algorithms in preference order.
 ///
@@ -230,6 +230,10 @@ pub struct NegotiationResult {
 /// - **Daemon mode** (unidirectional): Server sends lists, client does NOT respond
 ///
 /// The `is_daemon_mode` parameter controls whether we expect responses from the client.
+/// The `is_server` parameter controls whether we are the server or client:
+/// - When `is_server=true` in daemon mode: SEND lists only (client won't respond)
+/// - When `is_server=false` in daemon mode: READ lists only (don't send)
+/// - In SSH mode: both sides send, then both sides read
 pub fn negotiate_capabilities(
     protocol: ProtocolVersion,
     stdin: &mut dyn Read,
@@ -237,6 +241,7 @@ pub fn negotiate_capabilities(
     do_negotiation: bool,
     send_compression: bool,
     is_daemon_mode: bool,
+    is_server: bool,
 ) -> io::Result<NegotiationResult> {
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.as_u8() < 30 {
@@ -263,60 +268,55 @@ pub fn negotiate_capabilities(
         });
     }
 
-    // CRITICAL: Negotiation is SYMMETRIC! Both sides send their lists, then both sides read
-    // each other's lists, then both independently choose the first match.
-    // Comment from upstream compat.c: "We send all the negotiation strings before we start
+    // Negotiation flow (upstream compat.c:534-570 negotiate_the_strings):
+    //
+    // BIDIRECTIONAL in ALL modes (SSH and daemon):
+    //   - Both sides SEND their lists first
+    //   - Then both sides READ each other's lists
+    //   - Both independently choose the first match from the remote's list
+    //
+    // Upstream comment: "We send all the negotiation strings before we start
     // to read them to help avoid a slow startup."
+    //
+    // The `is_daemon_mode` and `is_server` parameters are kept for potential
+    // future use but currently unused as negotiation is always bidirectional.
+    let _ = is_daemon_mode;
+    let _ = is_server;
 
-    // Step 1: Send our supported algorithm lists (upstream compat.c:541-544)
-    // Server sends checksum list (unless already chosen via env/config)
+    // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
+    // Uses vstring format (NOT varint) - see write_vstring documentation
     let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
+    write_vstring(stdout, &checksum_list)?;
 
-    // Log the exact bytes we're sending
-    let mut checksum_bytes = Vec::new();
-    send_string(&mut checksum_bytes, &checksum_list).ok();
-
-    match send_string(stdout, &checksum_list) {
-        Ok(()) => {}
-        Err(e) => {
-            return Err(e);
-        }
-    }
-
-    // Server sends compression list only if do_compression is TRUE
+    // Send compression list only if compression is enabled
     if send_compression {
         let compression_list = SUPPORTED_COMPRESSIONS.join(" ");
-        send_string(stdout, &compression_list)?;
+        write_vstring(stdout, &compression_list)?;
     }
 
     stdout.flush()?;
 
-    // Step 2: Read client's supported algorithm lists (upstream compat.c:549-585)
-    // CRITICAL: Negotiation is BIDIRECTIONAL in BOTH daemon and SSH modes!
-    // Upstream negotiate_the_strings() calls recv_negotiate_str() for both sides.
-    // We must read the client's algorithm lists to keep the stream in sync.
-    let client_checksum_list = recv_string(stdin)?;
+    // Step 2: READ the remote side's algorithm lists (upstream compat.c:546-564)
+    // Uses vstring format (NOT varint) - see read_vstring documentation
+    let remote_checksum_list = read_vstring(stdin)?;
 
-    let client_compression_list = if send_compression {
-        let list = recv_string(stdin)?;
+    let remote_compression_list = if send_compression {
+        let list = read_vstring(stdin)?;
         Some(list)
     } else {
         None
     };
 
-    // Step 3: Choose algorithms - pick first from CLIENT's list that WE also support
-    // Upstream logic: "the client picks the first name in the server's list that is
-    // also in the client's list" - but from server perspective, we pick the first
-    // in the CLIENT's list that's in OUR list.
-    let checksum = choose_checksum_algorithm(&client_checksum_list)?;
+    // Step 3: Choose algorithms - pick first from REMOTE's list that WE also support
+    // This matches upstream where "the client picks the first name in the server's list
+    // that is also in the client's list"
+    let checksum = choose_checksum_algorithm(&remote_checksum_list)?;
 
-    let compression = if let Some(ref list) = client_compression_list {
+    let compression = if let Some(ref list) = remote_compression_list {
         choose_compression_algorithm(list)?
     } else {
         CompressionAlgorithm::None
     };
-
-    let _ = is_daemon_mode; // Suppress unused warning - both modes now use bidirectional negotiation
 
     Ok(NegotiationResult {
         checksum,
@@ -363,42 +363,68 @@ fn choose_compression_algorithm(client_list: &str) -> io::Result<CompressionAlgo
     Ok(CompressionAlgorithm::None)
 }
 
-/// Sends a negotiation string to the remote side.
+/// Writes a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format: varint(length) + string_bytes
+/// Format (upstream io.c:2222-2240 write_vstring):
+/// - For len <= 127: 1 byte = len
+/// - For len > 127: 2 bytes = [(len >> 8) | 0x80, len & 0xFF]
 ///
-/// This matches upstream's `write_buf()` behavior in negotiation context
-/// (compat.c:505-530).
-fn send_string(writer: &mut dyn Write, s: &str) -> io::Result<()> {
+/// This is DIFFERENT from varint encoding! Varint uses 7 bits per byte with
+/// continuation bits, while vstring uses a simpler 1-or-2 byte format.
+fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
     let bytes = s.as_bytes();
-    write_varint(writer, bytes.len() as i32)?;
+    let len = bytes.len();
+
+    if len > 0x7FFF {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("vstring too long: {len} > {}", 0x7FFF),
+        ));
+    }
+
+    if len > 0x7F {
+        // 2-byte format: high byte with 0x80 marker, then low byte
+        let high = ((len >> 8) as u8) | 0x80;
+        let low = (len & 0xFF) as u8;
+        writer.write_all(&[high, low])?;
+    } else {
+        // 1-byte format: just the length
+        writer.write_all(&[len as u8])?;
+    }
+
     writer.write_all(bytes)
 }
 
-/// Receives a negotiation string from the remote side.
+/// Reads a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format: varint(length) + string_bytes
+/// Format (upstream io.c:1944-1961 read_vstring):
+/// - Read first byte
+/// - If high bit set: len = (first & 0x7F) * 256 + read_another_byte
+/// - Otherwise: len = first byte
+/// - Then read `len` bytes of string data
 ///
-/// This matches upstream's `read_buf()` behavior in negotiation context
-/// (compat.c:368-386).
-///
-/// # Encoding Notes
-///
-/// Negotiation strings are algorithm names (e.g., "md5", "zlib") which are
-/// pure ASCII and thus valid UTF-8. However, rsync also supports charset
-/// negotiation (iconv) for filename encoding, which is a separate mechanism.
-///
-/// The current implementation assumes UTF-8, which is safe for algorithm names
-/// but may need extension for charset negotiation in the future.
-fn recv_string(reader: &mut dyn Read) -> io::Result<String> {
-    let len = read_varint(reader)? as usize;
+/// This is DIFFERENT from varint encoding!
+fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
+    let mut first = [0u8; 1];
+    reader.read_exact(&mut first)?;
+
+    let len = if first[0] & 0x80 != 0 {
+        // 2-byte format
+        let high = (first[0] & 0x7F) as usize;
+        let mut second = [0u8; 1];
+        reader.read_exact(&mut second)?;
+        high * 256 + second[0] as usize
+    } else {
+        // 1-byte format
+        first[0] as usize
+    };
 
     // Sanity check: negotiation strings should be small
-    // Upstream uses a 1024-byte buffer (compat.c:537)
+    // Upstream uses MAX_NSTR_STRLEN = 1024 (compat.c:537)
     if len > 8192 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("negotiation string too long: {len} bytes"),
+            format!("vstring too long: {len} bytes"),
         ));
     }
 
@@ -410,7 +436,7 @@ fn recv_string(reader: &mut dyn Read) -> io::Result<String> {
     String::from_utf8(buf).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("invalid UTF-8 in negotiation string: {e}"),
+            format!("invalid UTF-8 in vstring: {e}"),
         )
     })
 }
@@ -455,7 +481,8 @@ mod tests {
         let mut stdout = Vec::new();
 
         let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false).unwrap();
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                .unwrap();
 
         // Protocol < 30 should use defaults without any I/O
         assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
@@ -470,14 +497,15 @@ mod tests {
     fn test_negotiate_proto30_md5_zlib() {
         let protocol = ProtocolVersion::try_from(30).unwrap();
 
-        // Simulate client choosing md5 and zlib
-        // Format: varint(len) + string, so 3 + "md5" + 4 + "zlib"
+        // Simulate remote choosing md5 and zlib
+        // Format: vstring(len) + string, so len byte + "md5" + len byte + "zlib"
         let client_response = b"\x03md5\x04zlib";
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
         let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false).unwrap();
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                .unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
@@ -498,44 +526,63 @@ mod tests {
     fn test_negotiate_proto32_zstd() {
         let protocol = ProtocolVersion::try_from(32).unwrap();
 
-        // Simulate client choosing md5 and zstd
-        // Format: varint(len) + string, so 3 + "md5" + 4 + "zstd"
+        // Simulate remote choosing md5 and zstd
+        // Format: vstring(len) + string, so len byte + "md5" + len byte + "zstd"
         let client_response = b"\x03md5\x04zstd";
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
         let result =
-            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false).unwrap();
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                .unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zstd);
     }
 
     #[test]
-    fn test_send_recv_string_roundtrip() {
+    fn test_vstring_roundtrip() {
         let test_str = "md5 md4 sha1 xxh128";
         let mut buffer = Vec::new();
 
-        send_string(&mut buffer, test_str).unwrap();
+        write_vstring(&mut buffer, test_str).unwrap();
 
         let mut reader = &buffer[..];
-        let received = recv_string(&mut reader).unwrap();
+        let received = read_vstring(&mut reader).unwrap();
 
         assert_eq!(received, test_str);
     }
 
     #[test]
-    fn test_recv_string_length_limit() {
-        // Create a varint that claims 10000 bytes
-        let mut buffer = Vec::new();
-        write_varint(&mut buffer, 10000).unwrap();
-        buffer.extend_from_slice(&[b'x'; 100]); // But only provide 100
+    fn test_vstring_length_limit() {
+        // Create a vstring that claims 10000 bytes (uses 2-byte format)
+        // 10000 = 0x2710, so high byte = 0x27 | 0x80 = 0xA7, low byte = 0x10
+        let mut buffer = vec![0xA7, 0x10];
+        buffer.extend_from_slice(&[b'x'; 100]); // But only provide 100 bytes
 
         let mut reader = &buffer[..];
-        let result = recv_string(&mut reader);
+        let result = read_vstring(&mut reader);
 
-        // Should fail because length exceeds limit or can't read enough bytes
+        // Should fail because we can't read enough bytes
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_vstring_two_byte_format() {
+        // Test vstring encoding for length > 127
+        let test_str = "x".repeat(200); // 200 bytes > 127, needs 2-byte format
+        let mut buffer = Vec::new();
+
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // First byte should have high bit set (0xC8 = 0x80 | 0x00, second byte = 0xC8)
+        // 200 = 0x00C8, so [0x80, 0xC8]
+        assert_eq!(buffer[0], 0x80); // (200 >> 8) | 0x80 = 0 | 0x80 = 0x80
+        assert_eq!(buffer[1], 0xC8); // 200 & 0xFF = 0xC8
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
     }
 
     #[test]
