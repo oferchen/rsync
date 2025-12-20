@@ -226,6 +226,12 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .overrides_with("force"),
             )
             .arg(
+                Arg::new("qsort")
+                    .long("qsort")
+                    .help("Use qsort instead of merge sort for file list sorting.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("mkpath")
                     .long("mkpath")
                     .help("Create destination's missing path components.")
