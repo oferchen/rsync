@@ -554,18 +554,27 @@ fn delete_empty_directories() {
 
 #[test]
 fn backup_only_on_actual_changes() {
+    use filetime::{FileTime, set_file_mtime};
+
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     // Same content in source and dest
-    fs::write(src_dir.join("file.txt"), b"same content").unwrap();
-    fs::write(dest_dir.join("file.txt"), b"same content").unwrap();
+    let src_file = src_dir.join("file.txt");
+    let dest_file = dest_dir.join("file.txt");
+    fs::write(&src_file, b"same content").unwrap();
+    fs::write(&dest_file, b"same content").unwrap();
+
+    // Set identical mtimes so rsync's quick check considers them equal
+    let mtime = FileTime::from_unix_time(1700000000, 0);
+    set_file_mtime(&src_file, mtime).unwrap();
+    set_file_mtime(&dest_file, mtime).unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
         "--backup",
-        src_dir.join("file.txt").to_str().unwrap(),
+        src_file.to_str().unwrap(),
         dest_dir.to_str().unwrap(),
     ]);
     cmd.assert_success();
