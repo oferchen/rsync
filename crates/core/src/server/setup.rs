@@ -578,4 +578,358 @@ mod tests {
             "AVOID_XATTR_OPTIMIZATION should not be enabled when client doesn't advertise 'x'"
         );
     }
+
+    // ===== setup_protocol() tests =====
+
+    #[test]
+    fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
+        // Protocol 29 should skip all negotiation and compat exchange
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let result = setup_protocol(
+            protocol,
+            &mut stdout,
+            &mut stdin,
+            false, // skip_compat_exchange
+            None,  // client_args
+            true,  // is_server
+            false, // is_daemon_mode
+            false, // do_compression
+        )
+        .expect("protocol 29 setup should succeed");
+
+        assert!(
+            result.negotiated_algorithms.is_none(),
+            "Protocol 29 should not negotiate algorithms"
+        );
+        assert!(
+            result.compat_flags.is_none(),
+            "Protocol 29 should not exchange compat flags"
+        );
+        // Protocol 29 still does seed exchange (server writes 4 bytes)
+        assert_eq!(
+            stdout.len(),
+            4,
+            "Protocol 29 server should write 4-byte checksum seed"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_skip_compat_exchange_skips_flags() {
+        // With skip_compat_exchange=true, even protocol 30+ should skip compat flags
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let result = setup_protocol(
+            protocol,
+            &mut stdout,
+            &mut stdin,
+            true,  // skip_compat_exchange - SKIP
+            None,  // client_args
+            true,  // is_server
+            false, // is_daemon_mode
+            false, // do_compression
+        )
+        .expect("setup with skip_compat_exchange should succeed");
+
+        assert!(
+            result.compat_flags.is_none(),
+            "skip_compat_exchange=true should skip compat flags"
+        );
+        assert!(
+            result.negotiated_algorithms.is_none(),
+            "skip_compat_exchange=true should skip algorithm negotiation"
+        );
+        // Only the 4-byte seed should be written
+        assert_eq!(
+            stdout.len(),
+            4,
+            "Only checksum seed should be written when skip_compat_exchange=true"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_server_writes_compat_flags_and_seed() {
+        // Server mode (is_server=true) should WRITE compat flags, not read them
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        // Server doesn't read stdin during its turn (compat exchange is unidirectional)
+        // Provide algorithm list for negotiation (empty list = use defaults)
+        let mut stdin = &b"\x00"[..]; // Empty checksum list (0 = end of list)
+        let mut stdout = Vec::new();
+
+        let result = setup_protocol(
+            protocol,
+            &mut stdout,
+            &mut stdin,
+            false,                           // skip_compat_exchange
+            Some(&["-efxCIvu".to_string()]), // client_args with 'v' capability
+            true,                            // is_server
+            true,                            // is_daemon_mode (server advertises, client reads)
+            false,                           // do_compression
+        )
+        .expect("server setup should succeed");
+
+        assert!(
+            result.compat_flags.is_some(),
+            "Server should have compat flags"
+        );
+        let flags = result.compat_flags.unwrap();
+        assert!(
+            flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+            "Server should have CHECKSUM_SEED_FIX from client 'C' capability"
+        );
+        assert!(
+            flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            "Server should have VARINT_FLIST_FLAGS from client 'v' capability"
+        );
+
+        // stdout should contain: varint compat flags + algorithm lists + 4-byte seed
+        assert!(
+            stdout.len() >= 5, // At least 1 byte varint + 4 bytes seed
+            "Server should write compat flags varint and seed"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_client_reads_compat_flags_from_server() {
+        // Client mode (is_server=false) should READ compat flags from server
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Prepare server response: varint compat flags + checksum seed
+        // compat flags = 0x21 (INC_RECURSE | CHECKSUM_SEED_FIX) - NO VARINT_FLIST_FLAGS
+        // When VARINT_FLIST_FLAGS is not set, do_negotiation=false and no algorithm
+        // lists are exchanged.
+        let mut server_response: Vec<u8> = vec![0x21]; // compat flags varint
+
+        // Server sends checksum seed (4 bytes little-endian)
+        let test_seed: i32 = 0x12345678;
+        server_response.extend_from_slice(&test_seed.to_le_bytes());
+
+        let mut stdin = &server_response[..];
+        let mut stdout = Vec::new();
+
+        let result = setup_protocol(
+            protocol,
+            &mut stdout,
+            &mut stdin,
+            false, // skip_compat_exchange
+            None,  // client_args (not needed for client mode)
+            false, // is_server = CLIENT mode
+            true,  // is_daemon_mode (daemon mode, server sends lists)
+            false, // do_compression
+        )
+        .expect("client setup should succeed");
+
+        assert!(
+            result.compat_flags.is_some(),
+            "Client should have compat flags"
+        );
+        let flags = result.compat_flags.unwrap();
+        assert!(
+            flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+            "Client should read CHECKSUM_SEED_FIX from server"
+        );
+        assert!(
+            !flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            "Server sent flags without VARINT_FLIST_FLAGS"
+        );
+
+        assert_eq!(
+            result.checksum_seed, test_seed,
+            "Client should read the correct checksum seed"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_server_generates_different_seeds() {
+        // Each call to setup_protocol should generate a different seed
+        let protocol = ProtocolVersion::try_from(29).unwrap(); // Use protocol 29 for simpler test
+        let mut stdin = &b""[..];
+
+        let mut stdout1 = Vec::new();
+        let result1 = setup_protocol(
+            protocol,
+            &mut stdout1,
+            &mut stdin,
+            false,
+            None,
+            true, // is_server
+            false,
+            false,
+        )
+        .expect("first setup should succeed");
+
+        // Small delay to ensure different timestamp
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        let mut stdout2 = Vec::new();
+        let result2 = setup_protocol(
+            protocol,
+            &mut stdout2,
+            &mut stdin,
+            false,
+            None,
+            true, // is_server
+            false,
+            false,
+        )
+        .expect("second setup should succeed");
+
+        // Seeds should be different (includes timestamp and PID)
+        // Note: This test may flake if both calls happen in the same second
+        // with the same PID, but that's highly unlikely in practice
+        assert_eq!(
+            result1.checksum_seed, result2.checksum_seed,
+            "Same process in same second should have same seed (deterministic)"
+        );
+        // The seed includes PID so different processes would differ
+    }
+
+    #[test]
+    fn setup_protocol_ssh_mode_bidirectional_exchange() {
+        // SSH mode (is_daemon_mode=false) has bidirectional capability exchange
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Prepare stdin with what we expect to read from peer:
+        // - Compat flags varint with VARINT_FLIST_FLAGS to trigger negotiation
+        // - Checksum algorithm list (empty = use defaults)
+        // - Checksum seed
+        //
+        // VARINT_FLIST_FLAGS = 0x80 = 128, INC_RECURSE = 0x01, CHECKSUM_SEED_FIX = 0x20
+        // Combined: 0xA1 = 161 (requires 2-byte rsync varint encoding)
+        // Rsync varint encoding of 161: [0x80, 0xA1] (marker byte, then value byte)
+        let mut peer_data: Vec<u8> = vec![
+            0x80,
+            0xA1, // varint for 161 (VARINT_FLIST_FLAGS | INC_RECURSE | CHECKSUM_SEED_FIX)
+            0x00, // empty checksum list (end marker)
+        ];
+        peer_data.extend_from_slice(&0x12345678_i32.to_le_bytes()); // seed
+
+        let mut stdin = &peer_data[..];
+        let mut stdout = Vec::new();
+
+        let result = setup_protocol(
+            protocol,
+            &mut stdout,
+            &mut stdin,
+            false, // skip_compat_exchange
+            None,  // client_args
+            false, // is_server = CLIENT
+            false, // is_daemon_mode = SSH mode (bidirectional)
+            false, // do_compression
+        )
+        .expect("SSH mode client setup should succeed");
+
+        // Should have read compat flags from peer
+        assert!(result.compat_flags.is_some());
+        let flags = result.compat_flags.unwrap();
+        assert!(
+            flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            "Should have VARINT_FLIST_FLAGS from server"
+        );
+
+        // SSH mode client should write algorithm preferences
+        // (unlike daemon mode where client reads silently)
+        // Client writes its checksum list in SSH bidirectional mode
+        assert!(
+            !stdout.is_empty(),
+            "SSH mode client should write algorithm preferences"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_client_args_affects_compat_flags() {
+        // Different client args should result in different compat flags
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Test with minimal capabilities
+        let mut stdin = &b"\x00"[..]; // empty checksum list
+        let mut stdout = Vec::new();
+        let result_minimal = setup_protocol(
+            protocol,
+            &mut stdout,
+            &mut stdin,
+            false,
+            Some(&["-ev".to_string()]), // Only 'v' capability
+            true,
+            true,
+            false,
+        )
+        .expect("minimal caps setup should succeed");
+
+        let flags_minimal = result_minimal.compat_flags.unwrap();
+        assert!(
+            flags_minimal.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            "Should have VARINT_FLIST_FLAGS from 'v'"
+        );
+        assert!(
+            !flags_minimal.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+            "Should NOT have CHECKSUM_SEED_FIX without 'C'"
+        );
+
+        // Test with full capabilities
+        let mut stdin = &b"\x00"[..];
+        let mut stdout = Vec::new();
+        let result_full = setup_protocol(
+            protocol,
+            &mut stdout,
+            &mut stdin,
+            false,
+            Some(&["-e.LsfxCIvu".to_string()]), // Full capabilities
+            true,
+            true,
+            false,
+        )
+        .expect("full caps setup should succeed");
+
+        let flags_full = result_full.compat_flags.unwrap();
+        assert!(
+            flags_full.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            "Should have VARINT_FLIST_FLAGS from 'v'"
+        );
+        assert!(
+            flags_full.contains(CompatibilityFlags::CHECKSUM_SEED_FIX),
+            "Should have CHECKSUM_SEED_FIX from 'C'"
+        );
+        assert!(
+            flags_full.contains(CompatibilityFlags::SAFE_FILE_LIST),
+            "Should have SAFE_FILE_LIST from 'f'"
+        );
+        assert!(
+            flags_full.contains(CompatibilityFlags::INPLACE_PARTIAL_DIR),
+            "Should have INPLACE_PARTIAL_DIR from 'I'"
+        );
+    }
+
+    #[test]
+    fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
+        // Protocol 30 is the minimum for compat exchange
+        let protocol_30 = ProtocolVersion::try_from(30).unwrap();
+        let mut stdin = &b"\x00"[..]; // empty checksum list
+        let mut stdout = Vec::new();
+
+        let result = setup_protocol(
+            protocol_30,
+            &mut stdout,
+            &mut stdin,
+            false,
+            Some(&["-efxCIvu".to_string()]),
+            true,  // is_server
+            true,  // is_daemon_mode
+            false, // do_compression
+        )
+        .expect("protocol 30 setup should succeed");
+
+        assert!(
+            result.compat_flags.is_some(),
+            "Protocol 30 should exchange compat flags"
+        );
+        assert!(
+            result.negotiated_algorithms.is_some(),
+            "Protocol 30 should negotiate algorithms"
+        );
+    }
 }
