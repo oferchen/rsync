@@ -20,7 +20,7 @@ use crate::frontend::{
 };
 use core::{client::HumanReadableMode, message::Role, rsync_error};
 use engine::batch;
-use logging::MessageSink;
+use logging::{MessageSink, VerbosityConfig};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -182,6 +182,10 @@ where
     let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
     let human_readable_enabled = human_readable_mode.is_enabled();
     let msgs_to_stderr_enabled = msgs_to_stderr_option.unwrap_or(false);
+
+    // Initialize verbosity system from -v level (--info/--debug flags applied later in derive_settings)
+    let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
+    logging::verbosity::init(verbosity_config);
 
     if let Err(code) = validate_stdin_sources_conflict(&password_file, &files_from, stderr) {
         return code;
