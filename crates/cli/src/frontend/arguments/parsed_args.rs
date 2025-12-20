@@ -78,6 +78,7 @@ pub struct ParsedArgs {
     pub owner: Option<bool>,
     pub group: Option<bool>,
     pub chown: Option<OsString>,
+    pub copy_as: Option<OsString>,
     pub usermap: Option<OsString>,
     pub groupmap: Option<OsString>,
     pub chmod: Vec<OsString>,
