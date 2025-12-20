@@ -55,19 +55,20 @@ fn parse_client_info(client_args: &[String]) -> String {
 
         // Check for combined short options like "-vvde.LsfxCIvu"
         // The -e option may appear in the middle of other short options
-        if arg.starts_with('-') && !arg.starts_with("--") {
-            if let Some(e_pos) = arg.find('e') {
-                // Found 'e' in the argument
-                // Everything after 'e' is the capability string
-                if e_pos + 1 < arg.len() {
-                    let caps = &arg[e_pos + 1..];
-                    // Skip leading '.' which is a version placeholder
-                    // (upstream puts '.' when protocol_version != PROTOCOL_VERSION)
-                    if caps.starts_with('.') && caps.len() > 1 {
-                        return caps[1..].to_string();
-                    }
-                    return caps.to_string();
+        if arg.starts_with('-')
+            && !arg.starts_with("--")
+            && let Some(e_pos) = arg.find('e')
+        {
+            // Found 'e' in the argument
+            // Everything after 'e' is the capability string
+            if e_pos + 1 < arg.len() {
+                let caps = &arg[e_pos + 1..];
+                // Skip leading '.' which is a version placeholder
+                // (upstream puts '.' when protocol_version != PROTOCOL_VERSION)
+                if caps.starts_with('.') && caps.len() > 1 {
+                    return caps[1..].to_string();
                 }
+                return caps.to_string();
             }
         }
 
@@ -243,7 +244,8 @@ pub fn exchange_compat_flags_direct(
 /// The `do_compression` parameter controls whether compression algorithm negotiation happens:
 /// - `true`: Exchange compression algorithm lists (both sides send/receive)
 /// - `false`: Skip compression negotiation, use defaults
-/// This must match on both sides based on whether `-z` flag was passed.
+///   This must match on both sides based on whether `-z` flag was passed.
+#[allow(clippy::too_many_arguments)]
 pub fn setup_protocol(
     protocol: ProtocolVersion,
     stdout: &mut dyn Write,
@@ -312,7 +314,20 @@ pub fn setup_protocol(
         } else {
             // Client: READ compat flags from server
             let compat_value = protocol::read_varint(stdin)?;
-            CompatibilityFlags::from_bits(compat_value as u32)
+            let flags = CompatibilityFlags::from_bits(compat_value as u32);
+            // Debug checkpoint: what compat flags did we receive from server?
+            let _ = std::fs::write(
+                "/tmp/setup_COMPAT_FLAGS_READ",
+                format!(
+                    "value={:#x} ({}) has_varint={} has_inc_recurse={} flags={:?}",
+                    compat_value,
+                    compat_value,
+                    flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+                    flags.contains(CompatibilityFlags::INC_RECURSE),
+                    flags
+                ),
+            );
+            flags
         };
 
         // Protocol 30+ capability negotiation (upstream compat.c:534-585)
@@ -386,6 +401,10 @@ pub fn setup_protocol(
     // Checksum seed exchange (ALL protocols, upstream compat.c:750)
     // - Server: generates and WRITES the seed
     // - Client: READS the seed from server
+    let _ = std::fs::write(
+        "/tmp/setup_SEED_EXCHANGE_START",
+        format!("is_server={}", is_server),
+    );
     let checksum_seed = if is_server {
         // Server: generate and send seed
         let seed = {
@@ -400,12 +419,19 @@ pub fn setup_protocol(
         let seed_bytes = seed.to_le_bytes();
         stdout.write_all(&seed_bytes)?;
         stdout.flush()?;
+        let _ = std::fs::write("/tmp/setup_SEED_WRITTEN", format!("seed={}", seed));
         seed
     } else {
         // Client: read seed from server
+        let _ = std::fs::write("/tmp/setup_SEED_BEFORE_READ", "1");
         let mut seed_bytes = [0u8; 4];
         stdin.read_exact(&mut seed_bytes)?;
-        i32::from_le_bytes(seed_bytes)
+        let seed = i32::from_le_bytes(seed_bytes);
+        let _ = std::fs::write(
+            "/tmp/setup_SEED_READ",
+            format!("seed={} bytes={:02x?}", seed, seed_bytes),
+        );
+        seed
     };
 
     Ok(SetupResult {

@@ -128,11 +128,11 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
             let size = format_list_size(metadata.length(), human_readable);
             let timestamp = format_list_timestamp(metadata.modified());
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
-            if metadata.kind().is_symlink() {
-                if let Some(target) = metadata.symlink_target() {
-                    rendered.push_str(" -> ");
-                    rendered.push_str(&target.to_string_lossy());
-                }
+            if metadata.kind().is_symlink()
+                && let Some(target) = metadata.symlink_target()
+            {
+                rendered.push_str(" -> ");
+                rendered.push_str(&target.to_string_lossy());
             }
 
             writeln!(stdout, "{permissions} {size} {timestamp} {rendered}")?;
@@ -344,13 +344,12 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             }
 
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
-            if matches!(kind, ClientEventKind::SymlinkCopied) {
-                if let Some(metadata) = event.metadata() {
-                    if let Some(target) = metadata.symlink_target() {
-                        rendered.push_str(" -> ");
-                        rendered.push_str(&target.to_string_lossy());
-                    }
-                }
+            if matches!(kind, ClientEventKind::SymlinkCopied)
+                && let Some(metadata) = event.metadata()
+                && let Some(target) = metadata.symlink_target()
+            {
+                rendered.push_str(" -> ");
+                rendered.push_str(&target.to_string_lossy());
             }
             writeln!(stdout, "{rendered}")?;
             continue;
@@ -406,11 +405,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                     "ignoring unsafe symlink \"{}\"",
                     event.relative_path().display()
                 );
-                if let Some(metadata) = event.metadata() {
-                    if let Some(target) = metadata.symlink_target() {
-                        rendered.push_str(" -> ");
-                        rendered.push_str(&target.to_string_lossy());
-                    }
+                if let Some(metadata) = event.metadata()
+                    && let Some(target) = metadata.symlink_target()
+                {
+                    rendered.push_str(" -> ");
+                    rendered.push_str(&target.to_string_lossy());
                 }
                 writeln!(stdout, "{rendered}")?;
                 continue;
@@ -427,13 +426,12 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         }
 
         let mut rendered = event.relative_path().to_string_lossy().into_owned();
-        if matches!(kind, ClientEventKind::SymlinkCopied) {
-            if let Some(metadata) = event.metadata() {
-                if let Some(target) = metadata.symlink_target() {
-                    rendered.push_str(" -> ");
-                    rendered.push_str(&target.to_string_lossy());
-                }
-            }
+        if matches!(kind, ClientEventKind::SymlinkCopied)
+            && let Some(metadata) = event.metadata()
+            && let Some(target) = metadata.symlink_target()
+        {
+            rendered.push_str(" -> ");
+            rendered.push_str(&target.to_string_lossy());
         }
 
         if verbosity == 1 {

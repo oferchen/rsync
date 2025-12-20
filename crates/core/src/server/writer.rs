@@ -22,6 +22,10 @@ pub enum ServerWriter<W: Write> {
     /// Compressed+Multiplex mode - compress then multiplex
     #[allow(dead_code)] // Used in production code once compression is integrated
     Compressed(CompressedWriter<MultiplexWriter<W>>),
+    /// Temporary state during in-place transformations.
+    /// Any operation on a Taken writer panics.
+    #[doc(hidden)]
+    Taken,
 }
 
 impl<W: Write> ServerWriter<W> {
@@ -42,6 +46,7 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
+            Self::Taken => panic!("ServerWriter in invalid Taken state"),
         }
     }
 
@@ -76,6 +81,7 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
+            Self::Taken => panic!("ServerWriter in invalid Taken state"),
         }
     }
 
@@ -83,6 +89,38 @@ impl<W: Write> ServerWriter<W> {
     #[allow(dead_code)]
     pub fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_) | Self::Compressed(_))
+    }
+
+    /// Activates multiplex mode in place (mirrors upstream io_start_multiplex_out).
+    ///
+    /// This is used when the generator needs to activate multiplex AFTER sending
+    /// the file list but before sending file data. Upstream rsync client sender
+    /// calls io_start_multiplex_out() after send_file_list().
+    ///
+    /// # Panics
+    ///
+    /// Panics if the writer is in the Taken state (internal error).
+    pub fn activate_multiplex_in_place(&mut self) -> io::Result<()> {
+        // Use a take-and-replace pattern with the Taken variant as placeholder
+        let old_self = std::mem::replace(self, Self::Taken);
+
+        match old_self {
+            Self::Plain(writer) => {
+                *self = Self::Multiplex(MultiplexWriter::new(writer));
+                Ok(())
+            }
+            Self::Taken => {
+                panic!("ServerWriter in invalid Taken state");
+            }
+            other => {
+                // Restore original state
+                *self = other;
+                Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "multiplex already active",
+                ))
+            }
+        }
     }
 
     /// Sends a control message (non-DATA message) through the multiplexed stream.
@@ -109,6 +147,7 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::InvalidInput,
                 "cannot send control messages in plain mode",
             )),
+            Self::Taken => panic!("ServerWriter in invalid Taken state"),
         }
     }
 
@@ -142,6 +181,7 @@ impl<W: Write> ServerWriter<W> {
                 // Write directly to the multiplex layer's inner writer
                 compressed.inner_mut().write_raw(data)
             }
+            Self::Taken => panic!("ServerWriter in invalid Taken state"),
         }
     }
 }
@@ -152,6 +192,7 @@ impl<W: Write> Write for ServerWriter<W> {
             Self::Plain(w) => w.write(buf),
             Self::Multiplex(w) => w.write(buf),
             Self::Compressed(w) => w.write(buf),
+            Self::Taken => panic!("ServerWriter in invalid Taken state"),
         }
     }
 
@@ -160,6 +201,7 @@ impl<W: Write> Write for ServerWriter<W> {
             Self::Plain(w) => w.flush(),
             Self::Multiplex(w) => w.flush(),
             Self::Compressed(w) => w.flush(),
+            Self::Taken => panic!("ServerWriter in invalid Taken state"),
         }
     }
 }
@@ -188,6 +230,19 @@ impl<W: Write> MultiplexWriter<W> {
     /// Flushes the internal buffer by sending it as a MSG_DATA frame
     fn flush_buffer(&mut self) -> io::Result<()> {
         if !self.buffer.is_empty() {
+            // Debug: log what we're sending
+            static FLUSH_COUNT: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            let count = FLUSH_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = std::fs::write(
+                format!("/tmp/mux_FLUSH_{:03}", count),
+                format!(
+                    "len={} bytes={:02x?}",
+                    self.buffer.len(),
+                    &self.buffer[..self.buffer.len().min(100)]
+                ),
+            );
+
             let code = MessageCode::Data;
             protocol::send_msg(&mut self.inner, code, &self.buffer)?;
             self.buffer.clear();
@@ -223,6 +278,19 @@ impl<W: Write> MultiplexWriter<W> {
 
 impl<W: Write> Write for MultiplexWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        // Debug: track all writes
+        static WRITE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let count = WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let _ = std::fs::write(
+            format!("/tmp/mux_WRITE_{:03}", count),
+            format!(
+                "len={} buf_before={} bytes={:02x?}",
+                buf.len(),
+                self.buffer.len(),
+                &buf[..buf.len().min(50)]
+            ),
+        );
+
         if buf.is_empty() {
             return Ok(0);
         }
@@ -245,6 +313,10 @@ impl<W: Write> Write for MultiplexWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        let _ = std::fs::write(
+            "/tmp/mux_FLUSH_CALLED",
+            format!("buf_len={}", self.buffer.len()),
+        );
         self.flush_buffer()?;
         self.inner.flush()
     }

@@ -23,10 +23,10 @@ pub(crate) fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyEr
 }
 
 pub(crate) fn remove_incomplete_destination(destination: &Path) {
-    if let Err(error) = fs::remove_file(destination) {
-        if error.kind() != io::ErrorKind::NotFound {
-            // Preserve the original error from the transfer attempt.
-        }
+    if let Err(error) = fs::remove_file(destination)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        // Preserve the original error from the transfer attempt.
     }
 }
 
@@ -50,14 +50,14 @@ impl DestinationWriteGuard {
             } else {
                 partial_destination_path(destination)
             };
-            if let Err(error) = fs::remove_file(&temp_path) {
-                if error.kind() != io::ErrorKind::NotFound {
-                    return Err(LocalCopyError::io(
-                        "remove existing partial file",
-                        temp_path.clone(),
-                        error,
-                    ));
-                }
+            if let Err(error) = fs::remove_file(&temp_path)
+                && error.kind() != io::ErrorKind::NotFound
+            {
+                return Err(LocalCopyError::io(
+                    "remove existing partial file",
+                    temp_path.clone(),
+                    error,
+                ));
             }
             let file = fs::OpenOptions::new()
                 .create(true)
@@ -148,10 +148,10 @@ impl DestinationWriteGuard {
             return;
         }
 
-        if let Err(error) = fs::remove_file(&self.temp_path) {
-            if error.kind() != io::ErrorKind::NotFound {
-                // Best-effort cleanup: the file may have been removed concurrently.
-            }
+        if let Err(error) = fs::remove_file(&self.temp_path)
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            // Best-effort cleanup: the file may have been removed concurrently.
         }
 
         self.committed = true;

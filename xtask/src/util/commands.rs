@@ -322,10 +322,17 @@ mod tests {
 
     #[test]
     fn ensure_rust_target_installed_accepts_available_targets() {
-        let output = Command::new("rustup")
+        let output = match Command::new("rustup")
             .args(["target", "list", "--installed"])
             .output()
-            .expect("query installed rustup targets");
+        {
+            Ok(output) => output,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Skip test if rustup is not available
+                return;
+            }
+            Err(e) => panic!("query installed rustup targets: {e}"),
+        };
         assert!(output.status.success(), "rustup reported an error");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let target = stdout
@@ -337,8 +344,21 @@ mod tests {
             .unwrap_or_else(|error| panic!("target {target} should be installed: {error:?}"));
     }
 
+    /// Returns true if rustup is available on the system.
+    fn rustup_available() -> bool {
+        Command::new("rustup")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
     #[test]
     fn ensure_rust_target_installed_respects_forced_missing_env() {
+        if !rustup_available() {
+            // Skip test if rustup is not available
+            return;
+        }
         let mut guard = EnvGuard::new();
         guard.set(FORCE_MISSING_ENV, "rustup target list --installed");
         let error = ensure_rust_target_installed("x86_64-unknown-linux-gnu").unwrap_err();
@@ -350,6 +370,10 @@ mod tests {
 
     #[test]
     fn ensure_rust_target_installed_respects_missing_add_command() {
+        if !rustup_available() {
+            // Skip test if rustup is not available
+            return;
+        }
         let mut guard = EnvGuard::new();
         guard.set(FORCE_MISSING_ENV, "rustup target add");
         let error = ensure_rust_target_installed("nonexistent-target").unwrap_err();

@@ -113,11 +113,10 @@ fn generate_fallback_config(
         writeln!(config, "[{}]", module.name)?;
         writeln!(config, "    path = {}", module.path.display())?;
 
-        if let Some(comment) = &module.comment {
-            if !comment.is_empty() {
+        if let Some(comment) = &module.comment
+            && !comment.is_empty() {
                 writeln!(config, "    comment = {comment}")?;
             }
-        }
 
         if let Some(allowed) = join_pattern_tokens(&module.hosts_allow) {
             writeln!(config, "    hosts allow = {allowed}")?;
@@ -376,14 +375,13 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             }
         }
 
-        if let Some(limit) = max_sessions {
-            if served >= limit {
+        if let Some(limit) = max_sessions
+            && served >= limit {
                 if let Err(error) = notifier.status("Draining worker threads") {
                     log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
                 }
                 break;
             }
-        }
     }
 
     let result = drain_workers(&mut workers);
@@ -417,11 +415,10 @@ struct PidFileGuard {
 
 impl PidFileGuard {
     fn create(path: PathBuf) -> Result<Self, DaemonError> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).map_err(|error| pid_file_error(&path, error))?;
             }
-        }
 
         let mut file = OpenOptions::new()
             .create(true)

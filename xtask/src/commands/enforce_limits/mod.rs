@@ -70,12 +70,12 @@ where
         }
     }
 
-    if let (Some(warn), Some(max)) = (options.warn_lines, options.max_lines) {
-        if warn > max {
-            return Err(TaskError::Usage(format!(
-                "warn line limit ({warn}) cannot exceed maximum line limit ({max})"
-            )));
-        }
+    if let (Some(warn), Some(max)) = (options.warn_lines, options.max_lines)
+        && warn > max
+    {
+        return Err(TaskError::Usage(format!(
+            "warn line limit ({warn}) cannot exceed maximum line limit ({max})"
+        )));
     }
 
     Ok(options)
@@ -234,12 +234,11 @@ fn collect_rust_sources(root: &Path) -> TaskResult<Vec<PathBuf>> {
                 continue;
             }
 
-            if metadata.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext.eq_ignore_ascii_case("rs") {
-                        files.push(path);
-                    }
-                }
+            if metadata.is_file()
+                && let Some(ext) = path.extension()
+                && ext.eq_ignore_ascii_case("rs")
+            {
+                files.push(path);
             }
         }
     }

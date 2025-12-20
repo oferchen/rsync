@@ -85,13 +85,13 @@ pub(super) fn parse_line_limits_config(
         )?);
     }
 
-    if let (Some(warn), Some(max)) = (config.default_warn_lines, config.default_max_lines) {
-        if warn > max {
-            return Err(validation_error(format!(
-                "default warn_lines ({warn}) cannot exceed default max_lines ({max}) in {}",
-                origin.display()
-            )));
-        }
+    if let (Some(warn), Some(max)) = (config.default_warn_lines, config.default_max_lines)
+        && warn > max
+    {
+        return Err(validation_error(format!(
+            "default warn_lines ({warn}) cannot exceed default max_lines ({max}) in {}",
+            origin.display()
+        )));
     }
 
     if let Some(overrides) = value.get("overrides") {
@@ -167,14 +167,14 @@ pub(super) fn parse_line_limits_config(
                 .map(|value| parse_positive_usize_value(value, &warn_key, origin))
                 .transpose()?;
 
-            if let (Some(warn), Some(max)) = (warn_lines, max_lines) {
-                if warn > max {
-                    return Err(validation_error(format!(
-                        "override for {} in {} has warn_lines ({warn}) exceeding max_lines ({max})",
-                        override_path.display(),
-                        origin.display()
-                    )));
-                }
+            if let (Some(warn), Some(max)) = (warn_lines, max_lines)
+                && warn > max
+            {
+                return Err(validation_error(format!(
+                    "override for {} in {} has warn_lines ({warn}) exceeding max_lines ({max})",
+                    override_path.display(),
+                    origin.display()
+                )));
             }
 
             config.overrides.insert(

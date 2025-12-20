@@ -211,11 +211,11 @@ fn write_prefixed_keyword<W: FmtWrite>(
     writer.write_char(' ')?;
     writer.write_str(keyword)?;
 
-    if let Some(rest) = value {
-        if !rest.is_empty() {
-            writer.write_char(' ')?;
-            writer.write_str(rest)?;
-        }
+    if let Some(rest) = value
+        && !rest.is_empty()
+    {
+        writer.write_char(' ')?;
+        writer.write_str(rest)?;
     }
 
     writer.write_char('\n')

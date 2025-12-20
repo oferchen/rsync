@@ -124,16 +124,16 @@ pub(crate) fn copy_symlink(
 
     let destination_previously_existed = destination_metadata.is_some();
 
-    if let Some(existing) = destination_metadata.as_ref() {
-        if existing.file_type().is_dir() {
-            if context.force_replacements_enabled() {
-                context.force_remove_destination(destination, relative, existing)?;
-                destination_metadata = None;
-            } else {
-                return Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::ReplaceDirectoryWithSymlink,
-                ));
-            }
+    if let Some(existing) = destination_metadata.as_ref()
+        && existing.file_type().is_dir()
+    {
+        if context.force_replacements_enabled() {
+            context.force_remove_destination(destination, relative, existing)?;
+            destination_metadata = None;
+        } else {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::ReplaceDirectoryWithSymlink,
+            ));
         }
     }
 
@@ -241,11 +241,11 @@ pub(crate) fn copy_symlink(
         context.prepare_parent_directory(parent)?;
     }
 
-    if !mode.is_dry_run() {
-        if let Some(existing) = destination_metadata.take() {
-            context.backup_existing_entry(destination, relative, existing.file_type())?;
-            remove_existing_destination(destination)?;
-        }
+    if !mode.is_dry_run()
+        && let Some(existing) = destination_metadata.take()
+    {
+        context.backup_existing_entry(destination, relative, existing.file_type())?;
+        remove_existing_destination(destination)?;
     }
 
     // dedupe via hard links if we saw an identical symlink before

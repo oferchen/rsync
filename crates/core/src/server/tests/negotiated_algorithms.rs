@@ -37,6 +37,8 @@ fn test_config() -> ServerConfig {
         flags: ParsedServerFlags::default(),
         args: vec![std::ffi::OsString::from(".")],
         compression_level: None,
+        client_mode: false,
+        filter_rules: Vec::new(),
     }
 }
 
@@ -48,6 +50,8 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         flags: ParsedServerFlags::default(),
         args: vec![std::ffi::OsString::from(".")],
         compression_level: Some(level),
+        client_mode: false,
+        filter_rules: Vec::new(),
     }
 }
 

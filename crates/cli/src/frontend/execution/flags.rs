@@ -7,12 +7,6 @@ use core::{
 
 use super::super::progress::{NameOutputLevel, ProgressSetting};
 
-impl Default for ProgressSetting {
-    fn default() -> Self {
-        Self::Unspecified
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct InfoFlagSettings {
     pub(crate) progress: ProgressSetting,

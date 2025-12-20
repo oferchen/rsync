@@ -43,10 +43,10 @@ pub(crate) fn compute_backup_path(
         } else {
             destination_root.join(dir)
         };
-        if let Some(parent) = relative_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                base = base.join(parent);
-            }
+        if let Some(parent) = relative_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            base = base.join(parent);
         }
         base
     } else {

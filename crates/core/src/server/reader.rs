@@ -105,6 +105,8 @@ pub(super) struct MultiplexReader<R> {
     inner: R,
     buffer: Vec<u8>,
     pos: usize,
+    read_seq: usize, // Debug: track read sequence
+    msg_seq: usize,  // Debug: track message sequence
 }
 
 #[allow(dead_code)]
@@ -114,12 +116,16 @@ impl<R: Read> MultiplexReader<R> {
             inner,
             buffer: Vec::new(),
             pos: 0,
+            read_seq: 0,
+            msg_seq: 0,
         }
     }
 }
 
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.read_seq += 1;
+
         // If we have buffered data, copy it out first
         if self.pos < self.buffer.len() {
             let available = self.buffer.len() - self.pos;
@@ -136,20 +142,64 @@ impl<R: Read> Read for MultiplexReader<R> {
             return Ok(to_copy);
         }
 
-        // Read next multiplexed message
-        self.buffer.clear();
-        self.pos = 0;
+        // Loop until we get a MSG_DATA message
+        // Other message types (INFO, ERROR, etc.) are logged and we continue reading
+        loop {
+            self.buffer.clear();
+            self.pos = 0;
+            self.msg_seq += 1;
+            let msg_seq = self.msg_seq;
 
-        let _code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
+            let code = match protocol::recv_msg_into(&mut self.inner, &mut self.buffer) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = std::fs::write(
+                        format!("/tmp/mux_MSG_{:04}_ERR", msg_seq),
+                        format!("{:?}: {}", e.kind(), e),
+                    );
+                    return Err(e);
+                }
+            };
 
-        // For now, only handle MSG_DATA (7). Other messages should be handled by higher layers.
-        // If it's not MSG_DATA, we'll just return the payload anyway for compatibility.
-
-        // Copy from buffer to output
-        let to_copy = self.buffer.len().min(buf.len());
-        buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
-        self.pos = to_copy;
-
-        Ok(to_copy)
+            // Dispatch based on message type
+            match code {
+                protocol::MessageCode::Data => {
+                    // MSG_DATA: return payload for protocol processing
+                    let to_copy = self.buffer.len().min(buf.len());
+                    buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
+                    self.pos = to_copy;
+                    return Ok(to_copy);
+                }
+                protocol::MessageCode::Info
+                | protocol::MessageCode::Warning
+                | protocol::MessageCode::Log
+                | protocol::MessageCode::Client => {
+                    // Info/warning messages: print to stderr and continue
+                    if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                        eprint!("{}", msg);
+                    }
+                    // Continue loop to read next message
+                }
+                protocol::MessageCode::Error
+                | protocol::MessageCode::ErrorXfer
+                | protocol::MessageCode::ErrorSocket
+                | protocol::MessageCode::ErrorUtf8
+                | protocol::MessageCode::ErrorExit => {
+                    // Error messages: print to stderr and continue
+                    if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                        eprint!("{}", msg);
+                    }
+                    // Continue loop to read next message
+                }
+                _ => {
+                    // Other message types (Redo, Stats, etc.): log for debugging
+                    let _ = std::fs::write(
+                        format!("/tmp/mux_MSG_{:04}_UNHANDLED", msg_seq),
+                        format!("code={:?} len={}", code, self.buffer.len()),
+                    );
+                    // Continue loop to read next message
+                }
+            }
+        }
     }
 }

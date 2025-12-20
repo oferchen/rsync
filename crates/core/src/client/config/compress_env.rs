@@ -12,8 +12,8 @@ const FALSE_VALUES: &[&str] = &["0", "false", "no", "off"];
 
 /// Interprets an environment variable that forces compression to be disabled.
 ///
-/// Returning [`Ok(None)`] indicates that the variable is unset. [`Ok(Some(true))`]
-/// disables compression regardless of CLI flags, while [`Ok(Some(false))`]
+/// Returning `Ok(None)` indicates that the variable is unset. `Ok(Some(true))`
+/// disables compression regardless of CLI flags, while `Ok(Some(false))`
 /// leaves CLI/rsync defaults in place. Any other value results in a branded
 /// diagnostic so callers can correct the configuration.
 pub fn force_no_compress_from_env(variable: &str) -> Result<Option<bool>, Message> {

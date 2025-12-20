@@ -187,10 +187,10 @@ impl SshCommand {
 
         args.extend(self.options.iter().cloned());
 
-        if let Some(target) = self.target_argument() {
-            if !target.is_empty() {
-                args.push(target);
-            }
+        if let Some(target) = self.target_argument()
+            && !target.is_empty()
+        {
+            args.push(target);
         }
 
         args.extend(self.remote_command.iter().cloned());

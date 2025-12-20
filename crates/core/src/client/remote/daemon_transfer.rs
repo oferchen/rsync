@@ -4,17 +4,27 @@
 //! connecting to rsync daemons, performing handshakes, and executing transfers
 //! using the server infrastructure.
 
+// Note: This module uses the same TcpStream for both read and write.
+// We use unsafe code to split the borrow for stdin/stdout, matching the
+// pattern in ssh_transfer.rs
+#![allow(unsafe_code)]
+
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 
 use protocol::ProtocolVersion;
+use protocol::filters::{FilterRuleWireFormat, RuleType};
 
-use super::super::config::ClientConfig;
+use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
 use super::super::module_list::{DaemonAddress, connect_direct, parse_host_port};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::super::{CLIENT_SERVER_PROTOCOL_EXIT_CODE, DAEMON_SOCKET_TIMEOUT};
+use super::invocation::{RemoteRole, determine_transfer_role};
+use crate::server::handshake::HandshakeResult;
+use crate::server::{ServerConfig, ServerRole};
 
 /// Parsed daemon transfer request containing connection and path details.
 #[derive(Clone, Debug)]
@@ -74,7 +84,9 @@ impl DaemonTransferRequest {
 /// 2. Connects to the daemon
 /// 3. Performs the daemon handshake
 /// 4. Requests the module
-/// 5. Executes the transfer using server infrastructure
+/// 5. Sends arguments to daemon
+/// 6. Determines role from operand positions
+/// 7. Executes the transfer using server infrastructure
 ///
 /// # Arguments
 ///
@@ -97,6 +109,21 @@ pub fn run_daemon_transfer(
     config: &ClientConfig,
     _observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
+    // Step 1: Parse transfer args to determine role and paths
+    let args = config.transfer_args();
+    if args.len() < 2 {
+        return Err(invalid_argument_error(
+            "need at least one source and one destination",
+            1,
+        ));
+    }
+
+    let (sources, destination) = args.split_at(args.len() - 1);
+    let destination = &destination[0];
+
+    // Determine push vs pull and extract local/remote paths
+    let (role, local_paths, _remote_operands) = determine_transfer_role(sources, destination)?;
+
     // Find the rsync:// URL operand
     let daemon_url = config
         .transfer_args()
@@ -107,10 +134,10 @@ pub fn run_daemon_transfer(
         })
         .ok_or_else(|| invalid_argument_error("no rsync:// URL found", 1))?;
 
-    // Parse the URL
+    // Step 2: Parse the URL
     let request = DaemonTransferRequest::parse_rsync_url(&daemon_url.to_string_lossy())?;
 
-    // Connect to daemon
+    // Step 3: Connect to daemon
     let mut stream = connect_direct(
         &request.address,
         None, // No custom connect timeout
@@ -119,36 +146,90 @@ pub fn run_daemon_transfer(
         None, // No bind address
     )?;
 
-    // Perform daemon handshake
-    perform_daemon_handshake(&mut stream, &request)?;
+    // Step 4: Perform daemon handshake
+    let protocol = perform_daemon_handshake(&mut stream, &request)?;
 
-    // Implementation status: Daemon handshake complete (protocol exchange, module selection).
-    // Remaining work: Build ServerConfig from module parameters and execute the transfer
-    // using the server infrastructure (crates/core/src/server). This requires wiring the
-    // TCP stream into the server's I/O layer and configuring paths, filters, and permissions
-    // based on the daemon configuration (oc-rsyncd.conf).
-    //
-    // See crates/daemon/src/daemon/session_runtime.rs for the daemon-side equivalent.
-    Err(daemon_error(
-        "daemon data transfer implementation incomplete",
-        1,
-    ))
+    // Step 5: Send arguments to daemon
+    // For pull (we receive), the daemon is the sender, so is_sender=true
+    // For push (we send), the daemon is the receiver, so is_sender=false
+    let daemon_is_sender = matches!(role, RemoteRole::Receiver);
+    send_daemon_arguments(&mut stream, config, &request, protocol, daemon_is_sender)?;
+
+    // Step 6: Execute transfer based on role
+    // Protocol is already negotiated via @RSYNCD text exchange (not binary 4-byte exchange)
+    // This mirrors upstream where remote_protocol != 0 after exchange_protocols,
+    // so setup_protocol skips the binary exchange (compat.c:599)
+    match role {
+        RemoteRole::Receiver => {
+            // Pull: remote → local
+            run_pull_transfer(config, stream, &local_paths, protocol)
+        }
+        RemoteRole::Sender => {
+            // Push: local → remote
+            run_push_transfer(config, stream, &local_paths, protocol)
+        }
+    }
+}
+
+/// Parses the protocol version from an @RSYNCD greeting line.
+///
+/// Format: "@RSYNCD: XX.Y [digest_list]"
+/// Mirrors upstream exchange_protocols line 178: sscanf(buf, "@RSYNCD: %d.%d", ...)
+fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, ClientError> {
+    // Skip "@RSYNCD: " prefix (9 characters)
+    let rest = greeting.get(9..).ok_or_else(|| {
+        daemon_error(
+            format!("malformed greeting: {greeting}"),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        )
+    })?;
+
+    // Parse "XX.Y" - version is before the dot
+    let version_str = rest
+        .split(|c: char| c == '.' || c.is_whitespace())
+        .next()
+        .ok_or_else(|| {
+            daemon_error(
+                format!("no version in greeting: {greeting}"),
+                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+            )
+        })?;
+
+    let version_num: u8 = version_str.parse().map_err(|_| {
+        daemon_error(
+            format!("invalid version number in greeting: {greeting}"),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        )
+    })?;
+
+    ProtocolVersion::try_from(version_num).map_err(|e| {
+        daemon_error(
+            format!("unsupported protocol version {version_num}: {e}"),
+            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+        )
+    })
 }
 
 /// Performs the rsync daemon handshake protocol.
 ///
-/// Exchanges version information and requests the specified module.
+/// This follows the upstream clientserver.c:start_inband_exchange() flow:
+/// 1. Read daemon greeting (@RSYNCD: XX.Y)
+/// 2. Send client greeting (@RSYNCD: XX.Y)
+/// 3. Send module name
+/// 4. Read response lines (MOTD, @RSYNCD: OK/@RSYNCD: AUTHREQD/@ERROR)
+///
+/// Returns the negotiated protocol version.
 fn perform_daemon_handshake(
     stream: &mut TcpStream,
     request: &DaemonTransferRequest,
-) -> Result<(), ClientError> {
+) -> Result<ProtocolVersion, ClientError> {
     let mut reader = BufReader::new(
         stream
             .try_clone()
             .map_err(|e| socket_error("clone", request.address.socket_addr_display(), e))?,
     );
 
-    // Read daemon greeting: @RSYNCD: 31.0
+    // Step 1: Read daemon greeting: @RSYNCD: 31.0
     let mut greeting = String::new();
     reader.read_line(&mut greeting).map_err(|e| {
         socket_error(
@@ -165,8 +246,17 @@ fn perform_daemon_handshake(
         ));
     }
 
-    // Send client version: @RSYNCD: 31.0
-    let client_version = format!("@RSYNCD: {}.0\n", ProtocolVersion::NEWEST.as_u8());
+    // Parse daemon's protocol version from greeting: @RSYNCD: XX.Y [digests]
+    // Mirrors upstream exchange_protocols line 178: sscanf(buf, "@RSYNCD: %d.%d", ...)
+    let remote_protocol = parse_protocol_from_greeting(&greeting)?;
+
+    // Step 2: Send client version with auth digest list (upstream compat.c:832-845)
+    // For protocol 30+, client must include supported auth digests.
+    // Order follows upstream checksum.c:71-84 valid_auth_checksums_items[]
+    let client_version = format!(
+        "@RSYNCD: {}.0 sha512 sha256 sha1 md5 md4\n",
+        ProtocolVersion::NEWEST.as_u8()
+    );
     stream.write_all(client_version.as_bytes()).map_err(|e| {
         socket_error(
             "send client version to",
@@ -178,24 +268,8 @@ fn perform_daemon_handshake(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // Read handshake acknowledgment: @RSYNCD: OK
-    let mut ack = String::new();
-    reader.read_line(&mut ack).map_err(|e| {
-        socket_error(
-            "read handshake ack from",
-            request.address.socket_addr_display(),
-            e,
-        )
-    })?;
-
-    if ack.trim() != "@RSYNCD: OK" {
-        return Err(daemon_error(
-            format!("unexpected handshake response: {ack}"),
-            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-        ));
-    }
-
-    // Request the module
+    // Step 3: Send module name (upstream clientserver.c:351)
+    // This happens BEFORE waiting for @RSYNCD: OK
     let module_request = format!("{}\n", request.module);
     stream.write_all(module_request.as_bytes()).map_err(|e| {
         socket_error(
@@ -208,27 +282,529 @@ fn perform_daemon_handshake(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // Read module response
-    let mut response = String::new();
-    reader.read_line(&mut response).map_err(|e| {
+    // Step 4: Read response lines (upstream clientserver.c:357-390)
+    // Loop until we get @RSYNCD: OK, @ERROR, or @RSYNCD: EXIT
+    // Other lines are MOTD (message of the day) which we skip
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).map_err(|e| {
+            socket_error(
+                "read response from",
+                request.address.socket_addr_display(),
+                e,
+            )
+        })?;
+
+        let trimmed = line.trim();
+
+        // Handle @RSYNCD: AUTHREQD (authentication required)
+        if trimmed.starts_with("@RSYNCD: AUTHREQD ") {
+            // TODO: Implement authentication when needed
+            return Err(daemon_error(
+                "daemon requires authentication (not yet supported)",
+                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+            ));
+        }
+
+        // Success - module accepted
+        if trimmed == "@RSYNCD: OK" {
+            break;
+        }
+
+        // Server closing connection (used for module listing)
+        if trimmed == "@RSYNCD: EXIT" {
+            return Err(daemon_error(
+                "daemon closed connection",
+                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+            ));
+        }
+
+        // Error from server
+        if trimmed.starts_with("@ERROR") {
+            return Err(daemon_error(
+                trimmed.strip_prefix("@ERROR: ").unwrap_or(trimmed),
+                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+            ));
+        }
+
+        // Any other line is MOTD - skip it (upstream outputs if output_motd is set)
+    }
+
+    // Negotiate to minimum of our version and daemon's version
+    // (mirrors upstream exchange_protocols lines 211-227)
+    let our_protocol = ProtocolVersion::NEWEST.as_u8();
+    let negotiated = if our_protocol < remote_protocol.as_u8() {
+        ProtocolVersion::try_from(our_protocol).unwrap()
+    } else {
+        remote_protocol
+    };
+
+    // Success - return negotiated protocol version
+    Ok(negotiated)
+}
+
+/// Sends daemon-mode arguments to the server.
+///
+/// Mirrors upstream clientserver.c:393-405 (send_to_server).
+/// The format is: --server [--sender] <flags> . <module/path>
+/// For protocol ≥30, sends null-terminated strings.
+/// For protocol <30, sends newline-terminated strings.
+fn send_daemon_arguments(
+    stream: &mut TcpStream,
+    config: &ClientConfig,
+    request: &DaemonTransferRequest,
+    protocol: ProtocolVersion,
+    is_sender: bool,
+) -> Result<(), ClientError> {
+    // Build argument list (mirrors ssh_transfer.rs server_options)
+    let mut args = Vec::new();
+
+    // First arg is always --server (tells daemon we're using server protocol)
+    args.push("--server".to_string());
+
+    // For pull (we receive), daemon is sender, so we send --sender
+    // For push (we send), daemon is receiver, so we don't send --sender
+    if is_sender {
+        args.push("--sender".to_string());
+    }
+
+    // Build flag string with capabilities
+    let flag_string = build_server_flag_string(config);
+    if !flag_string.is_empty() {
+        args.push(flag_string);
+    }
+
+    // Add capability flags for protocol 30+ (upstream options.c:3010-3037 add_e_flags())
+    // This tells the daemon what features the client supports.
+    //
+    // Capability flags:
+    // - e. = capability prefix (. is placeholder for subprotocol version)
+    // - L = symlink time-setting support (SYMLINK_TIMES)
+    // - s = symlink iconv translation support (SYMLINK_ICONV)
+    // - f = flist I/O-error safety support (SAFE_FILE_LIST)
+    // - x = avoid xattr hardlink optimization (AVOID_XATTR_OPTIMIZATION)
+    // - C = checksum seed order fix (CHECKSUM_SEED_FIX)
+    // - I = inplace_partial behavior (INPLACE_PARTIAL_DIR)
+    // - v = varint for flist flags (VARINT_FLIST_FLAGS)
+    // - u = include uid 0 & gid 0 names (ID0_NAMES)
+    //
+    // NOTE: 'i' (INC_RECURSE) is NOT included because we send a complete
+    // file list in one batch. With INC_RECURSE, the daemon expects separate
+    // file lists for each directory level, which we don't implement yet.
+    if protocol.as_u8() >= 30 {
+        args.push("-e.LsfxCIvu".to_string());
+    }
+
+    // Add dummy argument (upstream requirement - represents CWD)
+    args.push(".".to_string());
+
+    // Add module path
+    let module_path = format!("{}/{}", request.module, request.path);
+    args.push(module_path);
+
+    // Send arguments with appropriate terminator
+    let terminator = if protocol.as_u8() >= 30 { b'\0' } else { b'\n' };
+
+    for arg in &args {
+        stream.write_all(arg.as_bytes()).map_err(|e| {
+            socket_error("send argument to", request.address.socket_addr_display(), e)
+        })?;
+        stream.write_all(&[terminator]).map_err(|e| {
+            socket_error(
+                "send terminator to",
+                request.address.socket_addr_display(),
+                e,
+            )
+        })?;
+    }
+
+    // Send final empty string to signal end
+    stream.write_all(&[terminator]).map_err(|e| {
         socket_error(
-            "read module response from",
+            "send final terminator to",
             request.address.socket_addr_display(),
             e,
         )
     })?;
 
-    // Check for errors
-    if response.starts_with("@ERROR") {
-        return Err(daemon_error(
-            response
-                .trim()
-                .strip_prefix("@ERROR: ")
-                .unwrap_or(&response),
-            CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-        ));
+    stream.flush().map_err(|e| {
+        socket_error(
+            "flush arguments to",
+            request.address.socket_addr_display(),
+            e,
+        )
+    })?;
+
+    Ok(())
+}
+
+/// Executes a pull transfer (remote → local).
+///
+/// In a pull transfer, the local side acts as the receiver and the remote side
+/// acts as the sender/generator. We reuse the server receiver infrastructure.
+///
+/// Protocol sequence (mirrors upstream client_run for !am_sender):
+/// 1. Protocol already negotiated via @RSYNCD text exchange (not binary 4-byte)
+/// 2. setup_protocol() does compat flags + checksum seed (NO version exchange)
+/// 3. io_start_multiplex_out() - activates output multiplex
+/// 4. send_filter_list() - we send, daemon receives (after multiplex activation)
+/// 5. File list exchange and transfer
+fn run_pull_transfer(
+    config: &ClientConfig,
+    mut stream: TcpStream,
+    local_paths: &[String],
+    protocol: ProtocolVersion,
+) -> Result<ClientSummary, ClientError> {
+    // Disable Nagle's algorithm to ensure data is sent immediately.
+    // Without this, small writes may be buffered and not reach the daemon
+    // before we start reading, causing a deadlock.
+    stream
+        .set_nodelay(true)
+        .map_err(|e| socket_error("set nodelay on", "daemon socket", e))?;
+
+    // Build filter rules to pass to server config
+    // (will be sent after multiplex activation in run_server_with_handshake)
+    let filter_rules = build_wire_format_rules(config.filter_rules())?;
+
+    // Build handshake result with negotiated protocol
+    // Protocol was negotiated via @RSYNCD text exchange, not binary 4-byte exchange.
+    // setup_protocol() will skip the binary exchange because remote_protocol != 0
+    // (mirrors upstream compat.c:599: if (remote_protocol == 0) { ... })
+    let handshake = HandshakeResult {
+        protocol,
+        buffered: Vec::new(),
+        compat_exchanged: false, // setup_protocol() will do compat exchange
+        client_args: None,
+        io_timeout: None,
+        negotiated_algorithms: None, // Will be populated by setup_protocol()
+        compat_flags: None,          // Will be populated by setup_protocol()
+        checksum_seed: 0,            // Will be populated by setup_protocol()
+    };
+
+    // Build server config for receiver role with filter rules
+    let server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
+
+    // Run server with pre-negotiated handshake
+    let server_stats =
+        run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
+
+    // Convert server stats to client summary
+    Ok(convert_server_stats_to_summary(server_stats))
+}
+
+/// Executes a push transfer (local → remote).
+///
+/// In a push transfer, the local side acts as the sender/generator and the
+/// remote side acts as the receiver. We reuse the server generator infrastructure.
+///
+/// Protocol sequence (mirrors upstream client_run for am_sender):
+/// 1. Protocol already negotiated via @RSYNCD text exchange (not binary 4-byte)
+/// 2. setup_protocol() does compat flags + checksum seed (NO version exchange)
+/// 3. io_start_multiplex_out() - activates output multiplex
+/// 4. send_filter_list() - we send, daemon receives (after multiplex activation)
+/// 5. File list exchange and transfer
+fn run_push_transfer(
+    config: &ClientConfig,
+    mut stream: TcpStream,
+    local_paths: &[String],
+    protocol: ProtocolVersion,
+) -> Result<ClientSummary, ClientError> {
+    // Disable Nagle's algorithm to ensure data is sent immediately.
+    // Without this, small writes may be buffered and not reach the daemon
+    // before we start reading, causing a deadlock.
+    stream
+        .set_nodelay(true)
+        .map_err(|e| socket_error("set nodelay on", "daemon socket", e))?;
+
+    // Build filter rules to pass to server config
+    // (will be sent after multiplex activation in run_server_with_handshake)
+    let filter_rules = build_wire_format_rules(config.filter_rules())?;
+
+    // Build handshake result with negotiated protocol
+    // Protocol was negotiated via @RSYNCD text exchange, not binary 4-byte exchange.
+    // setup_protocol() will skip the binary exchange because remote_protocol != 0
+    // (mirrors upstream compat.c:599: if (remote_protocol == 0) { ... })
+    let handshake = HandshakeResult {
+        protocol,
+        buffered: Vec::new(),
+        compat_exchanged: false, // setup_protocol() will do compat exchange
+        client_args: None,
+        io_timeout: None,
+        negotiated_algorithms: None, // Will be populated by setup_protocol()
+        compat_flags: None,          // Will be populated by setup_protocol()
+        checksum_seed: 0,            // Will be populated by setup_protocol()
+    };
+
+    // Build server config for generator (sender) role with filter rules
+    let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
+
+    // Run server with pre-negotiated handshake
+    let server_stats =
+        run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
+
+    // Convert server stats to client summary
+    Ok(convert_server_stats_to_summary(server_stats))
+}
+
+/// Converts server-side statistics to a client summary.
+///
+/// Maps the statistics returned by the server (receiver or generator) into the
+/// format expected by the client summary.
+fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientSummary {
+    use crate::server::ServerStats;
+    use engine::local_copy::LocalCopySummary;
+
+    let summary = match stats {
+        ServerStats::Receiver(transfer_stats) => {
+            // For pull transfers: we received files from remote
+            LocalCopySummary::from_receiver_stats(
+                transfer_stats.files_listed,
+                transfer_stats.files_transferred,
+                transfer_stats.bytes_received,
+            )
+        }
+        ServerStats::Generator(generator_stats) => {
+            // For push transfers: we sent files to remote
+            LocalCopySummary::from_generator_stats(
+                generator_stats.files_listed,
+                generator_stats.files_transferred,
+                generator_stats.bytes_sent,
+            )
+        }
+    };
+
+    ClientSummary::from_summary(summary)
+}
+
+/// Helper function to run server over a TCP stream with pre-negotiated handshake.
+///
+/// This is used for daemon client mode where we've already done the binary protocol
+/// version exchange in `perform_client_protocol_exchange`. Calls `run_server_with_handshake`
+/// directly, skipping the duplicate version exchange.
+fn run_server_with_handshake_over_stream(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    stream: &mut TcpStream,
+) -> Result<crate::server::ServerStats, ClientError> {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Tracing wrapper to log all writes
+    struct TracingWriter<'a> {
+        inner: &'a mut TcpStream,
+        write_count: &'static AtomicUsize,
     }
 
-    // Success - module accepted
-    Ok(())
+    impl<'a> Write for TracingWriter<'a> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let count = self.write_count.fetch_add(1, Ordering::SeqCst);
+            let _ = std::fs::write(
+                format!("/tmp/wire_WRITE_{:04}", count),
+                format!(
+                    "len={} bytes={:02x?}",
+                    buf.len(),
+                    &buf[..buf.len().min(200)]
+                ),
+            );
+            self.inner.write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            let count = self.write_count.load(Ordering::SeqCst);
+            let _ = std::fs::write(format!("/tmp/wire_FLUSH_{:04}", count), "1");
+            self.inner.flush()
+        }
+    }
+
+    static WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    WRITE_COUNT.store(0, Ordering::SeqCst);
+
+    // SAFETY: We create two mutable references to the same stream, which is safe
+    // because TcpStream internally manages separate read/write buffers.
+    let stream_ptr = stream as *mut TcpStream;
+    let result = unsafe {
+        let stdin: &mut dyn Read = &mut *stream_ptr;
+        let mut tracing_writer = TracingWriter {
+            inner: &mut *stream_ptr,
+            write_count: &WRITE_COUNT,
+        };
+        crate::server::run_server_with_handshake(config, handshake, stdin, &mut tracing_writer)
+    };
+
+    result.map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
+}
+
+/// Builds server configuration for receiver role (pull transfer).
+fn build_server_config_for_receiver(
+    config: &ClientConfig,
+    local_paths: &[String],
+    filter_rules: Vec<FilterRuleWireFormat>,
+) -> Result<ServerConfig, ClientError> {
+    // Build flag string from client config
+    let flag_string = build_server_flag_string(config);
+
+    // Receiver uses destination path as args
+    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+
+    let mut server_config =
+        ServerConfig::from_flag_string_and_args(ServerRole::Receiver, flag_string, args)
+            .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
+
+    // Set client_mode since we're a daemon client, not a server.
+    // This prevents the context from trying to read filter list
+    // (since we'll send it to the daemon after multiplex activation).
+    server_config.client_mode = true;
+    server_config.filter_rules = filter_rules;
+
+    Ok(server_config)
+}
+
+/// Builds server configuration for generator role (push transfer).
+fn build_server_config_for_generator(
+    config: &ClientConfig,
+    local_paths: &[String],
+    filter_rules: Vec<FilterRuleWireFormat>,
+) -> Result<ServerConfig, ClientError> {
+    // Build flag string from client config
+    let flag_string = build_server_flag_string(config);
+
+    // Generator uses source paths as args
+    let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
+
+    let mut server_config =
+        ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
+            .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
+
+    // Set client_mode since we're a daemon client, not a server.
+    // This prevents the context from trying to read filter list
+    // (since we'll send it to the daemon after multiplex activation).
+    server_config.client_mode = true;
+    server_config.filter_rules = filter_rules;
+
+    Ok(server_config)
+}
+
+/// Builds the compact server flag string from client configuration.
+///
+/// This mirrors ssh_transfer.rs:build_server_flag_string().
+fn build_server_flag_string(config: &ClientConfig) -> String {
+    let mut flags = String::from("-");
+
+    // Transfer flags (order matches upstream server_options())
+    if config.links() {
+        flags.push('l');
+    }
+    if config.preserve_owner() {
+        flags.push('o');
+    }
+    if config.preserve_group() {
+        flags.push('g');
+    }
+    if config.preserve_devices() || config.preserve_specials() {
+        flags.push('D');
+    }
+    if config.preserve_times() {
+        flags.push('t');
+    }
+    if config.preserve_permissions() {
+        flags.push('p');
+    }
+    if config.recursive() {
+        flags.push('r');
+    }
+    if config.compress() {
+        flags.push('z');
+    }
+    if config.checksum() {
+        flags.push('c');
+    }
+    if config.preserve_hard_links() {
+        flags.push('H');
+    }
+    if config.preserve_acls() {
+        flags.push('A');
+    }
+    if config.preserve_xattrs() {
+        flags.push('X');
+    }
+    if config.numeric_ids() {
+        flags.push('n');
+    }
+    if config.delete_mode().is_enabled() || config.delete_excluded() {
+        flags.push('d');
+    }
+    if config.whole_file() {
+        flags.push('W');
+    }
+    if config.sparse() {
+        flags.push('S');
+    }
+    if config.one_file_system() {
+        flags.push('x');
+    }
+    if config.relative_paths() {
+        flags.push('R');
+    }
+    if config.partial() {
+        flags.push('P');
+    }
+    if config.update() {
+        flags.push('u');
+    }
+
+    flags
+}
+
+/// Converts client filter rules to wire format.
+///
+/// Maps FilterRuleSpec (client-side representation) to FilterRuleWireFormat
+/// (protocol wire representation) for transmission to the remote server.
+fn build_wire_format_rules(
+    client_rules: &[FilterRuleSpec],
+) -> Result<Vec<FilterRuleWireFormat>, ClientError> {
+    let mut wire_rules = Vec::new();
+
+    for spec in client_rules {
+        // Convert FilterRuleKind to RuleType
+        let rule_type = match spec.kind() {
+            FilterRuleKind::Include => RuleType::Include,
+            FilterRuleKind::Exclude => RuleType::Exclude,
+            FilterRuleKind::Clear => RuleType::Clear,
+            FilterRuleKind::Protect => RuleType::Protect,
+            FilterRuleKind::Risk => RuleType::Risk,
+            FilterRuleKind::DirMerge => RuleType::DirMerge,
+            FilterRuleKind::ExcludeIfPresent => {
+                // ExcludeIfPresent is a client-side-only rule type, skip it
+                continue;
+            }
+        };
+
+        // Build wire format rule
+        let mut wire_rule = FilterRuleWireFormat {
+            rule_type,
+            pattern: spec.pattern().to_string(),
+            anchored: spec.pattern().starts_with('/'),
+            directory_only: spec.pattern().ends_with('/'),
+            no_inherit: false,
+            cvs_exclude: false,
+            word_split: false,
+            exclude_from_merge: false,
+            xattr_only: spec.is_xattr_only(),
+            sender_side: spec.applies_to_sender(),
+            receiver_side: spec.applies_to_receiver(),
+            perishable: spec.is_perishable(),
+            negate: false,
+        };
+
+        // Handle dir_merge options if present
+        if let Some(options) = spec.dir_merge_options() {
+            wire_rule.no_inherit = !options.inherit_rules();
+            wire_rule.word_split = options.uses_whitespace();
+            wire_rule.exclude_from_merge = options.excludes_self();
+        }
+
+        wire_rules.push(wire_rule);
+    }
+
+    Ok(wire_rules)
 }

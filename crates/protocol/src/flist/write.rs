@@ -115,30 +115,38 @@ impl FileListWriter {
             xflags |= XMIT_LONG_NAME as u32;
         }
 
+        // Check if varint encoding is enabled via VARINT_FLIST_FLAGS compat flag
+        // IMPORTANT: Use compat flag, NOT protocol version alone!
+        //
+        // The server only sets VARINT_FLIST_FLAGS if the client advertises 'v' capability.
+        // A client could connect with protocol 30+ but WITHOUT 'v', in which case
+        // single-byte flags must be used. This is critical for daemon client interop.
+        //
+        // Upstream flist.c:send_file_entry() uses xfer_flags_as_varint which is set
+        // based on the negotiated compat flags (compat.c:775).
+        let use_varint_flags = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
+
         // Ensure xflags is non-zero - upstream flist.c:541-547
-        // For protocol 30+ with varint encoding, use XMIT_EXTENDED_FLAGS if xflags would be zero
+        // For varint encoding, use XMIT_EXTENDED_FLAGS if xflags would be zero
         let xflags_to_write = if xflags == 0 {
             XMIT_EXTENDED_FLAGS as u32
         } else {
             xflags
         };
 
-        // Write xflags as varint for protocol 30+ (upstream flist.c:549-559)
-        //
-        // VARINT_FLIST_FLAGS compatibility flag (bit 7, 0x80) controls whether flags
-        // are encoded as varints or single bytes. Upstream rsync automatically sets
-        // this flag for all protocol 30+ sessions during capability negotiation
-        // (compat.c:setup_protocol), making it equivalent to a protocol version check.
-        //
-        // We mirror upstream by checking protocol >= 30 rather than testing the flag,
-        // because the flag is always present for these protocols and not checking it
-        // matches upstream's actual behavior (they also use protocol version checks
-        // in performance-critical paths like flist.c:send_file_entry).
-        if self.protocol.as_u8() >= 30 {
+        // Write xflags (upstream flist.c:549-559)
+        if use_varint_flags {
             write_varint(writer, xflags_to_write as i32)?;
         } else {
-            // Older protocol support (not used for protocol 32, but included for completeness)
+            // Single-byte encoding for protocol < 30 or no VARINT_FLIST_FLAGS
             writer.write_all(&[xflags_to_write as u8])?;
+
+            // Write extended flags byte if present (protocol 28+, non-varint mode)
+            if self.protocol.as_u8() >= 28 && (xflags_to_write & XMIT_EXTENDED_FLAGS as u32) != 0 {
+                writer.write_all(&[((xflags_to_write >> 8) & 0xFF) as u8])?;
+            }
         }
 
         // Write name compression info (upstream flist.c:560-569)
@@ -226,18 +234,18 @@ impl FileListWriter {
             return Ok(());
         }
 
-        if let Some(error) = io_error {
-            if use_safe_inc_flist {
-                // Send error marker with code (upstream flist.c:send_end_of_flist)
-                let error_flags =
-                    (XMIT_EXTENDED_FLAGS as i32) | ((XMIT_IO_ERROR_ENDLIST as i32) << 8);
-                write_varint(writer, error_flags)?;
-                write_varint(writer, error)?;
-                return Ok(());
-            }
-            // If not in safe mode, caller should have avoided sending error or
-            // handled it differently (upstream would call fatal_unsafe_io_error).
-            // We fall through to write normal end marker.
+        if let Some(error) = io_error
+            && use_safe_inc_flist
+        {
+            // Send error marker with code (upstream flist.c:send_end_of_flist)
+            // Uses write_shortint for the marker (2 bytes little-endian), then varint for error
+            // write_shortint(f, XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST);
+            // write_varint(f, io_error);
+            let marker_lo = XMIT_EXTENDED_FLAGS;
+            let marker_hi = XMIT_IO_ERROR_ENDLIST;
+            writer.write_all(&[marker_lo, marker_hi])?;
+            write_varint(writer, error)?;
+            return Ok(());
         }
 
         // Normal end of list marker (legacy mode)
@@ -380,15 +388,22 @@ mod tests {
         assert_ne!(buf, vec![0u8], "should not write simple end marker");
         assert!(buf.len() > 1, "should have error marker and error code");
 
-        // Verify error marker format:
-        // First varint should be XMIT_EXTENDED_FLAGS | (XMIT_IO_ERROR_ENDLIST << 8)
-        use crate::varint::decode_varint;
-        let cursor = &buf[..];
-        let (flags_value, cursor) = decode_varint(cursor).unwrap();
-        let expected_marker = (XMIT_EXTENDED_FLAGS as i32) | ((XMIT_IO_ERROR_ENDLIST as i32) << 8);
-        assert_eq!(flags_value, expected_marker);
+        // Verify error marker format (non-varint mode):
+        // First byte: XMIT_EXTENDED_FLAGS (0x04)
+        // Second byte: XMIT_IO_ERROR_ENDLIST (0x10)
+        // Then varint error code
+        assert_eq!(
+            buf[0], XMIT_EXTENDED_FLAGS,
+            "first byte should be XMIT_EXTENDED_FLAGS"
+        );
+        assert_eq!(
+            buf[1], XMIT_IO_ERROR_ENDLIST,
+            "second byte should be XMIT_IO_ERROR_ENDLIST"
+        );
 
-        // Second varint should be the error code
+        // Third varint should be the error code
+        use crate::varint::decode_varint;
+        let cursor = &buf[2..];
         let (error_code, _) = decode_varint(cursor).unwrap();
         assert_eq!(error_code, 23);
     }
@@ -414,14 +429,16 @@ mod tests {
         let mut buf = Vec::new();
         writer.write_end(&mut buf, Some(42)).unwrap();
 
-        // Protocol 31+ automatically enables safe mode
+        // Protocol 31+ automatically enables safe mode (uses 2-byte marker format)
         assert_ne!(buf, vec![0u8]);
         assert!(buf.len() > 1);
 
-        // Verify error code
+        // Verify marker format and error code
+        assert_eq!(buf[0], XMIT_EXTENDED_FLAGS);
+        assert_eq!(buf[1], XMIT_IO_ERROR_ENDLIST);
+
         use crate::varint::decode_varint;
-        let cursor = &buf[..];
-        let (_, cursor) = decode_varint(cursor).unwrap(); // Skip marker
+        let cursor = &buf[2..]; // Skip 2-byte marker
         let (error_code, _) = decode_varint(cursor).unwrap();
         assert_eq!(error_code, 42);
     }

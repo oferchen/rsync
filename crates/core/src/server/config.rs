@@ -5,6 +5,7 @@ use std::ffi::OsString;
 
 use compress::zlib::CompressionLevel;
 use protocol::ProtocolVersion;
+use protocol::filters::FilterRuleWireFormat;
 
 use super::flags::ParsedServerFlags;
 use super::role::ServerRole;
@@ -26,6 +27,24 @@ pub struct ServerConfig {
     /// When None, defaults to level 6 (upstream default).
     /// Sourced from daemon configuration or environment.
     pub compression_level: Option<CompressionLevel>,
+    /// When true, indicates client-side operation (daemon client mode).
+    ///
+    /// In client mode:
+    /// - Filter list is SENT to the remote server, not read from it
+    /// - The contexts skip reading filter list since the client already sent it
+    ///
+    /// This is used when connecting to a daemon as a client, where our code
+    /// sends the filter list to the daemon (which reads it), and then runs
+    /// server contexts locally that should not try to read filter list again.
+    pub client_mode: bool,
+    /// Filter rules to send to remote daemon (client_mode only).
+    ///
+    /// When `client_mode` is true, these rules are sent to the daemon after
+    /// multiplex activation and before the transfer begins. The daemon uses
+    /// these rules to filter file list generation.
+    ///
+    /// This is empty for normal server mode (where we receive filter list).
+    pub filter_rules: Vec<FilterRuleWireFormat>,
 }
 
 impl ServerConfig {
@@ -57,6 +76,8 @@ impl ServerConfig {
             flags,
             args,
             compression_level: None,
+            client_mode: false,
+            filter_rules: Vec::new(),
         })
     }
 }

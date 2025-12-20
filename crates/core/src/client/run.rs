@@ -230,32 +230,32 @@ fn run_client_internal(
     let summary = summary.map_err(map_local_copy_error)?;
 
     // Finalize batch file if batch mode was active
-    if let Some(ref writer_arc) = batch_writer {
-        if let Some(batch_cfg) = config.batch_config() {
-            // Finalize and close the batch file
-            {
-                let mut writer = writer_arc.lock().unwrap();
-                if let Err(e) = writer.flush() {
-                    use crate::message::Role;
-                    use crate::rsync_error;
-                    let msg = format!("failed to flush batch file: {e}");
-                    return Err(ClientError::new(
-                        1,
-                        rsync_error!(1, "{}", msg).with_role(Role::Client),
-                    ));
-                }
-            } // Drop the lock and BatchWriter will be cleaned up by Drop impl
-
-            // Generate the .sh replay script
-            if let Err(e) = engine::batch::script::generate_script(batch_cfg) {
+    if let Some(ref writer_arc) = batch_writer
+        && let Some(batch_cfg) = config.batch_config()
+    {
+        // Finalize and close the batch file
+        {
+            let mut writer = writer_arc.lock().unwrap();
+            if let Err(e) = writer.flush() {
                 use crate::message::Role;
                 use crate::rsync_error;
-                let msg = format!("failed to generate batch script: {e}");
+                let msg = format!("failed to flush batch file: {e}");
                 return Err(ClientError::new(
                     1,
                     rsync_error!(1, "{}", msg).with_role(Role::Client),
                 ));
             }
+        } // Drop the lock and BatchWriter will be cleaned up by Drop impl
+
+        // Generate the .sh replay script
+        if let Err(e) = engine::batch::script::generate_script(batch_cfg) {
+            use crate::message::Role;
+            use crate::rsync_error;
+            let msg = format!("failed to generate batch script: {e}");
+            return Err(ClientError::new(
+                1,
+                rsync_error!(1, "{}", msg).with_role(Role::Client),
+            ));
         }
     }
 

@@ -193,10 +193,10 @@ pub(crate) fn copy_directory_recursive(
         }
 
         if context.mode().is_dry_run() {
-            if !context.implied_dirs_enabled() {
-                if let Some(parent) = destination.parent() {
-                    context.prepare_parent_directory(parent)?;
-                }
+            if !context.implied_dirs_enabled()
+                && let Some(parent) = destination.parent()
+            {
+                context.prepare_parent_directory(parent)?;
             }
             directory_ready.set(true);
         } else {
@@ -218,17 +218,17 @@ pub(crate) fn copy_directory_recursive(
             created_directory_on_disk = true;
         }
 
-        if pending_record.is_none() {
-            if let Some((ref rel_path, ref snapshot)) = metadata_record {
-                pending_record = Some(LocalCopyRecord::new(
-                    rel_path.clone(),
-                    LocalCopyAction::DirectoryCreated,
-                    0,
-                    Some(snapshot.len()),
-                    Duration::default(),
-                    Some(snapshot.clone()),
-                ));
-            }
+        if pending_record.is_none()
+            && let Some((ref rel_path, ref snapshot)) = metadata_record
+        {
+            pending_record = Some(LocalCopyRecord::new(
+                rel_path.clone(),
+                LocalCopyAction::DirectoryCreated,
+                0,
+                Some(snapshot.len()),
+                Duration::default(),
+                Some(snapshot.clone()),
+            ));
         }
 
         Ok(())

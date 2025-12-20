@@ -267,6 +267,45 @@ This document defines the internal actors (“agents”), their responsibilities
 
 ---
 
+## Development Workflow Principles
+
+### Upstream Rsync as the Source of Truth
+
+All implementations **must** mirror upstream rsync behaviour:
+
+- **Study the C source**: Before implementing a feature, read the corresponding
+  upstream rsync C code (e.g., `options.c` for CLI, `io.c` for I/O, `flist.c`
+  for file lists). The C code is authoritative.
+- **Code over documentation**: When upstream docs and code disagree, follow the
+  code. Document any discrepancies you discover.
+- **Test against upstream**: Run interop tests with upstream rsync versions
+  (3.0.9, 3.1.3, 3.4.1) to verify wire-level compatibility.
+- **Preserve semantics exactly**: Exit codes, error messages, progress output,
+  and option behaviour must match upstream unless there's a documented reason.
+
+### Parallel Task Execution
+
+When possible, work on **multiple independent tasks concurrently**:
+
+- Launch exploration/research agents in parallel when investigating different
+  areas of the codebase
+- Use parallel tool calls for independent file reads, searches, or tests
+- Batch related changes across files when they don't depend on each other
+- Run independent build/test commands concurrently
+
+This maximises throughput and reduces total time to completion.
+
+### Documentation Maintenance
+
+Keep documentation synchronized with code:
+
+- Update CLAUDE.md when adding new modules, conventions, or patterns
+- Ensure rustdoc stays accurate — stale doc comments are worse than none
+- When behaviour changes, update all relevant docs in the same commit
+- Prefer inline rustdoc over separate markdown when documenting APIs
+
+---
+
 ## Terminology Mapping: Upstream Rsync ↔ oc-rsync
 
 This section cross-references upstream rsync C source with the Rust implementation to aid contributors familiar with the original codebase.
@@ -656,7 +695,46 @@ New work touching local copy must follow this structure.
 
 ## Lint & Hygiene Agents
 
-### 2.2 `enforce_limits` Agent
+### 2.1 File Header Convention
+
+Every Rust source file **must** include a module-level doc comment on the first
+line indicating the file's path relative to the codebase root:
+
+```rust
+//! crates/core/src/server/generator.rs
+```
+
+This convention:
+- Enables quick identification of files when viewing code snippets
+- Helps with navigation when reviewing diffs or logs
+- Maintains consistency across the codebase
+
+### 2.2 Comment Hygiene with Rustdoc
+
+All comments must follow rustdoc conventions and provide genuine value:
+
+- **Use `///` for public API documentation** — Explain what, why, and how
+- **Use `//!` for module-level documentation** — Describe the module's purpose
+- **Use `//` sparingly for inline implementation notes** — Only when the code
+  isn't self-explanatory
+- **Delete unhelpful comments** — Remove comments that merely restate the code,
+  are outdated, or add no insight
+- **Prefer self-documenting code** — Use descriptive names, extract functions,
+  and structure code to minimize comment needs
+
+Bad (restatement):
+```rust
+// Increment counter
+counter += 1;
+```
+
+Good (explains why):
+```rust
+// Compensate for zero-indexed protocol version in legacy clients
+counter += 1;
+```
+
+### 2.4 `enforce_limits` Agent
 
 * **Script:** `tools/enforce_limits.sh`
 
@@ -682,7 +760,7 @@ New work touching local copy must follow this structure.
   cargo run -p xtask -- enforce-limits
   ```
 
-### 2.4 `no_placeholders` Agent
+### 2.5 `no_placeholders` Agent
 
 * **Script:** `tools/no_placeholders.sh`
 

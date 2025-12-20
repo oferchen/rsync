@@ -218,7 +218,17 @@ pub struct NegotiationResult {
 /// use std::io::{stdin, stdout};
 ///
 /// let protocol = ProtocolVersion::try_from(32)?;
-/// let result = negotiate_capabilities(protocol, &mut stdin(), &mut stdout(), true)?;
+/// // Arguments: protocol, stdin, stdout, do_negotiation, send_compression,
+/// //            is_daemon_mode, is_server
+/// let result = negotiate_capabilities(
+///     protocol,
+///     &mut stdin(),
+///     &mut stdout(),
+///     true,   // do_negotiation
+///     false,  // send_compression
+///     false,  // is_daemon_mode (SSH mode)
+///     false,  // is_server (client side)
+/// )?;
 /// println!("Using checksum: {:?}, compression: {:?}",
 ///          result.checksum, result.compression);
 /// # Ok::<(), std::io::Error>(())
@@ -286,19 +296,25 @@ pub fn negotiate_capabilities(
     // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
     // Uses vstring format (NOT varint) - see write_vstring documentation
     let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
+    let _ = std::fs::write("/tmp/cap_SEND_CHECKSUM_LIST", &checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
     // Send compression list only if compression is enabled
     if send_compression {
         let compression_list = SUPPORTED_COMPRESSIONS.join(" ");
+        let _ = std::fs::write("/tmp/cap_SEND_COMPRESS_LIST", &compression_list);
         write_vstring(stdout, &compression_list)?;
     }
 
+    let _ = std::fs::write("/tmp/cap_BEFORE_FLUSH", "1");
     stdout.flush()?;
+    let _ = std::fs::write("/tmp/cap_AFTER_FLUSH", "1");
 
     // Step 2: READ the remote side's algorithm lists (upstream compat.c:546-564)
     // Uses vstring format (NOT varint) - see read_vstring documentation
+    let _ = std::fs::write("/tmp/cap_BEFORE_READ_CHECKSUM", "1");
     let remote_checksum_list = read_vstring(stdin)?;
+    let _ = std::fs::write("/tmp/cap_READ_CHECKSUM_LIST", &remote_checksum_list);
 
     let remote_compression_list = if send_compression {
         let list = read_vstring(stdin)?;

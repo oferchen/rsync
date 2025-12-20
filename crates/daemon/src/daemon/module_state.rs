@@ -250,11 +250,10 @@ pub(crate) struct ConnectionLimiter {
 
 impl ConnectionLimiter {
     pub(crate) fn open(path: PathBuf) -> Result<Self, DaemonError> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty() {
                 fs::create_dir_all(parent).map_err(|error| lock_file_error(&path, error))?;
             }
-        }
 
         let file = OpenOptions::new()
             .create(true)
@@ -336,11 +335,10 @@ impl ConnectionLimiter {
         let mut counts = BTreeMap::new();
         for line in contents.lines() {
             let mut parts = line.split_whitespace();
-            if let (Some(name), Some(value)) = (parts.next(), parts.next()) {
-                if let Ok(parsed) = value.parse::<u32>() {
+            if let (Some(name), Some(value)) = (parts.next(), parts.next())
+                && let Ok(parsed) = value.parse::<u32>() {
                     counts.insert(name.to_string(), parsed);
                 }
-            }
         }
 
         Ok(counts)

@@ -123,31 +123,27 @@ impl FileEntry {
             write_varint(writer, self.mode as i32)?;
         }
 
-        if !same_uid {
-            if let Some(uid) = self.uid {
-                write_varint(writer, uid as i32)?;
-            }
+        if !same_uid && let Some(uid) = self.uid {
+            write_varint(writer, uid as i32)?;
         }
 
-        if !same_gid {
-            if let Some(gid) = self.gid {
-                write_varint(writer, gid as i32)?;
-            }
+        if !same_gid && let Some(gid) = self.gid {
+            write_varint(writer, gid as i32)?;
         }
 
-        if self.file_type == FileType::Symlink {
-            if let Some(ref target) = self.symlink_target {
-                let target_bytes = target.as_bytes();
-                write_varint(writer, target_bytes.len() as i32)?;
-                writer.write_all(target_bytes)?;
-            }
+        if self.file_type == FileType::Symlink
+            && let Some(ref target) = self.symlink_target
+        {
+            let target_bytes = target.as_bytes();
+            write_varint(writer, target_bytes.len() as i32)?;
+            writer.write_all(target_bytes)?;
         }
 
-        if matches!(self.file_type, FileType::CharDevice | FileType::BlockDevice) {
-            if let (Some(major), Some(minor)) = (self.dev_major, self.dev_minor) {
-                write_varint(writer, major as i32)?;
-                write_varint(writer, minor as i32)?;
-            }
+        if matches!(self.file_type, FileType::CharDevice | FileType::BlockDevice)
+            && let (Some(major), Some(minor)) = (self.dev_major, self.dev_minor)
+        {
+            write_varint(writer, major as i32)?;
+            write_varint(writer, minor as i32)?;
         }
 
         Ok(())
