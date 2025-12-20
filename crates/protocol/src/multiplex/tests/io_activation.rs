@@ -4,7 +4,7 @@ use std::io::{self, Cursor, Read, Write};
 #[test]
 fn all_message_codes_round_trip_successfully() {
     for &code in MessageCode::all() {
-        let payload = format!("test payload for {:?}", code);
+        let payload = format!("test payload for {code:?}");
         let mut buffer = Vec::new();
         send_msg(&mut buffer, code, payload.as_bytes()).expect("send succeeds");
 
@@ -68,8 +68,7 @@ fn recv_msg_rejects_all_invalid_message_codes() {
         assert_eq!(
             err.kind(),
             io::ErrorKind::InvalidData,
-            "code {} should be rejected",
-            invalid_code
+            "code {invalid_code} should be rejected"
         );
     }
 }
@@ -285,8 +284,7 @@ fn recv_msg_reports_partial_header_read_as_unexpected_eof() {
         assert_eq!(
             err.kind(),
             io::ErrorKind::UnexpectedEof,
-            "truncation at byte {} should report UnexpectedEof",
-            truncate_at
+            "truncation at byte {truncate_at} should report UnexpectedEof"
         );
     }
 }
@@ -342,9 +340,7 @@ fn recv_msg_detects_payload_shorter_than_header_claims() {
             assert_eq!(
                 err.kind(),
                 io::ErrorKind::UnexpectedEof,
-                "claimed={} actual={} should report UnexpectedEof",
-                claimed_len,
-                actual_len
+                "claimed={claimed_len} actual={actual_len} should report UnexpectedEof"
             );
         }
     }
@@ -372,7 +368,7 @@ fn recv_msg_into_detects_payload_shorter_than_header_claims() {
 #[test]
 fn send_frame_matches_send_msg_for_all_message_codes() {
     for &code in MessageCode::all() {
-        let payload = format!("test-{:?}", code).into_bytes();
+        let payload = format!("test-{code:?}").into_bytes();
         let frame = MessageFrame::new(code, payload.clone()).expect("valid frame");
 
         let mut via_send_msg = Vec::new();
@@ -383,8 +379,7 @@ fn send_frame_matches_send_msg_for_all_message_codes() {
 
         assert_eq!(
             via_send_frame, via_send_msg,
-            "send_frame and send_msg should produce identical output for {:?}",
-            code
+            "send_frame and send_msg should produce identical output for {code:?}"
         );
     }
 }
