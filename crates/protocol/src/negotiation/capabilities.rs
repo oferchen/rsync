@@ -624,4 +624,179 @@ mod tests {
                 .contains("unsupported compression algorithm")
         );
     }
+
+    // ========================================================================
+    // Tests for do_negotiation parameter and daemon/SSH mode variations
+    // ========================================================================
+
+    #[test]
+    fn test_negotiate_do_negotiation_false_uses_defaults_no_io() {
+        // When do_negotiation=false, should return defaults without any I/O
+        // This happens when client lacks VARINT_FLIST_FLAGS capability
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdin = &b""[..]; // Empty input - should not be read
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            false, // do_negotiation = false
+            true,  // send_compression
+            false, // is_daemon_mode
+            true,  // is_server
+        )
+        .unwrap();
+
+        // Should use MD5 (protocol 30+ default) and None (no compression)
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(result.compression, CompressionAlgorithm::None);
+        // No I/O should have occurred
+        assert!(
+            stdout.is_empty(),
+            "no data should be sent when do_negotiation=false"
+        );
+    }
+
+    #[test]
+    fn test_negotiate_compression_disabled() {
+        // When send_compression=false, should only exchange checksum list
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Only provide checksum list, no compression list
+        let client_response = b"\x03md5"; // Just "md5", no compression
+        let mut stdin = &client_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            false, // send_compression = false
+            false, // is_daemon_mode
+            true,  // is_server
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        // Compression should be None when not negotiated
+        assert_eq!(result.compression, CompressionAlgorithm::None);
+
+        // Should have sent checksum list but not compression list
+        let output = String::from_utf8_lossy(&stdout);
+        assert!(output.contains("md5"), "should send checksum list");
+        // We can't easily verify compression wasn't sent without parsing,
+        // but the test passing means stdin wasn't over-read
+    }
+
+    #[test]
+    fn test_negotiate_daemon_mode_server() {
+        // Daemon mode server (is_daemon_mode=true, is_server=true)
+        // Currently still bidirectional, but parameters should be accepted
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let client_response = b"\x03md5\x04zlib";
+        let mut stdin = &client_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true, // do_negotiation
+            true, // send_compression
+            true, // is_daemon_mode = true
+            true, // is_server = true
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    }
+
+    #[test]
+    fn test_negotiate_daemon_mode_client() {
+        // Daemon mode client (is_daemon_mode=true, is_server=false)
+        // Currently still bidirectional, but parameters should be accepted
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let client_response = b"\x03md5\x04zlib";
+        let mut stdin = &client_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            true,  // send_compression
+            true,  // is_daemon_mode = true
+            false, // is_server = false
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    }
+
+    #[test]
+    fn test_negotiate_ssh_mode() {
+        // SSH mode (is_daemon_mode=false) - bidirectional exchange
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let client_response = b"\x06xxh128\x04zstd";
+        let mut stdin = &client_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            true,  // send_compression
+            false, // is_daemon_mode = false (SSH mode)
+            true,  // is_server
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+        assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    fn test_choose_checksum_first_match_wins() {
+        // When client sends multiple checksums, we pick the first one we support
+        let client_list = "xxh128 xxh64 md5 md4";
+        let result = choose_checksum_algorithm(client_list).unwrap();
+        // xxh128 is first and we support it
+        assert_eq!(result, ChecksumAlgorithm::XXH128);
+    }
+
+    #[test]
+    fn test_choose_checksum_fallback_to_later_match() {
+        // If first item is unsupported, pick next supported one
+        let client_list = "blake3 sha256 md5 md4";
+        let result = choose_checksum_algorithm(client_list).unwrap();
+        // blake3 and sha256 are not supported, md5 is
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    #[test]
+    fn test_choose_checksum_empty_list() {
+        // Empty list should fall back to MD5
+        let result = choose_checksum_algorithm("").unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    #[test]
+    fn test_choose_compression_first_match_wins() {
+        let client_list = "zstd lz4 zlib none";
+        let result = choose_compression_algorithm(client_list).unwrap();
+        assert_eq!(result, CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    fn test_choose_compression_empty_list() {
+        // Empty list should fall back to None
+        let result = choose_compression_algorithm("").unwrap();
+        assert_eq!(result, CompressionAlgorithm::None);
+    }
 }
