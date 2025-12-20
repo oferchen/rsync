@@ -65,6 +65,7 @@ where
         delete_mode,
         delete_excluded,
         delete_missing_args,
+        ignore_errors: _,
         backup,
         backup_dir,
         backup_suffix,
