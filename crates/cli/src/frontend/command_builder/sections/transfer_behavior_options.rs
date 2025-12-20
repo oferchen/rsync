@@ -203,6 +203,20 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("ignore-errors")
+                    .long("ignore-errors")
+                    .help("Continue deleting files even when there are I/O errors.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-ignore-errors"),
+            )
+            .arg(
+                Arg::new("no-ignore-errors")
+                    .long("no-ignore-errors")
+                    .help("Stop deleting if I/O errors occur (default).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("ignore-errors"),
+            )
+            .arg(
                 Arg::new("max-delete")
                     .long("max-delete")
                     .value_name("NUM")
