@@ -149,16 +149,16 @@ fn parse_args_no_r_alias_disables_recursion() {
 }
 
 #[test]
-fn parse_args_stderr_alias_routes_messages_to_stderr() {
+fn parse_args_stderr_option_sets_mode() {
     let parsed = parse_args([
         OsString::from(RSYNC),
-        OsString::from("--stderr"),
+        OsString::from("--stderr=errors"),
         OsString::from("source"),
         OsString::from("dest"),
     ])
     .expect("parse");
 
-    assert_eq!(parsed.msgs_to_stderr, Some(true));
+    assert_eq!(parsed.stderr_mode, Some(OsString::from("errors")));
 }
 
 #[test]

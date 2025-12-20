@@ -37,7 +37,6 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("msgs2stderr")
                     .long("msgs2stderr")
-                    .visible_alias("stderr")
                     .help("Send messages to standard error instead of standard output.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("no-msgs2stderr"),
@@ -51,7 +50,6 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-msgs2stderr")
                     .long("no-msgs2stderr")
-                    .visible_alias("no-stderr")
                     .help("Send messages to standard output instead of standard error.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("msgs2stderr"),
