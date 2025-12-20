@@ -293,20 +293,30 @@ fn test_old_dirs_works_with_other_options() {
 }
 
 #[test]
-fn test_del_works_with_delete_mode() {
-    let args = parse_args([
+fn test_del_is_alias_for_delete_during() {
+    // In upstream rsync, --del is an alias for --delete-during, not --delete
+    let args = parse_args(["oc-rsync", "--del", "--dirs", "src", "dest"]).unwrap();
+    // --del should activate delete during (same as --delete-during)
+    assert!(
+        args.delete_mode.is_enabled(),
+        "--del should enable deletion"
+    );
+}
+
+#[test]
+fn test_del_and_delete_before_are_mutually_exclusive() {
+    // --del is --delete-during, which is mutually exclusive with --delete-before
+    let result = parse_args([
         "oc-rsync",
         "--del",
         "--delete-before",
         "--dirs",
         "src",
         "dest",
-    ])
-    .unwrap();
-    // --delete-before should take precedence over --del
+    ]);
     assert!(
-        args.delete_mode.is_enabled(),
-        "--del should work with explicit delete modes"
+        result.is_err(),
+        "--del (--delete-during) and --delete-before should be mutually exclusive"
     );
 }
 

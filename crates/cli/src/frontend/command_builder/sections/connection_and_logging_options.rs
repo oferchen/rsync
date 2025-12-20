@@ -61,6 +61,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("compress-level")
                 .long("compress-level")
+                .visible_alias("zl")
                 .value_name("LEVEL")
                 .help("Set compression level (0 disables compression).")
                 .help("Set compression level (0-9). 0 disables compression.")
@@ -69,6 +70,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("compress-choice")
                 .long("compress-choice")
+                .visible_alias("zc")
                 .value_name("ALGO")
                 .help("Select compression algorithm (e.g. zlib, zstd).")
                 .num_args(1)
