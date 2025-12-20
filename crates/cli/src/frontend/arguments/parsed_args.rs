@@ -83,6 +83,7 @@ pub struct ParsedArgs {
     pub chmod: Vec<OsString>,
     pub perms: Option<bool>,
     pub super_mode: Option<bool>,
+    pub fake_super: Option<bool>,
     pub times: Option<bool>,
     pub omit_dir_times: Option<bool>,
     pub omit_link_times: Option<bool>,
