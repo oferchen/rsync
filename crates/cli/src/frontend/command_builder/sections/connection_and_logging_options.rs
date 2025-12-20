@@ -78,6 +78,20 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("old-compress")
+                .long("old-compress")
+                .help("Use old-style (zlib) compression.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("new-compress"),
+        )
+        .arg(
+            Arg::new("new-compress")
+                .long("new-compress")
+                .help("Use new-style compression (typically zstd).")
+                .action(ArgAction::SetTrue)
+                .overrides_with("old-compress"),
+        )
+        .arg(
             Arg::new("skip-compress")
                 .long("skip-compress")
                 .value_name("LIST")
