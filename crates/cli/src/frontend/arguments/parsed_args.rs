@@ -43,6 +43,7 @@ pub struct ParsedArgs {
     pub delete_mode: DeleteMode,
     pub delete_excluded: bool,
     pub delete_missing_args: bool,
+    pub ignore_errors: Option<bool>,
     pub backup: bool,
     pub backup_dir: Option<OsString>,
     pub backup_suffix: Option<OsString>,
