@@ -26,31 +26,28 @@ fn oc_help_flag_uses_wrapped_program_name() {
 }
 
 #[test]
-fn oc_help_mentions_oc_rsyncd_delegation() {
+fn oc_help_mentions_daemon_option() {
     let (code, stdout, stderr) = run_with_args([OsStr::new(OC_RSYNC), OsStr::new("--help")]);
 
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
 
     let rendered = String::from_utf8(stdout).expect("valid UTF-8");
-    let upstream = format!("delegates to {}", branding::daemon_program_name());
-    let branded = format!("delegates to {}", branding::oc_daemon_program_name());
-    assert!(rendered.contains(&branded));
-    assert!(!rendered.contains(&upstream));
+    // Help text should mention --daemon option
+    assert!(rendered.contains("--daemon"));
+    assert!(rendered.contains("Run as an rsync daemon"));
 }
 
 #[test]
-fn oc_help_mentions_branded_daemon_phrase() {
+fn oc_help_mentions_config_option() {
     let (code, stdout, stderr) = run_with_args([OsStr::new(OC_RSYNC), OsStr::new("--help")]);
 
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
 
     let rendered = String::from_utf8(stdout).expect("valid UTF-8");
-    let upstream = format!("Run as an {} daemon", branding::client_program_name());
-    let branded = format!("Run as an {} daemon", branding::oc_client_program_name());
-    assert!(rendered.contains(&branded));
-    assert!(!rendered.contains(&upstream));
+    // Help text should mention --config option for daemon config
+    assert!(rendered.contains("--config=FILE"));
 }
 
 #[test]

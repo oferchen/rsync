@@ -561,6 +561,21 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .overrides_with("detach"),
             )
             .arg(
+                Arg::new("daemon")
+                    .long("daemon")
+                    .help("Run as an rsync daemon, serving files to rsync clients.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("config")
+                    .long("config")
+                    .value_name("FILE")
+                    .help("Specify alternate daemon config file (default: /etc/oc-rsyncd/oc-rsyncd.conf).")
+                    .num_args(1)
+                    .action(ArgAction::Set)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("no-keep-dirlinks")
                     .long("no-keep-dirlinks")
                     .help("Disable treating destination symlinks to directories as directories.")
