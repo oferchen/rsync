@@ -117,4 +117,16 @@ impl ClientConfigBuilder {
         self.rsync_path = Some(path.into());
         self
     }
+
+    /// Sets the early-input file path.
+    ///
+    /// When set, rsync reads from this file immediately before the transfer
+    /// starts and makes the content available to the remote rsync process via
+    /// the `RSYNC_EARLY_INPUT` environment variable.
+    #[must_use]
+    #[doc(alias = "--early-input")]
+    pub fn early_input(mut self, path: Option<PathBuf>) -> Self {
+        self.early_input = path;
+        self
+    }
 }

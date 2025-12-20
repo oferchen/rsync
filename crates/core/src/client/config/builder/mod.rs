@@ -118,6 +118,7 @@ pub struct ClientConfigBuilder {
     iconv: IconvSetting,
     remote_shell: Option<Vec<OsString>>,
     rsync_path: Option<OsString>,
+    early_input: Option<PathBuf>,
     batch_config: Option<engine::batch::BatchConfig>,
     #[cfg(feature = "acl")]
     preserve_acls: bool,
@@ -232,6 +233,7 @@ impl ClientConfigBuilder {
             iconv: self.iconv,
             remote_shell: self.remote_shell,
             rsync_path: self.rsync_path,
+            early_input: self.early_input,
             batch_config: self.batch_config,
             #[cfg(feature = "acl")]
             preserve_acls: self.preserve_acls,

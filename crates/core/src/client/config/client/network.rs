@@ -80,4 +80,15 @@ impl ClientConfig {
     pub fn rsync_path(&self) -> Option<&OsStr> {
         self.rsync_path.as_deref()
     }
+
+    /// Returns the early-input file path, if specified.
+    ///
+    /// When set, rsync reads from this file immediately before the transfer
+    /// starts and makes the content available to the remote rsync process via
+    /// the `RSYNC_EARLY_INPUT` environment variable.
+    #[must_use]
+    #[doc(alias = "--early-input")]
+    pub fn early_input(&self) -> Option<&Path> {
+        self.early_input.as_deref()
+    }
 }
