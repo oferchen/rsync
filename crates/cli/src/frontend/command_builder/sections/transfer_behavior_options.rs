@@ -437,6 +437,14 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .num_args(1),
             )
             .arg(
+                Arg::new("copy-as")
+                    .long("copy-as")
+                    .value_name("USER[:GROUP]")
+                    .help("Run receiver with specified USER and optional GROUP for privileged copy.")
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
                 Arg::new("usermap")
                     .long("usermap")
                     .value_name("STRING")
