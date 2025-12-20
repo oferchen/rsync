@@ -63,6 +63,18 @@ impl ClientConfig {
         self.preserve_permissions
     }
 
+    /// Reports whether fake-super mode is enabled.
+    ///
+    /// When enabled, privileged attributes (ownership, special permissions,
+    /// ACLs, etc.) are stored/restored using extended attributes instead of
+    /// requiring real super-user privileges. This allows non-root users to
+    /// backup files with full metadata preservation.
+    #[must_use]
+    #[doc(alias = "--fake-super")]
+    pub const fn fake_super(&self) -> bool {
+        self.fake_super
+    }
+
     /// Reports whether timestamps should be preserved.
     #[must_use]
     #[doc(alias = "--times")]
