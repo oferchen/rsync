@@ -143,6 +143,8 @@ where
         server_mode: _,
         sender_mode: _,
         detach: _,
+        daemon_mode: _,
+        config: _,
         write_devices,
         devices,
         copy_devices,
