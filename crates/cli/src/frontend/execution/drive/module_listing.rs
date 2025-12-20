@@ -6,7 +6,7 @@ use core::client::{
     AddressMode, BindAddress, ModuleListOptions, ModuleListRequest, TransferTimeout,
     run_module_list_with_password_and_options,
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
 
 use crate::frontend::{

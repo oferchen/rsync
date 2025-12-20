@@ -1,5 +1,6 @@
 use std::io::{self, Read};
 
+use logging::debug_log;
 use protocol::{LEGACY_DAEMON_PREFIX_LEN, NegotiationPrologue, NegotiationPrologueSniffer};
 
 use super::NegotiatedStream;
@@ -41,6 +42,14 @@ pub fn sniff_negotiation_stream_with_sniffer<R: Read>(
 
     let sniffed_prefix_len = sniffer.sniffed_prefix_len();
     let buffered = sniffer.take_buffered();
+
+    debug_log!(
+        Connect,
+        2,
+        "sniffed negotiation prologue: {:?} ({} bytes buffered)",
+        decision,
+        buffered.len()
+    );
 
     debug_assert!(sniffed_prefix_len <= LEGACY_DAEMON_PREFIX_LEN);
     debug_assert!(sniffed_prefix_len <= buffered.len());

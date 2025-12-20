@@ -43,7 +43,7 @@ impl<'a, W> LineModeGuard<'a, W> {
     ///
     /// ```
     /// use core::message::Message;
-    /// use logging::{LineMode, MessageSink};
+    /// use logging_sink::{LineMode, MessageSink};
     ///
     /// let mut sink = MessageSink::new(Vec::new());
     /// {

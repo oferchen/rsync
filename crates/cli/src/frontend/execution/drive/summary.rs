@@ -10,7 +10,7 @@ use core::{
     },
     message::Message,
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},

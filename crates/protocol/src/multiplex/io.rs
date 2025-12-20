@@ -1,6 +1,8 @@
 use std::io::{self, IoSlice, Read, Write};
 use std::slice;
 
+use logging::debug_log;
+
 use crate::envelope::{HEADER_LEN, MessageCode, MessageHeader};
 
 use super::frame::MessageFrame;
@@ -15,6 +17,7 @@ use super::helpers::{
 /// 24-bit limit imposed by the C implementation. Violations result in
 /// [`io::ErrorKind::InvalidInput`].
 pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> io::Result<()> {
+    debug_log!(Io, 3, "mux send: code={:?} len={}", code, payload.len());
     let payload_len = ensure_payload_length(payload.len())?;
     let header = MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
     write_validated_message(writer, header, payload)
@@ -55,6 +58,7 @@ fn write_validated_message<W: Write + ?Sized>(
 pub fn recv_msg<R: Read>(reader: &mut R) -> io::Result<MessageFrame> {
     let header = read_header(reader)?;
     let len = header.payload_len_usize();
+    debug_log!(Io, 3, "mux recv: code={:?} len={}", header.code(), len);
 
     let payload = read_payload(reader, len)?;
 

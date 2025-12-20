@@ -242,6 +242,7 @@ name = "checksums"
 version = "3.4.1-rust"
 dependencies = [
  "digest",
+ "logging",
  "md-5",
  "md4",
  "openssl",
@@ -308,6 +309,7 @@ dependencies = [
  "filters",
  "libc",
  "logging",
+ "logging-sink",
  "metadata",
  "predicates",
  "protocol",
@@ -347,6 +349,7 @@ dependencies = [
  "filetime",
  "filters",
  "libc",
+ "logging",
  "metadata",
  "nix",
  "protocol",
@@ -396,7 +399,7 @@ dependencies = [
  "core",
  "dns-lookup",
  "fs2",
- "logging",
+ "logging-sink",
  "protocol",
  "sd-notify",
  "tempfile",
@@ -466,6 +469,7 @@ dependencies = [
  "filters",
  "globset",
  "libc",
+ "logging",
  "metadata",
  "protocol",
  "rustix 0.38.44",
@@ -512,6 +516,7 @@ name = "filters"
 version = "3.4.1-rust"
 dependencies = [
  "globset",
+ "logging",
 ]
 
 [[package]]
@@ -707,6 +712,10 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "logging"
+version = "3.4.1-rust"
+
+[[package]]
+name = "logging-sink"
 version = "3.4.1-rust"
 dependencies = [
  "core",
@@ -955,6 +964,7 @@ name = "protocol"
 version = "3.4.1-rust"
 dependencies = [
  "compress",
+ "logging",
  "memchr",
  "proptest",
 ]
@@ -1369,6 +1379,7 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 name = "transport"
 version = "3.4.1-rust"
 dependencies = [
+ "logging",
  "memchr",
  "proptest",
  "protocol",
@@ -1439,6 +1450,7 @@ dependencies = [
 name = "walk"
 version = "3.4.1-rust"
 dependencies = [
+ "logging",
  "tempfile",
 ]
 

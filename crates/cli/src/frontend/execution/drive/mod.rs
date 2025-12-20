@@ -10,7 +10,7 @@ mod validation;
 pub(crate) use validation::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;
 mod workflow;
 
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use std::io::Write;
 
 pub(crate) use workflow::execute;
