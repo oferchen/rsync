@@ -154,7 +154,7 @@ impl<R: Read> Read for MultiplexReader<R> {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = std::fs::write(
-                        format!("/tmp/mux_MSG_{:04}_ERR", msg_seq),
+                        format!("/tmp/mux_MSG_{msg_seq:04}_ERR"),
                         format!("{:?}: {}", e.kind(), e),
                     );
                     return Err(e);
@@ -176,7 +176,7 @@ impl<R: Read> Read for MultiplexReader<R> {
                 | protocol::MessageCode::Client => {
                     // Info/warning messages: print to stderr and continue
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                        eprint!("{}", msg);
+                        eprint!("{msg}");
                     }
                     // Continue loop to read next message
                 }
@@ -187,14 +187,14 @@ impl<R: Read> Read for MultiplexReader<R> {
                 | protocol::MessageCode::ErrorExit => {
                     // Error messages: print to stderr and continue
                     if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                        eprint!("{}", msg);
+                        eprint!("{msg}");
                     }
                     // Continue loop to read next message
                 }
                 _ => {
                     // Other message types (Redo, Stats, etc.): log for debugging
                     let _ = std::fs::write(
-                        format!("/tmp/mux_MSG_{:04}_UNHANDLED", msg_seq),
+                        format!("/tmp/mux_MSG_{msg_seq:04}_UNHANDLED"),
                         format!("code={:?} len={}", code, self.buffer.len()),
                     );
                     // Continue loop to read next message

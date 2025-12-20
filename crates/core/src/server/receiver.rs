@@ -561,12 +561,12 @@ impl ReceiverContext {
                         // For now, return error as we don't have basis file mapped
                         return Err(io::Error::new(
                             io::ErrorKind::Unsupported,
-                            format!("block copy not yet implemented (block {})", block_idx),
+                            format!("block copy not yet implemented (block {block_idx})"),
                         ));
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            format!("block reference {} without basis file", block_idx),
+                            format!("block reference {block_idx} without basis file"),
                         ));
                     }
                 }

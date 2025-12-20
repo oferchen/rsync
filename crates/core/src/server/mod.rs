@@ -323,7 +323,7 @@ pub fn run_server_with_handshake<W: Write>(
 
     let _ = std::fs::write(
         "/tmp/mod_FILTER_CHECK",
-        format!("should_send={}", should_send_filter_list),
+        format!("should_send={should_send_filter_list}"),
     );
     if should_send_filter_list {
         let _ = std::fs::write("/tmp/mod_SENDING_FILTER_LIST", "1");
