@@ -69,6 +69,8 @@
 
 mod line_mode;
 mod sink;
+pub mod verbosity;
 
 pub use line_mode::LineMode;
 pub use sink::{LineModeGuard, MessageSink, TryMapWriterError};
+pub use verbosity::{InfoFlag, DebugFlag, VerbosityConfig};
