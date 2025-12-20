@@ -223,6 +223,7 @@ where
     let executability =
         tri_state_flag_positive_first(&matches, "executability", "no-executability");
     let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
+    let fake_super = tri_state_flag_positive_first(&matches, "fake-super", "no-fake-super");
     let times = tri_state_flag_positive_first(&matches, "times", "no-times");
     let omit_dir_times =
         tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
@@ -516,6 +517,7 @@ where
         chmod,
         perms,
         super_mode,
+        fake_super,
         times,
         omit_dir_times,
         omit_link_times,

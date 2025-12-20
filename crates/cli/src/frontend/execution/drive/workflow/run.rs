@@ -106,6 +106,7 @@ where
         perms,
         executability,
         super_mode,
+        fake_super: _,
         times,
         omit_dir_times,
         omit_link_times,
