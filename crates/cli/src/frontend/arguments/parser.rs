@@ -81,6 +81,7 @@ where
     } else {
         env_protect_args_default()
     };
+    let old_args = tri_state_flag_negative_first(&matches, "old-args", "no-old-args");
     let address_mode = if matches.get_flag("ipv4") {
         AddressMode::Ipv4
     } else if matches.get_flag("ipv6") {
@@ -460,6 +461,7 @@ where
         remote_options,
         rsync_path,
         protect_args,
+        old_args,
         address_mode,
         bind_address: bind_address_raw,
         sockopts,

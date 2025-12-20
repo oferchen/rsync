@@ -31,6 +31,7 @@ pub struct ParsedArgs {
     pub remote_options: Vec<OsString>,
     pub rsync_path: Option<OsString>,
     pub protect_args: Option<bool>,
+    pub old_args: Option<bool>,
     pub address_mode: AddressMode,
     pub bind_address: Option<OsString>,
     pub sockopts: Option<OsString>,

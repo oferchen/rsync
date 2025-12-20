@@ -53,6 +53,7 @@ where
         remote_options,
         rsync_path: _,
         protect_args: _,
+        old_args: _,
         address_mode,
         bind_address: bind_address_raw,
         sockopts,
