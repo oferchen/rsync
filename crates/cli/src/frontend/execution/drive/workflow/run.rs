@@ -141,6 +141,7 @@ where
         munge_links: _,
         trust_sender: _,
         server_mode: _,
+        sender_mode: _,
         write_devices,
         devices,
         copy_devices,
