@@ -67,6 +67,8 @@ pub struct ParsedArgs {
     pub no_compress: bool,
     pub compress_level: Option<OsString>,
     pub compress_choice: Option<OsString>,
+    pub old_compress: bool,
+    pub new_compress: bool,
     pub skip_compress: Option<OsString>,
     pub open_noatime: bool,
     pub no_open_noatime: bool,

@@ -373,6 +373,8 @@ where
 
     let compress_level = matches.remove_one::<OsString>("compress-level");
     let compress_choice = matches.remove_one::<OsString>("compress-choice");
+    let old_compress = matches.get_flag("old-compress");
+    let new_compress = matches.get_flag("new-compress");
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
     let no_bwlimit = matches.get_flag("no-bwlimit");
     let bwlimit = if no_bwlimit {
@@ -492,6 +494,8 @@ where
         no_compress,
         compress_level,
         compress_choice,
+        old_compress,
+        new_compress,
         skip_compress,
         open_noatime,
         no_open_noatime,
