@@ -64,9 +64,9 @@ pub fn render_diagnostic_events<W: Write>(
                 message,
             } => {
                 if msgs2stderr {
-                    writeln!(err, "{}", message)?;
+                    writeln!(err, "{message}")?;
                 } else {
-                    writeln!(out, "{}", message)?;
+                    writeln!(out, "{message}")?;
                 }
             }
             DiagnosticEvent::Debug {
@@ -75,7 +75,7 @@ pub fn render_diagnostic_events<W: Write>(
                 message,
             } => {
                 // Debug always goes to stderr with flag prefix
-                writeln!(err, "[{}] {}", flag, message)?;
+                writeln!(err, "[{flag}] {message}")?;
             }
         }
     }
