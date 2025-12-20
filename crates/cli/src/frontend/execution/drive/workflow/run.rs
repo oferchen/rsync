@@ -168,6 +168,7 @@ where
         write_batch,
         only_write_batch,
         read_batch,
+        early_input: _,
         link_dests,
         remove_source_files,
         inplace,
