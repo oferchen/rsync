@@ -89,6 +89,8 @@ where
         no_compress,
         compress_level,
         compress_choice,
+        old_compress: _,
+        new_compress: _,
         skip_compress,
         open_noatime,
         no_open_noatime,
