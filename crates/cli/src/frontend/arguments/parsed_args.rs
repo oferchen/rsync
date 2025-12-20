@@ -131,6 +131,7 @@ pub struct ParsedArgs {
     pub write_batch: Option<OsString>,
     pub only_write_batch: Option<OsString>,
     pub read_batch: Option<OsString>,
+    pub early_input: Option<OsString>,
     pub link_dests: Vec<PathBuf>,
     pub remove_source_files: bool,
     pub inplace: Option<bool>,

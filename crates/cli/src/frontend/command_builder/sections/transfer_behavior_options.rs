@@ -57,6 +57,14 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .conflicts_with_all(["write-batch", "only-write-batch"]),
             )
             .arg(
+                Arg::new("early-input")
+                    .long("early-input")
+                    .value_name("FILE")
+                    .help("Read FILE early in the transfer (before file list).")
+                    .value_parser(OsStringValueParser::new())
+                    .num_args(1),
+            )
+            .arg(
                 Arg::new("whole-file")
                     .long("whole-file")
                     .short('W')
