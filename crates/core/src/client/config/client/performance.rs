@@ -84,4 +84,14 @@ impl ClientConfig {
     pub const fn max_alloc(&self) -> Option<u64> {
         self.max_alloc
     }
+
+    /// Reports whether qsort should be used instead of merge sort for file lists.
+    ///
+    /// When enabled, uses qsort for file list sorting which may be faster
+    /// for certain data patterns but is not a stable sort.
+    #[must_use]
+    #[doc(alias = "--qsort")]
+    pub const fn qsort(&self) -> bool {
+        self.qsort
+    }
 }
