@@ -20,6 +20,7 @@ filters = { path = "../filters" }
 compress = { path = "../compress" }
 protocol = { path = "../protocol" }
 bandwidth = { path = "../bandwidth" }
+logging = { path = "../logging" }
 globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
 libc = { version = "0.2", optional = true }

@@ -10,7 +10,7 @@ use core::client::{
     BandwidthLimit, CompressionSetting, SkipCompressList, force_no_compress_from_env,
     parse_skip_compress_list, skip_compress_from_env,
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 
 use super::super::{
     parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice, parse_compress_level,
@@ -148,7 +148,7 @@ where
                         for token in s.split(',') {
                             let token = token.trim();
                             if !token.is_empty() && token != "help" {
-                                let _ = logging::verbosity::apply_info_flag(token);
+                                let _ = logging::apply_info_flag(token);
                             }
                         }
                     }
@@ -218,7 +218,7 @@ where
                         for token in s.split(',') {
                             let token = token.trim();
                             if !token.is_empty() && token != "help" {
-                                let _ = logging::verbosity::apply_debug_flag(token);
+                                let _ = logging::apply_debug_flag(token);
                             }
                         }
                     }

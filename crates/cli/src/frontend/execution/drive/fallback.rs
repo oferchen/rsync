@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use core::client::{
     AddressMode, DeleteMode, HumanReadableMode, IconvSetting, RemoteFallbackArgs, TransferTimeout,
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
 
 use crate::frontend::execution::info_flags_include_progress;

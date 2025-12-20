@@ -7,7 +7,7 @@ use core::{
     rsync_error,
     version::VersionInfoReport,
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;

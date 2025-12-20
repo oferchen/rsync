@@ -1,7 +1,7 @@
-//! crates/logging/src/verbosity/config.rs
+//! crates/logging/src/config.rs
 //! Verbosity configuration combining info and debug levels.
 
-use super::levels::{InfoFlag, DebugFlag, InfoLevels, DebugLevels};
+use super::levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 
 /// Combined verbosity configuration for info and debug flags.
 #[derive(Clone, Default, Debug)]
@@ -237,7 +237,8 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
         Some(pos) => {
             let name = &token[..pos];
             let level_str = &token[pos..];
-            let level = level_str.parse::<u8>()
+            let level = level_str
+                .parse::<u8>()
                 .map_err(|_| format!("invalid level in flag: {}", token))?;
             Ok((name, level))
         }
