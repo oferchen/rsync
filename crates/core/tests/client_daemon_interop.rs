@@ -763,7 +763,7 @@ fn test_client_incremental_transfer() {
 
     // First transfer
     let config1 = ClientConfig::builder()
-        .transfer_args([format!("{}/", daemon_url), dest_path.clone()])
+        .transfer_args([format!("{daemon_url}/"), dest_path.clone()])
         .recursive(true)
         .build();
 
@@ -775,7 +775,7 @@ fn test_client_incremental_transfer() {
 
     // Second transfer (incremental) - rebuild config
     let config2 = ClientConfig::builder()
-        .transfer_args([format!("{}/", daemon_url), dest_path])
+        .transfer_args([format!("{daemon_url}/"), dest_path])
         .recursive(true)
         .build();
 
@@ -816,7 +816,7 @@ fn test_client_incremental_size_only() {
 
     // First transfer
     let config1 = ClientConfig::builder()
-        .transfer_args([format!("{}/sizetest.txt", daemon_url), dest_path.clone()])
+        .transfer_args([format!("{daemon_url}/sizetest.txt"), dest_path.clone()])
         .size_only(true)
         .build();
 
@@ -828,7 +828,7 @@ fn test_client_incremental_size_only() {
 
     // Second transfer with size-only should skip (same size) - rebuild config
     let config2 = ClientConfig::builder()
-        .transfer_args([format!("{}/sizetest.txt", daemon_url), dest_path])
+        .transfer_args([format!("{daemon_url}/sizetest.txt"), dest_path])
         .size_only(true)
         .build();
 
@@ -1050,8 +1050,8 @@ fn test_many_small_files() {
     // Create 100 small files
     for i in 0..100 {
         create_test_file(
-            &daemon.module_path().join(format!("file{:03}.txt", i)),
-            format!("content {}", i).as_bytes(),
+            &daemon.module_path().join(format!("file{i:03}.txt")),
+            format!("content {i}").as_bytes(),
         );
     }
 
@@ -1069,11 +1069,11 @@ fn test_many_small_files() {
 
     // Verify all files transferred
     for i in 0..100 {
-        let file_path = dest_root.path().join(format!("file{:03}.txt", i));
-        assert!(file_path.exists(), "file{:03}.txt should exist", i);
+        let file_path = dest_root.path().join(format!("file{i:03}.txt"));
+        assert!(file_path.exists(), "file{i:03}.txt should exist");
         assert_eq!(
             fs::read(&file_path).expect("read file"),
-            format!("content {}", i).as_bytes()
+            format!("content {i}").as_bytes()
         );
     }
 

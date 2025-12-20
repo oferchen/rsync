@@ -180,7 +180,7 @@ impl VerbosityConfig {
             "skip" => InfoFlag::Skip,
             "stats" => InfoFlag::Stats,
             "symsafe" => InfoFlag::Symsafe,
-            _ => return Err(format!("unknown info flag: {}", name)),
+            _ => return Err(format!("unknown info flag: {name}")),
         };
 
         self.info.set(flag, level);
@@ -216,7 +216,7 @@ impl VerbosityConfig {
             "recv" => DebugFlag::Recv,
             "send" => DebugFlag::Send,
             "time" => DebugFlag::Time,
-            _ => return Err(format!("unknown debug flag: {}", name)),
+            _ => return Err(format!("unknown debug flag: {name}")),
         };
 
         self.debug.set(flag, level);
@@ -239,7 +239,7 @@ fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
             let level_str = &token[pos..];
             let level = level_str
                 .parse::<u8>()
-                .map_err(|_| format!("invalid level in flag: {}", token))?;
+                .map_err(|_| format!("invalid level in flag: {token}"))?;
             Ok((name, level))
         }
         None => {
