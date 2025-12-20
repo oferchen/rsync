@@ -93,6 +93,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the maximum memory allocation limit per allocation request.
+    ///
+    /// When set, this limits how much memory can be allocated in a single
+    /// request, providing protection against memory exhaustion attacks.
+    #[must_use]
+    #[doc(alias = "--max-alloc")]
+    pub const fn max_alloc(mut self, limit: Option<u64>) -> Self {
+        self.max_alloc = limit;
+        self
+    }
+
     /// Enables or disables sparse file handling for the transfer.
     #[must_use]
     #[doc(alias = "--sparse")]

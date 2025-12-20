@@ -41,6 +41,7 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) min_size: &'a Option<OsString>,
     pub(crate) max_size: &'a Option<OsString>,
     pub(crate) block_size: &'a Option<OsString>,
+    pub(crate) max_alloc: &'a Option<OsString>,
     pub(crate) modify_window: &'a Option<OsString>,
     pub(crate) compress_flag: bool,
     pub(crate) no_compress: bool,
@@ -66,6 +67,7 @@ pub(crate) struct DerivedSettings {
     pub(crate) min_size_limit: Option<u64>,
     pub(crate) max_size_limit: Option<u64>,
     pub(crate) block_size_override: Option<NonZeroU32>,
+    pub(crate) max_alloc_limit: Option<u64>,
     pub(crate) modify_window_setting: Option<u64>,
     pub(crate) compress: bool,
     pub(crate) compress_disabled: bool,
@@ -272,6 +274,14 @@ where
         None => None,
     };
 
+    let max_alloc_limit = match inputs.max_alloc.as_ref() {
+        Some(value) => match parse_size_limit_argument(value.as_os_str(), "--max-alloc") {
+            Ok(limit) => Some(limit),
+            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+        },
+        None => None,
+    };
+
     let modify_window_setting = match inputs.modify_window.as_ref() {
         Some(value) => match parse_modify_window_argument(value.as_os_str()) {
             Ok(window) => Some(window),
@@ -421,6 +431,7 @@ where
         min_size_limit,
         max_size_limit,
         block_size_override,
+        max_alloc_limit,
         modify_window_setting,
         compress,
         compress_disabled,
