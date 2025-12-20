@@ -250,6 +250,7 @@ where
     let munge_links = tri_state_flag_positive_first(&matches, "munge-links", "no-munge-links");
     let trust_sender = matches.get_flag("trust-sender");
     let server_mode = matches.get_flag("server");
+    let sender_mode = matches.get_flag("sender");
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let qsort = matches.get_flag("qsort");
     let copy_devices = matches.get_flag("copy-devices");
@@ -546,6 +547,7 @@ where
         munge_links,
         trust_sender,
         server_mode,
+        sender_mode,
         write_devices,
         devices,
         copy_devices,
