@@ -136,6 +136,7 @@ pub struct ParsedArgs {
     pub msgs_to_stderr: Option<bool>,
     pub stderr_mode: Option<OsString>,
     pub outbuf: Option<OsString>,
+    pub max_alloc: Option<OsString>,
     pub itemize_changes: bool,
     pub whole_file: Option<bool>,
     pub excludes: Vec<OsString>,
