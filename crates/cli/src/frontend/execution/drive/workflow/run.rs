@@ -173,7 +173,7 @@ where
         write_batch,
         only_write_batch,
         read_batch,
-        early_input: _,
+        early_input,
         link_dests,
         remove_source_files,
         inplace,
@@ -629,6 +629,7 @@ where
         iconv: iconv_setting.clone(),
         remote_shell: parsed.remote_shell.clone(),
         rsync_path: parsed.rsync_path.clone(),
+        early_input: early_input.map(PathBuf::from),
         batch_config,
     };
 
