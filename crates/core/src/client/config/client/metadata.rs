@@ -27,6 +27,17 @@ impl ClientConfig {
         self.group_override
     }
 
+    /// Returns the configured copy-as USER[:GROUP] specification, if any.
+    ///
+    /// When set, rsync will attempt to set file ownership as if running as
+    /// the specified user (and optionally group). This is useful when running
+    /// rsync as root but wanting files owned by a different user.
+    #[must_use]
+    #[doc(alias = "--copy-as")]
+    pub fn copy_as(&self) -> Option<&OsStr> {
+        self.copy_as.as_deref()
+    }
+
     /// Reports whether executability should be preserved.
     #[must_use]
     #[doc(alias = "--executability")]

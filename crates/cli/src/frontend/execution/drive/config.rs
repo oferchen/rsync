@@ -50,6 +50,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) owner_override: Option<uid_t>,
     pub(crate) group: bool,
     pub(crate) group_override: Option<gid_t>,
+    pub(crate) copy_as: Option<OsString>,
     pub(crate) chmod_modifiers: Option<ChmodModifiers>,
     pub(crate) user_mapping: Option<UserMapping>,
     pub(crate) group_mapping: Option<GroupMapping>,
@@ -172,6 +173,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .owner_override(inputs.owner_override)
         .group(inputs.group)
         .group_override(inputs.group_override)
+        .copy_as(inputs.copy_as.clone())
         .chmod(inputs.chmod_modifiers.clone())
         .user_mapping(inputs.user_mapping.clone())
         .group_mapping(inputs.group_mapping.clone())

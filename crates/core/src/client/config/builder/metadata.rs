@@ -43,6 +43,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the copy-as USER[:GROUP] specification.
+    ///
+    /// When set, rsync will attempt to set file ownership as if running as
+    /// the specified user (and optionally group). This is useful when running
+    /// rsync as root but wanting files owned by a different user.
+    #[must_use]
+    #[doc(alias = "--copy-as")]
+    pub fn copy_as(mut self, spec: Option<OsString>) -> Self {
+        self.copy_as = spec;
+        self
+    }
+
     /// Applies chmod modifiers that should be evaluated after metadata preservation.
     #[must_use]
     #[doc(alias = "--chmod")]
