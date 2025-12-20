@@ -173,6 +173,7 @@ where
         msgs_to_stderr: msgs_to_stderr_option,
         stderr_mode: _,
         outbuf: _,
+        max_alloc: _,
         itemize_changes,
         whole_file,
         xattrs,

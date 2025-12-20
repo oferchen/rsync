@@ -63,6 +63,14 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("max-alloc")
+                    .long("max-alloc")
+                    .value_name("SIZE")
+                    .help("Limit memory allocation to SIZE bytes (can use K, M, G suffixes).")
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("itemize-changes")
                     .long("itemize-changes")
                     .short('i')
