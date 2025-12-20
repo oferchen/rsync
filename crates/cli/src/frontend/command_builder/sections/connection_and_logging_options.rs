@@ -161,6 +161,14 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .value_delimiter(','),
         )
         .arg(
+            Arg::new("dparam")
+                .long("dparam")
+                .value_name("OVERRIDE")
+                .help("Override daemon config parameter (can be specified multiple times).")
+                .action(ArgAction::Append)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("args")
                 .action(ArgAction::Append)
                 .num_args(0..)

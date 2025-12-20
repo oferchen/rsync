@@ -167,6 +167,7 @@ pub struct ParsedArgs {
     pub stop_at: Option<OsString>,
     pub out_format: Option<OsString>,
     pub daemon_port: Option<u16>,
+    pub dparam: Vec<OsString>,
     pub no_iconv: bool,
     pub executability: Option<bool>,
 }
