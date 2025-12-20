@@ -156,7 +156,6 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("delete")
                     .long("delete")
-                    .visible_alias("del")
                     .help("Remove destination files that are absent from the source.")
                     .action(ArgAction::SetTrue),
             )
@@ -169,6 +168,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("delete-during")
                     .long("delete-during")
+                    .visible_alias("del")
                     .help("Remove destination files that are absent from the source during directory traversal.")
                     .action(ArgAction::SetTrue),
             )
