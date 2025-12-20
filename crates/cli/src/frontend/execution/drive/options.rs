@@ -134,12 +134,24 @@ where
                     ProgressSetting::Unspecified => {}
                     value => progress_setting = value,
                 }
-                if let Some(value) = settings.stats {
-                    stats = value;
+                if let Some(level) = settings.stats {
+                    stats = level > 0;
                 }
                 if let Some(level) = settings.name {
                     name_level = level;
                     name_overridden = true;
+                }
+
+                // Apply info flags to verbosity config
+                for info_arg in inputs.info {
+                    if let Some(s) = info_arg.to_str() {
+                        for token in s.split(',') {
+                            let token = token.trim();
+                            if !token.is_empty() && token != "help" {
+                                let _ = logging::verbosity::apply_info_flag(token);
+                            }
+                        }
+                    }
                 }
             }
             Err(message) => {
@@ -159,7 +171,58 @@ where
                     return SettingsOutcome::Exit(0);
                 }
 
-                debug_flags_list = settings.flags;
+                // Convert DebugFlagSettings to Vec<OsString> for now
+                // This is a temporary bridge until logging module integration is complete
+                let mut flags = Vec::new();
+
+                macro_rules! add_flag {
+                    ($field:expr, $name:expr) => {
+                        if let Some(level) = $field {
+                            if level > 0 {
+                                flags.push(OsString::from(format!("{}{}", $name, level)));
+                            }
+                        }
+                    };
+                }
+
+                add_flag!(settings.acl, "acl");
+                add_flag!(settings.backup, "backup");
+                add_flag!(settings.bind, "bind");
+                add_flag!(settings.chdir, "chdir");
+                add_flag!(settings.connect, "connect");
+                add_flag!(settings.cmd, "cmd");
+                add_flag!(settings.del, "del");
+                add_flag!(settings.deltasum, "deltasum");
+                add_flag!(settings.dup, "dup");
+                add_flag!(settings.exit, "exit");
+                add_flag!(settings.filter, "filter");
+                add_flag!(settings.flist, "flist");
+                add_flag!(settings.fuzzy, "fuzzy");
+                add_flag!(settings.genr, "genr");
+                add_flag!(settings.hash, "hash");
+                add_flag!(settings.hlink, "hlink");
+                add_flag!(settings.iconv, "iconv");
+                add_flag!(settings.io, "io");
+                add_flag!(settings.nstr, "nstr");
+                add_flag!(settings.own, "own");
+                add_flag!(settings.proto, "proto");
+                add_flag!(settings.recv, "recv");
+                add_flag!(settings.send, "send");
+                add_flag!(settings.time, "time");
+
+                debug_flags_list = flags;
+
+                // Apply debug flags to verbosity config
+                for debug_arg in inputs.debug {
+                    if let Some(s) = debug_arg.to_str() {
+                        for token in s.split(',') {
+                            let token = token.trim();
+                            if !token.is_empty() && token != "help" {
+                                let _ = logging::verbosity::apply_debug_flag(token);
+                            }
+                        }
+                    }
+                }
             }
             Err(message) => {
                 return SettingsOutcome::Exit(fail_with_message(message, stderr));
