@@ -21,6 +21,7 @@ zstd = ["compress/zstd"]
 
 [dependencies]
 compress = { path = "../compress" }
+logging = { path = "../logging" }
 memchr = "2.7"
 
 [dev-dependencies]

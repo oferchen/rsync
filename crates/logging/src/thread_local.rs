@@ -1,12 +1,13 @@
-//! crates/logging/src/verbosity/thread_local.rs
+//! crates/logging/src/thread_local.rs
 //! Thread-local storage for verbosity configuration and event collection.
 
-use std::cell::RefCell;
 use super::config::VerbosityConfig;
-use super::levels::{InfoFlag, DebugFlag};
+use super::levels::{DebugFlag, InfoFlag};
+use std::cell::RefCell;
 
 thread_local! {
     static VERBOSITY: RefCell<VerbosityConfig> = RefCell::new(VerbosityConfig::default());
+    #[allow(clippy::missing_const_for_thread_local)]
     static EVENTS: RefCell<Vec<DiagnosticEvent>> = RefCell::new(Vec::new());
 }
 
@@ -42,51 +43,49 @@ pub fn init(config: VerbosityConfig) {
 
 /// Check if the info flag is at or above the specified level.
 pub fn info_gte(flag: InfoFlag, level: u8) -> bool {
-    VERBOSITY.with(|v| {
-        v.borrow().info.get(flag) >= level
-    })
+    VERBOSITY.with(|v| v.borrow().info.get(flag) >= level)
 }
 
 /// Check if the debug flag is at or above the specified level.
 pub fn debug_gte(flag: DebugFlag, level: u8) -> bool {
-    VERBOSITY.with(|v| {
-        v.borrow().debug.get(flag) >= level
-    })
+    VERBOSITY.with(|v| v.borrow().debug.get(flag) >= level)
 }
 
 /// Emit an info diagnostic event.
 pub fn emit_info(flag: InfoFlag, level: u8, message: String) {
     EVENTS.with(|e| {
-        e.borrow_mut().push(DiagnosticEvent::Info { flag, level, message });
+        e.borrow_mut().push(DiagnosticEvent::Info {
+            flag,
+            level,
+            message,
+        });
     });
 }
 
 /// Emit a debug diagnostic event.
 pub fn emit_debug(flag: DebugFlag, level: u8, message: String) {
     EVENTS.with(|e| {
-        e.borrow_mut().push(DiagnosticEvent::Debug { flag, level, message });
+        e.borrow_mut().push(DiagnosticEvent::Debug {
+            flag,
+            level,
+            message,
+        });
     });
 }
 
 /// Drain all collected events, clearing the internal buffer.
 pub fn drain_events() -> Vec<DiagnosticEvent> {
-    EVENTS.with(|e| {
-        e.borrow_mut().drain(..).collect()
-    })
+    EVENTS.with(|e| e.borrow_mut().drain(..).collect())
 }
 
 /// Apply an info flag token to the current configuration.
 pub fn apply_info_flag(token: &str) -> Result<(), String> {
-    VERBOSITY.with(|v| {
-        v.borrow_mut().apply_info_flag(token)
-    })
+    VERBOSITY.with(|v| v.borrow_mut().apply_info_flag(token))
 }
 
 /// Apply a debug flag token to the current configuration.
 pub fn apply_debug_flag(token: &str) -> Result<(), String> {
-    VERBOSITY.with(|v| {
-        v.borrow_mut().apply_debug_flag(token)
-    })
+    VERBOSITY.with(|v| v.borrow_mut().apply_debug_flag(token))
 }
 
 #[cfg(test)]
@@ -121,7 +120,11 @@ mod tests {
         assert_eq!(events.len(), 2);
 
         match &events[0] {
-            DiagnosticEvent::Info { flag, level, message } => {
+            DiagnosticEvent::Info {
+                flag,
+                level,
+                message,
+            } => {
                 assert_eq!(*flag, InfoFlag::Copy);
                 assert_eq!(*level, 1);
                 assert_eq!(message, "test info");
@@ -130,7 +133,11 @@ mod tests {
         }
 
         match &events[1] {
-            DiagnosticEvent::Debug { flag, level, message } => {
+            DiagnosticEvent::Debug {
+                flag,
+                level,
+                message,
+            } => {
                 assert_eq!(*flag, DebugFlag::Recv);
                 assert_eq!(*level, 2);
                 assert_eq!(message, "test debug");

@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use core::{message::Role, rsync_error};
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
 
 use super::messages::fail_with_message;

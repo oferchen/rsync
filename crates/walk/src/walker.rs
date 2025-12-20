@@ -1,5 +1,6 @@
 use crate::entry::WalkEntry;
 use crate::error::WalkError;
+use logging::debug_log;
 use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
@@ -24,6 +25,8 @@ impl Walker {
         include_root: bool,
     ) -> Result<Self, WalkError> {
         let root = absolutize(root)?;
+        debug_log!(Flist, 1, "building file list from {:?}", root);
+
         let metadata = fs::symlink_metadata(&root)
             .map_err(|error| WalkError::root_metadata(root.clone(), error))?;
 
@@ -66,9 +69,11 @@ impl Walker {
         let canonical = fs::canonicalize(&fs_path)
             .map_err(|error| WalkError::canonicalize(fs_path.clone(), error))?;
         if !self.visited.insert(canonical) {
+            debug_log!(Dup, 1, "skipping already visited directory: {:?}", fs_path);
             return Ok(());
         }
 
+        debug_log!(Flist, 3, "entering directory: {:?}", fs_path);
         let state = DirectoryState::new(fs_path, relative_prefix, depth)?;
         self.stack.push(state);
         Ok(())
@@ -80,6 +85,8 @@ impl Walker {
         relative_path: PathBuf,
         depth: usize,
     ) -> Result<WalkEntry, WalkError> {
+        debug_log!(Flist, 4, "processing entry: {:?}", relative_path);
+
         let metadata = fs::symlink_metadata(&full_path)
             .map_err(|error| WalkError::metadata(full_path.clone(), error))?;
         let mut next_state = None;
@@ -186,6 +193,8 @@ impl DirectoryState {
             entries.push(entry.file_name());
         }
         entries.sort();
+
+        debug_log!(Flist, 3, "found {} entries in {:?}", entries.len(), fs_path);
 
         Ok(Self {
             fs_path,

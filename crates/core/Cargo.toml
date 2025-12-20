@@ -23,6 +23,7 @@ transport = { path = "../transport" }
 filters = { path = "../filters" }
 compress = { path = "../compress" }
 walk = { path = "../walk" }
+logging = { path = "../logging" }
 libc = "0.2"
 base64 = "0.22"
 tempfile = "3.10"

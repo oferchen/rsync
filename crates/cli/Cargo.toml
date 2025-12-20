@@ -24,6 +24,7 @@ clap = { version = "4.5.17", features = ["std"] }
 core = { path = "../core" }
 engine = { path = "../engine" }
 logging = { path = "../logging" }
+logging-sink = { path = "../logging-sink" }
 protocol = { path = "../protocol" }
 compress = { path = "../compress" }
 metadata = { path = "../metadata" }

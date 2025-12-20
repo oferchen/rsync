@@ -56,7 +56,7 @@ use core::{
     rsync_error, rsync_info, rsync_warning,
     server::{HandshakeResult, ServerConfig, ServerRole, run_server_with_handshake},
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,
     format_legacy_daemon_message, parse_legacy_daemon_message,

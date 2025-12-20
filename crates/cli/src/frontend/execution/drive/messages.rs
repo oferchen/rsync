@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use core::message::Message;
-use logging::MessageSink;
+use logging_sink::MessageSink;
 
 use crate::frontend::write_message;
 

@@ -21,7 +21,7 @@ impl LineMode {
     /// # Examples
     ///
     /// ```
-    /// use logging::LineMode;
+    /// use logging_sink::LineMode;
     ///
     /// assert!(LineMode::WithNewline.append_newline());
     /// assert!(!LineMode::WithoutNewline.append_newline());
@@ -43,7 +43,7 @@ impl From<bool> for LineMode {
     /// # Examples
     ///
     /// ```
-    /// use logging::LineMode;
+    /// use logging_sink::LineMode;
     ///
     /// assert_eq!(LineMode::from(true), LineMode::WithNewline);
     /// assert_eq!(LineMode::from(false), LineMode::WithoutNewline);
@@ -67,7 +67,7 @@ impl From<LineMode> for bool {
     /// # Examples
     ///
     /// ```
-    /// use logging::LineMode;
+    /// use logging_sink::LineMode;
     ///
     /// let append_newline: bool = LineMode::WithNewline.into();
     /// assert!(append_newline);

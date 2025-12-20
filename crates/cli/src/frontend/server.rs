@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use core::branding::Brand;
 use core::message::Role;
 use core::rsync_error;
-use logging::MessageSink;
+use logging_sink::MessageSink;
 
 /// Returns the daemon argument vector when `--daemon` is present.
 pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> {
