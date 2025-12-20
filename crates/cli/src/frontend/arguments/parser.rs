@@ -54,6 +54,8 @@ where
         tri_state_flag_negative_first(&matches, "prune-empty-dirs", "no-prune-empty-dirs");
     let omit_link_times =
         tri_state_flag_negative_first(&matches, "omit-link-times", "no-omit-link-times");
+    let atimes = tri_state_flag_negative_first(&matches, "atimes", "no-atimes");
+    let crtimes = tri_state_flag_negative_first(&matches, "crtimes", "no-crtimes");
     if list_only {
         dry_run = true;
     }
@@ -505,6 +507,8 @@ where
         times,
         omit_dir_times,
         omit_link_times,
+        atimes,
+        crtimes,
         acls,
         numeric_ids,
         hard_links,
