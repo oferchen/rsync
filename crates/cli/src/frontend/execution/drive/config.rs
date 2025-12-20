@@ -55,6 +55,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) group_mapping: Option<GroupMapping>,
     pub(crate) executability: bool,
     pub(crate) permissions: bool,
+    pub(crate) fake_super: bool,
     pub(crate) times: bool,
     pub(crate) atimes: bool,
     pub(crate) crtimes: bool,
@@ -175,6 +176,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .group_mapping(inputs.group_mapping.clone())
         .executability(inputs.executability)
         .permissions(inputs.permissions)
+        .fake_super(inputs.fake_super)
         .times(inputs.times)
         .atimes(inputs.atimes)
         .crtimes(inputs.crtimes)
