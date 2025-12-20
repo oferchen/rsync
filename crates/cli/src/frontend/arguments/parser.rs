@@ -450,6 +450,10 @@ where
     let stop_after = matches.remove_one::<OsString>("stop-after");
     let stop_at_option = matches.remove_one::<OsString>("stop-at");
     let out_format = matches.remove_one::<OsString>("out-format");
+    let dparam = matches
+        .remove_many::<OsString>("dparam")
+        .map(|values| values.collect())
+        .unwrap_or_default();
     let itemize_changes = itemize_changes_flag && !no_itemize_changes_flag;
     let mut no_motd = matches.get_flag("no-motd");
     if matches.get_flag("motd") {
@@ -604,6 +608,7 @@ where
         stop_at: stop_at_option,
         out_format,
         daemon_port,
+        dparam,
         no_iconv,
         executability,
     })
