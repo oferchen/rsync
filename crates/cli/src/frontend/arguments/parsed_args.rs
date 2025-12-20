@@ -105,6 +105,7 @@ pub struct ParsedArgs {
     pub copy_devices: bool,
     pub specials: Option<bool>,
     pub force: Option<bool>,
+    pub qsort: bool,
     pub relative: Option<bool>,
     pub one_file_system: Option<bool>,
     pub implied_dirs: Option<bool>,
