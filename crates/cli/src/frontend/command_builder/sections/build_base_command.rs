@@ -342,7 +342,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("checksum-choice")
                     .long("checksum-choice")
-                    .alias("cc")
+                    .visible_alias("cc")
                     .value_name("ALGO")
                     .help(
                         "Select the strong checksum algorithm (auto, md4, md5, xxh64, xxh3, or xxh128).",
@@ -380,6 +380,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("existing")
                     .long("existing")
+                    .visible_alias("ignore-non-existing")
                     .help("Skip creating new files that do not already exist at the destination.")
                     .action(ArgAction::SetTrue),
             )
