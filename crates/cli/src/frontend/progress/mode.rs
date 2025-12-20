@@ -44,3 +44,32 @@ impl ProgressSetting {
         }
     }
 }
+
+/// Stderr output mode controlling how messages are routed.
+///
+/// This corresponds to the `--stderr=MODE` option in upstream rsync.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StderrMode {
+    /// Send only errors to stderr (default).
+    #[default]
+    Errors,
+    /// Send all messages to stderr.
+    All,
+    /// Client errors to stderr, server errors mixed with data.
+    Client,
+}
+
+impl StderrMode {
+    /// Parses a stderr mode string value.
+    ///
+    /// Returns `None` for unrecognized values.
+    #[must_use]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "errors" | "e" => Some(Self::Errors),
+            "all" | "a" => Some(Self::All),
+            "client" | "c" => Some(Self::Client),
+            _ => None,
+        }
+    }
+}
