@@ -11,6 +11,7 @@ use crate::frontend::execution::drive::module_listing::{
     ModuleListingInputs, maybe_handle_module_listing,
 };
 use crate::frontend::execution::drive::{config, filters, metadata, options, summary, validation};
+use crate::frontend::progress::StderrMode;
 use crate::frontend::{
     arguments::{ParsedArgs, StopRequest},
     execution::{
@@ -180,7 +181,7 @@ where
         append,
         append_verify,
         msgs_to_stderr: msgs_to_stderr_option,
-        stderr_mode: _,
+        stderr_mode,
         outbuf: _,
         max_alloc,
         itemize_changes,
@@ -203,6 +204,13 @@ where
     let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
     let human_readable_enabled = human_readable_mode.is_enabled();
     let msgs_to_stderr_enabled = msgs_to_stderr_option.unwrap_or(false);
+
+    // Parse stderr mode (defaults to Errors if unspecified or invalid)
+    let stderr_mode_setting = stderr_mode
+        .as_ref()
+        .and_then(|s| s.to_str())
+        .and_then(StderrMode::from_str)
+        .unwrap_or_default();
 
     // Initialize verbosity system from -v level (--info/--debug flags applied later in derive_settings)
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
@@ -660,6 +668,7 @@ where
         summary::TransferExecutionInputs {
             config,
             msgs_to_stderr: msgs_to_stderr_enabled,
+            stderr_mode: stderr_mode_setting,
             progress_mode,
             human_readable_mode,
             itemize_changes,
