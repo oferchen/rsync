@@ -525,6 +525,38 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("omit-link-times"),
             )
             .arg(
+                Arg::new("atimes")
+                    .long("atimes")
+                    .short('U')
+                    .help("Preserve access times.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-atimes"),
+            )
+            .arg(
+                Arg::new("no-atimes")
+                    .long("no-atimes")
+                    .visible_alias("no-U")
+                    .help("Disable access time preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("atimes"),
+            )
+            .arg(
+                Arg::new("crtimes")
+                    .long("crtimes")
+                    .short('N')
+                    .help("Preserve creation times (macOS/Windows).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-crtimes"),
+            )
+            .arg(
+                Arg::new("no-crtimes")
+                    .long("no-crtimes")
+                    .visible_alias("no-N")
+                    .help("Disable creation time preservation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("crtimes"),
+            )
+            .arg(
                 Arg::new("acls")
                     .long("acls")
                     .short('A')
