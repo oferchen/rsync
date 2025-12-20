@@ -513,6 +513,20 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("munge-links")
+                    .long("munge-links")
+                    .help("Munge symlinks to make them safe in daemon mode.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-munge-links"),
+            )
+            .arg(
+                Arg::new("no-munge-links")
+                    .long("no-munge-links")
+                    .help("Disable symlink munging.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("munge-links"),
+            )
+            .arg(
                 Arg::new("trust-sender")
                     .long("trust-sender")
                     .help("Trust the sender's file list without additional verification.")
