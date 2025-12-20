@@ -118,6 +118,7 @@ pub struct ClientConfig {
     pub(super) iconv: IconvSetting,
     pub(super) remote_shell: Option<Vec<OsString>>,
     pub(super) rsync_path: Option<OsString>,
+    pub(super) early_input: Option<PathBuf>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
     #[cfg(feature = "acl")]
     pub(super) preserve_acls: bool,
@@ -230,6 +231,7 @@ impl Default for ClientConfig {
             iconv: IconvSetting::Unspecified,
             remote_shell: None,
             rsync_path: None,
+            early_input: None,
             batch_config: None,
             #[cfg(feature = "acl")]
             preserve_acls: false,

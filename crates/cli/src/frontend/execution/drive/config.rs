@@ -129,6 +129,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) iconv: IconvSetting,
     pub(crate) remote_shell: Option<OsString>,
     pub(crate) rsync_path: Option<OsString>,
+    pub(crate) early_input: Option<PathBuf>,
     pub(crate) batch_config: Option<batch::BatchConfig>,
 }
 
@@ -256,6 +257,9 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     if let Some(ref path) = inputs.rsync_path {
         builder = builder.set_rsync_path(path.clone());
     }
+
+    // Configure early-input file if specified
+    builder = builder.early_input(inputs.early_input.clone());
 
     // Configure batch mode if specified
     if let Some(batch_cfg) = inputs.batch_config {
