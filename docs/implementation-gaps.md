@@ -6,10 +6,15 @@ This document identifies missing, incomplete, or incompatible flags and behavior
 
 | Category | Count | Severity |
 |----------|-------|----------|
-| Missing CLI Options | 32 | Mixed |
+| Missing CLI Options | 25 | Mixed |
 | Missing Protocol Features | 3 | Medium |
-| Behavioral Differences | 5 | Low |
+| Behavioral Differences | 3 | Low |
 | Extra Options (Rust-only) | 6 | N/A |
+
+**Recent Progress:**
+- ✅ Daemon/server mode (`--daemon`, `--config`) unified with main CLI
+- ✅ Dual-stack IPv4/IPv6 binding implemented
+- ✅ IPv4-mapped address normalization implemented
 
 ---
 
@@ -35,14 +40,14 @@ This document identifies missing, incomplete, or incompatible flags and behavior
 
 | Option | Purpose | Status |
 |--------|---------|--------|
-| `--daemon` | Run as daemon | **EXISTS in daemon crate, missing from CLI** |
+| `--daemon` | Run as daemon | ✅ **COMPLETE** - Unified with main CLI |
 | `--server` | Server mode (remote end) | Missing |
 | `--sender` | Sender role marker | Missing |
-| `--config` | Daemon config file | **EXISTS in daemon crate** |
+| `--config` | Daemon config file | ✅ **COMPLETE** - Unified with main CLI |
 | `--detach` / `--no-detach` | Daemon detach control | **EXISTS in daemon crate** |
 | `--dparam` / `-M` | Daemon parameter override | Missing |
 
-**Analysis**: Daemon options exist in `crates/daemon/src/` but are not exposed through the main CLI binary's unified command structure.
+**Analysis**: Core daemon options (`--daemon`, `--config`) are now unified with the main CLI binary. The daemon also supports dual-stack IPv4/IPv6 binding, matching upstream rsync behavior.
 
 ---
 
@@ -71,20 +76,20 @@ This document identifies missing, incomplete, or incompatible flags and behavior
 
 ### 1.5 Low Priority - Aliases and Shortcuts
 
-| Option | Equivalent | Notes |
-|--------|-----------|-------|
-| `--cc` | `--checksum-choice` | Shorthand alias |
-| `--zc` | `--compress-choice` | Shorthand alias |
-| `--zl` | `--compress-level` | Shorthand alias |
-| `--del` | `--delete-during` | Shorthand alias |
-| `--i-r` | `--inc-recursive` | Shorthand alias |
-| `--i-d` | `--implied-dirs` | Shorthand alias |
-| `--old-d` | `--old-dirs` | Legacy alias |
-| `--time-limit` | `--stop-after` | Legacy name |
-| `--log-format` | `--out-format` | Deprecated alias |
-| `--ignore-non-existing` | `--existing` | Alias |
+| Option | Equivalent | Status |
+|--------|-----------|--------|
+| `--cc` | `--checksum-choice` | Missing shorthand alias |
+| `--zc` | `--compress-choice` | Missing shorthand alias |
+| `--zl` | `--compress-level` | Missing shorthand alias |
+| `--del` | `--delete-during` | ✅ **COMPLETE** |
+| `--i-r` | `--inc-recursive` | Missing shorthand alias |
+| `--i-d` | `--implied-dirs` | Missing shorthand alias |
+| `--old-d` | `--old-dirs` | ✅ **COMPLETE** |
+| `--time-limit` | `--stop-after` | ✅ **COMPLETE** |
+| `--log-format` | `--out-format` | Missing deprecated alias |
+| `--ignore-non-existing` | `--existing` | Missing alias |
 
-**Analysis**: These are convenience aliases. Lower priority but needed for full compatibility.
+**Analysis**: Several aliases are now supported. Remaining aliases are convenience shortcuts for full compatibility.
 
 ---
 
@@ -99,12 +104,12 @@ This document identifies missing, incomplete, or incompatible flags and behavior
 
 ### 1.7 Low Priority - Advanced/Rare Options
 
-| Option | Purpose | Notes |
-|--------|---------|-------|
-| `--stderr` | Redirect stderr handling | Output routing |
-| `--old-args` | Legacy argument handling | Backwards compat |
-| `--secluded-args` | Protect arguments | Security |
-| `--qsort` | Use qsort for file lists | Performance tuning |
+| Option | Purpose | Status |
+|--------|---------|--------|
+| `--stderr` | Redirect stderr handling | Missing |
+| `--old-args` | Legacy argument handling | Missing |
+| `--secluded-args` | Protect arguments | ✅ **COMPLETE** |
+| `--qsort` | Use qsort for file lists | Missing |
 
 ---
 
@@ -153,11 +158,13 @@ Transforms symlinks to prevent traversal attacks in daemon mode. Not implemented
 
 ### 3.1 Daemon Mode Entry
 
-| Aspect | Upstream | oc-rsync |
-|--------|----------|---------|
-| Entry point | `rsync --daemon` | `oc-rsync --daemon` (separate parsing path) |
-| Config default | `/etc/rsyncd.conf` | `/etc/oc-rsyncd/oc-rsyncd.conf` |
-| Fork behavior | Forks to background by default | Currently no-op/no-detach only |
+| Aspect | Upstream | oc-rsync | Status |
+|--------|----------|---------|--------|
+| Entry point | `rsync --daemon` | `oc-rsync --daemon` | ✅ COMPLETE |
+| Config default | `/etc/rsyncd.conf` | `/etc/oc-rsyncd/oc-rsyncd.conf` | ⚠️ Intentional branding difference |
+| Fork behavior | Forks to background by default | Currently no-op/no-detach only | 🔧 IN PROGRESS |
+| Socket binding | Dual-stack IPv4+IPv6 via getaddrinfo | Dual-stack IPv4+IPv6 via explicit listeners | ✅ COMPLETE |
+| IPv4-mapped addresses | Separate sockets with IPV6_V6ONLY | Normalized via `normalize_peer_address()` | ✅ COMPLETE |
 
 ### 3.2 Delete with Errors
 
@@ -167,10 +174,11 @@ Transforms symlinks to prevent traversal attacks in daemon mode. Not implemented
 
 ### 3.3 Argument Protection
 
-| Aspect | Upstream | oc-rsync |
-|--------|----------|---------|
-| `--protect-args` / `-s` | Protects arguments from shell expansion | Exists but behavior may differ |
-| `--old-args` | Forces legacy argument handling | Missing |
+| Aspect | Upstream | oc-rsync | Status |
+|--------|----------|---------|--------|
+| `--protect-args` / `-s` | Protects arguments from shell expansion | Implemented | ✅ COMPLETE |
+| `--secluded-args` | Hides arguments from ps output | Implemented | ✅ COMPLETE |
+| `--old-args` | Forces legacy argument handling | Not implemented | Missing |
 
 ### 3.4 Memory Limits
 
@@ -206,6 +214,13 @@ These are acceptable extensions that provide explicit negation forms for consist
 
 ## 5. Priority Implementation Order
 
+### Completed Items
+
+- ✅ **Daemon mode unified** (`--daemon`, `--config` in main CLI)
+- ✅ **Dual-stack IPv4/IPv6 binding** (explicit listeners with address normalization)
+- ✅ **Several aliases** (`--del`, `--old-d`, `--time-limit`, `--secluded-args`)
+- ✅ **Argument protection** (`--protect-args`, `--secluded-args`)
+
 ### Phase 1: Critical Gaps (High Priority)
 
 1. **Add `--atimes` / `-U`**
@@ -237,13 +252,12 @@ These are acceptable extensions that provide explicit negation forms for consist
 
 7. **Add shorthand aliases**
    - `--cc`, `--zc`, `--zl`
-   - `--del`, `--i-r`, `--i-d`
-   - `--time-limit`, `--log-format`
+   - `--i-r`, `--i-d`
+   - `--log-format`
 
 8. **Add legacy compatibility**
    - `--old-args`
    - `--old-compress`, `--new-compress`
-   - `--old-dirs`
 
 ### Phase 4: Advanced Features (Low Priority)
 
