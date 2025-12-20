@@ -62,18 +62,18 @@ impl<'a> CopyContext<'a> {
     }
 
     pub(super) fn enforce_timeout(&mut self) -> Result<(), LocalCopyError> {
-        if let Some(limit) = self.timeout {
-            if self.last_progress.elapsed() > limit {
-                return Err(LocalCopyError::timeout(limit));
-            }
+        if let Some(limit) = self.timeout
+            && self.last_progress.elapsed() > limit
+        {
+            return Err(LocalCopyError::timeout(limit));
         }
-        if let Some(deadline) = self.stop_deadline {
-            if Instant::now() >= deadline {
-                let target = self
-                    .stop_at
-                    .unwrap_or_else(std::time::SystemTime::now);
-                return Err(LocalCopyError::stop_at_reached(target));
-            }
+        if let Some(deadline) = self.stop_deadline
+            && Instant::now() >= deadline
+        {
+            let target = self
+                .stop_at
+                .unwrap_or_else(std::time::SystemTime::now);
+            return Err(LocalCopyError::stop_at_reached(target));
         }
         Ok(())
     }
@@ -282,26 +282,26 @@ impl<'a> CopyContext<'a> {
             self.options.backup_suffix(),
         );
 
-        if let Some(parent) = backup_path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|error| {
-                    LocalCopyError::io("create backup directory", parent.to_path_buf(), error)
-                })?;
-            }
+        if let Some(parent) = backup_path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(|error| {
+                LocalCopyError::io("create backup directory", parent.to_path_buf(), error)
+            })?;
         }
 
         match fs::rename(destination, &backup_path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                if let Err(remove_error) = fs::remove_file(&backup_path) {
-                    if remove_error.kind() != io::ErrorKind::NotFound {
-                        return Err(LocalCopyError::io(
-                            "remove existing backup",
-                            backup_path.clone(),
-                            remove_error,
-                        ));
-                    }
+                if let Err(remove_error) = fs::remove_file(&backup_path)
+                    && remove_error.kind() != io::ErrorKind::NotFound
+                {
+                    return Err(LocalCopyError::io(
+                        "remove existing backup",
+                        backup_path.clone(),
+                        remove_error,
+                    ));
                 }
                 fs::rename(destination, &backup_path).map_err(|rename_error| {
                     LocalCopyError::io("create backup", backup_path.clone(), rename_error)

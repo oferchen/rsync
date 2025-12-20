@@ -31,23 +31,22 @@ pub(super) fn handle_dry_run(
     let destination_previously_existed = existing_metadata.is_some();
     let file_size = metadata.len();
     let file_type = metadata.file_type();
-    if context.update_enabled() {
-        if let Some(existing) = existing_metadata {
-            if super::super::comparison::destination_is_newer(metadata, existing) {
-                context.summary_mut().record_regular_file_skipped_newer();
-                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-                let total_bytes = Some(metadata_snapshot.len());
-                context.record(LocalCopyRecord::new(
-                    record_path.to_path_buf(),
-                    LocalCopyAction::SkippedNewerDestination,
-                    0,
-                    total_bytes,
-                    Duration::default(),
-                    Some(metadata_snapshot),
-                ));
-                return Ok(());
-            }
-        }
+    if context.update_enabled()
+        && let Some(existing) = existing_metadata
+        && super::super::comparison::destination_is_newer(metadata, existing)
+    {
+        context.summary_mut().record_regular_file_skipped_newer();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let total_bytes = Some(metadata_snapshot.len());
+        context.record(LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            LocalCopyAction::SkippedNewerDestination,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        ));
+        return Ok(());
     }
 
     if context.ignore_existing_enabled() && existing_metadata.is_some() {

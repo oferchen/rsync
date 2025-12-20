@@ -148,11 +148,10 @@ fn parse_module_definition(
     }
 
     if module.auth_users.is_empty() {
-        if module.secrets_file.is_none() {
-            if let Some(path) = default_secrets {
+        if module.secrets_file.is_none()
+            && let Some(path) = default_secrets {
                 module.secrets_file = Some(path.to_path_buf());
             }
-        }
         if module.incoming_chmod.is_none() {
             module.incoming_chmod = default_incoming_chmod.map(str::to_string);
         }

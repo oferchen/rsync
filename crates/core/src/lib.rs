@@ -37,9 +37,9 @@ pub use ::branding::workspace;
 ///
 /// # Examples
 ///
-/// ```
-/// // Both names access the same functionality
-/// use core::walk::WalkBuilder;
-/// // use core::flist::WalkBuilder;  // Equivalent
+/// ```ignore
+/// // Both names access the same functionality (from within this crate)
+/// use crate::walk::WalkBuilder;
+/// // use crate::flist::WalkBuilder;  // Equivalent
 /// ```
 pub use walk as flist;

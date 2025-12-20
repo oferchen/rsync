@@ -34,17 +34,16 @@ impl FilterSetInner {
             ),
         };
 
-        if matches!(context, DecisionContext::Deletion) {
-            if let Some(rule) = last_matching_rule(
+        if matches!(context, DecisionContext::Deletion)
+            && let Some(rule) = last_matching_rule(
                 &self.include_exclude,
                 path,
                 is_dir,
                 |rule| rule.applies_to_receiver,
                 true,
-            ) {
-                decision.excluded_for_delete_excluded =
-                    matches!(rule.action, FilterAction::Exclude);
-            }
+            )
+        {
+            decision.excluded_for_delete_excluded = matches!(rule.action, FilterAction::Exclude);
         }
 
         if let Some(rule) = transfer_rule {

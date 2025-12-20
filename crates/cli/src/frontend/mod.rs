@@ -261,10 +261,10 @@ where
         return server::run_daemon_mode(daemon_args, stdout, stderr);
     }
 
-    if daemon_alias_requested {
-        if let Some(daemon_args) = daemon_mode_arguments_for_alias(&args, brand) {
-            return server::run_daemon_mode(daemon_args, stdout, stderr);
-        }
+    if daemon_alias_requested
+        && let Some(daemon_args) = daemon_mode_arguments_for_alias(&args, brand)
+    {
+        return server::run_daemon_mode(daemon_args, stdout, stderr);
     }
 
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);

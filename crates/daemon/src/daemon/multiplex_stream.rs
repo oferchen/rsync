@@ -47,22 +47,50 @@ impl<R: Read> Read for MultiplexReader<R> {
             return Ok(to_copy);
         }
 
-        // Read next multiplexed message
-        self.buffer.clear();
-        self.pos = 0;
+        // Loop until we get a MSG_DATA message
+        // Other message types (INFO, ERROR, etc.) are logged and we continue reading
+        loop {
+            self.buffer.clear();
+            self.pos = 0;
 
-        let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
+            let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
 
-        // For now, only handle MSG_DATA (7). Other messages should be handled by higher layers.
-        // If it's not MSG_DATA, we'll just return the payload anyway for compatibility.
-        let _ = code; // Ignore message type for now
-
-        // Copy from buffer to output
-        let to_copy = self.buffer.len().min(buf.len());
-        buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
-        self.pos = to_copy;
-
-        Ok(to_copy)
+            // Dispatch based on message type
+            match code {
+                protocol::MessageCode::Data => {
+                    // MSG_DATA: return payload for protocol processing
+                    let to_copy = self.buffer.len().min(buf.len());
+                    buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
+                    self.pos = to_copy;
+                    return Ok(to_copy);
+                }
+                protocol::MessageCode::Info
+                | protocol::MessageCode::Warning
+                | protocol::MessageCode::Log
+                | protocol::MessageCode::Client => {
+                    // Info/warning messages: print to stderr and continue
+                    if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                        eprint!("{}", msg);
+                    }
+                    // Continue loop to read next message
+                }
+                protocol::MessageCode::Error
+                | protocol::MessageCode::ErrorXfer
+                | protocol::MessageCode::ErrorSocket
+                | protocol::MessageCode::ErrorUtf8
+                | protocol::MessageCode::ErrorExit => {
+                    // Error messages: print to stderr and continue
+                    if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                        eprint!("{}", msg);
+                    }
+                    // Continue loop to read next message
+                }
+                _ => {
+                    // Other message types (Redo, Stats, etc.): continue reading
+                    // These are handled at higher protocol levels
+                }
+            }
+        }
     }
 }
 

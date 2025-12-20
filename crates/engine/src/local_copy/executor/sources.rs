@@ -183,10 +183,10 @@ pub(crate) fn copy_sources(
 
                 if file_type.is_dir() {
                     if source.copy_contents() {
-                        if let Some(root) = relative_root.as_ref() {
-                            if !context.allows(root.as_path(), true) {
-                                continue;
-                            }
+                        if let Some(root) = relative_root.as_ref()
+                            && !context.allows(root.as_path(), true)
+                        {
+                            continue;
                         }
 
                         if !recursion_enabled && !dirs_enabled {
@@ -480,10 +480,10 @@ fn delete_missing_source_entry(
         return Ok(());
     }
 
-    if let Some(limit) = context.options().max_deletion_limit() {
-        if context.summary().items_deleted() >= limit {
-            return Err(LocalCopyError::delete_limit_exceeded(1));
-        }
+    if let Some(limit) = context.options().max_deletion_limit()
+        && context.summary().items_deleted() >= limit
+    {
+        return Err(LocalCopyError::delete_limit_exceeded(1));
     }
 
     let record_path = non_empty_path(relative.as_path());

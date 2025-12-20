@@ -8,9 +8,10 @@ pub(crate) enum ProgressMode {
 ///
 /// **Warning**: This type is exposed via `cli::test_utils` for integration
 /// tests only. It is not part of the stable public API.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ProgressSetting {
     /// No explicit progress flag was provided.
+    #[default]
     Unspecified,
     /// Progress reporting explicitly disabled via `--no-progress`.
     Disabled,

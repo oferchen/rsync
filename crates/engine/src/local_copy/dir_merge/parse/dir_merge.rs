@@ -24,10 +24,11 @@ pub(super) fn parse_dir_merge_directive(
         None => return Ok(None),
     };
 
-    if let Some(ch) = remainder.chars().next() {
-        if ch != ',' && !ch.is_ascii_whitespace() {
-            return Ok(None);
-        }
+    if let Some(ch) = remainder.chars().next()
+        && ch != ','
+        && !ch.is_ascii_whitespace()
+    {
+        return Ok(None);
     }
 
     remainder = remainder.trim_start();

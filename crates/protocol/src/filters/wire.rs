@@ -368,7 +368,7 @@ mod tests {
         let rule = FilterRuleWireFormat::exclude("*.log".to_string());
 
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule.clone()], protocol).unwrap();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
 
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -382,7 +382,7 @@ mod tests {
         let rule = FilterRuleWireFormat::include("*.txt".to_string());
 
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule.clone()], protocol).unwrap();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
 
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -396,7 +396,7 @@ mod tests {
         let rule = FilterRuleWireFormat::exclude("/tmp".to_string()).with_anchored(true);
 
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule.clone()], protocol).unwrap();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
 
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -410,7 +410,7 @@ mod tests {
         let rule = FilterRuleWireFormat::exclude("cache".to_string()).with_directory_only(true);
 
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule.clone()], protocol).unwrap();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
 
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -424,7 +424,7 @@ mod tests {
         let rule = FilterRuleWireFormat::exclude("*.tmp".to_string()).with_sides(true, false);
 
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule.clone()], protocol).unwrap();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
 
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -438,7 +438,7 @@ mod tests {
         let rule = FilterRuleWireFormat::exclude("*.bak".to_string()).with_sides(false, true);
 
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule.clone()], protocol).unwrap();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
 
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
@@ -452,7 +452,7 @@ mod tests {
         let rule = FilterRuleWireFormat::exclude("*.swp".to_string()).with_perishable(true);
 
         let mut buf = Vec::new();
-        write_filter_list(&mut buf, &[rule.clone()], protocol).unwrap();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
 
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);

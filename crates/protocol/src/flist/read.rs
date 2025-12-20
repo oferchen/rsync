@@ -79,25 +79,82 @@ impl FileListReader {
         &mut self,
         reader: &mut R,
     ) -> io::Result<Option<FileEntry>> {
-        // Read flags (as varint for protocol 30+, as byte for older protocols)
+        // Read flags (as varint if VARINT_FLIST_FLAGS set, as byte otherwise)
         //
-        // This mirrors the write side's VARINT_FLIST_FLAGS behavior. Upstream rsync
-        // always sets this compatibility flag for protocol 30+ sessions (compat.c),
-        // so checking protocol >= 30 is equivalent to checking the flag. We mirror
-        // upstream's performance optimization of using the protocol version directly
-        // (flist.c:recv_file_entry) rather than testing compat_flags on every entry.
-        let flags_value = if self.protocol.as_u8() >= 30 {
-            read_varint(reader)?
+        // IMPORTANT: The use of varint encoding for file list flags is controlled by
+        // VARINT_FLIST_FLAGS in compat_flags, NOT by protocol version alone.
+        // The server only sets this flag if the client advertises 'v' capability.
+        // See upstream compat.c: strchr(client_info, 'v') != NULL
+        //
+        // If client didn't send 'v' capability, compat_flags won't include
+        // VARINT_FLIST_FLAGS, and the file list uses single-byte flags even for
+        // protocol 30+. This is critical for daemon client interop!
+        static FLIST_ENTRY_COUNT: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let entry_idx = FLIST_ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let use_varint_flags = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
+        let _ = std::fs::write(
+            format!("/tmp/flist_{:03}_READ_ENTRY", entry_idx),
+            format!(
+                "use_varint={} prev_name_len={}",
+                use_varint_flags,
+                self.prev_name.len()
+            ),
+        );
+
+        // Read primary flags byte
+        let flags_byte = if use_varint_flags {
+            // Varint encoding: read as varint, primary flags in low 8 bits
+            let v = read_varint(reader)?;
+            let _ = std::fs::write(
+                format!("/tmp/flist_{:03}_FLAGS", entry_idx),
+                format!("varint={:#x}", v),
+            );
+            v
         } else {
-            let mut flags_byte = [0u8; 1];
-            reader.read_exact(&mut flags_byte)?;
-            flags_byte[0] as i32
+            // Single-byte encoding
+            let mut buf = [0u8; 1];
+            reader.read_exact(&mut buf)?;
+            let _ = std::fs::write(
+                format!("/tmp/flist_{:03}_FLAGS", entry_idx),
+                format!("byte={:#x} binary={:08b}", buf[0], buf[0]),
+            );
+            buf[0] as i32
         };
 
         // Zero value marks end of file list
-        if flags_value == 0 {
+        if flags_byte == 0 {
             return Ok(None);
         }
+
+        // Read extended flags byte if XMIT_EXTENDED_FLAGS is set and NOT using varint
+        // For varint, extended flags are in bits 8-15 of the varint value.
+        // For non-varint (protocol 28-29 or no VARINT_FLIST_FLAGS), extended flags
+        // are a separate second byte read ONLY when XMIT_EXTENDED_FLAGS is set.
+        let ext_byte = if use_varint_flags {
+            // Extended flags are in bits 8-15 of the varint
+            ((flags_byte >> 8) & 0xFF) as u8
+        } else if (flags_byte as u8 & XMIT_EXTENDED_FLAGS) != 0 {
+            // Read separate extended flags byte
+            let mut buf = [0u8; 1];
+            reader.read_exact(&mut buf)?;
+            let _ = std::fs::write(
+                format!("/tmp/flist_{:03}_EXT_FLAGS", entry_idx),
+                format!("byte={:#x}", buf[0]),
+            );
+            buf[0]
+        } else {
+            0
+        };
+
+        // Convert primary flags to u8 for further processing
+        let flags_byte = flags_byte as u8;
+
+        // Reconstruct combined flags value for error marker check
+        let flags_value = (flags_byte as i32) | ((ext_byte as i32) << 8);
 
         // Check for I/O error endlist marker (upstream flist.c:2633)
         // flags == (XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST)
@@ -126,10 +183,6 @@ impl FileListReader {
             ));
         }
 
-        // Extract flags bytes from varint value
-        let flags_byte = (flags_value & 0xFF) as u8;
-        let ext_byte = ((flags_value >> 8) & 0xFF) as u8;
-
         // Build flags structure
         // For protocol 28+, extended flags may be present in the second byte
         let flags = if ext_byte != 0 || (flags_byte & super::flags::XMIT_EXTENDED_FLAGS) != 0 {
@@ -152,6 +205,14 @@ impl FileListReader {
             let mtime = crate::read_varlong(reader, 4)?;
             self.prev_mtime = mtime;
             mtime
+        };
+
+        // Read nanoseconds if XMIT_MOD_NSEC is set (protocol 31+)
+        // Upstream flist.c:597-598: read_varint(f) if mtime has nsec
+        let _nsec = if flags.mod_nsec() {
+            crate::read_varint(reader)? as u32
+        } else {
+            0
         };
 
         // Read mode (or use previous)
@@ -179,10 +240,28 @@ impl FileListReader {
         reader: &mut R,
         flags: &FileFlags,
     ) -> io::Result<Vec<u8>> {
+        static NAME_READ_COUNT: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let name_idx = NAME_READ_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let _ = std::fs::write(
+            format!("/tmp/name_{:03}_START", name_idx),
+            format!(
+                "same_name={} long_name={} prev_name_len={}",
+                flags.same_name(),
+                flags.long_name(),
+                self.prev_name.len()
+            ),
+        );
+
         // Determine how many bytes are shared with the previous name
         let same_len = if flags.same_name() {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
+            let _ = std::fs::write(
+                format!("/tmp/name_{:03}_SAME_LEN", name_idx),
+                format!("byte={:#x} ({})", byte[0], byte[0]),
+            );
             byte[0] as usize
         } else {
             0
@@ -194,11 +273,23 @@ impl FileListReader {
         } else {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
+            let _ = std::fs::write(
+                format!("/tmp/name_{:03}_SUFFIX_LEN", name_idx),
+                format!("byte={:#x} ({})", byte[0], byte[0]),
+            );
             byte[0] as usize
         };
 
         // Validate lengths
         if same_len > self.prev_name.len() {
+            let _ = std::fs::write(
+                format!("/tmp/name_{:03}_ERROR", name_idx),
+                format!(
+                    "same_len={} > prev_name_len={}",
+                    same_len,
+                    self.prev_name.len()
+                ),
+            );
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -218,7 +309,20 @@ impl FileListReader {
             let start = name.len();
             name.resize(start + suffix_len, 0);
             reader.read_exact(&mut name[start..])?;
+            let _ = std::fs::write(
+                format!("/tmp/name_{:03}_SUFFIX_BYTES", name_idx),
+                format!(
+                    "bytes={:?} str={:?}",
+                    &name[start..],
+                    String::from_utf8_lossy(&name[start..])
+                ),
+            );
         }
+
+        let _ = std::fs::write(
+            format!("/tmp/name_{:03}_RESULT", name_idx),
+            format!("name={:?}", String::from_utf8_lossy(&name)),
+        );
 
         // Update previous name for next entry
         self.prev_name = name.clone();
@@ -334,7 +438,8 @@ mod tests {
         use crate::varint::encode_varint_to_vec;
 
         let protocol = test_protocol();
-        let flags = CompatibilityFlags::SAFE_FILE_LIST;
+        // Need VARINT_FLIST_FLAGS to read varint-encoded data
+        let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::VARINT_FLIST_FLAGS;
         let mut reader = FileListReader::with_compat_flags(protocol, flags);
 
         // Construct error marker: XMIT_EXTENDED_FLAGS | (XMIT_IO_ERROR_ENDLIST << 8)
@@ -359,11 +464,14 @@ mod tests {
 
     #[test]
     fn read_entry_rejects_error_marker_without_safe_file_list() {
+        use crate::CompatibilityFlags;
         use crate::varint::encode_varint_to_vec;
 
         // Use protocol 30 to avoid automatic safe mode (protocol >= 31)
         let protocol = ProtocolVersion::try_from(30u8).unwrap();
-        let mut reader = FileListReader::new(protocol); // No SAFE_FILE_LIST flag
+        // Need VARINT_FLIST_FLAGS to read varint-encoded data, but NOT SAFE_FILE_LIST
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
 
         // Construct error marker
         let error_marker = (XMIT_EXTENDED_FLAGS as i32) | ((XMIT_IO_ERROR_ENDLIST as i32) << 8);
@@ -385,10 +493,14 @@ mod tests {
 
     #[test]
     fn read_entry_with_protocol_31_accepts_error_marker() {
+        use crate::CompatibilityFlags;
         use crate::varint::encode_varint_to_vec;
 
         let protocol = ProtocolVersion::try_from(31u8).unwrap();
-        let mut reader = FileListReader::new(protocol); // No explicit flags, but protocol 31+
+        // Need VARINT_FLIST_FLAGS to read varint-encoded data
+        // Protocol 31+ automatically enables safe file list mode
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
 
         // Construct error marker + error code
         let error_marker = (XMIT_EXTENDED_FLAGS as i32) | ((XMIT_IO_ERROR_ENDLIST as i32) << 8);
@@ -408,12 +520,15 @@ mod tests {
     }
 
     #[test]
-    fn read_write_round_trip_with_safe_file_list_error() {
+    fn read_write_round_trip_with_safe_file_list_error_nonvarint() {
         use super::super::write::FileListWriter;
         use crate::CompatibilityFlags;
 
-        let protocol = test_protocol();
-        let flags = CompatibilityFlags::SAFE_FILE_LIST;
+        // Test non-varint mode (protocol 30 without VARINT_FLIST_FLAGS)
+        // In non-varint mode, the error marker (XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST)
+        // is written and causes read_entry to return an error.
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let flags = CompatibilityFlags::SAFE_FILE_LIST; // Note: no VARINT_FLIST_FLAGS
 
         // Write error marker
         let writer = FileListWriter::with_compat_flags(protocol, flags);
@@ -425,8 +540,44 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err());
+        assert!(result.is_err(), "expected error, got: {:?}", result);
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("file list I/O error: 123"));
+        assert!(
+            err.to_string().contains("file list I/O error: 123"),
+            "unexpected error message: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn read_write_round_trip_with_varint_end_marker() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+        use crate::varint::read_varint;
+
+        // Test varint mode (VARINT_FLIST_FLAGS enabled)
+        // In varint mode, end-of-list is 0 followed by error code varint.
+        // read_entry returns Ok(None) and caller reads error code separately.
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        // Write end marker with error code
+        let writer = FileListWriter::with_compat_flags(protocol, flags);
+        let mut data = Vec::new();
+        writer.write_end(&mut data, Some(123)).unwrap();
+
+        // Read end marker - returns Ok(None)
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
+        let mut cursor = Cursor::new(&data[..]);
+        let result = reader.read_entry(&mut cursor);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none(), "end marker should return None");
+
+        // Read the error code that follows the end marker
+        let error_code = read_varint(&mut cursor).unwrap();
+        assert_eq!(
+            error_code, 123,
+            "error code should be readable after end marker"
+        );
     }
 }

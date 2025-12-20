@@ -79,8 +79,17 @@ pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Resul
 
 fn read_header<R: Read>(reader: &mut R) -> io::Result<MessageHeader> {
     let mut header_bytes = [0u8; HEADER_LEN];
-    reader.read_exact(&mut header_bytes)?;
-    MessageHeader::decode(&header_bytes).map_err(map_envelope_error)
+    let _ = std::fs::write("/tmp/mux_HEADER_BEFORE_READ", "1");
+    match reader.read_exact(&mut header_bytes) {
+        Ok(()) => {
+            let _ = std::fs::write("/tmp/mux_HEADER_READ_OK", format!("{:02x?}", header_bytes));
+            MessageHeader::decode(&header_bytes).map_err(map_envelope_error)
+        }
+        Err(e) => {
+            let _ = std::fs::write("/tmp/mux_HEADER_READ_ERR", format!("{:?}: {}", e.kind(), e));
+            Err(e)
+        }
+    }
 }
 
 fn write_all_vectored<W: Write + ?Sized>(

@@ -126,15 +126,15 @@ impl<'a> CopyContext<'a> {
                     marker_counts.push((index, count));
                 }
             } else {
-                if has_segment {
-                    if let Some(current) = ephemeral_stack.last_mut() {
-                        current.push((index, segment));
-                    }
+                if has_segment
+                    && let Some(current) = ephemeral_stack.last_mut()
+                {
+                    current.push((index, segment));
                 }
-                if !markers.is_empty() {
-                    if let Some(current) = marker_ephemeral_stack.last_mut() {
-                        current.push((index, markers));
-                    }
+                if !markers.is_empty()
+                    && let Some(current) = marker_ephemeral_stack.last_mut()
+                {
+                    current.push((index, markers));
                 }
             }
         }

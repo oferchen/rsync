@@ -234,5 +234,13 @@ DAEMON_PROTOCOL_FLOW.md
 test_daemon_protocol.sh
 test_daemon_strace.sh
 test_daemon_tcpdump.sh
+test_rsync_varint
+.claude-flow/
+PROTOCOL_32_REQUIREMENTS.md
+PROTOCOL_TIMING_RESOLUTION_PLAN.md
+CURRENT_IMPLEMENTATION_DIAGNOSIS.md
+DAEMON_INVESTIGATION_SUMMARY.md
+DAEMON_PROTOCOL_FLOW.md
+DEBUGGING_INTEROP.md
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,linux,macos,windows,rust-analyzer,visualstudiocode,jetbrains
