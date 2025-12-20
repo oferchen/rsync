@@ -55,6 +55,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) executability: bool,
     pub(crate) permissions: bool,
     pub(crate) times: bool,
+    pub(crate) atimes: bool,
+    pub(crate) crtimes: bool,
     pub(crate) modify_window_setting: Option<u64>,
     pub(crate) omit_dir_times: bool,
     pub(crate) omit_link_times: bool,
@@ -172,6 +174,8 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .executability(inputs.executability)
         .permissions(inputs.permissions)
         .times(inputs.times)
+        .atimes(inputs.atimes)
+        .crtimes(inputs.crtimes)
         .modify_window(inputs.modify_window_setting)
         .omit_dir_times(inputs.omit_dir_times)
         .omit_link_times(inputs.omit_link_times)
