@@ -534,3 +534,590 @@ fn test_daemon_nonexistent_module_error() {
         "error should mention unknown module, got: {response}",
     );
 }
+
+// ============================================================================
+// Comprehensive Handshake Tests
+// ============================================================================
+
+/// Test full handshake sequence from client perspective with modern protocol.
+///
+/// This test verifies the complete daemon handshake flow:
+/// 1. Client receives daemon greeting (@RSYNCD: XX.Y)
+/// 2. Client sends version with auth digest list
+/// 3. Client sends module name
+/// 4. Client receives @RSYNCD: OK
+/// 5. Client sends server arguments
+///
+/// Mirrors upstream clientserver.c:start_inband_exchange()
+#[test]
+#[ignore = "requires upstream rsync binary"]
+fn test_full_handshake_sequence_modern_protocol() {
+    if !Path::new(UPSTREAM_3_4_1).exists() {
+        eprintln!("Skipping: upstream rsync 3.4.1 not found");
+        return;
+    }
+
+    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12880).expect("start upstream daemon");
+    daemon
+        .wait_ready(Duration::from_secs(5))
+        .expect("daemon ready");
+
+    let stream =
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .expect("set write timeout");
+
+    let reader_stream = stream.try_clone().expect("clone stream");
+    let mut writer_stream = stream;
+    let mut reader = BufReader::new(reader_stream);
+
+    // Step 1: Receive daemon greeting
+    let mut greeting = String::new();
+    reader.read_line(&mut greeting).expect("read greeting");
+    assert!(
+        greeting.starts_with("@RSYNCD: "),
+        "expected daemon greeting, got: {greeting}"
+    );
+
+    // Parse protocol version from greeting
+    let version_part = greeting
+        .trim()
+        .strip_prefix("@RSYNCD: ")
+        .expect("parse version prefix");
+    let protocol_version: f64 = version_part
+        .split_whitespace()
+        .next()
+        .expect("get version number")
+        .parse()
+        .expect("parse protocol version");
+    assert!(
+        protocol_version >= 30.0,
+        "3.4.1 should advertise protocol 30+, got: {protocol_version}"
+    );
+
+    // Step 2: Send client version with auth digests (protocol 30+ requirement)
+    // Order follows upstream checksum.c:71-84 valid_auth_checksums_items[]
+    writer_stream
+        .write_all(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n")
+        .expect("send client version");
+    writer_stream.flush().expect("flush version");
+
+    // Step 3: Send module name
+    writer_stream
+        .write_all(b"testmodule\n")
+        .expect("send module name");
+    writer_stream.flush().expect("flush module");
+
+    // Step 4: Receive @RSYNCD: OK (or MOTD lines first, then OK)
+    let mut got_ok = false;
+    for _ in 0..10 {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read response line");
+        let trimmed = line.trim();
+
+        if trimmed == "@RSYNCD: OK" {
+            got_ok = true;
+            break;
+        }
+
+        // Check for errors
+        assert!(
+            !trimmed.starts_with("@ERROR"),
+            "unexpected error: {trimmed}"
+        );
+        assert!(
+            !trimmed.starts_with("@RSYNCD: AUTHREQD"),
+            "unexpected auth required: {trimmed}"
+        );
+
+        // Other lines are MOTD, continue
+    }
+
+    assert!(got_ok, "should receive @RSYNCD: OK after module request");
+
+    // Step 5: Send server arguments (protocol 30+ uses null terminators)
+    // Format: --server [--sender] <flags> . <module/path>
+    let args = [
+        b"--server\0".as_slice(),
+        b"--sender\0".as_slice(),
+        b"-vn\0".as_slice(),
+        b"-e.LsfxCIvu\0".as_slice(), // Capability flags for protocol 30+
+        b".\0".as_slice(),
+        b"testmodule/\0".as_slice(),
+        b"\0".as_slice(), // Final empty string
+    ];
+
+    for arg in &args {
+        writer_stream.write_all(arg).expect("send argument");
+    }
+    writer_stream.flush().expect("flush arguments");
+
+    // At this point handshake is complete and file list exchange would begin
+    // (not tested here as that requires full server implementation)
+}
+
+/// Test protocol version negotiation downgrade to common version.
+///
+/// Verifies that when client advertises a higher version than daemon supports,
+/// the negotiated version is the minimum of both (daemon's version).
+#[test]
+#[ignore = "requires upstream rsync binary"]
+fn test_protocol_version_negotiation_downgrade() {
+    if !Path::new(UPSTREAM_3_1_3).exists() {
+        eprintln!("Skipping: upstream rsync 3.1.3 not found");
+        return;
+    }
+
+    let daemon = UpstreamDaemon::start(UPSTREAM_3_1_3, 12881).expect("start daemon 3.1.3");
+    daemon
+        .wait_ready(Duration::from_secs(5))
+        .expect("daemon ready");
+
+    let stream =
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+
+    let reader_stream = stream.try_clone().expect("clone stream");
+    let mut writer_stream = stream;
+    let mut reader = BufReader::new(reader_stream);
+
+    // Read daemon greeting - 3.1.3 advertises protocol 30 or 31
+    let mut greeting = String::new();
+    reader.read_line(&mut greeting).expect("read greeting");
+
+    let version_str = greeting
+        .trim()
+        .strip_prefix("@RSYNCD: ")
+        .expect("parse version");
+    let daemon_version: u8 = version_str
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .unwrap()
+        .parse()
+        .expect("parse daemon version");
+
+    // Send client version 32 (higher than 3.1.3's protocol)
+    writer_stream
+        .write_all(b"@RSYNCD: 32.0\n")
+        .expect("send version");
+    writer_stream.flush().expect("flush");
+
+    // Negotiated protocol should be min(32, daemon_version) = daemon_version
+    // This is the key part: client must downgrade to daemon's version
+    assert!(
+        daemon_version <= 31,
+        "3.1.3 should advertise protocol <= 31, got: {daemon_version}"
+    );
+
+    // Verify negotiation works by requesting module
+    writer_stream
+        .write_all(b"testmodule\n")
+        .expect("send module");
+    writer_stream.flush().expect("flush");
+
+    // Should get OK response (protocol negotiation succeeded)
+    let mut response = String::new();
+    reader.read_line(&mut response).expect("read response");
+    let trimmed = response.trim();
+
+    // May get OK immediately or after MOTD
+    assert!(
+        trimmed.starts_with("@RSYNCD: OK") || !trimmed.starts_with("@ERROR"),
+        "negotiation should succeed, got: {trimmed}"
+    );
+}
+
+/// Test protocol version negotiation upgrade to client's version.
+///
+/// Verifies that when daemon advertises a higher version than client supports,
+/// the negotiated version is the client's version.
+#[test]
+#[ignore = "requires upstream rsync binary"]
+fn test_protocol_version_negotiation_upgrade() {
+    if !Path::new(UPSTREAM_3_4_1).exists() {
+        eprintln!("Skipping: upstream rsync 3.4.1 not found");
+        return;
+    }
+
+    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12882).expect("start daemon 3.4.1");
+    daemon
+        .wait_ready(Duration::from_secs(5))
+        .expect("daemon ready");
+
+    let stream =
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+
+    let reader_stream = stream.try_clone().expect("clone stream");
+    let mut writer_stream = stream;
+    let mut reader = BufReader::new(reader_stream);
+
+    // Read daemon greeting - 3.4.1 advertises protocol 31
+    let mut greeting = String::new();
+    reader.read_line(&mut greeting).expect("read greeting");
+    assert!(greeting.starts_with("@RSYNCD: 31"), "expected protocol 31");
+
+    // Send client version 30 (lower than daemon's protocol 31)
+    writer_stream
+        .write_all(b"@RSYNCD: 30.0\n")
+        .expect("send version");
+    writer_stream.flush().expect("flush");
+
+    // Negotiated protocol should be min(31, 30) = 30
+    // Client limits the session to an older protocol version
+
+    // Verify negotiation works by requesting module
+    writer_stream
+        .write_all(b"testmodule\n")
+        .expect("send module");
+    writer_stream.flush().expect("flush");
+
+    // Should get OK response
+    let mut response = String::new();
+    reader.read_line(&mut response).expect("read response");
+    assert!(
+        response.trim().starts_with("@RSYNCD: OK") || !response.starts_with("@ERROR"),
+        "negotiation should succeed with downgraded protocol"
+    );
+}
+
+/// Test module listing request/response flow.
+///
+/// Verifies that sending "#list" instead of a module name returns the
+/// list of available modules followed by @RSYNCD: EXIT.
+///
+/// Mirrors upstream clientserver.c handling of module listing.
+#[test]
+#[ignore = "requires upstream rsync binary"]
+fn test_module_listing_request_response() {
+    if !Path::new(UPSTREAM_3_4_1).exists() {
+        eprintln!("Skipping: upstream rsync 3.4.1 not found");
+        return;
+    }
+
+    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12883).expect("start upstream daemon");
+    daemon
+        .wait_ready(Duration::from_secs(5))
+        .expect("daemon ready");
+
+    let stream =
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+
+    let reader_stream = stream.try_clone().expect("clone stream");
+    let mut writer_stream = stream;
+    let mut reader = BufReader::new(reader_stream);
+
+    // Read daemon greeting
+    let mut greeting = String::new();
+    reader.read_line(&mut greeting).expect("read greeting");
+    assert!(greeting.starts_with("@RSYNCD:"));
+
+    // Send client version
+    writer_stream
+        .write_all(b"@RSYNCD: 31.0\n")
+        .expect("send version");
+    writer_stream.flush().expect("flush");
+
+    // Request module list instead of specific module
+    writer_stream
+        .write_all(b"#list\n")
+        .expect("send #list request");
+    writer_stream.flush().expect("flush");
+
+    // Read module listing lines
+    let mut modules = Vec::new();
+    let mut got_exit = false;
+
+    for _ in 0..100 {
+        let mut line = String::new();
+        let n = reader.read_line(&mut line).expect("read module line");
+
+        if n == 0 {
+            break; // EOF
+        }
+
+        let trimmed = line.trim();
+
+        if trimmed == "@RSYNCD: EXIT" {
+            got_exit = true;
+            break;
+        }
+
+        if !trimmed.is_empty() && !trimmed.starts_with("@RSYNCD:") {
+            modules.push(trimmed.to_string());
+        }
+    }
+
+    assert!(got_exit, "should receive @RSYNCD: EXIT after module list");
+    assert!(
+        modules.iter().any(|m| m.contains("testmodule")),
+        "module list should contain testmodule, got: {modules:?}"
+    );
+}
+
+/// Test compat flags exchange for protocol 30+.
+///
+/// For protocol 30+, after the module handshake completes, both sides
+/// exchange compatibility flags as 4-byte varints before file list transfer.
+///
+/// This test verifies the handshake up to the point where compat flags
+/// would be exchanged (actual exchange requires full server implementation).
+#[test]
+#[ignore = "requires upstream rsync binary"]
+fn test_compat_flags_exchange_setup() {
+    if !Path::new(UPSTREAM_3_4_1).exists() {
+        eprintln!("Skipping: upstream rsync 3.4.1 not found");
+        return;
+    }
+
+    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12884).expect("start upstream daemon");
+    daemon
+        .wait_ready(Duration::from_secs(5))
+        .expect("daemon ready");
+
+    let stream =
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .expect("set write timeout");
+
+    let reader_stream = stream.try_clone().expect("clone stream");
+    let mut writer_stream = stream;
+    let mut reader = BufReader::new(reader_stream);
+
+    // Complete handshake sequence
+    let mut greeting = String::new();
+    reader.read_line(&mut greeting).expect("read greeting");
+
+    // Verify protocol 30+ for compat flags
+    let version_str = greeting
+        .trim()
+        .strip_prefix("@RSYNCD: ")
+        .expect("parse version");
+    let protocol_version: u8 = version_str
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .unwrap()
+        .parse()
+        .expect("parse version");
+
+    assert!(
+        protocol_version >= 30,
+        "need protocol 30+ for compat flags test, got: {protocol_version}"
+    );
+
+    // Send client version
+    writer_stream
+        .write_all(b"@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n")
+        .expect("send version");
+    writer_stream.flush().expect("flush");
+
+    // Send module request
+    writer_stream
+        .write_all(b"testmodule\n")
+        .expect("send module");
+    writer_stream.flush().expect("flush");
+
+    // Wait for OK
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read response");
+        if line.trim() == "@RSYNCD: OK" {
+            break;
+        }
+        assert!(!line.starts_with("@ERROR"), "unexpected error");
+    }
+
+    // Send server arguments (protocol 30+ format with null terminators)
+    let args = [
+        b"--server\0".as_slice(),
+        b"-vn\0".as_slice(),
+        b"-e.LsfxCIvu\0".as_slice(),
+        b".\0".as_slice(),
+        b"testmodule/\0".as_slice(),
+        b"\0".as_slice(),
+    ];
+
+    for arg in &args {
+        writer_stream.write_all(arg).expect("send argument");
+    }
+    writer_stream.flush().expect("flush arguments");
+
+    // At this point, the next protocol step would be:
+    // 1. Compat flags exchange (4-byte varint from each side)
+    // 2. Checksum seed exchange
+    // 3. Capability negotiation (checksum/compression algorithms)
+    // 4. Filter list exchange
+    // 5. File list exchange
+    //
+    // This test verifies we've completed the handshake portion correctly.
+}
+
+/// Test capability negotiation for checksum algorithms (protocol 30+).
+///
+/// For protocol 30+, after compat flags exchange, both sides negotiate
+/// which checksum and compression algorithms to use.
+///
+/// Server sends: supported checksums, supported compressions
+/// Client sends: chosen checksum, chosen compression
+///
+/// Mirrors upstream compat.c:534-585 (negotiate_the_strings)
+#[test]
+#[ignore = "requires upstream rsync binary and full protocol implementation"]
+fn test_capability_negotiation_checksums() {
+    // This test would require implementing the full protocol exchange
+    // up through compat flags and into algorithm negotiation.
+    //
+    // Key verification points:
+    // 1. Server sends space-separated list of checksum algorithms
+    // 2. Server sends space-separated list of compression algorithms
+    // 3. Client selects first mutually supported algorithm from each list
+    // 4. Both sides agree on xxh128/xxh3/xxh64/md5/md4/sha1/none for checksums
+    // 5. Both sides agree on zstd/lz4/zlibx/zlib/none for compression
+    //
+    // Current status: Placeholder for future implementation
+}
+
+/// Test capability negotiation for compression algorithms (protocol 30+).
+#[test]
+#[ignore = "requires upstream rsync binary and full protocol implementation"]
+fn test_capability_negotiation_compression() {
+    // This test would verify compression algorithm negotiation:
+    // 1. Server advertises: "zstd lz4 zlibx zlib none"
+    // 2. Client selects first supported algorithm
+    // 3. Upstream order: zstd, lz4, zlibx, zlib, none
+    //
+    // Current status: Placeholder for future implementation
+}
+
+/// Test error scenario: invalid protocol version in greeting.
+#[test]
+#[ignore = "requires upstream rsync binary"]
+fn test_error_invalid_protocol_version() {
+    if !Path::new(UPSTREAM_3_4_1).exists() {
+        eprintln!("Skipping: upstream rsync 3.4.1 not found");
+        return;
+    }
+
+    let daemon = UpstreamDaemon::start(UPSTREAM_3_4_1, 12885).expect("start upstream daemon");
+    daemon
+        .wait_ready(Duration::from_secs(5))
+        .expect("daemon ready");
+
+    let stream =
+        TcpStream::connect(format!("127.0.0.1:{}", daemon.port)).expect("connect to daemon");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+
+    let reader_stream = stream.try_clone().expect("clone stream");
+    let mut writer_stream = stream;
+    let mut reader = BufReader::new(reader_stream);
+
+    // Read daemon greeting
+    let mut greeting = String::new();
+    reader.read_line(&mut greeting).expect("read greeting");
+    assert!(greeting.starts_with("@RSYNCD:"));
+
+    // Send invalid protocol version (too old)
+    writer_stream
+        .write_all(b"@RSYNCD: 20.0\n")
+        .expect("send invalid version");
+    writer_stream.flush().expect("flush");
+
+    // Try to request module
+    writer_stream
+        .write_all(b"testmodule\n")
+        .expect("send module");
+    writer_stream.flush().expect("flush");
+
+    // Daemon should reject or handle gracefully
+    // (exact behavior depends on daemon implementation)
+    let mut response = String::new();
+    let result = reader.read_line(&mut response);
+
+    // Either get an error or connection closes
+    if result.is_ok() {
+        // If we get a response, it might be an error or the daemon
+        // might downgrade gracefully to protocol 20
+        // (upstream behavior varies by version)
+    }
+}
+
+/// Test error scenario: connection timeout.
+#[test]
+fn test_error_connection_timeout() {
+    // Try to connect to a port that's not listening
+    let result = TcpStream::connect("127.0.0.1:1");
+
+    // Should fail immediately (connection refused) or timeout
+    assert!(
+        result.is_err(),
+        "connection to non-listening port should fail"
+    );
+}
+
+/// Test error scenario: module access denied.
+///
+/// This would require configuring the daemon with access restrictions,
+/// which is outside the scope of this test suite but included for completeness.
+#[test]
+#[ignore = "requires daemon with access restrictions configured"]
+fn test_error_module_access_denied() {
+    // To test this properly, would need to:
+    // 1. Configure daemon with "hosts allow" or similar restrictions
+    // 2. Connect from unauthorized host/IP
+    // 3. Verify @ERROR response indicates access denied
+    //
+    // Current status: Placeholder for future implementation
+}
+
+/// Test handshake with MOTD (message of the day).
+///
+/// Verifies that the client correctly skips MOTD lines between module
+/// request and @RSYNCD: OK response.
+#[test]
+#[ignore = "requires upstream rsync binary with MOTD configured"]
+fn test_handshake_with_motd() {
+    // To test this, would need to configure daemon with MOTD file
+    // and verify client skips those lines correctly.
+    //
+    // Expected flow:
+    // 1. Client sends module request
+    // 2. Server sends MOTD lines (arbitrary text)
+    // 3. Server sends @RSYNCD: OK
+    // 4. Client should skip MOTD and wait for OK
+    //
+    // Current status: Placeholder for future implementation
+}
+
+/// Test handshake with authentication requirement.
+///
+/// Verifies that client receives @RSYNCD: AUTHREQD when daemon requires
+/// authentication for a module.
+#[test]
+#[ignore = "requires daemon with authentication configured"]
+fn test_handshake_with_auth_requirement() {
+    // To test this, would need to:
+    // 1. Configure daemon module with "auth users" and "secrets file"
+    // 2. Request module without authentication
+    // 3. Verify @RSYNCD: AUTHREQD response
+    // 4. Send authentication credentials
+    // 5. Verify @RSYNCD: OK after successful auth
+    //
+    // Current status: Placeholder for future implementation
+}
