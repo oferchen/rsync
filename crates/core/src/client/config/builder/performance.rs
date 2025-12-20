@@ -122,4 +122,15 @@ impl ClientConfigBuilder {
         self.fuzzy = fuzzy;
         self
     }
+
+    /// Enables qsort instead of merge sort for file list sorting.
+    ///
+    /// When enabled, uses qsort for file list sorting which may be faster
+    /// for certain data patterns but is not a stable sort.
+    #[must_use]
+    #[doc(alias = "--qsort")]
+    pub const fn qsort(mut self, qsort: bool) -> Self {
+        self.qsort = qsort;
+        self
+    }
 }
