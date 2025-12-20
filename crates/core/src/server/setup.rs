@@ -403,7 +403,7 @@ pub fn setup_protocol(
     // - Client: READS the seed from server
     let _ = std::fs::write(
         "/tmp/setup_SEED_EXCHANGE_START",
-        format!("is_server={}", is_server),
+        format!("is_server={is_server}"),
     );
     let checksum_seed = if is_server {
         // Server: generate and send seed
@@ -419,7 +419,7 @@ pub fn setup_protocol(
         let seed_bytes = seed.to_le_bytes();
         stdout.write_all(&seed_bytes)?;
         stdout.flush()?;
-        let _ = std::fs::write("/tmp/setup_SEED_WRITTEN", format!("seed={}", seed));
+        let _ = std::fs::write("/tmp/setup_SEED_WRITTEN", format!("seed={seed}"));
         seed
     } else {
         // Client: read seed from server
@@ -429,7 +429,7 @@ pub fn setup_protocol(
         let seed = i32::from_le_bytes(seed_bytes);
         let _ = std::fs::write(
             "/tmp/setup_SEED_READ",
-            format!("seed={} bytes={:02x?}", seed, seed_bytes),
+            format!("seed={seed} bytes={seed_bytes:02x?}"),
         );
         seed
     };
