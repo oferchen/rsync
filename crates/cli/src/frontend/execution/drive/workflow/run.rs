@@ -142,6 +142,7 @@ where
         copy_devices,
         specials,
         force,
+        qsort: _,
         relative,
         one_file_system,
         implied_dirs,
