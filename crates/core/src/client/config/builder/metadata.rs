@@ -90,6 +90,31 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Requests that access times be preserved when applying metadata.
+    ///
+    /// When enabled, the source file's access time (atime) is preserved on the
+    /// destination. This corresponds to the `-U` / `--atimes` flag in upstream rsync.
+    #[must_use]
+    #[doc(alias = "--atimes")]
+    #[doc(alias = "-U")]
+    pub const fn atimes(mut self, preserve: bool) -> Self {
+        self.preserve_atimes = preserve;
+        self
+    }
+
+    /// Requests that creation times be preserved when applying metadata.
+    ///
+    /// When enabled, the source file's creation time (crtime/birthtime) is preserved
+    /// on the destination. This is primarily useful on macOS and Windows systems.
+    /// Corresponds to the `-N` / `--crtimes` flag in upstream rsync.
+    #[must_use]
+    #[doc(alias = "--crtimes")]
+    #[doc(alias = "-N")]
+    pub const fn crtimes(mut self, preserve: bool) -> Self {
+        self.preserve_crtimes = preserve;
+        self
+    }
+
     /// Requests that directory timestamps be skipped when preserving times.
     #[must_use]
     #[doc(alias = "--omit-dir-times")]
