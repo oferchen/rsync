@@ -100,6 +100,7 @@ pub struct ParsedArgs {
     pub copy_unsafe_links: Option<bool>,
     pub keep_dirlinks: Option<bool>,
     pub safe_links: bool,
+    pub munge_links: Option<bool>,
     pub trust_sender: bool,
     pub write_devices: Option<bool>,
     pub devices: Option<bool>,
