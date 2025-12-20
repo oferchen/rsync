@@ -164,6 +164,20 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .overrides_with("protect-args"),
             )
             .arg(
+                Arg::new("old-args")
+                    .long("old-args")
+                    .help("Use old-style argument handling (pre-3.2.4 behavior).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-old-args"),
+            )
+            .arg(
+                Arg::new("no-old-args")
+                    .long("no-old-args")
+                    .help("Use new-style argument handling (default).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("old-args"),
+            )
+            .arg(
                 Arg::new("ipv4")
                     .long("ipv4")
                     .help("Prefer IPv4 when contacting remote hosts.")
