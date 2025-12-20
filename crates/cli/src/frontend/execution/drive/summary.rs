@@ -14,7 +14,7 @@ use logging_sink::MessageSink;
 
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
-    progress::{LiveProgress, NameOutputLevel, ProgressMode, emit_transfer_summary},
+    progress::{LiveProgress, NameOutputLevel, ProgressMode, StderrMode, emit_transfer_summary},
 };
 
 use super::messages::emit_message_with_fallback;
@@ -29,6 +29,8 @@ pub(crate) struct LogFileConfig {
 pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) config: ClientConfig,
     pub(crate) msgs_to_stderr: bool,
+    #[allow(dead_code)]
+    pub(crate) stderr_mode: StderrMode,
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) human_readable_mode: HumanReadableMode,
     pub(crate) itemize_changes: bool,
@@ -54,6 +56,7 @@ where
     let TransferExecutionInputs {
         config,
         msgs_to_stderr,
+        stderr_mode: _,
         progress_mode: requested_progress_mode,
         human_readable_mode,
         itemize_changes,
