@@ -244,6 +244,7 @@ where
     let keep_dirlinks =
         tri_state_flag_positive_first(&matches, "keep-dirlinks", "no-keep-dirlinks");
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
+    let trust_sender = matches.get_flag("trust-sender");
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let copy_devices = matches.get_flag("copy-devices");
     let archive_devices =
@@ -526,6 +527,7 @@ where
         copy_unsafe_links: copy_unsafe_links_option,
         keep_dirlinks,
         safe_links,
+        trust_sender,
         write_devices,
         devices,
         copy_devices,
