@@ -189,6 +189,7 @@ where
         stop_after,
         stop_at,
         out_format,
+        dparam: _,
         no_iconv,
     } = parsed;
 
