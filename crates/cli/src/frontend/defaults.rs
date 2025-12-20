@@ -6,7 +6,7 @@ use time::{format_description::FormatItem, macros::format_description};
 pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--help, --version/-V, -e/--rsh, --rsync-path, --connect-program, --port, --address, ",
     "--remote-option/-M, --protect-args/-s, --no-protect-args, --secluded-args, --no-secluded-args, ",
-    "--ipv4, --ipv6, --daemon, --dry-run/-n, --list-only, --archive/-a, --recursive/-r, --no-recursive, ",
+    "--ipv4, --ipv6, --daemon, --config, --dry-run/-n, --list-only, --archive/-a, --recursive/-r, --no-recursive, ",
     "--dirs/-d, --no-dirs, --delete/--del, --delete-before, --delete-during, --delete-delay, --delete-after, ",
     "--delete-excluded, --max-delete, --min-size, --max-size, --block-size, --backup/-b, --backup-dir, ",
     "--suffix, --checksum/-c, --checksum-choice, --checksum-seed, --size-only, --ignore-times, --ignore-existing, --existing, ",

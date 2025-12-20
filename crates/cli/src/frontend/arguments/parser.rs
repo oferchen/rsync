@@ -252,6 +252,8 @@ where
     let server_mode = matches.get_flag("server");
     let sender_mode = matches.get_flag("sender");
     let detach = tri_state_flag_positive_first(&matches, "detach", "no-detach");
+    let daemon_mode = matches.get_flag("daemon");
+    let config = matches.remove_one::<OsString>("config");
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let qsort = matches.get_flag("qsort");
     let copy_devices = matches.get_flag("copy-devices");
@@ -550,6 +552,8 @@ where
         server_mode,
         sender_mode,
         detach,
+        daemon_mode,
+        config,
         write_devices,
         devices,
         copy_devices,

@@ -1,17 +1,11 @@
 //! Rendering helpers for `--help` output.
 
 use super::ProgramName;
-use core::branding::{build_revision, manifest, rust_version};
+use core::branding::{build_revision, rust_version};
 
 /// Renders deterministic help text describing the CLI surface supported by this build for `program_name`.
 pub(super) fn help_text(program_name: ProgramName) -> String {
-    let manifest = manifest();
     let program = program_name.as_str();
-    let daemon_profile = match program_name {
-        ProgramName::Rsync => manifest.upstream(),
-        ProgramName::OcRsync => manifest.oc(),
-    };
-    let daemon = daemon_profile.daemon_program_name();
 
     format!(
         concat!(
@@ -33,7 +27,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-secluded-args  Alias of --no-protect-args.\n",
             "      --ipv4          Prefer IPv4 when connecting to remote hosts.\n",
             "      --ipv6          Prefer IPv6 when connecting to remote hosts.\n",
-            "      --daemon    Run as an {program} daemon (delegates to {daemon}).\n",
+            "      --daemon    Run as an rsync daemon, serving files to rsync clients.\n",
+            "      --config=FILE  Specify alternate daemon config file.\n",
             "  -n, --dry-run    Validate transfers without modifying the destination.\n",
             "      --list-only  List files without performing a transfer.\n",
             "  -a, --archive    Enable archive mode (implies --owner, --group, --perms, --times, --devices, and --specials).\n",
@@ -197,6 +192,5 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
         program = program,
         version = rust_version(),
         revision = build_revision(),
-        daemon = daemon,
     )
 }
