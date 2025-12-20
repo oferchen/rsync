@@ -547,6 +547,20 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .hide(true),
             )
             .arg(
+                Arg::new("detach")
+                    .long("detach")
+                    .help("Detach from the terminal and run as a background daemon.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-detach"),
+            )
+            .arg(
+                Arg::new("no-detach")
+                    .long("no-detach")
+                    .help("Do not detach from the terminal (run daemon in foreground).")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("detach"),
+            )
+            .arg(
                 Arg::new("no-keep-dirlinks")
                     .long("no-keep-dirlinks")
                     .help("Disable treating destination symlinks to directories as directories.")

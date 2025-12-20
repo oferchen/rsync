@@ -142,6 +142,7 @@ where
         trust_sender: _,
         server_mode: _,
         sender_mode: _,
+        detach: _,
         write_devices,
         devices,
         copy_devices,
