@@ -249,6 +249,7 @@ where
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
     let munge_links = tri_state_flag_positive_first(&matches, "munge-links", "no-munge-links");
     let trust_sender = matches.get_flag("trust-sender");
+    let server_mode = matches.get_flag("server");
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let qsort = matches.get_flag("qsort");
     let copy_devices = matches.get_flag("copy-devices");
@@ -544,6 +545,7 @@ where
         safe_links,
         munge_links,
         trust_sender,
+        server_mode,
         write_devices,
         devices,
         copy_devices,
