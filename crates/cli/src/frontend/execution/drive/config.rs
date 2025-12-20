@@ -32,6 +32,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) delete_mode: DeleteMode,
     pub(crate) delete_excluded: bool,
     pub(crate) delete_missing_args: bool,
+    pub(crate) ignore_errors: bool,
     pub(crate) max_delete_limit: Option<u64>,
     pub(crate) min_size_limit: Option<u64>,
     pub(crate) max_size_limit: Option<u64>,
@@ -152,6 +153,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         )
         .delete_excluded(inputs.delete_excluded)
         .delete_missing_args(inputs.delete_missing_args)
+        .ignore_errors(inputs.ignore_errors)
         .max_delete(inputs.max_delete_limit)
         .min_file_size(inputs.min_size_limit)
         .max_file_size(inputs.max_size_limit)

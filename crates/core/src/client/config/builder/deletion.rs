@@ -72,6 +72,19 @@ impl ClientConfigBuilder {
         self.max_delete = limit;
         self
     }
+
+    /// Configures whether deletions should proceed even when I/O errors occur.
+    ///
+    /// When enabled, rsync will continue with the deletion phase even if
+    /// there were I/O errors during the transfer. Without this flag,
+    /// I/O errors cause the deletion phase to be skipped to prevent
+    /// accidental data loss.
+    #[must_use]
+    #[doc(alias = "--ignore-errors")]
+    pub const fn ignore_errors(mut self, ignore: bool) -> Self {
+        self.ignore_errors = ignore;
+        self
+    }
 }
 
 #[cfg(test)]
