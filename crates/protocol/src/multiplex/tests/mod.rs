@@ -6,7 +6,9 @@ use super::{
 use crate::envelope::{HEADER_LEN, MAX_PAYLOAD_LENGTH, MPLEX_BASE, MessageCode, MessageHeader};
 
 mod borrowed;
+mod error_paths;
 mod frame;
+mod io_activation;
 mod limits;
 mod receive;
 mod send;

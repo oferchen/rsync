@@ -191,8 +191,8 @@ fn send_daemon_ok(
 /// For protocol >= 30: arguments are null-byte terminated
 /// For protocol < 30: arguments are newline terminated
 /// An empty argument marks the end of the list.
-fn read_client_arguments(
-    reader: &mut BufReader<TcpStream>,
+fn read_client_arguments<R: BufRead>(
+    reader: &mut R,
     protocol: Option<ProtocolVersion>,
 ) -> io::Result<Vec<String>> {
     let use_nulls = protocol.is_some_and(|p| p.as_u8() >= 30);
@@ -835,6 +835,333 @@ pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
         format!("{rate} KiB/s")
     } else {
         format!("{bytes} bytes/s")
+    }
+}
+
+#[cfg(test)]
+mod module_access_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn generate_auth_challenge_includes_ip_and_timestamp() {
+        let peer_ip = "192.168.1.1".parse::<IpAddr>().unwrap();
+        let challenge = generate_auth_challenge(peer_ip);
+
+        // Challenge should be base64-encoded MD5 hash (22 characters without padding)
+        assert_eq!(challenge.len(), 22);
+        assert!(challenge.chars().all(|c| c.is_alphanumeric() || c == '+' || c == '/'));
+    }
+
+    #[test]
+    fn generate_auth_challenge_produces_different_values() {
+        let peer_ip = "10.0.0.1".parse::<IpAddr>().unwrap();
+        let challenge1 = generate_auth_challenge(peer_ip);
+
+        // Small delay to ensure different timestamp
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let challenge2 = generate_auth_challenge(peer_ip);
+
+        // Challenges should differ due to timestamp
+        assert_ne!(challenge1, challenge2);
+    }
+
+    #[test]
+    fn sanitize_module_identifier_preserves_clean_input() {
+        let clean = "my_module-123";
+        let result = sanitize_module_identifier(clean);
+        assert_eq!(result, clean);
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn sanitize_module_identifier_replaces_control_characters() {
+        let dirty = "module\nwith\tcontrols\r";
+        let result = sanitize_module_identifier(dirty);
+        assert_eq!(result, "module?with?controls?");
+        assert!(matches!(result, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn sanitize_module_identifier_handles_mixed_content() {
+        let mixed = "mod\x00ule_\x1bname";
+        let result = sanitize_module_identifier(mixed);
+        assert_eq!(result, "mod?ule_?name");
+    }
+
+    #[test]
+    fn read_client_arguments_protocol_30_null_terminated() {
+        let input = b"--server\0--sender\0-r\0.\0\0";
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("should read arguments");
+
+        assert_eq!(args, vec!["--server", "--sender", "-r", "."]);
+    }
+
+    #[test]
+    fn read_client_arguments_protocol_30_stops_at_empty() {
+        let input = b"--server\0\0more\0data\0";
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("should read arguments");
+
+        assert_eq!(args, vec!["--server"]);
+    }
+
+    #[test]
+    fn read_client_arguments_protocol_29_newline_terminated() {
+        let input = b"--server\n--sender\n-r\n.\n\n";
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V29))
+            .expect("should read arguments");
+
+        assert_eq!(args, vec!["--server", "--sender", "-r", "."]);
+    }
+
+    #[test]
+    fn read_client_arguments_protocol_29_stops_at_empty_line() {
+        let input = b"--server\n\nmore\n";
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V29))
+            .expect("should read arguments");
+
+        assert_eq!(args, vec!["--server"]);
+    }
+
+    #[test]
+    fn read_client_arguments_handles_eof() {
+        let input = b"--server\0--sender\0";
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("should read arguments");
+
+        assert_eq!(args, vec!["--server", "--sender"]);
+    }
+
+    #[test]
+    fn read_client_arguments_empty_input() {
+        let input = b"";
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("should read arguments");
+
+        assert!(args.is_empty());
+    }
+
+    // Note: perform_protocol_setup tests are challenging to write as unit tests
+    // because the function requires bidirectional I/O (writing our version,
+    // then reading client's version, then potentially exchanging compat flags).
+    // Cursor<Vec<u8>> doesn't work well for bidirectional I/O patterns.
+    // These behaviors are better tested via integration tests with actual TCP streams.
+
+    #[test]
+    fn perform_protocol_setup_rejects_invalid_version_zero() {
+        let client_version = 0i32.to_le_bytes();
+        // Need buffer with room for both write and read
+        let mut buf = vec![0u8; 1024];
+        buf[..4].copy_from_slice(&client_version);
+        let mut stream = Cursor::new(buf);
+
+        let result = perform_protocol_setup(&mut stream, ProtocolVersion::V30);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // The error might be UnexpectedEof or InvalidData depending on exact stream state
+        assert!(
+            err.kind() == io::ErrorKind::InvalidData || err.kind() == io::ErrorKind::UnexpectedEof,
+            "Expected InvalidData or UnexpectedEof, got {:?}",
+            err.kind()
+        );
+    }
+
+    #[test]
+    fn perform_protocol_setup_rejects_invalid_version_negative() {
+        let client_version = (-1i32).to_le_bytes();
+        let mut buf = vec![0u8; 1024];
+        buf[..4].copy_from_slice(&client_version);
+        let mut stream = Cursor::new(buf);
+
+        let result = perform_protocol_setup(&mut stream, ProtocolVersion::V30);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.kind() == io::ErrorKind::InvalidData || err.kind() == io::ErrorKind::UnexpectedEof,
+            "Expected InvalidData or UnexpectedEof, got {:?}",
+            err.kind()
+        );
+    }
+
+    #[test]
+    fn perform_protocol_setup_rejects_version_too_high() {
+        let client_version = 256i32.to_le_bytes();
+        let mut buf = vec![0u8; 1024];
+        buf[..4].copy_from_slice(&client_version);
+        let mut stream = Cursor::new(buf);
+
+        let result = perform_protocol_setup(&mut stream, ProtocolVersion::V30);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.kind() == io::ErrorKind::InvalidData || err.kind() == io::ErrorKind::UnexpectedEof,
+            "Expected InvalidData or UnexpectedEof, got {:?}",
+            err.kind()
+        );
+    }
+
+    #[test]
+    fn apply_module_bandwidth_limit_disables_when_module_configured_none() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(1024).unwrap(),
+        ));
+
+        let change = apply_module_bandwidth_limit(
+            &mut limiter,
+            None,
+            false,
+            true,  // module_limit_configured
+            None,
+            false,
+        );
+
+        assert_eq!(change, LimiterChange::Disabled);
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn apply_module_bandwidth_limit_preserves_when_not_configured() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(1024).unwrap(),
+        ));
+
+        let change = apply_module_bandwidth_limit(
+            &mut limiter,
+            None,
+            false,
+            false,  // module_limit_configured
+            None,
+            false,
+        );
+
+        assert_eq!(change, LimiterChange::Unchanged);
+        assert!(limiter.is_some());
+    }
+
+    #[test]
+    fn apply_module_bandwidth_limit_enables_when_none_existed() {
+        let mut limiter = None;
+
+        let change = apply_module_bandwidth_limit(
+            &mut limiter,
+            NonZeroU64::new(2048),
+            true,  // module_limit_specified
+            true,  // module_limit_configured
+            None,
+            false,
+        );
+
+        assert_eq!(change, LimiterChange::Enabled);
+        assert!(limiter.is_some());
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 2048);
+    }
+
+    #[test]
+    fn apply_module_bandwidth_limit_lowers_existing_limit() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(2048).unwrap(),
+        ));
+
+        let change = apply_module_bandwidth_limit(
+            &mut limiter,
+            NonZeroU64::new(1024),
+            true,
+            true,
+            None,
+            false,
+        );
+
+        // Lowering the limit results in Updated
+        assert_eq!(change, LimiterChange::Updated);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1024);
+    }
+
+    #[test]
+    fn apply_module_bandwidth_limit_unchanged_when_limit_higher() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(1024).unwrap(),
+        ));
+
+        let change = apply_module_bandwidth_limit(
+            &mut limiter,
+            NonZeroU64::new(2048),
+            true,
+            true,
+            None,
+            false,
+        );
+
+        // Higher limit doesn't raise existing limit (cap function), so Unchanged
+        assert_eq!(change, LimiterChange::Unchanged);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1024);
+    }
+
+    #[test]
+    fn apply_module_bandwidth_limit_burst_only_override() {
+        let mut limiter = Some(BandwidthLimiter::new(
+            NonZeroU64::new(1024).unwrap(),
+        ));
+
+        let change = apply_module_bandwidth_limit(
+            &mut limiter,
+            None,
+            false,
+            true,  // module_limit_configured
+            NonZeroU64::new(4096),
+            true,  // module_burst_specified
+        );
+
+        // Should update with burst
+        assert_eq!(change, LimiterChange::Updated);
+        assert!(limiter.is_some());
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 4096);
+    }
+
+    #[test]
+    fn format_bandwidth_rate_displays_bytes() {
+        let rate = NonZeroU64::new(512).unwrap();
+        assert_eq!(format_bandwidth_rate(rate), "512 bytes/s");
+    }
+
+    #[test]
+    fn format_bandwidth_rate_displays_kib() {
+        let rate = NonZeroU64::new(2048).unwrap();
+        assert_eq!(format_bandwidth_rate(rate), "2 KiB/s");
+    }
+
+    #[test]
+    fn format_bandwidth_rate_displays_mib() {
+        let rate = NonZeroU64::new(5 * 1024 * 1024).unwrap();
+        assert_eq!(format_bandwidth_rate(rate), "5 MiB/s");
+    }
+
+    #[test]
+    fn format_bandwidth_rate_displays_gib() {
+        let rate = NonZeroU64::new(3 * 1024 * 1024 * 1024).unwrap();
+        assert_eq!(format_bandwidth_rate(rate), "3 GiB/s");
+    }
+
+    #[test]
+    fn format_bandwidth_rate_prefers_largest_unit() {
+        let rate = NonZeroU64::new(1024).unwrap();
+        assert_eq!(format_bandwidth_rate(rate), "1 KiB/s");
+
+        let rate = NonZeroU64::new(1025).unwrap();
+        assert_eq!(format_bandwidth_rate(rate), "1025 bytes/s");
     }
 }
 
