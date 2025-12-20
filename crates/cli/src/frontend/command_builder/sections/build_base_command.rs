@@ -540,6 +540,13 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .hide(true),
             )
             .arg(
+                Arg::new("sender")
+                    .long("sender")
+                    .help("Mark this process as the sender role (used with --server).")
+                    .action(ArgAction::SetTrue)
+                    .hide(true),
+            )
+            .arg(
                 Arg::new("no-keep-dirlinks")
                     .long("no-keep-dirlinks")
                     .help("Disable treating destination symlinks to directories as directories.")
