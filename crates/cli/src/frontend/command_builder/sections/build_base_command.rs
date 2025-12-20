@@ -605,6 +605,20 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .overrides_with("super"),
             )
             .arg(
+                Arg::new("fake-super")
+                    .long("fake-super")
+                    .help("Store/restore privileged attrs using xattrs instead of real permissions.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-fake-super"),
+            )
+            .arg(
+                Arg::new("no-fake-super")
+                    .long("no-fake-super")
+                    .help("Disable fake super-user mode.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("fake-super"),
+            )
+            .arg(
                 Arg::new("verbose")
                     .long("verbose")
                     .short('v')
