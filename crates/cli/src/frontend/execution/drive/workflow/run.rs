@@ -171,6 +171,7 @@ where
         append,
         append_verify,
         msgs_to_stderr: msgs_to_stderr_option,
+        stderr_mode: _,
         outbuf: _,
         itemize_changes,
         whole_file,
