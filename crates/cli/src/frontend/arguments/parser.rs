@@ -246,6 +246,7 @@ where
     let keep_dirlinks =
         tri_state_flag_positive_first(&matches, "keep-dirlinks", "no-keep-dirlinks");
     let safe_links = matches.get_flag("safe-links") || copy_unsafe_links_option == Some(true);
+    let munge_links = tri_state_flag_positive_first(&matches, "munge-links", "no-munge-links");
     let trust_sender = matches.get_flag("trust-sender");
     let force = tri_state_flag_positive_first(&matches, "force", "no-force");
     let qsort = matches.get_flag("qsort");
@@ -534,6 +535,7 @@ where
         copy_unsafe_links: copy_unsafe_links_option,
         keep_dirlinks,
         safe_links,
+        munge_links,
         trust_sender,
         write_devices,
         devices,
