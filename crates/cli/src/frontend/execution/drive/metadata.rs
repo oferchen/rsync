@@ -16,6 +16,8 @@ pub(crate) struct MetadataSettings {
     pub(crate) preserve_executability: bool,
     pub(crate) preserve_permissions: bool,
     pub(crate) preserve_times: bool,
+    pub(crate) preserve_atimes: bool,
+    pub(crate) preserve_crtimes: bool,
     pub(crate) omit_dir_times: bool,
     pub(crate) omit_link_times: bool,
     pub(crate) preserve_devices: bool,
@@ -44,6 +46,8 @@ pub(crate) struct MetadataInputs<'a> {
     pub(crate) perms: Option<bool>,
     pub(crate) super_mode: Option<bool>,
     pub(crate) times: Option<bool>,
+    pub(crate) atimes: Option<bool>,
+    pub(crate) crtimes: Option<bool>,
     pub(crate) omit_dir_times: Option<bool>,
     pub(crate) omit_link_times: Option<bool>,
     pub(crate) devices: Option<bool>,
@@ -74,6 +78,8 @@ pub(crate) fn compute_metadata_settings(
         groupmap,
         super_mode,
         times,
+        atimes,
+        crtimes,
         omit_dir_times,
         omit_link_times,
         devices,
@@ -136,6 +142,8 @@ pub(crate) fn compute_metadata_settings(
     };
 
     let preserve_times = times.unwrap_or(archive);
+    let preserve_atimes = atimes.unwrap_or(false);
+    let preserve_crtimes = crtimes.unwrap_or(false);
     let omit_dir_times_setting = omit_dir_times.unwrap_or(false);
     let omit_link_times_setting = omit_link_times.unwrap_or(false);
     let preserve_devices = devices.unwrap_or(archive);
@@ -179,6 +187,8 @@ pub(crate) fn compute_metadata_settings(
         preserve_executability,
         preserve_permissions,
         preserve_times,
+        preserve_atimes,
+        preserve_crtimes,
         omit_dir_times: omit_dir_times_setting,
         omit_link_times: omit_link_times_setting,
         preserve_devices,

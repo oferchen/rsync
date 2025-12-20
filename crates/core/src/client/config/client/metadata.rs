@@ -70,6 +70,29 @@ impl ClientConfig {
         self.preserve_times
     }
 
+    /// Reports whether access times should be preserved.
+    ///
+    /// When enabled, the source file's access time (atime) is preserved on the
+    /// destination. This corresponds to the `-U` / `--atimes` flag in upstream rsync.
+    #[must_use]
+    #[doc(alias = "--atimes")]
+    #[doc(alias = "-U")]
+    pub const fn preserve_atimes(&self) -> bool {
+        self.preserve_atimes
+    }
+
+    /// Reports whether creation times should be preserved.
+    ///
+    /// When enabled, the source file's creation time (crtime/birthtime) is preserved
+    /// on the destination. This is primarily useful on macOS and Windows systems.
+    /// Corresponds to the `-N` / `--crtimes` flag in upstream rsync.
+    #[must_use]
+    #[doc(alias = "--crtimes")]
+    #[doc(alias = "-N")]
+    pub const fn preserve_crtimes(&self) -> bool {
+        self.preserve_crtimes
+    }
+
     /// Reports whether directory timestamps should be skipped when preserving times.
     #[must_use]
     #[doc(alias = "--omit-dir-times")]
