@@ -215,6 +215,7 @@ where
     }
     let groupmap = groupmap_values.into_iter().next();
     let chown = matches.remove_one::<OsString>("chown");
+    let copy_as = matches.remove_one::<OsString>("copy-as");
     let chmod = matches
         .remove_many::<OsString>("chmod")
         .map(|values| values.collect())
@@ -513,6 +514,7 @@ where
         owner,
         group,
         chown,
+        copy_as,
         usermap,
         groupmap,
         chmod,
