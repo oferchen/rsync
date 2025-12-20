@@ -1,10 +1,12 @@
 //! Progress and verbose output helpers extracted from the CLI front-end.
 
+pub mod diagnostic;
 mod format;
 mod live;
 mod mode;
 mod render;
 
+pub use self::diagnostic::{DiagnosticEvent, flush_diagnostics, render_diagnostic_events};
 #[allow(unused_imports)]
 pub(crate) use self::format::{
     VerboseRateDisplay, describe_event_kind, event_matches_name_level, format_decimal_bytes,

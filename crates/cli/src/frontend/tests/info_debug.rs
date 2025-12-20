@@ -122,7 +122,74 @@ fn info_accepts_comma_separated_tokens() {
     let settings = parse_info_flags(&flags).expect("flags parse");
     assert!(matches!(settings.progress, ProgressSetting::PerFile));
     assert_eq!(settings.name, Some(NameOutputLevel::UpdatedAndUnchanged));
-    assert_eq!(settings.stats, Some(true));
+    assert_eq!(settings.stats, Some(1));
+}
+
+#[test]
+fn info_backup_flag_parsing() {
+    let flags = vec![OsString::from("backup")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.backup, Some(1));
+
+    let flags = vec![OsString::from("backup0")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.backup, Some(0));
+
+    let flags = vec![OsString::from("nobackup")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.backup, Some(0));
+}
+
+#[test]
+fn info_flist_levels() {
+    let flags = vec![OsString::from("flist")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.flist, Some(1));
+
+    let flags = vec![OsString::from("flist2")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.flist, Some(2));
+
+    let flags = vec![OsString::from("flist3")];
+    let error = parse_info_flags(&flags).err().expect("should reject level 3");
+    assert!(error.to_string().contains("invalid --info flag"));
+}
+
+#[test]
+fn info_stats_levels() {
+    let flags = vec![OsString::from("stats")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.stats, Some(1));
+
+    let flags = vec![OsString::from("stats2")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.stats, Some(2));
+
+    let flags = vec![OsString::from("stats3")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.stats, Some(3));
+
+    let flags = vec![OsString::from("stats4")];
+    let error = parse_info_flags(&flags).err().expect("should reject level 4");
+    assert!(error.to_string().contains("invalid --info flag"));
+}
+
+#[test]
+fn info_negation_forms() {
+    // Test 'no' prefix
+    let flags = vec![OsString::from("nodel")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.del, Some(0));
+
+    // Test '-' prefix
+    let flags = vec![OsString::from("-skip")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.skip, Some(0));
+
+    // Test '0' suffix
+    let flags = vec![OsString::from("copy0")];
+    let settings = parse_info_flags(&flags).expect("flags parse");
+    assert_eq!(settings.copy, Some(0));
 }
 
 #[test]
@@ -134,18 +201,87 @@ fn info_rejects_empty_segments() {
 
 #[test]
 fn debug_accepts_comma_separated_tokens() {
-    let flags = vec![OsString::from("checksum,io")];
+    let flags = vec![OsString::from("io,proto")];
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert!(!settings.help_requested);
-    assert_eq!(
-        settings.flags,
-        vec![OsString::from("checksum"), OsString::from("io")]
-    );
+    assert_eq!(settings.io, Some(1));
+    assert_eq!(settings.proto, Some(1));
+}
+
+#[test]
+fn debug_flist_levels() {
+    let flags = vec![OsString::from("flist")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.flist, Some(1));
+
+    let flags = vec![OsString::from("flist2")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.flist, Some(2));
+
+    let flags = vec![OsString::from("flist4")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.flist, Some(4));
+
+    let flags = vec![OsString::from("flist5")];
+    let error = parse_debug_flags(&flags).err().expect("should reject level 5");
+    assert!(error.to_string().contains("invalid --debug flag"));
+}
+
+#[test]
+fn debug_io_levels() {
+    let flags = vec![OsString::from("io")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.io, Some(1));
+
+    let flags = vec![OsString::from("io3")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.io, Some(3));
+
+    let flags = vec![OsString::from("io4")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.io, Some(4));
+
+    let flags = vec![OsString::from("io5")];
+    let error = parse_debug_flags(&flags).err().expect("should reject level 5");
+    assert!(error.to_string().contains("invalid --debug flag"));
+}
+
+#[test]
+fn debug_negation_forms() {
+    // Test 'no' prefix
+    let flags = vec![OsString::from("nodel")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.del, Some(0));
+
+    // Test '-' prefix
+    let flags = vec![OsString::from("-filter")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.filter, Some(0));
+
+    // Test '0' suffix
+    let flags = vec![OsString::from("recv0")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.recv, Some(0));
+}
+
+#[test]
+fn debug_all_and_none() {
+    let flags = vec![OsString::from("all")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.io, Some(1));
+    assert_eq!(settings.proto, Some(1));
+    assert_eq!(settings.flist, Some(1));
+
+    let flags = vec![OsString::from("none")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.io, Some(0));
+    assert_eq!(settings.proto, Some(0));
+    assert_eq!(settings.flist, Some(0));
 }
 
 #[test]
 fn debug_rejects_empty_segments() {
-    let flags = vec![OsString::from("checksum,,io")];
+    let flags = vec![OsString::from("deltasum,,io")];
     let error = parse_debug_flags(&flags).err().expect("parse should fail");
     assert!(error.to_string().contains("--debug flag must not be empty"));
 }
