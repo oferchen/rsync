@@ -134,6 +134,15 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .conflicts_with("iconv"),
         )
         .arg(
+            Arg::new("stderr")
+                .long("stderr")
+                .value_name("MODE")
+                .help("Change stderr output mode (errors, all, client).")
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("info")
                 .long("info")
                 .value_name("FLAGS")

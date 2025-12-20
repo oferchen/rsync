@@ -262,6 +262,7 @@ where
         tri_state_flag_positive_first(&matches, "one-file-system", "no-one-file-system");
     let implied_dirs = tri_state_flag_positive_first(&matches, "implied-dirs", "no-implied-dirs");
     let msgs_to_stderr = tri_state_flag_positive_first(&matches, "msgs2stderr", "no-msgs2stderr");
+    let stderr_mode = matches.remove_one::<OsString>("stderr");
     let outbuf = matches.remove_one::<OsString>("outbuf");
     let stats = matches.get_flag("stats");
     let eight_bit_output = matches.get_flag("8-bit-output");
@@ -565,6 +566,7 @@ where
         append,
         append_verify: append_verify_flag,
         msgs_to_stderr,
+        stderr_mode,
         outbuf,
         itemize_changes,
         whole_file,
