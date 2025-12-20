@@ -100,6 +100,7 @@ where
         owner,
         group,
         chown,
+        copy_as: _,
         usermap,
         groupmap,
         chmod,
