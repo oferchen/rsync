@@ -246,58 +246,126 @@ pub fn run_server_with_handshake<W: Write>(
     let reader = reader::ServerReader::new_plain(chained_stdin);
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
-    // Activate OUTPUT multiplex at protocol >= 30 for BOTH server and client modes
-    // Evidence from strace shows upstream client sends filter list as MSG_DATA frames.
+    // Activate OUTPUT multiplex based on mode and protocol version.
     //
-    // For server mode: io_start_multiplex_out at main.c:1248 (protocol >= 23)
-    // For client mode: io_start_multiplex_out is called conditionally based on
-    //   need_messages_from_generator, but strace evidence shows it IS activated
-    //   for typical receiver operations. For protocol >= 30, always activate.
-    if handshake.protocol.as_u8() >= 30 {
+    // Upstream rsync multiplex activation differs by mode:
+    //
+    // SERVER mode (main.c:1246-1248 start_server):
+    //   if (protocol_version >= 23)
+    //       io_start_multiplex_out(f_out);
+    //
+    // CLIENT SENDER mode (main.c:1296-1299 client_run am_sender):
+    //   if (protocol_version >= 30)
+    //       io_start_multiplex_out(f_out);
+    //   else
+    //       io_start_buffering_out(f_out);
+    //
+    // CLIENT RECEIVER mode (main.c:1340-1345):
+    //   if (need_messages_from_generator)
+    //       io_start_multiplex_out(f_out);
+    //   else
+    //       io_start_buffering_out(f_out);
+    //
+    // For client sender: multiplex is activated BEFORE filter/file list (protocol >= 30)
+    // For server: multiplex is activated BEFORE filter list (protocol >= 23)
+    let should_activate_output_multiplex = if config.client_mode {
+        // Client sender mode: activate for protocol >= 30
+        handshake.protocol.as_u8() >= 30
+    } else {
+        // Server mode: activate for protocol >= 23
+        handshake.protocol.as_u8() >= 23
+    };
+
+    if should_activate_output_multiplex {
+        let _ = std::fs::write(
+            "/tmp/mod_BEFORE_MUX_ACTIVATE",
+            format!(
+                "client_mode={} protocol={}",
+                config.client_mode,
+                handshake.protocol.as_u8()
+            ),
+        );
         writer = writer.activate_multiplex()?;
-    } else if !config.client_mode && handshake.protocol.as_u8() >= 23 {
-        // Legacy server mode: activate multiplex for protocol >= 23
-        writer = writer.activate_multiplex()?;
+        let _ = std::fs::write("/tmp/mod_AFTER_MUX_ACTIVATE", "1");
     }
 
-    // For client_mode: Send filter list AFTER activating output multiplex
-    // The filter list is sent through the multiplexed channel as MSG_DATA frames
-    if config.client_mode {
-        protocol::filters::write_filter_list(&mut writer, &config.filter_rules, handshake.protocol)?;
+    // Filter list handling for client mode.
+    //
+    // With protocol >= 30, multiplex is already active, so filter list is sent multiplexed.
+    // With protocol 23-29, filter list is sent with buffering only (not multiplexed).
+    //
+    // CRITICAL: Upstream rsync's send_filter_list() (exclude.c:1645-1669) skips sending
+    // the filter list entirely when am_sender && !receiver_wants_list. The receiver only
+    // wants the list if delete_mode or prune_empty_dirs is enabled.
+    //
+    // For a basic sender without --delete, NO filter list is sent. If we send a 4-byte
+    // zero terminator, the daemon will misinterpret it as file list data, corrupting
+    // the file list parsing.
+    //
+    // Mirror upstream behavior:
+    // - Skip filter list for Generator (sender) when no --delete flag
+    // - Send filter list for Receiver (receiver wants to tell sender what to exclude)
+    let should_send_filter_list = if config.client_mode {
+        match config.role {
+            ServerRole::Generator => {
+                // Sender: only send if receiver wants it (delete mode)
+                // or if we actually have filter rules to send
+                !config.filter_rules.is_empty() || config.flags.delete
+            }
+            ServerRole::Receiver => {
+                // Receiver always sends filter list to tell sender what to exclude
+                true
+            }
+        }
+    } else {
+        false
+    };
+
+    let _ = std::fs::write(
+        "/tmp/mod_FILTER_CHECK",
+        format!("should_send={}", should_send_filter_list),
+    );
+    if should_send_filter_list {
+        let _ = std::fs::write("/tmp/mod_SENDING_FILTER_LIST", "1");
+        protocol::filters::write_filter_list(
+            &mut writer,
+            &config.filter_rules,
+            handshake.protocol,
+        )?;
         writer.flush()?;
     }
+    let _ = std::fs::write("/tmp/mod_AFTER_FILTER_CHECK", "1");
 
     // Activate compression on writer if negotiated (Protocol 30+ with compression algorithm)
     // This mirrors upstream io.c:io_start_buffering_out()
     // Compression is activated AFTER multiplex, wrapping the multiplexed stream
     // Note: Reader compression is activated later in role contexts after INPUT multiplex
-    if let Some(ref negotiated) = handshake.negotiated_algorithms {
-        if let Some(compress_alg) = negotiated.compression.to_compress_algorithm()? {
-            // Use configured compression level or default to level 6 (upstream default)
-            // Compression level comes from:
-            // - Daemon configuration (rsyncd.conf compress-level setting)
-            // - Environment or other server-side configuration
-            let level = config
-                .compression_level
-                .unwrap_or(compress::zlib::CompressionLevel::Default);
+    if let Some(ref negotiated) = handshake.negotiated_algorithms
+        && let Some(compress_alg) = negotiated.compression.to_compress_algorithm()?
+    {
+        // Use configured compression level or default to level 6 (upstream default)
+        // Compression level comes from:
+        // - Daemon configuration (rsyncd.conf compress-level setting)
+        // - Environment or other server-side configuration
+        let level = config
+            .compression_level
+            .unwrap_or(compress::zlib::CompressionLevel::Default);
 
-            writer = writer.activate_compression(compress_alg, level)?;
-        }
+        writer = writer.activate_compression(compress_alg, level)?;
     }
 
     // Send MSG_IO_TIMEOUT for daemon mode with configured timeout (main.c:1249-1250)
     // This tells the client about the server's I/O timeout value
     // Only for server mode, not client mode
-    if !config.client_mode {
-        if let Some(timeout_secs) = handshake.io_timeout {
-            if handshake.protocol.as_u8() >= 31 {
-                // Send MSG_IO_TIMEOUT with 4-byte little-endian timeout value
-                // Upstream uses SIVAL(numbuf, 0, num) which stores as little-endian
-                use protocol::MessageCode;
-                let timeout_bytes = (timeout_secs as i32).to_le_bytes();
-                writer.send_message(MessageCode::IoTimeout, &timeout_bytes)?;
-            }
-        }
+    if !config.client_mode
+        && let Some(timeout_secs) = handshake.io_timeout
+        && handshake.protocol.as_u8() >= 31
+    {
+        // Send MSG_IO_TIMEOUT with 4-byte little-endian timeout value
+        // Upstream uses SIVAL(numbuf, 0, num) which stores as little-endian
+        use protocol::MessageCode;
+        let timeout_bytes = (timeout_secs as i32).to_le_bytes();
+        writer.send_message(MessageCode::IoTimeout, &timeout_bytes)?;
     }
 
     // NOTE: INPUT multiplex activation is now handled by each role AFTER reading filter list.
@@ -308,6 +376,7 @@ pub fn run_server_with_handshake<W: Write>(
 
     match config.role {
         ServerRole::Receiver => {
+            let _ = std::fs::write("/tmp/mod_ROLE_RECEIVER", "1");
             let mut ctx = ReceiverContext::new(&handshake, config);
             // Pass reader by value - ReceiverContext::run now takes ownership and activates multiplex internally
             let stats = ctx.run(chained_reader, &mut writer)?;
@@ -315,13 +384,22 @@ pub fn run_server_with_handshake<W: Write>(
             Ok(ServerStats::Receiver(stats))
         }
         ServerRole::Generator => {
+            let _ = std::fs::write(
+                "/tmp/mod_ROLE_GENERATOR",
+                format!(
+                    "paths={:?} handshake_compat={:?}",
+                    config.args, handshake.compat_flags
+                ),
+            );
             // Convert OsString args to PathBuf for file walking
             let paths: Vec<std::path::PathBuf> =
                 config.args.iter().map(std::path::PathBuf::from).collect();
 
             let mut ctx = GeneratorContext::new(&handshake, config);
+            let _ = std::fs::write("/tmp/mod_GEN_CTX_CREATED", "1");
             // Pass reader by value - GeneratorContext::run now takes ownership and activates multiplex internally
             let stats = ctx.run(chained_reader, &mut writer, &paths)?;
+            let _ = std::fs::write("/tmp/mod_GEN_RUN_DONE", "1");
 
             Ok(ServerStats::Generator(stats))
         }

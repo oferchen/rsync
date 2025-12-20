@@ -282,60 +282,60 @@ fn ensure_matrix_entry(
 ) {
     match extract_matrix_entry(section, name) {
         Some(entry) => {
-            if let Some(expected) = expectations.enabled {
-                if entry.enabled != Some(expected) {
-                    failures.push(format!(
-                        "{display_path}: cross-compilation entry '{name}' expected enabled={expected}"
-                    ));
-                }
+            if let Some(expected) = expectations.enabled
+                && entry.enabled != Some(expected)
+            {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected enabled={expected}"
+                ));
             }
 
-            if let Some(expected) = expectations.target {
-                if entry.target.as_deref() != Some(expected) {
-                    failures.push(format!(
-                        "{display_path}: cross-compilation entry '{name}' expected target='{expected}'"
-                    ));
-                }
+            if let Some(expected) = expectations.target
+                && entry.target.as_deref() != Some(expected)
+            {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected target='{expected}'"
+                ));
             }
 
-            if let Some(expected) = expectations.build_command {
-                if entry.build_command.as_deref() != Some(expected) {
-                    failures.push(format!(
-                        "{display_path}: cross-compilation entry '{name}' expected build_command='{expected}'"
-                    ));
-                }
+            if let Some(expected) = expectations.build_command
+                && entry.build_command.as_deref() != Some(expected)
+            {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected build_command='{expected}'"
+                ));
             }
 
-            if let Some(expected) = expectations.build_daemon {
-                if entry.build_daemon != Some(expected) {
-                    failures.push(format!(
-                        "{display_path}: cross-compilation entry '{name}' expected build_daemon={expected}"
-                    ));
-                }
+            if let Some(expected) = expectations.build_daemon
+                && entry.build_daemon != Some(expected)
+            {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected build_daemon={expected}"
+                ));
             }
 
-            if let Some(expected) = expectations.uses_zig {
-                if entry.uses_zig != Some(expected) {
-                    failures.push(format!(
-                        "{display_path}: cross-compilation entry '{name}' expected uses_zig={expected}"
-                    ));
-                }
+            if let Some(expected) = expectations.uses_zig
+                && entry.uses_zig != Some(expected)
+            {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected uses_zig={expected}"
+                ));
             }
 
-            if let Some(expected) = expectations.generate_sbom {
-                if entry.generate_sbom != Some(expected) {
-                    failures.push(format!(
-                        "{display_path}: cross-compilation entry '{name}' expected generate_sbom={expected}"
-                    ));
-                }
+            if let Some(expected) = expectations.generate_sbom
+                && entry.generate_sbom != Some(expected)
+            {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected generate_sbom={expected}"
+                ));
             }
 
-            if let Some(expected) = expectations.needs_cross_gcc {
-                if entry.needs_cross_gcc != Some(expected) {
-                    failures.push(format!(
-                        "{display_path}: cross-compilation entry '{name}' expected needs_cross_gcc={expected}"
-                    ));
-                }
+            if let Some(expected) = expectations.needs_cross_gcc
+                && entry.needs_cross_gcc != Some(expected)
+            {
+                failures.push(format!(
+                    "{display_path}: cross-compilation entry '{name}' expected needs_cross_gcc={expected}"
+                ));
             }
         }
         None => failures.push(format!(

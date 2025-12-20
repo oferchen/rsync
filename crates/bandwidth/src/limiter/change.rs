@@ -138,13 +138,13 @@ pub fn apply_effective_limit(
         }
     }
 
-    if burst_specified && !limit_specified {
-        if let Some(existing) = limiter.as_mut() {
-            if existing.burst_bytes() != burst {
-                existing.update_configuration(existing.limit_bytes(), burst);
-                change = change.combine(LimiterChange::Updated);
-            }
-        }
+    if burst_specified
+        && !limit_specified
+        && let Some(existing) = limiter.as_mut()
+        && existing.burst_bytes() != burst
+    {
+        existing.update_configuration(existing.limit_bytes(), burst);
+        change = change.combine(LimiterChange::Updated);
     }
 
     change

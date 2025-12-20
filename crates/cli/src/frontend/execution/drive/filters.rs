@@ -64,10 +64,10 @@ where
             .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
     );
 
-    if inputs.cvs_exclude {
-        if let Err(message) = append_cvs_exclude_rules(&mut filter_rules) {
-            return Err(fail_with_message(message, stderr));
-        }
+    if inputs.cvs_exclude
+        && let Err(message) = append_cvs_exclude_rules(&mut filter_rules)
+    {
+        return Err(fail_with_message(message, stderr));
     }
 
     let mut merge_stack = HashSet::new();

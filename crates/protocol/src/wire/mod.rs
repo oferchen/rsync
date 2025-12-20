@@ -9,6 +9,21 @@ pub mod delta;
 pub mod file_entry;
 pub mod signature;
 
-pub use self::delta::{DeltaOp, read_delta, write_delta};
+pub use self::delta::{
+    // Upstream wire format
+    CHUNK_SIZE,
+    // Internal format
+    DeltaOp,
+    read_delta,
+    read_int,
+    read_token,
+    write_delta,
+    write_int,
+    write_token_block_match,
+    write_token_end,
+    write_token_literal,
+    write_token_stream,
+    write_whole_file_delta,
+};
 pub use self::file_entry::{FileEntry, FileEntryFlags, FileType};
 pub use self::signature::{SignatureBlock, read_signature, write_signature};

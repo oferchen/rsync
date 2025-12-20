@@ -179,10 +179,10 @@ where
         open_noatime_flag
     };
     let compress_level_opt = matches.get_one::<OsString>("compress-level").cloned();
-    if let Some(ref value) = compress_level_opt {
-        if let Ok(setting) = parse_compress_level_argument(value.as_os_str()) {
-            compress = !setting.is_disabled();
-        }
+    if let Some(ref value) = compress_level_opt
+        && let Ok(setting) = parse_compress_level_argument(value.as_os_str())
+    {
+        compress = !setting.is_disabled();
     }
     let iconv = matches.remove_one::<OsString>("iconv");
     let no_iconv = matches.get_flag("no-iconv");

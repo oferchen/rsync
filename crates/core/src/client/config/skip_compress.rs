@@ -26,7 +26,7 @@ pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Messa
 /// Parses the `RSYNC_SKIP_COMPRESS` environment variable into a
 /// [`SkipCompressList`].
 ///
-/// Returning [`Ok(None)`] indicates that the variable was unset, allowing
+/// Returning `Ok(None)` indicates that the variable was unset, allowing
 /// callers to retain their default skip-compress configuration. When the
 /// variable is present but empty the function returns an empty list, matching
 /// upstream rsync's semantics where an explicitly empty list disables the

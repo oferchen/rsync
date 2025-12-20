@@ -47,16 +47,16 @@ pub(crate) fn copy_file(
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
 
-    if let Some(min_limit) = context.min_file_size_limit() {
-        if file_size < min_limit {
-            return Ok(());
-        }
+    if let Some(min_limit) = context.min_file_size_limit()
+        && file_size < min_limit
+    {
+        return Ok(());
     }
 
-    if let Some(max_limit) = context.max_file_size_limit() {
-        if file_size > max_limit {
-            return Ok(());
-        }
+    if let Some(max_limit) = context.max_file_size_limit()
+        && file_size > max_limit
+    {
+        return Ok(());
     }
 
     let mut existing_metadata = match fs::symlink_metadata(destination) {
@@ -73,17 +73,17 @@ pub(crate) fn copy_file(
 
     let mut destination_previously_existed = existing_metadata.is_some();
 
-    if let Some(existing) = existing_metadata.as_ref() {
-        if existing.file_type().is_dir() {
-            if context.force_replacements_enabled() {
-                context.force_remove_destination(destination, relative, existing)?;
-                destination_previously_existed = true;
-                existing_metadata = None;
-            } else {
-                return Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::ReplaceDirectoryWithFile,
-                ));
-            }
+    if let Some(existing) = existing_metadata.as_ref()
+        && existing.file_type().is_dir()
+    {
+        if context.force_replacements_enabled() {
+            context.force_remove_destination(destination, relative, existing)?;
+            destination_previously_existed = true;
+            existing_metadata = None;
+        } else {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::ReplaceDirectoryWithFile,
+            ));
         }
     }
 

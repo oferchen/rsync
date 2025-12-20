@@ -2,9 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 /// Describes the requested iconv charset conversion behaviour.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub enum IconvSetting {
     /// No explicit iconv request was provided.
+    #[default]
     Unspecified,
     /// Charset conversion is explicitly disabled (`--no-iconv` or `--iconv=-`).
     Disabled,
@@ -87,12 +88,6 @@ impl IconvSetting {
                 }
             }
         }
-    }
-}
-
-impl Default for IconvSetting {
-    fn default() -> Self {
-        Self::Unspecified
     }
 }
 

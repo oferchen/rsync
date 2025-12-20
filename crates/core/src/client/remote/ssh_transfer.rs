@@ -157,14 +157,14 @@ fn build_ssh_connection(
     }
 
     // Configure custom remote shell if specified
-    if let Some(shell_args) = config.remote_shell() {
-        if !shell_args.is_empty() {
-            // First argument is the program name
-            ssh.set_program(&shell_args[0]);
-            // Remaining arguments are SSH options
-            for arg in &shell_args[1..] {
-                ssh.push_option(arg.clone());
-            }
+    if let Some(shell_args) = config.remote_shell()
+        && !shell_args.is_empty()
+    {
+        // First argument is the program name
+        ssh.set_program(&shell_args[0]);
+        // Remaining arguments are SSH options
+        for arg in &shell_args[1..] {
+            ssh.push_option(arg.clone());
         }
     }
 

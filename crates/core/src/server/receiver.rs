@@ -37,17 +37,13 @@ use std::path::PathBuf;
 use checksums::strong::Md5Seed;
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader};
-use protocol::wire::{DeltaOp, read_delta};
+use protocol::wire::DeltaOp;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
-use engine::delta::{
-    DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayoutParams, apply_delta,
-    calculate_signature_layout,
-};
+use engine::delta::{DeltaScript, DeltaToken, SignatureLayoutParams, calculate_signature_layout};
 use engine::signature::{FileSignature, SignatureAlgorithm, generate_file_signature};
 
 use super::config::ServerConfig;
-use super::error::{DeltaFatalError, DeltaTransferError, categorize_io_error};
 use super::handshake::HandshakeResult;
 use super::temp_guard::TempFileGuard;
 
@@ -239,15 +235,15 @@ impl ReceiverContext {
         // Activate compression on reader if negotiated (Protocol 30+ with compression algorithm)
         // This mirrors upstream io.c:io_start_buffering_in()
         // Compression is activated AFTER multiplex, wrapping the multiplexed stream
-        if let Some(ref negotiated) = self.negotiated_algorithms {
-            if let Some(compress_alg) = negotiated.compression.to_compress_algorithm()? {
-                reader = reader.activate_compression(compress_alg).map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!("failed to activate INPUT compression: {e}"),
-                    )
-                })?;
-            }
+        if let Some(ref negotiated) = self.negotiated_algorithms
+            && let Some(compress_alg) = negotiated.compression.to_compress_algorithm()?
+        {
+            reader = reader.activate_compression(compress_alg).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("failed to activate INPUT compression: {e}"),
+                )
+            })?;
         }
 
         // Read filter list from sender (multiplexed for protocol >= 30)
@@ -258,8 +254,9 @@ impl ReceiverContext {
         // - The daemon (as generator) already consumed it
         // - There's no filter list coming back on this stream
         if !self.config.client_mode {
-            let _wire_rules = read_filter_list(&mut reader, self.protocol)
-                .map_err(|e| io::Error::new(e.kind(), format!("failed to read filter list: {e}")))?;
+            let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
+            })?;
         }
 
         let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
@@ -375,7 +372,7 @@ impl ReceiverContext {
 
             // For small deltas (1-253), send as single byte
             // For larger deltas, would need 0xFE prefix + 2 or 4 bytes
-            if delta >= 1 && delta <= 253 {
+            if (1..=253).contains(&delta) {
                 writer.write_all(&[delta as u8])?;
             } else if delta == 0 {
                 // Zero delta: 0xFE + 2-byte value
@@ -630,6 +627,7 @@ pub struct TransferStats {
 /// Applies a delta script to create a new file (whole-file transfer, no basis).
 ///
 /// All tokens must be Literal; Copy operations indicate a protocol error.
+#[allow(dead_code)]
 fn apply_whole_file_delta(path: &std::path::Path, script: &DeltaScript) -> io::Result<()> {
     let mut output = fs::File::create(path)?;
 
@@ -652,6 +650,7 @@ fn apply_whole_file_delta(path: &std::path::Path, script: &DeltaScript) -> io::R
 }
 
 /// Converts wire protocol delta operations to engine delta script.
+#[allow(dead_code)]
 fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
     let mut tokens = Vec::with_capacity(ops.len());
     let mut total_bytes = 0u64;
@@ -683,7 +682,9 @@ fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
 
 #[cfg(test)]
 mod tests {
-    use super::super::error::DeltaRecoverableError;
+    use super::super::error::{
+        DeltaFatalError, DeltaRecoverableError, DeltaTransferError, categorize_io_error,
+    };
     use super::super::flags::ParsedServerFlags;
     use super::super::role::ServerRole;
     use super::*;
