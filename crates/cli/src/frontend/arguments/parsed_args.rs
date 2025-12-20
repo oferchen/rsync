@@ -82,6 +82,8 @@ pub struct ParsedArgs {
     pub times: Option<bool>,
     pub omit_dir_times: Option<bool>,
     pub omit_link_times: Option<bool>,
+    pub atimes: Option<bool>,
+    pub crtimes: Option<bool>,
     pub acls: Option<bool>,
     pub numeric_ids: Option<bool>,
     pub hard_links: Option<bool>,
