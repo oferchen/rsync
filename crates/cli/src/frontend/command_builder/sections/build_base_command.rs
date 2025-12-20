@@ -533,6 +533,13 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("server")
+                    .long("server")
+                    .help("Run in server mode (for remote rsync invocation).")
+                    .action(ArgAction::SetTrue)
+                    .hide(true),
+            )
+            .arg(
                 Arg::new("no-keep-dirlinks")
                     .long("no-keep-dirlinks")
                     .help("Disable treating destination symlinks to directories as directories.")
