@@ -300,6 +300,7 @@ where
     let write_batch = matches.remove_one::<OsString>("write-batch");
     let only_write_batch = matches.remove_one::<OsString>("only-write-batch");
     let read_batch = matches.remove_one::<OsString>("read-batch");
+    let early_input = matches.remove_one::<OsString>("early-input");
     let link_dest_args: Vec<OsString> = matches
         .remove_many::<OsString>("link-dest")
         .map(|values| values.collect())
@@ -567,6 +568,7 @@ where
         write_batch,
         only_write_batch,
         read_batch,
+        early_input,
         link_dests,
         remove_source_files,
         inplace,
