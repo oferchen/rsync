@@ -599,7 +599,7 @@ fn run_server_with_handshake_over_stream(
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             let count = self.write_count.fetch_add(1, Ordering::SeqCst);
             let _ = std::fs::write(
-                format!("/tmp/wire_WRITE_{:04}", count),
+                format!("/tmp/wire_WRITE_{count:04}"),
                 format!(
                     "len={} bytes={:02x?}",
                     buf.len(),
@@ -611,7 +611,7 @@ fn run_server_with_handshake_over_stream(
 
         fn flush(&mut self) -> std::io::Result<()> {
             let count = self.write_count.load(Ordering::SeqCst);
-            let _ = std::fs::write(format!("/tmp/wire_FLUSH_{:04}", count), "1");
+            let _ = std::fs::write(format!("/tmp/wire_FLUSH_{count:04}"), "1");
             self.inner.flush()
         }
     }
