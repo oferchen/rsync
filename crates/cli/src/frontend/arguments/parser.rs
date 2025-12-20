@@ -115,7 +115,8 @@ where
         ignore_missing_args = true;
     }
     let delete_excluded = matches.get_flag("delete-excluded");
-    let ignore_errors = tri_state_flag_negative_first(&matches, "ignore-errors", "no-ignore-errors");
+    let ignore_errors =
+        tri_state_flag_negative_first(&matches, "ignore-errors", "no-ignore-errors");
     let max_delete = matches.remove_one::<OsString>("max-delete");
     let min_size = matches.remove_one::<OsString>("min-size");
     let max_size = matches.remove_one::<OsString>("max-size");

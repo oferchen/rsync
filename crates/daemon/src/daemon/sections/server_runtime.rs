@@ -191,6 +191,25 @@ pub(crate) fn format_connection_status(active: usize) -> String {
     }
 }
 
+/// Normalizes a socket address by converting IPv4-mapped IPv6 addresses to pure IPv4.
+///
+/// When running in dual-stack mode and accepting IPv4 connections on an IPv6 listener,
+/// the kernel reports peer addresses as IPv4-mapped IPv6 (e.g., `::ffff:127.0.0.1`).
+/// This function converts such addresses back to their IPv4 equivalents for consistent
+/// logging and host matching.
+fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
+    match addr.ip() {
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                SocketAddr::new(IpAddr::V4(v4), addr.port())
+            } else {
+                addr
+            }
+        }
+        IpAddr::V4(_) => addr,
+    }
+}
+
 fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let manifest = manifest();
     let version = manifest.rust_version();
@@ -208,6 +227,8 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
         lock_file,
         delegate_arguments,
         inline_modules,
+        address_family,
+        bind_address_overridden,
         ..
     } = options;
 
@@ -290,19 +311,71 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
             .collect(),
     );
     let motd_lines = Arc::new(motd_lines);
-    let requested_addr = SocketAddr::new(bind_address, port);
-    let listener =
-        TcpListener::bind(requested_addr).map_err(|error| bind_error(requested_addr, error))?;
-    let local_addr = listener.local_addr().unwrap_or(requested_addr);
+
+    // Determine bind addresses based on address_family and bind_address_overridden.
+    // When no specific family or address is configured, bind to both IPv4 and IPv6
+    // (dual-stack), matching upstream rsync behavior.
+    let bind_addresses: Vec<IpAddr> = if bind_address_overridden {
+        // User specified a specific address via --address/--bind
+        vec![bind_address]
+    } else {
+        match address_family {
+            Some(AddressFamily::Ipv4) => vec![IpAddr::V4(Ipv4Addr::UNSPECIFIED)],
+            Some(AddressFamily::Ipv6) => vec![IpAddr::V6(Ipv6Addr::UNSPECIFIED)],
+            None => {
+                // Dual-stack: bind to both IPv4 and IPv6
+                vec![
+                    IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                ]
+            }
+        }
+    };
+
+    // Create listeners for each bind address
+    let mut listeners: Vec<TcpListener> = Vec::with_capacity(bind_addresses.len());
+    let mut bound_addresses: Vec<SocketAddr> = Vec::with_capacity(bind_addresses.len());
+
+    for addr in &bind_addresses {
+        let requested_addr = SocketAddr::new(*addr, port);
+        match TcpListener::bind(requested_addr) {
+            Ok(listener) => {
+                let local_addr = listener.local_addr().unwrap_or(requested_addr);
+                bound_addresses.push(local_addr);
+                listeners.push(listener);
+            }
+            Err(error) => {
+                // If binding to one family fails (e.g., IPv6 not available), continue
+                // with the other family if we're in dual-stack mode. Otherwise, fail.
+                if bind_addresses.len() > 1 && !listeners.is_empty() {
+                    // Already bound to at least one address, continue
+                    continue;
+                }
+                return Err(bind_error(requested_addr, error));
+            }
+        }
+    }
+
+    if listeners.is_empty() {
+        let requested_addr = SocketAddr::new(bind_addresses[0], port);
+        return Err(bind_error(
+            requested_addr,
+            io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses available to bind"),
+        ));
+    }
 
     let notifier = systemd::ServiceNotifier::new();
-    let ready_status = format!("Listening on {local_addr}");
+    let ready_status = if bound_addresses.len() == 1 {
+        format!("Listening on {}", bound_addresses[0])
+    } else {
+        let addrs: Vec<String> = bound_addresses.iter().map(ToString::to_string).collect();
+        format!("Listening on {}", addrs.join(" and "))
+    };
     if let Err(error) = notifier.ready(Some(&ready_status)) {
         log_sd_notify_failure(log_sink.as_ref(), "service readiness", &error);
     }
 
     if let Some(log) = log_sink.as_ref() {
-        let port = local_addr.port();
         let text = format!(
             "rsyncd version {version} starting, listening on port {port}"
         );
@@ -315,73 +388,207 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
     let max_sessions = max_sessions.map(NonZeroUsize::get);
     let mut active_connections = 0usize;
 
-    loop {
-        reap_finished_workers(&mut workers)?;
+    // For dual-stack (multiple listeners), use channels to receive accepted connections
+    // from listener threads. For single listener, use direct accept for simplicity.
+    use std::sync::mpsc;
 
-        let current_active = workers.len();
-        if current_active != active_connections {
-            let status = format_connection_status(current_active);
-            if let Err(error) = notifier.status(&status) {
-                log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
-            }
-            active_connections = current_active;
-        }
+    if listeners.len() == 1 {
+        // Single listener - use simple blocking accept loop
+        let listener = listeners.remove(0);
+        let local_addr = bound_addresses[0];
 
-        match listener.accept() {
-            Ok((stream, peer_addr)) => {
-                let modules = Arc::clone(&modules);
-                let motd_lines = Arc::clone(&motd_lines);
-                let log_for_worker = log_sink.as_ref().map(Arc::clone);
-                let delegation_clone = delegation.clone();
-                let handle = thread::spawn(move || {
-                    let modules_vec = modules.as_ref();
-                    let motd_vec = motd_lines.as_ref();
-                    handle_session(
-                        stream,
-                        peer_addr,
-                        SessionParams {
-                            modules: modules_vec.as_slice(),
-                            motd_lines: motd_vec.as_slice(),
-                            daemon_limit: bandwidth_limit,
-                            daemon_burst: bandwidth_burst,
-                            log_sink: log_for_worker,
-                            reverse_lookup,
-                            delegation: delegation_clone,
-                        },
-                    )
-                    .map_err(|error| (Some(peer_addr), error))
-                });
-                workers.push(handle);
-                served = served.saturating_add(1);
+        loop {
+            reap_finished_workers(&mut workers)?;
 
-                let current_active = workers.len();
-                if current_active != active_connections {
-                    let status = format_connection_status(current_active);
-                    if let Err(error) = notifier.status(&status) {
-                        log_sd_notify_failure(
-                            log_sink.as_ref(),
-                            "connection status update",
-                            &error,
-                        );
-                    }
-                    active_connections = current_active;
-                }
-            }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                continue;
-            }
-            Err(error) => {
-                return Err(accept_error(local_addr, error));
-            }
-        }
-
-        if let Some(limit) = max_sessions
-            && served >= limit {
-                if let Err(error) = notifier.status("Draining worker threads") {
+            let current_active = workers.len();
+            if current_active != active_connections {
+                let status = format_connection_status(current_active);
+                if let Err(error) = notifier.status(&status) {
                     log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
                 }
-                break;
+                active_connections = current_active;
             }
+
+            match listener.accept() {
+                Ok((stream, raw_peer_addr)) => {
+                    let peer_addr = normalize_peer_address(raw_peer_addr);
+                    let modules = Arc::clone(&modules);
+                    let motd_lines = Arc::clone(&motd_lines);
+                    let log_for_worker = log_sink.as_ref().map(Arc::clone);
+                    let delegation_clone = delegation.clone();
+                    let handle = thread::spawn(move || {
+                        let modules_vec = modules.as_ref();
+                        let motd_vec = motd_lines.as_ref();
+                        handle_session(
+                            stream,
+                            peer_addr,
+                            SessionParams {
+                                modules: modules_vec.as_slice(),
+                                motd_lines: motd_vec.as_slice(),
+                                daemon_limit: bandwidth_limit,
+                                daemon_burst: bandwidth_burst,
+                                log_sink: log_for_worker,
+                                reverse_lookup,
+                                delegation: delegation_clone,
+                            },
+                        )
+                        .map_err(|error| (Some(peer_addr), error))
+                    });
+                    workers.push(handle);
+                    served = served.saturating_add(1);
+
+                    let current_active = workers.len();
+                    if current_active != active_connections {
+                        let status = format_connection_status(current_active);
+                        if let Err(error) = notifier.status(&status) {
+                            log_sd_notify_failure(
+                                log_sink.as_ref(),
+                                "connection status update",
+                                &error,
+                            );
+                        }
+                        active_connections = current_active;
+                    }
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                    continue;
+                }
+                Err(error) => {
+                    return Err(accept_error(local_addr, error));
+                }
+            }
+
+            if let Some(limit) = max_sessions
+                && served >= limit {
+                    if let Err(error) = notifier.status("Draining worker threads") {
+                        log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
+                    }
+                    break;
+                }
+        }
+    } else {
+        // Multiple listeners (dual-stack) - spawn acceptor threads and use channel
+        let (tx, rx) = mpsc::channel::<Result<(TcpStream, SocketAddr), (SocketAddr, io::Error)>>();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let mut acceptor_handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(listeners.len());
+
+        for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().cloned()) {
+            let tx = tx.clone();
+            let shutdown = Arc::clone(&shutdown);
+
+            let handle = thread::spawn(move || {
+                while !shutdown.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((stream, peer_addr)) => {
+                            if tx.send(Ok((stream, peer_addr))).is_err() {
+                                break; // Receiver dropped
+                            }
+                        }
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                            continue;
+                        }
+                        Err(error) => {
+                            let _ = tx.send(Err((local_addr, error)));
+                            break;
+                        }
+                    }
+                }
+            });
+            acceptor_handles.push(handle);
+        }
+
+        // Drop our copy of the sender so the channel closes when acceptors exit
+        drop(tx);
+
+        // Main loop: receive connections from any listener
+        loop {
+            reap_finished_workers(&mut workers)?;
+
+            let current_active = workers.len();
+            if current_active != active_connections {
+                let status = format_connection_status(current_active);
+                if let Err(error) = notifier.status(&status) {
+                    log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
+                }
+                active_connections = current_active;
+            }
+
+            // Use recv_timeout to allow periodic worker reaping and shutdown checks
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(Ok((stream, raw_peer_addr))) => {
+                    let peer_addr = normalize_peer_address(raw_peer_addr);
+                    let modules = Arc::clone(&modules);
+                    let motd_lines = Arc::clone(&motd_lines);
+                    let log_for_worker = log_sink.as_ref().map(Arc::clone);
+                    let delegation_clone = delegation.clone();
+                    let handle = thread::spawn(move || {
+                        let modules_vec = modules.as_ref();
+                        let motd_vec = motd_lines.as_ref();
+                        handle_session(
+                            stream,
+                            peer_addr,
+                            SessionParams {
+                                modules: modules_vec.as_slice(),
+                                motd_lines: motd_vec.as_slice(),
+                                daemon_limit: bandwidth_limit,
+                                daemon_burst: bandwidth_burst,
+                                log_sink: log_for_worker,
+                                reverse_lookup,
+                                delegation: delegation_clone,
+                            },
+                        )
+                        .map_err(|error| (Some(peer_addr), error))
+                    });
+                    workers.push(handle);
+                    served = served.saturating_add(1);
+
+                    let current_active = workers.len();
+                    if current_active != active_connections {
+                        let status = format_connection_status(current_active);
+                        if let Err(error) = notifier.status(&status) {
+                            log_sd_notify_failure(
+                                log_sink.as_ref(),
+                                "connection status update",
+                                &error,
+                            );
+                        }
+                        active_connections = current_active;
+                    }
+
+                    if let Some(limit) = max_sessions
+                        && served >= limit {
+                            if let Err(error) = notifier.status("Draining worker threads") {
+                                log_sd_notify_failure(log_sink.as_ref(), "connection status update", &error);
+                            }
+                            shutdown.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                }
+                Ok(Err((local_addr, error))) => {
+                    shutdown.store(true, Ordering::Relaxed);
+                    // Wait for acceptor threads to finish
+                    for handle in acceptor_handles {
+                        let _ = handle.join();
+                    }
+                    return Err(accept_error(local_addr, error));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // Continue to reap workers and check max_sessions
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    // All acceptors exited
+                    break;
+                }
+            }
+        }
+
+        // Signal acceptors to stop and wait for them
+        shutdown.store(true, Ordering::Relaxed);
+        for handle in acceptor_handles {
+            let _ = handle.join();
+        }
     }
 
     let result = drain_workers(&mut workers);
