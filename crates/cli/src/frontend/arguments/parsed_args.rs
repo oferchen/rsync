@@ -105,6 +105,7 @@ pub struct ParsedArgs {
     pub trust_sender: bool,
     pub server_mode: bool,
     pub sender_mode: bool,
+    pub detach: Option<bool>,
     pub write_devices: Option<bool>,
     pub devices: Option<bool>,
     pub copy_devices: bool,
