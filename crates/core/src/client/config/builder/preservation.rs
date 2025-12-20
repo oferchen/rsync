@@ -67,4 +67,15 @@ impl ClientConfigBuilder {
         self.safe_links = safe_links;
         self
     }
+
+    /// Enables or disables symlink munging for daemon mode safety.
+    ///
+    /// When enabled, symlinks are transformed by prefixing a special marker
+    /// so they cannot escape the module directory in daemon mode.
+    #[must_use]
+    #[doc(alias = "--munge-links")]
+    pub const fn munge_links(mut self, munge_links: bool) -> Self {
+        self.munge_links = munge_links;
+        self
+    }
 }
