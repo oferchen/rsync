@@ -97,7 +97,7 @@ impl FileListReader {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
         let _ = std::fs::write(
-            format!("/tmp/flist_{:03}_READ_ENTRY", entry_idx),
+            format!("/tmp/flist_{entry_idx:03}_READ_ENTRY"),
             format!(
                 "use_varint={} prev_name_len={}",
                 use_varint_flags,
@@ -110,8 +110,8 @@ impl FileListReader {
             // Varint encoding: read as varint, primary flags in low 8 bits
             let v = read_varint(reader)?;
             let _ = std::fs::write(
-                format!("/tmp/flist_{:03}_FLAGS", entry_idx),
-                format!("varint={:#x}", v),
+                format!("/tmp/flist_{entry_idx:03}_FLAGS"),
+                format!("varint={v:#x}"),
             );
             v
         } else {
@@ -119,7 +119,7 @@ impl FileListReader {
             let mut buf = [0u8; 1];
             reader.read_exact(&mut buf)?;
             let _ = std::fs::write(
-                format!("/tmp/flist_{:03}_FLAGS", entry_idx),
+                format!("/tmp/flist_{entry_idx:03}_FLAGS"),
                 format!("byte={:#x} binary={:08b}", buf[0], buf[0]),
             );
             buf[0] as i32
@@ -142,7 +142,7 @@ impl FileListReader {
             let mut buf = [0u8; 1];
             reader.read_exact(&mut buf)?;
             let _ = std::fs::write(
-                format!("/tmp/flist_{:03}_EXT_FLAGS", entry_idx),
+                format!("/tmp/flist_{entry_idx:03}_EXT_FLAGS"),
                 format!("byte={:#x}", buf[0]),
             );
             buf[0]
@@ -245,7 +245,7 @@ impl FileListReader {
         let name_idx = NAME_READ_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         let _ = std::fs::write(
-            format!("/tmp/name_{:03}_START", name_idx),
+            format!("/tmp/name_{name_idx:03}_START"),
             format!(
                 "same_name={} long_name={} prev_name_len={}",
                 flags.same_name(),
@@ -259,7 +259,7 @@ impl FileListReader {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
             let _ = std::fs::write(
-                format!("/tmp/name_{:03}_SAME_LEN", name_idx),
+                format!("/tmp/name_{name_idx:03}_SAME_LEN"),
                 format!("byte={:#x} ({})", byte[0], byte[0]),
             );
             byte[0] as usize
@@ -274,7 +274,7 @@ impl FileListReader {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
             let _ = std::fs::write(
-                format!("/tmp/name_{:03}_SUFFIX_LEN", name_idx),
+                format!("/tmp/name_{name_idx:03}_SUFFIX_LEN"),
                 format!("byte={:#x} ({})", byte[0], byte[0]),
             );
             byte[0] as usize
@@ -283,7 +283,7 @@ impl FileListReader {
         // Validate lengths
         if same_len > self.prev_name.len() {
             let _ = std::fs::write(
-                format!("/tmp/name_{:03}_ERROR", name_idx),
+                format!("/tmp/name_{name_idx:03}_ERROR"),
                 format!(
                     "same_len={} > prev_name_len={}",
                     same_len,
@@ -310,7 +310,7 @@ impl FileListReader {
             name.resize(start + suffix_len, 0);
             reader.read_exact(&mut name[start..])?;
             let _ = std::fs::write(
-                format!("/tmp/name_{:03}_SUFFIX_BYTES", name_idx),
+                format!("/tmp/name_{name_idx:03}_SUFFIX_BYTES"),
                 format!(
                     "bytes={:?} str={:?}",
                     &name[start..],
@@ -320,7 +320,7 @@ impl FileListReader {
         }
 
         let _ = std::fs::write(
-            format!("/tmp/name_{:03}_RESULT", name_idx),
+            format!("/tmp/name_{name_idx:03}_RESULT"),
             format!("name={:?}", String::from_utf8_lossy(&name)),
         );
 
@@ -540,12 +540,11 @@ mod tests {
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
 
-        assert!(result.is_err(), "expected error, got: {:?}", result);
+        assert!(result.is_err(), "expected error, got: {result:?}");
         let err = result.unwrap_err();
         assert!(
             err.to_string().contains("file list I/O error: 123"),
-            "unexpected error message: {}",
-            err
+            "unexpected error message: {err}"
         );
     }
 

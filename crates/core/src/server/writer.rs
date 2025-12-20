@@ -235,7 +235,7 @@ impl<W: Write> MultiplexWriter<W> {
                 std::sync::atomic::AtomicUsize::new(0);
             let count = FLUSH_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let _ = std::fs::write(
-                format!("/tmp/mux_FLUSH_{:03}", count),
+                format!("/tmp/mux_FLUSH_{count:03}"),
                 format!(
                     "len={} bytes={:02x?}",
                     self.buffer.len(),
@@ -282,7 +282,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         static WRITE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let count = WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let _ = std::fs::write(
-            format!("/tmp/mux_WRITE_{:03}", count),
+            format!("/tmp/mux_WRITE_{count:03}"),
             format!(
                 "len={} buf_before={} bytes={:02x?}",
                 buf.len(),

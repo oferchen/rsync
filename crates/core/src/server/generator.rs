@@ -342,7 +342,7 @@ impl GeneratorContext {
             let start = flist_bytes.len();
             flist_writer.write_entry(&mut flist_bytes, entry)?;
             let _ = std::fs::write(
-                format!("/tmp/gen_FLIST_ENTRY_{:03}", idx),
+                format!("/tmp/gen_FLIST_ENTRY_{idx:03}"),
                 format!(
                     "name={} size={} mode={:o} bytes={:02x?}",
                     entry.name(),
@@ -499,7 +499,7 @@ impl GeneratorContext {
 
         let _ = std::fs::write(
             "/tmp/gen_BEFORE_NDX_LOOP",
-            format!("phase={} max_phase={}", phase, max_phase),
+            format!("phase={phase} max_phase={max_phase}"),
         );
         let mut loop_counter = 0;
         loop {
@@ -507,12 +507,12 @@ impl GeneratorContext {
             // Read first byte of NDX encoding
             let mut ndx_byte = [0u8; 1];
             let _ = std::fs::write(
-                format!("/tmp/gen_NDX_READ_{:03}", loop_counter),
-                format!("phase={} loop={}", phase, loop_counter),
+                format!("/tmp/gen_NDX_READ_{loop_counter:03}"),
+                format!("phase={phase} loop={loop_counter}"),
             );
             reader.read_exact(&mut ndx_byte)?;
             let _ = std::fs::write(
-                format!("/tmp/gen_NDX_READ_{:03}_GOT", loop_counter),
+                format!("/tmp/gen_NDX_READ_{loop_counter:03}_GOT"),
                 format!("byte=0x{:02x}", ndx_byte[0]),
             );
 
@@ -522,7 +522,7 @@ impl GeneratorContext {
                 phase += 1;
                 let _ = std::fs::write(
                     "/tmp/gen_NDX_DONE_PHASE",
-                    format!("phase={} max_phase={}", phase, max_phase),
+                    format!("phase={phase} max_phase={max_phase}"),
                 );
 
                 if phase > max_phase {
@@ -560,8 +560,8 @@ impl GeneratorContext {
                         | ((rest[1] as i32) << 8)
                         | ((rest[2] as i32) << 16);
                     let _ = std::fs::write(
-                        format!("/tmp/gen_NDX_EXTENDED_4BYTE_{:03}", loop_counter),
-                        format!("value={}", value),
+                        format!("/tmp/gen_NDX_EXTENDED_4BYTE_{loop_counter:03}"),
+                        format!("value={value}"),
                     );
                     prev_positive = value;
                     value as usize
@@ -572,8 +572,8 @@ impl GeneratorContext {
                     let diff = ((ext_byte[0] as i32) << 8) | (diff_lo[0] as i32);
                     let ndx = prev_positive.saturating_add(diff);
                     let _ = std::fs::write(
-                        format!("/tmp/gen_NDX_EXTENDED_2BYTE_{:03}", loop_counter),
-                        format!("diff={} ndx={}", diff, ndx),
+                        format!("/tmp/gen_NDX_EXTENDED_2BYTE_{loop_counter:03}"),
+                        format!("diff={diff} ndx={ndx}"),
                     );
                     prev_positive = ndx;
                     ndx as usize
@@ -584,11 +584,8 @@ impl GeneratorContext {
                 let ndx = prev_positive.saturating_add(delta);
                 prev_positive = ndx;
                 let _ = std::fs::write(
-                    format!("/tmp/gen_NDX_FILE_{:03}", loop_counter),
-                    format!(
-                        "delta={} prev_positive={} ndx={}",
-                        delta, prev_positive, ndx
-                    ),
+                    format!("/tmp/gen_NDX_FILE_{loop_counter:03}"),
+                    format!("delta={delta} prev_positive={prev_positive} ndx={ndx}"),
                 );
                 ndx as usize
             };
@@ -609,8 +606,8 @@ impl GeneratorContext {
                 reader.read_exact(&mut iflags_bytes)?;
                 let iflags = u16::from_le_bytes(iflags_bytes);
                 let _ = std::fs::write(
-                    format!("/tmp/gen_IFLAGS_{:03}", loop_counter),
-                    format!("iflags=0x{:04x}", iflags),
+                    format!("/tmp/gen_IFLAGS_{loop_counter:03}"),
+                    format!("iflags=0x{iflags:04x}"),
                 );
                 iflags
             } else {
@@ -640,8 +637,8 @@ impl GeneratorContext {
             if iflags & ITEM_TRANSFER == 0 {
                 // File doesn't need transfer (e.g., unchanged or directory)
                 let _ = std::fs::write(
-                    format!("/tmp/gen_SKIP_{:03}", loop_counter),
-                    format!("iflags=0x{:04x} no ITEM_TRANSFER", iflags),
+                    format!("/tmp/gen_SKIP_{loop_counter:03}"),
+                    format!("iflags=0x{iflags:04x} no ITEM_TRANSFER"),
                 );
                 continue;
             }
@@ -679,16 +676,15 @@ impl GeneratorContext {
                 0
             };
             let _ = std::fs::write(
-                format!("/tmp/gen_SUM_HEAD_{:03}", loop_counter),
+                format!("/tmp/gen_SUM_HEAD_{loop_counter:03}"),
                 format!(
-                    "count={} blength={} s2length={} remainder={}",
-                    sum_count, sum_blength, sum_s2length, sum_remainder
+                    "count={sum_count} blength={sum_blength} s2length={sum_s2length} remainder={sum_remainder}"
                 ),
             );
 
             // Validate file index
             let _ = std::fs::write(
-                format!("/tmp/gen_NDX_VALIDATE_{:03}", loop_counter),
+                format!("/tmp/gen_NDX_VALIDATE_{loop_counter:03}"),
                 format!("ndx={} file_list_len={}", ndx, self.file_list.len()),
             );
             if ndx >= self.file_list.len() {
@@ -705,7 +701,7 @@ impl GeneratorContext {
             let file_entry = &self.file_list[ndx];
             let source_path = &self.full_paths[ndx];
             let _ = std::fs::write(
-                format!("/tmp/gen_NDX_PATH_{:03}", loop_counter),
+                format!("/tmp/gen_NDX_PATH_{loop_counter:03}"),
                 format!("full_path={:?} name={:?}", source_path, file_entry.name()),
             );
 
@@ -714,7 +710,7 @@ impl GeneratorContext {
             // Upstream sender.c:receive_sums() reads checksum blocks after sum_head.
             // When count=0 (no basis file), there are no blocks to read.
             // When count>0, read rolling_sum (4 bytes LE) + strong_sum (s2length bytes) per block.
-            let _ = std::fs::write(format!("/tmp/gen_BEFORE_SIG_{:03}", loop_counter), "1");
+            let _ = std::fs::write(format!("/tmp/gen_BEFORE_SIG_{loop_counter:03}"), "1");
             let block_length = sum_blength as u32;
             let block_count = sum_count as u32;
             let strong_sum_length = sum_s2length as u8;
@@ -744,10 +740,9 @@ impl GeneratorContext {
                 Vec::new()
             };
             let _ = std::fs::write(
-                format!("/tmp/gen_AFTER_SIG_{:03}", loop_counter),
+                format!("/tmp/gen_AFTER_SIG_{loop_counter:03}"),
                 format!(
-                    "block_length={} block_count={} strong_sum_length={}",
-                    block_length, block_count, strong_sum_length
+                    "block_length={block_length} block_count={block_count} strong_sum_length={strong_sum_length}"
                 ),
             );
 
@@ -755,12 +750,12 @@ impl GeneratorContext {
 
             // Step 2: Open source file
             let _ = std::fs::write(
-                format!("/tmp/gen_OPEN_FILE_{:03}", loop_counter),
-                format!("path={:?}", source_path),
+                format!("/tmp/gen_OPEN_FILE_{loop_counter:03}"),
+                format!("path={source_path:?}"),
             );
             let source_file = match fs::File::open(source_path) {
                 Ok(f) => {
-                    let _ = std::fs::write(format!("/tmp/gen_OPEN_OK_{:03}", loop_counter), "1");
+                    let _ = std::fs::write(format!("/tmp/gen_OPEN_OK_{loop_counter:03}"), "1");
                     f
                 }
                 Err(e) => {
@@ -769,8 +764,8 @@ impl GeneratorContext {
                     // skip the file entirely, which matches rsync behavior with --ignore-errors.
                     // Future enhancement: Implement protocol error marker for per-file failures.
                     let _ = std::fs::write(
-                        format!("/tmp/gen_OPEN_ERR_{:03}", loop_counter),
-                        format!("error={}", e),
+                        format!("/tmp/gen_OPEN_ERR_{loop_counter:03}"),
+                        format!("error={e}"),
                     );
                     continue;
                 }
@@ -778,8 +773,8 @@ impl GeneratorContext {
 
             // Step 3: Generate delta (or send whole file if no basis)
             let _ = std::fs::write(
-                format!("/tmp/gen_BEFORE_DELTA_{:03}", loop_counter),
-                format!("has_basis={}", has_basis),
+                format!("/tmp/gen_BEFORE_DELTA_{loop_counter:03}"),
+                format!("has_basis={has_basis}"),
             );
             let delta_script = if has_basis {
                 // Receiver has basis, generate delta
@@ -798,7 +793,7 @@ impl GeneratorContext {
                 generate_whole_file_delta(source_file)?
             };
             let _ = std::fs::write(
-                format!("/tmp/gen_AFTER_DELTA_{:03}", loop_counter),
+                format!("/tmp/gen_AFTER_DELTA_{loop_counter:03}"),
                 format!("total_bytes={}", delta_script.total_bytes()),
             );
 
@@ -830,8 +825,8 @@ impl GeneratorContext {
             // - Extended 2-byte: 0xFE prefix + 2 bytes for diff 0 or 254-32767
             // - Extended 4-byte: 0xFE prefix + 4 bytes (high bit set) for diff < 0 or > 32767
             let _ = std::fs::write(
-                format!("/tmp/gen_SEND_NDX_{:03}", loop_counter),
-                format!("ndx={} prev_write={} diff={}", ndx, prev_write, ndx_diff),
+                format!("/tmp/gen_SEND_NDX_{loop_counter:03}"),
+                format!("ndx={ndx} prev_write={prev_write} diff={ndx_diff}"),
             );
             if (1..=253).contains(&ndx_diff) {
                 // Simple single-byte diff (io.c:2271-2272)
@@ -861,8 +856,8 @@ impl GeneratorContext {
             if self.protocol.as_u8() >= 29 {
                 // write_shortint sends 2 bytes little-endian
                 let _ = std::fs::write(
-                    format!("/tmp/gen_SEND_IFLAGS_{:03}", loop_counter),
-                    format!("iflags=0x{:04x}", iflags),
+                    format!("/tmp/gen_SEND_IFLAGS_{loop_counter:03}"),
+                    format!("iflags=0x{iflags:04x}"),
                 );
                 writer.write_all(&iflags.to_le_bytes())?;
             }
@@ -881,10 +876,9 @@ impl GeneratorContext {
                 writer.write_all(&sum_remainder.to_le_bytes())?;
             }
             let _ = std::fs::write(
-                format!("/tmp/gen_SENT_SUM_HEAD_{:03}", loop_counter),
+                format!("/tmp/gen_SENT_SUM_HEAD_{loop_counter:03}"),
                 format!(
-                    "count={} blength={} s2length={} remainder={}",
-                    sum_count, sum_blength, sum_s2length, sum_remainder
+                    "count={sum_count} blength={sum_blength} s2length={sum_s2length} remainder={sum_remainder}"
                 ),
             );
 
@@ -893,12 +887,12 @@ impl GeneratorContext {
             // write_int(-(block+1)) for block matches, write_int(0) as end marker
             let wire_ops = script_to_wire_delta(&delta_script);
             let _ = std::fs::write(
-                format!("/tmp/gen_BEFORE_SEND_{:03}", loop_counter),
+                format!("/tmp/gen_BEFORE_SEND_{loop_counter:03}"),
                 format!("wire_ops_len={}", wire_ops.len()),
             );
             write_token_stream(&mut &mut *writer, &wire_ops)?;
             let _ = std::fs::write(
-                format!("/tmp/gen_AFTER_DELTA_TOKENS_{:03}", loop_counter),
+                format!("/tmp/gen_AFTER_DELTA_TOKENS_{loop_counter:03}"),
                 "1",
             );
 
@@ -928,7 +922,7 @@ impl GeneratorContext {
             );
 
             let _ = std::fs::write(
-                format!("/tmp/gen_SEND_CHECKSUM_{:03}", loop_counter),
+                format!("/tmp/gen_SEND_CHECKSUM_{loop_counter:03}"),
                 format!(
                     "algo={:?} len={} bytes={:02x?}",
                     checksum_algorithm,
@@ -938,17 +932,14 @@ impl GeneratorContext {
             );
             writer.write_all(&file_checksum)?;
             writer.flush()?;
-            let _ = std::fs::write(format!("/tmp/gen_AFTER_SEND_{:03}", loop_counter), "1");
+            let _ = std::fs::write(format!("/tmp/gen_AFTER_SEND_{loop_counter:03}"), "1");
 
             // Step 5: Track stats
             bytes_sent += delta_script.total_bytes();
             files_transferred += 1;
             let _ = std::fs::write(
-                format!("/tmp/gen_LOOP_STATS_{:03}", loop_counter),
-                format!(
-                    "bytes_sent={} files_transferred={}",
-                    bytes_sent, files_transferred
-                ),
+                format!("/tmp/gen_LOOP_STATS_{loop_counter:03}"),
+                format!("bytes_sent={bytes_sent} files_transferred={files_transferred}"),
             );
         }
 
@@ -1039,12 +1030,12 @@ impl GeneratorContext {
                         // Connection closed/reset during final goodbye - this is acceptable
                         // as the transfer has already completed successfully
                         let _ =
-                            std::fs::write("/tmp/gen_GOODBYE_READ2_CLOSED", format!("error={}", e));
+                            std::fs::write("/tmp/gen_GOODBYE_READ2_CLOSED", format!("error={e}"));
                     }
                     Err(e) => {
                         // Propagate other errors
                         let _ =
-                            std::fs::write("/tmp/gen_GOODBYE_READ2_ERROR", format!("error={}", e));
+                            std::fs::write("/tmp/gen_GOODBYE_READ2_ERROR", format!("error={e}"));
                         return Err(e);
                     }
                 }

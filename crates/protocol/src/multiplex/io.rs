@@ -82,7 +82,7 @@ fn read_header<R: Read>(reader: &mut R) -> io::Result<MessageHeader> {
     let _ = std::fs::write("/tmp/mux_HEADER_BEFORE_READ", "1");
     match reader.read_exact(&mut header_bytes) {
         Ok(()) => {
-            let _ = std::fs::write("/tmp/mux_HEADER_READ_OK", format!("{:02x?}", header_bytes));
+            let _ = std::fs::write("/tmp/mux_HEADER_READ_OK", format!("{header_bytes:02x?}"));
             MessageHeader::decode(&header_bytes).map_err(map_envelope_error)
         }
         Err(e) => {
