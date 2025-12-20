@@ -94,6 +94,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) human_readable: bool,
     pub(crate) mkpath: bool,
     pub(crate) prune_empty_dirs: bool,
+    pub(crate) qsort: bool,
     pub(crate) verbosity: u8,
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) stats: bool,
@@ -219,6 +220,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .human_readable(inputs.human_readable)
         .mkpath(inputs.mkpath)
         .prune_empty_dirs(inputs.prune_empty_dirs)
+        .qsort(inputs.qsort)
         .verbosity(inputs.verbosity)
         .progress(inputs.progress_mode.is_some())
         .stats(inputs.stats)
