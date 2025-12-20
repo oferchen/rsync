@@ -116,8 +116,7 @@ fn recv_msg_reports_header_truncation_at_each_byte() {
         assert_eq!(
             err.kind(),
             io::ErrorKind::UnexpectedEof,
-            "truncation at byte {} should be detected",
-            truncate_len
+            "truncation at byte {truncate_len} should be detected"
         );
     }
 }
@@ -135,8 +134,7 @@ fn recv_msg_into_reports_header_truncation_at_each_byte() {
         assert_eq!(
             err.kind(),
             io::ErrorKind::UnexpectedEof,
-            "truncation at byte {} should be detected",
-            truncate_len
+            "truncation at byte {truncate_len} should be detected"
         );
     }
 }
@@ -152,13 +150,11 @@ fn recv_msg_reports_payload_truncation_with_details() {
     let message = err.to_string();
     assert!(
         message.contains("expected 100 bytes"),
-        "error should mention expected length: {}",
-        message
+        "error should mention expected length: {message}"
     );
     assert!(
         message.contains("received 50"),
-        "error should mention actual length: {}",
-        message
+        "error should mention actual length: {message}"
     );
 }
 
@@ -176,13 +172,11 @@ fn recv_msg_into_reports_payload_truncation_with_details() {
     let message = err.to_string();
     assert!(
         message.contains("expected 200 bytes"),
-        "error should mention expected length: {}",
-        message
+        "error should mention expected length: {message}"
     );
     assert!(
         message.contains("received 75"),
-        "error should mention actual length: {}",
-        message
+        "error should mention actual length: {message}"
     );
     assert_eq!(buffer.len(), 75, "partial payload should be in buffer");
 }
@@ -195,8 +189,7 @@ fn recv_msg_rejects_tags_below_mplex_base() {
         assert_eq!(
             err.kind(),
             io::ErrorKind::InvalidData,
-            "tag {} below MPLEX_BASE should be rejected",
-            tag
+            "tag {tag} below MPLEX_BASE should be rejected"
         );
         assert!(
             err.to_string().contains("invalid tag byte"),
@@ -214,8 +207,7 @@ fn recv_msg_into_rejects_tags_below_mplex_base() {
         assert_eq!(
             err.kind(),
             io::ErrorKind::InvalidData,
-            "tag {} below MPLEX_BASE should be rejected",
-            tag
+            "tag {tag} below MPLEX_BASE should be rejected"
         );
     }
 }
@@ -233,8 +225,7 @@ fn recv_msg_rejects_unknown_message_codes_in_valid_range() {
         assert_eq!(
             err.kind(),
             io::ErrorKind::InvalidData,
-            "unknown code offset {} should be rejected",
-            offset
+            "unknown code offset {offset} should be rejected"
         );
     }
 }
