@@ -135,6 +135,7 @@ where
         copy_unsafe_links,
         keep_dirlinks,
         safe_links,
+        trust_sender: _,
         write_devices,
         devices,
         copy_devices,
