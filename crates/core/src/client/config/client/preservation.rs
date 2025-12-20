@@ -50,4 +50,15 @@ impl ClientConfig {
     pub const fn safe_links(&self) -> bool {
         self.safe_links
     }
+
+    /// Reports whether symlinks should be munged for daemon mode safety.
+    ///
+    /// When enabled, symlinks are transformed by prefixing a special marker
+    /// so they cannot escape the module directory in daemon mode. This is
+    /// a security feature for rsyncd.
+    #[must_use]
+    #[doc(alias = "--munge-links")]
+    pub const fn munge_links(&self) -> bool {
+        self.munge_links
+    }
 }
