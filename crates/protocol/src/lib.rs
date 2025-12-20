@@ -15,6 +15,8 @@ pub mod filters;
 pub mod flist;
 mod legacy;
 mod multiplex;
+/// NDX (file-list index) encoding and decoding.
+pub mod ndx;
 mod negotiation;
 mod varint;
 mod version;

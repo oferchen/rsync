@@ -136,8 +136,8 @@ fn delegate_binary_session(
         log_message(log, &message);
     }
 
-    if !status.success() {
-        if let Some(log) = log_sink {
+    if !status.success()
+        && let Some(log) = log_sink {
             let text = format!(
                 "fallback daemon '{}' exited with status {}",
                 Path::new(binary).display(),
@@ -146,7 +146,6 @@ fn delegate_binary_session(
             let message = rsync_warning!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }
-    }
 
     Ok(())
 }

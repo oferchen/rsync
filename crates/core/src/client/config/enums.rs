@@ -16,9 +16,10 @@ use engine::signature::SignatureAlgorithm;
 /// socket timeouts entirely, or asked to rely on the default for the current
 /// operation. Higher layers convert the setting into concrete [`Duration`]
 /// values depending on the transport in use.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum TransferTimeout {
     /// Use the default timeout for the current operation.
+    #[default]
     Default,
     /// Disable socket timeouts entirely.
     Disabled,
@@ -45,12 +46,6 @@ impl TransferTimeout {
             TransferTimeout::Seconds(value) => Some(value),
             TransferTimeout::Default | TransferTimeout::Disabled => None,
         }
-    }
-}
-
-impl Default for TransferTimeout {
-    fn default() -> Self {
-        Self::Default
     }
 }
 
@@ -304,8 +299,10 @@ impl Default for StrongChecksumChoice {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[doc(alias = "--ipv4")]
 #[doc(alias = "--ipv6")]
+#[derive(Default)]
 pub enum AddressMode {
     /// Allow the operating system to pick the address family.
+    #[default]
     Default,
     /// Restrict resolution and connections to IPv4 addresses.
     Ipv4,
@@ -313,20 +310,15 @@ pub enum AddressMode {
     Ipv6,
 }
 
-impl Default for AddressMode {
-    fn default() -> Self {
-        Self::Default
-    }
-}
-
 /// Compression configuration propagated from the CLI.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum CompressionSetting {
     /// Compression has been explicitly disabled (e.g. `--compress-level=0`).
     ///
     /// This is also the default when building a [`ClientConfig`](super::ClientConfig), matching
     /// upstream rsync's behaviour of leaving compression off unless the caller
     /// explicitly enables it.
+    #[default]
     Disabled,
     /// Compression is enabled with the provided [`CompressionLevel`].
     Level(CompressionLevel),
@@ -384,12 +376,6 @@ impl CompressionSetting {
     }
 }
 
-impl Default for CompressionSetting {
-    fn default() -> Self {
-        Self::Disabled
-    }
-}
-
 impl From<CompressionLevel> for CompressionSetting {
     fn from(level: CompressionLevel) -> Self {
         Self::Level(level)
@@ -397,9 +383,10 @@ impl From<CompressionLevel> for CompressionSetting {
 }
 
 /// Deletion scheduling selected by the caller.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum DeleteMode {
     /// Do not remove extraneous destination entries.
+    #[default]
     Disabled,
     /// Remove extraneous entries before transferring file data.
     Before,
@@ -416,11 +403,5 @@ impl DeleteMode {
     #[must_use]
     pub const fn is_enabled(self) -> bool {
         !matches!(self, Self::Disabled)
-    }
-}
-
-impl Default for DeleteMode {
-    fn default() -> Self {
-        Self::Disabled
     }
 }

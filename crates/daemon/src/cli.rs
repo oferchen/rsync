@@ -121,12 +121,11 @@ fn remainder_has_config(args: &[OsString]) -> bool {
             return true;
         }
         // inline: --config=/path/to/file
-        if let Some(s) = arg.to_str() {
-            if let Some(rest) = s.strip_prefix("--config=") {
-                if !rest.trim().is_empty() {
-                    return true;
-                }
-            }
+        if let Some(s) = arg.to_str()
+            && let Some(rest) = s.strip_prefix("--config=")
+            && !rest.trim().is_empty()
+        {
+            return true;
         }
     }
     false

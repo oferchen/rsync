@@ -17,10 +17,10 @@ pub(crate) fn filter_program_local_error(path: &Path, error: FilterProgramError)
 }
 
 pub(crate) fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
-    if pattern.is_absolute() {
-        if let Ok(stripped) = pattern.strip_prefix(Path::new("/")) {
-            return base.join(stripped);
-        }
+    if pattern.is_absolute()
+        && let Ok(stripped) = pattern.strip_prefix(Path::new("/"))
+    {
+        return base.join(stripped);
     }
 
     base.join(pattern)
@@ -150,11 +150,9 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         | "exclude-if-present"
                 ) || lower.starts_with("dir-merge");
 
-                if needs_argument {
-                    if let Some(next) = iter.next() {
-                        directive.push(' ');
-                        directive.push_str(next);
-                    }
+                if needs_argument && let Some(next) = iter.next() {
+                    directive.push(' ');
+                    directive.push_str(next);
                 }
 
                 match parse_filter_directive_line(&directive) {

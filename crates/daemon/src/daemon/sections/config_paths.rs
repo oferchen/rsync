@@ -15,11 +15,10 @@ where
     }
 
     let text = argument.to_string_lossy();
-    if let Some(rest) = text.strip_prefix(option) {
-        if let Some(value) = rest.strip_prefix('=') {
+    if let Some(rest) = text.strip_prefix(option)
+        && let Some(value) = rest.strip_prefix('=') {
             return Ok(Some(OsString::from(value)));
         }
-    }
 
     Ok(None)
 }
@@ -31,11 +30,10 @@ fn config_argument_present(arguments: &[OsString]) -> bool {
         }
 
         let text = argument.to_string_lossy();
-        if let Some(rest) = text.strip_prefix("--config") {
-            if rest.starts_with('=') {
+        if let Some(rest) = text.strip_prefix("--config")
+            && rest.starts_with('=') {
                 return true;
             }
-        }
     }
 
     false

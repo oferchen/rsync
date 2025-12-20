@@ -9,9 +9,10 @@ use std::fmt;
 use std::io;
 
 /// Represents the role associated with a name-mapping specification.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MappingKind {
     /// User mapping specified via `--usermap`.
+    #[default]
     User,
     /// Group mapping specified via `--groupmap`.
     Group,
@@ -25,12 +26,6 @@ impl MappingKind {
             Self::User => "--usermap",
             Self::Group => "--groupmap",
         }
-    }
-}
-
-impl Default for MappingKind {
-    fn default() -> Self {
-        Self::User
     }
 }
 

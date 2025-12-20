@@ -419,10 +419,10 @@ fn format_full_checksum(event: &ClientEvent) -> String {
         return EMPTY_CHECKSUM.to_string();
     }
 
-    if let Some(metadata) = event.metadata() {
-        if metadata.kind() != ClientEntryKind::File {
-            return EMPTY_CHECKSUM.to_string();
-        }
+    if let Some(metadata) = event.metadata()
+        && metadata.kind() != ClientEntryKind::File
+    {
+        return EMPTY_CHECKSUM.to_string();
     }
 
     let path = event.destination_path();

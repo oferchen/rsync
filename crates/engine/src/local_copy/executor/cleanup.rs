@@ -59,11 +59,11 @@ pub(crate) fn delete_extraneous_entries(
             continue;
         }
 
-        if let Some(limit) = context.options().max_deletion_limit() {
-            if context.summary().items_deleted() >= limit {
-                skipped_due_to_limit = skipped_due_to_limit.saturating_add(1);
-                continue;
-            }
+        if let Some(limit) = context.options().max_deletion_limit()
+            && context.summary().items_deleted() >= limit
+        {
+            skipped_due_to_limit = skipped_due_to_limit.saturating_add(1);
+            continue;
         }
 
         if context.mode().is_dry_run() {

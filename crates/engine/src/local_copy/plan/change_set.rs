@@ -204,10 +204,10 @@ impl LocalCopyChangeSet {
 
         if !destination_previously_existed {
             change_set = change_set.with_size_changed(true);
-        } else if let Some(existing_metadata) = existing {
-            if metadata.len() != existing_metadata.len() {
-                change_set = change_set.with_size_changed(true);
-            }
+        } else if let Some(existing_metadata) = existing
+            && metadata.len() != existing_metadata.len()
+        {
+            change_set = change_set.with_size_changed(true);
         }
 
         change_set = change_set.with_time_change(determine_time_change(

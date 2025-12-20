@@ -1,7 +1,8 @@
 /// Controls whether a [`MessageSink`](crate::MessageSink) appends a trailing newline when writing messages.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum LineMode {
     /// Append a newline terminator after each rendered message.
+    #[default]
     WithNewline,
     /// Emit the rendered message without a trailing newline.
     WithoutNewline,
@@ -28,12 +29,6 @@ impl LineMode {
     #[must_use]
     pub const fn append_newline(self) -> bool {
         matches!(self, Self::WithNewline)
-    }
-}
-
-impl Default for LineMode {
-    fn default() -> Self {
-        Self::WithNewline
     }
 }
 

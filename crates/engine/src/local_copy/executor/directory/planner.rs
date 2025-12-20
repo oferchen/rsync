@@ -228,17 +228,16 @@ pub(crate) fn plan_directory_entries<'a>(
             }
         }
 
-        if matches!(action, EntryAction::CopyDirectory) && context.one_file_system_enabled() {
-            if let Some(root) = root_device {
-                if let Some(entry_device) = crate::local_copy::overrides::device_identifier(
-                    entry.path.as_path(),
-                    metadata_override.as_ref().unwrap_or(entry_metadata),
-                ) {
-                    if entry_device != root {
-                        action = EntryAction::SkipMountPoint;
-                    }
-                }
-            }
+        if matches!(action, EntryAction::CopyDirectory)
+            && context.one_file_system_enabled()
+            && let Some(root) = root_device
+            && let Some(entry_device) = crate::local_copy::overrides::device_identifier(
+                entry.path.as_path(),
+                metadata_override.as_ref().unwrap_or(entry_metadata),
+            )
+            && entry_device != root
+        {
+            action = EntryAction::SkipMountPoint;
         }
 
         if deletion_enabled && keep_name {

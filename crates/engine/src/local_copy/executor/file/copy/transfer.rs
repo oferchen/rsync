@@ -685,10 +685,8 @@ pub(crate) fn take_fsync_call_count() -> usize {
 }
 
 fn open_source_file(path: &Path, use_noatime: bool) -> io::Result<fs::File> {
-    if use_noatime {
-        if let Some(file) = try_open_noatime(path)? {
-            return Ok(file);
-        }
+    if use_noatime && let Some(file) = try_open_noatime(path)? {
+        return Ok(file);
     }
     fs::File::open(path)
 }

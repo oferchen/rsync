@@ -4,7 +4,7 @@ use crate::workspace::{self, WorkspaceBranding};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use toml::Value;
 
 mod packaging;
@@ -86,7 +86,7 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
 
     ensure(
         file_name(branding.daemon_config.as_path(), "daemon_config")?
-            == PathBuf::from(format!("{brand}-rsyncd.conf")),
+            == Path::new(&format!("{brand}-rsyncd.conf")),
         format!(
             "daemon_config {} must be named {}-rsyncd.conf",
             branding.daemon_config.display(),
@@ -95,7 +95,7 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
     )?;
     ensure(
         file_name(branding.daemon_secrets.as_path(), "daemon_secrets")?
-            == PathBuf::from(format!("{brand}-rsyncd.secrets")),
+            == Path::new(&format!("{brand}-rsyncd.secrets")),
         format!(
             "daemon_secrets {} must be named {}-rsyncd.secrets",
             branding.daemon_secrets.display(),
@@ -106,7 +106,7 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         file_name(
             branding.legacy_daemon_config.as_path(),
             "legacy_daemon_config",
-        )? == PathBuf::from("rsyncd.conf"),
+        )? == Path::new("rsyncd.conf"),
         format!(
             "legacy_daemon_config {} must be named rsyncd.conf",
             branding.legacy_daemon_config.display()
@@ -116,7 +116,7 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         file_name(
             branding.legacy_daemon_secrets.as_path(),
             "legacy_daemon_secrets",
-        )? == PathBuf::from("rsyncd.secrets"),
+        )? == Path::new("rsyncd.secrets"),
         format!(
             "legacy_daemon_secrets {} must be named rsyncd.secrets",
             branding.legacy_daemon_secrets.display()

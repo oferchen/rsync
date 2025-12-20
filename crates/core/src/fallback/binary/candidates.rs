@@ -44,10 +44,10 @@ pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
             dir.join(direct_path)
         };
         for ext in &extensions {
-            if let Some(candidate) = apply_extension(&base, ext) {
-                if seen.insert(candidate.clone()) {
-                    results.push(candidate);
-                }
+            if let Some(candidate) = apply_extension(&base, ext)
+                && seen.insert(candidate.clone())
+            {
+                results.push(candidate);
             }
         }
     }
