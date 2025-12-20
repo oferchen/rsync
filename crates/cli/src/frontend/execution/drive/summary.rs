@@ -85,12 +85,12 @@ where
             let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
             let suppress_updated_only_totals = itemize_changes && !stats && verbosity == 0;
 
-            if let Some(observer) = live_progress {
-                if let Err(error) = observer.finish() {
-                    let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                        writeln!(writer, "warning: failed to render progress output: {error}")
-                    });
-                }
+            if let Some(observer) = live_progress
+                && let Err(error) = observer.finish()
+            {
+                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                    writeln!(writer, "warning: failed to render progress output: {error}")
+                });
             }
 
             let out_format_context = OutFormatContext::default();
@@ -119,8 +119,8 @@ where
                 });
             }
 
-            if let Some(mut log) = log_file {
-                if let Err(error) = emit_log_output(EmitLogOutputParams {
+            if let Some(mut log) = log_file
+                && let Err(error) = emit_log_output(EmitLogOutputParams {
                     summary: &summary,
                     log: &mut log,
                     verbosity,
@@ -129,21 +129,21 @@ where
                     name_level,
                     name_overridden,
                     human_readable_mode,
-                }) {
-                    let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                        writeln!(writer, "warning: failed to append to log file: {error}")
-                    });
-                }
+                })
+            {
+                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                    writeln!(writer, "warning: failed to append to log file: {error}")
+                });
             }
             0
         }
         Err(error) => {
-            if let Some(observer) = live_progress {
-                if let Err(err) = observer.finish() {
-                    let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-                        writeln!(writer, "warning: failed to render progress output: {err}")
-                    });
-                }
+            if let Some(observer) = live_progress
+                && let Err(err) = observer.finish()
+            {
+                let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                    writeln!(writer, "warning: failed to render progress output: {err}")
+                });
             }
 
             let message: &Message = error.message();

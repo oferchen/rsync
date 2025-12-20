@@ -166,13 +166,13 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
         upstream_binaries
     };
 
-    if binaries_to_test.is_empty() {
-        if let Some(ref v) = options.version {
-            return Err(crate::error::TaskError::ToolMissing(format!(
-                "Upstream rsync version {} not found",
-                v
-            )));
-        }
+    if binaries_to_test.is_empty()
+        && let Some(ref v) = options.version
+    {
+        return Err(crate::error::TaskError::ToolMissing(format!(
+            "Upstream rsync version {} not found",
+            v
+        )));
     }
 
     let mut validation_failed = false;

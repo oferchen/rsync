@@ -57,16 +57,16 @@ pub(crate) fn copy_device(
 
     let destination_previously_existed = existing_metadata.is_some();
 
-    if let Some(existing) = existing_metadata.as_ref() {
-        if existing.file_type().is_dir() {
-            if context.force_replacements_enabled() {
-                context.force_remove_destination(destination, relative, existing)?;
-                existing_metadata = None;
-            } else {
-                return Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
-                ));
-            }
+    if let Some(existing) = existing_metadata.as_ref()
+        && existing.file_type().is_dir()
+    {
+        if context.force_replacements_enabled() {
+            context.force_remove_destination(destination, relative, existing)?;
+            existing_metadata = None;
+        } else {
+            return Err(LocalCopyError::invalid_argument(
+                LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
+            ));
         }
     }
 

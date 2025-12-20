@@ -30,12 +30,11 @@ fn respond_with_module_list(
         }
 
         let mut line = module.name.clone();
-        if let Some(comment) = &module.comment {
-            if !comment.is_empty() {
+        if let Some(comment) = &module.comment
+            && !comment.is_empty() {
                 line.push('\t');
                 line.push_str(comment);
             }
-        }
         line.push('\n');
         write_limited(stream, limiter, line.as_bytes())?;
     }
@@ -146,13 +145,12 @@ fn verify_secret_response(
             continue;
         }
 
-        if let Some((user, secret)) = line.split_once(':') {
-            if user == username
+        if let Some((user, secret)) = line.split_once(':')
+            && user == username
                 && verify_daemon_auth_response(secret.as_bytes(), challenge, response)
             {
                 return Ok(true);
             }
-        }
     }
 
     Ok(false)
@@ -380,8 +378,8 @@ fn respond_with_module_request(
         let module_peer_host =
             module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
 
-        if change != LimiterChange::Unchanged {
-            if let Some(log) = log_sink {
+        if change != LimiterChange::Unchanged
+            && let Some(log) = log_sink {
                 log_module_bandwidth_change(
                     log,
                     module_peer_host.or(session_peer_host),
@@ -391,7 +389,6 @@ fn respond_with_module_request(
                     change,
                 );
             }
-        }
         if module.permits(peer_ip, module_peer_host) {
             let _connection_guard = match module.try_acquire_connection() {
                 Ok(guard) => guard,
@@ -673,7 +670,9 @@ fn respond_with_module_request(
             // let mut traced_write_stream = TracingWriter::new(write_stream, trace_config);
 
             // Run the server transfer - handles protocol setup and multiplex internally
+            let _ = std::fs::write("/tmp/daemon_BEFORE_RUN_SERVER", format!("protocol={}", handshake.protocol.as_u8()));
             let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
+            let _ = std::fs::write("/tmp/daemon_AFTER_RUN_SERVER", format!("result={:?}", result.is_ok()));
             match result {
                 Ok(_server_stats) => {
                     if let Some(log) = log_sink {
@@ -775,11 +774,10 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
 }
 
 fn log_message(log: &SharedLogSink, message: &Message) {
-    if let Ok(mut sink) = log.lock() {
-        if sink.write(message).is_ok() {
+    if let Ok(mut sink) = log.lock()
+        && sink.write(message).is_ok() {
             let _ = sink.flush();
         }
-    }
 }
 
 fn format_host(host: Option<&str>, fallback: IpAddr) -> String {

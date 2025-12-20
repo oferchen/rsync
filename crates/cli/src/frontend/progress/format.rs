@@ -84,10 +84,10 @@ pub(crate) fn format_list_permissions(metadata: &ClientEntryMetadata) -> String 
 }
 
 pub(crate) fn format_list_timestamp(modified: Option<SystemTime>) -> String {
-    if let Some(time) = modified {
-        if let Ok(datetime) = OffsetDateTime::from(time).format(LIST_TIMESTAMP_FORMAT) {
-            return datetime;
-        }
+    if let Some(time) = modified
+        && let Ok(datetime) = OffsetDateTime::from(time).format(LIST_TIMESTAMP_FORMAT)
+    {
+        return datetime;
     }
     "1970/01/01 00:00:00".to_string()
 }

@@ -370,13 +370,13 @@ fn locate_binary(name: &str) -> Option<PathBuf> {
 
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
-                    if let Ok(file_type) = entry.file_type() {
-                        if file_type.is_dir() {
-                            let entry_path = entry.path();
-                            candidates.insert(entry_path.join(&binary_name));
-                            candidates.insert(entry_path.join("debug").join(&binary_name));
-                            candidates.insert(entry_path.join("release").join(&binary_name));
-                        }
+                    if let Ok(file_type) = entry.file_type()
+                        && file_type.is_dir()
+                    {
+                        let entry_path = entry.path();
+                        candidates.insert(entry_path.join(&binary_name));
+                        candidates.insert(entry_path.join("debug").join(&binary_name));
+                        candidates.insert(entry_path.join("release").join(&binary_name));
                     }
                 }
             }

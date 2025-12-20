@@ -116,13 +116,12 @@ fn set_owner_like(
             Some(ownership::uid_from_raw(uid as RawUid))
         } else if options.owner() {
             let mut raw_uid = metadata.uid() as RawUid;
-            if let Some(mapping) = options.user_mapping() {
-                if let Some(mapped) = mapping
+            if let Some(mapping) = options.user_mapping()
+                && let Some(mapped) = mapping
                     .map_uid(raw_uid)
                     .map_err(|error| MetadataError::new("apply user mapping", destination, error))?
-                {
-                    raw_uid = mapped;
-                }
+            {
+                raw_uid = mapped;
             }
             map_uid(raw_uid, options.numeric_ids_enabled())
         } else {
@@ -132,12 +131,12 @@ fn set_owner_like(
             Some(ownership::gid_from_raw(gid as RawGid))
         } else if options.group() {
             let mut raw_gid = metadata.gid() as RawGid;
-            if let Some(mapping) = options.group_mapping() {
-                if let Some(mapped) = mapping.map_gid(raw_gid).map_err(|error| {
+            if let Some(mapping) = options.group_mapping()
+                && let Some(mapped) = mapping.map_gid(raw_gid).map_err(|error| {
                     MetadataError::new("apply group mapping", destination, error)
-                })? {
-                    raw_gid = mapped;
-                }
+                })?
+            {
+                raw_gid = mapped;
             }
             map_gid(raw_gid, options.numeric_ids_enabled())
         } else {
@@ -399,10 +398,10 @@ fn apply_ownership_from_entry(
         entry.uid().and_then(|uid| {
             let mut raw_uid = uid as RawUid;
             // Apply user mapping if present
-            if let Some(mapping) = options.user_mapping() {
-                if let Ok(Some(mapped)) = mapping.map_uid(raw_uid) {
-                    raw_uid = mapped;
-                }
+            if let Some(mapping) = options.user_mapping()
+                && let Ok(Some(mapped)) = mapping.map_uid(raw_uid)
+            {
+                raw_uid = mapped;
             }
             map_uid(raw_uid, options.numeric_ids_enabled())
         })
@@ -416,10 +415,10 @@ fn apply_ownership_from_entry(
     } else if options.group() {
         entry.gid().and_then(|gid| {
             let mut raw_gid = gid as RawGid;
-            if let Some(mapping) = options.group_mapping() {
-                if let Ok(Some(mapped)) = mapping.map_gid(raw_gid) {
-                    raw_gid = mapped;
-                }
+            if let Some(mapping) = options.group_mapping()
+                && let Ok(Some(mapped)) = mapping.map_gid(raw_gid)
+            {
+                raw_gid = mapped;
             }
             map_gid(raw_gid, options.numeric_ids_enabled())
         })

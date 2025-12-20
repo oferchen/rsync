@@ -380,13 +380,12 @@ impl RuntimeOptions {
             self.set_config_lock_file(lock_file, &origin)?;
         }
 
-        if let Some((components, _origin)) = parsed.global_bandwidth_limit {
-            if !self.bandwidth_limit_configured {
+        if let Some((components, _origin)) = parsed.global_bandwidth_limit
+            && !self.bandwidth_limit_configured {
                 self.bandwidth_limit = components.rate();
                 self.bandwidth_burst = components.burst();
                 self.bandwidth_limit_configured = true;
             }
-        }
 
         if let Some((secrets, origin)) = parsed.global_secrets_file {
             self.set_global_secrets_file(secrets, &origin)?;
@@ -578,8 +577,8 @@ impl RuntimeOptions {
         path: PathBuf,
         origin: &ConfigDirectiveOrigin,
     ) -> Result<(), DaemonError> {
-        if let Some(existing) = &self.global_secrets_file {
-            if self.global_secrets_from_config {
+        if let Some(existing) = &self.global_secrets_file
+            && self.global_secrets_from_config {
                 if existing == &path {
                     return Ok(());
                 }
@@ -590,7 +589,6 @@ impl RuntimeOptions {
                     "duplicate 'secrets file' directive in global section",
                 ));
             }
-        }
 
         self.global_secrets_file = Some(path);
         self.global_secrets_from_config = true;

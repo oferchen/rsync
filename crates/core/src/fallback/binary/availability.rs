@@ -99,10 +99,10 @@ fn cached_result(
     };
 
     if result {
-        if let Some(path) = matched_path.as_ref() {
-            if candidate_is_executable(path) {
-                return Some(Some(path.clone()));
-            }
+        if let Some(path) = matched_path.as_ref()
+            && candidate_is_executable(path)
+        {
+            return Some(Some(path.clone()));
         }
     } else if recorded_at.elapsed() < NEGATIVE_CACHE_TTL {
         return Some(None);

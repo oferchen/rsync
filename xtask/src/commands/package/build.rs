@@ -53,19 +53,20 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
             "install the rpmbuild tooling (for example, `dnf install rpm-build` or `apt install rpm`)",
         )?;
 
-        if let Some(profile) = options.profile.as_deref() {
-            if profile != "release" && profile != DIST_PROFILE {
-                probe_cargo_tool(
-                    workspace,
-                    &["rpm", "--help"],
-                    "cargo rpm build",
-                    "install the cargo-rpm subcommand (cargo install cargo-rpm)",
-                )?;
-                return Err(crate::util::validation_error(format!(
-                    "cargo rpm build does not support overriding the cargo profile (requested '{}'); adjust [package.metadata.rpm.cargo].buildflags instead",
-                    profile.to_string_lossy()
-                )));
-            }
+        if let Some(profile) = options.profile.as_deref()
+            && profile != "release"
+            && profile != DIST_PROFILE
+        {
+            probe_cargo_tool(
+                workspace,
+                &["rpm", "--help"],
+                "cargo rpm build",
+                "install the cargo-rpm subcommand (cargo install cargo-rpm)",
+            )?;
+            return Err(crate::util::validation_error(format!(
+                "cargo rpm build does not support overriding the cargo profile (requested '{}'); adjust [package.metadata.rpm.cargo].buildflags instead",
+                profile.to_string_lossy()
+            )));
         }
 
         let rpm_output_rel = std::path::Path::new("target").join("dist");
@@ -344,13 +345,13 @@ fn configure_feature_args(args: &mut Vec<OsString>) -> TaskResult<()> {
         args.push(OsString::from("--no-default-features"));
     }
 
-    if let Some(features) = env::var_os(FEATURE_LIST_ENV) {
-        if !features.is_empty() {
-            let features_value = features_to_string(&features, FEATURE_LIST_ENV)?;
-            if !features_value.is_empty() {
-                args.push(OsString::from("--features"));
-                args.push(OsString::from(features_value));
-            }
+    if let Some(features) = env::var_os(FEATURE_LIST_ENV)
+        && !features.is_empty()
+    {
+        let features_value = features_to_string(&features, FEATURE_LIST_ENV)?;
+        if !features_value.is_empty() {
+            args.push(OsString::from("--features"));
+            args.push(OsString::from(features_value));
         }
     }
 
