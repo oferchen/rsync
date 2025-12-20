@@ -4,6 +4,7 @@ use std::process::{Command, Stdio};
 
 use super::connection::SshConnection;
 use super::parse::{RemoteShellParseError, parse_remote_shell};
+use logging::debug_log;
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -142,6 +143,18 @@ impl SshCommand {
     /// Spawns the configured command and returns a [`SshConnection`].
     pub fn spawn(&self) -> io::Result<SshConnection> {
         let (program, args) = self.command_parts();
+
+        debug_log!(
+            Cmd,
+            1,
+            "spawning ssh: {} {}",
+            program.to_string_lossy(),
+            args.iter()
+                .map(|a| a.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+
         let mut command = Command::new(&program);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
@@ -153,6 +166,8 @@ impl SshCommand {
         }
 
         let mut child = command.spawn()?;
+
+        debug_log!(Connect, 2, "ssh process spawned successfully");
 
         let stdin = child.stdin.take().ok_or_else(|| {
             io::Error::new(

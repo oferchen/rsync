@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use core::client::{ClientConfigBuilder, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
-use logging::MessageSink;
+use logging_sink::MessageSink;
 
 use super::messages::fail_with_message;
 use crate::frontend::filter_rules::{

@@ -19,7 +19,7 @@ use core::{branding::Brand, message::MessageScratch};
 ///
 /// ```
 /// use core::message::Message;
-/// use logging::MessageSink;
+/// use logging_sink::MessageSink;
 ///
 /// let mut sink = MessageSink::new(Vec::new());
 ///
@@ -36,7 +36,7 @@ use core::{branding::Brand, message::MessageScratch};
 ///
 /// ```
 /// use core::message::Message;
-/// use logging::{LineMode, MessageSink};
+/// use logging_sink::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
 /// sink
@@ -50,7 +50,7 @@ use core::{branding::Brand, message::MessageScratch};
 ///
 /// ```
 /// use core::message::{Message, MessageScratch};
-/// use logging::{LineMode, MessageSink};
+/// use logging_sink::{LineMode, MessageSink};
 ///
 /// let mut sink = MessageSink::with_parts(Vec::new(), MessageScratch::new(), LineMode::WithoutNewline);
 /// sink

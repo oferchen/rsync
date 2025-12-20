@@ -1,76 +1,34 @@
-#![deny(unsafe_code)]
+//! crates/logging/src/lib.rs
+//! Logging and verbosity flag system for info and debug output control.
+//!
+//! This crate provides a thread-local verbosity configuration system that controls
+//! which diagnostic messages are emitted. It is intentionally dependency-free to
+//! avoid circular dependencies when used by low-level crates.
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! use logging::{VerbosityConfig, info_log, debug_log};
+//!
+//! // Initialize at session start
+//! logging::init(VerbosityConfig::from_verbose_level(2));
+//!
+//! // Use logging macros anywhere
+//! info_log!(Name, 1, "updated: {}", path);
+//! debug_log!(Deltasum, 2, "block {} matched", block_num);
+//! ```
+
 #![deny(missing_docs)]
-#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(unsafe_code)]
 
-//! # Overview
-//!
-//! `logging` provides reusable logging primitives that operate on the
-//! [`core::message::Message`] type shared across the Rust rsync
-//! workspace. The initial focus is on streaming diagnostics to arbitrary writers
-//! while reusing [`core::message::MessageScratch`]
-//! instances so higher layers avoid repeated buffer initialisation when printing
-//! large batches of messages.
-//!
-//! # Design
-//!
-//! The crate exposes [`MessageSink`], a lightweight wrapper around an
-//! [`std::io::Write`] implementor. Each sink stores a
-//! [`core::message::MessageScratch`] scratch buffer that is reused whenever a message is
-//! rendered, matching upstream rsync's approach of keeping stack-allocated
-//! buffers alive for the duration of a logging session. Callers can control
-//! whether rendered messages end with a newline by selecting a [`LineMode`].
-//!
-//! # Invariants
-//!
-//! - The sink never clones message payloads; it streams the segments emitted by
-//!   [`core::message::Message::render_to_writer_with_scratch`] or
-//!   [`core::message::Message::render_line_to_writer_with_scratch`].
-//! - Scratch buffers are reused across invocations so repeated writes avoid
-//!   zeroing fresh storage.
-//! - `LineMode::WithNewline` mirrors upstream rsync's default of printing each
-//!   diagnostic on its own line.
-//!
-//! # Errors
-//!
-//! All operations surface [`std::io::Error`] values originating from the
-//! underlying writer. When reserving buffer space fails, the error bubbles up
-//! unchanged from [`core::message::Message`] rendering helpers.
-//!
-//! # Examples
-//!
-//! Stream two diagnostics into an in-memory buffer and inspect the output:
-//!
-//! ```
-//! use core::{message::Message, rsync_error, rsync_warning};
-//! use logging::{LineMode, MessageSink};
-//!
-//! let mut sink = MessageSink::new(Vec::new());
-//! let vanished = rsync_warning!("some files vanished").with_code(24);
-//! let partial = rsync_error!(23, "partial transfer");
-//!
-//! sink.write(&vanished).unwrap();
-//! sink.write(&partial).unwrap();
-//!
-//! let output = String::from_utf8(sink.into_inner()).unwrap();
-//! assert!(output.lines().all(|line| line.starts_with("rsync")));
-//!
-//! // Render a final message without appending a newline.
-//! let mut final_sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-//! final_sink.write(Message::info("completed")).unwrap();
-//! let buffer = final_sink.into_inner();
-//! assert!(buffer.ends_with(b"completed"));
-//! ```
-//!
-//! # See also
-//!
-//! - [`core::message`] for message construction and formatting helpers.
-//! - Future logging backends will reuse [`MessageSink`] to route diagnostics to
-//!   stdout/stderr, log files, or journald.
+mod config;
+mod levels;
+mod macros;
+mod thread_local;
 
-mod line_mode;
-mod sink;
-pub mod verbosity;
-
-pub use line_mode::LineMode;
-pub use sink::{LineModeGuard, MessageSink, TryMapWriterError};
-pub use verbosity::{InfoFlag, DebugFlag, VerbosityConfig};
+pub use config::VerbosityConfig;
+pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
+pub use thread_local::{
+    DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events, emit_debug,
+    emit_info, info_gte, init,
+};

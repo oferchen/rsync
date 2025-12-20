@@ -2,7 +2,7 @@
 
 use crate::frontend::{arguments::ProgramName, render_help};
 use core::{message::Role, rsync_exit_code};
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use std::ffi::OsString;
 use std::io::Write;
 

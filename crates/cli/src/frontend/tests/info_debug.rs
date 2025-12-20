@@ -151,7 +151,9 @@ fn info_flist_levels() {
     assert_eq!(settings.flist, Some(2));
 
     let flags = vec![OsString::from("flist3")];
-    let error = parse_info_flags(&flags).err().expect("should reject level 3");
+    let error = parse_info_flags(&flags)
+        .err()
+        .expect("should reject level 3");
     assert!(error.to_string().contains("invalid --info flag"));
 }
 
@@ -170,7 +172,9 @@ fn info_stats_levels() {
     assert_eq!(settings.stats, Some(3));
 
     let flags = vec![OsString::from("stats4")];
-    let error = parse_info_flags(&flags).err().expect("should reject level 4");
+    let error = parse_info_flags(&flags)
+        .err()
+        .expect("should reject level 4");
     assert!(error.to_string().contains("invalid --info flag"));
 }
 
@@ -223,7 +227,9 @@ fn debug_flist_levels() {
     assert_eq!(settings.flist, Some(4));
 
     let flags = vec![OsString::from("flist5")];
-    let error = parse_debug_flags(&flags).err().expect("should reject level 5");
+    let error = parse_debug_flags(&flags)
+        .err()
+        .expect("should reject level 5");
     assert!(error.to_string().contains("invalid --debug flag"));
 }
 
@@ -242,7 +248,9 @@ fn debug_io_levels() {
     assert_eq!(settings.io, Some(4));
 
     let flags = vec![OsString::from("io5")];
-    let error = parse_debug_flags(&flags).err().expect("should reject level 5");
+    let error = parse_debug_flags(&flags)
+        .err()
+        .expect("should reject level 5");
     assert!(error.to_string().contains("invalid --debug flag"));
 }
 

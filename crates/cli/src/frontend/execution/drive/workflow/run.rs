@@ -20,7 +20,8 @@ use crate::frontend::{
 };
 use core::{client::HumanReadableMode, message::Role, rsync_error};
 use engine::batch;
-use logging::{MessageSink, VerbosityConfig};
+use logging::VerbosityConfig;
+use logging_sink::MessageSink;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -185,7 +186,7 @@ where
 
     // Initialize verbosity system from -v level (--info/--debug flags applied later in derive_settings)
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
-    logging::verbosity::init(verbosity_config);
+    logging::init(verbosity_config);
 
     if let Err(code) = validate_stdin_sources_conflict(&password_file, &files_from, stderr) {
         return code;

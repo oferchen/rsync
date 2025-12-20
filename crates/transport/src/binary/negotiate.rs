@@ -1,6 +1,7 @@
 use crate::negotiation::{
     NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
+use logging::debug_log;
 use protocol::{
     CompatibilityFlags, NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion,
 };
@@ -78,6 +79,8 @@ pub fn negotiate_binary_session_from_stream<R>(
 where
     R: Read + Write,
 {
+    debug_log!(Connect, 1, "binary protocol negotiation started");
+
     stream.ensure_decision(
         NegotiationPrologue::Binary,
         "binary negotiation requires binary prologue",
@@ -86,6 +89,7 @@ where
     let mut advertisement = [0u8; 4];
     let desired = desired_protocol.as_u8();
     advertisement.copy_from_slice(&u32::from(desired).to_be_bytes());
+    debug_log!(Proto, 2, "sending protocol version {}", desired);
     {
         let inner = stream.inner_mut();
         inner.write_all(&advertisement)?;
@@ -99,10 +103,29 @@ where
     let remote_protocol = match ProtocolVersion::from_peer_advertisement(remote_advertised) {
         Ok(protocol) => protocol,
         Err(err) => {
+            debug_log!(
+                Proto,
+                1,
+                "invalid remote protocol advertisement: {}",
+                remote_advertised
+            );
             return Err(io::Error::from(err));
         }
     };
+
+    debug_log!(Proto, 1, "remote protocol={}", remote_protocol.as_u8());
+
     let negotiated_protocol = cmp::min(desired_protocol, remote_protocol);
+
+    debug_log!(
+        Proto,
+        1,
+        "negotiated protocol={} (desired={}, remote={})",
+        negotiated_protocol.as_u8(),
+        desired_protocol.as_u8(),
+        remote_protocol.as_u8()
+    );
+
     let remote_compatibility_flags = if negotiated_protocol.uses_binary_negotiation() {
         let mut first = [0u8; 1];
         match stream.read(&mut first)? {
@@ -116,6 +139,14 @@ where
     } else {
         CompatibilityFlags::EMPTY
     };
+
+    debug_log!(
+        Proto,
+        2,
+        "remote compat flags: {:?}",
+        remote_compatibility_flags
+    );
+
     Ok(BinaryHandshake::from_components(
         remote_advertised,
         remote_protocol,

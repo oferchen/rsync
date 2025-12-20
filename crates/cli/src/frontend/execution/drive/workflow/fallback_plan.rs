@@ -7,7 +7,7 @@ use core::client::{
     AddressMode, BindAddress, DeleteMode, HumanReadableMode, IconvSetting, RemoteFallbackArgs,
     TransferTimeout,
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
 use std::ffi::OsString;
 use std::io::Write;

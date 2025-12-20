@@ -12,6 +12,7 @@ use std::io::{self, Write};
 /// This type will be replaced with the actual event type from the logging
 /// crate once the thread-local event queue is implemented.
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // Fields reserved for future use in level-aware rendering
 pub enum DiagnosticEvent {
     /// Info-level diagnostic message.
     Info {
@@ -48,6 +49,7 @@ pub enum DiagnosticEvent {
 /// # Errors
 ///
 /// Returns an I/O error if writing to either stream fails.
+#[allow(dead_code)] // Scaffolding for logging crate integration
 pub fn render_diagnostic_events<W: Write>(
     events: &[DiagnosticEvent],
     out: &mut W,
@@ -56,14 +58,22 @@ pub fn render_diagnostic_events<W: Write>(
 ) -> io::Result<()> {
     for event in events {
         match event {
-            DiagnosticEvent::Info { flag: _, level: _, message } => {
+            DiagnosticEvent::Info {
+                flag: _,
+                level: _,
+                message,
+            } => {
                 if msgs2stderr {
                     writeln!(err, "{}", message)?;
                 } else {
                     writeln!(out, "{}", message)?;
                 }
             }
-            DiagnosticEvent::Debug { flag, level: _, message } => {
+            DiagnosticEvent::Debug {
+                flag,
+                level: _,
+                message,
+            } => {
                 // Debug always goes to stderr with flag prefix
                 writeln!(err, "[{}] {}", flag, message)?;
             }
@@ -86,11 +96,8 @@ pub fn render_diagnostic_events<W: Write>(
 /// # Errors
 ///
 /// Returns an I/O error if rendering fails.
-pub fn flush_diagnostics<W: Write>(
-    out: &mut W,
-    err: &mut W,
-    msgs2stderr: bool,
-) -> io::Result<()> {
+#[allow(dead_code)] // Scaffolding for logging crate integration
+pub fn flush_diagnostics<W: Write>(out: &mut W, err: &mut W, msgs2stderr: bool) -> io::Result<()> {
     // This will integrate with logging::verbosity::drain_events() once available
     // For now, just a placeholder that does nothing
     let _ = (out, err, msgs2stderr);
@@ -114,7 +121,10 @@ mod tests {
 
         render_diagnostic_events(&events, &mut stdout, &mut stderr, false).unwrap();
 
-        assert_eq!(String::from_utf8(stdout).unwrap(), "transferred 1024 bytes\n");
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            "transferred 1024 bytes\n"
+        );
         assert!(stderr.is_empty());
     }
 

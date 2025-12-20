@@ -1,6 +1,8 @@
 use std::cmp::min;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
+use logging::debug_log;
+
 use crate::delta::index::DeltaSignatureIndex;
 
 /// Token describing how to reconstruct a target file from an rsync delta stream.
@@ -101,6 +103,15 @@ where
     R: Read + Seek,
     W: Write,
 {
+    debug_log!(
+        Recv,
+        2,
+        "applying delta: {} tokens, {} total bytes, {} literal bytes",
+        script.tokens().len(),
+        script.total_bytes(),
+        script.literal_bytes()
+    );
+
     let block_length = index.block_length();
     let block_length_u64 = u64::try_from(block_length)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "block length overflow"))?;

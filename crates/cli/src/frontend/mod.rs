@@ -98,7 +98,7 @@ use core::{
     rsync_error,
 };
 use execution::execute;
-use logging::MessageSink;
+use logging_sink::MessageSink;
 use outbuf::{OutbufAdapter, parse_outbuf_mode};
 #[cfg(test)]
 use std::collections::HashSet;

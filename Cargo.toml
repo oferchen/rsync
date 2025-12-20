@@ -55,6 +55,7 @@ members = [
     "crates/engine",
     "crates/filters",
     "crates/logging",
+    "crates/logging-sink",
     "crates/compress",
     "crates/metadata",
     "crates/protocol",

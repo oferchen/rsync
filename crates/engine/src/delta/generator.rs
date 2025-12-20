@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::io::{self, Read};
 
 use checksums::RollingChecksum;
+use logging::debug_log;
 
 use crate::delta::index::DeltaSignatureIndex;
 use crate::delta::script::{DeltaScript, DeltaToken};
@@ -112,6 +113,15 @@ impl DeltaGenerator {
             total_bytes += pending_literals.len() as u64;
             tokens.push(DeltaToken::Literal(pending_literals));
         }
+
+        debug_log!(
+            Deltasum,
+            2,
+            "delta generated: {} tokens, {} total bytes, {} literal bytes",
+            tokens.len(),
+            total_bytes,
+            literal_bytes
+        );
 
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
     }

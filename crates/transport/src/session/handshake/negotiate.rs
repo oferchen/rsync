@@ -3,6 +3,7 @@ use crate::daemon::negotiate_legacy_daemon_session_from_stream;
 use crate::negotiation::{
     NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
+use logging::debug_log;
 use protocol::{NegotiationPrologue, NegotiationPrologueSniffer, ProtocolVersion};
 use std::io::{self, Read, Write};
 
@@ -117,10 +118,12 @@ where
 {
     match stream.decision() {
         NegotiationPrologue::Binary => {
+            debug_log!(Connect, 1, "detected binary handshake");
             negotiate_binary_session_from_stream(stream, desired_protocol)
                 .map(SessionHandshake::Binary)
         }
         NegotiationPrologue::LegacyAscii => {
+            debug_log!(Connect, 1, "detected legacy @RSYNCD: handshake");
             negotiate_legacy_daemon_session_from_stream(stream, desired_protocol)
                 .map(SessionHandshake::Legacy)
         }

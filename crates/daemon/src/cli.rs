@@ -15,7 +15,7 @@ use core::{
     rsync_error,
     version::VersionInfoReport,
 };
-use logging::MessageSink;
+use logging_sink::MessageSink;
 
 use crate::{
     config::DaemonConfig,

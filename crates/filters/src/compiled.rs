@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use globset::{GlobBuilder, GlobMatcher};
+use logging::debug_log;
 
 use crate::{FilterAction, FilterError, FilterRule};
 
@@ -67,6 +68,7 @@ impl CompiledRule {
     pub(crate) fn matches(&self, path: &Path, is_dir: bool) -> bool {
         for matcher in &self.direct_matchers {
             if matcher.is_match(path) && (!self.directory_only || is_dir) {
+                debug_log!(Filter, 2, "direct pattern matched: {:?}", path);
                 return true;
             }
         }
@@ -74,11 +76,13 @@ impl CompiledRule {
         if !self.descendant_matchers.is_empty() {
             for matcher in &self.descendant_matchers {
                 if matcher.is_match(path) {
+                    debug_log!(Filter, 2, "descendant pattern matched: {:?}", path);
                     return true;
                 }
             }
         }
 
+        debug_log!(Filter, 3, "no pattern match for: {:?}", path);
         false
     }
 

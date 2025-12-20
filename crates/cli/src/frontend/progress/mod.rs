@@ -6,6 +6,7 @@ mod live;
 mod mode;
 mod render;
 
+#[allow(unused_imports)]
 pub use self::diagnostic::{DiagnosticEvent, flush_diagnostics, render_diagnostic_events};
 #[allow(unused_imports)]
 pub(crate) use self::format::{

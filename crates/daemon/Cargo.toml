@@ -23,7 +23,7 @@ base64 = "0.22"
 dns-lookup = "1.0"
 core = { path = "../core" }
 protocol = { path = "../protocol" }
-logging = { path = "../logging" }
+logging-sink = { path = "../logging-sink" }
 fs2 = "0.4"
 sd-notify = { version = "0.4.5", optional = true }
 tempfile = "3.10"
