@@ -41,22 +41,22 @@ fn test_del_alias_for_delete() {
 }
 
 #[test]
-fn test_stderr_alias_for_msgs2stderr() {
-    let args = parse_args(["oc-rsync", "--stderr", "src", "dest"]).unwrap();
+fn test_stderr_option_accepts_mode() {
+    let args = parse_args(["oc-rsync", "--stderr=errors", "src", "dest"]).unwrap();
     assert_eq!(
-        args.msgs_to_stderr,
-        Some(true),
-        "--stderr should behave like --msgs2stderr"
+        args.stderr_mode,
+        Some("errors".into()),
+        "--stderr should accept a mode argument"
     );
 }
 
 #[test]
-fn test_no_stderr_alias_for_no_msgs2stderr() {
-    let args = parse_args(["oc-rsync", "--no-stderr", "src", "dest"]).unwrap();
+fn test_stderr_option_accepts_all_mode() {
+    let args = parse_args(["oc-rsync", "--stderr=all", "src", "dest"]).unwrap();
     assert_eq!(
-        args.msgs_to_stderr,
-        Some(false),
-        "--no-stderr should behave like --no-msgs2stderr"
+        args.stderr_mode,
+        Some("all".into()),
+        "--stderr=all should set stderr_mode to 'all'"
     );
 }
 

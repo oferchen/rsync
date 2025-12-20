@@ -134,6 +134,7 @@ pub struct ParsedArgs {
     pub append: Option<bool>,
     pub append_verify: bool,
     pub msgs_to_stderr: Option<bool>,
+    pub stderr_mode: Option<OsString>,
     pub outbuf: Option<OsString>,
     pub itemize_changes: bool,
     pub whole_file: Option<bool>,
