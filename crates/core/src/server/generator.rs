@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 
 use checksums::strong::{Md4, Md5, Md5Seed, StrongDigest, Xxh3, Xxh64};
 use filters::{FilterRule, FilterSet};
+use logging::{debug_log, info_log};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
 use protocol::ndx::{NDX_FLIST_EOF, NdxState};
@@ -165,6 +166,7 @@ impl GeneratorContext {
     ///
     /// Mirrors upstream recursive directory scanning and file list construction behavior.
     pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize> {
+        info_log!(Flist, 1, "building file list...");
         self.file_list.clear();
         self.full_paths.clear();
 
@@ -187,7 +189,16 @@ impl GeneratorContext {
         self.file_list = sorted_entries;
         self.full_paths = sorted_paths;
 
-        Ok(self.file_list.len())
+        let count = self.file_list.len();
+        info_log!(Flist, 1, "built file list with {} entries", count);
+        debug_log!(
+            Flist,
+            2,
+            "file list entries: {:?}",
+            self.file_list.iter().map(|e| e.name()).collect::<Vec<_>>()
+        );
+
+        Ok(count)
     }
 
     /// Recursively walks a path and adds entries to the file list.

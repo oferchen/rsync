@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use logging::debug_log;
+
 use crate::{FilterAction, compiled::CompiledRule};
 
 #[derive(Debug, Default)]
@@ -47,7 +49,14 @@ impl FilterSetInner {
         }
 
         if let Some(rule) = transfer_rule {
-            decision.transfer_allowed = matches!(rule.action, FilterAction::Include);
+            let allowed = matches!(rule.action, FilterAction::Include);
+            decision.transfer_allowed = allowed;
+
+            if allowed {
+                debug_log!(Filter, 1, "including {:?} (matched rule)", path);
+            } else {
+                debug_log!(Filter, 1, "excluding {:?} (matched rule)", path);
+            }
         }
 
         let protection_rule = match context {

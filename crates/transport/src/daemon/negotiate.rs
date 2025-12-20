@@ -2,6 +2,7 @@ use super::types::LegacyDaemonHandshake;
 use crate::negotiation::{
     NegotiatedStream, sniff_negotiation_stream, sniff_negotiation_stream_with_sniffer,
 };
+use logging::debug_log;
 use protocol::{
     LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonGreetingOwned, NegotiationPrologue,
     NegotiationPrologueSniffer, ProtocolVersion,
@@ -75,6 +76,8 @@ pub fn negotiate_legacy_daemon_session_from_stream<R>(
 where
     R: Read + Write,
 {
+    debug_log!(Connect, 1, "legacy daemon negotiation started");
+
     stream.ensure_decision(
         NegotiationPrologue::LegacyAscii,
         "legacy daemon negotiation requires @RSYNCD: prefix",
@@ -84,7 +87,23 @@ where
     let greeting = stream.read_and_parse_legacy_daemon_greeting_details(&mut line)?;
     let server_greeting = LegacyDaemonGreetingOwned::from(greeting);
 
+    debug_log!(
+        Proto,
+        1,
+        "daemon server protocol={}.{}",
+        server_greeting.protocol().as_u8(),
+        server_greeting.subprotocol()
+    );
+
     let negotiated_protocol = cmp::min(desired_protocol, server_greeting.protocol());
+
+    debug_log!(
+        Proto,
+        1,
+        "negotiated protocol={} (desired={})",
+        negotiated_protocol.as_u8(),
+        desired_protocol.as_u8()
+    );
 
     let banner = build_client_greeting(&server_greeting, negotiated_protocol);
     stream.write_all(&banner)?;

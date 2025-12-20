@@ -1,11 +1,12 @@
 [package]
-name = "transport"
+name = "logging-sink"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Transport helpers for the Rust rsync implementation"
+description = "Message sink and output utilities for the Rust rsync implementation"
+repository.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
@@ -14,9 +15,4 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-protocol = { path = "../protocol" }
-logging = { path = "../logging" }
-memchr = "2.7"
-
-[dev-dependencies]
-proptest = "1.4"
+core = { path = "../core" }

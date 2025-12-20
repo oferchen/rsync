@@ -33,6 +33,8 @@
 
 use std::io::{self, Read, Write};
 
+use logging::debug_log;
+
 use crate::ProtocolVersion;
 
 /// Supported checksum algorithms in preference order.
@@ -255,6 +257,12 @@ pub fn negotiate_capabilities(
 ) -> io::Result<NegotiationResult> {
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.as_u8() < 30 {
+        debug_log!(
+            Proto,
+            1,
+            "protocol {} < 30, using legacy defaults (MD4, Zlib)",
+            protocol.as_u8()
+        );
         return Ok(NegotiationResult {
             checksum: ChecksumAlgorithm::MD4,
             compression: CompressionAlgorithm::Zlib,
@@ -272,6 +280,11 @@ pub fn negotiate_capabilities(
     if !do_negotiation {
         // Use protocol 30+ defaults without sending or reading anything
         // Upstream default when compression is not negotiated is CPRES_NONE (compat.c:234)
+        debug_log!(
+            Proto,
+            1,
+            "client lacks VARINT_FLIST_FLAGS, using defaults (MD5, None)"
+        );
         return Ok(NegotiationResult {
             checksum: ChecksumAlgorithm::MD5,
             compression: CompressionAlgorithm::None,
@@ -296,28 +309,26 @@ pub fn negotiate_capabilities(
     // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
     // Uses vstring format (NOT varint) - see write_vstring documentation
     let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
-    let _ = std::fs::write("/tmp/cap_SEND_CHECKSUM_LIST", &checksum_list);
+    debug_log!(Proto, 2, "sending checksum list: {}", checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
     // Send compression list only if compression is enabled
     if send_compression {
         let compression_list = SUPPORTED_COMPRESSIONS.join(" ");
-        let _ = std::fs::write("/tmp/cap_SEND_COMPRESS_LIST", &compression_list);
+        debug_log!(Proto, 2, "sending compression list: {}", compression_list);
         write_vstring(stdout, &compression_list)?;
     }
 
-    let _ = std::fs::write("/tmp/cap_BEFORE_FLUSH", "1");
     stdout.flush()?;
-    let _ = std::fs::write("/tmp/cap_AFTER_FLUSH", "1");
 
     // Step 2: READ the remote side's algorithm lists (upstream compat.c:546-564)
     // Uses vstring format (NOT varint) - see read_vstring documentation
-    let _ = std::fs::write("/tmp/cap_BEFORE_READ_CHECKSUM", "1");
     let remote_checksum_list = read_vstring(stdin)?;
-    let _ = std::fs::write("/tmp/cap_READ_CHECKSUM_LIST", &remote_checksum_list);
+    debug_log!(Proto, 2, "received checksum list: {}", remote_checksum_list);
 
     let remote_compression_list = if send_compression {
         let list = read_vstring(stdin)?;
+        debug_log!(Proto, 2, "received compression list: {}", list);
         Some(list)
     } else {
         None
@@ -334,6 +345,13 @@ pub fn negotiate_capabilities(
         CompressionAlgorithm::None
     };
 
+    debug_log!(
+        Proto,
+        1,
+        "negotiated checksum={}, compression={}",
+        checksum.as_str(),
+        compression.as_str()
+    );
     Ok(NegotiationResult {
         checksum,
         compression,

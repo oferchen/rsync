@@ -185,9 +185,7 @@ impl InfoFlagSettings {
 fn info_flag_error(display: &str) -> Message {
     rsync_error!(
         1,
-        format!(
-            "invalid --info flag '{display}': use --info=help for supported flags"
-        )
+        format!("invalid --info flag '{display}': use --info=help for supported flags")
     )
     .with_role(Role::Client)
 }
@@ -217,6 +215,7 @@ pub(crate) fn parse_info_flags(values: &[OsString]) -> Result<InfoFlagSettings, 
     Ok(settings)
 }
 
+#[derive(Default)]
 pub(crate) struct DebugFlagSettings {
     pub(crate) acl: Option<u8>,
     pub(crate) backup: Option<u8>,
@@ -243,38 +242,6 @@ pub(crate) struct DebugFlagSettings {
     pub(crate) send: Option<u8>,
     pub(crate) time: Option<u8>,
     pub(crate) help_requested: bool,
-}
-
-impl Default for DebugFlagSettings {
-    fn default() -> Self {
-        Self {
-            acl: None,
-            backup: None,
-            bind: None,
-            chdir: None,
-            connect: None,
-            cmd: None,
-            del: None,
-            deltasum: None,
-            dup: None,
-            exit: None,
-            filter: None,
-            flist: None,
-            fuzzy: None,
-            genr: None,
-            hash: None,
-            hlink: None,
-            iconv: None,
-            io: None,
-            nstr: None,
-            own: None,
-            proto: None,
-            recv: None,
-            send: None,
-            time: None,
-            help_requested: false,
-        }
-    }
 }
 
 impl DebugFlagSettings {
@@ -546,9 +513,7 @@ fn debug_flag_empty_error() -> Message {
 fn debug_flag_error(display: &str) -> Message {
     rsync_error!(
         1,
-        format!(
-            "invalid --debug flag '{display}': use --debug=help for supported flags"
-        )
+        format!("invalid --debug flag '{display}': use --debug=help for supported flags")
     )
     .with_role(Role::Client)
 }
