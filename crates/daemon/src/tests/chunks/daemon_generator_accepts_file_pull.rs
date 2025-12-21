@@ -55,11 +55,6 @@ fn daemon_generator_accepts_file_pull() {
         .expect("send client version");
     stream.flush().expect("flush");
 
-    // Read handshake acknowledgment
-    let mut ack = String::new();
-    reader.read_line(&mut ack).expect("read ack");
-    assert_eq!(ack, "@RSYNCD: OK\n");
-
     // Request the module (no authentication needed for read-only)
     stream
         .write_all(b"testmodule\n")

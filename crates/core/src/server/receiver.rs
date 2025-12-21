@@ -156,6 +156,9 @@ impl ReceiverContext {
     /// If the sender transmits an I/O error marker (SAFE_FILE_LIST mode), this
     /// method propagates the error up to the caller for handling. The caller should
     /// decide whether to continue or abort based on the error severity and context.
+    ///
+    /// After the file list entries, this also consumes the UID/GID lists that follow
+    /// (unless using incremental recursion). See upstream `recv_id_list()` in uidlist.c.
     pub fn receive_file_list<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
         let mut flist_reader = if let Some(flags) = self.compat_flags {
             FileListReader::with_compat_flags(self.protocol, flags)
@@ -171,7 +174,85 @@ impl ReceiverContext {
             count += 1;
         }
 
+        // Read ID lists (UID/GID mappings) after file list
+        // Upstream: recv_id_list() is called when !inc_recurse
+        // See flist.c:2726-2727 and uidlist.c:460
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+        if !inc_recurse {
+            self.receive_id_lists(reader)?;
+        }
+
         Ok(count)
+    }
+
+    /// Reads UID/GID lists from the sender.
+    ///
+    /// Mirrors upstream `recv_id_list()` in uidlist.c:460.
+    /// Each list is varint-terminated: reads (id, name_len, name) tuples until id=0.
+    ///
+    /// IMPORTANT: Both sender and receiver must use the same flags for ID lists.
+    /// The sender only sends ID lists if preserve_uid/gid is set on THEIR side,
+    /// which should match the client's flags since the daemon parses the client's
+    /// flag string.
+    ///
+    /// For now, we consume but don't store the mappings (no ownership preservation yet).
+    fn receive_id_lists<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<()> {
+        // Read UID list if preserve_uid is set (owner flag)
+        // Upstream condition: (preserve_uid || preserve_acls) && numeric_ids <= 0
+        // Note: numeric_ids is not implemented yet, assume false (0)
+        if self.config.flags.owner {
+            self.read_one_id_list(reader)?;
+        }
+
+        // Read GID list if preserve_gid is set (group flag)
+        // Upstream condition: (preserve_gid || preserve_acls) && numeric_ids <= 0
+        if self.config.flags.group {
+            self.read_one_id_list(reader)?;
+        }
+
+        Ok(())
+    }
+
+    /// Reads a single ID list (uid or gid).
+    ///
+    /// Format: (varint id, byte name_len, name bytes)* followed by varint 0 terminator.
+    /// If ID0_NAMES compat flag is set, also reads name for id=0 after terminator.
+    fn read_one_id_list<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<()> {
+        // Read (id, name) pairs until id=0
+        loop {
+            let id = protocol::read_varint(reader)?;
+            if id == 0 {
+                break;
+            }
+            // Read name: 1 byte length, then that many bytes
+            let mut len_buf = [0u8; 1];
+            reader.read_exact(&mut len_buf)?;
+            let name_len = len_buf[0] as usize;
+            if name_len > 0 {
+                let mut name_buf = vec![0u8; name_len];
+                reader.read_exact(&mut name_buf)?;
+            }
+        }
+
+        // If ID0_NAMES flag is set, also read name for id=0
+        // Note: This is only used with modern rsync (3.2.0+) and when preserve_uid/gid is set
+        let id0_names = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
+        if id0_names {
+            // recv_user_name(f, 0) or recv_group_name(f, 0)
+            let mut len_buf = [0u8; 1];
+            reader.read_exact(&mut len_buf)?;
+            let name_len = len_buf[0] as usize;
+            if name_len > 0 {
+                let mut name_buf = vec![0u8; name_len];
+                reader.read_exact(&mut name_buf)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Runs the receiver role to completion.
@@ -263,6 +344,7 @@ impl ReceiverContext {
 
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
+        let _ = file_count; // Suppress unused warning (file list stored in self.file_list)
 
         // NOTE: Do NOT send NDX_DONE here!
         // The receiver/generator should immediately start sending file indices
@@ -464,7 +546,13 @@ impl ReceiverContext {
 
             // Read echoed NDX from sender (delta encoded)
             let mut ndx_byte = [0u8; 1];
-            reader.read_exact(&mut ndx_byte)?;
+            let n = reader.read(&mut ndx_byte)?;
+            if n != 1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "failed to read NDX byte",
+                ));
+            }
 
             // For protocol >= 29, read iflags (shortint = 2 bytes LE)
             let iflags = if self.protocol.as_u8() >= 29 {

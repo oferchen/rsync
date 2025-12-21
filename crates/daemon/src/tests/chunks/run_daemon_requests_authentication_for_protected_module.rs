@@ -56,14 +56,10 @@ fn run_daemon_requests_authentication_for_protected_module() {
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    line.clear();
-    reader.read_line(&mut line).expect("handshake ack");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
     stream.write_all(b"secure\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    // Daemon responds directly with AUTHREQD for protected modules
+    // Daemon responds with AUTHREQD for protected modules after module selection
     // (CAP is only sent for #list requests)
     line.clear();
     reader.read_line(&mut line).expect("auth request");

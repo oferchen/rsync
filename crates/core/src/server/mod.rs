@@ -148,8 +148,6 @@ pub fn run_server_with_handshake<W: Write>(
     stdin: &mut dyn Read,
     mut stdout: W,
 ) -> ServerResult {
-    // Debug logging removed - eprintln! crashes when stderr unavailable in daemon mode
-
     // Protocol has already been negotiated via:
     // - perform_handshake() for SSH mode (binary exchange)
     // - @RSYNCD exchange for daemon mode
@@ -161,10 +159,28 @@ pub fn run_server_with_handshake<W: Write>(
     // This is critical for daemon mode where the BufReader may have read ahead
     let buffered_data = std::mem::take(&mut handshake.buffered);
 
-    // Chain buffered data with stdin BEFORE calling setup_protocol
-    // This ensures setup_protocol reads from the correct stream
-    let buffered = std::io::Cursor::new(buffered_data);
-    let mut chained_stdin = buffered.chain(stdin);
+    // IMPORTANT: In daemon mode, the buffered data from BufReader may contain
+    // garbage or premature binary data that was read ahead during argument parsing.
+    // This data is NOT meant for setup_protocol - it should be discarded.
+    //
+    // The vstring negotiation happens AFTER compat flags exchange:
+    // 1. Server sends compat flags
+    // 2. Client reads compat flags, determines do_negotiated_strings
+    // 3. THEN client sends its vstring
+    //
+    // Any data in the buffer at this point is from BEFORE the client knew
+    // whether to send vstrings, so it's not valid vstring data.
+    //
+    // For daemon mode (client_args is Some), discard the buffered data.
+    let mut chained_stdin: Box<dyn std::io::Read> =
+        if handshake.client_args.is_some() && !buffered_data.is_empty() {
+            // Daemon mode: don't use buffered data, read fresh from socket
+            Box::new(stdin)
+        } else {
+            // SSH mode or no buffered data: chain as before
+            let buffered = std::io::Cursor::new(buffered_data);
+            Box::new(buffered.chain(stdin))
+        };
 
     // Call setup_protocol() - mirrors upstream main.c:1245
     // This is the FIRST thing start_server() does after setting file descriptors
@@ -266,10 +282,26 @@ pub fn run_server_with_handshake<W: Write>(
     //   else
     //       io_start_buffering_out(f_out);
     //
+    // Multiplex activation timing for client and server modes.
+    //
+    // For protocol >= 30, need_messages_from_generator = 1 (compat.c:776), so BOTH
+    // client and daemon use multiplexed I/O.
+    //
+    // CLIENT mode (main.c:1341-1352 client_run):
+    //   io_start_multiplex_in(f_in);   // Line 1343 - for proto >= 23
+    //   io_start_multiplex_out(f_out); // Line 1345 - for need_messages (proto >= 30)
+    //   send_filter_list(f_out);       // Line 1352 - AFTER multiplex for proto >= 30
+    //   recv_file_list(f_in);          // Line 1361
+    //
+    // DAEMON sender (main.c:1252-1259 start_server):
+    //   io_start_multiplex_in(f_in);   // Line 1255 - for need_messages (proto >= 30)
+    //   recv_filter_list(f_in);        // Line 1258 - reads multiplexed filter list
+    //   do_server_sender();            // Line 1259
+    //
     // For client sender: multiplex is activated BEFORE filter/file list (protocol >= 30)
     // For server: multiplex is activated BEFORE filter list (protocol >= 23)
     let should_activate_output_multiplex = if config.client_mode {
-        // Client sender mode: activate for protocol >= 30
+        // Client mode: activate for protocol >= 30
         handshake.protocol.as_u8() >= 30
     } else {
         // Server mode: activate for protocol >= 23
@@ -277,30 +309,13 @@ pub fn run_server_with_handshake<W: Write>(
     };
 
     if should_activate_output_multiplex {
-        let _ = std::fs::write(
-            "/tmp/mod_BEFORE_MUX_ACTIVATE",
-            format!(
-                "client_mode={} protocol={}",
-                config.client_mode,
-                handshake.protocol.as_u8()
-            ),
-        );
         writer = writer.activate_multiplex()?;
-        let _ = std::fs::write("/tmp/mod_AFTER_MUX_ACTIVATE", "1");
     }
 
     // Filter list handling for client mode.
     //
-    // With protocol >= 30, multiplex is already active, so filter list is sent multiplexed.
-    // With protocol 23-29, filter list is sent with buffering only (not multiplexed).
-    //
-    // CRITICAL: Upstream rsync's send_filter_list() (exclude.c:1645-1669) skips sending
-    // the filter list entirely when am_sender && !receiver_wants_list. The receiver only
-    // wants the list if delete_mode or prune_empty_dirs is enabled.
-    //
-    // For a basic sender without --delete, NO filter list is sent. If we send a 4-byte
-    // zero terminator, the daemon will misinterpret it as file list data, corrupting
-    // the file list parsing.
+    // For protocol >= 30, filter list is sent through multiplexed output.
+    // The daemon (sender) activates input multiplex BEFORE reading filter list.
     //
     // Mirror upstream behavior:
     // - Skip filter list for Generator (sender) when no --delete flag
@@ -321,12 +336,7 @@ pub fn run_server_with_handshake<W: Write>(
         false
     };
 
-    let _ = std::fs::write(
-        "/tmp/mod_FILTER_CHECK",
-        format!("should_send={should_send_filter_list}"),
-    );
     if should_send_filter_list {
-        let _ = std::fs::write("/tmp/mod_SENDING_FILTER_LIST", "1");
         protocol::filters::write_filter_list(
             &mut writer,
             &config.filter_rules,
@@ -334,7 +344,6 @@ pub fn run_server_with_handshake<W: Write>(
         )?;
         writer.flush()?;
     }
-    let _ = std::fs::write("/tmp/mod_AFTER_FILTER_CHECK", "1");
 
     // Activate compression on writer if negotiated (Protocol 30+ with compression algorithm)
     // This mirrors upstream io.c:io_start_buffering_out()
@@ -376,7 +385,6 @@ pub fn run_server_with_handshake<W: Write>(
 
     match config.role {
         ServerRole::Receiver => {
-            let _ = std::fs::write("/tmp/mod_ROLE_RECEIVER", "1");
             let mut ctx = ReceiverContext::new(&handshake, config);
             // Pass reader by value - ReceiverContext::run now takes ownership and activates multiplex internally
             let stats = ctx.run(chained_reader, &mut writer)?;
@@ -384,22 +392,13 @@ pub fn run_server_with_handshake<W: Write>(
             Ok(ServerStats::Receiver(stats))
         }
         ServerRole::Generator => {
-            let _ = std::fs::write(
-                "/tmp/mod_ROLE_GENERATOR",
-                format!(
-                    "paths={:?} handshake_compat={:?}",
-                    config.args, handshake.compat_flags
-                ),
-            );
             // Convert OsString args to PathBuf for file walking
             let paths: Vec<std::path::PathBuf> =
                 config.args.iter().map(std::path::PathBuf::from).collect();
 
             let mut ctx = GeneratorContext::new(&handshake, config);
-            let _ = std::fs::write("/tmp/mod_GEN_CTX_CREATED", "1");
             // Pass reader by value - GeneratorContext::run now takes ownership and activates multiplex internally
             let stats = ctx.run(chained_reader, &mut writer, &paths)?;
-            let _ = std::fs::write("/tmp/mod_GEN_RUN_DONE", "1");
 
             Ok(ServerStats::Generator(stats))
         }
