@@ -173,9 +173,11 @@ fn handle_legacy_session(
     while let Some(line) = read_trimmed_line(&mut reader)? {
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(version)) => {
+                // Record the negotiated protocol version but do NOT send @RSYNCD: OK here.
+                // The OK is only sent after the module is selected and approved, not after
+                // the version exchange. Sending OK here causes the client to misinterpret
+                // subsequent protocol messages.
                 negotiated_protocol = Some(version);
-                messages.write_ok(reader.get_mut(), &mut limiter)?;
-                reader.get_mut().flush()?;
                 continue;
             }
             Ok(LegacyDaemonMessage::Other(payload)) => {

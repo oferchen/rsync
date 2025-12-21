@@ -141,11 +141,10 @@
 //! assert_eq!(line, "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n");
 //! stream.write_all(b"@RSYNCD: 32.0\n")?;
 //! stream.flush()?;
-//! line.clear();
-//! reader.read_line(&mut line)?;
-//! assert_eq!(line, "@RSYNCD: OK\n");
+//! // Send a non-existent module name
 //! stream.write_all(b"module\n")?;
 //! stream.flush()?;
+//! // For unknown modules, daemon sends @ERROR directly (no OK for unknown modules)
 //! line.clear();
 //! reader.read_line(&mut line)?;
 //! assert!(line.starts_with("@ERROR:"));

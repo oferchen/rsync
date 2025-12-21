@@ -20,6 +20,22 @@ pub fn send_msg<W: Write>(writer: &mut W, code: MessageCode, payload: &[u8]) -> 
     debug_log!(Io, 3, "mux send: code={:?} len={}", code, payload.len());
     let payload_len = ensure_payload_length(payload.len())?;
     let header = MessageHeader::new(code, payload_len).map_err(map_envelope_error_for_input)?;
+
+    // Debug: trace exact header bytes
+    static SEND_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let count = SEND_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let header_bytes = header.encode();
+    let _ = std::fs::write(
+        format!("/tmp/mux_SEND_{count:03}"),
+        format!(
+            "code={:?} len={} header={:02x?} payload_start={:02x?}",
+            code,
+            payload.len(),
+            header_bytes,
+            &payload[..payload.len().min(20)]
+        ),
+    );
+
     write_validated_message(writer, header, payload)
 }
 

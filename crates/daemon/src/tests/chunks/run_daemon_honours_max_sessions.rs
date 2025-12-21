@@ -32,13 +32,12 @@ fn run_daemon_honours_max_sessions() {
             .expect("send handshake response");
         stream.flush().expect("flush handshake response");
 
-        line.clear();
-        reader.read_line(&mut line).expect("handshake ack");
-        assert_eq!(line, "@RSYNCD: OK\n");
-
+        // Send module name immediately after version exchange (no OK expected yet).
+        // The daemon only sends @RSYNCD: OK after the module is selected.
         stream.write_all(b"module\n").expect("send module request");
         stream.flush().expect("flush module request");
 
+        // Now we expect an error because 'module' doesn't exist
         line.clear();
         reader.read_line(&mut line).expect("error message");
         assert!(line.starts_with("@ERROR:"));

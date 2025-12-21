@@ -30,10 +30,6 @@ fn run_daemon_serves_single_legacy_connection() {
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    line.clear();
-    reader.read_line(&mut line).expect("handshake ack");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
     stream.write_all(b"module\n").expect("send module request");
     stream.flush().expect("flush module request");
 

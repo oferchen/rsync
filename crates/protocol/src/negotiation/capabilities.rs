@@ -293,22 +293,27 @@ pub fn negotiate_capabilities(
 
     // Negotiation flow (upstream compat.c:534-570 negotiate_the_strings):
     //
-    // BIDIRECTIONAL in ALL modes (SSH and daemon):
-    //   - Both sides SEND their lists first
+    // BIDIRECTIONAL exchange in BOTH daemon and SSH modes when CF_VARINT_FLIST_FLAGS is set:
+    //   - Both sides SEND their algorithm lists first
     //   - Then both sides READ each other's lists
     //   - Both independently choose the first match from the remote's list
     //
     // Upstream comment: "We send all the negotiation strings before we start
     // to read them to help avoid a slow startup."
     //
-    // The `is_daemon_mode` and `is_server` parameters are kept for potential
-    // future use but currently unused as negotiation is always bidirectional.
-    let _ = is_daemon_mode;
-    let _ = is_server;
+    // Note: Even though daemon mode advertises algorithms in the @RSYNCD greeting,
+    // the vstring exchange STILL happens if CF_VARINT_FLIST_FLAGS is negotiated.
+    // The greeting is just informational; the actual selection uses vstrings.
+    let _ = is_daemon_mode; // Exchange happens in all modes when do_negotiation=true
+    let _ = is_server; // Both sides behave symmetrically
 
     // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
     // Uses vstring format (NOT varint) - see write_vstring documentation
     let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
+    let _ = std::fs::write(
+        "/tmp/nego_SEND_CHECKSUM",
+        format!("list='{}' len={}", checksum_list, checksum_list.len()),
+    );
     debug_log!(Proto, 2, "sending checksum list: {}", checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
@@ -416,17 +421,19 @@ fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
         ));
     }
 
-    if len > 0x7F {
+    let len_bytes = if len > 0x7F {
         // 2-byte format: high byte with 0x80 marker, then low byte
         let high = ((len >> 8) as u8) | 0x80;
         let low = (len & 0xFF) as u8;
-        writer.write_all(&[high, low])?;
+        vec![high, low]
     } else {
         // 1-byte format: just the length
-        writer.write_all(&[len as u8])?;
-    }
+        vec![len as u8]
+    };
 
-    writer.write_all(bytes)
+    writer.write_all(&len_bytes)?;
+    writer.write_all(bytes)?;
+    Ok(())
 }
 
 /// Reads a vstring (variable-length string) using upstream rsync's format.

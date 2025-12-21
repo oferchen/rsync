@@ -89,44 +89,37 @@ impl FileListReader {
         // If client didn't send 'v' capability, compat_flags won't include
         // VARINT_FLIST_FLAGS, and the file list uses single-byte flags even for
         // protocol 30+. This is critical for daemon client interop!
-        static FLIST_ENTRY_COUNT: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let entry_idx = FLIST_ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
         let use_varint_flags = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
-        let _ = std::fs::write(
-            format!("/tmp/flist_{entry_idx:03}_READ_ENTRY"),
-            format!(
-                "use_varint={} prev_name_len={}",
-                use_varint_flags,
-                self.prev_name.len()
-            ),
-        );
 
         // Read primary flags byte
         let flags_byte = if use_varint_flags {
             // Varint encoding: read as varint, primary flags in low 8 bits
-            let v = read_varint(reader)?;
-            let _ = std::fs::write(
-                format!("/tmp/flist_{entry_idx:03}_FLAGS"),
-                format!("varint={v:#x}"),
-            );
-            v
+            read_varint(reader)?
         } else {
             // Single-byte encoding
             let mut buf = [0u8; 1];
             reader.read_exact(&mut buf)?;
-            let _ = std::fs::write(
-                format!("/tmp/flist_{entry_idx:03}_FLAGS"),
-                format!("byte={:#x} binary={:08b}", buf[0], buf[0]),
-            );
             buf[0] as i32
         };
 
         // Zero value marks end of file list
+        // When using varint flags, an error code follows the zero terminator.
+        // See upstream flist.c:2617-2622
         if flags_byte == 0 {
+            if use_varint_flags {
+                // Read the I/O error code that follows zero flags in varint mode
+                let io_error = read_varint(reader)?;
+                if io_error != 0 {
+                    // Non-zero I/O error from sender - propagate as error
+                    // Caller can decide whether to continue or abort
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("sender reported I/O error: {io_error}"),
+                    ));
+                }
+            }
             return Ok(None);
         }
 
@@ -141,10 +134,6 @@ impl FileListReader {
             // Read separate extended flags byte
             let mut buf = [0u8; 1];
             reader.read_exact(&mut buf)?;
-            let _ = std::fs::write(
-                format!("/tmp/flist_{entry_idx:03}_EXT_FLAGS"),
-                format!("byte={:#x}", buf[0]),
-            );
             buf[0]
         } else {
             0
@@ -240,28 +229,10 @@ impl FileListReader {
         reader: &mut R,
         flags: &FileFlags,
     ) -> io::Result<Vec<u8>> {
-        static NAME_READ_COUNT: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
-        let name_idx = NAME_READ_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        let _ = std::fs::write(
-            format!("/tmp/name_{name_idx:03}_START"),
-            format!(
-                "same_name={} long_name={} prev_name_len={}",
-                flags.same_name(),
-                flags.long_name(),
-                self.prev_name.len()
-            ),
-        );
-
         // Determine how many bytes are shared with the previous name
         let same_len = if flags.same_name() {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
-            let _ = std::fs::write(
-                format!("/tmp/name_{name_idx:03}_SAME_LEN"),
-                format!("byte={:#x} ({})", byte[0], byte[0]),
-            );
             byte[0] as usize
         } else {
             0
@@ -273,23 +244,11 @@ impl FileListReader {
         } else {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
-            let _ = std::fs::write(
-                format!("/tmp/name_{name_idx:03}_SUFFIX_LEN"),
-                format!("byte={:#x} ({})", byte[0], byte[0]),
-            );
             byte[0] as usize
         };
 
         // Validate lengths
         if same_len > self.prev_name.len() {
-            let _ = std::fs::write(
-                format!("/tmp/name_{name_idx:03}_ERROR"),
-                format!(
-                    "same_len={} > prev_name_len={}",
-                    same_len,
-                    self.prev_name.len()
-                ),
-            );
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -309,20 +268,7 @@ impl FileListReader {
             let start = name.len();
             name.resize(start + suffix_len, 0);
             reader.read_exact(&mut name[start..])?;
-            let _ = std::fs::write(
-                format!("/tmp/name_{name_idx:03}_SUFFIX_BYTES"),
-                format!(
-                    "bytes={:?} str={:?}",
-                    &name[start..],
-                    String::from_utf8_lossy(&name[start..])
-                ),
-            );
         }
-
-        let _ = std::fs::write(
-            format!("/tmp/name_{name_idx:03}_RESULT"),
-            format!("name={:?}", String::from_utf8_lossy(&name)),
-        );
 
         // Update previous name for next entry
         self.prev_name = name.clone();
@@ -552,31 +498,43 @@ mod tests {
     fn read_write_round_trip_with_varint_end_marker() {
         use super::super::write::FileListWriter;
         use crate::CompatibilityFlags;
-        use crate::varint::read_varint;
 
         // Test varint mode (VARINT_FLIST_FLAGS enabled)
         // In varint mode, end-of-list is 0 followed by error code varint.
-        // read_entry returns Ok(None) and caller reads error code separately.
+        // Per upstream flist.c:2617-2622, read_entry reads both the zero flags
+        // AND the error code in one call.
         let protocol = test_protocol();
         let flags = CompatibilityFlags::SAFE_FILE_LIST | CompatibilityFlags::VARINT_FLIST_FLAGS;
 
-        // Write end marker with error code
+        // Test 1: End marker with io_error=0 returns Ok(None)
         let writer = FileListWriter::with_compat_flags(protocol, flags);
         let mut data = Vec::new();
-        writer.write_end(&mut data, Some(123)).unwrap();
+        writer.write_end(&mut data, Some(0)).unwrap();
 
-        // Read end marker - returns Ok(None)
         let mut reader = FileListReader::with_compat_flags(protocol, flags);
         let mut cursor = Cursor::new(&data[..]);
         let result = reader.read_entry(&mut cursor);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "end marker with io_error=0 should succeed");
         assert!(result.unwrap().is_none(), "end marker should return None");
-
-        // Read the error code that follows the end marker
-        let error_code = read_varint(&mut cursor).unwrap();
+        // Cursor should be at end - error code was consumed
         assert_eq!(
-            error_code, 123,
-            "error code should be readable after end marker"
+            cursor.position() as usize,
+            data.len(),
+            "error code should be consumed"
+        );
+
+        // Test 2: End marker with non-zero error returns Err
+        let mut data2 = Vec::new();
+        writer.write_end(&mut data2, Some(123)).unwrap();
+
+        let mut reader2 = FileListReader::with_compat_flags(protocol, flags);
+        let mut cursor2 = Cursor::new(&data2[..]);
+        let result2 = reader2.read_entry(&mut cursor2);
+        assert!(result2.is_err(), "end marker with io_error!=0 should fail");
+        let err = result2.unwrap_err();
+        assert!(
+            err.to_string().contains("123"),
+            "error should contain the error code: {err}"
         );
     }
 }
