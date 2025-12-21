@@ -70,11 +70,6 @@ fn daemon_receiver_accepts_file_push() {
         .expect("send client version");
     stream.flush().expect("flush");
 
-    // Read handshake acknowledgment
-    let mut ack = String::new();
-    reader.read_line(&mut ack).expect("read ack");
-    assert_eq!(ack, "@RSYNCD: OK\n");
-
     // Request the module with authentication
     stream
         .write_all(b"testuser@testmodule\n")

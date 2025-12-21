@@ -328,63 +328,21 @@ impl GeneratorContext {
 
     /// Sends the file list to the receiver.
     pub fn send_file_list<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
-        // Debug checkpoint
-        let _ = std::fs::write(
-            "/tmp/gen_SEND_FLIST_START",
-            format!(
-                "compat_flags={:?} has_varint={} file_count={}",
-                self.compat_flags,
-                self.compat_flags
-                    .map(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS))
-                    .unwrap_or(false),
-                self.file_list.len()
-            ),
-        );
-
         let mut flist_writer = if let Some(flags) = self.compat_flags {
             FileListWriter::with_compat_flags(self.protocol, flags)
         } else {
             FileListWriter::new(self.protocol)
         };
 
-        // Capture bytes for debugging
-        let mut flist_bytes = Vec::new();
-        for (idx, entry) in self.file_list.iter().enumerate() {
-            let start = flist_bytes.len();
-            flist_writer.write_entry(&mut flist_bytes, entry)?;
-            let _ = std::fs::write(
-                format!("/tmp/gen_FLIST_ENTRY_{idx:03}"),
-                format!(
-                    "name={} size={} mode={:o} bytes={:02x?}",
-                    entry.name(),
-                    entry.size(),
-                    entry.mode(),
-                    &flist_bytes[start..]
-                ),
-            );
+        for entry in self.file_list.iter() {
+            flist_writer.write_entry(writer, entry)?;
         }
 
         // Write end marker with no error (SAFE_FILE_LIST support)
         // Future: track I/O errors during file list building and pass them here
-        let start = flist_bytes.len();
-        flist_writer.write_end(&mut flist_bytes, None)?;
-        let _ = std::fs::write(
-            "/tmp/gen_FLIST_END",
-            format!("end_marker_bytes={:02x?}", &flist_bytes[start..]),
-        );
-
-        // Write all bytes to actual writer
-        writer.write_all(&flist_bytes)?;
+        flist_writer.write_end(writer, None)?;
         writer.flush()?;
 
-        let _ = std::fs::write(
-            "/tmp/gen_SEND_FLIST_DONE",
-            format!(
-                "count={} total_bytes={}",
-                self.file_list.len(),
-                flist_bytes.len()
-            ),
-        );
         Ok(self.file_list.len())
     }
 
@@ -450,14 +408,9 @@ impl GeneratorContext {
 
         let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
 
-        let _ = std::fs::write("/tmp/gen_BEFORE_BUILD_FLIST", "1");
         // Build file list
         self.build_file_list(paths)?;
 
-        let _ = std::fs::write(
-            "/tmp/gen_AFTER_BUILD_BEFORE_SEND",
-            format!("file_count={}", self.file_list.len()),
-        );
         // Send file list
         let file_count = self.send_file_list(writer)?;
 
@@ -508,37 +461,18 @@ impl GeneratorContext {
         let mut bytes_sent = 0u64;
         let mut prev_positive: i32 = -1; // For NDX delta decoding
 
-        let _ = std::fs::write(
-            "/tmp/gen_BEFORE_NDX_LOOP",
-            format!("phase={phase} max_phase={max_phase}"),
-        );
-        let mut loop_counter = 0;
         loop {
-            loop_counter += 1;
             // Read first byte of NDX encoding
             let mut ndx_byte = [0u8; 1];
-            let _ = std::fs::write(
-                format!("/tmp/gen_NDX_READ_{loop_counter:03}"),
-                format!("phase={phase} loop={loop_counter}"),
-            );
             reader.read_exact(&mut ndx_byte)?;
-            let _ = std::fs::write(
-                format!("/tmp/gen_NDX_READ_{loop_counter:03}_GOT"),
-                format!("byte=0x{:02x}", ndx_byte[0]),
-            );
 
             // Decode NDX value (protocol 30+ encoding from upstream io.c:read_ndx)
             let ndx = if ndx_byte[0] == 0 {
                 // NDX_DONE: phase transition (upstream sender.c lines 236-258)
                 phase += 1;
-                let _ = std::fs::write(
-                    "/tmp/gen_NDX_DONE_PHASE",
-                    format!("phase={phase} max_phase={max_phase}"),
-                );
 
                 if phase > max_phase {
                     // All phases complete, exit loop
-                    let _ = std::fs::write("/tmp/gen_LOOP_EXIT", "phase > max_phase");
                     break;
                 }
 
@@ -570,10 +504,6 @@ impl GeneratorContext {
                         | (rest[0] as i32)
                         | ((rest[1] as i32) << 8)
                         | ((rest[2] as i32) << 16);
-                    let _ = std::fs::write(
-                        format!("/tmp/gen_NDX_EXTENDED_4BYTE_{loop_counter:03}"),
-                        format!("value={value}"),
-                    );
                     prev_positive = value;
                     value as usize
                 } else {
@@ -582,10 +512,6 @@ impl GeneratorContext {
                     reader.read_exact(&mut diff_lo)?;
                     let diff = ((ext_byte[0] as i32) << 8) | (diff_lo[0] as i32);
                     let ndx = prev_positive.saturating_add(diff);
-                    let _ = std::fs::write(
-                        format!("/tmp/gen_NDX_EXTENDED_2BYTE_{loop_counter:03}"),
-                        format!("diff={diff} ndx={ndx}"),
-                    );
                     prev_positive = ndx;
                     ndx as usize
                 }
@@ -594,10 +520,6 @@ impl GeneratorContext {
                 let delta = ndx_byte[0] as i32;
                 let ndx = prev_positive.saturating_add(delta);
                 prev_positive = ndx;
-                let _ = std::fs::write(
-                    format!("/tmp/gen_NDX_FILE_{loop_counter:03}"),
-                    format!("delta={delta} prev_positive={prev_positive} ndx={ndx}"),
-                );
                 ndx as usize
             };
 
@@ -615,12 +537,7 @@ impl GeneratorContext {
             let iflags = if self.protocol.as_u8() >= 29 {
                 let mut iflags_bytes = [0u8; 2];
                 reader.read_exact(&mut iflags_bytes)?;
-                let iflags = u16::from_le_bytes(iflags_bytes);
-                let _ = std::fs::write(
-                    format!("/tmp/gen_IFLAGS_{loop_counter:03}"),
-                    format!("iflags=0x{iflags:04x}"),
-                );
-                iflags
+                u16::from_le_bytes(iflags_bytes)
             } else {
                 // For older protocols, assume ITEM_TRANSFER
                 0x8000u16
@@ -647,10 +564,6 @@ impl GeneratorContext {
             const ITEM_TRANSFER: u16 = 0x8000;
             if iflags & ITEM_TRANSFER == 0 {
                 // File doesn't need transfer (e.g., unchanged or directory)
-                let _ = std::fs::write(
-                    format!("/tmp/gen_SKIP_{loop_counter:03}"),
-                    format!("iflags=0x{iflags:04x} no ITEM_TRANSFER"),
-                );
                 continue;
             }
 
@@ -686,18 +599,7 @@ impl GeneratorContext {
             } else {
                 0
             };
-            let _ = std::fs::write(
-                format!("/tmp/gen_SUM_HEAD_{loop_counter:03}"),
-                format!(
-                    "count={sum_count} blength={sum_blength} s2length={sum_s2length} remainder={sum_remainder}"
-                ),
-            );
-
             // Validate file index
-            let _ = std::fs::write(
-                format!("/tmp/gen_NDX_VALIDATE_{loop_counter:03}"),
-                format!("ndx={} file_list_len={}", ndx, self.file_list.len()),
-            );
             if ndx >= self.file_list.len() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -709,19 +611,14 @@ impl GeneratorContext {
                 ));
             }
 
-            let file_entry = &self.file_list[ndx];
+            let _file_entry = &self.file_list[ndx];
             let source_path = &self.full_paths[ndx];
-            let _ = std::fs::write(
-                format!("/tmp/gen_NDX_PATH_{loop_counter:03}"),
-                format!("full_path={:?} name={:?}", source_path, file_entry.name()),
-            );
 
             // Read signature blocks from receiver
             //
             // Upstream sender.c:receive_sums() reads checksum blocks after sum_head.
             // When count=0 (no basis file), there are no blocks to read.
             // When count>0, read rolling_sum (4 bytes LE) + strong_sum (s2length bytes) per block.
-            let _ = std::fs::write(format!("/tmp/gen_BEFORE_SIG_{loop_counter:03}"), "1");
             let block_length = sum_blength as u32;
             let block_count = sum_count as u32;
             let strong_sum_length = sum_s2length as u8;
@@ -750,43 +647,21 @@ impl GeneratorContext {
                 // No basis file (count=0), whole-file transfer - no blocks to read
                 Vec::new()
             };
-            let _ = std::fs::write(
-                format!("/tmp/gen_AFTER_SIG_{loop_counter:03}"),
-                format!(
-                    "block_length={block_length} block_count={block_count} strong_sum_length={strong_sum_length}"
-                ),
-            );
-
             let has_basis = block_count > 0;
 
             // Step 2: Open source file
-            let _ = std::fs::write(
-                format!("/tmp/gen_OPEN_FILE_{loop_counter:03}"),
-                format!("path={source_path:?}"),
-            );
             let source_file = match fs::File::open(source_path) {
-                Ok(f) => {
-                    let _ = std::fs::write(format!("/tmp/gen_OPEN_OK_{loop_counter:03}"), "1");
-                    f
-                }
-                Err(e) => {
+                Ok(f) => f,
+                Err(_e) => {
                     // Note: Upstream rsync sends an error marker in the wire protocol when
                     // a source file cannot be opened (see generator.c:1450). For now, we
                     // skip the file entirely, which matches rsync behavior with --ignore-errors.
                     // Future enhancement: Implement protocol error marker for per-file failures.
-                    let _ = std::fs::write(
-                        format!("/tmp/gen_OPEN_ERR_{loop_counter:03}"),
-                        format!("error={e}"),
-                    );
                     continue;
                 }
             };
 
             // Step 3: Generate delta (or send whole file if no basis)
-            let _ = std::fs::write(
-                format!("/tmp/gen_BEFORE_DELTA_{loop_counter:03}"),
-                format!("has_basis={has_basis}"),
-            );
             let delta_script = if has_basis {
                 // Receiver has basis, generate delta
                 generate_delta_from_signature(
@@ -803,11 +678,6 @@ impl GeneratorContext {
                 // Receiver has no basis, send whole file as literals
                 generate_whole_file_delta(source_file)?
             };
-            let _ = std::fs::write(
-                format!("/tmp/gen_AFTER_DELTA_{loop_counter:03}"),
-                format!("total_bytes={}", delta_script.total_bytes()),
-            );
-
             // Step 4a: Send ndx and attrs back to receiver
             //
             // Upstream sender.c:411 - write_ndx_and_attrs(f_out, ndx, iflags, ...)
@@ -835,10 +705,6 @@ impl GeneratorContext {
             // - Simple case: 1-253 sends as single byte
             // - Extended 2-byte: 0xFE prefix + 2 bytes for diff 0 or 254-32767
             // - Extended 4-byte: 0xFE prefix + 4 bytes (high bit set) for diff < 0 or > 32767
-            let _ = std::fs::write(
-                format!("/tmp/gen_SEND_NDX_{loop_counter:03}"),
-                format!("ndx={ndx} prev_write={prev_write} diff={ndx_diff}"),
-            );
             if (1..=253).contains(&ndx_diff) {
                 // Simple single-byte diff (io.c:2271-2272)
                 writer.write_all(&[ndx_diff as u8])?;
@@ -866,10 +732,6 @@ impl GeneratorContext {
             // The receiver expects to get back the same iflags it sent us
             if self.protocol.as_u8() >= 29 {
                 // write_shortint sends 2 bytes little-endian
-                let _ = std::fs::write(
-                    format!("/tmp/gen_SEND_IFLAGS_{loop_counter:03}"),
-                    format!("iflags=0x{iflags:04x}"),
-                );
                 writer.write_all(&iflags.to_le_bytes())?;
             }
 
@@ -886,26 +748,12 @@ impl GeneratorContext {
                 writer.write_all(&sum_s2length.to_le_bytes())?;
                 writer.write_all(&sum_remainder.to_le_bytes())?;
             }
-            let _ = std::fs::write(
-                format!("/tmp/gen_SENT_SUM_HEAD_{loop_counter:03}"),
-                format!(
-                    "count={sum_count} blength={sum_blength} s2length={sum_s2length} remainder={sum_remainder}"
-                ),
-            );
 
             // Step 4c: Convert engine delta to wire format and send
             // Using upstream token format: write_int(len) + data for literals,
             // write_int(-(block+1)) for block matches, write_int(0) as end marker
             let wire_ops = script_to_wire_delta(&delta_script);
-            let _ = std::fs::write(
-                format!("/tmp/gen_BEFORE_SEND_{loop_counter:03}"),
-                format!("wire_ops_len={}", wire_ops.len()),
-            );
             write_token_stream(&mut &mut *writer, &wire_ops)?;
-            let _ = std::fs::write(
-                format!("/tmp/gen_AFTER_DELTA_TOKENS_{loop_counter:03}"),
-                "1",
-            );
 
             // Step 4d: Send file transfer checksum
             //
@@ -932,26 +780,12 @@ impl GeneratorContext {
                 self.compat_flags.as_ref(),
             );
 
-            let _ = std::fs::write(
-                format!("/tmp/gen_SEND_CHECKSUM_{loop_counter:03}"),
-                format!(
-                    "algo={:?} len={} bytes={:02x?}",
-                    checksum_algorithm,
-                    file_checksum.len(),
-                    &file_checksum
-                ),
-            );
             writer.write_all(&file_checksum)?;
             writer.flush()?;
-            let _ = std::fs::write(format!("/tmp/gen_AFTER_SEND_{loop_counter:03}"), "1");
 
             // Step 5: Track stats
             bytes_sent += delta_script.total_bytes();
             files_transferred += 1;
-            let _ = std::fs::write(
-                format!("/tmp/gen_LOOP_STATS_{loop_counter:03}"),
-                format!("bytes_sent={bytes_sent} files_transferred={files_transferred}"),
-            );
         }
 
         // Upstream do_server_sender flow (main.c):
@@ -964,17 +798,35 @@ impl GeneratorContext {
 
         // Step 1: Send NDX_DONE to indicate end of file transfer phase
         // write_ndx(f_out, NDX_DONE) from sender.c line 462
-        let _ = std::fs::write("/tmp/gen_SEND_FINAL_NDX_DONE", "1");
         writer.write_all(&[0x00])?;
         writer.flush()?;
 
         // Step 2: Stats handling
-        // NOTE: Upstream sender.c line 473-476 only sends stats in special verbose cases:
-        //   if (msgs2stderr && INFO_GTE(STATS, 3)) { write_varlong30(...) }
-        // The default case doesn't send stats from the sender side.
-        // Stats are typically only sent by the receiver via MSG_STATS messages.
-        // So we skip sending stats here.
-        let _ = std::fs::write("/tmp/gen_SKIP_STATS", "1");
+        // Upstream handle_stats() in main.c lines 813-844:
+        //   if (am_server && am_sender) {
+        //       write_varlong30(f, total_read, 3);
+        //       write_varlong30(f, total_written, 3);
+        //       write_varlong30(f, stats.total_size, 3);
+        //       if (protocol_version >= 29) {
+        //           write_varlong30(f, stats.flist_buildtime, 3);
+        //           write_varlong30(f, stats.flist_xfertime, 3);
+        //       }
+        //   }
+        //
+        // The server sender MUST send these stats - the client expects them!
+        let total_read: u64 = 0; // TODO: track actual bytes read
+        let total_written: u64 = bytes_sent; // Bytes sent during transfer
+        let total_size: u64 = self.file_list.iter().map(|e| e.size()).sum();
+        let flist_buildtime: u64 = 0; // TODO: track actual build time
+        let flist_xfertime: u64 = 0; // TODO: track actual transfer time
+
+        protocol::write_varlong30(writer, total_read as i64, 3)?;
+        protocol::write_varlong30(writer, total_written as i64, 3)?;
+        protocol::write_varlong30(writer, total_size as i64, 3)?;
+        if self.protocol.as_u8() >= 29 {
+            protocol::write_varlong30(writer, flist_buildtime as i64, 3)?;
+            protocol::write_varlong30(writer, flist_xfertime as i64, 3)?;
+        }
         writer.flush()?;
 
         // Step 3: read_final_goodbye (main.c lines 880-905)
@@ -983,12 +835,7 @@ impl GeneratorContext {
             let mut goodbye_byte = [0u8; 1];
 
             // Read first NDX_DONE from receiver
-            let _ = std::fs::write("/tmp/gen_GOODBYE_BEFORE_READ1", "1");
             reader.read_exact(&mut goodbye_byte)?;
-            let _ = std::fs::write(
-                "/tmp/gen_GOODBYE_READ1",
-                format!("byte=0x{:02x}", goodbye_byte[0]),
-            );
 
             // Handle both write_ndx(0x00) and write_int(0xFFFFFFFF) formats
             if goodbye_byte[0] == 0xFF {
@@ -1003,7 +850,6 @@ impl GeneratorContext {
 
             // For protocol 31+: write NDX_DONE back, then read again
             if self.protocol.as_u8() >= 31 {
-                let _ = std::fs::write("/tmp/gen_GOODBYE_SEND_NDX_DONE", "1");
                 writer.write_all(&[0x00])?;
                 writer.flush()?; // Must flush before reading final goodbye
 
@@ -1015,38 +861,26 @@ impl GeneratorContext {
                 // child. If the timing is unlucky, the connection closes before we read.
                 // Since the transfer has already completed successfully at this point,
                 // we treat connection errors here as acceptable and return success.
-                let _ = std::fs::write("/tmp/gen_GOODBYE_BEFORE_READ2", "1");
                 match reader.read_exact(&mut goodbye_byte) {
                     Ok(()) => {
-                        let _ = std::fs::write(
-                            "/tmp/gen_GOODBYE_READ2",
-                            format!("byte=0x{:02x}", goodbye_byte[0]),
-                        );
                         if goodbye_byte[0] == 0xFF {
                             let mut extra = [0u8; 3];
                             let _ = reader.read_exact(&mut extra); // Ignore error on extra bytes
-                        } else if goodbye_byte[0] != 0 {
-                            // Got unexpected data, but transfer was successful
-                            let _ = std::fs::write(
-                                "/tmp/gen_GOODBYE_READ2_UNEXPECTED",
-                                format!("byte=0x{:02x}", goodbye_byte[0]),
-                            );
                         }
+                        // Non-zero but not 0xFF is unusual but transfer was successful
                     }
                     Err(e)
                         if e.kind() == io::ErrorKind::ConnectionReset
                             || e.kind() == io::ErrorKind::UnexpectedEof
-                            || e.kind() == io::ErrorKind::BrokenPipe =>
+                            || e.kind() == io::ErrorKind::BrokenPipe
+                            || e.kind() == io::ErrorKind::WouldBlock =>
                     {
-                        // Connection closed/reset during final goodbye - this is acceptable
-                        // as the transfer has already completed successfully
-                        let _ =
-                            std::fs::write("/tmp/gen_GOODBYE_READ2_CLOSED", format!("error={e}"));
+                        // Connection closed/reset/unavailable during final goodbye - this is
+                        // acceptable as the transfer has already completed successfully.
+                        // WouldBlock can happen if the client closes before sending second goodbye.
                     }
                     Err(e) => {
                         // Propagate other errors
-                        let _ =
-                            std::fs::write("/tmp/gen_GOODBYE_READ2_ERROR", format!("error={e}"));
                         return Err(e);
                     }
                 }

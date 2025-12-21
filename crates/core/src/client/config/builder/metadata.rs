@@ -43,7 +43,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Sets the copy-as USER[:GROUP] specification.
+    /// Sets the copy-as `USER[:GROUP]` specification.
     ///
     /// When set, rsync will attempt to set file ownership as if running as
     /// the specified user (and optionally group). This is useful when running

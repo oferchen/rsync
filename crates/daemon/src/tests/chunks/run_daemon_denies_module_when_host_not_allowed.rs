@@ -35,14 +35,10 @@ fn run_daemon_denies_module_when_host_not_allowed() {
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    line.clear();
-    reader.read_line(&mut line).expect("handshake ack");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    // Daemon responds directly with error for denied access
+    // Daemon responds with error for denied access after module selection
     // (CAP is only sent for #list requests)
     line.clear();
     reader.read_line(&mut line).expect("error message");

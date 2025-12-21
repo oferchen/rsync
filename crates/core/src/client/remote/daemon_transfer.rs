@@ -586,49 +586,15 @@ fn run_server_with_handshake_over_stream(
     handshake: HandshakeResult,
     stream: &mut TcpStream,
 ) -> Result<crate::server::ServerStats, ClientError> {
-    use std::io::{Read, Write};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    // Tracing wrapper to log all writes
-    struct TracingWriter<'a> {
-        inner: &'a mut TcpStream,
-        write_count: &'static AtomicUsize,
-    }
-
-    impl<'a> Write for TracingWriter<'a> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            let count = self.write_count.fetch_add(1, Ordering::SeqCst);
-            let _ = std::fs::write(
-                format!("/tmp/wire_WRITE_{count:04}"),
-                format!(
-                    "len={} bytes={:02x?}",
-                    buf.len(),
-                    &buf[..buf.len().min(200)]
-                ),
-            );
-            self.inner.write(buf)
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            let count = self.write_count.load(Ordering::SeqCst);
-            let _ = std::fs::write(format!("/tmp/wire_FLUSH_{count:04}"), "1");
-            self.inner.flush()
-        }
-    }
-
-    static WRITE_COUNT: AtomicUsize = AtomicUsize::new(0);
-    WRITE_COUNT.store(0, Ordering::SeqCst);
+    use std::io::Read;
 
     // SAFETY: We create two mutable references to the same stream, which is safe
     // because TcpStream internally manages separate read/write buffers.
     let stream_ptr = stream as *mut TcpStream;
     let result = unsafe {
         let stdin: &mut dyn Read = &mut *stream_ptr;
-        let mut tracing_writer = TracingWriter {
-            inner: &mut *stream_ptr,
-            write_count: &WRITE_COUNT,
-        };
-        crate::server::run_server_with_handshake(config, handshake, stdin, &mut tracing_writer)
+        let stdout = &mut *stream_ptr;
+        crate::server::run_server_with_handshake(config, handshake, stdin, stdout)
     };
 
     result.map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
