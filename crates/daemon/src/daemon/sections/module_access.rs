@@ -536,10 +536,16 @@ fn respond_with_module_request(
             };
 
             // Build ServerConfig with module path as the target directory
-            // Parse client arguments to extract flags and additional paths
+            // Extract the short flags argument (starts with '-' but not '--')
+            // Client args are like: ["--server", "--sender", "-vvre.iLsfxCIvu", ".", "testmod/"]
+            let flag_string = client_args
+                .iter()
+                .find(|arg| arg.starts_with('-') && !arg.starts_with("--"))
+                .cloned()
+                .unwrap_or_default();
             let config = match ServerConfig::from_flag_string_and_args(
                 role,
-                client_args.join(" "), // Use client-supplied arguments
+                flag_string,
                 vec![OsString::from(&module.path)],
             ) {
                 Ok(cfg) => cfg,
@@ -655,24 +661,8 @@ fn respond_with_module_request(
                 checksum_seed: 0,  // Will be populated by setup_protocol()
             };
 
-            // Protocol tracing disabled: The tracing layer interferes with protocol 28 compatibility
-            // by adding buffering that disrupts the legacy line-based handshake. Protocol 30+
-            // works correctly with tracing enabled.
-            //
-            // To re-enable tracing for debugging protocol 30+ issues:
-            // 1. Uncomment the code below
-            // 2. Use traced_read_stream and traced_write_stream in run_server_with_handshake
-            // 3. Check /tmp/daemon-protocol-trace.log for wire format details
-            //
-            // use protocol::debug_trace::{TraceConfig, TracingReader, TracingWriter};
-            // let trace_config = TraceConfig::enabled("daemon");
-            // let mut traced_read_stream = TracingReader::new(read_stream, trace_config.clone());
-            // let mut traced_write_stream = TracingWriter::new(write_stream, trace_config);
-
             // Run the server transfer - handles protocol setup and multiplex internally
-            let _ = std::fs::write("/tmp/daemon_BEFORE_RUN_SERVER", format!("protocol={}", handshake.protocol.as_u8()));
             let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
-            let _ = std::fs::write("/tmp/daemon_AFTER_RUN_SERVER", format!("result={:?}", result.is_ok()));
             match result {
                 Ok(_server_stats) => {
                     if let Some(log) = log_sink {

@@ -186,8 +186,11 @@ pub fn exchange_compat_flags_direct(
     let client_info = parse_client_info(client_args);
 
     // Build compat flags based on client capabilities
-    // For now, hardcode allow_inc_recurse=true (should come from config)
-    let our_flags = build_compat_flags_from_client_info(&client_info, true);
+    // DISABLED: allow_inc_recurse=false because we don't implement incremental file lists yet.
+    // With INC_RECURSE, the server sends file lists in segments as directories are traversed,
+    // but we currently send the entire file list at once. Setting this to false prevents
+    // advertising INC_RECURSE to the client, causing it to fall back to non-incremental mode.
+    let our_flags = build_compat_flags_from_client_info(&client_info, false);
 
     // Server ONLY WRITES compat flags (upstream compat.c:736-738)
     // The client reads but DOES NOT send anything back - it's unidirectional!
@@ -272,10 +275,19 @@ pub fn setup_protocol(
         let (our_flags, client_info) = if let Some(args) = client_args {
             // Daemon server mode: parse client capabilities from -e option
             let client_info = parse_client_info(args);
-            (
-                build_compat_flags_from_client_info(&client_info, true),
-                Some(client_info),
-            )
+            // DISABLED: allow_inc_recurse=false - see comment in exchange_compat_flags_direct
+            let flags = build_compat_flags_from_client_info(&client_info, false);
+            let _ = std::fs::write(
+                "/tmp/setup_CLIENT_INFO",
+                format!(
+                    "client_info='{}' flags={:?} has_i={} has_v={}",
+                    client_info,
+                    flags,
+                    client_info.contains('i'),
+                    client_info.contains('v')
+                ),
+            );
+            (flags, Some(client_info))
         } else {
             // SSH/client mode: use default flags based on platform capabilities
             #[cfg(unix)]
@@ -308,6 +320,16 @@ pub fn setup_protocol(
         let compat_flags = if is_server {
             // Server: build and WRITE our compat flags
             let compat_value = our_flags.bits() as i32;
+            // Debug: trace exact bytes being written for compat flags
+            let mut compat_bytes = Vec::new();
+            protocol::encode_varint_to_vec(compat_value, &mut compat_bytes);
+            let _ = std::fs::write(
+                "/tmp/setup_COMPAT_WRITE",
+                format!(
+                    "value={:#x} ({}) bytes={:02x?} our_flags={:?}",
+                    compat_value, compat_value, compat_bytes, our_flags
+                ),
+            );
             protocol::write_varint(stdout, compat_value)?;
             stdout.flush()?;
             our_flags
@@ -417,23 +439,24 @@ pub fn setup_protocol(
             timestamp ^ (pid << 6)
         };
         let seed_bytes = seed.to_le_bytes();
+        let _ = std::fs::write(
+            "/tmp/setup_SEED_WRITE",
+            format!("seed={} bytes={:02x?}", seed, seed_bytes),
+        );
         stdout.write_all(&seed_bytes)?;
         stdout.flush()?;
-        let _ = std::fs::write("/tmp/setup_SEED_WRITTEN", format!("seed={seed}"));
         seed
     } else {
         // Client: read seed from server
-        let _ = std::fs::write("/tmp/setup_SEED_BEFORE_READ", "1");
         let mut seed_bytes = [0u8; 4];
         stdin.read_exact(&mut seed_bytes)?;
-        let seed = i32::from_le_bytes(seed_bytes);
-        let _ = std::fs::write(
-            "/tmp/setup_SEED_READ",
-            format!("seed={seed} bytes={seed_bytes:02x?}"),
-        );
-        seed
+        i32::from_le_bytes(seed_bytes)
     };
 
+    let _ = std::fs::write(
+        "/tmp/setup_RETURNING",
+        format!("compat={:?} seed={}", compat_flags, checksum_seed),
+    );
     Ok(SetupResult {
         negotiated_algorithms,
         compat_flags,

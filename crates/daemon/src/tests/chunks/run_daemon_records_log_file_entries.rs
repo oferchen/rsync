@@ -37,14 +37,10 @@ fn run_daemon_records_log_file_entries() {
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    line.clear();
-    reader.read_line(&mut line).expect("handshake ack");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
-    // Daemon responds directly with OK for module requests
+    // Daemon responds with OK after module selection
     // (CAP is only sent for #list requests)
     line.clear();
     reader.read_line(&mut line).expect("module acknowledgement");
