@@ -55,16 +55,12 @@ fn run_daemon_enforces_module_connection_limit() {
         .expect("send handshake");
     first_stream.flush().expect("flush handshake");
 
-    line.clear();
-    first_reader.read_line(&mut line).expect("handshake ack");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
     first_stream
         .write_all(b"secure\n")
         .expect("send module request");
     first_stream.flush().expect("flush module");
 
-    // Daemon responds directly with AUTHREQD for protected modules
+    // Daemon responds with AUTHREQD for protected modules after module selection
     // (CAP is only sent for #list requests)
     line.clear();
     first_reader
@@ -84,18 +80,12 @@ fn run_daemon_enforces_module_connection_limit() {
         .expect("send second handshake");
     second_stream.flush().expect("flush second handshake");
 
-    line.clear();
-    second_reader
-        .read_line(&mut line)
-        .expect("second handshake ack");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
     second_stream
         .write_all(b"secure\n")
         .expect("send second module");
     second_stream.flush().expect("flush second module");
 
-    // Daemon responds directly with connection limit error
+    // Daemon responds with connection limit error after module selection
     // (CAP is only sent for #list requests)
     line.clear();
     second_reader.read_line(&mut line).expect("limit error");

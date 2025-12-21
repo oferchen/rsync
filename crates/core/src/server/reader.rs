@@ -125,11 +125,22 @@ impl<R: Read> MultiplexReader<R> {
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.read_seq += 1;
+        let read_seq = self.read_seq;
 
         // If we have buffered data, copy it out first
         if self.pos < self.buffer.len() {
             let available = self.buffer.len() - self.pos;
             let to_copy = available.min(buf.len());
+            let _ = std::fs::write(
+                format!("/tmp/mux_BUF_READ_{read_seq:04}"),
+                format!(
+                    "from_buffer pos={} len={} copying={} bytes={:02x?}",
+                    self.pos,
+                    self.buffer.len(),
+                    to_copy,
+                    &self.buffer[self.pos..self.pos + to_copy.min(20)]
+                ),
+            );
             buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
             self.pos += to_copy;
 
@@ -154,20 +165,50 @@ impl<R: Read> Read for MultiplexReader<R> {
                 Ok(c) => c,
                 Err(e) => {
                     let _ = std::fs::write(
-                        format!("/tmp/mux_MSG_{msg_seq:04}_ERR"),
+                        format!("/tmp/mux_READ_{msg_seq:04}_ERR"),
                         format!("{:?}: {}", e.kind(), e),
                     );
                     return Err(e);
                 }
             };
 
+            // Debug: log every received message with timestamp
+            static READ_COUNTER: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
+            let global_seq = READ_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = std::fs::write(
+                format!("/tmp/mux_READ_{msg_seq:04}"),
+                format!(
+                    "global_seq={} code={:?} len={} bytes={:02x?}",
+                    global_seq,
+                    code,
+                    self.buffer.len(),
+                    &self.buffer[..self.buffer.len().min(100)]
+                ),
+            );
+
             // Dispatch based on message type
             match code {
                 protocol::MessageCode::Data => {
                     // MSG_DATA: return payload for protocol processing
                     let to_copy = self.buffer.len().min(buf.len());
+                    let _ = std::fs::write(
+                        format!("/tmp/mux_NEW_FRAME_{read_seq:04}"),
+                        format!(
+                            "new_frame msg_seq={} buf_len={} copying={} returning={:02x?}",
+                            msg_seq,
+                            buf.len(),
+                            to_copy,
+                            &self.buffer[..to_copy.min(20)]
+                        ),
+                    );
                     buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
                     self.pos = to_copy;
+                    // Verify what we're returning
+                    let _ = std::fs::write(
+                        format!("/tmp/mux_RETURN_{read_seq:04}"),
+                        format!("returning {:02x?}", &buf[..to_copy.min(20)]),
+                    );
                     return Ok(to_copy);
                 }
                 protocol::MessageCode::Info
