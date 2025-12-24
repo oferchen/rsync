@@ -237,9 +237,10 @@ impl<W: Write> MultiplexWriter<W> {
             let _ = std::fs::write(
                 format!("/tmp/mux_FLUSH_{count:03}"),
                 format!(
-                    "len={} bytes={:02x?}",
+                    "len={} first20={:02x?} last10={:02x?}",
                     self.buffer.len(),
-                    &self.buffer[..self.buffer.len().min(100)]
+                    &self.buffer[..self.buffer.len().min(20)],
+                    &self.buffer[self.buffer.len().saturating_sub(10)..]
                 ),
             );
 
