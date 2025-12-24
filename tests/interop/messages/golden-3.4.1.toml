@@ -744,24 +744,16 @@ text = "protocol version mismatch -- is your shell clean?"
 scenario = "protocol_version_mismatch"
 
 [[messages]]
-text = "protocol version mismatch -- is your shell clean?"
-scenario = "protocol_version_mismatch"
-
-[[messages]]
 text = "(see the rsync manpage for an explanation)"
-scenario = "protocol_version_mismatch"
-
-[[messages]]
-text = "(see the rsync manpage for an explanation)"
-scenario = "protocol_version_mismatch"
-
-[[messages]]
-text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [Receiver=3.4.1]"
 scenario = "protocol_version_mismatch"
 
 [[messages]]
 text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [sender]"
 role = "sender"
+scenario = "protocol_version_mismatch"
+
+[[messages]]
+text = "rsync error: received SIGUSR1 (code 19) at main.c(1600) [Receiver=3.4.1]"
 scenario = "protocol_version_mismatch"
 
 [[messages]]
@@ -775,11 +767,11 @@ role = "sender"
 scenario = "source_not_found"
 
 [[messages]]
-text = "rsync: [Receiver] failed to connect to localhost (127.0.0.1): Connection refused (111)"
+text = "rsync: [Receiver] failed to connect to localhost (::1): Connection refused (111)"
 scenario = "daemon_connection_refused"
 
 [[messages]]
-text = "rsync: [Receiver] failed to connect to localhost (::1): Network is unreachable (101)"
+text = "rsync: [Receiver] failed to connect to localhost (127.0.0.1): Connection refused (111)"
 scenario = "daemon_connection_refused"
 
 [[messages]]
@@ -834,11 +826,11 @@ role = "sender"
 scenario = "remote_not_found"
 
 [[messages]]
-text = "rsync: connection unexpectedly closed (0 bytes received so far) [sender]"
+text = "rsync: [sender] safe_write failed to write 4 bytes to socket: Broken pipe (32)"
 role = "sender"
 scenario = "remote_not_found"
 
 [[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(232) [sender]"
+text = "rsync error: error in IPC code (code 14) at io.c(327) [sender]"
 role = "sender"
 scenario = "remote_not_found"
