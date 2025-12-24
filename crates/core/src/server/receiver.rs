@@ -303,11 +303,18 @@ impl ReceiverContext {
         mut reader: super::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
-        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30
+        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30 with INC_RECURSE.
         // This matches upstream do_server_recv() at main.c:1167 which calls io_start_multiplex_in()
         // BEFORE calling recv_filter_list() at line 1171.
-        // The client sends ALL data (including filter list) as multiplexed MSG_DATA frames for protocol >= 30.
-        if self.protocol.as_u8() >= 30 {
+        //
+        // However, when INC_RECURSE is DISABLED (daemon mode with allow_inc_recurse=false),
+        // the client sends filter list as PLAIN data, not multiplexed.
+        // We must check the actual compat flags, not just the protocol version.
+        let inc_recurse_enabled = self
+            .compat_flags
+            .as_ref()
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+        if self.protocol.as_u8() >= 30 && inc_recurse_enabled {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
             })?;
