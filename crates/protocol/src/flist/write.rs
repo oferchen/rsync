@@ -7,7 +7,8 @@ use std::io::{self, Write};
 
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
-use crate::varint::{write_longint, write_varint, write_varlong, write_varlong30};
+use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
+use crate::varint::write_varint;
 
 use super::entry::FileEntry;
 use super::flags::{
@@ -24,6 +25,8 @@ use super::flags::{
 pub struct FileListWriter {
     /// Protocol version being used.
     protocol: ProtocolVersion,
+    /// Protocol codec for version-aware encoding.
+    codec: ProtocolCodecEnum,
     /// Compatibility flags for this session.
     compat_flags: Option<CompatibilityFlags>,
     /// Previous entry's path (for name compression).
@@ -46,6 +49,7 @@ impl FileListWriter {
     pub fn new(protocol: ProtocolVersion) -> Self {
         Self {
             protocol,
+            codec: create_protocol_codec(protocol.as_u8()),
             compat_flags: None,
             prev_name: Vec::new(),
             prev_mode: 0,
@@ -60,6 +64,7 @@ impl FileListWriter {
     pub fn with_compat_flags(protocol: ProtocolVersion, compat_flags: CompatibilityFlags) -> Self {
         Self {
             protocol,
+            codec: create_protocol_codec(protocol.as_u8()),
             compat_flags: Some(compat_flags),
             prev_name: Vec::new(),
             prev_mode: 0,
@@ -180,16 +185,12 @@ impl FileListWriter {
         }
 
         // Write suffix length (upstream flist.c:566-569 -> io.h:write_varint30)
-        // Protocol >= 30 with XMIT_LONG_NAME: write_varint (variable length)
-        // Protocol < 30 with XMIT_LONG_NAME: write_int (4 bytes fixed)
+        // Uses codec for protocol-aware encoding:
+        // - Protocol >= 30: varint (variable length)
+        // - Protocol < 30: 4-byte fixed integer
         // Without XMIT_LONG_NAME: write_byte (1 byte)
         if xflags & (XMIT_LONG_NAME as u32) != 0 {
-            if self.protocol.as_u8() >= 30 {
-                write_varint(writer, suffix_len as i32)?;
-            } else {
-                // write_int for protocol < 30
-                writer.write_all(&(suffix_len as i32).to_le_bytes())?;
-            }
+            self.codec.write_long_name_len(writer, suffix_len)?;
         } else {
             writer.write_all(&[suffix_len as u8])?;
         }
@@ -198,23 +199,17 @@ impl FileListWriter {
         writer.write_all(&name[same_len..])?;
 
         // Write file length (upstream flist.c:580 -> io.h:write_varlong30)
-        // Protocol >= 30: uses write_varlong with min_bytes=3
-        // Protocol < 30: uses write_longint (4 bytes fixed for small values)
-        if self.protocol.as_u8() >= 30 {
-            write_varlong30(writer, entry.size() as i64, 3)?;
-        } else {
-            write_longint(writer, entry.size() as i64)?;
-        }
+        // Uses codec for protocol-aware encoding:
+        // - Protocol >= 30: varlong with min_bytes=3
+        // - Protocol < 30: longint (4 bytes for small, 12 for large)
+        self.codec.write_file_size(writer, entry.size() as i64)?;
 
         // Write mtime if different (upstream flist.c:581-585)
+        // Uses codec for protocol-aware encoding:
+        // - Protocol >= 30: varlong with min_bytes=4
+        // - Protocol < 30: 4-byte fixed integer
         if xflags & (XMIT_SAME_TIME as u32) == 0 {
-            if self.protocol.as_u8() >= 30 {
-                // Protocol 30+: use write_varlong with min_bytes=4
-                write_varlong(writer, entry.mtime(), 4)?;
-            } else {
-                // Protocol < 30: use write_int (4 bytes fixed)
-                writer.write_all(&(entry.mtime() as i32).to_le_bytes())?;
-            }
+            self.codec.write_mtime(writer, entry.mtime())?;
         }
 
         // Write mode if different (upstream flist.c:593-594)

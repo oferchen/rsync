@@ -4,6 +4,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
+/// Protocol version-aware encoding/decoding using the Strategy pattern.
+pub mod codec;
 mod compatibility;
 /// Debug tracing system for protocol analysis
 pub mod debug_trace;

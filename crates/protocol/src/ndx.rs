@@ -10,12 +10,12 @@
 //!
 //! # Strategy Pattern
 //!
-//! The [`NdxCodec`] trait defines the encoding/decoding interface, with two
+//! The `NdxCodec` trait defines the encoding/decoding interface, with two
 //! implementations:
-//! - [`LegacyNdxCodec`]: Protocol 28-29 (4-byte LE integers)
-//! - [`ModernNdxCodec`]: Protocol 30+ (delta encoding)
+//! - `LegacyNdxCodec`: Protocol 28-29 (4-byte LE integers)
+//! - `ModernNdxCodec`: Protocol 30+ (delta encoding)
 //!
-//! Use [`create_ndx_codec`] to get the appropriate codec for a protocol version.
+//! Use `create_ndx_codec` to get the appropriate codec for a protocol version.
 //!
 //! # Wire Formats
 //!
@@ -71,7 +71,7 @@ pub const NDX_FLIST_OFFSET: i32 = -101;
 /// Strategy trait for NDX encoding/decoding.
 ///
 /// Implementations provide protocol-version-specific wire formats for file
-/// list indices. Use [`create_ndx_codec`] to get the appropriate implementation.
+/// list indices. Use `create_ndx_codec` to get the appropriate implementation.
 ///
 /// # Example
 ///
@@ -343,7 +343,7 @@ impl NdxCodec for ModernNdxCodec {
 /// This enum wraps both [`LegacyNdxCodec`] and [`ModernNdxCodec`] and dispatches
 /// to the appropriate implementation based on the protocol version.
 ///
-/// Use [`NdxCodecEnum::new`] or [`create_ndx_codec`] to create an instance.
+/// Use [`NdxCodecEnum::new`] or `create_ndx_codec` to create an instance.
 #[derive(Debug, Clone)]
 pub enum NdxCodecEnum {
     /// Legacy codec for protocol < 30
@@ -429,7 +429,7 @@ pub fn create_ndx_codec(protocol_version: u8) -> NdxCodecEnum {
 /// State tracker for NDX delta encoding (protocol 30+).
 ///
 /// This is the original implementation, kept for backward compatibility.
-/// For new code, prefer using [`create_ndx_codec`] with the Strategy pattern.
+/// For new code, prefer using `create_ndx_codec` with the Strategy pattern.
 ///
 /// # Upstream Reference
 ///
@@ -463,7 +463,7 @@ impl NdxState {
     /// Writes an NDX value using the byte-reduction method (protocol 30+).
     ///
     /// **Note**: This method always uses protocol 30+ encoding. For protocol < 30,
-    /// use [`LegacyNdxCodec`] or [`create_ndx_codec`].
+    /// use [`LegacyNdxCodec`] or `create_ndx_codec`.
     pub fn write_ndx<W: Write>(&mut self, writer: &mut W, ndx: i32) -> io::Result<()> {
         let mut buf = [0u8; 6];
         let mut cnt = 0;
@@ -512,7 +512,7 @@ impl NdxState {
     /// Reads an NDX value using the byte-reduction method (protocol 30+).
     ///
     /// **Note**: This method always uses protocol 30+ decoding. For protocol < 30,
-    /// use [`LegacyNdxCodec`] or [`create_ndx_codec`].
+    /// use [`LegacyNdxCodec`] or `create_ndx_codec`.
     pub fn read_ndx<R: Read>(&mut self, reader: &mut R) -> io::Result<i32> {
         let mut b = [0u8; 4];
         reader.read_exact(&mut b[..1])?;
@@ -560,7 +560,7 @@ impl NdxState {
 
 /// Convenience function to write NDX_FLIST_EOF using protocol 30+ encoding.
 ///
-/// **Note**: For protocol < 30, use [`LegacyNdxCodec`] or [`create_ndx_codec`].
+/// **Note**: For protocol < 30, use [`LegacyNdxCodec`] or `create_ndx_codec`.
 pub fn write_ndx_flist_eof<W: Write>(writer: &mut W, state: &mut NdxState) -> io::Result<()> {
     state.write_ndx(writer, NDX_FLIST_EOF)
 }
@@ -568,7 +568,7 @@ pub fn write_ndx_flist_eof<W: Write>(writer: &mut W, state: &mut NdxState) -> io
 /// Convenience function to write NDX_DONE using protocol 30+ encoding.
 ///
 /// **Note**: This writes `[0x00]` which is only correct for protocol 30+.
-/// For protocol < 30, use [`LegacyNdxCodec`] or [`create_ndx_codec`].
+/// For protocol < 30, use [`LegacyNdxCodec`] or `create_ndx_codec`.
 pub fn write_ndx_done<W: Write>(writer: &mut W) -> io::Result<()> {
     writer.write_all(&[0x00])
 }
