@@ -15,8 +15,8 @@ use crate::frontend::progress::StderrMode;
 use crate::frontend::{
     arguments::{ParsedArgs, StopRequest},
     execution::{
-        chown::ParsedChown, extract_operands, load_file_list_operands, parse_chown_argument,
-        resolve_file_list_entries, resolve_iconv_setting,
+        chown::ParsedChown, extract_operands, load_file_list_operands, operand_is_remote,
+        parse_chown_argument, resolve_file_list_entries, resolve_iconv_setting,
     },
 };
 use core::{client::HumanReadableMode, message::Role, rsync_error};
@@ -442,20 +442,26 @@ where
         }
     }
 
-    if let Some(exit_code) = validation::validate_local_only_options(
-        desired_protocol,
-        password_file.as_ref(),
-        connect_program.as_ref(),
-        parsed.rsync_path.as_ref(),
-        &remote_options,
-        stderr,
-    ) {
-        return exit_code;
-    }
-
+    // Build transfer operands early so we can check if this is a daemon transfer
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
     transfer_operands.append(&mut file_list_operands);
     transfer_operands.extend(remainder);
+
+    // Only validate local-only options if we're NOT accessing a daemon (rsync:// or ::)
+    // Options like --protocol, --password-file are valid for daemon access
+    let is_daemon_transfer = transfer_operands.iter().any(|op| operand_is_remote(op));
+    if !is_daemon_transfer {
+        if let Some(exit_code) = validation::validate_local_only_options(
+            desired_protocol,
+            password_file.as_ref(),
+            connect_program.as_ref(),
+            parsed.rsync_path.as_ref(),
+            &remote_options,
+            stderr,
+        ) {
+            return exit_code;
+        }
+    }
 
     if let Err(code) =
         ensure_transfer_operands_present(&transfer_operands, program_name, stdout, stderr)

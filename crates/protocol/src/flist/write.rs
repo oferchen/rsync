@@ -7,7 +7,7 @@ use std::io::{self, Write};
 
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
-use crate::varint::{write_varint, write_varlong, write_varlong30};
+use crate::varint::{write_longint, write_varint, write_varlong, write_varlong30};
 
 use super::entry::FileEntry;
 use super::flags::{
@@ -78,6 +78,16 @@ impl FileListWriter {
         writer: &mut W,
         entry: &FileEntry,
     ) -> io::Result<()> {
+        // Write entry bytes directly to the writer
+        self.write_entry_to_buffer(writer, entry)
+    }
+
+    /// Internal: write entry bytes to a writer.
+    fn write_entry_to_buffer<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> io::Result<()> {
         let name = entry.name().as_bytes();
 
         // Calculate name compression (upstream flist.c:532-534)
@@ -128,25 +138,40 @@ impl FileListWriter {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
 
-        // Ensure xflags is non-zero - upstream flist.c:541-547
-        // For varint encoding, use XMIT_EXTENDED_FLAGS if xflags would be zero
-        let xflags_to_write = if xflags == 0 {
-            XMIT_EXTENDED_FLAGS as u32
-        } else {
-            xflags
-        };
-
         // Write xflags (upstream flist.c:549-559)
         if use_varint_flags {
+            // Protocol 30+ with varint: use XMIT_EXTENDED_FLAGS if xflags would be zero
+            let xflags_to_write = if xflags == 0 {
+                XMIT_EXTENDED_FLAGS as u32
+            } else {
+                xflags
+            };
             write_varint(writer, xflags_to_write as i32)?;
-        } else {
-            // Single-byte encoding for protocol < 30 or no VARINT_FLIST_FLAGS
-            writer.write_all(&[xflags_to_write as u8])?;
-
-            // Write extended flags byte if present (protocol 28+, non-varint mode)
-            if self.protocol.as_u8() >= 28 && (xflags_to_write & XMIT_EXTENDED_FLAGS as u32) != 0 {
-                writer.write_all(&[((xflags_to_write >> 8) & 0xFF) as u8])?;
+        } else if self.protocol.as_u8() >= 28 {
+            // Protocol 28-29: upstream flist.c:551-558
+            // If xflags is 0 and not a directory, add XMIT_TOP_DIR
+            let mut xflags_to_write = xflags;
+            if xflags_to_write == 0 && !entry.is_dir() {
+                xflags_to_write |= XMIT_TOP_DIR as u32;
             }
+
+            // If high byte is set OR xflags is still 0, use 2-byte encoding
+            if (xflags_to_write & 0xFF00) != 0 || xflags_to_write == 0 {
+                xflags_to_write |= XMIT_EXTENDED_FLAGS as u32;
+                // write_shortint: 2 bytes little-endian
+                writer.write_all(&(xflags_to_write as u16).to_le_bytes())?;
+            } else {
+                // 1 byte encoding
+                writer.write_all(&[xflags_to_write as u8])?;
+            }
+        } else {
+            // Protocol < 28: simple byte encoding
+            let xflags_to_write = if xflags == 0 {
+                XMIT_EXTENDED_FLAGS as u32
+            } else {
+                xflags
+            };
+            writer.write_all(&[xflags_to_write as u8])?;
         }
 
         // Write name compression info (upstream flist.c:560-569)
@@ -154,9 +179,17 @@ impl FileListWriter {
             writer.write_all(&[same_len as u8])?;
         }
 
-        // Write suffix length
+        // Write suffix length (upstream flist.c:566-569 -> io.h:write_varint30)
+        // Protocol >= 30 with XMIT_LONG_NAME: write_varint (variable length)
+        // Protocol < 30 with XMIT_LONG_NAME: write_int (4 bytes fixed)
+        // Without XMIT_LONG_NAME: write_byte (1 byte)
         if xflags & (XMIT_LONG_NAME as u32) != 0 {
-            write_varint(writer, suffix_len as i32)?;
+            if self.protocol.as_u8() >= 30 {
+                write_varint(writer, suffix_len as i32)?;
+            } else {
+                // write_int for protocol < 30
+                writer.write_all(&(suffix_len as i32).to_le_bytes())?;
+            }
         } else {
             writer.write_all(&[suffix_len as u8])?;
         }
@@ -164,13 +197,24 @@ impl FileListWriter {
         // Write suffix bytes (upstream flist.c:570)
         writer.write_all(&name[same_len..])?;
 
-        // Write file length using varlong30 (upstream flist.c:580)
-        write_varlong30(writer, entry.size() as i64, 3)?;
+        // Write file length (upstream flist.c:580 -> io.h:write_varlong30)
+        // Protocol >= 30: uses write_varlong with min_bytes=3
+        // Protocol < 30: uses write_longint (4 bytes fixed for small values)
+        if self.protocol.as_u8() >= 30 {
+            write_varlong30(writer, entry.size() as i64, 3)?;
+        } else {
+            write_longint(writer, entry.size() as i64)?;
+        }
 
         // Write mtime if different (upstream flist.c:581-585)
         if xflags & (XMIT_SAME_TIME as u32) == 0 {
-            // For protocol >= 30, use write_varlong with min_bytes=4
-            write_varlong(writer, entry.mtime(), 4)?;
+            if self.protocol.as_u8() >= 30 {
+                // Protocol 30+: use write_varlong with min_bytes=4
+                write_varlong(writer, entry.mtime(), 4)?;
+            } else {
+                // Protocol < 30: use write_int (4 bytes fixed)
+                writer.write_all(&(entry.mtime() as i32).to_le_bytes())?;
+            }
         }
 
         // Write mode if different (upstream flist.c:593-594)

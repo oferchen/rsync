@@ -234,10 +234,27 @@ pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Resu
     Ok(i64::from_le_bytes(bytes))
 }
 
+/// Writes a 64-bit integer using rsync's legacy longint format (protocol < 30).
+///
+/// This mirrors upstream's `write_longint(int f, int64 x)` from io.c.
+/// The encoding:
+/// - For values 0 <= x <= 0x7FFFFFFF: writes 4 bytes (little-endian i32)
+/// - For larger values: writes 0xFFFFFFFF (4 bytes) followed by the full 8 bytes
+pub fn write_longint<W: Write + ?Sized>(writer: &mut W, value: i64) -> io::Result<()> {
+    if (0..=0x7FFF_FFFF).contains(&value) {
+        // Fits in positive signed 32-bit
+        writer.write_all(&(value as i32).to_le_bytes())
+    } else {
+        // Write 0xFFFFFFFF marker followed by full 64-bit value
+        writer.write_all(&0xFFFF_FFFFu32.to_le_bytes())?;
+        writer.write_all(&value.to_le_bytes())
+    }
+}
+
 /// Writes a variable-length integer using protocol 30+ varlong encoding.
 ///
 /// This mirrors upstream's `write_varlong30(int f, int64 x, uchar min_bytes)` inline function.
-/// For protocol < 30, it would use write_longint, but we only support protocol 30+.
+/// For protocol < 30, callers should use `write_longint` instead.
 pub fn write_varlong30<W: Write + ?Sized>(
     writer: &mut W,
     value: i64,
