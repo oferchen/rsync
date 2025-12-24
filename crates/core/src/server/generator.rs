@@ -897,16 +897,10 @@ impl GeneratorContext {
         // Step 1: Send NDX_DONE to indicate end of file transfer phase
         // write_ndx(f_out, NDX_DONE) from sender.c line 462
         //
-        // CRITICAL: For protocol < 30, NDX is a 4-byte little-endian integer (write_int).
-        // For protocol >= 30, NDX uses compressed encoding (0x00 = NDX_DONE).
-        // See io.c write_ndx() for upstream implementation.
-        if self.protocol.as_u8() < 30 {
-            // Protocol 28-29: NDX_DONE = -1 as 4-byte little-endian
-            writer.write_all(&(-1i32).to_le_bytes())?;
-        } else {
-            // Protocol 30+: NDX_DONE = 0x00 (compressed encoding)
-            writer.write_all(&[0x00])?;
-        }
+        // Use NdxCodec for protocol-version-aware encoding:
+        // - Protocol 28-29: NDX_DONE = -1 as 4-byte little-endian (write_int)
+        // - Protocol 30+: NDX_DONE = 0x00 (compressed encoding)
+        ndx_write_codec.write_ndx_done(&mut *writer)?;
         writer.flush()?;
 
         // Step 2: Stats handling

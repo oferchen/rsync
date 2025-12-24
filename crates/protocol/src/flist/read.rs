@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
+use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
 use crate::varint::read_varint;
 
 use super::entry::FileEntry;
@@ -22,6 +23,8 @@ use super::flags::{FileFlags, XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};
 pub struct FileListReader {
     /// Protocol version being used.
     protocol: ProtocolVersion,
+    /// Protocol codec for version-aware encoding/decoding.
+    codec: ProtocolCodecEnum,
     /// Compatibility flags for this session.
     compat_flags: Option<CompatibilityFlags>,
     /// Previous entry's path (for name compression).
@@ -44,8 +47,10 @@ impl FileListReader {
     /// Creates a new file list reader for the given protocol version.
     #[must_use]
     pub fn new(protocol: ProtocolVersion) -> Self {
+        let codec = create_protocol_codec(protocol.as_u8());
         Self {
             protocol,
+            codec,
             compat_flags: None,
             prev_name: Vec::new(),
             prev_mode: 0,
@@ -60,8 +65,10 @@ impl FileListReader {
     /// Creates a new file list reader with compatibility flags.
     #[must_use]
     pub fn with_compat_flags(protocol: ProtocolVersion, compat_flags: CompatibilityFlags) -> Self {
+        let codec = create_protocol_codec(protocol.as_u8());
         Self {
             protocol,
+            codec,
             compat_flags: Some(compat_flags),
             prev_name: Vec::new(),
             prev_mode: 0,
@@ -323,20 +330,14 @@ impl FileListReader {
         Ok(name)
     }
 
-    /// Reads the file size using varlong encoding.
+    /// Reads the file size using protocol-appropriate encoding.
     ///
-    /// The write side uses write_varlong30(writer, size, 3) which calls write_varlong.
-    /// We must use read_varlong with min_bytes=3 to match.
+    /// The codec handles version-dependent encoding:
+    /// - Protocol 30+: varlong with min_bytes=3
+    /// - Protocol 28-29: 32-bit varint
     fn read_size<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<u64> {
-        // In protocol 30+, sizes use varlong with min_bytes=3
-        if self.protocol.as_u8() >= 30 {
-            // Match write_varlong30(writer, size, 3) from write.rs:133
-            let size = crate::read_varlong(reader, 3)?;
-            Ok(size as u64)
-        } else {
-            // Older protocols use 32-bit varint sizes
-            Ok(read_varint(reader)? as u64)
-        }
+        let size = self.codec.read_file_size(reader)?;
+        Ok(size as u64)
     }
 }
 
