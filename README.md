@@ -83,7 +83,15 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 ### Implementation Status
 
-**Daemon Interoperability**: ✅ **Working with upstream rsync 3.4.1 clients**
+**Daemon Interoperability**: ✅ **Full protocol 28-32 compatibility with upstream rsync clients**
+
+The daemon mode (`oc-rsync --daemon`) is fully interoperable with upstream rsync clients across all supported protocol versions:
+
+- ✅ **Protocol 28** - rsync 3.0.x clients
+- ✅ **Protocol 29** - rsync 3.1.x clients
+- ✅ **Protocol 30** - rsync 3.2.x clients
+- ✅ **Protocol 31** - rsync 3.3.x clients
+- ✅ **Protocol 32** - rsync 3.4.x clients
 
 **Server Delta Transfer**: ✅ **Complete with metadata preservation**
 
@@ -98,14 +106,16 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ **Error handling** - RAII cleanup, error categorization, ENOSPC detection
 
 **Test Coverage**:
-- 3,249 tests passing (100% pass rate)
-- 12 comprehensive integration tests for delta transfer
-- 10 error scenario tests (cleanup, categorization, edge cases)
+- 3,564 tests passing (100% pass rate)
+- Comprehensive integration tests for delta transfer
+- Error scenario tests (cleanup, categorization, edge cases)
+- Protocol version interoperability validated (protocols 28-32)
 - Content integrity and metadata preservation validated
 - Edge cases covered (empty files, large files, size mismatches, binary data)
 
 **Production Readiness**:
 - ✅ Core delta transfer: Production-ready
+- ✅ Protocol interoperability: Tested with protocols 28-32
 - ✅ Metadata preservation: Complete and tested
 - ✅ End-to-end validation: Comprehensive integration tests
 - ✅ Error handling: Complete with categorization and cleanup
