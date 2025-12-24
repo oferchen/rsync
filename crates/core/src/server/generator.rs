@@ -375,9 +375,17 @@ impl GeneratorContext {
         // When inc_recurse is enabled, need_messages_from_generator = 1 (compat.c).
         // This means the client multiplexes its output to the server.
         //
-        // CRITICAL: For protocol 30+, the client sends MULTIPLEXED data!
+        // CRITICAL: For protocol 30+ with INC_RECURSE, the client sends MULTIPLEXED data!
         // The filter list and other data come wrapped in MSG_DATA frames.
-        if self.protocol.as_u8() >= 30 {
+        //
+        // However, when INC_RECURSE is DISABLED (daemon mode with allow_inc_recurse=false),
+        // the client sends filter list as PLAIN data, not multiplexed.
+        // We must check the actual compat flags, not just the protocol version.
+        let inc_recurse_enabled = self
+            .compat_flags
+            .as_ref()
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+        if self.protocol.as_u8() >= 30 && inc_recurse_enabled {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
             })?;
