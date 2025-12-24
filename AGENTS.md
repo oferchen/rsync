@@ -777,6 +777,42 @@ When reviewing or writing code, actively remove unhelpful comments:
 5. **Delete TODO/FIXME in production code** — Use issue tracking instead.
    The `no_placeholders` agent enforces this.
 
+### 2.3 Coding Principles
+
+All code contributions must adhere to these principles:
+
+- **Efficiency and Performance** — Optimize hot paths; avoid unnecessary
+  allocations; use appropriate data structures for the access patterns.
+
+- **Elegance and Conciseness** — Prefer clear, expressive code over verbose
+  implementations. Remove dead code and simplify complex logic.
+
+- **Modularity** — Follow the clean code philosophy of "do one thing and do it
+  well." Each function, module, and trait should have a single, well-defined
+  responsibility.
+
+- **Ease of Maintenance** — Write code that future contributors can understand
+  and modify. Use descriptive names, keep functions short, and avoid clever
+  tricks that obscure intent.
+
+- **Standard Library First** — Prefer `std` library types and traits over
+  external dependencies unless there's a substantial, documented advantage.
+  When external crates are necessary, choose well-maintained, actively
+  supported libraries.
+
+- **Design Patterns** — Apply appropriate design patterns (Strategy, Factory,
+  State, etc.) to manage complexity, especially for protocol-version-specific
+  behavior and role-based dispatch.
+
+- **No Deprecated APIs** — Never use deprecated functions, methods, or
+  libraries. If a dependency deprecates functionality, migrate to the
+  recommended replacement promptly.
+
+- **Complete and Functional** — All submitted code must be complete and
+  functional for its intended purpose. No pseudo-code, placeholder
+  implementations, or stub functions. The `no_placeholders` agent enforces
+  this for macro-level violations.
+
 ### 2.4 `enforce_limits` Agent
 
 * **Script:** `tools/enforce_limits.sh`
