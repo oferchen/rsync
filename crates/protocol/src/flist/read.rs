@@ -30,12 +30,14 @@ pub struct FileListReader {
     prev_mode: u32,
     /// Previous entry's mtime.
     prev_mtime: i64,
-    /// Previous entry's UID (for future ownership preservation).
-    #[allow(dead_code)]
+    /// Previous entry's UID (for ownership preservation).
     prev_uid: u32,
-    /// Previous entry's GID (for future ownership preservation).
-    #[allow(dead_code)]
+    /// Previous entry's GID (for ownership preservation).
     prev_gid: u32,
+    /// Whether to preserve (and thus read) UID values from the wire.
+    preserve_uid: bool,
+    /// Whether to preserve (and thus read) GID values from the wire.
+    preserve_gid: bool,
 }
 
 impl FileListReader {
@@ -50,6 +52,8 @@ impl FileListReader {
             prev_mtime: 0,
             prev_uid: 0,
             prev_gid: 0,
+            preserve_uid: false,
+            preserve_gid: false,
         }
     }
 
@@ -64,7 +68,31 @@ impl FileListReader {
             prev_mtime: 0,
             prev_uid: 0,
             prev_gid: 0,
+            preserve_uid: false,
+            preserve_gid: false,
         }
+    }
+
+    /// Sets whether UID values should be read from the wire.
+    ///
+    /// When `preserve_uid` is true, the reader will consume UID values from
+    /// the wire protocol when the `XMIT_SAME_UID` flag is NOT set.
+    /// This must match the sender's `-o` / `--owner` flag.
+    #[must_use]
+    pub fn with_preserve_uid(mut self, preserve: bool) -> Self {
+        self.preserve_uid = preserve;
+        self
+    }
+
+    /// Sets whether GID values should be read from the wire.
+    ///
+    /// When `preserve_gid` is true, the reader will consume GID values from
+    /// the wire protocol when the `XMIT_SAME_GID` flag is NOT set.
+    /// This must match the sender's `-g` / `--group` flag.
+    #[must_use]
+    pub fn with_preserve_gid(mut self, preserve: bool) -> Self {
+        self.preserve_gid = preserve;
+        self
     }
 
     /// Reads the next file entry from the stream.
@@ -93,7 +121,6 @@ impl FileListReader {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
 
-        // Read primary flags byte
         let flags_byte = if use_varint_flags {
             // Varint encoding: read as varint, primary flags in low 8 bits
             read_varint(reader)?
@@ -214,6 +241,26 @@ impl FileListReader {
             let mode = i32::from_le_bytes(mode_bytes) as u32;
             self.prev_mode = mode;
             mode
+        };
+
+        // Read UID if preserve_uid is set and XMIT_SAME_UID is NOT set
+        // Upstream flist.c:880-887: if (preserve_uid && !(xflags & XMIT_SAME_UID)) uid = read_varint(f)
+        let _uid = if self.preserve_uid && !flags.same_uid() {
+            let uid = read_varint(reader)? as u32;
+            self.prev_uid = uid;
+            uid
+        } else {
+            self.prev_uid
+        };
+
+        // Read GID if preserve_gid is set and XMIT_SAME_GID is NOT set
+        // Upstream flist.c:888-895: if (preserve_gid && !(xflags & XMIT_SAME_GID)) gid = read_varint(f)
+        let _gid = if self.preserve_gid && !flags.same_gid() {
+            let gid = read_varint(reader)? as u32;
+            self.prev_gid = gid;
+            gid
+        } else {
+            self.prev_gid
         };
 
         // Construct entry
