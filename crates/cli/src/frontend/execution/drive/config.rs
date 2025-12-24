@@ -12,7 +12,7 @@ use core::client::{
     IconvSetting, SkipCompressList, StrongChecksumChoice, TransferTimeout,
 };
 use engine::batch;
-use transport::ssh;
+use rsync_io::ssh;
 
 use crate::frontend::progress::{NameOutputLevel, ProgressMode};
 use crate::platform::{gid_t, uid_t};

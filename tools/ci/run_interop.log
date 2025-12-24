@@ -1,0 +1,495 @@
+ ~/rsync/tools/ci  master !89 ?4  bash -x run_interop.sh                                                                                                                         ok | % | ofer@archlinux  14:06:04
+> bash -x run_interop.sh
++ set -euo pipefail
++ command -v curl
++ command -v tar
++ export GIT_TERMINAL_PROMPT=0
++ GIT_TERMINAL_PROMPT=0
++++ dirname run_interop.sh
+++ cd ./../..
+++ pwd
++ workspace_root=/home/ofer/rsync
++ target_dir=/home/ofer/rsync/target/dist
++ upstream_src_root=/home/ofer/rsync/target/interop/upstream-src
++ upstream_install_root=/home/ofer/rsync/target/interop/upstream-install
++ interop_log_dir=/home/ofer/rsync/target/interop/logs
++ versions=(3.0.9 3.1.3 3.4.1)
++ rsync_repo_url=https://github.com/RsyncProject/rsync.git
++ rsync_tarball_base_url=https://rsync.samba.org/ftp/rsync/src
++ DEBIAN_MIRROR=https://deb.debian.org/debian
++ UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu
++ OLD_UBUNTU_MIRROR=https://old-releases.ubuntu.com/ubuntu
++ oc_pid=
++ up_pid=
++ oc_pid_file_current=
++ up_pid_file_current=
++ workdir=
++ ensure_workspace_binaries
++ [[ -x /home/ofer/rsync/target/dist/oc-rsync ]]
++ return
++ mkdir -p /home/ofer/rsync/target/interop/upstream-src /home/ofer/rsync/target/interop/upstream-install
++ for version in "${versions[@]}"
++ ensure_upstream_build 3.0.9
++ local version=3.0.9
++ local install_dir=/home/ofer/rsync/target/interop/upstream-install/3.0.9
++ local binary=/home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync
+++ detect_deb_arch
+++ local u
++++ uname -m
+++ u=x86_64
+++ case "$u" in
+++ echo amd64
++ local arch=amd64
++ [[ -x /home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync ]]
++ /home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync --version
++ head -n1
++ grep -q 'rsync\s\+version\s\+3.0.9\b'
++ return
++ for version in "${versions[@]}"
++ ensure_upstream_build 3.1.3
++ local version=3.1.3
++ local install_dir=/home/ofer/rsync/target/interop/upstream-install/3.1.3
++ local binary=/home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync
+++ detect_deb_arch
+++ local u
++++ uname -m
+++ u=x86_64
+++ case "$u" in
+++ echo amd64
++ local arch=amd64
++ [[ -x /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync ]]
++ /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync --version
++ head -n1
++ grep -q 'rsync\s\+version\s\+3.1.3\b'
++ rm -rf /home/ofer/rsync/target/interop/upstream-install/3.1.3
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.1.3
++ local url
+++ build_version_url 3.1.3 amd64
+++ local version=3.1.3
+++ local arch=amd64
+++ case "$version" in
+++ echo http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb
++ url=http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb
++ echo 'Trying http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb'
+Trying http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb
++ try_fetch_deb http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb /home/ofer/rsync/target/interop/upstream-install/3.1.3
++ local url=http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb
++ local install_dir=/home/ofer/rsync/target/interop/upstream-install/3.1.3
++ local tmp_deb
+++ mktemp
++ tmp_deb=/tmp/tmp.EhtpcDwSjw
++ curl -fsSL http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb -o /tmp/tmp.EhtpcDwSjw
++ command -v ar
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.1.3
++ cd /home/ofer/rsync/target/interop/upstream-install/3.1.3
++ ar x /tmp/tmp.EhtpcDwSjw
++ [[ -f data.tar.xz ]]
++ tar -xf data.tar.xz
++ rm -f data.tar.xz
++ rm -f /tmp/tmp.EhtpcDwSjw
++ [[ -x /home/ofer/rsync/target/interop/upstream-install/3.1.3/usr/bin/rsync ]]
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin
++ cp /home/ofer/rsync/target/interop/upstream-install/3.1.3/usr/bin/rsync /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync
++ return 0
++ /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync --version
++ head -n1
++ grep -q 'rsync\s\+version\s\+3.1.3\b'
++ echo 'Using rsync 3.1.3 from http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb'
+Using rsync 3.1.3 from http://archive.ubuntu.com/ubuntu/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_amd64.deb
++ return
++ for version in "${versions[@]}"
++ ensure_upstream_build 3.4.1
++ local version=3.4.1
++ local install_dir=/home/ofer/rsync/target/interop/upstream-install/3.4.1
++ local binary=/home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync
+++ detect_deb_arch
+++ local u
++++ uname -m
+++ u=x86_64
+++ case "$u" in
+++ echo amd64
++ local arch=amd64
++ [[ -x /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync ]]
++ /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync --version
++ head -n1
++ grep -q 'rsync\s\+version\s\+3.4.1\b'
++ rm -rf /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ local url
+++ build_version_url 3.4.1 amd64
+++ local version=3.4.1
+++ local arch=amd64
+++ case "$version" in
+++ echo https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb
++ url=https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb
++ echo 'Trying https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb'
+Trying https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb
++ try_fetch_deb https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ local url=https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb
++ local install_dir=/home/ofer/rsync/target/interop/upstream-install/3.4.1
++ local tmp_deb
+++ mktemp
++ tmp_deb=/tmp/tmp.J6zAlysvtk
++ curl -fsSL https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb -o /tmp/tmp.J6zAlysvtk
++ command -v ar
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ cd /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ ar x /tmp/tmp.J6zAlysvtk
++ [[ -f data.tar.xz ]]
++ tar -xf data.tar.xz
++ rm -f data.tar.xz
++ rm -f /tmp/tmp.J6zAlysvtk
++ [[ -x /home/ofer/rsync/target/interop/upstream-install/3.4.1/usr/bin/rsync ]]
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin
++ cp /home/ofer/rsync/target/interop/upstream-install/3.4.1/usr/bin/rsync /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync
++ return 0
++ /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync --version
++ head -n1
++ grep -q 'rsync\s\+version\s\+3.4.1\b'
++ echo 'Version mismatch for https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb, discarding'
+Version mismatch for https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-6_amd64.deb, discarding
++ rm -rf /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ echo 'Trying generic pool for 3.4.1 (amd64) ...'
+Trying generic pool for 3.4.1 (amd64) ...
++ try_fetch_deb_generic 3.4.1 amd64 /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ local version=3.4.1
++ local arch=amd64
++ local install_dir=/home/ofer/rsync/target/interop/upstream-install/3.4.1
++ local tmp_deb
+++ mktemp
++ tmp_deb=/tmp/tmp.fUnxRBwT12
++ candidates=()
++ local candidates
++ case "$version" in
++ candidates+=("${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-5_${arch}.deb")
++ for url in "${candidates[@]}"
++ curl -fsSL https://deb.debian.org/debian/pool/main/r/rsync/rsync_3.4.1+ds1-5_amd64.deb -o /tmp/tmp.fUnxRBwT12
++ command -v ar
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ cd /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ ar x /tmp/tmp.fUnxRBwT12
++ [[ -f data.tar.xz ]]
++ tar -xf data.tar.xz
++ rm -f data.tar.xz
++ rm -f /tmp/tmp.fUnxRBwT12
++ [[ -x /home/ofer/rsync/target/interop/upstream-install/3.4.1/usr/bin/rsync ]]
++ mkdir -p /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin
++ cp /home/ofer/rsync/target/interop/upstream-install/3.4.1/usr/bin/rsync /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync
++ return 0
++ /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync --version
++ head -n1
++ grep -q 'rsync\s\+version\s\+3.4.1\b'
++ echo 'Version mismatch for generic pool, discarding'
+Version mismatch for generic pool, discarding
++ rm -rf /home/ofer/rsync/target/interop/upstream-install/3.4.1
++ echo 'No suitable .deb found for rsync 3.4.1 (amd64); building from source ...'
+No suitable .deb found for rsync 3.4.1 (amd64); building from source ...
++ build_upstream_from_source 3.4.1
++ local version=3.4.1
++ local src_dir=/home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1
++ local install_dir=/home/ofer/rsync/target/interop/upstream-install/3.4.1
++ local build_log=/home/ofer/rsync/target/interop/logs/rsync-3.4.1-build.log
++ rm -rf /home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1
++ mkdir -p /home/ofer/rsync/target/interop/upstream-src /home/ofer/rsync/target/interop/upstream-install
++ mkdir -p /home/ofer/rsync/target/interop/logs
++ rm -f /home/ofer/rsync/target/interop/logs/rsync-3.4.1-build.log
++ echo 'Fetching upstream rsync 3.4.1 release tarball from https://rsync.samba.org/ftp/rsync/src (log: /home/ofer/rsync/target/interop/logs/rsync-3.4.1-build.log)'
+Fetching upstream rsync 3.4.1 release tarball from https://rsync.samba.org/ftp/rsync/src (log: /home/ofer/rsync/target/interop/logs/rsync-3.4.1-build.log)
++ fetch_upstream_tarball 3.4.1 /home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1
++ local version=3.4.1
++ local destination=/home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1
++ local tarball_url=https://rsync.samba.org/ftp/rsync/src/rsync-3.4.1.tar.gz
++ local tmp_tar
+++ mktemp
++ tmp_tar=/tmp/tmp.PU36EFzqf5
++ curl -fsSL https://rsync.samba.org/ftp/rsync/src/rsync-3.4.1.tar.gz -o /tmp/tmp.PU36EFzqf5
++ mkdir -p /home/ofer/rsync/target/interop/upstream-src
++ rm -rf /home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1 /home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1
++ tar -xzf /tmp/tmp.PU36EFzqf5 -C /home/ofer/rsync/target/interop/upstream-src
++ rm -f /tmp/tmp.PU36EFzqf5
++ [[ -d /home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1 ]]
++ return 0
++ pushd /home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1
++ [[ ! -x configure ]]
++ [[ ! -x configure ]]
++ local configure_help
+++ ./configure --help
++ configure_help=$'`configure\' configures rsync to adapt to many kinds of systems.\n\nUsage: /home/ofer/rsync/target/interop/upstream-src/rsync-3.4.1/configure.sh [OPTION]... [VAR=VALUE]...\n\nTo assign environment variables (e.g., CC, CFLAGS...), specify them as\nVAR=VALUE.  See below for descriptions of some of the useful variables.\n\nDefaults for the options are specified in brackets.\n\nConfiguration:\n  -h, --help              display this help and exit\n      --help=short        display options specific to this package\n      --help=recursive    display the short help of all the included packages\n  -V, --version           display version information and exit\n  -q, --quiet, --silent   do not print `checking ...\' messages\n      --cache-file=FILE   cache test results in FILE [disabled]\n  -C, --config-cache      alias for `--cache-file=config.cache\'\n  -n, --no-create         do not create output files\n      --srcdir=DIR        find the sources in DIR [configure dir or `..\']\n\nInstallation directories:\n  --prefix=PREFIX         install architecture-independent files in PREFIX\n                          [/usr/local]\n  --exec-prefix=EPREFIX   install architecture-dependent files in EPREFIX\n                          [PREFIX]\n\nBy default, `make install\' will install all the files in\n`/usr/local/bin\', `/usr/local/lib\' etc.  You can specify\nan installation prefix other than `/usr/local\' using `--prefix\',\nfor instance `--prefix=$HOME\'.\n\nFor better control, use the options below.\n\nFine tuning of the installation directories:\n  --bindir=DIR            user executables [EPREFIX/bin]\n  --sbindir=DIR           system admin executables [EPREFIX/sbin]\n  --libexecdir=DIR        program executables [EPREFIX/libexec]\n  --sysconfdir=DIR        read-only single-machine data [PREFIX/etc]\n  --sharedstatedir=DIR    modifiable architecture-independent data [PREFIX/com]\n  --localstatedir=DIR     modifiable single-machine data [PREFIX/var]\n  --runstatedir=DIR       modifiable per-process data [LOCALSTATEDIR/run]\n  --libdir=DIR            object code libraries [EPREFIX/lib]\n  --includedir=DIR        C header files [PREFIX/include]\n  --oldincludedir=DIR     C header files for non-gcc [/usr/include]\n  --datarootdir=DIR       read-only arch.-independent data root [PREFIX/share]\n  --datadir=DIR           read-only architecture-independent data [DATAROOTDIR]\n  --infodir=DIR           info documentation [DATAROOTDIR/info]\n  --localedir=DIR         locale-dependent data [DATAROOTDIR/locale]\n  --mandir=DIR            man documentation [DATAROOTDIR/man]\n  --docdir=DIR            documentation root [DATAROOTDIR/doc/rsync]\n  --htmldir=DIR           html documentation [DOCDIR]\n  --dvidir=DIR            dvi documentation [DOCDIR]\n  --pdfdir=DIR            pdf documentation [DOCDIR]\n  --psdir=DIR             ps documentation [DOCDIR]\n\nSystem types:\n  --build=BUILD     configure for building on BUILD [guessed]\n  --host=HOST       cross-compile to build programs to run on HOST [BUILD]\n\nOptional Features:\n  --disable-option-checking  ignore unrecognized --enable/--with options\n  --disable-FEATURE       do not include FEATURE (same as --enable-FEATURE=no)\n  --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]\n  --disable-debug         disable to omit debugging symbols and features\n  --enable-profile        enable to turn on CPU profiling\n  --disable-md2man        disable to omit manpage creation\n  --enable-maintainer-mode\n                          enable to turn on extra debug features\n  --enable-roll-simd      enable/disable to control rolling-checksum SIMD\n                          optimizations (requires c++)\n  --disable-largefile     omit support for large files\n  --disable-ipv6          disable to omit ipv6 support\n  --disable-locale        disable to omit locale features\n  --disable-openssl       disable to omit openssl crypto library\n  --enable-md5-asm        enable/disable to control MD5 ASM optimizations\n  --enable-roll-asm       enable/disable to control rolling-checksum ASM\n                          optimizations (requires --enable-roll-simd)\n  --disable-xxhash        disable to omit xxhash checksums\n  --disable-zstd          disable to omit zstd compression\n  --disable-lz4           disable to omit LZ4 compression\n  --disable-iconv-open    disable to avoid all use of iconv_open()\n  --disable-iconv         disable to omit the --iconv option\n  --disable-acl-support   disable to omit ACL support\n  --disable-xattr-support disable to omit extended attributes\n\nOptional Packages:\n  --with-PACKAGE[=ARG]    use PACKAGE [ARG=yes]\n  --without-PACKAGE       do not use PACKAGE (same as --with-PACKAGE=no)\n  --with-openssl-conf=PATH\n                          set default OPENSSL_CONF path for rsync\n  --with-rrsync           also install the rrsync script and its manpage\n  --with-included-popt    use bundled popt library, not from system\n  --with-included-zlib    use bundled zlib library, not from system\n  --with-secluded-args    make --secluded-args option the default\n  --with-rsync-path=PATH  set default --rsync-path to PATH (default: rsync)\n  --with-rsyncd-conf=PATH set configuration file for rsync server to PATH\n                          (default: /etc/rsyncd.conf)\n  --with-rsh=CMD          set remote shell command to CMD (default: ssh)\n  --with-nobody-user=USER set the default unprivileged user (default nobody)\n  --with-nobody-group=GROUP\n                          set the default unprivileged group (default nobody\n                          or nogroup)\n\nSome influential environment variables:\n  CC          C compiler command\n  CFLAGS      C compiler flags\n  LDFLAGS     linker flags, e.g. -L<lib dir> if you have libraries in a\n              nonstandard directory <lib dir>\n  LIBS        libraries to pass to the linker, e.g. -l<library>\n  CPPFLAGS    (Objective) C/C++ preprocessor flags, e.g. -I<include dir> if\n              you have headers in a nonstandard directory <include dir>\n  CPP         C preprocessor\n  CXX         C++ compiler command\n  CXXFLAGS    C++ compiler flags\n\nUse these variables to override the choices made by `configure\' or to help\nit to find libraries and programs with nonstandard names/locations.\n\nReport bugs to <https://rsync.samba.org/bug-tracking.html>.'
++ configure_args=('--prefix=/home/ofer/rsync/target/interop/upstream-install/3.4.1')
++ local -a configure_args
++ grep -q -- --disable-xxhash
++ configure_args+=("--disable-xxhash")
++ grep -q -- --disable-lz4
++ configure_args+=("--disable-lz4")
++ grep -q -- --disable-md2man
++ configure_args+=("--disable-md2man")
++ ./configure --prefix=/home/ofer/rsync/target/interop/upstream-install/3.4.1 --disable-xxhash --disable-lz4 --disable-md2man
+++ build_jobs
+++ command -v nproc
+++ nproc
++ make -j8
++ make install
++ popd
++ oc_client=/home/ofer/rsync/target/dist/oc-rsync
++ oc_binary=/home/ofer/rsync/target/dist/oc-rsync
+++ mktemp -d
++ workdir=/tmp/tmp.WeWtSjeAoh
++ trap cleanup EXIT
++ src=/tmp/tmp.WeWtSjeAoh/source
++ mkdir -p /tmp/tmp.WeWtSjeAoh/source
++ printf 'interop-test\n'
+++ id -u
++ uid=1000
+++ id -g
++ gid=1000
++ oc_identity=
++ up_identity=
++ [[ 1000 -eq 0 ]]
++ port_base=2873
++ failed=()
++ for version in "${versions[@]}"
++ upstream_binary=/home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync
++ [[ ! -x /home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync ]]
++ echo 'Running interoperability checks against upstream rsync 3.0.9'
+Running interoperability checks against upstream rsync 3.0.9
++ run_interop_case 3.0.9 /home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync 2873 2874
++ local version=3.0.9
++ local upstream_binary=/home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync
++ local oc_port=2873
++ local upstream_port=2874
++ local version_tag=3-0-9
++ local oc_dest=/tmp/tmp.WeWtSjeAoh/oc-destination-3-0-9
++ local up_dest=/tmp/tmp.WeWtSjeAoh/upstream-destination-3-0-9
++ local oc_pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid
++ local up_pid_file=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-0-9.pid
++ local oc_conf=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.conf
++ local up_conf=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-0-9.conf
++ local oc_log=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.log
++ local up_log=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-0-9.log
++ rm -rf /tmp/tmp.WeWtSjeAoh/oc-destination-3-0-9 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-0-9
++ mkdir -p /tmp/tmp.WeWtSjeAoh/oc-destination-3-0-9 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-0-9
++ write_rust_daemon_conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid 2873 /tmp/tmp.WeWtSjeAoh/oc-destination-3-0-9 'oc interop target (3.0.9)'
++ local path=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.conf
++ local pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid
++ local port=2873
++ local dest=/tmp/tmp.WeWtSjeAoh/oc-destination-3-0-9
++ local 'comment=oc interop target (3.0.9)'
++ cat
++ write_upstream_conf /tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-0-9.conf /tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-0-9.pid 2874 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-0-9 'upstream interop target (3.0.9)' ''
++ local path=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-0-9.conf
++ local pid_file=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-0-9.pid
++ local port=2874
++ local dest=/tmp/tmp.WeWtSjeAoh/upstream-destination-3-0-9
++ local 'comment=upstream interop target (3.0.9)'
++ local identity=
++ cat
++ echo 'Testing upstream rsync 3.0.9 client -> oc-rsync --daemon'
+Testing upstream rsync 3.0.9 client -> oc-rsync --daemon
++ start_oc_daemon /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.log /home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid 2873
++ local config=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.conf
++ local log_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.log
++ local fallback_client=/home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync
++ local pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid
++ local port=2873
++ oc_pid_file_current=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid
++ oc_pid=1034954
++ sleep 1
++ RUST_BACKTRACE=1
++ OC_RSYNC_DAEMON_FALLBACK=0
++ /home/ofer/rsync/target/dist/oc-rsync --daemon --config /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.conf --port 2873 --log-file /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.log
++ /home/ofer/rsync/target/interop/upstream-install/3.0.9/bin/rsync -av --timeout=10 /tmp/tmp.WeWtSjeAoh/source/ rsync://127.0.0.1:2873/interop
++ echo 'FAIL: upstream rsync 3.0.9 -> oc-rsync --daemon'
+FAIL: upstream rsync 3.0.9 -> oc-rsync --daemon
++ echo '--- oc-rsync --daemon log (/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.log) ---'
+--- oc-rsync --daemon log (/tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.log) ---
++ cat /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.log
+oc-rsync info: rsyncd version 3.4.1-rust starting, listening on port 2873 at crates/daemon/src/daemon/sections/server_runtime.rs:382 [daemon=3.4.1-rust]
+oc-rsync info: connect from localhost (127.0.0.1) at crates/daemon/src/daemon/sections/auth_helpers.rs:52 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' requested from localhost (127.0.0.1) at crates/daemon/src/daemon/sections/auth_helpers.rs:70 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' from localhost (127.0.0.1): client args: --server -vlogDtpre.iLsf --timeout=10 . interop/ at crates/daemon/src/daemon/sections/module_access.rs:520 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' from localhost (127.0.0.1): protocol 30, role: Receiver at crates/daemon/src/daemon/sections/module_access.rs:621 [daemon=3.4.1-rust]
+[sender] io timeout after 10 seconds -- exiting
+rsync error: timeout in data send/receive (code 30) at io.c(140) [sender=3.0.9]
+oc-rsync error: transfer failed to localhost (127.0.0.1): module=interop error=failed to read filter list: failed to fill whole buffer (code 1) at crates/daemon/src/daemon/sections/module_access.rs:688 [daemon=3.4.1-rust]
++ stop_oc_daemon
++ [[ -n 1034954 ]]
++ kill 1034954
++ wait 1034954
++ true
++ oc_pid=
++ [[ -n /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid ]]
++ rm -f /tmp/tmp.WeWtSjeAoh/oc-daemon-3-0-9.pid
++ oc_pid_file_current=
++ return 1
++ failed+=("$version")
++ port_base=2875
++ for version in "${versions[@]}"
++ upstream_binary=/home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync
++ [[ ! -x /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync ]]
++ echo 'Running interoperability checks against upstream rsync 3.1.3'
+Running interoperability checks against upstream rsync 3.1.3
++ run_interop_case 3.1.3 /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync 2875 2876
++ local version=3.1.3
++ local upstream_binary=/home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync
++ local oc_port=2875
++ local upstream_port=2876
++ local version_tag=3-1-3
++ local oc_dest=/tmp/tmp.WeWtSjeAoh/oc-destination-3-1-3
++ local up_dest=/tmp/tmp.WeWtSjeAoh/upstream-destination-3-1-3
++ local oc_pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid
++ local up_pid_file=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-1-3.pid
++ local oc_conf=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.conf
++ local up_conf=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-1-3.conf
++ local oc_log=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.log
++ local up_log=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-1-3.log
++ rm -rf /tmp/tmp.WeWtSjeAoh/oc-destination-3-1-3 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-1-3
++ mkdir -p /tmp/tmp.WeWtSjeAoh/oc-destination-3-1-3 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-1-3
++ write_rust_daemon_conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid 2875 /tmp/tmp.WeWtSjeAoh/oc-destination-3-1-3 'oc interop target (3.1.3)'
++ local path=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.conf
++ local pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid
++ local port=2875
++ local dest=/tmp/tmp.WeWtSjeAoh/oc-destination-3-1-3
++ local 'comment=oc interop target (3.1.3)'
++ cat
++ write_upstream_conf /tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-1-3.conf /tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-1-3.pid 2876 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-1-3 'upstream interop target (3.1.3)' ''
++ local path=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-1-3.conf
++ local pid_file=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-1-3.pid
++ local port=2876
++ local dest=/tmp/tmp.WeWtSjeAoh/upstream-destination-3-1-3
++ local 'comment=upstream interop target (3.1.3)'
++ local identity=
++ cat
++ echo 'Testing upstream rsync 3.1.3 client -> oc-rsync --daemon'
+Testing upstream rsync 3.1.3 client -> oc-rsync --daemon
++ start_oc_daemon /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.log /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid 2875
++ local config=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.conf
++ local log_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.log
++ local fallback_client=/home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync
++ local pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid
++ local port=2875
++ oc_pid_file_current=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid
++ oc_pid=1034972
++ sleep 1
++ RUST_BACKTRACE=1
++ OC_RSYNC_DAEMON_FALLBACK=0
++ /home/ofer/rsync/target/dist/oc-rsync --daemon --config /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.conf --port 2875 --log-file /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.log
++ /home/ofer/rsync/target/interop/upstream-install/3.1.3/bin/rsync -av --timeout=10 /tmp/tmp.WeWtSjeAoh/source/ rsync://127.0.0.1:2875/interop
++ echo 'FAIL: upstream rsync 3.1.3 -> oc-rsync --daemon'
+FAIL: upstream rsync 3.1.3 -> oc-rsync --daemon
++ echo '--- oc-rsync --daemon log (/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.log) ---'
+--- oc-rsync --daemon log (/tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.log) ---
++ cat /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.log
+oc-rsync info: rsyncd version 3.4.1-rust starting, listening on port 2875 at crates/daemon/src/daemon/sections/server_runtime.rs:382 [daemon=3.4.1-rust]
+oc-rsync info: connect from localhost (127.0.0.1) at crates/daemon/src/daemon/sections/auth_helpers.rs:52 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' requested from localhost (127.0.0.1) at crates/daemon/src/daemon/sections/auth_helpers.rs:70 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' from localhost (127.0.0.1): client args: --server -vlogDtpre.iLsfxC --timeout=10 . interop/ at crates/daemon/src/daemon/sections/module_access.rs:520 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' from localhost (127.0.0.1): protocol 31, role: Receiver at crates/daemon/src/daemon/sections/module_access.rs:621 [daemon=3.4.1-rust]
+oc-rsync error: transfer failed to localhost (127.0.0.1): module=interop error=failed to read filter list: failed to fill whole buffer (code 1) at crates/daemon/src/daemon/sections/module_access.rs:688 [daemon=3.4.1-rust]
+rsync: connection unexpectedly closed (0 bytes received so far) [sender]
+rsync error: error in rsync protocol data stream (code 12) at io.c(235) [sender=3.1.3]
++ stop_oc_daemon
++ [[ -n 1034972 ]]
++ kill 1034972
++ wait 1034972
++ true
++ oc_pid=
++ [[ -n /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid ]]
++ rm -f /tmp/tmp.WeWtSjeAoh/oc-daemon-3-1-3.pid
++ oc_pid_file_current=
++ return 1
++ failed+=("$version")
++ port_base=2877
++ for version in "${versions[@]}"
++ upstream_binary=/home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync
++ [[ ! -x /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync ]]
++ echo 'Running interoperability checks against upstream rsync 3.4.1'
+Running interoperability checks against upstream rsync 3.4.1
++ run_interop_case 3.4.1 /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync 2877 2878
++ local version=3.4.1
++ local upstream_binary=/home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync
++ local oc_port=2877
++ local upstream_port=2878
++ local version_tag=3-4-1
++ local oc_dest=/tmp/tmp.WeWtSjeAoh/oc-destination-3-4-1
++ local up_dest=/tmp/tmp.WeWtSjeAoh/upstream-destination-3-4-1
++ local oc_pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid
++ local up_pid_file=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-4-1.pid
++ local oc_conf=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.conf
++ local up_conf=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-4-1.conf
++ local oc_log=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.log
++ local up_log=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-4-1.log
++ rm -rf /tmp/tmp.WeWtSjeAoh/oc-destination-3-4-1 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-4-1
++ mkdir -p /tmp/tmp.WeWtSjeAoh/oc-destination-3-4-1 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-4-1
++ write_rust_daemon_conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid 2877 /tmp/tmp.WeWtSjeAoh/oc-destination-3-4-1 'oc interop target (3.4.1)'
++ local path=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.conf
++ local pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid
++ local port=2877
++ local dest=/tmp/tmp.WeWtSjeAoh/oc-destination-3-4-1
++ local 'comment=oc interop target (3.4.1)'
++ cat
++ write_upstream_conf /tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-4-1.conf /tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-4-1.pid 2878 /tmp/tmp.WeWtSjeAoh/upstream-destination-3-4-1 'upstream interop target (3.4.1)' ''
++ local path=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-4-1.conf
++ local pid_file=/tmp/tmp.WeWtSjeAoh/upstream-rsyncd-3-4-1.pid
++ local port=2878
++ local dest=/tmp/tmp.WeWtSjeAoh/upstream-destination-3-4-1
++ local 'comment=upstream interop target (3.4.1)'
++ local identity=
++ cat
++ echo 'Testing upstream rsync 3.4.1 client -> oc-rsync --daemon'
+Testing upstream rsync 3.4.1 client -> oc-rsync --daemon
++ start_oc_daemon /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.conf /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.log /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid 2877
++ local config=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.conf
++ local log_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.log
++ local fallback_client=/home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync
++ local pid_file=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid
++ local port=2877
++ oc_pid_file_current=/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid
++ oc_pid=1034982
++ sleep 1
++ RUST_BACKTRACE=1
++ OC_RSYNC_DAEMON_FALLBACK=0
++ /home/ofer/rsync/target/dist/oc-rsync --daemon --config /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.conf --port 2877 --log-file /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.log
++ /home/ofer/rsync/target/interop/upstream-install/3.4.1/bin/rsync -av --timeout=10 /tmp/tmp.WeWtSjeAoh/source/ rsync://127.0.0.1:2877/interop
++ echo 'FAIL: upstream rsync 3.4.1 -> oc-rsync --daemon'
+FAIL: upstream rsync 3.4.1 -> oc-rsync --daemon
++ echo '--- oc-rsync --daemon log (/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.log) ---'
+--- oc-rsync --daemon log (/tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.log) ---
++ cat /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.log
+oc-rsync info: rsyncd version 3.4.1-rust starting, listening on port 2877 at crates/daemon/src/daemon/sections/server_runtime.rs:382 [daemon=3.4.1-rust]
+oc-rsync info: connect from localhost (127.0.0.1) at crates/daemon/src/daemon/sections/auth_helpers.rs:52 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' requested from localhost (127.0.0.1) at crates/daemon/src/daemon/sections/auth_helpers.rs:70 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' from localhost (127.0.0.1): client args: --server -vlogDtpre.iLsfxCIvu --timeout=10 . interop/ at crates/daemon/src/daemon/sections/module_access.rs:520 [daemon=3.4.1-rust]
+oc-rsync info: module 'interop' from localhost (127.0.0.1): protocol 32, role: Receiver at crates/daemon/src/daemon/sections/module_access.rs:621 [daemon=3.4.1-rust]
+oc-rsync error: transfer failed to localhost (127.0.0.1): module=interop error=failed to read filter list: failed to fill whole buffer (code 1) at crates/daemon/src/daemon/sections/module_access.rs:688 [daemon=3.4.1-rust]
+rsync: connection unexpectedly closed (0 bytes received so far) [sender]
+rsync error: error in rsync protocol data stream (code 12) at io.c(232) [sender=3.4.1]
++ stop_oc_daemon
++ [[ -n 1034982 ]]
++ kill 1034982
++ wait 1034982
++ true
++ oc_pid=
++ [[ -n /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid ]]
++ rm -f /tmp/tmp.WeWtSjeAoh/oc-daemon-3-4-1.pid
++ oc_pid_file_current=
++ return 1
++ failed+=("$version")
++ port_base=2879
++ ((  3 > 0  ))
++ echo 'Interop failures: 3.0.9 3.1.3 3.4.1'
+Interop failures: 3.0.9 3.1.3 3.4.1
++ exit 1
++ cleanup
++ local exit_code=1
++ stop_oc_daemon
++ [[ -n '' ]]
++ [[ -n '' ]]
++ stop_upstream_daemon
++ [[ -n '' ]]
++ [[ -n '' ]]
++ [[ -n /tmp/tmp.WeWtSjeAoh ]]
++ [[ -d /tmp/tmp.WeWtSjeAoh ]]
++ rm -rf /tmp/tmp.WeWtSjeAoh
++ exit 1
+

@@ -19,10 +19,10 @@ protocol = { path = "../protocol" }
 metadata = { path = "../metadata", default-features = false }
 engine = { path = "../engine", default-features = false }
 bandwidth = { path = "../bandwidth" }
-transport = { path = "../transport" }
+rsync_io = { path = "../rsync_io", package = "rsync_io" }
 filters = { path = "../filters" }
 compress = { path = "../compress" }
-walk = { path = "../walk" }
+flist = { path = "../flist" }
 logging = { path = "../logging" }
 libc = "0.2"
 base64 = "0.22"

@@ -5,7 +5,7 @@ use protocol::{
     LEGACY_DAEMON_PREFIX, LegacyDaemonMessage, parse_legacy_daemon_message,
     parse_legacy_warning_message,
 };
-use transport::negotiate_legacy_daemon_session;
+use rsync_io::negotiate_legacy_daemon_session;
 
 use super::super::{
     ClientError, DAEMON_SOCKET_TIMEOUT, PARTIAL_TRANSFER_EXIT_CODE, TransferTimeout,
