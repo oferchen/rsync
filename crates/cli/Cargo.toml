@@ -28,7 +28,7 @@ logging-sink = { path = "../logging-sink" }
 protocol = { path = "../protocol" }
 compress = { path = "../compress" }
 metadata = { path = "../metadata" }
-transport = { path = "../transport" }
+rsync_io = { path = "../rsync_io", package = "rsync_io" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = "3.10"
 

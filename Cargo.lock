@@ -313,10 +313,10 @@ dependencies = [
  "metadata",
  "predicates",
  "protocol",
+ "rsync_io",
  "rustix 0.38.44",
  "tempfile",
  "time",
- "transport",
  "users",
  "xattr",
 ]
@@ -348,16 +348,16 @@ dependencies = [
  "engine",
  "filetime",
  "filters",
+ "flist",
  "libc",
  "logging",
  "metadata",
  "nix",
  "protocol",
+ "rsync_io",
  "rustix 0.38.44",
  "socket2",
  "tempfile",
- "transport",
- "walk",
 ]
 
 [[package]]
@@ -534,6 +534,14 @@ dependencies = [
  "crc32fast",
  "libz-sys",
  "miniz_oxide",
+]
+
+[[package]]
+name = "flist"
+version = "3.4.1-rust"
+dependencies = [
+ "logging",
+ "tempfile",
 ]
 
 [[package]]
@@ -1067,6 +1075,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "rsync_io"
+version = "3.4.1-rust"
+dependencies = [
+ "logging",
+ "memchr",
+ "proptest",
+ "protocol",
+]
+
+[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1376,16 +1394,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
-name = "transport"
-version = "3.4.1-rust"
-dependencies = [
- "logging",
- "memchr",
- "proptest",
- "protocol",
-]
-
-[[package]]
 name = "twox-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1444,14 +1452,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "walk"
-version = "3.4.1-rust"
-dependencies = [
- "logging",
- "tempfile",
 ]
 
 [[package]]
