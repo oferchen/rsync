@@ -271,13 +271,21 @@ This document defines the internal actors (“agents”), their responsibilities
 
 ### Upstream Rsync as the Source of Truth
 
-All implementations **must** mirror upstream rsync behaviour:
+All implementations **must** mirror upstream rsync behaviour. The upstream C
+source code is the **ONLY** authoritative reference for protocol behaviour,
+wire formats, and algorithmic details.
 
 - **Study the C source**: Before implementing a feature, read the corresponding
   upstream rsync C code (e.g., `options.c` for CLI, `io.c` for I/O, `flist.c`
-  for file lists). The C code is authoritative.
+  for file lists, `generator.c` for sender logic, `receiver.c` for receiver).
+  The C code is authoritative—not documentation, not comments, not memory.
+- **Local upstream source**: The upstream rsync source is available at
+  `target/interop/upstream-src/rsync-3.4.1/` after running interop tests.
+  Always consult this when investigating protocol behaviour.
 - **Code over documentation**: When upstream docs and code disagree, follow the
   code. Document any discrepancies you discover.
+- **Code over memory**: Never rely on what you "remember" about how rsync works.
+  Always verify against the actual upstream source code before implementing.
 - **Test against upstream**: Run interop tests with upstream rsync versions
   (3.0.9, 3.1.3, 3.4.1) to verify wire-level compatibility.
 - **Preserve semantics exactly**: Exit codes, error messages, progress output,
@@ -727,7 +735,9 @@ All comments must follow rustdoc conventions and provide genuine value:
 
 #### Comment Cleanup Rules
 
-When reviewing or writing code, actively remove unhelpful comments:
+**Proactive cleanup is mandatory.** When reviewing or writing code, actively
+remove unhelpful comments. Comments that don't add value are technical debt
+that obscures the code and misleads future readers.
 
 1. **Delete restatement comments** — Comments that merely describe what the code
    does are noise. The code itself is the source of truth.
@@ -776,6 +786,13 @@ When reviewing or writing code, actively remove unhelpful comments:
 
 5. **Delete TODO/FIXME in production code** — Use issue tracking instead.
    The `no_placeholders` agent enforces this.
+
+6. **Remove debug/checkpoint code after debugging** — File-based checkpoints
+   (`std::fs::write("/tmp/...")`) are essential for daemon debugging but must
+   be removed before committing. Search for and remove all checkpoint code:
+   ```bash
+   git grep 'std::fs::write.*tmp' crates/
+   ```
 
 ### 2.3 Coding Principles
 
