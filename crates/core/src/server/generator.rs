@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 use checksums::strong::{Md4, Md5, Md5Seed, Xxh3, Xxh64};
 use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
+use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
 use protocol::ndx::{NDX_FLIST_EOF, NdxCodec, create_ndx_codec};
@@ -922,12 +923,16 @@ impl GeneratorContext {
         let flist_buildtime: u64 = 0; // TODO: track actual build time
         let flist_xfertime: u64 = 0; // TODO: track actual transfer time
 
-        protocol::write_varlong30(writer, total_read as i64, 3)?;
-        protocol::write_varlong30(writer, total_written as i64, 3)?;
-        protocol::write_varlong30(writer, total_size as i64, 3)?;
+        // Use protocol-aware codec for stats encoding:
+        // - Protocol < 30: uses write_longint (4-byte fixed, or 12 for large values)
+        // - Protocol >= 30: uses write_varlong (variable-length encoding)
+        let stats_codec = create_protocol_codec(self.protocol.as_u8());
+        stats_codec.write_stat(writer, total_read as i64)?;
+        stats_codec.write_stat(writer, total_written as i64)?;
+        stats_codec.write_stat(writer, total_size as i64)?;
         if self.protocol.as_u8() >= 29 {
-            protocol::write_varlong30(writer, flist_buildtime as i64, 3)?;
-            protocol::write_varlong30(writer, flist_xfertime as i64, 3)?;
+            stats_codec.write_stat(writer, flist_buildtime as i64)?;
+            stats_codec.write_stat(writer, flist_xfertime as i64)?;
         }
         writer.flush()?;
 
