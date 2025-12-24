@@ -326,8 +326,7 @@ pub fn setup_protocol(
             let _ = std::fs::write(
                 "/tmp/setup_COMPAT_WRITE",
                 format!(
-                    "value={:#x} ({}) bytes={:02x?} our_flags={:?}",
-                    compat_value, compat_value, compat_bytes, our_flags
+                    "value={compat_value:#x} ({compat_value}) bytes={compat_bytes:02x?} our_flags={our_flags:?}",
                 ),
             );
             protocol::write_varint(stdout, compat_value)?;
@@ -441,7 +440,7 @@ pub fn setup_protocol(
         let seed_bytes = seed.to_le_bytes();
         let _ = std::fs::write(
             "/tmp/setup_SEED_WRITE",
-            format!("seed={} bytes={:02x?}", seed, seed_bytes),
+            format!("seed={seed} bytes={seed_bytes:02x?}"),
         );
         stdout.write_all(&seed_bytes)?;
         stdout.flush()?;
@@ -455,7 +454,7 @@ pub fn setup_protocol(
 
     let _ = std::fs::write(
         "/tmp/setup_RETURNING",
-        format!("compat={:?} seed={}", compat_flags, checksum_seed),
+        format!("compat={compat_flags:?} seed={checksum_seed}"),
     );
     Ok(SetupResult {
         negotiated_algorithms,

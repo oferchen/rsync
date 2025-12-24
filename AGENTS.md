@@ -314,13 +314,13 @@ This section cross-references upstream rsync C source with the Rust implementati
 
 | Upstream File | oc-rsync Location | Notes |
 |---------------|-------------------|-------|
-| `flist.c` | `crates/walk/` | File list building and traversal. Aliased as `core::flist` for upstream compatibility. |
+| `flist.c` | `crates/flist/` | File list building and traversal |
 | `generator.c` | `crates/core/src/server/generator.rs` | Generator role (sender) implementation |
 | `receiver.c` | `crates/core/src/server/receiver.rs` | Receiver role implementation |
 | `sender.c` | `crates/engine/` (partial) | Delta generation, mixed with local copy logic |
 | `match.c` | `crates/checksums/src/rolling/` | Block matching via rolling checksum |
 | `checksum.c` | `crates/checksums/src/strong/` | Strong checksums (MD4/MD5/SHA1/XXH) |
-| `io.c` | `crates/transport/` | Multiplexed I/O layer |
+| `io.c` | `crates/io/` | Multiplexed I/O layer (imported as `rsync_io` to avoid `std::io` conflict) |
 | `compat.c` | `crates/protocol/src/compat.rs` | Compatibility flags negotiation |
 | `clientserver.c` | `crates/daemon/` | Daemon protocol implementation |
 | `authenticate.c` | `crates/core/src/auth/` | Daemon authentication |
@@ -332,8 +332,8 @@ This section cross-references upstream rsync C source with the Rust implementati
 
 | Upstream Term | oc-rsync Term | Location |
 |---------------|---------------|----------|
-| `file_list` | `FileList` | `crates/walk/` |
-| `file_struct` | `FileEntry` | `crates/walk/` |
+| `file_list` | `FileListWalker` | `crates/flist/` |
+| `file_struct` | `FileListEntry` | `crates/flist/` |
 | `sum_struct` | `Signature` / `FileSignature` | `crates/checksums/` |
 | `map_struct` | `MappedFile` | `crates/engine/` |
 | `stats` | `TransferStats` | Various |
@@ -370,11 +370,16 @@ Version strings follow the format `x.y.z[-rust]`:
 - Centralized in `crates/branding/src/workspace/version.rs`
 - Validated at build time via `crates/branding/build.rs`
 
-### Transitional Aliases
+### Crate Naming
 
-To aid navigation for contributors familiar with upstream:
-- `pub use walk as flist;` in `crates/core/src/lib.rs` (line 45)
-- Both `core::walk` and `core::flist` access the same module
+Crate names align with upstream rsync file names:
+
+- `flist` — mirrors `flist.c` (file list generation)
+- `io` — mirrors `io.c` (imported as `rsync_io` to avoid `std::io` conflict)
+
+Re-exports in `core` provide convenient access:
+- `core::flist` — re-exports the `flist` crate
+- `core::io` — re-exports `rsync_io` as `io`
 
 ---
 
@@ -383,7 +388,7 @@ To aid navigation for contributors familiar with upstream:
 ### 1) Client & Daemon Entrypoint (CLI Binary)
 
 - **Binary**: `src/bin/oc-rsync.rs`
-- **Depends on**: `cli`, `core`, `transport`, `daemon`, `logging`
+- **Depends on**: `cli`, `core`, `io`, `daemon`, `logging`
 - **Responsibilities**:
   - Parse CLI (Clap v4) and render upstream-parity help/misuse.
   - Dispatch into:
@@ -717,22 +722,60 @@ All comments must follow rustdoc conventions and provide genuine value:
 - **Use `//!` for module-level documentation** — Describe the module's purpose
 - **Use `//` sparingly for inline implementation notes** — Only when the code
   isn't self-explanatory
-- **Delete unhelpful comments** — Remove comments that merely restate the code,
-  are outdated, or add no insight
 - **Prefer self-documenting code** — Use descriptive names, extract functions,
   and structure code to minimize comment needs
 
-Bad (restatement):
-```rust
-// Increment counter
-counter += 1;
-```
+#### Comment Cleanup Rules
 
-Good (explains why):
-```rust
-// Compensate for zero-indexed protocol version in legacy clients
-counter += 1;
-```
+When reviewing or writing code, actively remove unhelpful comments:
+
+1. **Delete restatement comments** — Comments that merely describe what the code
+   does are noise. The code itself is the source of truth.
+   ```rust
+   // Bad: restates the code
+   // Read the file
+   let contents = fs::read_to_string(path)?;
+
+   // Good: no comment needed, code is self-explanatory
+   let contents = fs::read_to_string(path)?;
+   ```
+
+2. **Delete outdated comments** — Comments that no longer match the code are
+   actively harmful. If you change code, update or remove associated comments.
+   ```rust
+   // Bad: comment says one thing, code does another
+   // Send exactly 4 bytes for the header
+   writer.write_all(&header[..8])?;  // Actually sends 8 bytes!
+
+   // Good: remove the lie
+   writer.write_all(&header[..8])?;
+   ```
+
+3. **Convert inline comments to rustdoc** — If a comment explains public API
+   behavior, it belongs in `///` documentation, not inline `//`.
+   ```rust
+   // Bad: useful info hidden in inline comment
+   // This timeout matches upstream rsync's SELECT_TIMEOUT
+   pub const DEFAULT_TIMEOUT: u64 = 60;
+
+   // Good: rustdoc makes it discoverable
+   /// Default I/O timeout in seconds.
+   ///
+   /// Matches upstream rsync's `SELECT_TIMEOUT` constant from `io.c`.
+   pub const DEFAULT_TIMEOUT: u64 = 60;
+   ```
+
+4. **Reference upstream when explaining non-obvious behavior** — When code
+   mirrors upstream rsync behavior that isn't intuitive, cite the source.
+   ```rust
+   // Good: explains WHY with upstream reference
+   // Protocol version is sent as (version * 1000000) for backwards compat
+   // with rsync < 3.0 (see compat.c:setup_protocol)
+   let wire_version = protocol_version * 1_000_000;
+   ```
+
+5. **Delete TODO/FIXME in production code** — Use issue tracking instead.
+   The `no_placeholders` agent enforces this.
 
 ### 2.4 `enforce_limits` Agent
 

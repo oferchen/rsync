@@ -15,7 +15,7 @@ use std::ffi::OsString;
 
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType, write_filter_list};
-use transport::ssh::{SshCommand, SshConnection, parse_ssh_operand};
+use rsync_io::ssh::{SshCommand, SshConnection, parse_ssh_operand};
 
 use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
 use super::super::error::{ClientError, invalid_argument_error};
