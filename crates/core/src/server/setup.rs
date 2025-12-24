@@ -277,16 +277,6 @@ pub fn setup_protocol(
             let client_info = parse_client_info(args);
             // DISABLED: allow_inc_recurse=false - see comment in exchange_compat_flags_direct
             let flags = build_compat_flags_from_client_info(&client_info, false);
-            let _ = std::fs::write(
-                "/tmp/setup_CLIENT_INFO",
-                format!(
-                    "client_info='{}' flags={:?} has_i={} has_v={}",
-                    client_info,
-                    flags,
-                    client_info.contains('i'),
-                    client_info.contains('v')
-                ),
-            );
             (flags, Some(client_info))
         } else {
             // SSH/client mode: use default flags based on platform capabilities
@@ -320,35 +310,13 @@ pub fn setup_protocol(
         let compat_flags = if is_server {
             // Server: build and WRITE our compat flags
             let compat_value = our_flags.bits() as i32;
-            // Debug: trace exact bytes being written for compat flags
-            let mut compat_bytes = Vec::new();
-            protocol::encode_varint_to_vec(compat_value, &mut compat_bytes);
-            let _ = std::fs::write(
-                "/tmp/setup_COMPAT_WRITE",
-                format!(
-                    "value={compat_value:#x} ({compat_value}) bytes={compat_bytes:02x?} our_flags={our_flags:?}",
-                ),
-            );
             protocol::write_varint(stdout, compat_value)?;
             stdout.flush()?;
             our_flags
         } else {
             // Client: READ compat flags from server
             let compat_value = protocol::read_varint(stdin)?;
-            let flags = CompatibilityFlags::from_bits(compat_value as u32);
-            // Debug checkpoint: what compat flags did we receive from server?
-            let _ = std::fs::write(
-                "/tmp/setup_COMPAT_FLAGS_READ",
-                format!(
-                    "value={:#x} ({}) has_varint={} has_inc_recurse={} flags={:?}",
-                    compat_value,
-                    compat_value,
-                    flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
-                    flags.contains(CompatibilityFlags::INC_RECURSE),
-                    flags
-                ),
-            );
-            flags
+            CompatibilityFlags::from_bits(compat_value as u32)
         };
 
         // Protocol 30+ capability negotiation (upstream compat.c:534-585)
@@ -422,10 +390,6 @@ pub fn setup_protocol(
     // Checksum seed exchange (ALL protocols, upstream compat.c:750)
     // - Server: generates and WRITES the seed
     // - Client: READS the seed from server
-    let _ = std::fs::write(
-        "/tmp/setup_SEED_EXCHANGE_START",
-        format!("is_server={is_server}"),
-    );
     let checksum_seed = if is_server {
         // Server: generate and send seed
         let seed = {
@@ -438,10 +402,6 @@ pub fn setup_protocol(
             timestamp ^ (pid << 6)
         };
         let seed_bytes = seed.to_le_bytes();
-        let _ = std::fs::write(
-            "/tmp/setup_SEED_WRITE",
-            format!("seed={seed} bytes={seed_bytes:02x?}"),
-        );
         stdout.write_all(&seed_bytes)?;
         stdout.flush()?;
         seed
@@ -452,10 +412,6 @@ pub fn setup_protocol(
         i32::from_le_bytes(seed_bytes)
     };
 
-    let _ = std::fs::write(
-        "/tmp/setup_RETURNING",
-        format!("compat={compat_flags:?} seed={checksum_seed}"),
-    );
     Ok(SetupResult {
         negotiated_algorithms,
         compat_flags,
