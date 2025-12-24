@@ -287,7 +287,6 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     }
 
     let value = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    // Debug logging removed - eprintln! crashes when stderr unavailable in daemon threads
     Ok(value)
 }
 

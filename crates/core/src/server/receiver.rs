@@ -164,7 +164,12 @@ impl ReceiverContext {
             FileListReader::with_compat_flags(self.protocol, flags)
         } else {
             FileListReader::new(self.protocol)
-        };
+        }
+        // Wire up preserve_uid/preserve_gid from server config flags.
+        // This MUST match what the sender is sending - if sender uses -o/-g,
+        // uid/gid values are included in the file list and we must consume them.
+        .with_preserve_uid(self.config.flags.owner)
+        .with_preserve_gid(self.config.flags.group);
         let mut count = 0;
 
         // Read entries until end marker or error
@@ -303,18 +308,11 @@ impl ReceiverContext {
         mut reader: super::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
-        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30 with INC_RECURSE.
+        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30.
         // This matches upstream do_server_recv() at main.c:1167 which calls io_start_multiplex_in()
         // BEFORE calling recv_filter_list() at line 1171.
-        //
-        // However, when INC_RECURSE is DISABLED (daemon mode with allow_inc_recurse=false),
-        // the client sends filter list as PLAIN data, not multiplexed.
-        // We must check the actual compat flags, not just the protocol version.
-        let inc_recurse_enabled = self
-            .compat_flags
-            .as_ref()
-            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
-        if self.protocol.as_u8() >= 30 && inc_recurse_enabled {
+        // The client sends ALL data (including filter list) as multiplexed MSG_DATA frames for protocol >= 30.
+        if self.protocol.as_u8() >= 30 {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
             })?;
@@ -335,13 +333,29 @@ impl ReceiverContext {
         }
 
         // Read filter list from sender (multiplexed for protocol >= 30)
-        // This mirrors upstream recv_filter_list timing at main.c:1171
+        // This mirrors upstream recv_filter_list() at exclude.c:1672-1687.
+        //
+        // CRITICAL: The filter list is ONLY read when `receiver_wants_list` is true.
+        // From upstream exclude.c:1680:
+        //   if (!local_server && (am_sender || receiver_wants_list)) {
+        //       while ((len = read_int(f_in)) != 0) { ... }
+        //   }
+        //
+        // Where receiver_wants_list = prune_empty_dirs || (delete_mode && ...)
+        //
+        // For a daemon receiver (am_sender=0), the filter list is only read when:
+        // - prune_empty_dirs is enabled, OR
+        // - delete_mode is enabled
+        //
+        // If neither flag is set, NO filter list is sent by the client and we
+        // must NOT try to read one, or we'll block waiting for data that never comes.
         //
         // In client mode (daemon client), skip reading filter list because:
         // - The client already sent filter list to the daemon
         // - The daemon (as generator) already consumed it
         // - There's no filter list coming back on this stream
-        if !self.config.client_mode {
+        let receiver_wants_list = self.config.flags.delete; // TODO: add prune_empty_dirs support
+        if !self.config.client_mode && receiver_wants_list {
             let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
             })?;
