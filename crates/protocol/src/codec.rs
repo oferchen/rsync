@@ -139,6 +139,27 @@ pub trait ProtocolCodec: Send + Sync {
     fn read_varint<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i32> {
         read_varint(reader)
     }
+
+    // ========================================================================
+    // Statistics encoding (mirrors write_varlong30 in upstream)
+    // ========================================================================
+
+    /// Writes a statistic value (used for transfer stats in handle_stats).
+    ///
+    /// This mirrors upstream's `write_varlong30(f, x, 3)` macro which:
+    /// - Protocol < 30: Uses longint (4 bytes, or 12 bytes for large values)
+    /// - Protocol >= 30: Uses varlong with min_bytes=3
+    ///
+    /// The encoding is identical to `write_file_size` but this method is provided
+    /// for semantic clarity when encoding transfer statistics.
+    fn write_stat<W: Write + ?Sized>(&self, writer: &mut W, value: i64) -> io::Result<()> {
+        self.write_file_size(writer, value)
+    }
+
+    /// Reads a statistic value.
+    fn read_stat<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64> {
+        self.read_file_size(reader)
+    }
 }
 
 // ============================================================================
