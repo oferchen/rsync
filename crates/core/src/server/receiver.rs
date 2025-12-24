@@ -37,6 +37,7 @@ use std::path::PathBuf;
 use checksums::strong::Md5Seed;
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader};
+use protocol::ndx::{NdxCodec, create_ndx_codec};
 use protocol::wire::DeltaOp;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
@@ -444,13 +445,10 @@ impl ReceiverContext {
         // 2. For each file to transfer: sends ndx, then signature
         // 3. Waits for sender to send delta
         //
-        // NDX encoding (write_ndx/read_ndx in io.c):
-        // - 0x00 = NDX_DONE (-1)
-        // - 0xFF = negative number prefix (other negative values)
-        // - 0xFE = extended encoding (large deltas)
-        // - Other bytes: delta from previous positive index
-        //   (e.g., for sequential files: prev=-1, send 1 for idx 0, then 1 for each next)
-        let mut prev_positive_ndx: i32 = -1; // Track last positive index sent
+        // Use NdxCodec Strategy pattern for protocol-version-aware NDX encoding.
+        // The codec handles both legacy (4-byte LE) and modern (delta) formats,
+        // and maintains its own prev_positive state for delta encoding.
+        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
         for (file_idx, file_entry) in self.file_list.iter().enumerate() {
             let relative_path = file_entry.path();
@@ -467,26 +465,10 @@ impl ReceiverContext {
                 continue;
             }
 
-            // Send file index using NDX delta encoding
-            // Delta = current_index - prev_positive_ndx
+            // Send file index using NDX encoding via NdxCodec Strategy pattern.
+            // The codec handles protocol-version-aware encoding automatically.
             let ndx = file_idx as i32;
-            let delta = ndx - prev_positive_ndx;
-            prev_positive_ndx = ndx;
-
-            // For small deltas (1-253), send as single byte
-            // For larger deltas, would need 0xFE prefix + 2 or 4 bytes
-            if (1..=253).contains(&delta) {
-                writer.write_all(&[delta as u8])?;
-            } else if delta == 0 {
-                // Zero delta: 0xFE + 2-byte value
-                writer.write_all(&[0xFE, 0x00, 0x00])?;
-            } else {
-                // For larger values, use extended encoding
-                // 0xFE + 2-byte delta (or 4-byte if high bit set)
-                let delta_u16 = delta as u16;
-                writer.write_all(&[0xFE])?;
-                writer.write_all(&delta_u16.to_le_bytes())?;
-            }
+            ndx_write_codec.write_ndx(&mut *writer, ndx)?;
 
             // For protocol >= 29, sender expects iflags after NDX
             // ITEM_TRANSFER (0x8000) tells sender to read sum_head and send delta
@@ -701,9 +683,9 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
-        // Send NDX_DONE (wire value 0x00) to signal end of transfer
-        // This tells the sender we don't want any more files
-        writer.write_all(&[0x00])?;
+        // Send NDX_DONE to signal end of transfer using NdxCodec Strategy pattern.
+        // This tells the sender we don't want any more files.
+        ndx_write_codec.write_ndx_done(&mut *writer)?;
         writer.flush()?;
 
         // Report metadata errors summary if any occurred

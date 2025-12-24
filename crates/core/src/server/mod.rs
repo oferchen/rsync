@@ -148,6 +148,15 @@ pub fn run_server_with_handshake<W: Write>(
     stdin: &mut dyn Read,
     mut stdout: W,
 ) -> ServerResult {
+    // DEBUG: Checkpoint at entry
+    let _ = std::fs::write(
+        "/tmp/server_RUN_ENTRY",
+        format!(
+            "protocol={} role={:?}",
+            handshake.protocol.as_u8(),
+            config.role
+        ),
+    );
     // Protocol has already been negotiated via:
     // - perform_handshake() for SSH mode (binary exchange)
     // - @RSYNCD exchange for daemon mode
@@ -382,6 +391,11 @@ pub fn run_server_with_handshake<W: Write>(
     // See receiver.rs and generator.rs for the activation points.
 
     let chained_reader = reader;
+
+    let _ = std::fs::write(
+        "/tmp/server_BEFORE_ROLE_DISPATCH",
+        format!("role={:?}", config.role),
+    );
 
     match config.role {
         ServerRole::Receiver => {
