@@ -310,10 +310,6 @@ pub fn negotiate_capabilities(
     // Step 1: SEND our supported algorithm lists (upstream compat.c:541-544)
     // Uses vstring format (NOT varint) - see write_vstring documentation
     let checksum_list = SUPPORTED_CHECKSUMS.join(" ");
-    let _ = std::fs::write(
-        "/tmp/nego_SEND_CHECKSUM",
-        format!("list='{}' len={}", checksum_list, checksum_list.len()),
-    );
     debug_log!(Proto, 2, "sending checksum list: {}", checksum_list);
     write_vstring(stdout, &checksum_list)?;
 

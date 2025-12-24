@@ -33,12 +33,12 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
-use checksums::strong::{Md4, Md5, Md5Seed, StrongDigest, Xxh3, Xxh64};
+use checksums::strong::{Md4, Md5, Md5Seed, Xxh3, Xxh64};
 use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter};
-use protocol::ndx::{NDX_FLIST_EOF, NdxState};
+use protocol::ndx::{NDX_FLIST_EOF, NdxCodec, create_ndx_codec};
 use protocol::wire::{DeltaOp, SignatureBlock, write_token_stream};
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
@@ -174,11 +174,129 @@ impl GeneratorContext {
             self.walk_path(base_path, base_path)?;
         }
 
-        // Sort file list lexicographically (rsync requirement).
+        // Sort file list using rsync's ordering (upstream flist.c:f_name_cmp).
+        //
+        // Rsync file list ordering rules:
+        // 1. Files and directories are sorted alphabetically together at each level
+        // 2. A directory entry is immediately followed by all its contents (recursively)
+        // 3. The "." entry (if present) always comes first
+        //
+        // Example order for: test.txt, subdir/, subdir/file.txt, another.txt
+        //   - . (root dir entry)
+        //   - another.txt
+        //   - subdir (alphabetically before "test")
+        //   - subdir/file.txt (contents of subdir)
+        //   - test.txt
+        //
         // We need to sort both file_list and full_paths together to maintain correspondence.
-        // Create index array, sort by name, then reorder both arrays.
+        // Create index array, sort by rsync rules, then reorder both arrays.
+
+        let file_list_ref = &self.file_list;
+
         let mut indices: Vec<usize> = (0..self.file_list.len()).collect();
-        indices.sort_by(|&a, &b| self.file_list[a].name().cmp(self.file_list[b].name()));
+        indices.sort_by(|&a, &b| {
+            let entry_a = &file_list_ref[a];
+            let entry_b = &file_list_ref[b];
+            let name_a = entry_a.name();
+            let name_b = entry_b.name();
+
+            // Handle "." specially - always comes first
+            if name_a == "." {
+                return std::cmp::Ordering::Less;
+            }
+            if name_b == "." {
+                return std::cmp::Ordering::Greater;
+            }
+
+            // Rsync file list sorting (mirrors upstream flist.c:f_name_cmp):
+            //
+            // At each directory level:
+            // 1. Files before directories (both sorted alphabetically within their category)
+            // 2. A directory is immediately followed by all its contents (recursively)
+            //
+            // Example: for test.txt, subdir/, subdir/file.txt, another.txt
+            //   - . (root marker)
+            //   - another.txt (file at root, 'a' < 's' < 't')
+            //   - subdir (directory at root, after all root files)
+            //   - subdir/file.txt (contents of subdir)
+            //   - test.txt (file at root)
+            //
+            // Wait, that's not right. Looking at actual rsync behavior:
+            //   - Files and directories at root are sorted together alphabetically
+            //   - Directory contents come right after the directory entry
+            //   - BUT within each level, files before directories of same parent
+            //
+            // Correct order for: test.txt, subdir/, subdir/file.txt, another.txt
+            //   - another.txt (file at root)
+            //   - test.txt (file at root, comes BEFORE subdir because files first at root)
+            //   - subdir (directory at root, after root files)
+            //   - subdir/file.txt
+
+            // Rsync sorting algorithm (mirrors flist.c):
+            // - At each directory level, files sort BEFORE directories
+            // - Within each category (files or dirs), sort alphabetically
+            // - Directory contents come immediately after the directory
+            //
+            // For: file1.txt, testfile.txt, subdir/, subdir/sub1.txt
+            // Result: file1.txt, testfile.txt, subdir/, subdir/sub1.txt
+            // (NOT: file1.txt, subdir/, subdir/sub1.txt, testfile.txt)
+
+            let is_dir_a = entry_a.is_dir();
+            let is_dir_b = entry_b.is_dir();
+
+            // Get parent paths (empty string for root level)
+            let parent_a = name_a.rfind('/').map_or("", |i| &name_a[..i]);
+            let parent_b = name_b.rfind('/').map_or("", |i| &name_b[..i]);
+
+            // Get just the filename component
+            let file_a = name_a.rfind('/').map_or(name_a, |i| &name_a[i + 1..]);
+            let file_b = name_b.rfind('/').map_or(name_b, |i| &name_b[i + 1..]);
+
+            if parent_a == parent_b {
+                // Same parent directory - at the same level
+                // Files sort before directories, then alphabetically within each group
+                match (is_dir_a, is_dir_b) {
+                    (false, true) => std::cmp::Ordering::Less,    // file < dir
+                    (true, false) => std::cmp::Ordering::Greater, // dir > file
+                    _ => file_a.cmp(file_b),                      // same type: alphabetical
+                }
+            } else if name_b.starts_with(name_a)
+                && name_b.as_bytes().get(name_a.len()) == Some(&b'/')
+            {
+                // a is an ancestor of b (e.g., "subdir" vs "subdir/file.txt")
+                // Ancestor comes first
+                std::cmp::Ordering::Less
+            } else if name_a.starts_with(name_b)
+                && name_a.as_bytes().get(name_b.len()) == Some(&b'/')
+            {
+                // b is an ancestor of a
+                std::cmp::Ordering::Greater
+            } else {
+                // Different parent directories
+                // Compare the root-level components first
+                // Different branches entirely - compare lexicographically at root
+                // First compare the root-level components
+                let root_a = name_a.find('/').map_or(name_a, |i| &name_a[..i]);
+                let root_b = name_b.find('/').map_or(name_b, |i| &name_b[..i]);
+
+                if root_a == root_b {
+                    // Same root, different subpaths
+                    name_a.cmp(name_b)
+                } else {
+                    // Different roots - check if they're files or dirs at root
+                    let a_is_file_at_root = !is_dir_a && !name_a.contains('/');
+                    let b_is_file_at_root = !is_dir_b && !name_b.contains('/');
+                    let a_is_under_dir = name_a.contains('/');
+                    let b_is_under_dir = name_b.contains('/');
+
+                    match (a_is_file_at_root, b_is_file_at_root) {
+                        (true, false) if b_is_under_dir || is_dir_b => std::cmp::Ordering::Less,
+                        (false, true) if a_is_under_dir || is_dir_a => std::cmp::Ordering::Greater,
+                        _ => root_a.cmp(root_b),
+                    }
+                }
+            }
+        });
 
         // Reorder both arrays according to sorted indices
         let sorted_entries: Vec<_> = indices.iter().map(|&i| self.file_list[i].clone()).collect();
@@ -216,15 +334,10 @@ impl GeneratorContext {
         // Calculate relative path
         let relative = path.strip_prefix(base).unwrap_or(path).to_path_buf();
 
-        // For the base directory, include it as "." entry (upstream rsync behavior)
-        // This is required for the receiver to properly parse the file list.
+        // For the base directory, skip the "." entry and just walk children
+        // Some clients may not expect/handle the "." entry correctly
         if relative.as_os_str().is_empty() && metadata.is_dir() {
-            // Add "." entry for the source directory (mirrors upstream flist.c)
-            let dot_entry = self.create_entry(path, &PathBuf::from("."), &metadata)?;
-            self.file_list.push(dot_entry);
-            self.full_paths.push(path.to_path_buf());
-
-            // Walk children of the base directory
+            // Walk children of the base directory (no "." entry)
             for entry in std::fs::read_dir(path)? {
                 let entry = entry?;
                 self.walk_path(base, &entry.path())?;
@@ -416,6 +529,37 @@ impl GeneratorContext {
         // Send file list
         let file_count = self.send_file_list(writer)?;
 
+        // Send ID lists for non-INC_RECURSE protocols (upstream flist.c:2513-2514)
+        //
+        // Upstream sends UID/GID mappings here if preserve_uid/gid is set.
+        // For now, we send empty lists (just the terminator) if preserve flags are set.
+        // Format: varint id, byte name_len, name bytes, ... varint 0 terminator
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
+
+        if !inc_recurse {
+            // Send UID list if preserve_uid
+            if self.config.flags.owner {
+                // Empty list: just write varint 0 terminator
+                protocol::write_varint(writer, 0)?;
+            }
+            // Send GID list if preserve_gid
+            if self.config.flags.group {
+                // Empty list: just write varint 0 terminator
+                protocol::write_varint(writer, 0)?;
+            }
+        }
+
+        // Send io_error flag for protocol < 30 (upstream flist.c:2517-2518)
+        //
+        // Upstream: write_int(f, ignore_errors ? 0 : io_error);
+        // We always send 0 (no error) for now.
+        if self.protocol.as_u8() < 30 {
+            writer.write_all(&0i32.to_le_bytes())?;
+            writer.flush()?;
+        }
+
         // Send NDX_FLIST_EOF if incremental recursion is enabled
         //
         // Upstream flist.c:2534-2545 in send_file_list():
@@ -432,8 +576,9 @@ impl GeneratorContext {
         if let Some(flags) = self.compat_flags
             && flags.contains(CompatibilityFlags::INC_RECURSE)
         {
-            let mut ndx_state = NdxState::new();
-            ndx_state.write_ndx(writer, NDX_FLIST_EOF)?;
+            // Use NdxCodec for protocol-version-aware encoding of NDX_FLIST_EOF
+            let mut ndx_codec = create_ndx_codec(self.protocol.as_u8());
+            ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
             writer.flush()?;
         }
 
@@ -461,16 +606,26 @@ impl GeneratorContext {
 
         let mut files_transferred = 0;
         let mut bytes_sent = 0u64;
-        let mut prev_positive: i32 = -1; // For NDX delta decoding
+
+        // Create NDX codecs using Strategy pattern for protocol-version-aware encoding.
+        // Upstream rsync uses separate static variables for read and write state (io.c:2244-2245),
+        // so we need two codecs: one for reading NDX from receiver, one for writing back.
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
 
         loop {
-            // Read first byte of NDX encoding
-            let mut ndx_byte = [0u8; 1];
-            reader.read_exact(&mut ndx_byte)?;
+            // Read NDX value from receiver
+            //
+            // Upstream io.c:read_ndx/write_ndx for protocol < 30:
+            //   if (protocol_version < 30) return read_int(f);
+            // For protocol 30+, uses compressed encoding.
+            //
+            // Use NdxCodec Strategy pattern for protocol-version-aware NDX decoding.
+            // The codec handles both legacy (4-byte LE) and modern (delta) formats.
+            let ndx = ndx_read_codec.read_ndx(&mut *reader)?;
 
-            // Decode NDX value (protocol 30+ encoding from upstream io.c:read_ndx)
-            let ndx = if ndx_byte[0] == 0 {
-                // NDX_DONE: phase transition (upstream sender.c lines 236-258)
+            // Handle NDX_DONE (-1): phase transition (upstream sender.c lines 236-258)
+            if ndx == -1 {
                 phase += 1;
 
                 if phase > max_phase {
@@ -480,50 +635,21 @@ impl GeneratorContext {
 
                 // Echo NDX_DONE back and continue to next phase
                 // Upstream sender.c line 256: write_ndx(f_out, NDX_DONE)
-                writer.write_all(&[0x00])?;
+                ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
 
                 continue;
-            } else if ndx_byte[0] == 0xFF {
-                // Negative number prefix (NDX_FLIST_EOF, etc.) - not yet supported
+            }
+
+            // Handle other negative NDX values (NDX_FLIST_EOF, etc.)
+            if ndx < 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
-                    "negative NDX values (other than NDX_DONE) not yet implemented",
+                    format!("negative NDX value {ndx} not yet implemented"),
                 ));
-            } else if ndx_byte[0] == 0xFE {
-                // Extended encoding - read 2 or 4 more bytes
-                // Upstream io.c:2305-2314
-                let mut ext_byte = [0u8; 1];
-                reader.read_exact(&mut ext_byte)?;
+            }
 
-                if ext_byte[0] & 0x80 != 0 {
-                    // 4-byte full value: high byte has 0x80 set
-                    // Format: 0xFE | (high & 0x7F | 0x80) | low | mid | hi
-                    let high = (ext_byte[0] & !0x80) as i32;
-                    let mut rest = [0u8; 3];
-                    reader.read_exact(&mut rest)?;
-                    let value = (high << 24)
-                        | (rest[0] as i32)
-                        | ((rest[1] as i32) << 8)
-                        | ((rest[2] as i32) << 16);
-                    prev_positive = value;
-                    value as usize
-                } else {
-                    // 2-byte diff: 0xFE | diff_hi | diff_lo
-                    let mut diff_lo = [0u8; 1];
-                    reader.read_exact(&mut diff_lo)?;
-                    let diff = ((ext_byte[0] as i32) << 8) | (diff_lo[0] as i32);
-                    let ndx = prev_positive.saturating_add(diff);
-                    prev_positive = ndx;
-                    ndx as usize
-                }
-            } else {
-                // Simple delta encoding: ndx = prev_positive + byte_value
-                let delta = ndx_byte[0] as i32;
-                let ndx = prev_positive.saturating_add(delta);
-                prev_positive = ndx;
-                ndx as usize
-            };
+            let ndx = ndx as usize;
 
             // Read item flags (iflags) for protocol >= 29
             // Upstream rsync.c:read_ndx_and_attrs() line ~227:
@@ -601,6 +727,7 @@ impl GeneratorContext {
             } else {
                 0
             };
+
             // Validate file index
             if ndx >= self.file_list.len() {
                 return Err(io::Error::new(
@@ -651,6 +778,13 @@ impl GeneratorContext {
             };
             let has_basis = block_count > 0;
 
+            // Skip non-regular files (directories, symlinks, etc.)
+            // Directories don't have file data to transfer - their metadata
+            // is handled separately. Only regular files need delta transfer.
+            if !_file_entry.is_file() {
+                continue;
+            }
+
             // Step 2: Open source file
             let source_file = match fs::File::open(source_path) {
                 Ok(f) => f,
@@ -680,54 +814,16 @@ impl GeneratorContext {
                 // Receiver has no basis, send whole file as literals
                 generate_whole_file_delta(source_file)?
             };
+
             // Step 4a: Send ndx and attrs back to receiver
             //
             // Upstream sender.c:411 - write_ndx_and_attrs(f_out, ndx, iflags, ...)
             // This tells the receiver which file is about to be received.
             //
-            // write_ndx encoding for positive values (upstream io.c:2243-2286):
-            // - Each of read_ndx and write_ndx has its OWN static prev_positive
-            // - For write: diff = ndx - prev_positive, then prev_positive = ndx
-            // - For read: num = byte + prev_positive, then prev_positive = num
-            //
-            // We track prev_write separately from prev_positive (which is for reading).
-            // For the first file at ndx=2: diff = 2 - (-1) = 3, send byte 3.
-            //
-            // Note: We use a simpler static for now; proper implementation would
-            // track this in GeneratorContext.
-            static PREV_WRITE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-            use std::sync::atomic::Ordering;
-
+            // Use NdxCodec Strategy pattern for protocol-version-aware NDX encoding.
+            // The codec maintains its own prev_positive state for delta encoding.
             let ndx_i32 = ndx as i32;
-            let prev_write = PREV_WRITE.load(Ordering::SeqCst);
-            let ndx_diff = ndx_i32 - prev_write;
-            PREV_WRITE.store(ndx_i32, Ordering::SeqCst);
-
-            // Encode ndx_diff for wire (upstream io.c:2256-2285)
-            // - Simple case: 1-253 sends as single byte
-            // - Extended 2-byte: 0xFE prefix + 2 bytes for diff 0 or 254-32767
-            // - Extended 4-byte: 0xFE prefix + 4 bytes (high bit set) for diff < 0 or > 32767
-            if (1..=253).contains(&ndx_diff) {
-                // Simple single-byte diff (io.c:2271-2272)
-                writer.write_all(&[ndx_diff as u8])?;
-            } else if !(0..=0x7FFF).contains(&ndx_diff) {
-                // Full 4-byte encoding with high bit set (io.c:2275-2280)
-                // Format: 0xFE | (high | 0x80) | low | mid | hi
-                let ndx_val = ndx_i32;
-                let bytes = [
-                    0xFE,
-                    ((ndx_val >> 24) as u8) | 0x80,
-                    ndx_val as u8,
-                    (ndx_val >> 8) as u8,
-                    (ndx_val >> 16) as u8,
-                ];
-                writer.write_all(&bytes)?;
-            } else {
-                // 2-byte diff encoding (io.c:2281-2284)
-                // Format: 0xFE | diff_hi | diff_lo
-                let bytes = [0xFE, (ndx_diff >> 8) as u8, ndx_diff as u8];
-                writer.write_all(&bytes)?;
-            }
+            ndx_write_codec.write_ndx(&mut *writer, ndx_i32)?;
 
             // For protocol >= 29, echo back the iflags we received from the daemon
             // Upstream sender.c:411 - write_ndx_and_attrs(f_out, ndx, iflags, ...)
@@ -800,7 +896,17 @@ impl GeneratorContext {
 
         // Step 1: Send NDX_DONE to indicate end of file transfer phase
         // write_ndx(f_out, NDX_DONE) from sender.c line 462
-        writer.write_all(&[0x00])?;
+        //
+        // CRITICAL: For protocol < 30, NDX is a 4-byte little-endian integer (write_int).
+        // For protocol >= 30, NDX uses compressed encoding (0x00 = NDX_DONE).
+        // See io.c write_ndx() for upstream implementation.
+        if self.protocol.as_u8() < 30 {
+            // Protocol 28-29: NDX_DONE = -1 as 4-byte little-endian
+            writer.write_all(&(-1i32).to_le_bytes())?;
+        } else {
+            // Protocol 30+: NDX_DONE = 0x00 (compressed encoding)
+            writer.write_all(&[0x00])?;
+        }
         writer.flush()?;
 
         // Step 2: Stats handling
@@ -1102,7 +1208,7 @@ fn compute_file_checksum(
     script: &DeltaScript,
     algorithm: ChecksumAlgorithm,
     seed: i32,
-    compat_flags: Option<&CompatibilityFlags>,
+    _compat_flags: Option<&CompatibilityFlags>,
 ) -> Vec<u8> {
     // Collect all literal bytes from the script
     let mut all_bytes = Vec::new();
@@ -1122,23 +1228,18 @@ fn compute_file_checksum(
             vec![0u8]
         }
         ChecksumAlgorithm::MD4 => {
+            // Upstream checksum.c:sum_init() for MD4: prepends seed as 4 LE bytes
+            // SIVAL(s.buf, 0, seed); md4_update(&m, s.buf, 4);
             let mut hasher = Md4::new();
+            hasher.update(&seed.to_le_bytes());
             hasher.update(&all_bytes);
             hasher.finalize().to_vec()
         }
         ChecksumAlgorithm::MD5 => {
-            // MD5 uses seed with proper/legacy ordering based on compat flags
-            let seed_config = if let Some(flags) = compat_flags {
-                if flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX) {
-                    Md5Seed::proper(seed)
-                } else {
-                    Md5Seed::legacy(seed)
-                }
-            } else {
-                Md5Seed::legacy(seed)
-            };
-
-            let mut hasher = Md5::with_seed(seed_config);
+            // Upstream checksum.c sum_init() for MD5: just md5_begin(&ctx_md)
+            // The seed is NOT used for MD5 file transfer checksums!
+            // (The seed is only used for MD4 variants and for block checksums)
+            let mut hasher = Md5::new();
             hasher.update(&all_bytes);
             hasher.finalize().to_vec()
         }
@@ -1437,17 +1538,15 @@ mod tests {
         let paths = vec![base_path.to_path_buf()];
         let count = ctx.build_file_list(&paths).unwrap();
 
-        // Should have 3 entries: "." directory + 2 .txt files (not the .log file)
-        // The "." entry is included for the base directory (upstream rsync behavior)
-        assert_eq!(count, 3);
+        // Should have 2 entries: 2 .txt files (not the .log file)
+        // Note: "." entry is NOT included (we skip base directory entry for interop)
+        assert_eq!(count, 2);
         let file_list = ctx.file_list();
-        assert_eq!(file_list.len(), 3);
+        assert_eq!(file_list.len(), 2);
 
-        // Verify the .log file is not in the list (skip "." entry)
+        // Verify the .log file is not in the list
         for entry in file_list {
-            if entry.name() != "." {
-                assert!(!entry.name().contains(".log"));
-            }
+            assert!(!entry.name().contains(".log"));
         }
     }
 
@@ -1485,14 +1584,12 @@ mod tests {
         let paths = vec![base_path.to_path_buf()];
         let count = ctx.build_file_list(&paths).unwrap();
 
-        // Should have 2 entries: "." directory + 1 file (data.txt)
-        // The "." entry is included for the base directory (upstream rsync behavior)
-        assert_eq!(count, 2);
+        // Should have 1 entry: data.txt (other files excluded by "exclude *")
+        // Note: "." entry is NOT included (we skip base directory entry for interop)
+        assert_eq!(count, 1);
         let file_list = ctx.file_list();
-        assert_eq!(file_list.len(), 2);
-        // First entry is ".", second is "data.txt" (sorted alphabetically)
-        assert_eq!(file_list[0].name(), ".");
-        assert_eq!(file_list[1].name(), "data.txt");
+        assert_eq!(file_list.len(), 1);
+        assert_eq!(file_list[0].name(), "data.txt");
     }
 
     #[test]
@@ -1566,10 +1663,10 @@ mod tests {
         let paths = vec![base_path.to_path_buf()];
         let count = ctx.build_file_list(&paths).unwrap();
 
-        // Should have 4 entries: "." directory + 3 files when no filters are present
-        // The "." entry is included for the base directory (upstream rsync behavior)
-        assert_eq!(count, 4);
-        assert_eq!(ctx.file_list().len(), 4);
+        // Should have 3 entries: 3 files when no filters are present
+        // Note: "." entry is NOT included (we skip base directory entry for interop)
+        assert_eq!(count, 3);
+        assert_eq!(ctx.file_list().len(), 3);
     }
 
     #[test]
