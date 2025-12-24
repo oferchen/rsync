@@ -24,22 +24,24 @@ pub mod version;
 /// Workspace metadata derived from the repository `Cargo.toml`.
 pub use ::branding::workspace;
 
-/// Upstream-compatible alias for the `walk` crate.
+/// File list generation and traversal (mirrors upstream `flist.c`).
 ///
-/// This provides a transitional alias matching upstream rsync terminology,
-/// where file list operations are grouped under `flist.c`. The alias helps
-/// maintainers familiar with the C codebase locate functionality without
-/// breaking existing code using the `walk` name.
+/// This crate handles file list building and transmission, matching the
+/// functionality in upstream rsync's `flist.c`. The name `flist` aligns
+/// with upstream terminology for easier cross-referencing.
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c` - Upstream file list building and transmission
+/// - `flist.c` - File list building and transmission
+pub use ::flist;
+
+/// Socket and pipe I/O utilities (mirrors upstream `io.c`).
 ///
-/// # Examples
+/// This crate provides multiplexed I/O, negotiation streams, and transport
+/// helpers matching upstream rsync's `io.c`. The module is imported as
+/// `rsync_io` to avoid conflicts with `std::io`.
 ///
-/// ```ignore
-/// // Both names access the same functionality (from within this crate)
-/// use crate::walk::WalkBuilder;
-/// // use crate::flist::WalkBuilder;  // Equivalent
-/// ```
-pub use walk as flist;
+/// # Upstream Reference
+///
+/// - `io.c` - Socket and pipe I/O utilities
+pub use rsync_io as io;
