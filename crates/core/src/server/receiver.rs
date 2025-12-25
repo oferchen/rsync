@@ -36,7 +36,7 @@ use std::path::PathBuf;
 
 use checksums::strong::Md5Seed;
 use protocol::filters::read_filter_list;
-use protocol::flist::{FileEntry, FileListReader};
+use protocol::flist::{FileEntry, FileListReader, sort_file_list};
 use protocol::ndx::{NdxCodec, create_ndx_codec};
 use protocol::wire::DeltaOp;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
@@ -189,6 +189,11 @@ impl ReceiverContext {
         if !inc_recurse {
             self.receive_id_lists(reader)?;
         }
+
+        // Sort file list to match sender's sorted order.
+        // Upstream: flist_sort_and_clean() is called after recv_id_list()
+        // See flist.c:2736 - both sides must sort to ensure matching NDX indices.
+        sort_file_list(&mut self.file_list);
 
         Ok(count)
     }
