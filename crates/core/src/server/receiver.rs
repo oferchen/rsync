@@ -688,13 +688,93 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
-        // Send NDX_DONE to signal end of transfer using NdxCodec Strategy pattern.
-        // This tells the sender we don't want any more files.
-        ndx_write_codec.write_ndx_done(&mut *writer)?;
-        writer.flush()?;
+        // Phase handling: after sending all file requests, we need to exchange NDX_DONEs
+        // with the sender for multi-phase protocol (protocol >= 29 has 2 phases).
+        //
+        // Upstream sender.c lines 236-258 and receiver.c lines 554-588:
+        // - Phase 1: Normal file transfer (just completed above)
+        // - Phase 2: Redo phase for files that failed verification
+        // - After each phase, both sides exchange NDX_DONE
+        //
+        // Flow for each phase transition:
+        // 1. We (receiver/generator) send NDX_DONE (no more files for this phase)
+        // 2. Sender receives NDX_DONE, increments phase, echoes NDX_DONE
+        // 3. We receive echoed NDX_DONE, increment phase
+        // 4. If phase <= max_phase: send NDX_DONE for next phase, repeat
+        // 5. If phase > max_phase: exit loop
+        //
+        // Sender also sends final NDX_DONE after loop (sender.c line 462)
+        let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
+        let mut phase: i32 = 0;
 
-        // Report metadata errors summary if any occurred
-        // (metadata_errors tracking remains for potential logging)
+        // Create separate NDX codec for reading (needs its own state for delta decoding)
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+
+        loop {
+            // Send NDX_DONE to signal end of current phase
+            ndx_write_codec.write_ndx_done(&mut *writer)?;
+            writer.flush()?;
+
+            phase += 1;
+
+            if phase > max_phase {
+                // All phases complete, exit
+                break;
+            }
+
+            // Read echoed NDX_DONE from sender
+            // Upstream sender.c line 256: write_ndx(f_out, NDX_DONE)
+            let ndx = ndx_read_codec.read_ndx(reader)?;
+            if ndx != -1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("expected NDX_DONE (-1) from sender during phase transition, got {ndx}"),
+                ));
+            }
+
+            // Continue to next phase (redo phase - no files to redo for now)
+        }
+
+        // Read final NDX_DONE from sender (sender.c line 462: write_ndx after loop)
+        let final_ndx = ndx_read_codec.read_ndx(reader)?;
+        if final_ndx != -1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected final NDX_DONE (-1) from sender, got {final_ndx}"),
+            ));
+        }
+
+        // Goodbye exchange: After send_files() returns, sender calls read_final_goodbye()
+        // which reads more NDX_DONEs from us.
+        //
+        // Upstream main.c read_final_goodbye() (lines 875-907):
+        // - For protocol < 29: read_int() and expect NDX_DONE
+        // - For protocol >= 29: read_ndx_and_attrs() and expect NDX_DONE
+        // - For protocol >= 31: if NDX_DONE, echo NDX_DONE back, then read another NDX_DONE
+        //
+        // This comes from the generator side in do_recv() (main.c lines 1117-1121):
+        // if (protocol_version >= 24) { write_ndx(f_out, NDX_DONE); }
+        if self.protocol.as_u8() >= 24 {
+            // Send goodbye NDX_DONE that sender reads in read_final_goodbye()
+            ndx_write_codec.write_ndx_done(&mut *writer)?;
+            writer.flush()?;
+
+            // For protocol >= 31, sender echoes NDX_DONE and expects another
+            if self.protocol.as_u8() >= 31 {
+                // Read echoed NDX_DONE from sender
+                let goodbye_echo = ndx_read_codec.read_ndx(reader)?;
+                if goodbye_echo != -1 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo}"),
+                    ));
+                }
+
+                // Send final goodbye NDX_DONE
+                ndx_write_codec.write_ndx_done(&mut *writer)?;
+                writer.flush()?;
+            }
+        }
 
         Ok(TransferStats {
             files_listed: file_count,
