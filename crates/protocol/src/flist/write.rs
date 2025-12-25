@@ -163,7 +163,9 @@ impl FileListWriter {
             // If high byte is set OR xflags is still 0, use 2-byte encoding
             if (xflags_to_write & 0xFF00) != 0 || xflags_to_write == 0 {
                 xflags_to_write |= XMIT_EXTENDED_FLAGS as u32;
-                // write_shortint: 2 bytes little-endian
+                // File list flags use 2 separate bytes: [primary, extended]
+                // NOT shortint encoding. Primary flags in low byte, extended in high byte.
+                // Little-endian write matches this: [low, high] = [primary, extended]
                 writer.write_all(&(xflags_to_write as u16).to_le_bytes())?;
             } else {
                 // 1 byte encoding
