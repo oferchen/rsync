@@ -38,7 +38,7 @@ use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
 use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
-use protocol::flist::{FileEntry, FileListWriter};
+use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
 use protocol::ndx::{NDX_FLIST_EOF, NdxCodec, create_ndx_codec};
 use protocol::wire::{DeltaOp, SignatureBlock, write_token_stream};
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
@@ -176,128 +176,11 @@ impl GeneratorContext {
         }
 
         // Sort file list using rsync's ordering (upstream flist.c:f_name_cmp).
-        //
-        // Rsync file list ordering rules:
-        // 1. Files and directories are sorted alphabetically together at each level
-        // 2. A directory entry is immediately followed by all its contents (recursively)
-        // 3. The "." entry (if present) always comes first
-        //
-        // Example order for: test.txt, subdir/, subdir/file.txt, another.txt
-        //   - . (root dir entry)
-        //   - another.txt
-        //   - subdir (alphabetically before "test")
-        //   - subdir/file.txt (contents of subdir)
-        //   - test.txt
-        //
         // We need to sort both file_list and full_paths together to maintain correspondence.
         // Create index array, sort by rsync rules, then reorder both arrays.
-
         let file_list_ref = &self.file_list;
-
         let mut indices: Vec<usize> = (0..self.file_list.len()).collect();
-        indices.sort_by(|&a, &b| {
-            let entry_a = &file_list_ref[a];
-            let entry_b = &file_list_ref[b];
-            let name_a = entry_a.name();
-            let name_b = entry_b.name();
-
-            // Handle "." specially - always comes first
-            if name_a == "." {
-                return std::cmp::Ordering::Less;
-            }
-            if name_b == "." {
-                return std::cmp::Ordering::Greater;
-            }
-
-            // Rsync file list sorting (mirrors upstream flist.c:f_name_cmp):
-            //
-            // At each directory level:
-            // 1. Files before directories (both sorted alphabetically within their category)
-            // 2. A directory is immediately followed by all its contents (recursively)
-            //
-            // Example: for test.txt, subdir/, subdir/file.txt, another.txt
-            //   - . (root marker)
-            //   - another.txt (file at root, 'a' < 's' < 't')
-            //   - subdir (directory at root, after all root files)
-            //   - subdir/file.txt (contents of subdir)
-            //   - test.txt (file at root)
-            //
-            // Wait, that's not right. Looking at actual rsync behavior:
-            //   - Files and directories at root are sorted together alphabetically
-            //   - Directory contents come right after the directory entry
-            //   - BUT within each level, files before directories of same parent
-            //
-            // Correct order for: test.txt, subdir/, subdir/file.txt, another.txt
-            //   - another.txt (file at root)
-            //   - test.txt (file at root, comes BEFORE subdir because files first at root)
-            //   - subdir (directory at root, after root files)
-            //   - subdir/file.txt
-
-            // Rsync sorting algorithm (mirrors flist.c):
-            // - At each directory level, files sort BEFORE directories
-            // - Within each category (files or dirs), sort alphabetically
-            // - Directory contents come immediately after the directory
-            //
-            // For: file1.txt, testfile.txt, subdir/, subdir/sub1.txt
-            // Result: file1.txt, testfile.txt, subdir/, subdir/sub1.txt
-            // (NOT: file1.txt, subdir/, subdir/sub1.txt, testfile.txt)
-
-            let is_dir_a = entry_a.is_dir();
-            let is_dir_b = entry_b.is_dir();
-
-            // Get parent paths (empty string for root level)
-            let parent_a = name_a.rfind('/').map_or("", |i| &name_a[..i]);
-            let parent_b = name_b.rfind('/').map_or("", |i| &name_b[..i]);
-
-            // Get just the filename component
-            let file_a = name_a.rfind('/').map_or(name_a, |i| &name_a[i + 1..]);
-            let file_b = name_b.rfind('/').map_or(name_b, |i| &name_b[i + 1..]);
-
-            if parent_a == parent_b {
-                // Same parent directory - at the same level
-                // Files sort before directories, then alphabetically within each group
-                match (is_dir_a, is_dir_b) {
-                    (false, true) => std::cmp::Ordering::Less,    // file < dir
-                    (true, false) => std::cmp::Ordering::Greater, // dir > file
-                    _ => file_a.cmp(file_b),                      // same type: alphabetical
-                }
-            } else if name_b.starts_with(name_a)
-                && name_b.as_bytes().get(name_a.len()) == Some(&b'/')
-            {
-                // a is an ancestor of b (e.g., "subdir" vs "subdir/file.txt")
-                // Ancestor comes first
-                std::cmp::Ordering::Less
-            } else if name_a.starts_with(name_b)
-                && name_a.as_bytes().get(name_b.len()) == Some(&b'/')
-            {
-                // b is an ancestor of a
-                std::cmp::Ordering::Greater
-            } else {
-                // Different parent directories
-                // Compare the root-level components first
-                // Different branches entirely - compare lexicographically at root
-                // First compare the root-level components
-                let root_a = name_a.find('/').map_or(name_a, |i| &name_a[..i]);
-                let root_b = name_b.find('/').map_or(name_b, |i| &name_b[..i]);
-
-                if root_a == root_b {
-                    // Same root, different subpaths
-                    name_a.cmp(name_b)
-                } else {
-                    // Different roots - check if they're files or dirs at root
-                    let a_is_file_at_root = !is_dir_a && !name_a.contains('/');
-                    let b_is_file_at_root = !is_dir_b && !name_b.contains('/');
-                    let a_is_under_dir = name_a.contains('/');
-                    let b_is_under_dir = name_b.contains('/');
-
-                    match (a_is_file_at_root, b_is_file_at_root) {
-                        (true, false) if b_is_under_dir || is_dir_b => std::cmp::Ordering::Less,
-                        (false, true) if a_is_under_dir || is_dir_a => std::cmp::Ordering::Greater,
-                        _ => root_a.cmp(root_b),
-                    }
-                }
-            }
-        });
+        indices.sort_by(|&a, &b| compare_file_entries(&file_list_ref[a], &file_list_ref[b]));
 
         // Reorder both arrays according to sorted indices
         let sorted_entries: Vec<_> = indices.iter().map(|&i| self.file_list[i].clone()).collect();
