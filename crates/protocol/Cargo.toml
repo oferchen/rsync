@@ -18,9 +18,12 @@ targets = ["x86_64-unknown-linux-gnu"]
 # Compression algorithm features (match compress crate features)
 lz4 = ["compress/lz4"]
 zstd = ["compress/zstd"]
+# Filename encoding conversion (iconv)
+iconv = ["encoding_rs"]
 
 [dependencies]
 compress = { path = "../compress" }
+encoding_rs = { version = "0.8", optional = true }
 logging = { path = "../logging" }
 memchr = "2.7"
 

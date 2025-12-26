@@ -114,6 +114,12 @@ mod special;
 #[cfg(all(unix, feature = "xattr"))]
 mod xattr;
 
+#[cfg(all(unix, feature = "xattr"))]
+pub mod nfsv4_acl;
+
+#[cfg(unix)]
+pub mod fake_super;
+
 #[cfg(all(
     feature = "acl",
     any(
@@ -159,3 +165,8 @@ pub use special::{create_device_node, create_fifo};
 
 #[cfg(all(unix, feature = "xattr"))]
 pub use xattr::sync_xattrs;
+
+#[cfg(unix)]
+pub use fake_super::{
+    FAKE_SUPER_XATTR, FakeSuperStat, load_fake_super, remove_fake_super, store_fake_super,
+};

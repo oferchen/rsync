@@ -15,11 +15,15 @@ mod error;
 pub mod filters;
 /// File list encoding and decoding.
 pub mod flist;
+/// Filename encoding conversion (iconv) for cross-platform transfers.
+pub mod iconv;
 mod legacy;
 mod multiplex;
 /// NDX (file-list index) encoding and decoding.
 pub mod ndx;
 mod negotiation;
+/// Transfer statistics wire format encoding and decoding.
+pub mod stats;
 mod varint;
 mod version;
 pub mod wire;
@@ -34,6 +38,7 @@ pub use envelope::{
     ParseMessageCodeError,
 };
 pub use error::NegotiationError;
+pub use iconv::{ConversionError, FilenameConverter, converter_from_locale};
 pub use legacy::{
     DigestListTokens, LEGACY_DAEMON_PREFIX, LEGACY_DAEMON_PREFIX_BYTES, LEGACY_DAEMON_PREFIX_LEN,
     LegacyDaemonGreeting, LegacyDaemonGreetingOwned, LegacyDaemonMessage,
@@ -56,9 +61,10 @@ pub use negotiation::{
     negotiate_capabilities, read_and_parse_legacy_daemon_greeting,
     read_and_parse_legacy_daemon_greeting_details, read_legacy_daemon_line,
 };
+pub use stats::{DeleteStats, TransferStats};
 pub use varint::{
-    decode_varint, encode_varint_to_vec, read_varint, read_varlong, write_varint, write_varlong,
-    write_varlong30,
+    decode_varint, encode_varint_to_vec, read_varint, read_varlong, read_varlong30, write_varint,
+    write_varlong, write_varlong30,
 };
 pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolVersion,

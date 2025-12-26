@@ -58,6 +58,8 @@ pub struct ParsedServerFlags {
     pub partial: bool,
     /// Update only newer files (`u` flag, `--update`).
     pub update: bool,
+    /// Fuzzy basis file matching (`y` flag, `--fuzzy`).
+    pub fuzzy: bool,
 
     /// Info flags after the first `.` separator.
     pub info_flags: InfoFlags,
@@ -150,6 +152,7 @@ impl ParsedServerFlags {
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
+            b'y' => self.fuzzy = true,
             // Unknown flags are ignored to maintain forward compatibility
             _ => {}
         }
@@ -274,5 +277,12 @@ mod tests {
         let flags = ParsedServerFlags::parse("-AX").unwrap();
         assert!(flags.acls);
         assert!(flags.xattrs);
+    }
+
+    #[test]
+    fn parses_fuzzy_flag() {
+        let flags = ParsedServerFlags::parse("-ry").unwrap();
+        assert!(flags.recursive);
+        assert!(flags.fuzzy);
     }
 }

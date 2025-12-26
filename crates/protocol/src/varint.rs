@@ -209,15 +209,16 @@ pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Resu
     }
 
     // Determine mask for extracting data bits from leading byte
+    // When cnt == min_bytes, no flag bits were set, so all 8 bits are data.
+    // Otherwise, 'bit' points to either:
+    //   - The first zero bit we encountered (loop exited on bit check), or
+    //   - The bit we were about to check when cnt reached 8 (loop exited on cnt check)
+    // In both cases, (bit - 1) gives us the mask for the data bits.
     let mask = if cnt == min_bytes as usize {
         // No flag bits set - all 8 bits of leading byte are data
         0xFF
-    } else if cnt == 8 {
-        // All bits set - special case
-        0xFF
     } else {
-        // 'bit' is the first zero bit we encountered
-        // All bits below it are data bits
+        // Extract data bits below the current bit position
         bit - 1
     };
 
@@ -261,6 +262,14 @@ pub fn write_varlong30<W: Write + ?Sized>(
     min_bytes: u8,
 ) -> io::Result<()> {
     write_varlong(writer, value, min_bytes)
+}
+
+/// Reads a variable-length integer using protocol 30+ varlong encoding.
+///
+/// This mirrors upstream's `read_varlong30(int f, uchar min_bytes)` inline function.
+/// For protocol < 30, callers should use `read_longint` instead.
+pub fn read_varlong30<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
+    read_varlong(reader, min_bytes)
 }
 
 /// Encodes `value` into `out` using rsync's variable-length integer format.
@@ -467,6 +476,43 @@ mod tests {
                 cursor.position() as usize,
                 encoded.len(),
                 "Cursor position mismatch for value={value} min_bytes={min_bytes}"
+            );
+        }
+    }
+
+    #[test]
+    fn varlong_large_values_with_min_bytes_3() {
+        // Test large values with min_bytes=3 (used for stats)
+        // Note: With min_bytes=3, the maximum encodable value that round-trips
+        // correctly is ~2.88e17 (288 PB). This matches upstream rsync's limitation.
+        // Values larger than this would require 9 bytes but the decoder only
+        // handles 8 bytes total (matching upstream io.c:read_varlong).
+        let max_safe_for_min3: i64 = 0x03FF_FFFF_FFFF_FFFF; // ~288 PB
+        let test_cases = [
+            (max_safe_for_min3, 3u8), // Maximum safe value for min_bytes=3
+            (max_safe_for_min3 / 2, 3u8),
+            (1_000_000_000_000_000i64, 3u8), // 1 PB - realistic large transfer
+            (100_000_000_000_000i64, 3u8),   // 100 TB
+            (1_000_000_000_000i64, 3u8),     // 1 TB
+            (1_000_000_000i64, 3u8),         // 1 GB
+            (500_000_000i64, 3u8),
+        ];
+
+        for (value, min_bytes) in test_cases {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, value, min_bytes).expect("encoding succeeds");
+
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("decoding succeeds");
+
+            assert_eq!(
+                decoded, value,
+                "Round-trip failed for value={value} min_bytes={min_bytes}: encoded={encoded:02x?}"
+            );
+            assert_eq!(
+                cursor.position() as usize,
+                encoded.len(),
+                "Cursor didn't consume all bytes for value={value}"
             );
         }
     }

@@ -56,7 +56,7 @@ acl = ["metadata/acl", "engine/acl"]
 xattr = []
 zstd = ["engine/zstd", "compress/zstd"]
 lz4 = ["engine/lz4", "compress/lz4"]
-iconv = []
+iconv = ["protocol/iconv"]
 sd-notify = []
 
 [dev-dependencies]

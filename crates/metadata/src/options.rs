@@ -10,6 +10,7 @@ pub struct MetadataOptions {
     preserve_permissions: bool,
     preserve_times: bool,
     numeric_ids: bool,
+    fake_super: bool,
     owner_override: Option<u32>,
     group_override: Option<u32>,
     chmod: Option<ChmodModifiers>,
@@ -31,6 +32,7 @@ impl MetadataOptions {
             preserve_permissions: true,
             preserve_times: true,
             numeric_ids: false,
+            fake_super: false,
             owner_override: None,
             group_override: None,
             chmod: None,
@@ -83,6 +85,18 @@ impl MetadataOptions {
     #[doc(alias = "--numeric-ids")]
     pub const fn numeric_ids(mut self, numeric: bool) -> Self {
         self.numeric_ids = numeric;
+        self
+    }
+
+    /// Enables fake-super mode for metadata preservation.
+    ///
+    /// When enabled, privileged metadata (ownership, device numbers) that cannot
+    /// be applied directly is stored in extended attributes (`user.rsync.%stat`)
+    /// instead. This allows backup/restore without requiring root privileges.
+    #[must_use]
+    #[doc(alias = "--fake-super")]
+    pub const fn fake_super(mut self, enabled: bool) -> Self {
+        self.fake_super = enabled;
         self
     }
 
@@ -168,6 +182,12 @@ impl MetadataOptions {
         self.numeric_ids
     }
 
+    /// Reports whether fake-super mode is enabled.
+    #[must_use]
+    pub const fn fake_super_enabled(&self) -> bool {
+        self.fake_super
+    }
+
     /// Reports the configured ownership override if any.
     #[must_use]
     pub const fn owner_override(&self) -> Option<u32> {
@@ -220,6 +240,7 @@ mod tests {
         assert!(options.permissions());
         assert!(options.times());
         assert!(!options.numeric_ids_enabled());
+        assert!(!options.fake_super_enabled());
         assert!(options.owner_override().is_none());
         assert!(options.group_override().is_none());
         assert!(options.chmod().is_none());
@@ -260,6 +281,15 @@ mod tests {
         assert_eq!(options.chmod(), Some(&modifiers));
         assert_eq!(options.user_mapping(), Some(&user_map));
         assert_eq!(options.group_mapping(), Some(&group_map));
+    }
+
+    #[test]
+    fn fake_super_can_be_enabled() {
+        let options = MetadataOptions::new().fake_super(true);
+        assert!(options.fake_super_enabled());
+
+        let disabled = MetadataOptions::new().fake_super(false);
+        assert!(!disabled.fake_super_enabled());
     }
 
     #[test]
