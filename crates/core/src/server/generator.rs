@@ -325,11 +325,17 @@ impl GeneratorContext {
 
     /// Sends the file list to the receiver.
     pub fn send_file_list<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
-        let mut flist_writer = if let Some(flags) = self.compat_flags {
+        let flist_writer = if let Some(flags) = self.compat_flags {
             FileListWriter::with_compat_flags(self.protocol, flags)
         } else {
             FileListWriter::new(self.protocol)
         };
+
+        // Configure UID/GID preservation based on server flags
+        // Upstream flist.c uses preserve_uid/preserve_gid globals
+        let mut flist_writer = flist_writer
+            .with_preserve_uid(self.config.flags.owner)
+            .with_preserve_gid(self.config.flags.group);
 
         for entry in self.file_list.iter() {
             flist_writer.write_entry(writer, entry)?;
@@ -358,25 +364,35 @@ impl GeneratorContext {
         writer: &mut super::writer::ServerWriter<W>,
         paths: &[PathBuf],
     ) -> io::Result<GeneratorStats> {
-        // Activate INPUT multiplex for protocol >= 30 with incremental recursion
+        // Activate INPUT multiplex based on mode and protocol version.
         //
-        // Upstream rsync (main.c:1252-1257) in start_server():
-        //   if (am_sender) {
-        //       if (need_messages_from_generator)
-        //           io_start_multiplex_in(f_in);
-        //       else
-        //           io_start_buffering_in(f_in);
-        //   }
+        // The activation threshold differs by mode:
         //
-        // For protocol >= 30, incremental recursion (inc_recurse) is enabled by default.
-        // When inc_recurse is enabled, need_messages_from_generator = 1 (compat.c).
-        // This means the client multiplexes its output to the server.
+        // SERVER mode (daemon sender - main.c:1252-1257 start_server am_sender):
+        //   if (need_messages_from_generator)
+        //       io_start_multiplex_in(f_in);
+        //   For protocol >= 30, need_messages_from_generator = 1 (compat.c:776)
         //
-        // CRITICAL: For protocol 30+, the client sends MULTIPLEXED data!
-        // The filter list and other data come wrapped in MSG_DATA frames.
-        // This matches upstream main.c:1167 which calls io_start_multiplex_in()
-        // for protocol >= 30 regardless of INC_RECURSE setting.
-        if self.protocol.as_u8() >= 30 {
+        // CLIENT mode (client pushing to daemon - main.c:1304-1305 client_run am_sender):
+        //   if (protocol_version >= 31 || (!filesfrom_host && protocol_version >= 23))
+        //       io_start_multiplex_in(f_in);
+        //   We don't support filesfrom, so this simplifies to >= 23
+        //
+        // The daemon receiver (start_server) activates OUTPUT multiplex for >= 23:
+        //   main.c:1247-1248: if (protocol_version >= 23) io_start_multiplex_out(f_out);
+        //
+        // So when client pushes to daemon (protocol >= 23):
+        // - Daemon sends us MSG_DATA frames (daemon output multiplex)
+        // - We must read them with INPUT multiplex
+        let should_activate_input_multiplex = if self.config.client_mode {
+            // Client mode: >= 23 (upstream main.c:1304-1305, no filesfrom)
+            self.protocol.as_u8() >= 23
+        } else {
+            // Server mode: >= 30 (need_messages_from_generator)
+            self.protocol.as_u8() >= 30
+        };
+
+        if should_activate_input_multiplex {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
             })?;
@@ -433,6 +449,13 @@ impl GeneratorContext {
                 // Empty list: just write varint 0 terminator
                 protocol::write_varint(writer, 0)?;
             }
+
+            // CRITICAL: Flush UID/GID lists before entering main loop.
+            // Without this flush, the data stays in the write buffer and causes
+            // a deadlock: we wait to read from daemon, daemon waits to receive
+            // our UID/GID lists. This mirrors upstream behavior where the I/O
+            // layer flushes buffered data before blocking reads.
+            writer.flush()?;
         }
 
         // Send io_error flag for protocol < 30 (upstream flist.c:2517-2518)

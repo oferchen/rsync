@@ -79,24 +79,22 @@ impl OcDaemon {
 
         // Write oc-rsyncd.conf matching daemon configuration format
         // Uses oc-rsync branding conventions per CLAUDE.md
+        // Note: port and log-file are passed via CLI, not config
+        // use chroot and numeric ids go in module section
         let config_content = format!(
             "\
 # Test daemon configuration for interop tests
 pid file = {}
-port = {}
-use chroot = false
-numeric ids = yes
-log file = {}
 
 [testmodule]
     path = {}
     comment = Test module for upstream client interop
     read only = false
     list = yes
+    use chroot = false
+    numeric ids = yes
 ",
             pid_path.display(),
-            port,
-            log_path.display(),
             module_path.display()
         );
         fs::write(&config_path, config_content)?;
@@ -111,11 +109,16 @@ log file = {}
 
         // Start daemon with --no-detach so we can manage the process lifecycle
         // Mirrors upstream rsync daemon invocation from daemon_client_interop.rs
+        // Pass port and log-file via CLI since they're not config directives
         let mut child = Command::new(binary)
             .arg("--daemon")
             .arg("--config")
             .arg(&config_path)
             .arg("--no-detach")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--log-file")
+            .arg(&log_path)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()?;
