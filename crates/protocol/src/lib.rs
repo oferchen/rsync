@@ -50,6 +50,9 @@ pub use legacy::{
     parse_legacy_error_message_bytes, parse_legacy_warning_message,
     parse_legacy_warning_message_bytes, write_legacy_daemon_greeting, write_legacy_daemon_message,
 };
+#[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
+pub use multiplex::MultiplexCodec;
 pub use multiplex::{
     BorrowedMessageFrame, BorrowedMessageFrames, MessageFrame, recv_msg, recv_msg_into, send_frame,
     send_msg,
