@@ -1,6 +1,6 @@
 //! Error types produced when parsing protocol versions from text.
 
-use ::core::fmt;
+use thiserror::Error;
 
 /// Errors that can occur while parsing a protocol version from a string.
 #[doc(alias = "--protocol")]
@@ -20,7 +20,7 @@ pub enum ParseProtocolVersionErrorKind {
 
 /// Error type returned when parsing a [`ProtocolVersion`](super::ProtocolVersion) from text fails.
 #[doc(alias = "--protocol")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub struct ParseProtocolVersionError {
     kind: ParseProtocolVersionErrorKind,
 }
@@ -47,8 +47,8 @@ impl ParseProtocolVersionError {
     }
 }
 
-impl fmt::Display for ParseProtocolVersionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for ParseProtocolVersionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind {
             ParseProtocolVersionErrorKind::Empty => f.write_str("protocol version string is empty"),
             ParseProtocolVersionErrorKind::InvalidDigit => {
@@ -70,5 +70,3 @@ impl fmt::Display for ParseProtocolVersionError {
         }
     }
 }
-
-impl std::error::Error for ParseProtocolVersionError {}
