@@ -50,7 +50,9 @@ structures such as [`client::ClientError`](src/client/struct.ClientError.html).
 Create an error message using the helper APIs and render it into the canonical
 user-facing form:
 
-```rust
+```rust,ignore
+// Note: This example uses `ignore` because the crate name "core" conflicts
+// with Rust's standard library `core` crate in doctest contexts.
 use core::{message::Message, message::Role, message_source};
 
 let rendered = Message::error(23, "delta-transfer failure")

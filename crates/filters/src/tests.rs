@@ -268,7 +268,8 @@ mod properties {
 
     /// Strategy for generating valid patterns (avoiding broken glob syntax).
     fn valid_pattern() -> impl Strategy<Value = String> {
-        proptest::collection::vec(pattern_char(), 1..20).prop_map(|chars| chars.into_iter().collect())
+        proptest::collection::vec(pattern_char(), 1..20)
+            .prop_map(|chars| chars.into_iter().collect())
     }
 
     proptest! {

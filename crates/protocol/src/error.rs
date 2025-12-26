@@ -6,7 +6,10 @@ use thiserror::Error;
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum NegotiationError {
     /// None of the peer protocol versions overlap with our supported set.
-    #[error("no mutual rsync protocol version; peer offered {peer_versions:?}, we support {:?}", ProtocolVersion::supported_protocol_numbers())]
+    #[error(
+        "no mutual rsync protocol version; peer offered {peer_versions:?}, we support {:?}",
+        ProtocolVersion::supported_protocol_numbers()
+    )]
     NoMutualProtocol {
         /// Versions advertised by the peer (after filtering to the upstream range).
         peer_versions: Vec<u8>,
@@ -63,7 +66,6 @@ impl NegotiationError {
         }
     }
 }
-
 
 impl From<NegotiationError> for io::Error {
     fn from(err: NegotiationError) -> Self {

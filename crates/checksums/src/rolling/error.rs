@@ -13,7 +13,9 @@ pub enum RollingError {
         len: usize,
     },
     /// The number of outgoing bytes does not match the number of incoming bytes.
-    #[error("rolling checksum requires outgoing ({outgoing}) and incoming ({incoming}) slices to have the same length")]
+    #[error(
+        "rolling checksum requires outgoing ({outgoing}) and incoming ({incoming}) slices to have the same length"
+    )]
     MismatchedSliceLength {
         /// Number of bytes being removed from the rolling window.
         outgoing: usize,

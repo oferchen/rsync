@@ -59,6 +59,13 @@ pub fn execute(workspace: &Path, options: DocsOptions) -> TaskResult<()> {
     Ok(())
 }
 
+/// Crates excluded from doctests due to name conflicts with std::core or other issues.
+const DOCTEST_EXCLUDED_CRATES: &[&str] = &[
+    // The "core" crate name shadows std::core, causing thiserror's derive macros
+    // to fail when they generate code referencing core::fmt and core::write!.
+    "core",
+];
+
 fn library_packages(workspace: &Path) -> TaskResult<Vec<String>> {
     let mut command = MetadataCommand::new();
     command.current_dir(workspace);
@@ -72,6 +79,7 @@ fn library_packages(workspace: &Path) -> TaskResult<Vec<String>> {
         .into_iter()
         .filter(|package| members.contains(&package.id))
         .filter(has_library_target)
+        .filter(|package| !DOCTEST_EXCLUDED_CRATES.contains(&package.name.as_str()))
         .map(|package| package.name)
         .collect();
 
