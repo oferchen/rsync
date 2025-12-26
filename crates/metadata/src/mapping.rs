@@ -5,8 +5,9 @@ use crate::id_lookup::{
 };
 use rustix::process::{RawGid, RawUid};
 use std::cmp::Ordering;
-use std::fmt;
 use std::io;
+
+use thiserror::Error;
 
 /// Represents the role associated with a name-mapping specification.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -30,7 +31,8 @@ impl MappingKind {
 }
 
 /// Error returned when parsing a mapping specification fails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("{message}")]
 pub struct MappingParseError {
     kind: MappingKind,
     message: String,
@@ -50,14 +52,6 @@ impl MappingParseError {
         self.kind
     }
 }
-
-impl fmt::Display for MappingParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for MappingParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum MappingMatcher {
