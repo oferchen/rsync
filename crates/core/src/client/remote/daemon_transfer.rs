@@ -1,3 +1,5 @@
+//! crates/core/src/client/remote/daemon_transfer.rs
+//!
 //! Daemon transfer orchestration.
 //!
 //! This module coordinates daemon-based remote transfers (rsync:// URLs) by
@@ -12,6 +14,9 @@
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType};
@@ -105,6 +110,10 @@ impl DaemonTransferRequest {
 /// - Handshake fails
 /// - Module access is denied
 /// - Transfer execution fails
+#[cfg_attr(
+    feature = "tracing",
+    instrument(skip(config, _observer), name = "daemon_transfer")
+)]
 pub fn run_daemon_transfer(
     config: &ClientConfig,
     _observer: Option<&mut dyn ClientProgressObserver>,
