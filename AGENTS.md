@@ -711,6 +711,51 @@ pub enum ConnectionState {
 - `FilterChain` evaluates rules in order, first match wins.
 - Rules cascade: include → exclude → include patterns.
 
+### Crate Dependency Graph
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                          cli                                │
+│                   (clap, indicatif)                         │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+┌──────────────────────────▼──────────────────────────────────┐
+│                         core                                │
+│              (orchestration facade)                         │
+└───────┬─────────────┬─────────────┬─────────────┬───────────┘
+        │             │             │             │
+        ▼             ▼             ▼             ▼
+┌───────────────┐ ┌───────────┐ ┌───────────┐ ┌───────────────┐
+│    engine     │ │  daemon   │ │ transport │ │   logging     │
+│ (delta xfer)  │ │  (rsyncd) │ │ (ssh/tcp) │ │ (sink/format) │
+└───────┬───────┘ └─────┬─────┘ └─────┬─────┘ └───────────────┘
+        │               │             │
+        ▼               ▼             ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       protocol                              │
+│        (multiplex, negotiation, flist, varint)              │
+└───────┬─────────────┬─────────────┬─────────────┬───────────┘
+        │             │             │             │
+        ▼             ▼             ▼             ▼
+┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────────────┐
+│ checksums │ │  filters  │ │ compress  │ │     bandwidth     │
+│ (xxh/md5) │ │ (globset) │ │(zlib/zstd)│ │  (token bucket)   │
+└───────────┘ └───────────┘ └───────────┘ └───────────────────┘
+        │             │             │             │
+        └─────────────┴─────────────┴─────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │    metadata     │
+                    │ (perms/xattr)   │
+                    └─────────────────┘
+```
+
+**Data Flow:**
+- CLI parses arguments → builds `CoreConfig` → calls `core::run_client()`
+- Core orchestrates: walk → filter → delta → compress → transport
+- Daemon handles: accept → negotiate → auth → spawn transfer thread
+
 ### External Dependencies
 
 Core dependencies and their purposes:
@@ -813,6 +858,142 @@ Summary of which external libraries enable specific rsync functionality:
 // Error context extension
 pub trait IoResultExt<T> {
     fn with_path(self, path: &Path) -> Result<T, RsyncError>;
+}
+```
+
+### API Reference: Key Types
+
+**Checksums (`crates/checksums/`)**:
+
+```rust
+// Rolling checksum for block matching
+pub struct RollingChecksum {
+    s1: u32,  // sum of bytes
+    s2: u32,  // weighted sum
+}
+
+impl RollingChecksum {
+    pub fn new() -> Self;
+    pub fn update(&mut self, data: &[u8]);           // Process block
+    pub fn roll(&mut self, old: u8, new: u8);        // Slide window
+    pub fn roll_many(&mut self, old: &[u8], new: &[u8]);  // Batch roll
+    pub fn digest(&self) -> u32;                      // Get checksum
+}
+
+// Strong checksum trait (MD4/MD5/SHA1/XXH3)
+pub trait StrongDigest: Default {
+    type Output: AsRef<[u8]>;
+    fn update(&mut self, data: &[u8]);
+    fn finalize(self) -> Self::Output;
+}
+```
+
+**Protocol (`crates/protocol/`)**:
+
+```rust
+// Message codes for multiplexing
+pub enum MessageCode {
+    Data = 0,      // MSG_DATA - file content
+    Error = 1,     // MSG_ERROR_XFER
+    Info = 2,      // MSG_INFO
+    // ... (see rsync.h MSG_* constants)
+}
+
+// Multiplexed frame
+pub struct MessageFrame {
+    code: MessageCode,
+    payload: Vec<u8>,
+}
+
+// Protocol version-aware encoding
+pub trait NdxCodec {
+    fn write_ndx(&self, w: &mut impl Write, ndx: i32) -> io::Result<()>;
+    fn read_ndx(&self, r: &mut impl Read) -> io::Result<i32>;
+}
+```
+
+**File Operations (`crates/walk/`, `crates/engine/`)**:
+
+```rust
+// File metadata entry
+pub struct FileEntry {
+    pub path: PathBuf,
+    pub file_type: FileType,
+    pub size: u64,
+    pub mtime: SystemTime,
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+// Iterator over file tree
+pub struct FileListWalker { /* ... */ }
+
+impl Iterator for FileListWalker {
+    type Item = io::Result<FileEntry>;
+}
+
+// Atomic file write (temp → sync → rename)
+pub struct DestinationWriteGuard { /* ... */ }
+```
+
+**Filters (`crates/filters/`)**:
+
+```rust
+pub enum FilterAction { Include, Exclude, Protect, Risk, Clear }
+
+pub struct FilterRule {
+    pub action: FilterAction,
+    pub pattern: Pattern,
+    pub anchored: bool,
+    pub directory_only: bool,
+}
+
+pub struct FilterSet {
+    rules: Vec<FilterRule>,
+}
+
+impl FilterSet {
+    pub fn matches(&self, path: &Path, is_dir: bool) -> Option<FilterAction>;
+}
+```
+
+**Delta Operations (`crates/engine/src/delta/`)**:
+
+```rust
+// Delta instruction
+pub enum DeltaOp {
+    Copy { offset: u64, length: u32 },  // Copy from basis
+    Literal(Vec<u8>),                    // New data
+}
+
+// Signature for delta generation
+pub struct SignatureBlock {
+    pub weak: u32,       // Rolling checksum
+    pub strong: Vec<u8>, // Truncated strong hash
+}
+
+// Index for O(1) weak checksum lookup
+pub struct DeltaSignatureIndex { /* HashMap<u32, Vec<usize>> */ }
+```
+
+**Error Types (`crates/core/`)**:
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum TransferError {
+    #[error("I/O error on {path}: {source}")]
+    Io { path: PathBuf, #[source] source: io::Error },
+
+    #[error("protocol error: {0}")]
+    Protocol(#[from] ProtocolError),
+
+    // ... other variants
+}
+
+impl TransferError {
+    /// Map to upstream rsync exit code
+    pub fn exit_code(&self) -> i32;
 }
 ```
 
@@ -1461,6 +1642,152 @@ cargo nextest run --workspace --all-features
 ```
 
 **Update investigation notes**: Document root cause and fix in `investigation.md` or commit message for future reference.
+
+---
+
+## Testing Patterns
+
+### 5.1 Integration Test Harness
+
+The workspace uses a standardized test fixture pattern for integration tests:
+
+```rust
+// Example test setup pattern
+use tempfile::TempDir;
+
+fn setup_test_dirs() -> (TempDir, PathBuf, PathBuf) {
+    let temp = TempDir::new().expect("create temp dir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::create_dir_all(&dest).unwrap();
+    (temp, source, dest)
+}
+
+// Create test files
+fn create_test_file(dir: &Path, name: &str, content: &[u8]) {
+    let path = dir.join(name);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    std::fs::write(&path, content).unwrap();
+}
+```
+
+### 5.2 Wire Compatibility Testing
+
+Golden byte tests ensure wire-level compatibility with upstream rsync:
+
+- Golden files in `crates/protocol/tests/golden/` contain captured byte streams
+- Tests compare encoded output against expected bytes exactly
+- Any wire format change must update golden files and be reviewed carefully
+
+```rust
+// Golden test pattern
+#[test]
+fn test_handshake_matches_golden() {
+    let expected = include_bytes!("golden/protocol32_handshake.bin");
+    let actual = encode_handshake(protocol_version);
+    assert_eq!(&actual[..], &expected[..]);
+}
+```
+
+### 5.3 Property-Based Testing
+
+Use property tests for algorithmic correctness:
+
+```rust
+// Rolling checksum property: roll matches full recomputation
+#[test]
+fn rolling_matches_full() {
+    let data = b"Hello, rsync world!";
+    let block_size = 5;
+
+    let full = RollingChecksum::compute(&data[1..block_size + 1]);
+
+    let mut rolling = RollingChecksum::new();
+    rolling.update(&data[0..block_size]);
+    rolling.roll(data[0], data[block_size]);
+
+    assert_eq!(rolling.digest(), full);
+}
+```
+
+### 5.4 Interop Testing
+
+Test against multiple upstream rsync versions:
+
+```bash
+# Run interop tests
+cargo nextest run -E 'test(interop)'
+
+# Test with specific upstream version
+target/interop/upstream-install/3.4.1/bin/rsync --version
+```
+
+**Tested configurations:**
+
+| Test | Client | Server | Protocol |
+|------|--------|--------|----------|
+| Push to daemon | oc-rsync | upstream 3.4.1 | 32 |
+| Pull from daemon | oc-rsync | upstream 3.4.1 | 32 |
+| Serve to client | upstream 3.4.1 | oc-rsync | 32 |
+| Receive from client | upstream 3.4.1 | oc-rsync | 32 |
+
+### 5.5 Directory Comparison
+
+After transfer tests, verify source and destination match:
+
+```rust
+// Recursive directory comparison
+fn assert_dirs_equal(a: &Path, b: &Path) {
+    let a_files: Vec<_> = walkdir::WalkDir::new(a)
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect();
+
+    for entry in a_files {
+        let rel = entry.path().strip_prefix(a).unwrap();
+        let b_path = b.join(rel);
+        assert!(b_path.exists(), "missing: {:?}", rel);
+
+        if entry.file_type().is_file() {
+            let a_content = std::fs::read(entry.path()).unwrap();
+            let b_content = std::fs::read(&b_path).unwrap();
+            assert_eq!(a_content, b_content, "content mismatch: {:?}", rel);
+        }
+    }
+}
+```
+
+### 5.6 Environment Isolation
+
+Tests that modify environment variables must use guards:
+
+```rust
+// EnvGuard pattern for test isolation
+struct EnvGuard {
+    key: String,
+    original: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &str, value: &str) -> Self {
+        let original = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key: key.to_string(), original }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(val) => std::env::set_var(&self.key, val),
+            None => std::env::remove_var(&self.key),
+        }
+    }
+}
+```
 
 ---
 
