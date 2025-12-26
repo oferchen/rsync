@@ -31,3 +31,14 @@ logging = { path = "../logging" }
 
 [dev-dependencies]
 proptest = "1.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "checksums_benchmark"
+harness = false
+
+[[bench]]
+name = "parallel_benchmark"
+harness = false
+required-features = ["parallel"]
