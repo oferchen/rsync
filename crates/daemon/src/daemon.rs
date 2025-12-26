@@ -75,6 +75,9 @@ pub(crate) mod tracing_stream;
 #[cfg(feature = "concurrent-sessions")]
 pub mod session_registry;
 
+#[cfg(feature = "concurrent-sessions")]
+pub mod connection_pool;
+
 use self::help::help_text;
 
 /// Exit code used when daemon functionality is unavailable.
