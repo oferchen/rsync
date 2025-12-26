@@ -89,6 +89,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Parallel computation - feature-gated for parallel file operations
 rayon = "1.10"
+# Concurrent hash map - for shared state across daemon sessions
+dashmap = "6.1"
 
 [workspace.metadata.docs.rs]
 all-features = true
