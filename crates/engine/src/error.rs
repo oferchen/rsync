@@ -12,7 +12,11 @@ pub type EngineResult<T> = Result<T, EngineError>;
 pub enum EngineError {
     /// I/O error occurred.
     #[error("I/O error: {0}")]
-    Io(#[from] #[source] io::Error),
+    Io(
+        #[from]
+        #[source]
+        io::Error,
+    ),
     /// Invalid configuration or parameters.
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
