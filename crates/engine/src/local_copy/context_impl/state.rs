@@ -155,6 +155,15 @@ impl<'a> CopyContext<'a> {
                 true,
                 self.filter_program.as_ref(),
             )?;
+
+            // Sync NFSv4 ACLs separately (stored in system.nfs4_acl xattr)
+            sync_nfsv4_acls_if_requested(
+                self.options.preserve_nfsv4_acls(),
+                mode,
+                source,
+                destination,
+                true,
+            )?;
         }
 
         #[cfg(all(unix, feature = "acl"))]

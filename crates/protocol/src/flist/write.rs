@@ -8,6 +8,7 @@ use std::io::{self, Write};
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
 use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
+use crate::iconv::FilenameConverter;
 use crate::varint::write_varint;
 
 use super::entry::FileEntry;
@@ -45,6 +46,8 @@ pub struct FileListWriter {
     /// Whether to preserve (and thus write) GID values to the wire.
     /// Corresponds to `-g` / `--group` flag.
     preserve_gid: bool,
+    /// Optional filename encoding converter (for --iconv support).
+    iconv: Option<FilenameConverter>,
 }
 
 impl FileListWriter {
@@ -62,6 +65,7 @@ impl FileListWriter {
             prev_gid: 0,
             preserve_uid: false,
             preserve_gid: false,
+            iconv: None,
         }
     }
 
@@ -79,6 +83,7 @@ impl FileListWriter {
             prev_gid: 0,
             preserve_uid: false,
             preserve_gid: false,
+            iconv: None,
         }
     }
 
@@ -104,6 +109,16 @@ impl FileListWriter {
         self
     }
 
+    /// Sets the filename encoding converter for iconv support.
+    ///
+    /// When set, filenames are converted from the local encoding to the remote
+    /// encoding before being written to the wire.
+    #[must_use]
+    pub fn with_iconv(mut self, converter: FilenameConverter) -> Self {
+        self.iconv = Some(converter);
+        self
+    }
+
     /// Writes a file entry to the stream.
     ///
     /// This mirrors upstream rsync's `send_file_entry()` from flist.c.
@@ -123,10 +138,25 @@ impl FileListWriter {
         writer: &mut W,
         entry: &FileEntry,
     ) -> io::Result<()> {
-        let name = entry.name().as_bytes();
+        let raw_name = entry.name().as_bytes();
+
+        // Apply iconv conversion if configured (local -> remote encoding)
+        let name: std::borrow::Cow<'_, [u8]> = if let Some(ref converter) = self.iconv {
+            match converter.local_to_remote(raw_name) {
+                Ok(converted) => converted,
+                Err(e) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("filename encoding conversion failed: {e}"),
+                    ));
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(raw_name)
+        };
 
         // Calculate name compression (upstream flist.c:532-534)
-        let same_len = common_prefix_len(&self.prev_name, name);
+        let same_len = common_prefix_len(&self.prev_name, &name);
         let suffix_len = name.len() - same_len;
 
         // Build xflags (upstream flist.c:406-540)

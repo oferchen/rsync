@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
 use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
+use crate::iconv::FilenameConverter;
 use crate::varint::read_varint;
 
 use super::entry::FileEntry;
@@ -41,6 +42,8 @@ pub struct FileListReader {
     preserve_uid: bool,
     /// Whether to preserve (and thus read) GID values from the wire.
     preserve_gid: bool,
+    /// Optional filename encoding converter (for --iconv support).
+    iconv: Option<FilenameConverter>,
 }
 
 impl FileListReader {
@@ -59,6 +62,7 @@ impl FileListReader {
             prev_gid: 0,
             preserve_uid: false,
             preserve_gid: false,
+            iconv: None,
         }
     }
 
@@ -77,6 +81,7 @@ impl FileListReader {
             prev_gid: 0,
             preserve_uid: false,
             preserve_gid: false,
+            iconv: None,
         }
     }
 
@@ -99,6 +104,16 @@ impl FileListReader {
     #[must_use]
     pub fn with_preserve_gid(mut self, preserve: bool) -> Self {
         self.preserve_gid = preserve;
+        self
+    }
+
+    /// Sets the filename encoding converter for iconv support.
+    ///
+    /// When set, filenames read from the wire are converted from the remote
+    /// encoding to the local encoding before being returned.
+    #[must_use]
+    pub fn with_iconv(mut self, converter: FilenameConverter) -> Self {
+        self.iconv = Some(converter);
         self
     }
 
@@ -270,8 +285,23 @@ impl FileListReader {
             self.prev_gid
         };
 
+        // Apply iconv conversion if configured (remote -> local encoding)
+        let converted_name = if let Some(ref converter) = self.iconv {
+            match converter.remote_to_local(&name) {
+                Ok(converted) => converted.into_owned(),
+                Err(e) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("filename encoding conversion failed: {e}"),
+                    ));
+                }
+            }
+        } else {
+            name
+        };
+
         // Construct entry
-        let path = PathBuf::from(String::from_utf8_lossy(&name).into_owned());
+        let path = PathBuf::from(String::from_utf8_lossy(&converted_name).into_owned());
         let entry = FileEntry::from_raw(path, size, mode, mtime, 0, flags);
 
         Ok(Some(entry))
