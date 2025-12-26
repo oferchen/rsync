@@ -1,15 +1,17 @@
 use ::core::convert::TryFrom;
-use ::core::fmt;
 
 use super::log_code::LogCode;
 use super::message_code::MessageCode;
+use thiserror::Error;
 
 /// Errors that arise when converting between [`LogCode`] and [`MessageCode`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum LogCodeConversionError {
     /// The [`LogCode`] has no multiplexed [`MessageCode`] equivalent.
+    #[error("log code {0} has no multiplexed message equivalent")]
     NoMessageEquivalent(LogCode),
     /// The [`MessageCode`] does not map to a [`LogCode`].
+    #[error("message code {0} has no log code equivalent")]
     NoLogEquivalent(MessageCode),
 }
 
@@ -32,21 +34,6 @@ impl LogCodeConversionError {
         }
     }
 }
-
-impl fmt::Display for LogCodeConversionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoMessageEquivalent(log) => {
-                write!(f, "log code {log} has no multiplexed message equivalent",)
-            }
-            Self::NoLogEquivalent(code) => {
-                write!(f, "message code {code} has no log code equivalent")
-            }
-        }
-    }
-}
-
-impl std::error::Error for LogCodeConversionError {}
 
 impl TryFrom<LogCode> for MessageCode {
     type Error = LogCodeConversionError;

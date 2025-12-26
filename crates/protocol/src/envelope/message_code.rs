@@ -5,6 +5,7 @@ use std::string::String;
 
 use super::error::EnvelopeError;
 use super::log_code::LogCode;
+use thiserror::Error;
 
 /// Tags used for multiplexed messages flowing over the rsync protocol stream.
 ///
@@ -74,7 +75,8 @@ pub enum MessageCode {
 }
 
 /// Error returned when parsing a multiplexed message code from its mnemonic name fails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("unknown multiplexed message code name: \"{invalid_name}\"")]
 pub struct ParseMessageCodeError {
     invalid_name: String,
 }
@@ -94,18 +96,6 @@ impl ParseMessageCodeError {
         &self.invalid_name
     }
 }
-
-impl fmt::Display for ParseMessageCodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unknown multiplexed message code name: \"{}\"",
-            self.invalid_name
-        )
-    }
-}
-
-impl std::error::Error for ParseMessageCodeError {}
 
 impl MessageCode {
     /// Alias constant representing the legacy `MSG_FLUSH` identifier.

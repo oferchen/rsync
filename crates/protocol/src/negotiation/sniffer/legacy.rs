@@ -97,34 +97,16 @@ pub fn read_and_parse_legacy_daemon_greeting_details<'a, R: Read>(
     parse_legacy_daemon_greeting_bytes_details(line).map_err(io::Error::from)
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("failed to reserve memory for legacy negotiation buffer: {inner}")]
 struct LegacyBufferReserveError {
+    #[source]
     inner: TryReserveError,
 }
 
 impl LegacyBufferReserveError {
     fn new(inner: TryReserveError) -> Self {
         Self { inner }
-    }
-
-    fn inner(&self) -> &TryReserveError {
-        &self.inner
-    }
-}
-
-impl std::fmt::Display for LegacyBufferReserveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "failed to reserve memory for legacy negotiation buffer: {}",
-            self.inner
-        )
-    }
-}
-
-impl std::error::Error for LegacyBufferReserveError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.inner())
     }
 }
 
