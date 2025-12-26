@@ -1,19 +1,21 @@
-use ::core::fmt;
-
 use crate::version::ProtocolVersion;
 use std::io;
+use thiserror::Error;
 
 /// Errors that can occur while attempting to negotiate a protocol version.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum NegotiationError {
     /// None of the peer protocol versions overlap with our supported set.
+    #[error("no mutual rsync protocol version; peer offered {peer_versions:?}, we support {:?}", ProtocolVersion::supported_protocol_numbers())]
     NoMutualProtocol {
         /// Versions advertised by the peer (after filtering to the upstream range).
         peer_versions: Vec<u8>,
     },
     /// The peer advertised a protocol version outside the upstream supported range.
+    #[error("peer advertised unsupported rsync protocol version {version} (valid range {oldest}-{newest})", version = .0, oldest = ProtocolVersion::supported_range_bounds().0, newest = ProtocolVersion::supported_range_bounds().1)]
     UnsupportedVersion(u32),
     /// A legacy ASCII daemon greeting could not be parsed.
+    #[error("malformed legacy rsync daemon greeting: {input:?}")]
     MalformedLegacyGreeting {
         /// The raw greeting text without trailing newlines.
         input: String,
@@ -62,34 +64,6 @@ impl NegotiationError {
     }
 }
 
-impl fmt::Display for NegotiationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoMutualProtocol { peer_versions } => {
-                let supported = ProtocolVersion::supported_protocol_numbers();
-                write!(
-                    f,
-                    // clippy(uninlined_format_args): inline variables into the format string.
-                    "no mutual rsync protocol version; peer offered {peer_versions:?}, we support {supported:?}"
-                )
-            }
-            Self::UnsupportedVersion(version) => {
-                let (oldest, newest) = ProtocolVersion::supported_range_bounds();
-                write!(
-                    f,
-                    // clippy(uninlined_format_args): inline variables into the format string.
-                    "peer advertised unsupported rsync protocol version {version} (valid range {oldest}-{newest})"
-                )
-            }
-            Self::MalformedLegacyGreeting { input } => {
-                // clippy(uninlined_format_args): inline variables into the format string.
-                write!(f, "malformed legacy rsync daemon greeting: {input:?}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for NegotiationError {}
 
 impl From<NegotiationError> for io::Error {
     fn from(err: NegotiationError) -> Self {
