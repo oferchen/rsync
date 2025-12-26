@@ -6,6 +6,8 @@
 
 use std::fmt;
 
+use thiserror::Error;
+
 /// Semantic version number with optional Rust branding suffix.
 ///
 /// Versions follow the format `x.y.z[-rust]` where:
@@ -153,7 +155,8 @@ impl fmt::Display for Version {
 }
 
 /// Error returned when version parsing fails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("invalid version '{input}': {reason}")]
 pub struct VersionParseError {
     input: String,
     reason: &'static str,
@@ -179,14 +182,6 @@ impl VersionParseError {
         self.reason
     }
 }
-
-impl fmt::Display for VersionParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid version '{}': {}", self.input, self.reason)
-    }
-}
-
-impl std::error::Error for VersionParseError {}
 
 impl std::str::FromStr for Version {
     type Err = VersionParseError;
