@@ -72,6 +72,10 @@
 //!   layouts so forthcoming protocol layers can transmit signatures without
 //!   shelling out to upstream rsync.
 
+#[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
+pub mod async_io;
+
 pub mod batch;
 pub mod delta;
 pub mod error;
@@ -93,4 +97,10 @@ pub use local_copy::{
 };
 pub use signature::{
     FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
+};
+
+#[cfg(feature = "async")]
+pub use async_io::{
+    AsyncBatchCopier, AsyncFileCopier, AsyncFileReader, AsyncFileWriter, AsyncIoError,
+    ChecksumAlgorithm, CopyProgress, CopyResult, compute_file_checksum,
 };
