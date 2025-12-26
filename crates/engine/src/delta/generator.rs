@@ -1,8 +1,13 @@
+//! crates/engine/src/delta/generator.rs
+
 use std::collections::VecDeque;
 use std::io::{self, Read};
 
 use checksums::RollingChecksum;
 use logging::debug_log;
+
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use crate::delta::index::DeltaSignatureIndex;
 use crate::delta::script::{DeltaScript, DeltaToken};
@@ -134,6 +139,10 @@ impl Default for DeltaGenerator {
 }
 
 /// Convenience helper that generates a delta using the default [`DeltaGenerator`] configuration.
+#[cfg_attr(
+    feature = "tracing",
+    instrument(skip(reader, index), name = "generate_delta")
+)]
 pub fn generate_delta<R: Read>(reader: R, index: &DeltaSignatureIndex) -> io::Result<DeltaScript> {
     DeltaGenerator::new().generate(reader, index)
 }
