@@ -14,7 +14,7 @@ mod apply;
 mod parse;
 mod spec;
 
-use std::fmt;
+use thiserror::Error;
 
 #[cfg(unix)]
 use apply::apply_clauses;
@@ -22,7 +22,8 @@ use parse::parse_spec;
 use spec::Clause;
 
 /// Error produced when parsing a `--chmod` specification fails.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Error)]
+#[error("{message}")]
 pub struct ChmodError {
     message: String,
 }
@@ -34,14 +35,6 @@ impl ChmodError {
         }
     }
 }
-
-impl fmt::Display for ChmodError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for ChmodError {}
 
 /// Parsed representation of one or more `--chmod` directives.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
