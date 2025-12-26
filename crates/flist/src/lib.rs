@@ -89,6 +89,10 @@ mod entry;
 mod error;
 mod file_list_walker;
 
+#[cfg(feature = "parallel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
+pub mod parallel;
+
 #[cfg(test)]
 mod tests;
 
