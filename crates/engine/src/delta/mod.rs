@@ -86,10 +86,10 @@ pub use generator::{DeltaGenerator, generate_delta};
 pub use index::DeltaSignatureIndex;
 pub use script::{DeltaScript, DeltaToken, apply_delta};
 
-use ::core::fmt;
 use ::core::num::{NonZeroU8, NonZeroU32};
 
 use protocol::ProtocolVersion;
+use thiserror::Error;
 
 /// Default block length used by rsync when files are small.
 const BLOCK_SIZE: u32 = 700;
@@ -205,14 +205,16 @@ impl SignatureLayout {
 }
 
 /// Errors produced when calculating signature layouts.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum SignatureLayoutError {
     /// File length exceeded [`i64::MAX`], which upstream rsync rejects.
+    #[error("file length {length} exceeds i64::MAX")]
     FileTooLarge {
         /// Length in bytes of the file being processed.
         length: u64,
     },
     /// Number of blocks exceeded [`i32::MAX`].
+    #[error("block count {blocks} derived from block length {block_length} exceeds i32::MAX")]
     BlockCountOverflow {
         /// Block length that triggered the overflow.
         block_length: u32,
@@ -220,27 +222,6 @@ pub enum SignatureLayoutError {
         blocks: u64,
     },
 }
-
-impl fmt::Display for SignatureLayoutError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SignatureLayoutError::FileTooLarge { length } => {
-                write!(f, "file length {length} exceeds i64::MAX")
-            }
-            SignatureLayoutError::BlockCountOverflow {
-                block_length,
-                blocks,
-            } => {
-                write!(
-                    f,
-                    "block count {blocks} derived from block length {block_length} exceeds i32::MAX"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for SignatureLayoutError {}
 
 /// Calculates the signature layout for a file using rsync's heuristics.
 #[doc(alias = "--block-size")]

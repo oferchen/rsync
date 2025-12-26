@@ -96,9 +96,10 @@
 //! - [`checksums`] for the rolling and strong checksum implementations
 //!   reused by this module.
 
-use ::core::fmt;
 use std::io::{self, Read};
 use std::num::NonZeroUsize;
+
+use thiserror::Error;
 
 use checksums::RollingDigest;
 use checksums::strong::{Md4, Md5, Md5Seed, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
@@ -278,11 +279,13 @@ impl FileSignature {
 }
 
 /// Errors returned when generating file signatures.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum SignatureError {
     /// Underlying I/O failure raised while reading file contents.
-    Io(io::Error),
+    #[error("failed to read input while generating signature: {0}")]
+    Io(#[from] #[source] io::Error),
     /// Requested strong checksum length exceeds what the algorithm can provide.
+    #[error("requested strong checksum length {requested} exceeds {algorithm:?} digest width")]
     DigestLengthMismatch {
         /// Strong checksum algorithm in use.
         algorithm: SignatureAlgorithm,
@@ -290,11 +293,13 @@ pub enum SignatureError {
         requested: NonZeroUsize,
     },
     /// Extra bytes were present in the input after consuming the advertised layout.
+    #[error("input contained {bytes} trailing byte(s) beyond the expected layout")]
     TrailingData {
         /// Number of bytes observed beyond the expected layout.
         bytes: u64,
     },
     /// Number of blocks derived from the layout exceeded the platform's addressable range.
+    #[error("signature layout describes {0} blocks which exceeds addressable memory")]
     TooManyBlocks(u64),
 }
 
@@ -306,49 +311,6 @@ impl SignatureError {
             algorithm,
             requested,
         }
-    }
-}
-
-impl fmt::Display for SignatureError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SignatureError::Io(error) => write!(
-                f,
-                "failed to read input while generating signature: {error}"
-            ),
-            SignatureError::DigestLengthMismatch {
-                algorithm,
-                requested,
-            } => write!(
-                f,
-                "requested strong checksum length {requested} exceeds {algorithm:?} digest width"
-            ),
-            SignatureError::TrailingData { bytes } => write!(
-                f,
-                "input contained {bytes} trailing byte(s) beyond the expected layout"
-            ),
-            SignatureError::TooManyBlocks(blocks) => write!(
-                f,
-                "signature layout describes {blocks} blocks which exceeds addressable memory"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for SignatureError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            SignatureError::Io(error) => Some(error),
-            SignatureError::DigestLengthMismatch { .. }
-            | SignatureError::TrailingData { .. }
-            | SignatureError::TooManyBlocks(_) => None,
-        }
-    }
-}
-
-impl From<io::Error> for SignatureError {
-    fn from(error: io::Error) -> Self {
-        SignatureError::Io(error)
     }
 }
 
