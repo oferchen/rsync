@@ -1,7 +1,12 @@
+//! crates/engine/src/delta/script.rs
+
 use std::cmp::min;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
 use logging::debug_log;
+
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use crate::delta::index::DeltaSignatureIndex;
 
@@ -93,6 +98,10 @@ impl DeltaScript {
 }
 
 /// Applies a [`DeltaScript`] to an existing basis file, producing the target payload.
+#[cfg_attr(
+    feature = "tracing",
+    instrument(skip(basis, output, index, script), name = "apply_delta")
+)]
 pub fn apply_delta<R, W>(
     mut basis: R,
     mut output: W,

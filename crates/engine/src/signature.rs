@@ -100,6 +100,8 @@ use std::io::{self, Read};
 use std::num::NonZeroUsize;
 
 use thiserror::Error;
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use checksums::RollingDigest;
 use checksums::strong::{Md4, Md5, Md5Seed, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
@@ -330,6 +332,7 @@ impl SignatureError {
 /// - Returns [`SignatureError::TooManyBlocks`] if the layout describes more blocks than can be
 ///   addressed on the current platform.
 /// - Propagates any I/O error surfaced by the reader.
+#[cfg_attr(feature = "tracing", instrument(skip(reader), fields(algorithm = ?algorithm, block_count = layout.block_count()), name = "generate_signature"))]
 pub fn generate_file_signature<R: Read>(
     mut reader: R,
     layout: SignatureLayout,

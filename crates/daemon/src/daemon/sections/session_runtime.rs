@@ -18,6 +18,7 @@ struct LegacySessionParams<'a> {
     reverse_lookup: bool,
 }
 
+#[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "session_handler"))]
 fn handle_session(
     stream: TcpStream,
     peer_addr: SocketAddr,
@@ -144,6 +145,7 @@ fn write_limited(
     }
 }
 
+#[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "legacy_session"))]
 fn handle_legacy_session(
     stream: TcpStream,
     peer_addr: SocketAddr,
