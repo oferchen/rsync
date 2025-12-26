@@ -25,6 +25,7 @@ compress = { path = "../compress" }
 flist = { path = "../flist" }
 logging = { path = "../logging" }
 thiserror = "2.0"
+tracing = { workspace = true, optional = true }
 libc = "0.2"
 base64 = "0.22"
 tempfile = "3.10"
@@ -62,7 +63,10 @@ iconv = ["protocol/iconv"]
 sd-notify = []
 # Async runtime support - enables tokio-based async I/O for core operations
 async = ["dep:tokio", "engine/async"]
+# Structured logging instrumentation for performance analysis and diagnostics
+tracing = ["dep:tracing"]
 
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
+tracing-subscriber = { workspace = true }
