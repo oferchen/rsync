@@ -5,7 +5,7 @@
 //! into a compact single-letter flag string like `-logDtpre.iLsfxC`. This module
 //! decodes those flags into structured options.
 
-use std::fmt;
+use thiserror::Error;
 
 /// Parsed server options decoded from the compact flag string.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -175,21 +175,12 @@ impl InfoFlags {
 }
 
 /// Error returned when parsing a flag string fails.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Error)]
 pub enum ParseFlagError {
     /// The flag string did not start with a leading `-`.
+    #[error("flag string must start with '-'")]
     MissingLeadingDash,
 }
-
-impl fmt::Display for ParseFlagError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingLeadingDash => write!(f, "flag string must start with '-'"),
-        }
-    }
-}
-
-impl std::error::Error for ParseFlagError {}
 
 #[cfg(test)]
 mod tests {
