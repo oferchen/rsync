@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use thiserror::Error;
+
 /// Describes how secluded argument mode is advertised in `--version` output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SecludedArgsMode {
@@ -53,18 +55,11 @@ impl SecludedArgsMode {
 }
 
 /// Error returned when parsing a [`SecludedArgsMode`] from text fails.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("unrecognised secluded-args mode")]
 pub struct ParseSecludedArgsModeError {
     _private: (),
 }
-
-impl fmt::Display for ParseSecludedArgsModeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("unrecognised secluded-args mode")
-    }
-}
-
-impl std::error::Error for ParseSecludedArgsModeError {}
 
 impl fmt::Display for SecludedArgsMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

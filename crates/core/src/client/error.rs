@@ -1,10 +1,12 @@
-use crate::message::{Message, Role};
-use crate::rsync_error;
-use engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
-use std::error::Error;
 use std::fmt;
 use std::io;
 use std::path::Path;
+
+use thiserror::Error;
+
+use crate::message::{Message, Role};
+use crate::rsync_error;
+use engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
 
 /// Exit code returned when client functionality is unavailable.
 pub const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
@@ -28,7 +30,8 @@ pub(crate) const MAX_DELETE_EXIT_CODE: i32 = 25;
 pub const REMOTE_COMMAND_NOT_FOUND_EXIT_CODE: i32 = 127;
 
 /// Error returned when the client orchestration fails.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Error)]
+#[error("{message}")]
 pub struct ClientError {
     exit_code: i32,
     message: Message,
@@ -51,14 +54,6 @@ impl ClientError {
         &self.message
     }
 }
-
-impl fmt::Display for ClientError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.message.fmt(f)
-    }
-}
-
-impl Error for ClientError {}
 
 pub(crate) fn missing_operands_error() -> ClientError {
     let message = rsync_error!(

@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use thiserror::Error;
+
 /// Severity of a user-visible message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Severity {
@@ -120,18 +122,11 @@ impl fmt::Display for Severity {
 }
 
 /// Error returned when parsing a [`Severity`] from a string fails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("unrecognised rsync message severity")]
 pub struct ParseSeverityError {
     _private: (),
 }
-
-impl fmt::Display for ParseSeverityError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("unrecognised rsync message severity")
-    }
-}
-
-impl std::error::Error for ParseSeverityError {}
 
 impl FromStr for Severity {
     type Err = ParseSeverityError;
