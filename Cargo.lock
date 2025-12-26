@@ -108,6 +108,7 @@ version = "3.4.1-rust"
 dependencies = [
  "memchr",
  "proptest",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -340,6 +341,7 @@ version = "3.4.1-rust"
 dependencies = [
  "flate2",
  "lz4_flex",
+ "thiserror 2.0.17",
  "zstd",
 ]
 
@@ -535,6 +537,7 @@ version = "3.4.1-rust"
 dependencies = [
  "globset",
  "logging",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -560,6 +563,7 @@ version = "3.4.1-rust"
 dependencies = [
  "logging",
  "tempfile",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -803,6 +807,7 @@ dependencies = [
  "protocol",
  "rustix 0.38.44",
  "tempfile",
+ "thiserror 2.0.17",
  "xattr",
 ]
 

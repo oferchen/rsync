@@ -62,11 +62,11 @@
 //! assert_eq!(bytes as usize, compressed.len());
 //! ```
 
-use std::{
-    fmt,
-    io::{self, IoSlice, IoSliceMut, Read, Write},
-    num::NonZeroU8,
-};
+use std::fmt;
+use std::io::{self, IoSlice, IoSliceMut, Read, Write};
+use std::num::NonZeroU8;
+
+use thiserror::Error;
 
 use crate::common::{CountingSink, CountingWriter};
 use flate2::{
@@ -125,7 +125,8 @@ impl From<CompressionLevel> for Compression {
 
 /// Error returned when a requested compression level falls outside the
 /// permissible zlib range.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("compression level {level} is outside the supported range 1-9")]
 pub struct CompressionLevelError {
     level: u32,
 }
@@ -142,18 +143,6 @@ impl CompressionLevelError {
         self.level
     }
 }
-
-impl fmt::Display for CompressionLevelError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "compression level {} is outside the supported range 1-9",
-            self.level
-        )
-    }
-}
-
-impl std::error::Error for CompressionLevelError {}
 
 /// Streaming encoder that records the number of compressed bytes produced.
 ///

@@ -1,12 +1,15 @@
-use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use thiserror::Error;
+
 /// Error produced when metadata preservation fails.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("failed to {context} '{}': {source}", path.display())]
 pub struct MetadataError {
     context: &'static str,
     path: PathBuf,
+    #[source]
     source: io::Error,
 }
 
@@ -42,24 +45,6 @@ impl MetadataError {
     #[must_use]
     pub fn into_parts(self) -> (&'static str, PathBuf, io::Error) {
         (self.context, self.path, self.source)
-    }
-}
-
-impl fmt::Display for MetadataError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "failed to {} '{}': {}",
-            self.context,
-            self.path.display(),
-            self.source
-        )
-    }
-}
-
-impl std::error::Error for MetadataError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 

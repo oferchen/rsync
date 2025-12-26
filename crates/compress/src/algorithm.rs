@@ -1,7 +1,8 @@
 //! Shared enumeration describing compression algorithms supported by the workspace.
 
-use ::core::fmt;
 use ::core::str::FromStr;
+
+use thiserror::Error;
 
 /// Compression algorithms recognised by the workspace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -147,7 +148,8 @@ mod tests {
 }
 
 /// Error returned when attempting to parse an unsupported compression algorithm.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("unsupported compression algorithm: {input}")]
 pub struct CompressionAlgorithmParseError {
     input: String,
 }
@@ -167,14 +169,6 @@ impl CompressionAlgorithmParseError {
         &self.input
     }
 }
-
-impl fmt::Display for CompressionAlgorithmParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unsupported compression algorithm: {}", self.input)
-    }
-}
-
-impl std::error::Error for CompressionAlgorithmParseError {}
 
 impl FromStr for CompressionAlgorithm {
     type Err = CompressionAlgorithmParseError;

@@ -1,11 +1,13 @@
-use std::error::Error;
-use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use thiserror::Error;
+
 /// Error returned when traversal fails.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error(transparent)]
 pub struct FileListError {
+    #[from]
     kind: FileListErrorKind,
 }
 
@@ -65,96 +67,52 @@ impl FileListError {
     }
 }
 
-impl fmt::Display for FileListError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            FileListErrorKind::RootMetadata { path, source } => {
-                write!(
-                    f,
-                    "failed to inspect traversal root '{}': {}",
-                    path.display(),
-                    source
-                )
-            }
-            FileListErrorKind::ReadDir { path, source } => {
-                write!(
-                    f,
-                    "failed to read directory '{}': {}",
-                    path.display(),
-                    source
-                )
-            }
-            FileListErrorKind::ReadDirEntry { path, source } => {
-                write!(
-                    f,
-                    "failed to read entry in '{}': {}",
-                    path.display(),
-                    source
-                )
-            }
-            FileListErrorKind::Metadata { path, source } => {
-                write!(
-                    f,
-                    "failed to inspect metadata for '{}': {}",
-                    path.display(),
-                    source
-                )
-            }
-            FileListErrorKind::Canonicalize { path, source } => {
-                write!(f, "failed to canonicalize '{}': {}", path.display(), source)
-            }
-        }
-    }
-}
-
-impl Error for FileListError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match &self.kind {
-            FileListErrorKind::RootMetadata { source, .. }
-            | FileListErrorKind::ReadDir { source, .. }
-            | FileListErrorKind::ReadDirEntry { source, .. }
-            | FileListErrorKind::Metadata { source, .. }
-            | FileListErrorKind::Canonicalize { source, .. } => Some(source),
-        }
-    }
-}
-
 /// Classification of traversal failures.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum FileListErrorKind {
     /// Failed to query metadata for the traversal root.
+    #[error("failed to inspect traversal root '{}': {source}", path.display())]
     RootMetadata {
         /// Path that failed to provide metadata.
         path: PathBuf,
         /// Underlying error emitted by the operating system.
+        #[source]
         source: io::Error,
     },
     /// Failed to read the contents of a directory.
+    #[error("failed to read directory '{}': {source}", path.display())]
     ReadDir {
         /// Directory whose contents could not be read.
         path: PathBuf,
         /// Underlying error emitted by the operating system.
+        #[source]
         source: io::Error,
     },
     /// Failed to obtain a directory entry during iteration.
+    #[error("failed to read entry in '{}': {source}", path.display())]
     ReadDirEntry {
         /// Directory containing the problematic entry.
         path: PathBuf,
         /// Underlying error emitted by the operating system.
+        #[source]
         source: io::Error,
     },
     /// Failed to retrieve metadata for an entry.
+    #[error("failed to inspect metadata for '{}': {source}", path.display())]
     Metadata {
         /// Path whose metadata could not be retrieved.
         path: PathBuf,
         /// Underlying error emitted by the operating system.
+        #[source]
         source: io::Error,
     },
     /// Failed to canonicalize a directory path while preventing cycles.
+    #[error("failed to canonicalize '{}': {source}", path.display())]
     Canonicalize {
         /// Directory path that failed to canonicalize.
         path: PathBuf,
         /// Underlying error emitted by the operating system.
+        #[source]
         source: io::Error,
     },
 }
@@ -176,6 +134,7 @@ impl FileListErrorKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error as _;
 
     fn io_failure() -> io::Error {
         io::Error::other("synthetic failure")
