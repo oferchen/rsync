@@ -4,7 +4,8 @@
 //! `user@host:path`, `[::1]:path`) into structured components for SSH invocation.
 
 use std::ffi::OsStr;
-use std::fmt;
+
+use thiserror::Error;
 
 /// Parsed remote operand with extracted components.
 ///
@@ -66,27 +67,18 @@ impl RemoteOperand {
 }
 
 /// Errors that can occur when parsing remote operands.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum RemoteOperandParseError {
     /// The operand string was empty.
+    #[error("remote operand is empty")]
     Empty,
     /// The operand format was invalid or could not be parsed.
+    #[error("invalid remote operand format")]
     InvalidFormat,
     /// The port number was invalid or out of range.
+    #[error("invalid port number in remote operand")]
     InvalidPort,
 }
-
-impl fmt::Display for RemoteOperandParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => write!(f, "remote operand is empty"),
-            Self::InvalidFormat => write!(f, "invalid remote operand format"),
-            Self::InvalidPort => write!(f, "invalid port number in remote operand"),
-        }
-    }
-}
-
-impl std::error::Error for RemoteOperandParseError {}
 
 /// Parses an SSH-style remote operand into structured components.
 ///
