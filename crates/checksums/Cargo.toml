@@ -14,6 +14,8 @@ targets = ["x86_64-unknown-linux-gnu"]
 default = ["openssl-vendored"]
 openssl = ["dep:openssl"]
 openssl-vendored = ["openssl", "openssl/vendored"]
+# Parallel checksum computation using rayon
+parallel = ["rayon"]
 
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
@@ -24,6 +26,7 @@ sha2 = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
 thiserror = "2.0"
 openssl = { version = "0.10", optional = true }
+rayon = { version = "1.10", optional = true }
 logging = { path = "../logging" }
 
 [dev-dependencies]
