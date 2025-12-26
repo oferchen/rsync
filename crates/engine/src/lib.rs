@@ -75,6 +75,7 @@
 pub mod batch;
 pub mod delta;
 pub mod error;
+pub mod fuzzy;
 pub mod local_copy;
 pub mod signature;
 
@@ -85,6 +86,7 @@ pub use delta::{
     generate_delta,
 };
 pub use error::{EngineError, EngineResult};
+pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
 pub use local_copy::{
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
     LocalCopySummary, SkipCompressList, SkipCompressParseError,

@@ -102,6 +102,9 @@ pub(crate) use metadata_sync::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_xattrs_if_requested;
 
+#[cfg(all(unix, feature = "xattr"))]
+pub(crate) use metadata_sync::sync_nfsv4_acls_if_requested;
+
 pub(crate) use operands::{DestinationSpec, SourceSpec, operand_is_remote};
 
 pub use filter_program::{
