@@ -314,22 +314,35 @@ pub fn run_server_with_handshake<W: Write>(
 
     // Filter list handling for client mode.
     //
-    // Upstream exclude.c:send_filter_list() determines whether to send filter list:
-    //   receiver_wants_list = prune_empty_dirs || (delete_mode && ...)
-    //   if (am_sender && !receiver_wants_list) f_out = -1;  // Skip sending
+    // The filter list exchange depends on role and mode:
     //
-    // For a basic push (no delete, no prune_empty_dirs), the sender SKIPS sending
-    // the filter list entirely. The daemon receiver doesn't expect one.
+    // CLIENT GENERATOR (push to daemon):
+    //   Upstream exclude.c:send_filter_list() logic:
+    //     receiver_wants_list = prune_empty_dirs || (delete_mode && ...)
+    //     if (am_sender && !receiver_wants_list) f_out = -1;  // Skip sending
+    //   For a basic push (no delete), the sender SKIPS sending the filter list.
     //
-    // We only send filter list when:
-    // 1. We have actual filter rules to send, OR
-    // 2. Receiver needs the list (delete mode, prune_empty_dirs)
-    // TODO: Add prune_empty_dirs support
+    // CLIENT RECEIVER (pull from daemon):
+    //   Upstream main.c:start_server() when daemon is sender (am_sender=1):
+    //     recv_filter_list(f_in);  // Daemon ALWAYS reads filter list from client!
+    //   The daemon expects to read filter list from us, so we MUST send one
+    //   (even if empty, we send the terminator).
+    //
+    // SERVER mode: we receive, never send.
     let receiver_wants_filter_list = config.flags.delete || !config.filter_rules.is_empty();
 
     let should_send_filter_list = if config.client_mode {
-        // Client sender mode: only send if receiver needs it (upstream exclude.c logic)
-        receiver_wants_filter_list
+        match config.role {
+            ServerRole::Generator => {
+                // Client sender (push): only send if receiver wants it
+                receiver_wants_filter_list
+            }
+            ServerRole::Receiver => {
+                // Client receiver (pull): daemon sender ALWAYS reads filter list from us
+                // We must send at least the empty terminator
+                true
+            }
+        }
     } else {
         // Server mode: never send (we receive)
         false
