@@ -11,7 +11,9 @@
 //! - Async session handling with timeout support
 //! - Integration with SessionRegistry for concurrent session tracking
 //! - Graceful shutdown support via cancellation tokens
-//!
+
+#![allow(dead_code)]
+
 //! # Example
 //!
 //! ```ignore
@@ -33,7 +35,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{Semaphore, broadcast};
 use tokio::time::timeout;
 
 #[cfg(feature = "concurrent-sessions")]
@@ -53,6 +55,7 @@ pub const DEFAULT_READ_TIMEOUT: u64 = 30;
 
 /// Configuration for the async daemon listener.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ListenerConfig {
     /// Address to bind to.
     pub bind_address: SocketAddr,
@@ -74,6 +77,7 @@ impl Default for ListenerConfig {
     }
 }
 
+#[allow(dead_code)]
 impl ListenerConfig {
     /// Creates a new listener configuration with default settings.
     #[must_use]
@@ -173,6 +177,7 @@ impl From<io::Error> for AsyncDaemonError {
 }
 
 /// Async TCP listener for the rsync daemon.
+#[allow(dead_code)]
 pub struct AsyncDaemonListener {
     listener: TcpListener,
     config: ListenerConfig,
@@ -184,6 +189,7 @@ pub struct AsyncDaemonListener {
     connection_pool: Arc<ConnectionPool>,
 }
 
+#[allow(dead_code)]
 impl AsyncDaemonListener {
     /// Creates a new async daemon listener bound to the configured address.
     ///
@@ -425,6 +431,7 @@ impl Drop for AsyncSession {
 
 /// Result of a session handling operation.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SessionResult {
     /// Peer address of the session.
     pub peer_addr: SocketAddr,

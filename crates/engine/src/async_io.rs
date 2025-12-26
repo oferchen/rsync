@@ -400,10 +400,7 @@ impl AsyncBatchCopier {
     /// # Errors
     ///
     /// Individual file errors are returned in the result vector.
-    pub async fn copy_files<I, P, Q>(
-        &self,
-        files: I,
-    ) -> Vec<Result<CopyResult, AsyncIoError>>
+    pub async fn copy_files<I, P, Q>(&self, files: I) -> Vec<Result<CopyResult, AsyncIoError>>
     where
         I: IntoIterator<Item = (P, Q)>,
         P: AsRef<Path> + Send + 'static,
@@ -713,14 +710,15 @@ pub async fn compute_file_checksum(
     task::spawn_blocking(move || {
         use std::io::Read;
 
-        let mut file =
-            std::fs::File::open(&path).map_err(|e| AsyncIoError::io(&path, e))?;
+        let mut file = std::fs::File::open(&path).map_err(|e| AsyncIoError::io(&path, e))?;
 
         let mut buffer = vec![0u8; 64 * 1024];
         let mut hasher = algorithm.new_hasher();
 
         loop {
-            let n = file.read(&mut buffer).map_err(|e| AsyncIoError::io(&path, e))?;
+            let n = file
+                .read(&mut buffer)
+                .map_err(|e| AsyncIoError::io(&path, e))?;
             if n == 0 {
                 break;
             }
@@ -827,7 +825,10 @@ mod tests {
         let result = copier.copy_file(&src, &dst).await.unwrap();
 
         assert_eq!(result.bytes_copied, 19);
-        assert_eq!(std::fs::read_to_string(&dst).unwrap(), "Hello, async world!");
+        assert_eq!(
+            std::fs::read_to_string(&dst).unwrap(),
+            "Hello, async world!"
+        );
     }
 
     #[tokio::test]
@@ -927,7 +928,8 @@ mod tests {
 
         // Verify all files were copied
         for i in 0..5 {
-            let content = std::fs::read_to_string(temp.path().join(format!("dst_{i}.txt"))).unwrap();
+            let content =
+                std::fs::read_to_string(temp.path().join(format!("dst_{i}.txt"))).unwrap();
             assert_eq!(content, format!("Content {i}"));
         }
     }

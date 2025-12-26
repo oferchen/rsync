@@ -9,9 +9,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
 
-use super::connection_pool::{ConnectionPool, IpStats};
+use super::connection_pool::ConnectionPool;
 use super::session_registry::{SessionRegistry, SessionState};
 
 fn test_addr(ip_last: u8, port: u16) -> SocketAddr {
@@ -188,7 +187,10 @@ fn concurrent_module_queries() {
             barrier.wait();
             let module = format!("module_{thread_id}");
             for i in 0..200 {
-                let addr = test_addr((thread_id * 50 + i / 4) as u8, (thread_id * 1000 + i) as u16);
+                let addr = test_addr(
+                    (thread_id * 50 + i / 4) as u8,
+                    (thread_id * 1000 + i) as u16,
+                );
                 let session_id = registry.register(addr, None);
                 let conn_id = pool.register(addr);
 
@@ -378,16 +380,16 @@ fn concurrent_byte_updates() {
     // 10 threads each add 1000 bytes received and 500 sent
     for _ in 0..10 {
         let pool = Arc::clone(&pool);
-        let conn_id = conn_id;
+        let thread_conn_id = conn_id;
         let barrier = Arc::clone(&barrier);
 
         handles.push(thread::spawn(move || {
             barrier.wait();
             for _ in 0..1000 {
-                pool.add_bytes(&conn_id, 1, 0);
+                pool.add_bytes(&thread_conn_id, 1, 0);
             }
             for _ in 0..500 {
-                pool.add_bytes(&conn_id, 0, 1);
+                pool.add_bytes(&thread_conn_id, 0, 1);
             }
         }));
     }
@@ -419,7 +421,10 @@ fn concurrent_aggregate_stats() {
         handles.push(thread::spawn(move || {
             barrier.wait();
             for i in 0..100 {
-                let addr = test_addr((thread_id * 64 + i / 4) as u8, (thread_id * 1000 + i) as u16);
+                let addr = test_addr(
+                    (thread_id * 64 + i / 4) as u8,
+                    (thread_id * 1000 + i) as u16,
+                );
                 let conn_id = pool.register(addr);
                 let session_id = registry.register(addr, None);
 

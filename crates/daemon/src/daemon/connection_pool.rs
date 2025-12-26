@@ -7,6 +7,8 @@
 //! The pool uses DashMap for lock-free concurrent access, allowing multiple
 //! threads to query and update connection state without blocking.
 
+#![allow(dead_code)]
+
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,6 +36,7 @@ impl std::fmt::Display for ConnectionId {
 
 /// Metadata about an active connection.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct ConnectionInfo {
     /// Unique connection identifier.
     pub id: ConnectionId,
@@ -132,6 +135,7 @@ pub struct ConnectionPool {
     next_id: AtomicU64,
 }
 
+#[allow(dead_code)]
 impl ConnectionPool {
     /// Creates a new empty connection pool.
     #[must_use]
@@ -314,13 +318,7 @@ impl ConnectionPool {
     pub fn connections_for_module(&self, module: &str) -> Vec<ConnectionInfo> {
         self.connections
             .iter()
-            .filter(|entry| {
-                entry
-                    .value()
-                    .module
-                    .as_ref()
-                    .is_some_and(|m| m == module)
-            })
+            .filter(|entry| entry.value().module.as_ref().is_some_and(|m| m == module))
             .map(|entry| entry.value().clone())
             .collect()
     }
@@ -330,13 +328,7 @@ impl ConnectionPool {
     pub fn module_connection_count(&self, module: &str) -> usize {
         self.connections
             .iter()
-            .filter(|entry| {
-                entry
-                    .value()
-                    .module
-                    .as_ref()
-                    .is_some_and(|m| m == module)
-            })
+            .filter(|entry| entry.value().module.as_ref().is_some_and(|m| m == module))
             .count()
     }
 

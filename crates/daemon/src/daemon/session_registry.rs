@@ -6,6 +6,8 @@
 //! sessions. It enables concurrent queries about session state without
 //! blocking the main accept loop.
 
+#![allow(dead_code)]
+
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -275,13 +277,7 @@ impl SessionRegistry {
     pub fn sessions_for_module(&self, module: &str) -> Vec<SessionInfo> {
         self.sessions
             .iter()
-            .filter(|entry| {
-                entry
-                    .value()
-                    .module
-                    .as_ref()
-                    .is_some_and(|m| m == module)
-            })
+            .filter(|entry| entry.value().module.as_ref().is_some_and(|m| m == module))
             .map(|entry| entry.value().clone())
             .collect()
     }
@@ -291,13 +287,7 @@ impl SessionRegistry {
     pub fn module_session_count(&self, module: &str) -> usize {
         self.sessions
             .iter()
-            .filter(|entry| {
-                entry
-                    .value()
-                    .module
-                    .as_ref()
-                    .is_some_and(|m| m == module)
-            })
+            .filter(|entry| entry.value().module.as_ref().is_some_and(|m| m == module))
             .count()
     }
 
@@ -309,7 +299,7 @@ impl SessionRegistry {
             .sessions
             .iter()
             .filter(|entry| !entry.value().is_active())
-            .map(|entry| entry.key().clone())
+            .map(|entry| *entry.key())
             .collect();
 
         let count = to_remove.len();
@@ -327,7 +317,7 @@ impl SessionRegistry {
             .sessions
             .iter()
             .filter(|entry| entry.value().duration() > max_age)
-            .map(|entry| entry.key().clone())
+            .map(|entry| *entry.key())
             .collect();
 
         let count = to_remove.len();
