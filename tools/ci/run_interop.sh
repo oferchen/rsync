@@ -482,7 +482,8 @@ start_upstream_daemon() {
   local pid_file=$4
 
   up_pid_file_current="$pid_file"
-  "$binary" --daemon --config "$config" --no-detach --log-file "$log_file" &
+  # Close stdin to prevent SIGPIPE when daemon writes to closed pipe
+  "$binary" --daemon --config "$config" --no-detach --log-file "$log_file" </dev/null &
   up_pid=$!
   sleep 1
 }
