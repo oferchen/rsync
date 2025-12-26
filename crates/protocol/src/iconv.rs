@@ -19,21 +19,14 @@
 use std::borrow::Cow;
 
 /// Error type for encoding conversion failures.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{message}")]
 pub struct ConversionError {
     /// Description of the error.
     pub message: String,
     /// The bytes that failed to convert (if applicable).
     pub bytes: Option<Vec<u8>>,
 }
-
-impl std::fmt::Display for ConversionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for ConversionError {}
 
 impl ConversionError {
     /// Creates a new conversion error with the given message.

@@ -166,7 +166,8 @@ impl FromStr for KnownCompatibilityFlag {
 }
 
 /// Error returned when parsing a [`KnownCompatibilityFlag`] from an invalid identifier.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("unrecognized compatibility flag identifier: {identifier}")]
 pub struct ParseKnownCompatibilityFlagError {
     identifier: Box<str>,
 }
@@ -184,18 +185,6 @@ impl ParseKnownCompatibilityFlagError {
         &self.identifier
     }
 }
-
-impl fmt::Display for ParseKnownCompatibilityFlagError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unrecognized compatibility flag identifier: {}",
-            self.identifier()
-        )
-    }
-}
-
-impl std::error::Error for ParseKnownCompatibilityFlagError {}
 
 impl fmt::Display for KnownCompatibilityFlag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
