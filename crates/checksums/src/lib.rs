@@ -7,6 +7,10 @@
 mod rolling;
 pub mod strong;
 
+#[cfg(feature = "parallel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
+pub mod parallel;
+
 pub use rolling::{
     RollingChecksum, RollingDigest, RollingError, RollingSliceError, simd_acceleration_available,
 };
