@@ -12,8 +12,8 @@ use crate::varint::write_varint;
 
 use super::entry::FileEntry;
 use super::flags::{
-    XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_SAME_MODE, XMIT_SAME_NAME,
-    XMIT_SAME_TIME, XMIT_TOP_DIR,
+    XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_SAME_GID, XMIT_SAME_MODE,
+    XMIT_SAME_NAME, XMIT_SAME_TIME, XMIT_SAME_UID, XMIT_TOP_DIR,
 };
 
 /// State maintained while writing a file list.
@@ -35,12 +35,16 @@ pub struct FileListWriter {
     prev_mode: u32,
     /// Previous entry's mtime.
     prev_mtime: i64,
-    /// Previous entry's UID (for future ownership preservation).
-    #[allow(dead_code)]
+    /// Previous entry's UID (for ownership preservation).
     prev_uid: u32,
-    /// Previous entry's GID (for future ownership preservation).
-    #[allow(dead_code)]
+    /// Previous entry's GID (for ownership preservation).
     prev_gid: u32,
+    /// Whether to preserve (and thus write) UID values to the wire.
+    /// Corresponds to `-o` / `--owner` flag.
+    preserve_uid: bool,
+    /// Whether to preserve (and thus write) GID values to the wire.
+    /// Corresponds to `-g` / `--group` flag.
+    preserve_gid: bool,
 }
 
 impl FileListWriter {
@@ -56,6 +60,8 @@ impl FileListWriter {
             prev_mtime: 0,
             prev_uid: 0,
             prev_gid: 0,
+            preserve_uid: false,
+            preserve_gid: false,
         }
     }
 
@@ -71,7 +77,31 @@ impl FileListWriter {
             prev_mtime: 0,
             prev_uid: 0,
             prev_gid: 0,
+            preserve_uid: false,
+            preserve_gid: false,
         }
+    }
+
+    /// Sets whether UID values should be written to the wire.
+    ///
+    /// When `preserve_uid` is true, the writer will emit UID values for each
+    /// entry, with compression via the `XMIT_SAME_UID` flag when UIDs match.
+    /// This must match the `-o` / `--owner` flag.
+    #[must_use]
+    pub fn with_preserve_uid(mut self, preserve: bool) -> Self {
+        self.preserve_uid = preserve;
+        self
+    }
+
+    /// Sets whether GID values should be written to the wire.
+    ///
+    /// When `preserve_gid` is true, the writer will emit GID values for each
+    /// entry, with compression via the `XMIT_SAME_GID` flag when GIDs match.
+    /// This must match the `-g` / `--group` flag.
+    #[must_use]
+    pub fn with_preserve_gid(mut self, preserve: bool) -> Self {
+        self.preserve_gid = preserve;
+        self
     }
 
     /// Writes a file entry to the stream.
@@ -121,6 +151,20 @@ impl FileListWriter {
             self.prev_mtime = entry.mtime();
         }
 
+        // UID comparison (upstream flist.c:463-467)
+        // Get the entry's UID, defaulting to 0 if not set
+        let entry_uid = entry.uid().unwrap_or(0);
+        if self.preserve_uid && entry_uid == self.prev_uid {
+            xflags |= XMIT_SAME_UID as u32;
+        }
+
+        // GID comparison (upstream flist.c:473-476)
+        // Get the entry's GID, defaulting to 0 if not set
+        let entry_gid = entry.gid().unwrap_or(0);
+        if self.preserve_gid && entry_gid == self.prev_gid {
+            xflags |= XMIT_SAME_GID as u32;
+        }
+
         // Name compression (upstream flist.c:532-537)
         if same_len > 0 {
             xflags |= XMIT_SAME_NAME as u32;
@@ -145,13 +189,26 @@ impl FileListWriter {
 
         // Write xflags (upstream flist.c:549-559)
         if use_varint_flags {
-            // Protocol 30+ with varint: use XMIT_EXTENDED_FLAGS if xflags would be zero
-            let xflags_to_write = if xflags == 0 {
-                XMIT_EXTENDED_FLAGS as u32
-            } else {
-                xflags
-            };
-            write_varint(writer, xflags_to_write as i32)?;
+            // Protocol 30+ with varint: avoid xflags=0 which looks like end marker
+            //
+            // Upstream flist.c:551-552:
+            //   if (!xflags && !S_ISDIR(mode))
+            //       xflags = XMIT_LONG_NAME; /* Avoid a 0 value */
+            //
+            // IMPORTANT: Although upstream only adds this for non-directories,
+            // we MUST add it for ALL entries to avoid xflags=0 looking like
+            // the file list end marker (varint 0 = 0x00).
+            //
+            // Upstream relies on directories having XMIT_TOP_DIR or other flags
+            // set, but our file list walker may produce directories without any
+            // "same-as-previous" flags, resulting in xflags=0.
+            //
+            // XMIT_LONG_NAME (0x40) is safe for directories - it just means
+            // the name length is encoded as varint instead of single byte.
+            if xflags == 0 {
+                xflags = XMIT_LONG_NAME as u32;
+            }
+            write_varint(writer, xflags as i32)?;
         } else if self.protocol.as_u8() >= 28 {
             // Protocol 28-29: upstream flist.c:551-558
             // If xflags is 0 and not a directory, add XMIT_TOP_DIR
@@ -173,12 +230,11 @@ impl FileListWriter {
             }
         } else {
             // Protocol < 28: simple byte encoding
-            let xflags_to_write = if xflags == 0 {
-                XMIT_EXTENDED_FLAGS as u32
-            } else {
-                xflags
-            };
-            writer.write_all(&[xflags_to_write as u8])?;
+            // Avoid xflags=0 which looks like end marker (upstream flist.c:551-552)
+            if xflags == 0 && !entry.is_dir() {
+                xflags = XMIT_LONG_NAME as u32;
+            }
+            writer.write_all(&[xflags as u8])?;
         }
 
         // Write name compression info (upstream flist.c:560-569)
@@ -200,16 +256,25 @@ impl FileListWriter {
         // Write suffix bytes (upstream flist.c:570)
         writer.write_all(&name[same_len..])?;
 
-        // Write file length (upstream flist.c:580 -> io.h:write_varlong30)
-        // Uses codec for protocol-aware encoding:
-        // - Protocol >= 30: varlong with min_bytes=3
-        // - Protocol < 30: longint (4 bytes for small, 12 for large)
+        // Write file length (upstream flist.c:580)
+        //
+        // Upstream: write_varlong30(f, F_LENGTH(file), 3);
+        // VARINT_FLIST_FLAGS does NOT change this - it only affects xflags
+        // and end-of-list marker encoding, not file_length or mtime.
+        //
+        // The codec's write_file_size handles protocol-specific encoding:
+        // - Protocol < 30: 4-byte or 8-byte integer (longint)
+        // - Protocol >= 30: varlong30 with 3 bytes minimum
         self.codec.write_file_size(writer, entry.size() as i64)?;
 
         // Write mtime if different (upstream flist.c:581-585)
-        // Uses codec for protocol-aware encoding:
-        // - Protocol >= 30: varlong with min_bytes=4
-        // - Protocol < 30: 4-byte fixed integer
+        //
+        // Upstream for protocol >= 30: write_varlong(f, modtime, 4);
+        // VARINT_FLIST_FLAGS does NOT change mtime encoding.
+        //
+        // The codec's write_mtime handles protocol-specific encoding:
+        // - Protocol < 30: 4-byte unsigned integer (read_uint)
+        // - Protocol >= 30: varlong with 4 bytes minimum
         if xflags & (XMIT_SAME_TIME as u32) == 0 {
             self.codec.write_mtime(writer, entry.mtime())?;
         }
@@ -220,6 +285,34 @@ impl FileListWriter {
             // to_wire_mode() is usually a no-op on Unix, just converts mode to i32
             let wire_mode = entry.mode() as i32;
             writer.write_all(&wire_mode.to_le_bytes())?;
+        }
+
+        // Write UID if preserve_uid is set and XMIT_SAME_UID is NOT set
+        // Upstream flist.c:597-608
+        if self.preserve_uid && (xflags & (XMIT_SAME_UID as u32)) == 0 {
+            if self.protocol.as_u8() < 30 {
+                // Protocol < 30: write_int (4 bytes LE)
+                writer.write_all(&(entry_uid as i32).to_le_bytes())?;
+            } else {
+                // Protocol >= 30: write_varint
+                write_varint(writer, entry_uid as i32)?;
+                // Note: XMIT_USER_NAME_FOLLOWS is not currently supported
+            }
+            self.prev_uid = entry_uid;
+        }
+
+        // Write GID if preserve_gid is set and XMIT_SAME_GID is NOT set
+        // Upstream flist.c:609-620
+        if self.preserve_gid && (xflags & (XMIT_SAME_GID as u32)) == 0 {
+            if self.protocol.as_u8() < 30 {
+                // Protocol < 30: write_int (4 bytes LE)
+                writer.write_all(&(entry_gid as i32).to_le_bytes())?;
+            } else {
+                // Protocol >= 30: write_varint
+                write_varint(writer, entry_gid as i32)?;
+                // Note: XMIT_GROUP_NAME_FOLLOWS is not currently supported
+            }
+            self.prev_gid = entry_gid;
         }
 
         // Update previous name (upstream flist.c:677)

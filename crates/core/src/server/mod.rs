@@ -148,15 +148,6 @@ pub fn run_server_with_handshake<W: Write>(
     stdin: &mut dyn Read,
     mut stdout: W,
 ) -> ServerResult {
-    // DEBUG: Checkpoint at entry
-    let _ = std::fs::write(
-        "/tmp/server_RUN_ENTRY",
-        format!(
-            "protocol={} role={:?}",
-            handshake.protocol.as_u8(),
-            config.role
-        ),
-    );
     // Protocol has already been negotiated via:
     // - perform_handshake() for SSH mode (binary exchange)
     // - @RSYNCD exchange for daemon mode
@@ -323,25 +314,24 @@ pub fn run_server_with_handshake<W: Write>(
 
     // Filter list handling for client mode.
     //
-    // For protocol >= 30, filter list is sent through multiplexed output.
-    // The daemon (sender) activates input multiplex BEFORE reading filter list.
+    // Upstream exclude.c:send_filter_list() determines whether to send filter list:
+    //   receiver_wants_list = prune_empty_dirs || (delete_mode && ...)
+    //   if (am_sender && !receiver_wants_list) f_out = -1;  // Skip sending
     //
-    // Mirror upstream behavior:
-    // - Skip filter list for Generator (sender) when no --delete flag
-    // - Send filter list for Receiver (receiver wants to tell sender what to exclude)
+    // For a basic push (no delete, no prune_empty_dirs), the sender SKIPS sending
+    // the filter list entirely. The daemon receiver doesn't expect one.
+    //
+    // We only send filter list when:
+    // 1. We have actual filter rules to send, OR
+    // 2. Receiver needs the list (delete mode, prune_empty_dirs)
+    // TODO: Add prune_empty_dirs support
+    let receiver_wants_filter_list = config.flags.delete || !config.filter_rules.is_empty();
+
     let should_send_filter_list = if config.client_mode {
-        match config.role {
-            ServerRole::Generator => {
-                // Sender: only send if receiver wants it (delete mode)
-                // or if we actually have filter rules to send
-                !config.filter_rules.is_empty() || config.flags.delete
-            }
-            ServerRole::Receiver => {
-                // Receiver always sends filter list to tell sender what to exclude
-                true
-            }
-        }
+        // Client sender mode: only send if receiver needs it (upstream exclude.c logic)
+        receiver_wants_filter_list
     } else {
+        // Server mode: never send (we receive)
         false
     };
 
@@ -391,11 +381,6 @@ pub fn run_server_with_handshake<W: Write>(
     // See receiver.rs and generator.rs for the activation points.
 
     let chained_reader = reader;
-
-    let _ = std::fs::write(
-        "/tmp/server_BEFORE_ROLE_DISPATCH",
-        format!("role={:?}", config.role),
-    );
 
     match config.role {
         ServerRole::Receiver => {
