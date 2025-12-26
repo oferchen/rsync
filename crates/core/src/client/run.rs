@@ -1,9 +1,14 @@
+//! crates/core/src/client/run.rs
+
 use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use engine::batch::{BatchReader, BatchWriter};
 use engine::local_copy::{
@@ -30,6 +35,7 @@ use super::summary::ClientSummary;
 /// The helper executes the local copy engine for local transfers, or the
 /// native SSH transport for remote transfers. Both paths return a summary
 /// of the work performed.
+#[cfg_attr(feature = "tracing", instrument(skip(config)))]
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     run_client_internal(config, None)
 }
@@ -38,6 +44,7 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 ///
 /// When an observer is supplied the transfer emits progress updates mirroring
 /// the behaviour of `--info=progress2`.
+#[cfg_attr(feature = "tracing", instrument(skip(config, observer)))]
 pub fn run_client_with_observer(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
@@ -50,6 +57,7 @@ pub fn run_client_with_observer(
 /// The caller may supply a [`RemoteFallbackContext`] that describes how to invoke
 /// an upstream `rsync` binary for remote transfers while the native engine
 /// evolves.
+#[cfg_attr(feature = "tracing", instrument(skip(config, observer, _fallback)))]
 pub fn run_client_or_fallback<Out, Err>(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
@@ -62,6 +70,10 @@ where
     run_client_internal(config, observer).map(|summary| ClientOutcome::Local(Box::new(summary)))
 }
 
+#[cfg_attr(
+    feature = "tracing",
+    instrument(skip(config, observer), name = "client_internal")
+)]
 fn run_client_internal(
     config: ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,

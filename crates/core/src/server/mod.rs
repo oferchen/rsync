@@ -1,4 +1,6 @@
 #![deny(unsafe_code)]
+//! crates/core/src/server/mod.rs
+//!
 //! Native server orchestration utilities.
 //!
 //! This module provides the server-side entry points for `--server` mode,
@@ -59,6 +61,9 @@
 //! See the `generator` module documentation for implementation details.
 
 use std::io::{self, Read, Write};
+
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 /// Compressed reader wrapping multiplexed streams.
 mod compressed_reader;
@@ -123,6 +128,7 @@ pub type ServerResult = io::Result<ServerStats>;
 /// # Returns
 ///
 /// Returns `ServerStats` on successful transfer, or an error if handshake or transfer fails.
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout), fields(role = ?config.role)))]
 pub fn run_server_stdio(
     config: ServerConfig,
     stdin: &mut dyn Read,
@@ -142,6 +148,7 @@ pub fn run_server_stdio(
 /// # Returns
 ///
 /// Returns `ServerStats` on successful transfer, or an error if transfer fails.
+#[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake<W: Write>(
     config: ServerConfig,
     mut handshake: HandshakeResult,

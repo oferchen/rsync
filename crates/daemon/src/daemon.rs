@@ -1,3 +1,5 @@
+//! crates/daemon/src/daemon.rs
+//!
 //! Implementation details backing [`crate::run_daemon`].
 //!
 //! The module hosts the listener loop, authentication helpers, and
@@ -6,6 +8,7 @@
 //! functionality.
 
 use dns_lookup::{lookup_addr, lookup_host};
+
 use std::borrow::Cow;
 #[cfg(test)]
 use std::cell::RefCell;
@@ -28,6 +31,8 @@ use std::sync::{
 };
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use std::process::{ChildStdin, Command as ProcessCommand, Stdio};
 
@@ -132,6 +137,7 @@ include!("daemon/sections/config_helpers.rs");
 /// deterministic `@ERROR` message explaining that module serving is not yet
 /// available. This behaviour gives higher layers a concrete negotiation target
 /// while keeping the observable output stable.
+#[cfg_attr(feature = "tracing", instrument(skip(config), name = "daemon_run"))]
 pub fn run_daemon(config: DaemonConfig) -> Result<(), DaemonError> {
     let options = RuntimeOptions::parse_with_brand(
         config.arguments(),
