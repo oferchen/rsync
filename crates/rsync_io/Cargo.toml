@@ -14,6 +14,7 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
+thiserror = "2.0"
 protocol = { path = "../protocol" }
 logging = { path = "../logging" }
 memchr = "2.7"

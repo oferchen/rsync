@@ -1,7 +1,10 @@
 use std::io;
 
+use thiserror::Error;
+
 /// Error returned when `NegotiationBufferedSlices::copy_to_slice` receives an undersized buffer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("buffer length {provided} is insufficient for negotiation transcript requiring {required} bytes")]
 pub struct CopyToSliceError {
     required: usize,
     provided: usize,
@@ -37,18 +40,6 @@ impl CopyToSliceError {
         self.required.saturating_sub(self.provided)
     }
 }
-
-impl std::fmt::Display for CopyToSliceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "buffer length {} is insufficient for negotiation transcript requiring {} bytes",
-            self.provided, self.required
-        )
-    }
-}
-
-impl std::error::Error for CopyToSliceError {}
 
 impl From<CopyToSliceError> for io::Error {
     fn from(err: CopyToSliceError) -> Self {
@@ -86,7 +77,8 @@ impl From<CopyToSliceError> for io::Error {
 /// assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
 /// assert!(io_err.to_string().contains("requires"));
 /// ```
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("buffered negotiation data requires {required} bytes but destination provided {provided}")]
 pub struct BufferedCopyTooSmall {
     required: usize,
     provided: usize,
@@ -136,18 +128,6 @@ impl BufferedCopyTooSmall {
         self.required.saturating_sub(self.provided)
     }
 }
-
-impl std::fmt::Display for BufferedCopyTooSmall {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "buffered negotiation data requires {} bytes but destination provided {}",
-            self.required, self.provided
-        )
-    }
-}
-
-impl std::error::Error for BufferedCopyTooSmall {}
 
 impl From<BufferedCopyTooSmall> for io::Error {
     fn from(err: BufferedCopyTooSmall) -> Self {
