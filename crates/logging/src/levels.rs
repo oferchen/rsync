@@ -3,6 +3,7 @@
 
 /// Info flags for diagnostic categories.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum InfoFlag {
     /// Backup file operations.
     Backup,
@@ -34,6 +35,7 @@ pub enum InfoFlag {
 
 /// Debug flags for diagnostic categories.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DebugFlag {
     /// ACL processing.
     Acl,
@@ -87,6 +89,7 @@ pub enum DebugFlag {
 
 /// Info verbosity levels for each flag.
 #[derive(Clone, Default, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct InfoLevels {
     /// Backup file operations level.
     pub backup: u8,
@@ -175,6 +178,7 @@ impl InfoLevels {
 
 /// Debug verbosity levels for each flag.
 #[derive(Clone, Default, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DebugLevels {
     /// ACL processing level.
     pub acl: u8,
