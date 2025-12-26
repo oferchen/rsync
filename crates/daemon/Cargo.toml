@@ -18,6 +18,8 @@ default = []
 sd-notify = ["dep:sd-notify", "core/sd-notify"]
 # Async runtime support - enables tokio-based async I/O for daemon operations
 async = ["dep:tokio", "core/async"]
+# Concurrent session tracking - enables efficient shared state for multi-session daemons
+concurrent-sessions = ["dep:dashmap"]
 
 [dependencies]
 clap = { version = "4.5.49", features = ["std"] }
@@ -30,6 +32,7 @@ fs2 = "0.4"
 sd-notify = { version = "0.4.5", optional = true }
 tempfile = "3.10"
 tokio = { workspace = true, optional = true }
+dashmap = { workspace = true, optional = true }
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
