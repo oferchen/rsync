@@ -1,9 +1,11 @@
 use ::core::fmt;
 use ::core::str::FromStr;
 use std::io;
+use thiserror::Error;
 
 /// Error returned when the caller-provided slice cannot hold the buffered negotiation prefix.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("provided buffer of length {available} is too small for negotiation prefix (requires {required})")]
 pub struct BufferedPrefixTooSmall {
     required: usize,
     available: usize,
@@ -46,18 +48,6 @@ impl BufferedPrefixTooSmall {
     }
 }
 
-impl fmt::Display for BufferedPrefixTooSmall {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "provided buffer of length {} is too small for negotiation prefix (requires {})",
-            self.available, self.required
-        )
-    }
-}
-
-impl std::error::Error for BufferedPrefixTooSmall {}
-
 /// Error category produced when parsing a [`NegotiationPrologue`] from text fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParseNegotiationPrologueErrorKind {
@@ -68,13 +58,13 @@ pub enum ParseNegotiationPrologueErrorKind {
 }
 
 /// Error returned when parsing a [`NegotiationPrologue`] from text fails.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub struct ParseNegotiationPrologueError {
     kind: ParseNegotiationPrologueErrorKind,
 }
 
 impl ParseNegotiationPrologueError {
-    const fn new(kind: ParseNegotiationPrologueErrorKind) -> Self {
+    pub(crate) const fn new(kind: ParseNegotiationPrologueErrorKind) -> Self {
         Self { kind }
     }
 
@@ -98,8 +88,6 @@ impl fmt::Display for ParseNegotiationPrologueError {
         }
     }
 }
-
-impl std::error::Error for ParseNegotiationPrologueError {}
 
 impl From<BufferedPrefixTooSmall> for io::Error {
     fn from(err: BufferedPrefixTooSmall) -> Self {

@@ -145,11 +145,13 @@ impl FromStr for LogCode {
 }
 
 /// Error returned when parsing a log code from its representation fails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ParseLogCodeError {
     /// The provided numeric identifier is not known to rsync 3.4.1.
+    #[error("unknown log code value: {0}")]
     InvalidValue(u8),
     /// The provided mnemonic name is not known to rsync 3.4.1.
+    #[error("unknown log code name: \"{0}\"")]
     InvalidName(String),
 }
 
@@ -184,14 +186,3 @@ impl ParseLogCodeError {
         }
     }
 }
-
-impl fmt::Display for ParseLogCodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidValue(value) => write!(f, "unknown log code value: {value}"),
-            Self::InvalidName(name) => write!(f, "unknown log code name: \"{name}\""),
-        }
-    }
-}
-
-impl std::error::Error for ParseLogCodeError {}
