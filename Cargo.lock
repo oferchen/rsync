@@ -541,6 +541,7 @@ version = "3.4.1-rust"
 dependencies = [
  "globset",
  "logging",
+ "proptest",
  "thiserror 2.0.17",
 ]
 

@@ -245,3 +245,111 @@ fn sender_only_risk_does_not_clear_receiver_protection() {
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(!set.allows_deletion(Path::new("keep/item.txt"), false));
 }
+
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strategy for generating valid glob pattern characters.
+    fn pattern_char() -> impl Strategy<Value = char> {
+        prop_oneof![
+            Just('a'),
+            Just('b'),
+            Just('c'),
+            Just('0'),
+            Just('1'),
+            Just('_'),
+            Just('-'),
+            Just('.'),
+            Just('/'),
+            Just('*'),
+        ]
+    }
+
+    /// Strategy for generating valid patterns (avoiding broken glob syntax).
+    fn valid_pattern() -> impl Strategy<Value = String> {
+        proptest::collection::vec(pattern_char(), 1..20).prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        #[test]
+        fn include_exclude_duality(pattern in valid_pattern()) {
+            // An include rule should make applies_to_sender and applies_to_receiver true
+            let include = FilterRule::include(&pattern);
+            prop_assert!(include.applies_to_sender());
+            prop_assert!(include.applies_to_receiver());
+            prop_assert_eq!(include.action(), FilterAction::Include);
+            prop_assert_eq!(include.pattern(), &pattern);
+
+            // An exclude rule should also apply to both sides by default
+            let exclude = FilterRule::exclude(&pattern);
+            prop_assert!(exclude.applies_to_sender());
+            prop_assert!(exclude.applies_to_receiver());
+            prop_assert_eq!(exclude.action(), FilterAction::Exclude);
+        }
+
+        #[test]
+        fn with_sides_is_consistent(
+            pattern in valid_pattern(),
+            sender in any::<bool>(),
+            receiver in any::<bool>()
+        ) {
+            let rule = FilterRule::include(&pattern)
+                .with_sides(sender, receiver);
+
+            prop_assert_eq!(rule.applies_to_sender(), sender);
+            prop_assert_eq!(rule.applies_to_receiver(), receiver);
+        }
+
+        #[test]
+        fn anchor_to_root_adds_leading_slash(pattern in valid_pattern()) {
+            // Skip patterns that already start with '/' to test the anchoring behavior
+            prop_assume!(!pattern.starts_with('/'));
+
+            let rule = FilterRule::include(&pattern).anchor_to_root();
+            prop_assert!(rule.pattern().starts_with('/'));
+
+            // Double anchoring should be idempotent
+            let double_anchored = rule.anchor_to_root();
+            prop_assert!(double_anchored.pattern().starts_with('/'));
+            prop_assert!(!double_anchored.pattern().starts_with("//"));
+        }
+
+        #[test]
+        fn show_hide_are_sender_only(pattern in valid_pattern()) {
+            let show = FilterRule::show(&pattern);
+            prop_assert!(show.applies_to_sender());
+            prop_assert!(!show.applies_to_receiver());
+            prop_assert_eq!(show.action(), FilterAction::Include);
+
+            let hide = FilterRule::hide(&pattern);
+            prop_assert!(hide.applies_to_sender());
+            prop_assert!(!hide.applies_to_receiver());
+            prop_assert_eq!(hide.action(), FilterAction::Exclude);
+        }
+
+        #[test]
+        fn protect_risk_are_receiver_only(pattern in valid_pattern()) {
+            let protect = FilterRule::protect(&pattern);
+            prop_assert!(!protect.applies_to_sender());
+            prop_assert!(protect.applies_to_receiver());
+            prop_assert_eq!(protect.action(), FilterAction::Protect);
+
+            let risk = FilterRule::risk(&pattern);
+            prop_assert!(!risk.applies_to_sender());
+            prop_assert!(risk.applies_to_receiver());
+            prop_assert_eq!(risk.action(), FilterAction::Risk);
+        }
+
+        #[test]
+        fn perishable_flag_is_independent(
+            pattern in valid_pattern(),
+            perishable in any::<bool>()
+        ) {
+            let rule = FilterRule::exclude(&pattern).with_perishable(perishable);
+            prop_assert_eq!(rule.is_perishable(), perishable);
+            // Other properties should be unaffected
+            prop_assert_eq!(rule.action(), FilterAction::Exclude);
+        }
+    }
+}
