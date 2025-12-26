@@ -69,6 +69,16 @@ impl RollingChecksum {
     pub const DEFAULT_READER_BUFFER_LEN: usize = 32 * 1024;
 
     /// Creates a new rolling checksum with zeroed state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::RollingChecksum;
+    ///
+    /// let mut checksum = RollingChecksum::new();
+    /// assert!(checksum.is_empty());
+    /// assert_eq!(checksum.len(), 0);
+    /// ```
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -108,6 +118,24 @@ impl RollingChecksum {
     }
 
     /// Updates the checksum with an additional slice of bytes.
+    ///
+    /// This is the primary method for computing checksums over data blocks.
+    /// SIMD acceleration (AVX2/SSE2/NEON) is used when available.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::RollingChecksum;
+    ///
+    /// let mut checksum = RollingChecksum::new();
+    /// checksum.update(b"Hello, ");
+    /// checksum.update(b"rsync!");
+    ///
+    /// // Equivalent to computing over the full block
+    /// let mut full = RollingChecksum::new();
+    /// full.update(b"Hello, rsync!");
+    /// assert_eq!(checksum.value(), full.value());
+    /// ```
     #[inline]
     pub fn update(&mut self, chunk: &[u8]) {
         let (s1, s2, len) = accumulate_chunk_dispatch(self.s1, self.s2, self.len, chunk);
@@ -220,6 +248,34 @@ impl RollingChecksum {
     }
 
     /// Rolls the checksum by removing one byte and adding another.
+    ///
+    /// This enables O(1) sliding window updates for delta detection.
+    /// The window size remains constant after rolling.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::RollingChecksum;
+    ///
+    /// let data = b"ABCDE";
+    /// let block_size = 3;
+    ///
+    /// // Compute checksum for "ABC"
+    /// let mut rolling = RollingChecksum::new();
+    /// rolling.update(&data[0..3]); // "ABC"
+    ///
+    /// // Roll window: remove 'A', add 'D' -> now covers "BCD"
+    /// rolling.roll(data[0], data[3]).unwrap();
+    ///
+    /// // Verify it matches fresh computation of "BCD"
+    /// let mut fresh = RollingChecksum::new();
+    /// fresh.update(&data[1..4]); // "BCD"
+    /// assert_eq!(rolling.value(), fresh.value());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RollingError::EmptyWindow`] if no bytes have been processed.
     #[inline]
     pub fn roll(&mut self, outgoing: u8, incoming: u8) -> Result<(), RollingError> {
         let window_len = self.window_len_u32()?;
@@ -240,6 +296,38 @@ impl RollingChecksum {
     }
 
     /// Rolls multiple bytes at once.
+    ///
+    /// More efficient than calling [`roll`](Self::roll) repeatedly when
+    /// sliding the window by multiple positions. Uses weighted-delta
+    /// aggregation to reduce per-byte overhead.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::RollingChecksum;
+    ///
+    /// let data = b"ABCDEFGH";
+    /// let block_size = 4;
+    ///
+    /// // Compute checksum for "ABCD"
+    /// let mut rolling = RollingChecksum::new();
+    /// rolling.update(&data[0..4]);
+    ///
+    /// // Roll by 3 positions: "ABCD" -> "EFGH"
+    /// rolling.roll_many(&data[0..3], &data[4..7]).unwrap();
+    /// // One more roll to complete the shift
+    /// rolling.roll(data[3], data[7]).unwrap();
+    ///
+    /// // Verify
+    /// let mut fresh = RollingChecksum::new();
+    /// fresh.update(&data[4..8]); // "EFGH"
+    /// assert_eq!(rolling.value(), fresh.value());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`RollingError::MismatchedSliceLength`] if slices differ in length.
+    /// - [`RollingError::EmptyWindow`] if no bytes have been processed.
     #[inline]
     pub fn roll_many(&mut self, outgoing: &[u8], incoming: &[u8]) -> Result<(), RollingError> {
         if outgoing.len() != incoming.len() {
@@ -305,12 +393,49 @@ impl RollingChecksum {
     }
 
     /// Returns the rolling checksum value in rsync's packed 32-bit representation.
+    ///
+    /// The format is `(s2 << 16) | s1`, matching upstream rsync's wire format.
+    /// Use this value for hash table lookups during delta detection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::RollingChecksum;
+    ///
+    /// let mut checksum = RollingChecksum::new();
+    /// checksum.update(b"test data");
+    ///
+    /// let packed = checksum.value();
+    /// // Upper 16 bits: s2 (weighted sum)
+    /// // Lower 16 bits: s1 (byte sum)
+    /// let s1 = packed & 0xFFFF;
+    /// let s2 = packed >> 16;
+    /// ```
     #[must_use]
     pub const fn value(&self) -> u32 {
         (self.s2 << 16) | self.s1
     }
 
     /// Returns the current state as a structured digest.
+    ///
+    /// The digest can be used to save/restore checksum state, useful for
+    /// checkpointing during large file processing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::RollingChecksum;
+    ///
+    /// let mut checksum = RollingChecksum::new();
+    /// checksum.update(b"some data");
+    ///
+    /// // Save state
+    /// let digest = checksum.digest();
+    ///
+    /// // Restore later
+    /// let restored = RollingChecksum::from_digest(digest);
+    /// assert_eq!(checksum.value(), restored.value());
+    /// ```
     #[must_use]
     pub fn digest(&self) -> RollingDigest {
         RollingDigest::new(self.s1 as u16, self.s2 as u16, self.len)
