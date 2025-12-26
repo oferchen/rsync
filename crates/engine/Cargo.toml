@@ -22,6 +22,7 @@ protocol = { path = "../protocol" }
 bandwidth = { path = "../bandwidth" }
 logging = { path = "../logging" }
 thiserror = "2.0"
+rayon = { workspace = true, optional = true }
 globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
 libc = { version = "0.2", optional = true }
@@ -41,6 +42,8 @@ zstd = ["compress/zstd"]
 lz4 = ["compress/lz4"]
 # Async runtime support - enables tokio-based async I/O for file operations
 async = ["dep:tokio"]
+# Parallel file operations - enables rayon-based parallelism for large transfers
+parallel = ["dep:rayon"]
 
 [dev-dependencies]
 filetime = "0.2"
