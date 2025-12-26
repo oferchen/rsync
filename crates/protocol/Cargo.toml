@@ -20,12 +20,17 @@ lz4 = ["compress/lz4"]
 zstd = ["compress/zstd"]
 # Filename encoding conversion (iconv)
 iconv = ["encoding_rs"]
+# Async codec support using tokio-util
+async = ["bytes", "tokio", "tokio-util"]
 
 [dependencies]
+bytes = { version = "1.9", optional = true }
 compress = { path = "../compress" }
 encoding_rs = { version = "0.8", optional = true }
 logging = { path = "../logging" }
 memchr = "2.7"
+tokio = { version = "1.43", features = ["io-util"], optional = true }
+tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 [dev-dependencies]
 proptest = "1.4"
