@@ -732,6 +732,46 @@ Core dependencies and their purposes:
 | `thiserror` | Error derivation | Throughout |
 | `indicatif` | Progress bars | `crates/cli/` |
 
+### Version Compatibility Matrix
+
+Protocol version support and corresponding upstream rsync versions:
+
+| Protocol | Upstream Versions | Key Features | oc-rsync Support |
+|----------|-------------------|--------------|------------------|
+| 32 | 3.4.x | XXH3 checksums, incremental recursion | ✓ Full |
+| 31 | 3.1.x–3.3.x | ID0_NAMES, goodbye exchange | ✓ Full |
+| 30 | 3.0.x | Binary handshake, modern compat flags | ✓ Full |
+| 29 | 2.6.4–2.6.9 | Multi-phase NDX_DONE, improved stats | ✓ Full |
+| 28 | 2.6.0–2.6.3 | Legacy 4-byte encoding | ✓ Full |
+| < 28 | < 2.6.0 | Obsolete protocols | ✗ Rejected |
+
+**Interop Testing Matrix:**
+
+| oc-rsync Role | Upstream 3.0.9 | Upstream 3.1.3 | Upstream 3.4.1 |
+|---------------|----------------|----------------|----------------|
+| Client → Daemon | ✓ Push/Pull | ✓ Push/Pull | ✓ Push/Pull |
+| Daemon ← Client | ✓ Push/Pull | ✓ Push/Pull | ✓ Push/Pull |
+
+### Library to Rsync Feature Mapping
+
+Summary of which external libraries enable specific rsync functionality:
+
+| Rsync Feature | Primary Library | Crate Location |
+|---------------|-----------------|----------------|
+| Block checksums | `xxhash-rust` (XXH3), `md-5`, `md4` | `crates/checksums/` |
+| Rolling checksum | Custom SIMD (no external) | `crates/checksums/src/rolling/` |
+| Delta encoding | Custom (no external) | `crates/engine/src/delta/` |
+| File compression | `flate2` (zlib), `zstd` | `crates/compress/` |
+| Protocol framing | `tokio-util` (Codec) | `crates/protocol/` |
+| Async I/O | `tokio` | `crates/daemon/`, `crates/transport/` |
+| Rate limiting | `governor` | `crates/bandwidth/` |
+| File traversal | `walkdir` | `crates/walk/` |
+| Pattern matching | `globset` | `crates/filters/` |
+| Timestamp handling | `filetime` | `crates/metadata/` |
+| CLI parsing | `clap` (derive) | `crates/cli/` |
+| Progress display | `indicatif` | `crates/cli/` |
+| Error handling | `thiserror` | Throughout |
+
 ### Subsystem Integration Guidelines
 
 **Checksums (`crates/checksums/`)**:
