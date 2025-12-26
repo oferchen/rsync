@@ -1,9 +1,12 @@
 use std::collections::TryReserveError;
-use std::fmt;
 use std::io;
 
-#[derive(Debug)]
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+#[error("failed to reserve memory while rendering rsync message: {inner}")]
 struct MessageBufferReserveError {
+    #[source]
     inner: TryReserveError,
 }
 
@@ -11,27 +14,6 @@ impl MessageBufferReserveError {
     #[inline]
     fn new(inner: TryReserveError) -> Self {
         Self { inner }
-    }
-
-    #[inline]
-    fn inner(&self) -> &TryReserveError {
-        &self.inner
-    }
-}
-
-impl fmt::Display for MessageBufferReserveError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "failed to reserve memory while rendering rsync message: {}",
-            self.inner
-        )
-    }
-}
-
-impl std::error::Error for MessageBufferReserveError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.inner())
     }
 }
 

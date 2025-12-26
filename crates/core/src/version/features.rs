@@ -3,6 +3,8 @@ use std::iter::{FromIterator, FusedIterator};
 use std::str::FromStr;
 use std::vec::Vec;
 
+use thiserror::Error;
+
 const COMPILED_FEATURE_COUNT: usize = CompiledFeature::ALL.len();
 
 const ACL_FEATURE_BIT: u8 = 1 << 0;
@@ -310,16 +312,9 @@ impl fmt::Display for CompiledFeature {
 }
 
 /// Error returned when parsing a [`CompiledFeature`] from a string fails.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("unknown compiled feature label")]
 pub struct ParseCompiledFeatureError;
-
-impl fmt::Display for ParseCompiledFeatureError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("unknown compiled feature label")
-    }
-}
-
-impl std::error::Error for ParseCompiledFeatureError {}
 
 impl FromStr for CompiledFeature {
     type Err = ParseCompiledFeatureError;
