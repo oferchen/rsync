@@ -64,7 +64,7 @@ text = "Checksum list:"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "md5 md4 sha1 none"
+text = "xxh128 xxh3 xxh64 (xxhash) md5 md4 sha1 none"
 scenario = "conflicting_options"
 
 [[messages]]
@@ -72,7 +72,7 @@ text = "Compress list:"
 scenario = "conflicting_options"
 
 [[messages]]
-text = "zstd zlibx zlib none"
+text = "zstd lz4 zlibx zlib none"
 scenario = "conflicting_options"
 
 [[messages]]
