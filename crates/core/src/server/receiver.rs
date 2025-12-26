@@ -728,7 +728,9 @@ impl ReceiverContext {
             if ndx != -1 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("expected NDX_DONE (-1) from sender during phase transition, got {ndx}"),
+                    format!(
+                        "expected NDX_DONE (-1) from sender during phase transition, got {ndx}"
+                    ),
                 ));
             }
 
@@ -766,7 +768,9 @@ impl ReceiverContext {
                 if goodbye_echo != -1 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo}"),
+                        format!(
+                            "expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo}"
+                        ),
                     ));
                 }
 
