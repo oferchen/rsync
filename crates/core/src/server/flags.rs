@@ -60,6 +60,8 @@ pub struct ParsedServerFlags {
     pub update: bool,
     /// Fuzzy basis file matching (`y` flag, `--fuzzy`).
     pub fuzzy: bool,
+    /// Prune empty directories from destination (`m` flag, `--prune-empty-dirs`).
+    pub prune_empty_dirs: bool,
 
     /// Info flags after the first `.` separator.
     pub info_flags: InfoFlags,
@@ -153,6 +155,7 @@ impl ParsedServerFlags {
             b'P' => self.partial = true,
             b'u' => self.update = true,
             b'y' => self.fuzzy = true,
+            b'm' => self.prune_empty_dirs = true,
             // Unknown flags are ignored to maintain forward compatibility
             _ => {}
         }
@@ -275,5 +278,12 @@ mod tests {
         let flags = ParsedServerFlags::parse("-ry").unwrap();
         assert!(flags.recursive);
         assert!(flags.fuzzy);
+    }
+
+    #[test]
+    fn parses_prune_empty_dirs_flag() {
+        let flags = ParsedServerFlags::parse("-rm").unwrap();
+        assert!(flags.recursive);
+        assert!(flags.prune_empty_dirs);
     }
 }
