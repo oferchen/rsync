@@ -1,8 +1,9 @@
+use std::path::PathBuf;
+
+use thiserror::Error;
+
 use crate::local_copy::filter_program::{DirMergeOptions, ExcludeIfPresentRule};
 use filters::FilterRule;
-use std::error::Error;
-use std::fmt;
-use std::path::PathBuf;
 
 #[derive(Debug)]
 pub(crate) enum ParsedFilterDirective {
@@ -15,7 +16,8 @@ pub(crate) enum ParsedFilterDirective {
     Clear,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("{message}")]
 pub(crate) struct FilterParseError {
     message: String,
 }
@@ -27,11 +29,3 @@ impl FilterParseError {
         }
     }
 }
-
-impl fmt::Display for FilterParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl Error for FilterParseError {}
