@@ -18,6 +18,8 @@ use super::filter_program::{
 #[cfg(all(unix, feature = "acl"))]
 use super::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
+use super::sync_nfsv4_acls_if_requested;
+#[cfg(all(unix, feature = "xattr"))]
 use super::sync_xattrs_if_requested;
 
 use super::{
