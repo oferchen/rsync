@@ -439,15 +439,33 @@ impl GeneratorContext {
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
 
         if !inc_recurse {
+            // ID0_NAMES compat flag (protocol 32+) requires sending name for id=0
+            // after the terminator. See upstream uidlist.c:send_user_name/send_group_name.
+            let id0_names = self
+                .compat_flags
+                .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
+
             // Send UID list if preserve_uid
             if self.config.flags.owner {
                 // Empty list: just write varint 0 terminator
                 protocol::write_varint(writer, 0)?;
+
+                // ID0_NAMES: send name for id=0 after terminator
+                // Format: 1 byte length, then name bytes
+                // We send empty name (length=0)
+                if id0_names {
+                    writer.write_all(&[0u8])?; // Empty name for uid=0
+                }
             }
             // Send GID list if preserve_gid
             if self.config.flags.group {
                 // Empty list: just write varint 0 terminator
                 protocol::write_varint(writer, 0)?;
+
+                // ID0_NAMES: send name for id=0 after terminator
+                if id0_names {
+                    writer.write_all(&[0u8])?; // Empty name for gid=0
+                }
             }
 
             // CRITICAL: Flush UID/GID lists before entering main loop.
