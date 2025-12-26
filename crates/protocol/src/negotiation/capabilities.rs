@@ -52,6 +52,7 @@ const SUPPORTED_COMPRESSIONS: &[&str] = &["zstd", "lz4", "zlibx", "zlib", "none"
 
 /// Checksum algorithm choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChecksumAlgorithm {
     /// No checksum (for listing directories, etc.)
     None,
@@ -103,6 +104,7 @@ impl ChecksumAlgorithm {
 
 /// Compression algorithm choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -178,6 +180,7 @@ impl CompressionAlgorithm {
 
 /// Result of capability negotiation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NegotiationResult {
     /// Selected checksum algorithm.
     pub checksum: ChecksumAlgorithm,

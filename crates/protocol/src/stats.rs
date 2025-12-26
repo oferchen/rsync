@@ -36,6 +36,7 @@ use crate::version::ProtocolVersion;
 /// - **Sender**: `total_read` is bytes received, `total_written` is bytes sent
 /// - **Receiver**: `total_read` is bytes sent, `total_written` is bytes received
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TransferStats {
     /// Total bytes read from the network.
     pub total_read: u64,
@@ -156,6 +157,7 @@ impl TransferStats {
 /// These are sent separately from transfer stats to report deletion counts
 /// when `--delete` is used.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DeleteStats {
     /// Number of regular files deleted.
     pub files: u32,
@@ -390,5 +392,40 @@ mod tests {
         let decoded = DeleteStats::read_from(&mut cursor).unwrap();
 
         assert_eq!(stats, decoded);
+    }
+
+    #[cfg(feature = "serde")]
+    mod serde_tests {
+        use super::*;
+
+        #[test]
+        fn test_transfer_stats_serde_roundtrip() {
+            let stats = TransferStats {
+                total_read: 1024,
+                total_written: 2048,
+                total_size: 10000,
+                flist_buildtime: 500000,
+                flist_xfertime: 100000,
+            };
+
+            let json = serde_json::to_string(&stats).unwrap();
+            let decoded: TransferStats = serde_json::from_str(&json).unwrap();
+            assert_eq!(stats, decoded);
+        }
+
+        #[test]
+        fn test_delete_stats_serde_roundtrip() {
+            let stats = DeleteStats {
+                files: 10,
+                dirs: 3,
+                symlinks: 2,
+                devices: 1,
+                specials: 0,
+            };
+
+            let json = serde_json::to_string(&stats).unwrap();
+            let decoded: DeleteStats = serde_json::from_str(&json).unwrap();
+            assert_eq!(stats, decoded);
+        }
     }
 }
