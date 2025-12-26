@@ -17,7 +17,9 @@ pub use types::DaemonAddress;
 #[allow(unused_imports)]
 pub(super) use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
 #[allow(unused_imports)]
-pub(super) use auth::{DaemonAuthContext, SensitiveBytes, send_daemon_auth_credentials};
+pub(super) use auth::{
+    DaemonAuthContext, SensitiveBytes, load_daemon_password, send_daemon_auth_credentials,
+};
 #[allow(unused_imports)]
 pub(super) use connect::{
     ConnectProgramConfig, ProxyConfig, ProxyCredentials, connect_direct, connect_via_proxy,
