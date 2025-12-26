@@ -4,6 +4,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
+// Note: This crate uses manual `Error` and `Display` implementations rather
+// than thiserror because it depends on a crate named `core` which shadows
+// Rust's primitive `core`, conflicting with thiserror's macro expansion.
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;

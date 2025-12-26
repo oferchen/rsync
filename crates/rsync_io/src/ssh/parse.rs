@@ -3,52 +3,35 @@
 //! Helpers for parsing remote shell specifications supplied via `-e/--rsh`.
 
 use std::borrow::Cow;
-use std::error::Error;
 use std::ffi::{OsStr, OsString};
-use std::fmt;
+
+use thiserror::Error;
 
 #[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 /// Errors returned when parsing remote shell specifications fails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum RemoteShellParseError {
     /// The specification was empty or consisted solely of whitespace.
+    #[error("remote shell specification is empty")]
     Empty,
     /// A backslash escape reached the end of the specification.
+    #[error("remote shell specification ended after escape")]
     UnterminatedEscape,
     /// A single-quoted string was not terminated.
+    #[error("remote shell specification has an unterminated single quote")]
     UnterminatedSingleQuote,
     /// A double-quoted string was not terminated.
+    #[error("remote shell specification has an unterminated double quote")]
     UnterminatedDoubleQuote,
     /// The specification contained an interior NUL byte.
+    #[error("remote shell specification contains a NUL byte")]
     InteriorNull,
     /// Non-Unicode data was supplied on a platform that requires Unicode.
+    #[error("remote shell specification contains invalid Unicode for this platform")]
     InvalidEncoding,
 }
-
-impl fmt::Display for RemoteShellParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => f.write_str("remote shell specification is empty"),
-            Self::UnterminatedEscape => {
-                f.write_str("remote shell specification ended after escape")
-            }
-            Self::UnterminatedSingleQuote => {
-                f.write_str("remote shell specification has an unterminated single quote")
-            }
-            Self::UnterminatedDoubleQuote => {
-                f.write_str("remote shell specification has an unterminated double quote")
-            }
-            Self::InteriorNull => f.write_str("remote shell specification contains a NUL byte"),
-            Self::InvalidEncoding => {
-                f.write_str("remote shell specification contains invalid Unicode for this platform")
-            }
-        }
-    }
-}
-
-impl Error for RemoteShellParseError {}
 
 /// Parses a remote shell specification using rsync's quoting rules.
 pub fn parse_remote_shell(specification: &OsStr) -> Result<Vec<OsString>, RemoteShellParseError> {

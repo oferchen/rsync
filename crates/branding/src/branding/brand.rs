@@ -5,6 +5,8 @@ use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
 
+use thiserror::Error;
+
 use super::constants::{
     OC_CLIENT_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, UPSTREAM_CLIENT_PROGRAM_NAME,
     UPSTREAM_DAEMON_PROGRAM_NAME,
@@ -39,16 +41,9 @@ pub enum Brand {
 }
 
 /// Error returned when parsing a [`Brand`] from an unrecognised string fails.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("unrecognised brand; expected oc or upstream aliases")]
 pub struct BrandParseError;
-
-impl fmt::Display for BrandParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("unrecognised brand; expected oc or upstream aliases")
-    }
-}
-
-impl std::error::Error for BrandParseError {}
 
 impl FromStr for Brand {
     type Err = BrandParseError;

@@ -168,6 +168,7 @@ version = "3.4.1-rust"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror 2.0.17",
  "toml",
 ]
 
@@ -1128,6 +1129,7 @@ dependencies = [
  "memchr",
  "proptest",
  "protocol",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

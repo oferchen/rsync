@@ -7,6 +7,10 @@
 //! dedicated module allows the sprawling runtime logic in `lib.rs` to focus on
 //! protocol and configuration handling while still constructing consistent
 //! messages that honour workspace branding conventions.
+//!
+//! Note: This module uses manual `Error` and `Display` implementations rather
+//! than thiserror because the workspace's `core` crate shadows Rust's primitive
+//! `core`, which conflicts with thiserror's macro expansion.
 
 use std::error::Error;
 use std::fmt;
