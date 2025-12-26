@@ -30,12 +30,208 @@
 //! - [`protocol::wire`] - Wire format for signatures and deltas
 
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
-use checksums::strong::Md5Seed;
+use checksums::strong::{Md4, Md5, Md5Seed, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use protocol::filters::read_filter_list;
+
+/// State tracker for sparse file writing.
+///
+/// Tracks pending runs of zeros that should become holes in the output file
+/// rather than being written as data. Mirrors upstream rsync's write_sparse()
+/// behavior in fileio.c.
+#[derive(Default)]
+struct SparseWriteState {
+    /// Number of pending zero bytes to skip (becomes a hole).
+    pending_zeros: u64,
+}
+
+impl SparseWriteState {
+    /// Adds additional zero bytes to the pending run.
+    fn accumulate(&mut self, additional: usize) {
+        self.pending_zeros = self.pending_zeros.saturating_add(additional as u64);
+    }
+
+    /// Flushes pending zeros by seeking forward, creating a hole.
+    fn flush<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<()> {
+        if self.pending_zeros == 0 {
+            return Ok(());
+        }
+
+        // Seek forward past the zeros to create a hole
+        let mut remaining = self.pending_zeros;
+        while remaining > 0 {
+            let step = remaining.min(i64::MAX as u64);
+            writer.seek(SeekFrom::Current(step as i64))?;
+            remaining -= step;
+        }
+
+        self.pending_zeros = 0;
+        Ok(())
+    }
+
+    /// Writes data with sparse optimization.
+    ///
+    /// Zero runs are tracked and become holes; non-zero data is written normally.
+    fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
+        if data.is_empty() {
+            return Ok(0);
+        }
+
+        let mut offset = 0;
+        const CHUNK_SIZE: usize = 1024;
+
+        while offset < data.len() {
+            let segment_end = (offset + CHUNK_SIZE).min(data.len());
+            let segment = &data[offset..segment_end];
+
+            // Count leading zeros
+            let leading = segment.iter().take_while(|&&b| b == 0).count();
+            self.accumulate(leading);
+
+            if leading == segment.len() {
+                offset = segment_end;
+                continue;
+            }
+
+            // Count trailing zeros
+            let data_part = &segment[leading..];
+            let trailing = data_part.iter().rev().take_while(|&&b| b == 0).count();
+            let data_start = offset + leading;
+            let data_end = segment_end - trailing;
+
+            if data_end > data_start {
+                // Flush pending zeros (creates hole)
+                self.flush(writer)?;
+                // Write non-zero data
+                writer.write_all(&data[data_start..data_end])?;
+            }
+
+            // Trailing zeros become pending for next iteration
+            self.pending_zeros = trailing as u64;
+            offset = segment_end;
+        }
+
+        Ok(data.len())
+    }
+
+    /// Finalizes sparse writing and returns final position.
+    ///
+    /// If there are pending zeros at the end, we need to either:
+    /// - Write a single zero byte at the last position (creating the hole), or
+    /// - Just seek and let truncation handle it
+    fn finish<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<u64> {
+        if self.pending_zeros > 0 {
+            // Seek to final position minus 1
+            let final_offset = self.pending_zeros.saturating_sub(1);
+            if final_offset > 0 {
+                let mut remaining = final_offset;
+                while remaining > 0 {
+                    let step = remaining.min(i64::MAX as u64);
+                    writer.seek(SeekFrom::Current(step as i64))?;
+                    remaining -= step;
+                }
+            }
+            // Write a single zero byte to extend the file to the correct size
+            if self.pending_zeros > 0 {
+                writer.write_all(&[0])?;
+            }
+            self.pending_zeros = 0;
+        }
+
+        writer.stream_position()
+    }
+}
+
+/// Checksum verifier for delta transfer integrity verification.
+///
+/// This enum wraps the different strong checksum hashers to allow
+/// runtime selection based on negotiated protocol parameters.
+/// Mirrors upstream rsync's file checksum verification in receiver.c.
+enum ChecksumVerifier {
+    /// MD4 checksum (legacy, protocol < 30).
+    Md4(Md4),
+    /// MD5 checksum (protocol 30+).
+    Md5(Md5),
+    /// SHA1 checksum.
+    Sha1(Sha1),
+    /// XXH64 checksum.
+    Xxh64(Xxh64),
+    /// XXH3 (64-bit) checksum.
+    Xxh3(Xxh3),
+    /// XXH3 (128-bit) checksum.
+    Xxh3_128(Xxh3_128),
+}
+
+impl ChecksumVerifier {
+    /// Creates a new checksum verifier based on the negotiated algorithm.
+    fn new(
+        negotiated: Option<&NegotiationResult>,
+        protocol: ProtocolVersion,
+        seed: i32,
+        compat_flags: Option<&CompatibilityFlags>,
+    ) -> Self {
+        let seed_u64 = seed as u64;
+
+        if let Some(neg) = negotiated {
+            match neg.checksum {
+                ChecksumAlgorithm::None | ChecksumAlgorithm::MD4 => {
+                    ChecksumVerifier::Md4(Md4::new())
+                }
+                ChecksumAlgorithm::MD5 => {
+                    let seed_config = if let Some(flags) = compat_flags {
+                        if flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX) {
+                            Md5Seed::proper(seed)
+                        } else {
+                            Md5Seed::legacy(seed)
+                        }
+                    } else {
+                        Md5Seed::legacy(seed)
+                    };
+                    ChecksumVerifier::Md5(Md5::with_seed(seed_config))
+                }
+                ChecksumAlgorithm::SHA1 => ChecksumVerifier::Sha1(Sha1::new()),
+                ChecksumAlgorithm::XXH64 => ChecksumVerifier::Xxh64(Xxh64::with_seed(seed_u64)),
+                ChecksumAlgorithm::XXH3 => ChecksumVerifier::Xxh3(Xxh3::with_seed(seed_u64)),
+                ChecksumAlgorithm::XXH128 => {
+                    ChecksumVerifier::Xxh3_128(Xxh3_128::with_seed(seed_u64))
+                }
+            }
+        } else if protocol.as_u8() >= 30 {
+            // Protocol 30+ default: MD5 with legacy seed
+            ChecksumVerifier::Md5(Md5::with_seed(Md5Seed::legacy(seed)))
+        } else {
+            // Protocol < 30: MD4
+            ChecksumVerifier::Md4(Md4::new())
+        }
+    }
+
+    /// Updates the hasher with data.
+    fn update(&mut self, data: &[u8]) {
+        match self {
+            ChecksumVerifier::Md4(h) => h.update(data),
+            ChecksumVerifier::Md5(h) => h.update(data),
+            ChecksumVerifier::Sha1(h) => h.update(data),
+            ChecksumVerifier::Xxh64(h) => h.update(data),
+            ChecksumVerifier::Xxh3(h) => h.update(data),
+            ChecksumVerifier::Xxh3_128(h) => h.update(data),
+        }
+    }
+
+    /// Finalizes the hasher and returns the digest as bytes.
+    fn finalize(self) -> Vec<u8> {
+        match self {
+            ChecksumVerifier::Md4(h) => h.finalize().as_ref().to_vec(),
+            ChecksumVerifier::Md5(h) => h.finalize().as_ref().to_vec(),
+            ChecksumVerifier::Sha1(h) => h.finalize().as_ref().to_vec(),
+            ChecksumVerifier::Xxh64(h) => h.finalize().as_ref().to_vec(),
+            ChecksumVerifier::Xxh3(h) => h.finalize().as_ref().to_vec(),
+            ChecksumVerifier::Xxh3_128(h) => h.finalize().as_ref().to_vec(),
+        }
+    }
+}
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
 use protocol::ndx::{NdxCodec, create_ndx_codec};
 use protocol::wire::DeltaOp;
@@ -361,7 +557,7 @@ impl ReceiverContext {
         // - The client already sent filter list to the daemon
         // - The daemon (as generator) already consumed it
         // - There's no filter list coming back on this stream
-        let receiver_wants_list = self.config.flags.delete; // TODO: add prune_empty_dirs support
+        let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
         if !self.config.client_mode && receiver_wants_list {
             let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
@@ -488,27 +684,28 @@ impl ReceiverContext {
             // Step 1 & 2: Generate signature if basis file exists
             // If exact file not found and fuzzy matching is enabled, try to find
             // a similar file to use as basis for delta transfer.
-            let signature_opt: Option<FileSignature> = 'sig: {
+            // We track the basis path for block copying during delta application.
+            let (signature_opt, basis_path_opt): (Option<FileSignature>, Option<PathBuf>) = 'sig: {
                 // Try to open the exact file first
-                let (basis_file, basis_size) = match fs::File::open(&file_path) {
+                let (basis_file, basis_size, basis_path) = match fs::File::open(&file_path) {
                     Ok(f) => {
                         let size = match f.metadata() {
                             Ok(meta) => meta.len(),
-                            Err(_) => break 'sig None,
+                            Err(_) => break 'sig (None, None),
                         };
-                        (f, size)
+                        (f, size, file_path.clone())
                     }
                     Err(_) => {
                         // Exact file not found - try fuzzy matching if enabled
                         if !self.config.flags.fuzzy {
-                            break 'sig None;
+                            break 'sig (None, None);
                         }
 
                         // Use FuzzyMatcher to find a similar file in dest_dir
                         let fuzzy_matcher = FuzzyMatcher::new();
                         let target_name = match relative_path.file_name() {
                             Some(name) => name,
-                            None => break 'sig None,
+                            None => break 'sig (None, None),
                         };
                         let target_size = file_entry.size();
 
@@ -518,19 +715,20 @@ impl ReceiverContext {
                             target_size,
                         ) {
                             Some(m) => m,
-                            None => break 'sig None,
+                            None => break 'sig (None, None),
                         };
 
                         // Open the fuzzy-matched file as basis
-                        let fuzzy_file = match fs::File::open(&fuzzy_match.path) {
+                        let fuzzy_path = fuzzy_match.path.clone();
+                        let fuzzy_file = match fs::File::open(&fuzzy_path) {
                             Ok(f) => f,
-                            Err(_) => break 'sig None,
+                            Err(_) => break 'sig (None, None),
                         };
                         let fuzzy_size = match fuzzy_file.metadata() {
                             Ok(meta) => meta.len(),
-                            Err(_) => break 'sig None,
+                            Err(_) => break 'sig (None, None),
                         };
-                        (fuzzy_file, fuzzy_size)
+                        (fuzzy_file, fuzzy_size, fuzzy_path)
                     }
                 };
 
@@ -543,10 +741,13 @@ impl ReceiverContext {
 
                 let layout = match calculate_signature_layout(params) {
                     Ok(layout) => layout,
-                    Err(_) => break 'sig None,
+                    Err(_) => break 'sig (None, None),
                 };
 
-                generate_file_signature(basis_file, layout, checksum_algorithm).ok()
+                match generate_file_signature(basis_file, layout, checksum_algorithm) {
+                    Ok(sig) => (Some(sig), Some(basis_path)),
+                    Err(_) => (None, None),
+                }
             };
 
             // Step 3: Send sum_head (signature header) matching upstream wire format
@@ -650,6 +851,24 @@ impl ReceiverContext {
             let mut output = fs::File::create(&temp_path)?;
             let mut total_bytes: u64 = 0;
 
+            // Sparse file support: track zero runs to create holes
+            // Mirrors upstream rsync's write_sparse() in fileio.c
+            let use_sparse = self.config.flags.sparse;
+            let mut sparse_state = if use_sparse {
+                Some(SparseWriteState::default())
+            } else {
+                None
+            };
+
+            // Create checksum verifier for integrity verification
+            // Mirrors upstream rsync's file checksum calculation during delta application
+            let mut checksum_verifier = ChecksumVerifier::new(
+                self.negotiated_algorithms.as_ref(),
+                self.protocol,
+                self.checksum_seed,
+                self.compat_flags.as_ref(),
+            );
+
             // Read tokens in a loop
             loop {
                 let mut token_buf = [0u8; 4];
@@ -674,29 +893,87 @@ impl ReceiverContext {
                     };
                     let mut file_checksum = vec![0u8; checksum_len];
                     reader.read_exact(&mut file_checksum)?;
-                    // TODO: Optionally verify checksum matches computed hash
+
+                    // Verify checksum matches computed hash
+                    // Upstream receiver.c:440-457 - verification after delta application
+                    let computed = checksum_verifier.finalize();
+                    // Compare only up to the minimum of computed and received lengths
+                    // (some algorithms may have truncated checksums)
+                    let cmp_len = std::cmp::min(computed.len(), file_checksum.len());
+                    if computed[..cmp_len] != file_checksum[..cmp_len] {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "checksum verification failed for {:?}: expected {:02x?}, got {:02x?}",
+                                file_path,
+                                &file_checksum[..cmp_len],
+                                &computed[..cmp_len]
+                            ),
+                        ));
+                    }
                     break;
                 } else if token > 0 {
                     // Literal data: token bytes follow
                     let mut data = vec![0u8; token as usize];
                     reader.read_exact(&mut data)?;
-                    output.write_all(&data)?;
+                    // Use sparse writing if enabled
+                    if let Some(ref mut sparse) = sparse_state {
+                        sparse.write(&mut output, &data)?;
+                    } else {
+                        output.write_all(&data)?;
+                    }
+                    // Update checksum with literal data
+                    checksum_verifier.update(&data);
                     total_bytes += token as u64;
                 } else {
                     // Negative: block reference = -(token+1)
                     // For new files (no basis), this shouldn't happen
                     let block_idx = -(token + 1) as usize;
-                    if let Some(ref sig) = signature_opt {
+                    if let (Some(sig), Some(basis_path)) = (&signature_opt, &basis_path_opt) {
                         // We have a basis file - copy the block
+                        // Mirrors upstream receiver.c receive_data() block copy logic
                         let layout = sig.layout();
                         let block_len = layout.block_length().get() as u64;
-                        let _offset = block_idx as u64 * block_len;
-                        // Read from basis file at offset and write to output
-                        // For now, return error as we don't have basis file mapped
-                        return Err(io::Error::new(
-                            io::ErrorKind::Unsupported,
-                            format!("block copy not yet implemented (block {block_idx})"),
-                        ));
+                        let offset = block_idx as u64 * block_len;
+
+                        // Calculate actual bytes to copy for this block
+                        // Last block may be shorter (remainder)
+                        let block_count = layout.block_count() as usize;
+                        let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
+                            // Last block uses remainder size
+                            let remainder = layout.remainder();
+                            if remainder > 0 {
+                                remainder as usize
+                            } else {
+                                block_len as usize
+                            }
+                        } else {
+                            block_len as usize
+                        };
+
+                        // Open basis file and seek to block offset
+                        let mut basis_file = fs::File::open(basis_path).map_err(|e| {
+                            io::Error::new(
+                                e.kind(),
+                                format!("failed to open basis file {basis_path:?}: {e}"),
+                            )
+                        })?;
+                        basis_file.seek(SeekFrom::Start(offset))?;
+
+                        // Read block data and write to output
+                        let mut block_data = vec![0u8; bytes_to_copy];
+                        basis_file.read_exact(&mut block_data)?;
+                        // Use sparse writing if enabled
+                        if let Some(ref mut sparse) = sparse_state {
+                            sparse.write(&mut output, &block_data)?;
+                        } else {
+                            output.write_all(&block_data)?;
+                        }
+
+                        // Update checksum with copied data
+                        checksum_verifier.update(&block_data);
+
+                        total_bytes += bytes_to_copy as u64;
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -704,6 +981,12 @@ impl ReceiverContext {
                         ));
                     }
                 }
+            }
+
+            // Finalize sparse writing if active
+            // This ensures trailing zeros are handled (extends file to correct size)
+            if let Some(ref mut sparse) = sparse_state {
+                sparse.finish(&mut output)?;
             }
 
             // Sync the output file
@@ -1194,5 +1477,179 @@ mod tests {
         assert_eq!(stats.metadata_errors.len(), 2);
         assert_eq!(stats.metadata_errors[0].0, PathBuf::from("/tmp/file1.txt"));
         assert_eq!(stats.metadata_errors[0].1, "Permission denied");
+    }
+
+    #[test]
+    fn checksum_verifier_md4_for_legacy_protocol() {
+        // Protocol < 30 defaults to MD4
+        let protocol = ProtocolVersion::try_from(28u8).unwrap();
+        let mut verifier = ChecksumVerifier::new(None, protocol, 0, None);
+
+        verifier.update(b"test data");
+        let digest = verifier.finalize();
+
+        // MD4 produces 16 bytes
+        assert_eq!(digest.len(), 16);
+    }
+
+    #[test]
+    fn checksum_verifier_md5_for_modern_protocol() {
+        // Protocol >= 30 without negotiation defaults to MD5
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut verifier = ChecksumVerifier::new(None, protocol, 12345, None);
+
+        verifier.update(b"test data");
+        let digest = verifier.finalize();
+
+        // MD5 produces 16 bytes
+        assert_eq!(digest.len(), 16);
+    }
+
+    #[test]
+    fn checksum_verifier_xxh3_with_negotiation() {
+        use protocol::CompressionAlgorithm;
+
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let negotiated = NegotiationResult {
+            checksum: ChecksumAlgorithm::XXH3,
+            compression: CompressionAlgorithm::None,
+        };
+
+        let mut verifier = ChecksumVerifier::new(Some(&negotiated), protocol, 9999, None);
+
+        verifier.update(b"test data");
+        let digest = verifier.finalize();
+
+        // XXH3 produces 8 bytes (64-bit)
+        assert_eq!(digest.len(), 8);
+    }
+
+    #[test]
+    fn checksum_verifier_sha1_with_negotiation() {
+        use protocol::CompressionAlgorithm;
+
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let negotiated = NegotiationResult {
+            checksum: ChecksumAlgorithm::SHA1,
+            compression: CompressionAlgorithm::None,
+        };
+
+        let mut verifier = ChecksumVerifier::new(Some(&negotiated), protocol, 0, None);
+
+        verifier.update(b"test data");
+        let digest = verifier.finalize();
+
+        // SHA1 produces 20 bytes
+        assert_eq!(digest.len(), 20);
+    }
+
+    #[test]
+    fn checksum_verifier_incremental_update() {
+        // Test that incremental updates produce same result as single update
+        let protocol = ProtocolVersion::try_from(28u8).unwrap();
+
+        let mut verifier1 = ChecksumVerifier::new(None, protocol, 0, None);
+        verifier1.update(b"hello ");
+        verifier1.update(b"world");
+        let digest1 = verifier1.finalize();
+
+        let mut verifier2 = ChecksumVerifier::new(None, protocol, 0, None);
+        verifier2.update(b"hello world");
+        let digest2 = verifier2.finalize();
+
+        assert_eq!(digest1, digest2);
+    }
+
+    #[test]
+    fn sparse_write_state_writes_nonzero_data() {
+        let mut output = Cursor::new(Vec::new());
+        let mut sparse = SparseWriteState::default();
+
+        // Write non-zero data
+        let data = b"hello world";
+        sparse.write(&mut output, data).unwrap();
+        sparse.finish(&mut output).unwrap();
+
+        // Should write the data directly
+        assert_eq!(output.get_ref(), data);
+    }
+
+    #[test]
+    fn sparse_write_state_skips_zero_runs() {
+        let mut output = Cursor::new(Vec::new());
+        let mut sparse = SparseWriteState::default();
+
+        // Write zeros followed by data
+        let zeros = [0u8; 4096];
+        let data = b"test";
+        sparse.write(&mut output, &zeros).unwrap();
+        sparse.write(&mut output, data).unwrap();
+        sparse.finish(&mut output).unwrap();
+
+        // Output should be mostly zeros (sparse seek) followed by "test"
+        // The file position should be at zeros.len() + data.len()
+        let result = output.into_inner();
+        assert_eq!(result.len(), 4096 + 4);
+        // Last 4 bytes should be "test"
+        assert_eq!(&result[4096..], b"test");
+    }
+
+    #[test]
+    fn sparse_write_state_handles_trailing_zeros() {
+        let mut output = Cursor::new(Vec::new());
+        let mut sparse = SparseWriteState::default();
+
+        // Write data followed by zeros
+        let data = b"test";
+        let zeros = [0u8; 1024];
+        sparse.write(&mut output, data).unwrap();
+        sparse.write(&mut output, &zeros).unwrap();
+        sparse.finish(&mut output).unwrap();
+
+        // File should be extended to correct size
+        let result = output.into_inner();
+        assert_eq!(result.len(), 4 + 1024);
+        assert_eq!(&result[..4], b"test");
+    }
+
+    #[test]
+    fn sparse_write_state_mixed_data_and_zeros() {
+        let mut output = Cursor::new(Vec::new());
+        let mut sparse = SparseWriteState::default();
+
+        // Interleaved data and zeros
+        sparse.write(&mut output, b"AAA").unwrap();
+        sparse.write(&mut output, &[0u8; 100]).unwrap();
+        sparse.write(&mut output, b"BBB").unwrap();
+        sparse.finish(&mut output).unwrap();
+
+        let result = output.into_inner();
+        assert_eq!(result.len(), 3 + 100 + 3);
+        assert_eq!(&result[..3], b"AAA");
+        assert_eq!(&result[103..], b"BBB");
+    }
+
+    #[test]
+    fn sparse_write_state_empty_write() {
+        let mut output = Cursor::new(Vec::new());
+        let mut sparse = SparseWriteState::default();
+
+        // Empty write should be a no-op
+        let n = sparse.write(&mut output, &[]).unwrap();
+        assert_eq!(n, 0);
+
+        sparse.finish(&mut output).unwrap();
+        assert!(output.get_ref().is_empty());
+    }
+
+    #[test]
+    fn sparse_write_state_accumulate_pending_zeros() {
+        let mut sparse = SparseWriteState::default();
+
+        sparse.accumulate(100);
+        assert_eq!(sparse.pending_zeros, 100);
+
+        sparse.accumulate(50);
+        assert_eq!(sparse.pending_zeros, 150);
     }
 }

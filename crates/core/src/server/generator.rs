@@ -32,6 +32,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use checksums::strong::{Md4, Md5, Md5Seed, Xxh3, Xxh64};
 use filters::{FilterRule, FilterSet};
@@ -110,6 +111,16 @@ pub struct GeneratorContext {
     compat_flags: Option<CompatibilityFlags>,
     /// Checksum seed for XXHash algorithms.
     checksum_seed: i32,
+    /// When file list building started (for flist_buildtime statistic).
+    flist_build_start: Option<Instant>,
+    /// When file list building ended (for flist_buildtime statistic).
+    flist_build_end: Option<Instant>,
+    /// When file list transfer started (for flist_xfertime statistic).
+    flist_xfer_start: Option<Instant>,
+    /// When file list transfer ended (for flist_xfertime statistic).
+    flist_xfer_end: Option<Instant>,
+    /// Total bytes read from network during transfer (for total_read statistic).
+    total_bytes_read: u64,
 }
 
 impl GeneratorContext {
@@ -124,6 +135,11 @@ impl GeneratorContext {
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
+            flist_build_start: None,
+            flist_build_end: None,
+            flist_xfer_start: None,
+            flist_xfer_end: None,
+            total_bytes_read: 0,
         }
     }
 
@@ -167,6 +183,9 @@ impl GeneratorContext {
     ///
     /// Mirrors upstream recursive directory scanning and file list construction behavior.
     pub fn build_file_list(&mut self, base_paths: &[PathBuf]) -> io::Result<usize> {
+        // Track timing for flist_buildtime statistic (upstream stats.flist_buildtime)
+        self.flist_build_start = Some(Instant::now());
+
         info_log!(Flist, 1, "building file list...");
         self.file_list.clear();
         self.full_paths.clear();
@@ -190,6 +209,9 @@ impl GeneratorContext {
             .collect();
         self.file_list = sorted_entries;
         self.full_paths = sorted_paths;
+
+        // Record end time for flist_buildtime statistic
+        self.flist_build_end = Some(Instant::now());
 
         let count = self.file_list.len();
         info_log!(Flist, 1, "built file list with {} entries", count);
@@ -324,7 +346,10 @@ impl GeneratorContext {
     }
 
     /// Sends the file list to the receiver.
-    pub fn send_file_list<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<usize> {
+    pub fn send_file_list<W: Write + ?Sized>(&mut self, writer: &mut W) -> io::Result<usize> {
+        // Track timing for flist_xfertime statistic (upstream stats.flist_xfertime)
+        self.flist_xfer_start = Some(Instant::now());
+
         let flist_writer = if let Some(flags) = self.compat_flags {
             FileListWriter::with_compat_flags(self.protocol, flags)
         } else {
@@ -345,6 +370,9 @@ impl GeneratorContext {
         // Future: track I/O errors during file list building and pass them here
         flist_writer.write_end(writer, None)?;
         writer.flush()?;
+
+        // Record end time for flist_xfertime statistic
+        self.flist_xfer_end = Some(Instant::now());
 
         Ok(self.file_list.len())
     }
@@ -590,6 +618,7 @@ impl GeneratorContext {
             let iflags = if self.protocol.as_u8() >= 29 {
                 let mut iflags_bytes = [0u8; 2];
                 reader.read_exact(&mut iflags_bytes)?;
+                self.total_bytes_read += 2;
                 u16::from_le_bytes(iflags_bytes)
             } else {
                 // For older protocols, assume ITEM_TRANSFER
@@ -603,13 +632,17 @@ impl GeneratorContext {
                 // Read and discard fnamecmp_type byte
                 let mut _ftype = [0u8; 1];
                 reader.read_exact(&mut _ftype)?;
+                self.total_bytes_read += 1;
             }
             if iflags & 0x0001 != 0 {
                 // Read and discard extended name (vstring format: varint length + bytes)
                 let xlen = protocol::read_varint(reader)? as usize;
+                self.total_bytes_read += 4; // Approximate varint size
                 if xlen > 0 {
-                    let mut xname = vec![0u8; xlen.min(4096)];
+                    let actual_len = xlen.min(4096);
+                    let mut xname = vec![0u8; actual_len];
                     reader.read_exact(&mut xname)?;
+                    self.total_bytes_read += actual_len as u64;
                 }
             }
 
@@ -635,9 +668,11 @@ impl GeneratorContext {
             if self.protocol.as_u8() >= 27 {
                 // Protocol 27+: 16 bytes (count, blength, s2length, remainder)
                 reader.read_exact(&mut sum_head)?;
+                self.total_bytes_read += 16;
             } else {
                 // Older protocols: 8 bytes (count, blength)
                 reader.read_exact(&mut sum_head[..8])?;
+                self.total_bytes_read += 8;
             }
             let sum_count = i32::from_le_bytes(sum_head[0..4].try_into().unwrap());
             let sum_blength = i32::from_le_bytes(sum_head[4..8].try_into().unwrap());
@@ -684,11 +719,13 @@ impl GeneratorContext {
                     // Read rolling checksum (4 bytes LE)
                     let mut rolling_sum_bytes = [0u8; 4];
                     reader.read_exact(&mut rolling_sum_bytes)?;
+                    self.total_bytes_read += 4;
                     let rolling_sum = u32::from_le_bytes(rolling_sum_bytes);
 
                     // Read strong checksum (s2length bytes)
                     let mut strong_sum = vec![0u8; sum_s2length as usize];
                     reader.read_exact(&mut strong_sum)?;
+                    self.total_bytes_read += sum_s2length as u64;
 
                     blocks.push(SignatureBlock {
                         index: i as u32,
@@ -841,11 +878,21 @@ impl GeneratorContext {
         //   }
         //
         // The server sender MUST send these stats - the client expects them!
-        let total_read: u64 = 0; // TODO: track actual bytes read
+        let total_read: u64 = self.total_bytes_read;
         let total_written: u64 = bytes_sent; // Bytes sent during transfer
         let total_size: u64 = self.file_list.iter().map(|e| e.size()).sum();
-        let flist_buildtime: u64 = 0; // TODO: track actual build time
-        let flist_xfertime: u64 = 0; // TODO: track actual transfer time
+
+        // Calculate file list build time in milliseconds (upstream stats.flist_buildtime)
+        let flist_buildtime: u64 = match (self.flist_build_start, self.flist_build_end) {
+            (Some(start), Some(end)) => end.duration_since(start).as_millis() as u64,
+            _ => 0,
+        };
+
+        // Calculate file list transfer time in milliseconds (upstream stats.flist_xfertime)
+        let flist_xfertime: u64 = match (self.flist_xfer_start, self.flist_xfer_end) {
+            (Some(start), Some(end)) => end.duration_since(start).as_millis() as u64,
+            _ => 0,
+        };
 
         // Use protocol-aware codec for stats encoding:
         // - Protocol < 30: uses write_longint (4-byte fixed, or 12 for large values)
@@ -922,6 +969,9 @@ impl GeneratorContext {
             files_listed: file_count,
             files_transferred,
             bytes_sent,
+            bytes_read: self.total_bytes_read,
+            flist_buildtime_ms: flist_buildtime,
+            flist_xfertime_ms: flist_xfertime,
         })
     }
 
@@ -992,6 +1042,12 @@ pub struct GeneratorStats {
     pub files_transferred: usize,
     /// Total bytes sent.
     pub bytes_sent: u64,
+    /// Total bytes read from network.
+    pub bytes_read: u64,
+    /// File list build time in milliseconds.
+    pub flist_buildtime_ms: u64,
+    /// File list transfer time in milliseconds.
+    pub flist_xfertime_ms: u64,
 }
 
 // Helper functions for delta generation
@@ -1261,7 +1317,7 @@ mod tests {
     fn send_empty_file_list() {
         let handshake = test_handshake();
         let config = test_config();
-        let ctx = GeneratorContext::new(&handshake, config);
+        let mut ctx = GeneratorContext::new(&handshake, config);
 
         let mut output = Vec::new();
         let count = ctx.send_file_list(&mut output).unwrap();

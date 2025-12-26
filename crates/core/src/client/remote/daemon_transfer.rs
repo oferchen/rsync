@@ -21,9 +21,14 @@ use tracing::instrument;
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
+use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
+
 use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
 use super::super::error::{ClientError, daemon_error, invalid_argument_error, socket_error};
-use super::super::module_list::{DaemonAddress, connect_direct, parse_host_port};
+use super::super::module_list::{
+    DaemonAddress, DaemonAuthContext, connect_direct, load_daemon_password, parse_host_port,
+    send_daemon_auth_credentials,
+};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::super::{CLIENT_SERVER_PROTOCOL_EXIT_CODE, DAEMON_SOCKET_TIMEOUT};
@@ -219,6 +224,28 @@ fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, Clien
     })
 }
 
+/// Parses the digest list from a daemon greeting.
+///
+/// Format: "@RSYNCD: XX.Y [digest_list]"
+/// Returns the list of advertised digests for authentication.
+fn parse_digest_list_from_greeting(greeting: &str) -> Vec<DaemonAuthDigest> {
+    // Skip "@RSYNCD: XX.Y " (version part) to get digest list
+    // The greeting looks like: "@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4"
+    let rest = greeting.get(9..).unwrap_or("");
+
+    // Skip version number (e.g., "31.0")
+    let after_version = rest
+        .split_once(char::is_whitespace)
+        .map(|(_, rest)| rest)
+        .unwrap_or("");
+
+    parse_daemon_digest_list(if after_version.is_empty() {
+        None
+    } else {
+        Some(after_version)
+    })
+}
+
 /// Performs the rsync daemon handshake protocol.
 ///
 /// This follows the upstream clientserver.c:start_inband_exchange() flow:
@@ -258,6 +285,9 @@ fn perform_daemon_handshake(
     // Parse daemon's protocol version from greeting: @RSYNCD: XX.Y [digests]
     // Mirrors upstream exchange_protocols line 178: sscanf(buf, "@RSYNCD: %d.%d", ...)
     let remote_protocol = parse_protocol_from_greeting(&greeting)?;
+
+    // Parse digest list from greeting for authentication
+    let advertised_digests = parse_digest_list_from_greeting(&greeting);
 
     // Step 2: Send client version with auth digest list (upstream compat.c:832-845)
     // For protocol 30+, client must include supported auth digests.
@@ -307,12 +337,32 @@ fn perform_daemon_handshake(
         let trimmed = line.trim();
 
         // Handle @RSYNCD: AUTHREQD (authentication required)
-        if trimmed.starts_with("@RSYNCD: AUTHREQD ") {
-            // TODO: Implement authentication when needed
-            return Err(daemon_error(
-                "daemon requires authentication (not yet supported)",
-                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-            ));
+        // Format: "@RSYNCD: AUTHREQD <challenge>"
+        if let Some(challenge) = trimmed.strip_prefix("@RSYNCD: AUTHREQD ") {
+            // Load password from RSYNC_PASSWORD environment variable
+            let secret = load_daemon_password().ok_or_else(|| {
+                daemon_error(
+                    "daemon requires authentication but RSYNC_PASSWORD not set",
+                    CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+                )
+            })?;
+
+            // Get username from URL or default to current user
+            let username = request.username.clone().unwrap_or_else(|| {
+                std::env::var("USER")
+                    .or_else(|_| std::env::var("USERNAME"))
+                    .unwrap_or_else(|_| "rsync".to_string())
+            });
+
+            // Select strongest mutually supported digest
+            let digest = select_daemon_digest(&advertised_digests);
+
+            // Build auth context and send credentials
+            let auth_context = DaemonAuthContext::new(username, secret, digest);
+            send_daemon_auth_credentials(&mut reader, &auth_context, challenge, &request.address)?;
+
+            // Continue reading for OK or another error after auth
+            continue;
         }
 
         // Success - module accepted
@@ -782,4 +832,63 @@ fn build_wire_format_rules(
     }
 
     Ok(wire_rules)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::DaemonAuthDigest;
+
+    #[test]
+    fn parse_digest_list_from_greeting_with_full_list() {
+        let greeting = "@RSYNCD: 31.0 sha512 sha256 sha1 md5 md4\n";
+        let digests = parse_digest_list_from_greeting(greeting);
+        assert_eq!(digests.len(), 5);
+        assert_eq!(digests[0], DaemonAuthDigest::Sha512);
+        assert_eq!(digests[1], DaemonAuthDigest::Sha256);
+        assert_eq!(digests[2], DaemonAuthDigest::Sha1);
+        assert_eq!(digests[3], DaemonAuthDigest::Md5);
+        assert_eq!(digests[4], DaemonAuthDigest::Md4);
+    }
+
+    #[test]
+    fn parse_digest_list_from_greeting_with_partial_list() {
+        let greeting = "@RSYNCD: 30.0 sha256 md5\n";
+        let digests = parse_digest_list_from_greeting(greeting);
+        assert_eq!(digests.len(), 2);
+        assert_eq!(digests[0], DaemonAuthDigest::Sha256);
+        assert_eq!(digests[1], DaemonAuthDigest::Md5);
+    }
+
+    #[test]
+    fn parse_digest_list_from_greeting_without_digests() {
+        // Old protocol versions may not include digest list
+        let greeting = "@RSYNCD: 29.0\n";
+        let digests = parse_digest_list_from_greeting(greeting);
+        assert!(digests.is_empty());
+    }
+
+    #[test]
+    fn parse_digest_list_from_greeting_ignores_unknown() {
+        let greeting = "@RSYNCD: 31.0 sha512 unknown sha1 bogus md4\n";
+        let digests = parse_digest_list_from_greeting(greeting);
+        assert_eq!(digests.len(), 3);
+        assert_eq!(digests[0], DaemonAuthDigest::Sha512);
+        assert_eq!(digests[1], DaemonAuthDigest::Sha1);
+        assert_eq!(digests[2], DaemonAuthDigest::Md4);
+    }
+
+    #[test]
+    fn parse_protocol_from_greeting_extracts_version() {
+        let greeting = "@RSYNCD: 31.0 sha512 sha256\n";
+        let protocol = parse_protocol_from_greeting(greeting).unwrap();
+        assert_eq!(protocol.as_u8(), 31);
+    }
+
+    #[test]
+    fn parse_protocol_from_greeting_handles_version_only() {
+        let greeting = "@RSYNCD: 28.0\n";
+        let protocol = parse_protocol_from_greeting(greeting).unwrap();
+        assert_eq!(protocol.as_u8(), 28);
+    }
 }
