@@ -5,6 +5,7 @@ use super::levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 
 /// Combined verbosity configuration for info and debug flags.
 #[derive(Clone, Default, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerbosityConfig {
     /// Info flag levels.
     pub info: InfoLevels,
@@ -332,5 +333,40 @@ mod tests {
         assert_eq!(config.debug.flist, 3);
 
         assert!(config.apply_debug_flag("invalid").is_err());
+    }
+
+    #[cfg(feature = "serde")]
+    mod serde_tests {
+        use super::*;
+        use crate::{DebugFlag, InfoFlag};
+
+        #[test]
+        fn test_verbosity_config_serde_roundtrip() {
+            let config = VerbosityConfig::from_verbose_level(2);
+
+            let json = serde_json::to_string(&config).unwrap();
+            let decoded: VerbosityConfig = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(config.info.copy, decoded.info.copy);
+            assert_eq!(config.info.del, decoded.info.del);
+            assert_eq!(config.debug.bind, decoded.debug.bind);
+            assert_eq!(config.debug.flist, decoded.debug.flist);
+        }
+
+        #[test]
+        fn test_info_flag_serde_roundtrip() {
+            let flag = InfoFlag::Copy;
+            let json = serde_json::to_string(&flag).unwrap();
+            let decoded: InfoFlag = serde_json::from_str(&json).unwrap();
+            assert_eq!(flag, decoded);
+        }
+
+        #[test]
+        fn test_debug_flag_serde_roundtrip() {
+            let flag = DebugFlag::Deltasum;
+            let json = serde_json::to_string(&flag).unwrap();
+            let decoded: DebugFlag = serde_json::from_str(&json).unwrap();
+            assert_eq!(flag, decoded);
+        }
     }
 }
