@@ -81,6 +81,10 @@ pub mod connection_pool;
 #[cfg(all(test, feature = "concurrent-sessions"))]
 mod concurrent_tests;
 
+#[cfg(feature = "async")]
+#[cfg_attr(docsrs, doc(cfg(feature = "async")))]
+pub mod async_session;
+
 use self::help::help_text;
 
 /// Exit code used when daemon functionality is unavailable.
