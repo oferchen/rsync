@@ -4,7 +4,9 @@ use thiserror::Error;
 
 /// Error returned when `NegotiationBufferedSlices::copy_to_slice` receives an undersized buffer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
-#[error("buffer length {provided} is insufficient for negotiation transcript requiring {required} bytes")]
+#[error(
+    "buffer length {provided} is insufficient for negotiation transcript requiring {required} bytes"
+)]
 pub struct CopyToSliceError {
     required: usize,
     provided: usize,
