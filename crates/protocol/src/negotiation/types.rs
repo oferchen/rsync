@@ -5,7 +5,9 @@ use thiserror::Error;
 
 /// Error returned when the caller-provided slice cannot hold the buffered negotiation prefix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
-#[error("provided buffer of length {available} is too small for negotiation prefix (requires {required})")]
+#[error(
+    "provided buffer of length {available} is too small for negotiation prefix (requires {required})"
+)]
 pub struct BufferedPrefixTooSmall {
     required: usize,
     available: usize,

@@ -8,6 +8,12 @@ description = "Core utilities shared by the Rust rsync implementation"
 repository.workspace = true
 build = "build.rs"
 
+# Doctests are disabled because the crate name "core" shadows the standard
+# library's core, causing thiserror's derive macros to fail when they generate
+# code referencing core::fmt and core::write!.
+[lib]
+doctest = false
+
 [package.metadata.docs.rs]
 all-features = true
 no-default-features = false
