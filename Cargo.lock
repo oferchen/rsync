@@ -444,6 +444,7 @@ dependencies = [
  "sd-notify",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -541,6 +542,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tracing",
  "xattr",
 ]
 
