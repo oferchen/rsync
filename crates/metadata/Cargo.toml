@@ -19,6 +19,7 @@ filetime = "0.2"
 protocol = { path = "../protocol" }
 rustix = { version = "0.38", features = ["fs", "process"] }
 libc = "0.2"
+thiserror = "2.0"
 
 [target.'cfg(unix)'.dependencies]
 xattr = { version = "1.6", optional = true }
