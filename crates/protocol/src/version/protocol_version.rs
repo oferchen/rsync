@@ -22,6 +22,8 @@ use super::parse::{ParseProtocolVersionError, ParseProtocolVersionErrorKind};
 /// A single negotiated rsync protocol version.
 #[doc(alias = "--protocol")]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct ProtocolVersion(NonZeroU8);
 
 macro_rules! declare_supported_protocols {

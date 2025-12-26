@@ -566,6 +566,7 @@ name = "flist"
 version = "3.4.1-rust"
 dependencies = [
  "logging",
+ "serde",
  "tempfile",
  "thiserror 2.0.17",
 ]
@@ -759,6 +760,10 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 [[package]]
 name = "logging"
 version = "3.4.1-rust"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "logging-sink"
@@ -1033,6 +1038,8 @@ dependencies = [
  "logging",
  "memchr",
  "proptest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",

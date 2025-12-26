@@ -22,6 +22,8 @@ zstd = ["compress/zstd"]
 iconv = ["encoding_rs"]
 # Async codec support using tokio-util
 async = ["bytes", "tokio", "tokio-util"]
+# Serialization support for protocol types
+serde = ["dep:serde"]
 
 [dependencies]
 bytes = { version = "1.9", optional = true }
@@ -29,9 +31,11 @@ compress = { path = "../compress" }
 encoding_rs = { version = "0.8", optional = true }
 logging = { path = "../logging" }
 memchr = "2.7"
+serde = { workspace = true, optional = true }
 thiserror = "2.0"
 tokio = { version = "1.43", features = ["io-util"], optional = true }
 tokio-util = { version = "0.7", features = ["codec"], optional = true }
 
 [dev-dependencies]
 proptest = "1.4"
+serde_json = { workspace = true }
