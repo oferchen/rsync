@@ -24,6 +24,7 @@ filters = { path = "../filters" }
 compress = { path = "../compress" }
 flist = { path = "../flist" }
 logging = { path = "../logging" }
+thiserror = "2.0"
 libc = "0.2"
 base64 = "0.22"
 tempfile = "3.10"
