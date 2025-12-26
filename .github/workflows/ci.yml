@@ -49,6 +49,57 @@ jobs:
       - name: Nextest
         run: cargo nextest run --workspace --all-targets --all-features
 
+  feature-flags:
+    name: Feature flag combinations
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no-default-features
+            features: ""
+            args: "--no-default-features"
+          - name: parallel
+            features: "parallel"
+            args: "-p checksums -p flist --features parallel"
+          - name: async
+            features: "async"
+            args: "-p daemon -p core -p protocol -p engine --features async"
+          - name: concurrent-sessions
+            features: "concurrent-sessions"
+            args: "-p daemon --features concurrent-sessions"
+          - name: tracing
+            features: "tracing"
+            args: "-p daemon -p core -p engine --features tracing"
+          - name: serde
+            features: "serde"
+            args: "-p logging -p protocol -p flist --features serde"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: features-${{ matrix.name }}
+
+      - name: Build (${{ matrix.name }})
+        run: cargo build --workspace ${{ matrix.args }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Test (${{ matrix.name }})
+        run: cargo nextest run --workspace ${{ matrix.args }}
+
   interop-upstream:
     name: interop with upstream rsync
     runs-on: ubuntu-latest
