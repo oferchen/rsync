@@ -7,12 +7,11 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand::Rng;
 
+use checksums::RollingChecksum;
 use checksums::parallel::{
-    compute_block_signatures_parallel, compute_digests_parallel,
-    compute_rolling_checksums_parallel,
+    compute_block_signatures_parallel, compute_digests_parallel, compute_rolling_checksums_parallel,
 };
 use checksums::strong::{Md5, Sha256, Xxh3};
-use checksums::RollingChecksum;
 
 /// Generate random data of the specified size.
 fn generate_random_data(size: usize) -> Vec<u8> {
