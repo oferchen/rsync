@@ -1,6 +1,6 @@
-use std::error::Error;
-use std::fmt;
 use std::num::NonZeroU64;
+
+use thiserror::Error;
 
 mod components;
 mod numeric;
@@ -11,31 +11,18 @@ pub(crate) use numeric::pow_u128;
 use numeric::parse_decimal_with_exponent;
 
 /// Errors returned when parsing a bandwidth limit fails.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 pub enum BandwidthParseError {
     /// The argument did not follow rsync's recognised syntax.
+    #[error("invalid bandwidth limit syntax")]
     Invalid,
     /// The requested rate was too small (less than 512 bytes per second).
+    #[error("bandwidth limit is below the minimum of 512 bytes per second")]
     TooSmall,
     /// The requested rate overflowed the supported range.
+    #[error("bandwidth limit exceeds the supported range")]
     TooLarge,
 }
-
-impl fmt::Display for BandwidthParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let description = match self {
-            BandwidthParseError::Invalid => "invalid bandwidth limit syntax",
-            BandwidthParseError::TooSmall => {
-                "bandwidth limit is below the minimum of 512 bytes per second"
-            }
-            BandwidthParseError::TooLarge => "bandwidth limit exceeds the supported range",
-        };
-
-        f.write_str(description)
-    }
-}
-
-impl Error for BandwidthParseError {}
 
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
 #[doc(alias = "--bwlimit")]
