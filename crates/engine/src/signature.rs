@@ -283,7 +283,11 @@ impl FileSignature {
 pub enum SignatureError {
     /// Underlying I/O failure raised while reading file contents.
     #[error("failed to read input while generating signature: {0}")]
-    Io(#[from] #[source] io::Error),
+    Io(
+        #[from]
+        #[source]
+        io::Error,
+    ),
     /// Requested strong checksum length exceeds what the algorithm can provide.
     #[error("requested strong checksum length {requested} exceeds {algorithm:?} digest width")]
     DigestLengthMismatch {
