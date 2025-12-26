@@ -15,6 +15,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 logging = { path = "../logging" }
+rayon = { version = "1.10", optional = true }
 serde = { workspace = true, optional = true }
 thiserror = "2.0"
 
@@ -23,5 +24,7 @@ tempfile = "3.10.1"
 
 [features]
 default = []
+# Parallel file list processing using rayon
+parallel = ["rayon"]
 # Serialization support for file list types
 serde = ["dep:serde"]
