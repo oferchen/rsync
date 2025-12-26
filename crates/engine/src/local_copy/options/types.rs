@@ -152,6 +152,8 @@ pub struct LocalCopyOptions {
     pub(super) stop_at: Option<SystemTime>,
     #[cfg(feature = "xattr")]
     pub(super) preserve_xattrs: bool,
+    #[cfg(feature = "xattr")]
+    pub(super) preserve_nfsv4_acls: bool,
     pub(super) backup: bool,
     pub(super) backup_dir: Option<PathBuf>,
     pub(super) backup_suffix: OsString,
@@ -244,6 +246,8 @@ impl LocalCopyOptions {
             stop_at: None,
             #[cfg(feature = "xattr")]
             preserve_xattrs: false,
+            #[cfg(feature = "xattr")]
+            preserve_nfsv4_acls: false,
             backup: false,
             backup_dir: None,
             backup_suffix: OsString::from("~"),

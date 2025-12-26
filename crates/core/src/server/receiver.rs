@@ -42,6 +42,7 @@ use protocol::wire::DeltaOp;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::delta::{DeltaScript, DeltaToken, SignatureLayoutParams, calculate_signature_layout};
+use engine::fuzzy::FuzzyMatcher;
 use engine::signature::{FileSignature, SignatureAlgorithm, generate_file_signature};
 
 use super::config::ServerConfig;
@@ -485,19 +486,56 @@ impl ReceiverContext {
             writer.flush()?;
 
             // Step 1 & 2: Generate signature if basis file exists
+            // If exact file not found and fuzzy matching is enabled, try to find
+            // a similar file to use as basis for delta transfer.
             let signature_opt: Option<FileSignature> = 'sig: {
-                let basis_file = match fs::File::open(&file_path) {
-                    Ok(f) => f,
-                    Err(_) => break 'sig None,
-                };
+                // Try to open the exact file first
+                let (basis_file, basis_size) = match fs::File::open(&file_path) {
+                    Ok(f) => {
+                        let size = match f.metadata() {
+                            Ok(meta) => meta.len(),
+                            Err(_) => break 'sig None,
+                        };
+                        (f, size)
+                    }
+                    Err(_) => {
+                        // Exact file not found - try fuzzy matching if enabled
+                        if !self.config.flags.fuzzy {
+                            break 'sig None;
+                        }
 
-                let file_size = match basis_file.metadata() {
-                    Ok(meta) => meta.len(),
-                    Err(_) => break 'sig None,
+                        // Use FuzzyMatcher to find a similar file in dest_dir
+                        let fuzzy_matcher = FuzzyMatcher::new();
+                        let target_name = match relative_path.file_name() {
+                            Some(name) => name,
+                            None => break 'sig None,
+                        };
+                        let target_size = file_entry.size();
+
+                        let fuzzy_match = match fuzzy_matcher.find_fuzzy_basis(
+                            target_name,
+                            &dest_dir,
+                            target_size,
+                        ) {
+                            Some(m) => m,
+                            None => break 'sig None,
+                        };
+
+                        // Open the fuzzy-matched file as basis
+                        let fuzzy_file = match fs::File::open(&fuzzy_match.path) {
+                            Ok(f) => f,
+                            Err(_) => break 'sig None,
+                        };
+                        let fuzzy_size = match fuzzy_file.metadata() {
+                            Ok(meta) => meta.len(),
+                            Err(_) => break 'sig None,
+                        };
+                        (fuzzy_file, fuzzy_size)
+                    }
                 };
 
                 let params = SignatureLayoutParams::new(
-                    file_size,
+                    basis_size,
                     None, // Use default block size heuristic
                     self.protocol,
                     checksum_length,

@@ -223,4 +223,21 @@ impl LocalCopyOptions {
     pub const fn preserve_xattrs(&self) -> bool {
         self.preserve_xattrs
     }
+
+    /// Requests that NFSv4 ACLs be preserved when copying entries.
+    ///
+    /// NFSv4 ACLs are distinct from POSIX ACLs and use an ACE-based model
+    /// with inheritance support. They are stored in the `system.nfs4_acl`
+    /// extended attribute.
+    #[must_use]
+    pub const fn nfsv4_acls(mut self, preserve: bool) -> Self {
+        self.preserve_nfsv4_acls = preserve;
+        self
+    }
+
+    /// Reports whether NFSv4 ACL preservation has been requested.
+    #[must_use]
+    pub const fn preserve_nfsv4_acls(&self) -> bool {
+        self.preserve_nfsv4_acls
+    }
 }

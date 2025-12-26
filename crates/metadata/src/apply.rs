@@ -391,19 +391,41 @@ fn apply_ownership_from_entry(
         return Ok(());
     }
 
-    // Determine owner
+    // Get raw uid/gid from entry for potential fake-super storage
+    let raw_uid = if let Some(uid_override) = options.owner_override() {
+        Some(uid_override)
+    } else if options.owner() {
+        entry.uid()
+    } else {
+        None
+    };
+
+    let raw_gid = if let Some(gid_override) = options.group_override() {
+        Some(gid_override)
+    } else if options.group() {
+        entry.gid()
+    } else {
+        None
+    };
+
+    // If fake-super mode is enabled, store ownership in xattr instead of applying directly
+    if options.fake_super_enabled() {
+        return apply_ownership_via_fake_super(destination, entry, raw_uid, raw_gid);
+    }
+
+    // Determine owner (with mappings applied)
     let owner = if let Some(uid_override) = options.owner_override() {
         Some(ownership::uid_from_raw(uid_override as RawUid))
     } else if options.owner() {
         entry.uid().and_then(|uid| {
-            let mut raw_uid = uid as RawUid;
+            let mut mapped_uid = uid as RawUid;
             // Apply user mapping if present
             if let Some(mapping) = options.user_mapping()
-                && let Ok(Some(mapped)) = mapping.map_uid(raw_uid)
+                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid)
             {
-                raw_uid = mapped;
+                mapped_uid = mapped;
             }
-            map_uid(raw_uid, options.numeric_ids_enabled())
+            map_uid(mapped_uid, options.numeric_ids_enabled())
         })
     } else {
         None
@@ -414,13 +436,13 @@ fn apply_ownership_from_entry(
         Some(ownership::gid_from_raw(gid_override as RawGid))
     } else if options.group() {
         entry.gid().and_then(|gid| {
-            let mut raw_gid = gid as RawGid;
+            let mut mapped_gid = gid as RawGid;
             if let Some(mapping) = options.group_mapping()
-                && let Ok(Some(mapped)) = mapping.map_gid(raw_gid)
+                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid)
             {
-                raw_gid = mapped;
+                mapped_gid = mapped;
             }
-            map_gid(raw_gid, options.numeric_ids_enabled())
+            map_gid(mapped_gid, options.numeric_ids_enabled())
         })
     } else {
         None
@@ -434,6 +456,46 @@ fn apply_ownership_from_entry(
     }
 
     Ok(())
+}
+
+/// Stores ownership metadata via fake-super xattr instead of applying directly.
+///
+/// This is used when `--fake-super` is enabled, allowing non-root users to
+/// preserve ownership information in extended attributes.
+#[cfg(unix)]
+fn apply_ownership_via_fake_super(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    uid: Option<u32>,
+    gid: Option<u32>,
+) -> Result<(), MetadataError> {
+    use crate::fake_super::{FakeSuperStat, store_fake_super};
+
+    // Build FakeSuperStat from entry metadata
+    let mode = entry.permissions();
+    let uid = uid.unwrap_or(0);
+    let gid = gid.unwrap_or(0);
+
+    // Check if this is a device file (block or char) and get rdev if present
+    let rdev = if entry.file_type().is_device() {
+        // Get major/minor directly from the entry - they're already decoded
+        match (entry.rdev_major(), entry.rdev_minor()) {
+            (Some(major), Some(minor)) => Some((major, minor)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let stat = FakeSuperStat {
+        mode,
+        uid,
+        gid,
+        rdev,
+    };
+
+    store_fake_super(destination, &stat)
+        .map_err(|error| MetadataError::new("store fake-super metadata", destination, error))
 }
 
 #[cfg(not(unix))]
