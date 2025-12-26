@@ -4,6 +4,9 @@ mod legacy;
 mod observe;
 mod util;
 
+#[cfg(feature = "async")]
+mod async_read;
+
 pub use core::NegotiationPrologueSniffer;
 pub use legacy::{
     read_and_parse_legacy_daemon_greeting, read_and_parse_legacy_daemon_greeting_details,
