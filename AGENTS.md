@@ -649,6 +649,135 @@ New work touching local copy must follow this structure.
 
 ---
 
+## Library Integration Patterns
+
+This section documents the design patterns and external dependencies used across
+the codebase. All implementations must follow these patterns for consistency.
+
+### Design Pattern Usage
+
+**Strategy Pattern** — Used for algorithm selection based on runtime conditions:
+
+- **Checksums**: `RollingChecksum` and `StrongChecksum` traits allow swapping
+  algorithms (Adler32/SIMD vs MD4/MD5/XXH3) based on protocol version.
+- **Protocol Codecs**: `NdxCodec` and `ProtocolCodec` traits select wire
+  encoding format (legacy 4-byte LE vs modern varint) per protocol version.
+- **Compression**: Algorithm selection (zlib/zstd) via trait objects.
+
+```rust
+// Strategy pattern example
+pub trait RollingChecksum {
+    fn update(&mut self, data: &[u8]);
+    fn roll(&mut self, old_byte: u8, new_byte: u8);
+    fn digest(&self) -> u32;
+}
+```
+
+**Builder Pattern** — Used for complex object construction with validation:
+
+- **FileEntry**: `FileEntryBuilder` with `.path()`, `.size()`, `.mtime()` etc.
+- **CoreConfig**: Builder for transfer configuration.
+- **FilterChain**: `.include()`, `.exclude()` method chaining.
+
+```rust
+// Builder pattern example
+let entry = FileEntryBuilder::new()
+    .path("src/main.rs")
+    .file_type(FileType::Regular)
+    .size(1024)
+    .mtime(SystemTime::now())
+    .build()?;
+```
+
+**State Machine Pattern** — Used for connection lifecycle management:
+
+- **Daemon connections**: `ConnectionState` enum with transitions:
+  `Greeting → ModuleSelect → Authenticating → Transferring → Closing`
+- State transitions are explicit and validated.
+
+```rust
+// State machine states
+pub enum ConnectionState {
+    Greeting,
+    ModuleSelect,
+    Authenticating { module: String },
+    Transferring { module: String, read_only: bool },
+    Closing,
+}
+```
+
+**Chain of Responsibility** — Used for filter rule evaluation:
+
+- `FilterChain` evaluates rules in order, first match wins.
+- Rules cascade: include → exclude → include patterns.
+
+### External Dependencies
+
+Core dependencies and their purposes:
+
+| Crate | Purpose | Location |
+|-------|---------|----------|
+| `tokio` | Async runtime for daemon | `crates/daemon/`, `crates/transport/` |
+| `tokio-util` | Codec framework for framing | `crates/protocol/` |
+| `bytes` | Zero-copy buffer handling | Throughout |
+| `governor` | Token bucket rate limiting | `crates/bandwidth/` |
+| `flate2` | zlib compression | `crates/compress/` |
+| `zstd` | zstd compression | `crates/compress/` |
+| `xxhash-rust` | XXH3 strong checksum | `crates/checksums/` |
+| `md-5`, `md4` | Legacy checksums | `crates/checksums/` |
+| `walkdir` | Directory traversal | `crates/walk/` |
+| `globset` | Pattern matching | `crates/filters/` |
+| `filetime` | Timestamp preservation | `crates/metadata/` |
+| `clap` | CLI parsing (derive macros) | `crates/cli/` |
+| `thiserror` | Error derivation | Throughout |
+| `indicatif` | Progress bars | `crates/cli/` |
+
+### Subsystem Integration Guidelines
+
+**Checksums (`crates/checksums/`)**:
+- Rolling checksum must support `roll()` for sliding window.
+- Strong checksums implement digest truncation per protocol.
+- SIMD paths must have scalar fallbacks with parity tests.
+
+**Protocol Framing (`crates/protocol/`)**:
+- Use `tokio-util::codec` for Encoder/Decoder traits.
+- Message size validation in codec, not application layer.
+- Golden byte tests for wire format compatibility.
+
+**File Operations (`crates/engine/`, `crates/metadata/`)**:
+- Use `AtomicFile` for safe writes (temp file → sync → rename).
+- Preserve metadata order: write content → set mtime → set perms.
+- Handle `same-file` detection for safety.
+
+**Filters (`crates/filters/`)**:
+- Parse rsync filter syntax exactly (anchored `/`, directory `/`).
+- Evaluate chain in order, first match determines fate.
+- Support merge files (`.rsync-filter`).
+
+**Bandwidth (`crates/bandwidth/`)**:
+- Use `governor` for token bucket implementation.
+- Handle large transfers by chunking token requests.
+- Support dynamic limit changes mid-transfer.
+
+**Daemon (`crates/daemon/`)**:
+- Connection limiting via `tokio::sync::Semaphore`.
+- Graceful shutdown via `broadcast` channel.
+- systemd notification for service readiness.
+
+**Error Handling**:
+- Use `thiserror` for error type derivation.
+- Map all errors to upstream-compatible exit codes.
+- Include path context in I/O errors via extension trait.
+
+```rust
+// Error context extension
+pub trait IoResultExt<T> {
+    fn with_path(self, path: &Path) -> Result<T, RsyncError>;
+}
+```
+
+---
+
 ## Exit Codes & Roles
 
 * Exit codes map 1:1 to upstream rsync. Integration tests assert:
