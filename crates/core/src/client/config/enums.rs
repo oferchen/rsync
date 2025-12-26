@@ -1,7 +1,8 @@
-use std::fmt;
 use std::num::NonZeroU64;
 use std::str::FromStr;
 use std::time::Duration;
+
+use thiserror::Error;
 
 use crate::{
     message::{Message, Role},
@@ -113,11 +114,13 @@ impl FromStr for HumanReadableMode {
 }
 
 /// Errors produced when parsing a [`HumanReadableMode`] from text.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum HumanReadableModeParseError {
     /// The provided value was empty after trimming ASCII whitespace.
+    #[error("human-readable level must not be empty")]
     Empty,
     /// The provided value did not match an accepted human-readable level.
+    #[error("invalid human-readable level '{value}': expected 0, 1, or 2")]
     Invalid {
         /// The invalid value supplied by the caller after trimming ASCII whitespace.
         value: String,
@@ -134,20 +137,6 @@ impl HumanReadableModeParseError {
         }
     }
 }
-
-impl fmt::Display for HumanReadableModeParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => f.write_str("human-readable level must not be empty"),
-            Self::Invalid { value } => write!(
-                f,
-                "invalid human-readable level '{value}': expected 0, 1, or 2"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for HumanReadableModeParseError {}
 
 /// Enumerates the strong checksum algorithms recognised by the client.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

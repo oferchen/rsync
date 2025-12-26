@@ -1,5 +1,4 @@
-use std::error::Error;
-use std::fmt;
+use thiserror::Error;
 
 /// Describes the requested iconv charset conversion behaviour.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
@@ -92,31 +91,18 @@ impl IconvSetting {
 }
 
 /// Errors raised while parsing an iconv specification.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum IconvParseError {
     /// The specification was empty.
+    #[error("iconv specification must not be empty")]
     EmptySpecification,
     /// The local charset was omitted before the comma.
+    #[error("iconv specification is missing a local charset")]
     MissingLocalCharset,
     /// The remote charset component after the comma was empty.
+    #[error("iconv specification is missing a remote charset")]
     MissingRemoteCharset,
 }
-
-impl fmt::Display for IconvParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptySpecification => f.write_str("iconv specification must not be empty"),
-            Self::MissingLocalCharset => {
-                f.write_str("iconv specification is missing a local charset")
-            }
-            Self::MissingRemoteCharset => {
-                f.write_str("iconv specification is missing a remote charset")
-            }
-        }
-    }
-}
-
-impl Error for IconvParseError {}
 
 #[cfg(test)]
 mod tests {

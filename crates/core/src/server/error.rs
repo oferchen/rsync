@@ -7,6 +7,8 @@
 use std::io;
 use std::path::PathBuf;
 
+use thiserror::Error;
+
 /// Error categories for delta transfer operations.
 ///
 /// Delta transfer can encounter various error conditions that require different
@@ -15,26 +17,30 @@ use std::path::PathBuf;
 /// - **Fatal**: Abort the entire transfer to prevent data loss
 /// - **Recoverable**: Skip the current file but continue with others
 /// - **DataCorruption**: Critical risk requiring immediate abort
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum DeltaTransferError {
     /// Fatal error that should abort the entire transfer.
-    Fatal(DeltaFatalError),
+    #[error("Fatal: {0}")]
+    Fatal(#[from] DeltaFatalError),
 
     /// Recoverable error - skip file and continue.
-    Recoverable(DeltaRecoverableError),
+    #[error("Recoverable: {0}")]
+    Recoverable(#[from] DeltaRecoverableError),
 
     /// Data corruption risk - abort immediately.
+    #[error("Data corruption risk: {0}")]
     DataCorruption(String),
 }
 
 /// Fatal errors that require aborting the entire transfer.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum DeltaFatalError {
     /// Disk full - abort to prevent data loss.
     ///
     /// When the filesystem runs out of space, continuing the transfer
     /// risks partial file writes and data corruption. The transfer must
     /// abort immediately.
+    #[error("Disk full at {}{}", path.display(), bytes_needed.map(|b| format!(" ({b} bytes needed)")).unwrap_or_default())]
     DiskFull {
         /// Path where disk full was detected.
         path: PathBuf,
@@ -46,6 +52,7 @@ pub enum DeltaFatalError {
     ///
     /// Cannot write to a read-only filesystem. This is fatal because
     /// it affects all subsequent file operations.
+    #[error("Read-only filesystem at {}", path.display())]
     ReadOnlyFilesystem {
         /// Path where read-only filesystem was detected.
         path: PathBuf,
@@ -55,6 +62,7 @@ pub enum DeltaFatalError {
     ///
     /// Protocol violations indicate a fundamental communication problem
     /// that cannot be recovered from.
+    #[error("Protocol error: {message}")]
     ProtocolError {
         /// Description of the protocol error.
         message: String,
@@ -63,16 +71,18 @@ pub enum DeltaFatalError {
     /// Other fatal I/O error.
     ///
     /// Catch-all for I/O errors that should abort the transfer.
-    Io(io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[source] io::Error),
 }
 
 /// Recoverable errors that allow skipping the current file.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum DeltaRecoverableError {
     /// File not found (disappeared during transfer).
     ///
     /// If a file is deleted between the file list being generated and
     /// the actual transfer, we can safely skip it.
+    #[error("File not found: {}", path.display())]
     FileNotFound {
         /// Path to the missing file.
         path: PathBuf,
@@ -82,6 +92,7 @@ pub enum DeltaRecoverableError {
     ///
     /// Permission errors on individual files can be skipped. The user
     /// will see a warning but the transfer continues.
+    #[error("Permission denied for {operation} on {}", path.display())]
     PermissionDenied {
         /// Path where permission was denied.
         path: PathBuf,
@@ -92,76 +103,15 @@ pub enum DeltaRecoverableError {
     /// Other I/O error that allows continuing.
     ///
     /// Catch-all for I/O errors that affect only the current file.
+    #[error("I/O error on {}: {error}", path.display())]
     Io {
         /// Path where the error occurred.
         path: PathBuf,
         /// The underlying I/O error.
+        #[source]
         error: io::Error,
     },
 }
-
-impl std::fmt::Display for DeltaTransferError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DeltaTransferError::Fatal(e) => write!(f, "Fatal: {e}"),
-            DeltaTransferError::Recoverable(e) => write!(f, "Recoverable: {e}"),
-            DeltaTransferError::DataCorruption(msg) => {
-                write!(f, "Data corruption risk: {msg}")
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for DeltaFatalError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DeltaFatalError::DiskFull { path, bytes_needed } => {
-                if let Some(bytes) = bytes_needed {
-                    write!(
-                        f,
-                        "Disk full at {} ({} bytes needed)",
-                        path.display(),
-                        bytes
-                    )
-                } else {
-                    write!(f, "Disk full at {}", path.display())
-                }
-            }
-            DeltaFatalError::ReadOnlyFilesystem { path } => {
-                write!(f, "Read-only filesystem at {}", path.display())
-            }
-            DeltaFatalError::ProtocolError { message } => {
-                write!(f, "Protocol error: {message}")
-            }
-            DeltaFatalError::Io(e) => write!(f, "I/O error: {e}"),
-        }
-    }
-}
-
-impl std::fmt::Display for DeltaRecoverableError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DeltaRecoverableError::FileNotFound { path } => {
-                write!(f, "File not found: {}", path.display())
-            }
-            DeltaRecoverableError::PermissionDenied { path, operation } => {
-                write!(
-                    f,
-                    "Permission denied for {} on {}",
-                    operation,
-                    path.display()
-                )
-            }
-            DeltaRecoverableError::Io { path, error } => {
-                write!(f, "I/O error on {}: {}", path.display(), error)
-            }
-        }
-    }
-}
-
-impl std::error::Error for DeltaTransferError {}
-impl std::error::Error for DeltaFatalError {}
-impl std::error::Error for DeltaRecoverableError {}
 
 /// Categorize an io::Error into DeltaTransferError.
 ///

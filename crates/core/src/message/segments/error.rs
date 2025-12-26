@@ -1,9 +1,11 @@
-use std::fmt;
 use std::io;
+
+use thiserror::Error;
 
 /// Error returned when [`MessageSegments::copy_to_slice`][super::MessageSegments::copy_to_slice]
 /// receives an undersized buffer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+#[error("buffer length {provided} is insufficient for message requiring {required} bytes")]
 pub struct CopyToSliceError {
     pub(super) required: usize,
     pub(super) provided: usize,
@@ -38,18 +40,6 @@ impl CopyToSliceError {
         self.required.saturating_sub(self.provided)
     }
 }
-
-impl fmt::Display for CopyToSliceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "buffer length {} is insufficient for message requiring {} bytes",
-            self.provided, self.required
-        )
-    }
-}
-
-impl std::error::Error for CopyToSliceError {}
 
 impl From<CopyToSliceError> for io::Error {
     fn from(err: CopyToSliceError) -> Self {

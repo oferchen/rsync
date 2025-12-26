@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use thiserror::Error;
+
 /// Role used in the trailer portion of an rsync message.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Role {
@@ -83,18 +85,11 @@ impl fmt::Display for Role {
 }
 
 /// Error returned when parsing a [`Role`] from a string fails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("unrecognised rsync message role")]
 pub struct ParseRoleError {
     _private: (),
 }
-
-impl fmt::Display for ParseRoleError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("unrecognised rsync message role")
-    }
-}
-
-impl std::error::Error for ParseRoleError {}
 
 impl FromStr for Role {
     type Err = ParseRoleError;
