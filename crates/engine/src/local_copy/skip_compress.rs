@@ -1,6 +1,6 @@
-use std::error::Error;
-use std::fmt;
 use std::path::Path;
+
+use thiserror::Error;
 
 /// Default suffixes that should not be compressed when compression is enabled.
 const DEFAULT_SKIP_SUFFIXES: &[&str] = &[
@@ -15,39 +15,18 @@ const DEFAULT_SKIP_SUFFIXES: &[&str] = &[
 ];
 
 /// Errors that can occur when parsing a `--skip-compress` specification.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum SkipCompressParseError {
     /// The specification contained a character that is not supported.
+    #[error("invalid character '{0}' in --skip-compress specification")]
     InvalidCharacter(char),
     /// A character class (`[...]`) was not terminated.
+    #[error("unterminated character class in --skip-compress specification")]
     UnterminatedClass,
     /// A character class was declared without any characters.
+    #[error("empty character class in --skip-compress specification")]
     EmptyClass,
 }
-
-impl fmt::Display for SkipCompressParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidCharacter(ch) => {
-                write!(
-                    f,
-                    "invalid character '{ch}' in --skip-compress specification"
-                )
-            }
-            Self::UnterminatedClass => {
-                write!(
-                    f,
-                    "unterminated character class in --skip-compress specification"
-                )
-            }
-            Self::EmptyClass => {
-                write!(f, "empty character class in --skip-compress specification")
-            }
-        }
-    }
-}
-
-impl Error for SkipCompressParseError {}
 
 /// A parsed list of suffix patterns that should bypass compression.
 #[derive(Clone, Debug, Eq, PartialEq)]

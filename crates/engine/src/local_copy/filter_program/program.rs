@@ -1,5 +1,3 @@
-use std::error::Error;
-use std::fmt;
 use std::path::Path;
 
 #[cfg(all(unix, feature = "xattr"))]
@@ -7,6 +5,7 @@ use filters::FilterAction;
 use filters::FilterRule;
 #[cfg(all(unix, feature = "xattr"))]
 use globset::{GlobBuilder, GlobMatcher};
+use thiserror::Error;
 
 use super::super::LocalCopyError;
 use super::rules::{DirMergeRule, ExcludeIfPresentRule};
@@ -236,9 +235,11 @@ pub enum FilterProgramEntry {
 }
 
 /// Error produced when compiling filter patterns into matchers fails.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("failed to compile filter pattern '{pattern}': {source}")]
 pub struct FilterProgramError {
     pattern: String,
+    #[source]
     source: globset::Error,
 }
 
@@ -251,16 +252,6 @@ impl FilterProgramError {
     #[must_use]
     pub fn pattern(&self) -> &str {
         &self.pattern
-    }
-}
-
-impl fmt::Display for FilterProgramError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "failed to compile filter pattern '{}': {}",
-            self.pattern, self.source
-        )
     }
 }
 
@@ -296,11 +287,5 @@ impl XattrRule {
 
     fn matches(&self, name: &str) -> bool {
         self.matcher.is_match(name)
-    }
-}
-
-impl Error for FilterProgramError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.source)
     }
 }
