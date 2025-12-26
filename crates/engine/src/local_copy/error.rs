@@ -1,15 +1,18 @@
-use super::filter_program::{
-    INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, TIMEOUT_EXIT_CODE,
-};
-use std::error::Error;
-use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use thiserror::Error;
+
+use super::filter_program::{
+    INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, TIMEOUT_EXIT_CODE,
+};
+
 /// Error produced when planning or executing a local copy fails.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error(transparent)]
 pub struct LocalCopyError {
+    #[from]
     kind: LocalCopyErrorKind,
 }
 
@@ -85,80 +88,40 @@ impl LocalCopyError {
     }
 }
 
-impl fmt::Display for LocalCopyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            LocalCopyErrorKind::MissingSourceOperands => {
-                write!(
-                    f,
-                    "missing source operands: supply at least one source and a destination"
-                )
-            }
-            LocalCopyErrorKind::InvalidArgument(reason) => write!(f, "{}", reason.message()),
-            LocalCopyErrorKind::Io {
-                action,
-                path,
-                source,
-            } => {
-                write!(f, "failed to {action} '{}': {source}", path.display())
-            }
-            LocalCopyErrorKind::Timeout { duration } => {
-                write!(
-                    f,
-                    "transfer timed out after {:.3} seconds without progress",
-                    duration.as_secs_f64()
-                )
-            }
-            LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
-                let noun = if *skipped == 1 { "entry" } else { "entries" };
-                write!(
-                    f,
-                    "Deletions stopped due to --max-delete limit ({skipped} {noun} skipped)"
-                )
-            }
-            LocalCopyErrorKind::StopAtReached { .. } => {
-                write!(f, "stopping at requested limit")
-            }
-        }
-    }
-}
-
-impl Error for LocalCopyError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match &self.kind {
-            LocalCopyErrorKind::Io { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
-
 /// Classification of local copy failures.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum LocalCopyErrorKind {
     /// No operands were supplied.
+    #[error("missing source operands: supply at least one source and a destination")]
     MissingSourceOperands,
     /// Operands were invalid.
+    #[error("{}", .0.message())]
     InvalidArgument(LocalCopyArgumentError),
     /// Filesystem interaction failed.
+    #[error("failed to {action} '{}': {source}", path.display())]
     Io {
         /// Action being performed.
         action: &'static str,
         /// Path involved in the failure.
         path: PathBuf,
         /// Underlying error.
+        #[source]
         source: io::Error,
     },
     /// The transfer exceeded the configured inactivity timeout.
+    #[error("transfer timed out after {:.3} seconds without progress", duration.as_secs_f64())]
     Timeout {
         /// Duration of inactivity that triggered the timeout.
         duration: Duration,
     },
     /// Deletions were halted because the configured limit was exceeded.
+    #[error("Deletions stopped due to --max-delete limit ({skipped} {} skipped)", if *skipped == 1 { "entry" } else { "entries" })]
     DeleteLimitExceeded {
         /// Number of entries that were skipped after reaching the limit.
         skipped: u64,
     },
     /// The configured stop-at deadline was reached.
+    #[error("stopping at requested limit")]
     StopAtReached {
         /// The requested wall-clock deadline.
         target: SystemTime,
