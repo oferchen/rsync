@@ -1,3 +1,5 @@
+//! crates/core/src/client/remote/ssh_transfer.rs
+//!
 //! SSH transfer orchestration.
 //!
 //! This module coordinates SSH-based remote transfers by spawning SSH connections,
@@ -12,6 +14,9 @@
 #![allow(unsafe_code)]
 
 use std::ffi::OsString;
+
+#[cfg(feature = "tracing")]
+use tracing::instrument;
 
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType, write_filter_list};
@@ -52,6 +57,10 @@ use crate::server::{ServerConfig, ServerRole};
 /// - SSH connection fails
 /// - Protocol negotiation fails
 /// - Transfer execution fails
+#[cfg_attr(
+    feature = "tracing",
+    instrument(skip(config, observer), name = "ssh_transfer")
+)]
 pub fn run_ssh_transfer(
     config: &ClientConfig,
     observer: Option<&mut dyn ClientProgressObserver>,
