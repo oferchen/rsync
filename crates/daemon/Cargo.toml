@@ -20,6 +20,8 @@ sd-notify = ["dep:sd-notify", "core/sd-notify"]
 async = ["dep:tokio", "core/async"]
 # Concurrent session tracking - enables efficient shared state for multi-session daemons
 concurrent-sessions = ["dep:dashmap"]
+# Structured logging instrumentation for daemon diagnostics
+tracing = ["dep:tracing", "core/tracing"]
 
 [dependencies]
 clap = { version = "4.5.49", features = ["std"] }
@@ -33,6 +35,7 @@ sd-notify = { version = "0.4.5", optional = true }
 tempfile = "3.10"
 tokio = { workspace = true, optional = true }
 dashmap = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
