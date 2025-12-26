@@ -15,6 +15,8 @@ use super::known::KnownCompatibilityFlag;
 /// integer codec implemented in the `varint` module, making the bitfield compact
 /// while retaining forward compatibility when new bits are defined.
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct CompatibilityFlags {
     bits: u32,
 }
