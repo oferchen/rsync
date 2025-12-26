@@ -29,6 +29,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
   - [XTask & docs validation](#xtask--docs-validation)
   - [Release & packaging](#release--packaging)
 - [Configuration & environment](#configuration--environment)
+- [Feature Flags](#feature-flags)
 - [Logging](#logging)
 - [Contributing](#contributing)
 - [License](#license)
@@ -398,6 +399,62 @@ oc-rsync --help
 # Daemon options
 oc-rsync --daemon --help
 ```
+
+---
+
+## Feature Flags
+
+The workspace uses Cargo feature flags to enable optional functionality. The following features are available:
+
+### Core Features (enabled by default)
+
+| Feature | Crate | Description |
+|---------|-------|-------------|
+| `zstd` | core, cli, engine, compress | Zstandard compression algorithm support |
+| `lz4` | core, cli, engine, compress | LZ4 compression algorithm support |
+| `acl` | core, cli, engine, metadata | POSIX ACL (Access Control List) preservation |
+| `xattr` | core, cli, engine, metadata | Extended attribute preservation |
+| `iconv` | core, protocol | Filename encoding conversion (via encoding_rs) |
+| `openssl-vendored` | checksums | OpenSSL with vendored build (default for checksums) |
+
+### Optional Features
+
+| Feature | Crate | Description |
+|---------|-------|-------------|
+| `parallel` | checksums, flist | Parallel processing using rayon (checksum computation, file list building) |
+| `async` | core, protocol, engine, daemon | Tokio-based async I/O for concurrent operations |
+| `tracing` | core, engine, daemon | Structured logging instrumentation for performance analysis |
+| `concurrent-sessions` | daemon | Thread-safe session/connection tracking with DashMap |
+| `sd-notify` | daemon, core | systemd notification support for service integration |
+| `serde` | logging, protocol, flist | Serialization support for configuration and protocol types |
+| `test-support` | bandwidth | Test utilities for bandwidth limiting |
+
+### Building with Features
+
+```bash
+# Default features (recommended for most users)
+cargo build --workspace
+
+# All features (for development/testing)
+cargo build --workspace --all-features
+
+# Minimal build (no optional features)
+cargo build --workspace --no-default-features
+
+# Specific feature combinations
+cargo build --workspace --features "parallel,tracing"
+cargo build -p daemon --features "concurrent-sessions,sd-notify"
+cargo build -p checksums --features "parallel"
+```
+
+### Feature Dependencies
+
+Some features have cross-crate dependencies:
+
+- `core/zstd` enables `engine/zstd` and `compress/zstd`
+- `core/async` enables `engine/async`
+- `daemon/tracing` enables `core/tracing`
+- `daemon/concurrent-sessions` requires DashMap for lock-free concurrent data structures
 
 ---
 
