@@ -7,8 +7,8 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand::Rng;
 
-use checksums::strong::{Md4, Md5, Sha1, Sha256, Sha512, Xxh3, Xxh64};
 use checksums::RollingChecksum;
+use checksums::strong::{Md4, Md5, Sha1, Sha256, Sha512, Xxh3, Xxh64};
 
 /// Generate random data of the specified size.
 fn generate_random_data(size: usize) -> Vec<u8> {
@@ -53,7 +53,9 @@ fn bench_rolling_checksum_roll(c: &mut Criterion) {
         b.iter(|| {
             let mut checksum = base_checksum.clone();
             // Roll single byte
-            checksum.roll(black_box(data[0]), black_box(data[block_size])).unwrap();
+            checksum
+                .roll(black_box(data[0]), black_box(data[block_size]))
+                .unwrap();
             black_box(checksum.value())
         });
     });
