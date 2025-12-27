@@ -195,3 +195,116 @@ fn trim_leading_empty_slices<'a, 'b>(mut slices: &'b [IoSlice<'a>]) -> &'b [IoSl
 
     slices
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::message::{Message, MessageScratch, Role};
+    use crate::message_source;
+
+    #[test]
+    fn write_to_empty_segments_succeeds() {
+        let mut scratch = MessageScratch::new();
+        // Create empty segments by not adding any content
+        let msg = Message::info("");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        let result = segments.write_to(&mut buffer);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn write_to_writes_all_segments() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test message");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        segments.write_to(&mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn write_to_matches_to_bytes() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::error(23, "delta-transfer failure")
+            .with_role(Role::Sender)
+            .with_source(message_source!());
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        segments.write_to(&mut buffer).unwrap();
+        assert_eq!(buffer, msg.to_bytes().unwrap());
+    }
+
+    #[test]
+    fn write_to_single_segment_works() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("simple");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        let result = segments.write_to(&mut buffer);
+        assert!(result.is_ok());
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn write_to_multiple_segments_works() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::error(42, "with code and role")
+            .with_role(Role::Receiver)
+            .with_source(message_source!());
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        segments.write_to(&mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn write_to_preserves_existing_buffer_content() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = b"prefix:".to_vec();
+        let prefix_len = buffer.len();
+        segments.write_to(&mut buffer).unwrap();
+        assert_eq!(&buffer[..prefix_len], b"prefix:");
+    }
+
+    #[test]
+    fn write_to_handles_warning_message() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::warning("warning text");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        segments.write_to(&mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn write_to_handles_error_message() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::error(1, "error text");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        segments.write_to(&mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn write_to_with_newline_includes_newline() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, true);
+        let mut buffer = Vec::new();
+        segments.write_to(&mut buffer).unwrap();
+        assert!(buffer.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn write_to_without_newline_no_trailing_newline() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        segments.write_to(&mut buffer).unwrap();
+        assert!(!buffer.ends_with(b"\n"));
+    }
+}
