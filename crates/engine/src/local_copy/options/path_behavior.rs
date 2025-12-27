@@ -283,3 +283,254 @@ impl LocalCopyOptions {
         self.force_replacements
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whole_file_enables() {
+        let opts = LocalCopyOptions::new().whole_file(true);
+        assert!(opts.whole_file_enabled());
+    }
+
+    #[test]
+    fn whole_file_disables() {
+        let opts = LocalCopyOptions::new().whole_file(true).whole_file(false);
+        assert!(!opts.whole_file_enabled());
+    }
+
+    #[test]
+    fn copy_links_enables() {
+        let opts = LocalCopyOptions::new().copy_links(true);
+        assert!(opts.copy_links_enabled());
+    }
+
+    #[test]
+    fn copy_links_disables() {
+        let opts = LocalCopyOptions::new().copy_links(true).copy_links(false);
+        assert!(!opts.copy_links_enabled());
+    }
+
+    #[test]
+    fn links_enables() {
+        let opts = LocalCopyOptions::new().links(true);
+        assert!(opts.links_enabled());
+    }
+
+    #[test]
+    fn links_disables() {
+        let opts = LocalCopyOptions::new().links(true).links(false);
+        assert!(!opts.links_enabled());
+    }
+
+    #[test]
+    fn open_noatime_enables() {
+        let opts = LocalCopyOptions::new().open_noatime(true);
+        assert!(opts.open_noatime_enabled());
+    }
+
+    #[test]
+    fn open_noatime_disables() {
+        let opts = LocalCopyOptions::new().open_noatime(true).open_noatime(false);
+        assert!(!opts.open_noatime_enabled());
+    }
+
+    #[test]
+    fn copy_unsafe_links_enables() {
+        let opts = LocalCopyOptions::new().copy_unsafe_links(true);
+        assert!(opts.copy_unsafe_links_enabled());
+    }
+
+    #[test]
+    fn copy_unsafe_links_disables() {
+        let opts = LocalCopyOptions::new().copy_unsafe_links(true).copy_unsafe_links(false);
+        assert!(!opts.copy_unsafe_links_enabled());
+    }
+
+    #[test]
+    fn safe_links_enables() {
+        let opts = LocalCopyOptions::new().safe_links(true);
+        assert!(opts.safe_links_enabled());
+    }
+
+    #[test]
+    fn safe_links_disables() {
+        let opts = LocalCopyOptions::new().safe_links(true).safe_links(false);
+        assert!(!opts.safe_links_enabled());
+    }
+
+    #[test]
+    fn copy_dirlinks_enables() {
+        let opts = LocalCopyOptions::new().copy_dirlinks(true);
+        assert!(opts.copy_dirlinks_enabled());
+    }
+
+    #[test]
+    fn copy_dirlinks_disables() {
+        let opts = LocalCopyOptions::new().copy_dirlinks(true).copy_dirlinks(false);
+        assert!(!opts.copy_dirlinks_enabled());
+    }
+
+    #[test]
+    fn keep_dirlinks_enables() {
+        let opts = LocalCopyOptions::new().keep_dirlinks(true);
+        assert!(opts.keep_dirlinks_enabled());
+    }
+
+    #[test]
+    fn keep_dirlinks_disables() {
+        let opts = LocalCopyOptions::new().keep_dirlinks(true).keep_dirlinks(false);
+        assert!(!opts.keep_dirlinks_enabled());
+    }
+
+    #[test]
+    fn relative_paths_enables() {
+        let opts = LocalCopyOptions::new().relative_paths(true);
+        assert!(opts.relative_paths_enabled());
+    }
+
+    #[test]
+    fn relative_paths_disables() {
+        let opts = LocalCopyOptions::new().relative_paths(true).relative_paths(false);
+        assert!(!opts.relative_paths_enabled());
+    }
+
+    #[test]
+    fn recursive_enables() {
+        let opts = LocalCopyOptions::new().recursive(true);
+        assert!(opts.recursive_enabled());
+    }
+
+    #[test]
+    fn recursive_disables() {
+        let opts = LocalCopyOptions::new().recursive(true).recursive(false);
+        assert!(!opts.recursive_enabled());
+    }
+
+    #[test]
+    fn dirs_enables() {
+        let opts = LocalCopyOptions::new().dirs(true);
+        assert!(opts.dirs_enabled());
+    }
+
+    #[test]
+    fn dirs_disables() {
+        let opts = LocalCopyOptions::new().dirs(true).dirs(false);
+        assert!(!opts.dirs_enabled());
+    }
+
+    #[test]
+    fn implied_dirs_enables() {
+        let opts = LocalCopyOptions::new().implied_dirs(true);
+        assert!(opts.implied_dirs_enabled());
+    }
+
+    #[test]
+    fn implied_dirs_disables() {
+        let opts = LocalCopyOptions::new().implied_dirs(true).implied_dirs(false);
+        assert!(!opts.implied_dirs_enabled());
+    }
+
+    #[test]
+    fn mkpath_enables() {
+        let opts = LocalCopyOptions::new().mkpath(true);
+        assert!(opts.mkpath_enabled());
+    }
+
+    #[test]
+    fn mkpath_disables() {
+        let opts = LocalCopyOptions::new().mkpath(true).mkpath(false);
+        assert!(!opts.mkpath_enabled());
+    }
+
+    #[test]
+    fn prune_empty_dirs_enables() {
+        let opts = LocalCopyOptions::new().prune_empty_dirs(true);
+        assert!(opts.prune_empty_dirs_enabled());
+    }
+
+    #[test]
+    fn prune_empty_dirs_disables() {
+        let opts = LocalCopyOptions::new().prune_empty_dirs(true).prune_empty_dirs(false);
+        assert!(!opts.prune_empty_dirs_enabled());
+    }
+
+    #[test]
+    fn devices_enables() {
+        let opts = LocalCopyOptions::new().devices(true);
+        assert!(opts.devices_enabled());
+    }
+
+    #[test]
+    fn devices_disables() {
+        let opts = LocalCopyOptions::new().devices(true).devices(false);
+        assert!(!opts.devices_enabled());
+    }
+
+    #[test]
+    fn copy_devices_as_files_enables() {
+        let opts = LocalCopyOptions::new().copy_devices_as_files(true);
+        assert!(opts.copy_devices_as_files_enabled());
+    }
+
+    #[test]
+    fn copy_devices_as_files_disables() {
+        let opts = LocalCopyOptions::new().copy_devices_as_files(true).copy_devices_as_files(false);
+        assert!(!opts.copy_devices_as_files_enabled());
+    }
+
+    #[test]
+    fn specials_enables() {
+        let opts = LocalCopyOptions::new().specials(true);
+        assert!(opts.specials_enabled());
+    }
+
+    #[test]
+    fn specials_disables() {
+        let opts = LocalCopyOptions::new().specials(true).specials(false);
+        assert!(!opts.specials_enabled());
+    }
+
+    #[test]
+    fn force_replacements_enables() {
+        let opts = LocalCopyOptions::new().force_replacements(true);
+        assert!(opts.force_replacements_enabled());
+    }
+
+    #[test]
+    fn force_replacements_disables() {
+        let opts = LocalCopyOptions::new().force_replacements(true).force_replacements(false);
+        assert!(!opts.force_replacements_enabled());
+    }
+
+    #[test]
+    fn one_file_system_enables() {
+        let opts = LocalCopyOptions::new().one_file_system(true);
+        assert!(opts.one_file_system_enabled());
+    }
+
+    #[test]
+    fn one_file_system_disables() {
+        let opts = LocalCopyOptions::new().one_file_system(true).one_file_system(false);
+        assert!(!opts.one_file_system_enabled());
+    }
+
+    #[test]
+    fn default_recursive_is_true() {
+        let opts = LocalCopyOptions::new();
+        assert!(opts.recursive_enabled());
+    }
+
+    #[test]
+    fn default_implied_dirs_is_true() {
+        let opts = LocalCopyOptions::new();
+        assert!(opts.implied_dirs_enabled());
+    }
+
+    #[test]
+    fn default_whole_file_is_true() {
+        let opts = LocalCopyOptions::new();
+        assert!(opts.whole_file_enabled());
+    }
+}

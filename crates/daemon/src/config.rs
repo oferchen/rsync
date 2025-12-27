@@ -107,3 +107,137 @@ impl DaemonConfigBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod daemon_config_tests {
+        use super::*;
+
+        #[test]
+        fn builder_default() {
+            let config = DaemonConfig::builder().build();
+
+            assert_eq!(config.brand(), Brand::Oc);
+            assert!(config.arguments().is_empty());
+            assert!(config.load_default_paths());
+            assert!(!config.has_runtime_request());
+        }
+
+        #[test]
+        fn builder_with_brand() {
+            let config = DaemonConfig::builder()
+                .brand(Brand::Upstream)
+                .build();
+
+            assert_eq!(config.brand(), Brand::Upstream);
+        }
+
+        #[test]
+        fn builder_with_arguments() {
+            let config = DaemonConfig::builder()
+                .arguments(["--port", "8873", "--once"])
+                .build();
+
+            assert_eq!(config.arguments().len(), 3);
+            assert_eq!(config.arguments()[0], "--port");
+            assert_eq!(config.arguments()[1], "8873");
+            assert_eq!(config.arguments()[2], "--once");
+            assert!(config.has_runtime_request());
+        }
+
+        #[test]
+        fn builder_disable_default_paths() {
+            let config = DaemonConfig::builder()
+                .disable_default_paths()
+                .build();
+
+            assert!(!config.load_default_paths());
+        }
+
+        #[test]
+        fn builder_chained() {
+            let config = DaemonConfig::builder()
+                .brand(Brand::Upstream)
+                .arguments(["--config", "/etc/rsyncd.conf"])
+                .disable_default_paths()
+                .build();
+
+            assert_eq!(config.brand(), Brand::Upstream);
+            assert_eq!(config.arguments().len(), 2);
+            assert!(!config.load_default_paths());
+            assert!(config.has_runtime_request());
+        }
+
+        #[test]
+        fn clone_and_eq() {
+            let config = DaemonConfig::builder()
+                .brand(Brand::Oc)
+                .arguments(["--once"])
+                .build();
+            let cloned = config.clone();
+
+            assert_eq!(config, cloned);
+        }
+
+        #[test]
+        fn debug_format() {
+            let config = DaemonConfig::builder().build();
+            let debug = format!("{:?}", config);
+
+            assert!(debug.contains("DaemonConfig"));
+            assert!(debug.contains("brand"));
+        }
+    }
+
+    mod daemon_config_builder_tests {
+        use super::*;
+
+        #[test]
+        fn default() {
+            let builder = DaemonConfigBuilder::default();
+            let config = builder.build();
+
+            assert_eq!(config.brand(), Brand::Oc);
+            assert!(config.load_default_paths());
+        }
+
+        #[test]
+        fn clone_and_eq() {
+            let builder = DaemonConfigBuilder::default();
+            let cloned = builder.clone();
+
+            assert_eq!(builder, cloned);
+        }
+
+        #[test]
+        fn debug_format() {
+            let builder = DaemonConfigBuilder::default();
+            let debug = format!("{:?}", builder);
+
+            assert!(debug.contains("DaemonConfigBuilder"));
+        }
+
+        #[test]
+        fn arguments_from_vec() {
+            let args = vec!["--help".to_string(), "--version".to_string()];
+            let config = DaemonConfig::builder()
+                .arguments(args)
+                .build();
+
+            assert_eq!(config.arguments().len(), 2);
+        }
+
+        #[test]
+        fn arguments_from_osstrings() {
+            let args = vec![OsString::from("--once")];
+            let config = DaemonConfig::builder()
+                .arguments(args)
+                .build();
+
+            assert_eq!(config.arguments().len(), 1);
+            assert_eq!(config.arguments()[0], "--once");
+        }
+    }
+}

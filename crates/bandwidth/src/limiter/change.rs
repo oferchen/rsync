@@ -149,3 +149,180 @@ pub fn apply_effective_limit(
 
     change
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limiter_change_unchanged_has_lowest_priority() {
+        assert_eq!(LimiterChange::Unchanged.priority(), 0);
+    }
+
+    #[test]
+    fn limiter_change_disabled_has_highest_priority() {
+        assert!(LimiterChange::Disabled.priority() > LimiterChange::Enabled.priority());
+        assert!(LimiterChange::Disabled.priority() > LimiterChange::Updated.priority());
+        assert!(LimiterChange::Disabled.priority() > LimiterChange::Unchanged.priority());
+    }
+
+    #[test]
+    fn limiter_change_combine_returns_higher_priority() {
+        assert_eq!(
+            LimiterChange::Unchanged.combine(LimiterChange::Updated),
+            LimiterChange::Updated
+        );
+        assert_eq!(
+            LimiterChange::Updated.combine(LimiterChange::Enabled),
+            LimiterChange::Enabled
+        );
+        assert_eq!(
+            LimiterChange::Enabled.combine(LimiterChange::Disabled),
+            LimiterChange::Disabled
+        );
+    }
+
+    #[test]
+    fn limiter_change_combine_unchanged_with_unchanged() {
+        assert_eq!(
+            LimiterChange::Unchanged.combine(LimiterChange::Unchanged),
+            LimiterChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn limiter_change_combine_same_priority_returns_self() {
+        assert_eq!(
+            LimiterChange::Updated.combine(LimiterChange::Updated),
+            LimiterChange::Updated
+        );
+    }
+
+    #[test]
+    fn limiter_change_combine_all_empty_returns_unchanged() {
+        let changes: Vec<LimiterChange> = vec![];
+        assert_eq!(LimiterChange::combine_all(changes), LimiterChange::Unchanged);
+    }
+
+    #[test]
+    fn limiter_change_combine_all_single_returns_that_change() {
+        assert_eq!(
+            LimiterChange::combine_all(vec![LimiterChange::Enabled]),
+            LimiterChange::Enabled
+        );
+    }
+
+    #[test]
+    fn limiter_change_combine_all_returns_highest_priority() {
+        let changes = vec![
+            LimiterChange::Unchanged,
+            LimiterChange::Updated,
+            LimiterChange::Enabled,
+        ];
+        assert_eq!(LimiterChange::combine_all(changes), LimiterChange::Enabled);
+    }
+
+    #[test]
+    fn limiter_change_combine_all_disabled_wins() {
+        let changes = vec![
+            LimiterChange::Enabled,
+            LimiterChange::Disabled,
+            LimiterChange::Updated,
+        ];
+        assert_eq!(LimiterChange::combine_all(changes), LimiterChange::Disabled);
+    }
+
+    #[test]
+    fn limiter_change_is_changed_true_for_updated() {
+        assert!(LimiterChange::Updated.is_changed());
+    }
+
+    #[test]
+    fn limiter_change_is_changed_true_for_enabled() {
+        assert!(LimiterChange::Enabled.is_changed());
+    }
+
+    #[test]
+    fn limiter_change_is_changed_true_for_disabled() {
+        assert!(LimiterChange::Disabled.is_changed());
+    }
+
+    #[test]
+    fn limiter_change_is_changed_false_for_unchanged() {
+        assert!(!LimiterChange::Unchanged.is_changed());
+    }
+
+    #[test]
+    fn limiter_change_leaves_limiter_active_for_enabled() {
+        assert!(LimiterChange::Enabled.leaves_limiter_active());
+    }
+
+    #[test]
+    fn limiter_change_leaves_limiter_active_for_updated() {
+        assert!(LimiterChange::Updated.leaves_limiter_active());
+    }
+
+    #[test]
+    fn limiter_change_leaves_limiter_active_false_for_disabled() {
+        assert!(!LimiterChange::Disabled.leaves_limiter_active());
+    }
+
+    #[test]
+    fn limiter_change_leaves_limiter_active_false_for_unchanged() {
+        assert!(!LimiterChange::Unchanged.leaves_limiter_active());
+    }
+
+    #[test]
+    fn limiter_change_disables_limiter_true_for_disabled() {
+        assert!(LimiterChange::Disabled.disables_limiter());
+    }
+
+    #[test]
+    fn limiter_change_disables_limiter_false_for_others() {
+        assert!(!LimiterChange::Unchanged.disables_limiter());
+        assert!(!LimiterChange::Updated.disables_limiter());
+        assert!(!LimiterChange::Enabled.disables_limiter());
+    }
+
+    #[test]
+    fn limiter_change_ord_unchanged_less_than_updated() {
+        assert!(LimiterChange::Unchanged < LimiterChange::Updated);
+    }
+
+    #[test]
+    fn limiter_change_ord_updated_less_than_enabled() {
+        assert!(LimiterChange::Updated < LimiterChange::Enabled);
+    }
+
+    #[test]
+    fn limiter_change_ord_enabled_less_than_disabled() {
+        assert!(LimiterChange::Enabled < LimiterChange::Disabled);
+    }
+
+    #[test]
+    fn limiter_change_partial_ord_returns_some() {
+        assert!(LimiterChange::Updated.partial_cmp(&LimiterChange::Enabled).is_some());
+    }
+
+    #[test]
+    fn limiter_change_from_iterator() {
+        let changes = vec![
+            LimiterChange::Unchanged,
+            LimiterChange::Updated,
+        ];
+        let result: LimiterChange = changes.into_iter().collect();
+        assert_eq!(result, LimiterChange::Updated);
+    }
+
+    #[test]
+    fn limiter_change_clone_equals() {
+        let change = LimiterChange::Enabled;
+        assert_eq!(change.clone(), change);
+    }
+
+    #[test]
+    fn limiter_change_debug() {
+        let debug = format!("{:?}", LimiterChange::Enabled);
+        assert!(debug.contains("Enabled"));
+    }
+}

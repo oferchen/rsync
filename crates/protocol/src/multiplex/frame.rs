@@ -247,3 +247,228 @@ impl DerefMut for MessageFrame {
         self.payload_mut()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::convert::TryFrom;
+
+    #[test]
+    fn message_frame_new_valid() {
+        let frame = MessageFrame::new(MessageCode::Info, b"hello".to_vec()).unwrap();
+        assert_eq!(frame.code(), MessageCode::Info);
+        assert_eq!(frame.payload(), b"hello");
+    }
+
+    #[test]
+    fn message_frame_new_empty_payload() {
+        let frame = MessageFrame::new(MessageCode::Data, vec![]).unwrap();
+        assert_eq!(frame.payload_len(), 0);
+    }
+
+    #[test]
+    fn message_frame_code() {
+        let frame = MessageFrame::new(MessageCode::Warning, b"warn".to_vec()).unwrap();
+        assert_eq!(frame.code(), MessageCode::Warning);
+    }
+
+    #[test]
+    fn message_frame_payload() {
+        let data = b"test payload data".to_vec();
+        let frame = MessageFrame::new(MessageCode::Data, data.clone()).unwrap();
+        assert_eq!(frame.payload(), &data);
+    }
+
+    #[test]
+    fn message_frame_payload_mut() {
+        let mut frame = MessageFrame::new(MessageCode::Data, b"abc".to_vec()).unwrap();
+        frame.payload_mut()[0] = b'x';
+        assert_eq!(frame.payload(), b"xbc");
+    }
+
+    #[test]
+    fn message_frame_payload_len() {
+        let frame = MessageFrame::new(MessageCode::Info, b"12345".to_vec()).unwrap();
+        assert_eq!(frame.payload_len(), 5);
+    }
+
+    #[test]
+    fn message_frame_into_payload() {
+        let original = b"test".to_vec();
+        let frame = MessageFrame::new(MessageCode::Info, original.clone()).unwrap();
+        let payload = frame.into_payload();
+        assert_eq!(payload, original);
+    }
+
+    #[test]
+    fn message_frame_into_parts() {
+        let frame = MessageFrame::new(MessageCode::Error, b"err".to_vec()).unwrap();
+        let (code, payload) = frame.into_parts();
+        assert_eq!(code, MessageCode::Error);
+        assert_eq!(payload, b"err");
+    }
+
+    #[test]
+    fn message_frame_header() {
+        let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec()).unwrap();
+        let header = frame.header().unwrap();
+        assert_eq!(header.code(), MessageCode::Info);
+        assert_eq!(header.payload_len(), 3);
+    }
+
+    #[test]
+    fn message_frame_encode_into_vec() {
+        let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec()).unwrap();
+        let mut bytes = Vec::new();
+        frame.encode_into_vec(&mut bytes).unwrap();
+        // Header is 4 bytes + 3 bytes payload
+        assert_eq!(bytes.len(), 7);
+    }
+
+    #[test]
+    fn message_frame_encode_into_vec_appends() {
+        let frame = MessageFrame::new(MessageCode::Info, b"a".to_vec()).unwrap();
+        let mut bytes = vec![0xFF, 0xFF];
+        frame.encode_into_vec(&mut bytes).unwrap();
+        // Original 2 bytes + header 4 + payload 1
+        assert_eq!(bytes.len(), 7);
+        assert_eq!(&bytes[0..2], &[0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn message_frame_encode_into_writer() {
+        let frame = MessageFrame::new(MessageCode::Data, b"test".to_vec()).unwrap();
+        let mut bytes = Vec::new();
+        frame.encode_into_writer(&mut bytes).unwrap();
+        assert_eq!(bytes.len(), 8); // 4 header + 4 payload
+    }
+
+    #[test]
+    fn message_frame_decode_from_slice() {
+        let frame = MessageFrame::new(MessageCode::Info, b"abc".to_vec()).unwrap();
+        let mut encoded = Vec::new();
+        frame.encode_into_vec(&mut encoded).unwrap();
+
+        let (decoded, remainder) = MessageFrame::decode_from_slice(&encoded).unwrap();
+        assert_eq!(decoded.code(), MessageCode::Info);
+        assert_eq!(decoded.payload(), b"abc");
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn message_frame_decode_from_slice_with_remainder() {
+        let frame = MessageFrame::new(MessageCode::Info, b"a".to_vec()).unwrap();
+        let mut encoded = Vec::new();
+        frame.encode_into_vec(&mut encoded).unwrap();
+        encoded.extend_from_slice(b"extra");
+
+        let (decoded, remainder) = MessageFrame::decode_from_slice(&encoded).unwrap();
+        assert_eq!(decoded.code(), MessageCode::Info);
+        assert_eq!(decoded.payload(), b"a");
+        assert_eq!(remainder, b"extra");
+    }
+
+    #[test]
+    fn message_frame_roundtrip() {
+        let original = MessageFrame::new(MessageCode::Warning, b"warning message".to_vec()).unwrap();
+        let mut encoded = Vec::new();
+        original.encode_into_vec(&mut encoded).unwrap();
+
+        let (decoded, remainder) = MessageFrame::decode_from_slice(&encoded).unwrap();
+        assert!(remainder.is_empty());
+        assert_eq!(decoded.code(), original.code());
+        assert_eq!(decoded.payload(), original.payload());
+    }
+
+    #[test]
+    fn message_frame_as_ref() {
+        let frame = MessageFrame::new(MessageCode::Data, b"data".to_vec()).unwrap();
+        let slice: &[u8] = frame.as_ref();
+        assert_eq!(slice, b"data");
+    }
+
+    #[test]
+    fn message_frame_as_mut() {
+        let mut frame = MessageFrame::new(MessageCode::Data, b"data".to_vec()).unwrap();
+        let slice: &mut [u8] = frame.as_mut();
+        slice[0] = b'x';
+        assert_eq!(frame.payload(), b"xata");
+    }
+
+    #[test]
+    fn message_frame_try_from_tuple() {
+        let frame = MessageFrame::try_from((MessageCode::Info, b"test".to_vec())).unwrap();
+        assert_eq!(frame.code(), MessageCode::Info);
+        assert_eq!(frame.payload(), b"test");
+    }
+
+    #[test]
+    fn message_frame_into_tuple() {
+        let frame = MessageFrame::new(MessageCode::Error, b"err".to_vec()).unwrap();
+        let (code, payload): (MessageCode, Vec<u8>) = frame.into();
+        assert_eq!(code, MessageCode::Error);
+        assert_eq!(payload, b"err");
+    }
+
+    #[test]
+    fn message_frame_try_from_slice() {
+        let original = MessageFrame::new(MessageCode::Info, b"hello".to_vec()).unwrap();
+        let mut encoded = Vec::new();
+        original.encode_into_vec(&mut encoded).unwrap();
+
+        let decoded = MessageFrame::try_from(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.code(), MessageCode::Info);
+        assert_eq!(decoded.payload(), b"hello");
+    }
+
+    #[test]
+    fn message_frame_try_from_slice_with_trailing_data_fails() {
+        let original = MessageFrame::new(MessageCode::Info, b"a".to_vec()).unwrap();
+        let mut encoded = Vec::new();
+        original.encode_into_vec(&mut encoded).unwrap();
+        encoded.push(0xFF); // Extra trailing byte
+
+        let result = MessageFrame::try_from(encoded.as_slice());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn message_frame_deref() {
+        let frame = MessageFrame::new(MessageCode::Data, b"abc".to_vec()).unwrap();
+        let slice: &[u8] = &*frame;
+        assert_eq!(slice, b"abc");
+    }
+
+    #[test]
+    fn message_frame_deref_mut() {
+        let mut frame = MessageFrame::new(MessageCode::Data, b"abc".to_vec()).unwrap();
+        (&mut *frame)[1] = b'x';
+        assert_eq!(frame.payload(), b"axc");
+    }
+
+    #[test]
+    fn message_frame_clone() {
+        let frame = MessageFrame::new(MessageCode::Info, b"test".to_vec()).unwrap();
+        let cloned = frame.clone();
+        assert_eq!(frame, cloned);
+    }
+
+    #[test]
+    fn message_frame_debug() {
+        let frame = MessageFrame::new(MessageCode::Info, b"x".to_vec()).unwrap();
+        let debug = format!("{:?}", frame);
+        assert!(debug.contains("MessageFrame"));
+    }
+
+    #[test]
+    fn message_frame_equality() {
+        let frame1 = MessageFrame::new(MessageCode::Info, b"a".to_vec()).unwrap();
+        let frame2 = MessageFrame::new(MessageCode::Info, b"a".to_vec()).unwrap();
+        let frame3 = MessageFrame::new(MessageCode::Info, b"b".to_vec()).unwrap();
+        let frame4 = MessageFrame::new(MessageCode::Error, b"a".to_vec()).unwrap();
+
+        assert_eq!(frame1, frame2);
+        assert_ne!(frame1, frame3);
+        assert_ne!(frame1, frame4);
+    }
+}

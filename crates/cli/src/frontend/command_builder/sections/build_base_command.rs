@@ -44,8 +44,18 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("8-bit-output")
                     .long("8-bit-output")
+                    .short('8')
                     .help("Leave high-bit characters unescaped in output.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-8-bit-output"),
+            )
+            .arg(
+                Arg::new("no-8-bit-output")
+                    .long("no-8-bit-output")
+                    .visible_alias("no-8")
+                    .help("Escape high-bit characters in output.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("8-bit-output"),
             )
             .arg(
                 Arg::new("no-msgs2stderr")
@@ -81,6 +91,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-itemize-changes")
                     .long("no-itemize-changes")
+                    .visible_alias("no-i")
                     .help("Disable change summaries for updated entries.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("itemize-changes"),
@@ -164,6 +175,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-protect-args")
                     .long("no-protect-args")
+                    .visible_alias("no-s")
                     .alias("no-secluded-args")
                     .help("Allow the remote shell to expand wildcard arguments.")
                     .action(ArgAction::SetTrue)
@@ -264,6 +276,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-prune-empty-dirs")
                     .long("no-prune-empty-dirs")
+                    .visible_alias("no-m")
                     .help("Disable pruning of empty directories.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("prune-empty-dirs"),
@@ -427,6 +440,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-fuzzy")
                     .long("no-fuzzy")
+                    .visible_alias("no-y")
                     .help("Disable --fuzzy basis file search.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("fuzzy"),
@@ -593,7 +607,6 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-archive-devices")
                     .long("no-D")
-                    .visible_alias("no-archive-devices")
                     .help("Disable preservation of device and special files (negates -D).")
                     .action(ArgAction::SetTrue)
                     .overrides_with("archive-devices"),
@@ -728,6 +741,7 @@ pub(crate) fn build_base_command(program_name: &'static str) -> ClapCommand {
             .arg(
                 Arg::new("no-one-file-system")
                     .long("no-one-file-system")
+                    .visible_alias("no-x")
                     .help("Allow traversal across filesystem boundaries.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("one-file-system"),

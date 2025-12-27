@@ -7,3 +7,14 @@ impl ClientConfig {
         self.force_fallback
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_fallback_default_is_false() {
+        let config = ClientConfig::default();
+        assert!(!config.force_fallback());
+    }
+}

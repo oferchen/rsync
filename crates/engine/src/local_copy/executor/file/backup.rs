@@ -79,3 +79,146 @@ pub(crate) fn copy_entry_to_backup(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+    use std::path::Path;
+
+    #[test]
+    fn compute_backup_path_with_suffix_only() {
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest/file.txt"),
+            None,
+            None,
+            OsStr::new("~"),
+        );
+        assert_eq!(result, PathBuf::from("/dest/file.txt~"));
+    }
+
+    #[test]
+    fn compute_backup_path_with_empty_suffix() {
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest/file.txt"),
+            None,
+            None,
+            OsStr::new(""),
+        );
+        assert_eq!(result, PathBuf::from("/dest/file.txt"));
+    }
+
+    #[test]
+    fn compute_backup_path_with_relative_path() {
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest/subdir/file.txt"),
+            Some(Path::new("subdir/file.txt")),
+            None,
+            OsStr::new(".bak"),
+        );
+        assert_eq!(result, PathBuf::from("/dest/subdir/file.txt.bak"));
+    }
+
+    #[test]
+    fn compute_backup_path_with_absolute_backup_dir() {
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest/file.txt"),
+            None,
+            Some(Path::new("/backup")),
+            OsStr::new("~"),
+        );
+        assert_eq!(result, PathBuf::from("/backup/file.txt~"));
+    }
+
+    #[test]
+    fn compute_backup_path_with_relative_backup_dir() {
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest/file.txt"),
+            None,
+            Some(Path::new(".backups")),
+            OsStr::new("~"),
+        );
+        assert_eq!(result, PathBuf::from("/dest/.backups/file.txt~"));
+    }
+
+    #[test]
+    fn compute_backup_path_preserves_directory_structure_in_backup_dir() {
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest/subdir/deep/file.txt"),
+            Some(Path::new("subdir/deep/file.txt")),
+            Some(Path::new("/backup")),
+            OsStr::new("~"),
+        );
+        assert_eq!(result, PathBuf::from("/backup/subdir/deep/file.txt~"));
+    }
+
+    #[test]
+    fn compute_backup_path_destination_is_root() {
+        // When destination matches destination_root exactly
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest"),
+            None,
+            None,
+            OsStr::new("~"),
+        );
+        assert_eq!(result, PathBuf::from("/dest~"));
+    }
+
+    #[test]
+    fn compute_backup_path_destination_not_under_root() {
+        // When destination is not under destination_root
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/other/file.txt"),
+            None,
+            None,
+            OsStr::new("~"),
+        );
+        assert_eq!(result, PathBuf::from("/other/file.txt~"));
+    }
+
+    #[test]
+    fn compute_backup_path_no_file_name() {
+        // When destination has no file name (e.g., root path)
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/"),
+            None,
+            None,
+            OsStr::new("~"),
+        );
+        // Should use "backup" as default name
+        assert!(result.to_string_lossy().contains("backup"));
+    }
+
+    #[test]
+    fn compute_backup_path_nested_with_backup_dir_and_relative() {
+        let result = compute_backup_path(
+            Path::new("/dest"),
+            Path::new("/dest/a/b/c.txt"),
+            Some(Path::new("a/b/c.txt")),
+            Some(Path::new("/backups")),
+            OsStr::new(".old"),
+        );
+        assert_eq!(result, PathBuf::from("/backups/a/b/c.txt.old"));
+    }
+
+    #[test]
+    fn compute_backup_path_relative_backup_dir_with_subdirectory() {
+        let result = compute_backup_path(
+            Path::new("/project"),
+            Path::new("/project/src/main.rs"),
+            Some(Path::new("src/main.rs")),
+            Some(Path::new("backup")),
+            OsStr::new("~"),
+        );
+        assert_eq!(result, PathBuf::from("/project/backup/src/main.rs~"));
+    }
+}

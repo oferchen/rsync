@@ -95,3 +95,91 @@ impl ClientConfig {
         self.qsort
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for compress
+    #[test]
+    fn compress_default_is_false() {
+        let config = default_config();
+        assert!(!config.compress());
+    }
+
+    // Tests for compression_level
+    #[test]
+    fn compression_level_default_is_none() {
+        let config = default_config();
+        assert!(config.compression_level().is_none());
+    }
+
+    // Tests for compression_algorithm
+    #[test]
+    fn compression_algorithm_default_is_valid() {
+        let config = default_config();
+        let _algo = config.compression_algorithm();
+        // Just verify it returns successfully
+    }
+
+    // Tests for skip_compress
+    #[test]
+    fn skip_compress_default_exists() {
+        let config = default_config();
+        let _skip = config.skip_compress();
+        // Just verify it returns successfully
+    }
+
+    // Tests for whole_file
+    #[test]
+    fn whole_file_default_is_true() {
+        let config = default_config();
+        assert!(config.whole_file());
+    }
+
+    // Tests for open_noatime
+    #[test]
+    fn open_noatime_default_is_false() {
+        let config = default_config();
+        assert!(!config.open_noatime());
+    }
+
+    // Tests for sparse
+    #[test]
+    fn sparse_default_is_false() {
+        let config = default_config();
+        assert!(!config.sparse());
+    }
+
+    // Tests for fuzzy
+    #[test]
+    fn fuzzy_default_is_false() {
+        let config = default_config();
+        assert!(!config.fuzzy());
+    }
+
+    // Tests for block_size_override
+    #[test]
+    fn block_size_override_default_is_none() {
+        let config = default_config();
+        assert!(config.block_size_override().is_none());
+    }
+
+    // Tests for max_alloc
+    #[test]
+    fn max_alloc_default_is_none() {
+        let config = default_config();
+        assert!(config.max_alloc().is_none());
+    }
+
+    // Tests for qsort
+    #[test]
+    fn qsort_default_is_false() {
+        let config = default_config();
+        assert!(!config.qsort());
+    }
+}

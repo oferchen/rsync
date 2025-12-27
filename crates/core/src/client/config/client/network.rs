@@ -92,3 +92,96 @@ impl ClientConfig {
         self.early_input.as_deref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for address_mode
+    #[test]
+    fn address_mode_default_is_default() {
+        let config = default_config();
+        assert_eq!(config.address_mode(), AddressMode::Default);
+    }
+
+    // Tests for connect_program
+    #[test]
+    fn connect_program_default_is_none() {
+        let config = default_config();
+        assert!(config.connect_program().is_none());
+    }
+
+    // Tests for bind_address
+    #[test]
+    fn bind_address_default_is_none() {
+        let config = default_config();
+        assert!(config.bind_address().is_none());
+    }
+
+    // Tests for sockopts
+    #[test]
+    fn sockopts_default_is_none() {
+        let config = default_config();
+        assert!(config.sockopts().is_none());
+    }
+
+    // Tests for blocking_io
+    #[test]
+    fn blocking_io_default_is_none() {
+        let config = default_config();
+        assert!(config.blocking_io().is_none());
+    }
+
+    // Tests for bandwidth_limit
+    #[test]
+    fn bandwidth_limit_default_is_none() {
+        let config = default_config();
+        assert!(config.bandwidth_limit().is_none());
+    }
+
+    // Tests for timeout
+    #[test]
+    fn timeout_default_is_default() {
+        let config = default_config();
+        assert_eq!(config.timeout(), TransferTimeout::Default);
+    }
+
+    // Tests for connect_timeout
+    #[test]
+    fn connect_timeout_default_is_default() {
+        let config = default_config();
+        assert_eq!(config.connect_timeout(), TransferTimeout::Default);
+    }
+
+    // Tests for stop_at
+    #[test]
+    fn stop_at_default_is_none() {
+        let config = default_config();
+        assert!(config.stop_at().is_none());
+    }
+
+    // Tests for remote_shell
+    #[test]
+    fn remote_shell_default_is_none() {
+        let config = default_config();
+        assert!(config.remote_shell().is_none());
+    }
+
+    // Tests for rsync_path
+    #[test]
+    fn rsync_path_default_is_none() {
+        let config = default_config();
+        assert!(config.rsync_path().is_none());
+    }
+
+    // Tests for early_input
+    #[test]
+    fn early_input_default_is_none() {
+        let config = default_config();
+        assert!(config.early_input().is_none());
+    }
+}

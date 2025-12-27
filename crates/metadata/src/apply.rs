@@ -837,4 +837,299 @@ mod tests {
         let dest_target = fs::read_link(&dest_link).expect("read dest link");
         assert_eq!(dest_target, target);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_metadata_with_options_no_times() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let target = temp.path().join("target.txt");
+        fs::write(&target, b"data").expect("write target");
+
+        let source_link = temp.path().join("source-link2");
+        let dest_link = temp.path().join("dest-link2");
+        symlink(&target, &source_link).expect("create source link");
+        symlink(&target, &dest_link).expect("create dest link");
+
+        let metadata = fs::symlink_metadata(&source_link).expect("metadata");
+
+        // Apply with times disabled
+        apply_symlink_metadata_with_options(
+            &dest_link,
+            &metadata,
+            MetadataOptions::new().preserve_times(false),
+        )
+        .expect("apply symlink metadata");
+
+        // Should succeed without error
+        assert!(fs::symlink_metadata(&dest_link).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_metadata_with_options_no_times() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-dir-notime");
+        let dest = temp.path().join("dest-dir-notime");
+        fs::create_dir(&source).expect("create source dir");
+        fs::create_dir(&dest).expect("create dest dir");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        apply_directory_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new().preserve_times(false),
+        )
+        .expect("apply dir metadata");
+
+        // Should succeed
+        assert!(fs::metadata(&dest).is_ok());
+    }
+
+    #[test]
+    fn file_metadata_with_all_options_disabled() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-noop.txt");
+        let dest = temp.path().join("dest-noop.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        // Apply with everything disabled
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new()
+                .preserve_times(false)
+                .preserve_permissions(false)
+                .preserve_owner(false)
+                .preserve_group(false),
+        )
+        .expect("apply metadata");
+
+        // Should succeed
+        assert!(fs::metadata(&dest).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executability_not_applied_to_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-exec-dir");
+        let dest = temp.path().join("dest-exec-dir");
+        fs::create_dir(&source).expect("create source dir");
+        fs::create_dir(&dest).expect("create dest dir");
+
+        fs::set_permissions(&source, PermissionsExt::from_mode(0o755)).expect("set source perms");
+        fs::set_permissions(&dest, PermissionsExt::from_mode(0o700)).expect("set dest perms");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        // Executability preservation only applies to files, not directories
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new()
+                .preserve_permissions(false)
+                .preserve_executability(true)
+                .preserve_times(false),
+        )
+        .expect("apply metadata");
+
+        // For directories, executability flag should have no effect
+        assert!(fs::metadata(&dest).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executability_removed_when_source_not_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-noexec.txt");
+        let dest = temp.path().join("dest-noexec.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        // Source is NOT executable
+        fs::set_permissions(&source, PermissionsExt::from_mode(0o644)).expect("set source perms");
+        // Dest IS executable
+        fs::set_permissions(&dest, PermissionsExt::from_mode(0o755)).expect("set dest perms");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new()
+                .preserve_permissions(false)
+                .preserve_executability(true)
+                .preserve_times(false),
+        )
+        .expect("apply metadata");
+
+        // Dest should no longer be executable
+        let mode = current_mode(&dest) & 0o111;
+        assert_eq!(mode, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_override_takes_precedence() {
+        if rustix::process::geteuid().as_raw() != 0 {
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-override.txt");
+        let dest = temp.path().join("dest-override.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new()
+                .preserve_owner(true)
+                .with_owner_override(Some(1000))
+                .preserve_times(false),
+        )
+        .expect("apply metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        assert_eq!(dest_meta.uid(), 1000);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_override_takes_precedence() {
+        if rustix::process::geteuid().as_raw() != 0 {
+            return;
+        }
+
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("source-grp-override.txt");
+        let dest = temp.path().join("dest-grp-override.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+
+        apply_file_metadata_with_options(
+            &dest,
+            &metadata,
+            MetadataOptions::new()
+                .preserve_group(true)
+                .with_group_override(Some(1000))
+                .preserve_times(false),
+        )
+        .expect("apply metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        assert_eq!(dest_meta.gid(), 1000);
+    }
+
+    #[test]
+    fn apply_metadata_from_file_entry_with_timestamps() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("entry-dest.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let mut entry = FileEntry::new_file("entry-dest.txt".into(), 4, 0o644);
+        entry.set_mtime(1_700_000_000, 123_456_789);
+
+        apply_metadata_from_file_entry(
+            &dest,
+            &entry,
+            MetadataOptions::new().preserve_times(true),
+        )
+        .expect("apply from entry");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+        assert_eq!(dest_mtime, FileTime::from_unix_time(1_700_000_000, 123_456_789));
+    }
+
+    #[test]
+    fn apply_metadata_from_file_entry_no_times() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("entry-notime.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        let entry = FileEntry::new_file("entry-notime.txt".into(), 4, 0o644);
+
+        apply_metadata_from_file_entry(
+            &dest,
+            &entry,
+            MetadataOptions::new().preserve_times(false),
+        )
+        .expect("apply from entry");
+
+        // Should succeed without modifying times
+        assert!(fs::metadata(&dest).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_permissions_from_entry_respects_permissions_flag() {
+        use protocol::flist::FileEntry;
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("entry-perms.txt");
+        fs::write(&dest, b"data").expect("write dest");
+        fs::set_permissions(&dest, PermissionsExt::from_mode(0o666)).expect("set dest perms");
+
+        let entry = FileEntry::new_file("entry-perms.txt".into(), 4, 0o755);
+
+        apply_metadata_from_file_entry(
+            &dest,
+            &entry,
+            MetadataOptions::new()
+                .preserve_permissions(true)
+                .preserve_times(false),
+        )
+        .expect("apply from entry");
+
+        let mode = current_mode(&dest) & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_permissions_from_entry_no_change_when_disabled() {
+        use protocol::flist::FileEntry;
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("entry-noperms.txt");
+        fs::write(&dest, b"data").expect("write dest");
+        fs::set_permissions(&dest, PermissionsExt::from_mode(0o666)).expect("set dest perms");
+
+        let entry = FileEntry::new_file("entry-noperms.txt".into(), 4, 0o755);
+
+        apply_metadata_from_file_entry(
+            &dest,
+            &entry,
+            MetadataOptions::new()
+                .preserve_permissions(false)
+                .preserve_times(false),
+        )
+        .expect("apply from entry");
+
+        let mode = current_mode(&dest) & 0o777;
+        // Should still be original mode
+        assert_eq!(mode, 0o666);
+    }
 }

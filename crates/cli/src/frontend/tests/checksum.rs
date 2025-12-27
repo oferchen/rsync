@@ -6,6 +6,7 @@ fn checksum_with_no_times_preserves_existing_destination() {
     use filetime::{FileTime, set_file_mtime};
     use tempfile::tempdir;
 
+    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("source-checksum.txt");
     let destination = tmp.path().join("dest-checksum.txt");

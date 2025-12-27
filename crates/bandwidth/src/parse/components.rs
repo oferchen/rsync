@@ -253,3 +253,289 @@ impl Default for BandwidthLimitComponents {
         Self::unlimited()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nz(val: u64) -> NonZeroU64 {
+        NonZeroU64::new(val).unwrap()
+    }
+
+    #[test]
+    fn new_with_rate_and_burst() {
+        let c = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        assert_eq!(c.rate(), Some(nz(1000)));
+        assert_eq!(c.burst(), Some(nz(500)));
+        assert!(c.limit_specified());
+        assert!(c.burst_specified());
+    }
+
+    #[test]
+    fn new_with_rate_only() {
+        let c = BandwidthLimitComponents::new(Some(nz(1000)), None);
+        assert_eq!(c.rate(), Some(nz(1000)));
+        assert_eq!(c.burst(), None);
+        assert!(c.limit_specified());
+        assert!(!c.burst_specified());
+    }
+
+    #[test]
+    fn new_without_rate_discards_burst() {
+        // When rate is None (unlimited), burst is ignored
+        let c = BandwidthLimitComponents::new(None, Some(nz(500)));
+        assert_eq!(c.rate(), None);
+        assert_eq!(c.burst(), None);
+        assert!(!c.limit_specified());
+        assert!(!c.burst_specified());
+    }
+
+    #[test]
+    fn new_unlimited() {
+        let c = BandwidthLimitComponents::new(None, None);
+        assert!(c.is_unlimited());
+        assert!(!c.limit_specified());
+        assert!(!c.burst_specified());
+    }
+
+    #[test]
+    fn unlimited_constructor() {
+        let c = BandwidthLimitComponents::unlimited();
+        assert_eq!(c.rate(), None);
+        assert_eq!(c.burst(), None);
+        assert!(c.is_unlimited());
+        assert!(!c.limit_specified());
+        assert!(!c.burst_specified());
+    }
+
+    #[test]
+    fn new_with_specified_records_burst_flag() {
+        let c = BandwidthLimitComponents::new_with_specified(Some(nz(1000)), Some(nz(500)), true);
+        assert!(c.burst_specified());
+
+        let c2 = BandwidthLimitComponents::new_with_specified(Some(nz(1000)), Some(nz(500)), false);
+        assert!(!c2.burst_specified());
+    }
+
+    #[test]
+    fn new_with_flags_with_rate() {
+        let c = BandwidthLimitComponents::new_with_flags(
+            Some(nz(1000)),
+            Some(nz(500)),
+            true,
+            true,
+        );
+        assert_eq!(c.rate(), Some(nz(1000)));
+        assert_eq!(c.burst(), Some(nz(500)));
+        assert!(c.limit_specified());
+        assert!(c.burst_specified());
+    }
+
+    #[test]
+    fn new_with_flags_without_rate_preserves_limit_specified() {
+        // Even without rate, limit_specified flag can be set
+        let c = BandwidthLimitComponents::new_with_flags(None, None, true, false);
+        assert!(c.limit_specified());
+        assert!(!c.burst_specified());
+    }
+
+    #[test]
+    fn is_unlimited_true_when_no_rate() {
+        let c = BandwidthLimitComponents::unlimited();
+        assert!(c.is_unlimited());
+
+        let c2 = BandwidthLimitComponents::new(None, None);
+        assert!(c2.is_unlimited());
+    }
+
+    #[test]
+    fn is_unlimited_false_when_rate_present() {
+        let c = BandwidthLimitComponents::new(Some(nz(100)), None);
+        assert!(!c.is_unlimited());
+    }
+
+    #[test]
+    fn to_limiter_returns_none_when_unlimited() {
+        let c = BandwidthLimitComponents::unlimited();
+        assert!(c.to_limiter().is_none());
+    }
+
+    #[test]
+    fn to_limiter_returns_limiter_with_rate() {
+        let c = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        let limiter = c.to_limiter();
+        assert!(limiter.is_some());
+        let l = limiter.unwrap();
+        assert_eq!(l.limit_bytes(), nz(1000));
+        assert_eq!(l.burst_bytes(), Some(nz(500)));
+    }
+
+    #[test]
+    fn into_limiter_returns_none_when_unlimited() {
+        let c = BandwidthLimitComponents::unlimited();
+        assert!(c.into_limiter().is_none());
+    }
+
+    #[test]
+    fn into_limiter_returns_limiter_with_rate() {
+        let c = BandwidthLimitComponents::new(Some(nz(2000)), Some(nz(1000)));
+        let limiter = c.into_limiter();
+        assert!(limiter.is_some());
+        let l = limiter.unwrap();
+        assert_eq!(l.limit_bytes(), nz(2000));
+        assert_eq!(l.burst_bytes(), Some(nz(1000)));
+    }
+
+    #[test]
+    fn apply_to_limiter_creates_new_limiter() {
+        let c = BandwidthLimitComponents::new(Some(nz(1000)), None);
+        let mut limiter: Option<BandwidthLimiter> = None;
+        let change = c.apply_to_limiter(&mut limiter);
+        assert_eq!(change, LimiterChange::Enabled);
+        assert!(limiter.is_some());
+    }
+
+    #[test]
+    fn apply_to_limiter_unchanged_when_nothing_specified() {
+        let c = BandwidthLimitComponents::unlimited();
+        let mut limiter: Option<BandwidthLimiter> = None;
+        let change = c.apply_to_limiter(&mut limiter);
+        assert_eq!(change, LimiterChange::Unchanged);
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn constrained_by_takes_minimum_rate() {
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), None);
+        let c2 = BandwidthLimitComponents::new(Some(nz(500)), None);
+        let constrained = c1.constrained_by(&c2);
+        assert_eq!(constrained.rate(), Some(nz(500)));
+    }
+
+    #[test]
+    fn constrained_by_unlimited_override_disables_limit() {
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), None);
+        // Create an unlimited override with limit_specified = true
+        let c2 = BandwidthLimitComponents::new_with_flags(None, None, true, false);
+        let constrained = c1.constrained_by(&c2);
+        assert!(constrained.is_unlimited());
+    }
+
+    #[test]
+    fn constrained_by_applies_override_burst() {
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        let c2 = BandwidthLimitComponents::new(Some(nz(800)), Some(nz(200)));
+        let constrained = c1.constrained_by(&c2);
+        // Rate should be min of 1000 and 800 = 800
+        assert_eq!(constrained.rate(), Some(nz(800)));
+        // Burst should be from override
+        assert_eq!(constrained.burst(), Some(nz(200)));
+    }
+
+    #[test]
+    fn constrained_by_no_override_preserves_original() {
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        let c2 = BandwidthLimitComponents::unlimited();
+        let constrained = c1.constrained_by(&c2);
+        assert_eq!(constrained.rate(), Some(nz(1000)));
+        assert_eq!(constrained.burst(), Some(nz(500)));
+    }
+
+    #[test]
+    fn constrained_by_burst_only_override() {
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        // Override with only burst specified
+        let c2 = BandwidthLimitComponents::new_with_flags(None, Some(nz(200)), false, true);
+        let constrained = c1.constrained_by(&c2);
+        assert_eq!(constrained.rate(), Some(nz(1000)));
+        assert_eq!(constrained.burst(), Some(nz(200)));
+        assert!(constrained.burst_specified());
+    }
+
+    #[test]
+    fn from_str_parses_simple_number_as_kilobytes() {
+        // Default unit is kilobytes, so 1000 means 1000 KB = 1024000 bytes
+        let c: BandwidthLimitComponents = "1000".parse().unwrap();
+        assert_eq!(c.rate(), Some(nz(1024000)));
+    }
+
+    #[test]
+    fn from_str_parses_zero_as_unlimited() {
+        let c: BandwidthLimitComponents = "0".parse().unwrap();
+        assert!(c.is_unlimited());
+    }
+
+    #[test]
+    fn from_str_parses_with_explicit_suffix() {
+        // Explicit K suffix (kilobytes)
+        let c: BandwidthLimitComponents = "1k".parse().unwrap();
+        assert_eq!(c.rate(), Some(nz(1024)));
+
+        // M suffix (megabytes)
+        let c2: BandwidthLimitComponents = "1m".parse().unwrap();
+        assert_eq!(c2.rate(), Some(nz(1024 * 1024)));
+    }
+
+    #[test]
+    fn from_str_parses_bytes_suffix() {
+        // B suffix means bytes, so 1024b = 1024 bytes
+        let c: BandwidthLimitComponents = "1024b".parse().unwrap();
+        assert_eq!(c.rate(), Some(nz(1024)));
+    }
+
+    #[test]
+    fn from_str_invalid_returns_error() {
+        let result: Result<BandwidthLimitComponents, _> = "not-a-number".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn default_is_unlimited() {
+        let c = BandwidthLimitComponents::default();
+        assert!(c.is_unlimited());
+        assert_eq!(c, BandwidthLimitComponents::unlimited());
+    }
+
+    #[test]
+    fn clone_equals_original() {
+        let c = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        assert_eq!(c.clone(), c);
+    }
+
+    #[test]
+    fn copy_semantics() {
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), None);
+        let c2 = c1;
+        assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn debug_format() {
+        let c = BandwidthLimitComponents::new(Some(nz(1000)), None);
+        let debug = format!("{:?}", c);
+        assert!(debug.contains("BandwidthLimitComponents"));
+    }
+
+    #[test]
+    fn equality() {
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        let c2 = BandwidthLimitComponents::new(Some(nz(1000)), Some(nz(500)));
+        let c3 = BandwidthLimitComponents::new(Some(nz(2000)), Some(nz(500)));
+        assert_eq!(c1, c2);
+        assert_ne!(c1, c3);
+    }
+
+    #[test]
+    fn with_internal_flags_preserves_all_flags() {
+        let c = BandwidthLimitComponents::with_internal_flags(
+            Some(nz(1000)),
+            Some(nz(500)),
+            true,
+            true,
+        );
+        assert_eq!(c.rate(), Some(nz(1000)));
+        assert_eq!(c.burst(), Some(nz(500)));
+        assert!(c.limit_specified());
+        assert!(c.burst_specified());
+    }
+}

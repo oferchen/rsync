@@ -75,6 +75,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-whole-file")
                     .long("no-whole-file")
+                    .visible_alias("no-W")
                     .help("Enable the delta-transfer algorithm (disable whole-file copies).")
                     .action(ArgAction::SetTrue)
                     .overrides_with("whole-file"),
@@ -261,7 +262,16 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .long("backup")
                     .short('b')
                     .help("Create backups before overwriting or deleting existing entries.")
-                    .action(ArgAction::SetTrue),
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("no-backup"),
+            )
+            .arg(
+                Arg::new("no-backup")
+                    .long("no-backup")
+                    .visible_alias("no-b")
+                    .help("Disable backup creation.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("backup"),
             )
             .arg(
                 Arg::new("backup-dir")
@@ -656,7 +666,15 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .help("Set I/O timeout in seconds (0 disables the timeout).")
                     .num_args(1)
                     .action(ArgAction::Set)
-                    .value_parser(OsStringValueParser::new()),
+                    .value_parser(OsStringValueParser::new())
+                    .overrides_with("no-timeout"),
+            )
+            .arg(
+                Arg::new("no-timeout")
+                    .long("no-timeout")
+                    .help("Disable I/O timeout.")
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("timeout"),
             )
             .arg(
                 Arg::new("stop-after")

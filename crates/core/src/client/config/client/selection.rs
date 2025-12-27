@@ -134,3 +134,136 @@ impl ClientConfig {
         self.prune_empty_dirs
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for file size filters
+    #[test]
+    fn min_file_size_default_is_none() {
+        let config = default_config();
+        assert!(config.min_file_size().is_none());
+    }
+
+    #[test]
+    fn max_file_size_default_is_none() {
+        let config = default_config();
+        assert!(config.max_file_size().is_none());
+    }
+
+    // Tests for modify window
+    #[test]
+    fn modify_window_default_is_none() {
+        let config = default_config();
+        assert!(config.modify_window().is_none());
+    }
+
+    #[test]
+    fn modify_window_duration_default_is_zero() {
+        let config = default_config();
+        assert_eq!(config.modify_window_duration(), Duration::ZERO);
+    }
+
+    // Tests for remove source files
+    #[test]
+    fn remove_source_files_default_is_false() {
+        let config = default_config();
+        assert!(!config.remove_source_files());
+    }
+
+    // Tests for size-only mode
+    #[test]
+    fn size_only_default_is_false() {
+        let config = default_config();
+        assert!(!config.size_only());
+    }
+
+    // Tests for ignore times
+    #[test]
+    fn ignore_times_default_is_false() {
+        let config = default_config();
+        assert!(!config.ignore_times());
+    }
+
+    // Tests for ignore existing
+    #[test]
+    fn ignore_existing_default_is_false() {
+        let config = default_config();
+        assert!(!config.ignore_existing());
+    }
+
+    // Tests for existing only
+    #[test]
+    fn existing_only_default_is_false() {
+        let config = default_config();
+        assert!(!config.existing_only());
+    }
+
+    // Tests for ignore missing args
+    #[test]
+    fn ignore_missing_args_default_is_false() {
+        let config = default_config();
+        assert!(!config.ignore_missing_args());
+    }
+
+    // Tests for delete missing args
+    #[test]
+    fn delete_missing_args_default_is_false() {
+        let config = default_config();
+        assert!(!config.delete_missing_args());
+    }
+
+    // Tests for update mode
+    #[test]
+    fn update_default_is_false() {
+        let config = default_config();
+        assert!(!config.update());
+    }
+
+    // Tests for relative paths
+    #[test]
+    fn relative_paths_default_is_false() {
+        let config = default_config();
+        assert!(!config.relative_paths());
+    }
+
+    // Tests for one file system
+    #[test]
+    fn one_file_system_default_is_false() {
+        let config = default_config();
+        assert!(!config.one_file_system());
+    }
+
+    // Tests for implied dirs
+    #[test]
+    fn implied_dirs_default_is_true() {
+        let config = default_config();
+        assert!(config.implied_dirs());
+    }
+
+    // Tests for mkpath
+    #[test]
+    fn mkpath_default_is_false() {
+        let config = default_config();
+        assert!(!config.mkpath());
+    }
+
+    // Tests for force replacements
+    #[test]
+    fn force_replacements_default_is_false() {
+        let config = default_config();
+        assert!(!config.force_replacements());
+    }
+
+    // Tests for prune empty dirs
+    #[test]
+    fn prune_empty_dirs_default_is_false() {
+        let config = default_config();
+        assert!(!config.prune_empty_dirs());
+    }
+}

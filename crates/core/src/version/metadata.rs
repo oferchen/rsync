@@ -180,3 +180,231 @@ pub const fn version_metadata_for_program(program_name: &'static str) -> Version
         source_url: SOURCE_URL,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for version_metadata factory function
+    #[test]
+    fn version_metadata_returns_valid_metadata() {
+        let meta = version_metadata();
+        assert_eq!(meta.program_name(), PROGRAM_NAME);
+        assert_eq!(meta.upstream_version(), UPSTREAM_BASE_VERSION);
+        assert_eq!(meta.rust_version(), RUST_VERSION);
+    }
+
+    #[test]
+    fn version_metadata_protocol_version_is_newest() {
+        let meta = version_metadata();
+        assert_eq!(meta.protocol_version(), ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn version_metadata_has_copyright_notice() {
+        let meta = version_metadata();
+        assert_eq!(meta.copyright_notice(), COPYRIGHT_NOTICE);
+        assert!(!meta.copyright_notice().is_empty());
+    }
+
+    #[test]
+    fn version_metadata_has_source_url() {
+        let meta = version_metadata();
+        assert_eq!(meta.source_url(), SOURCE_URL);
+        assert!(!meta.source_url().is_empty());
+    }
+
+    // Tests for daemon_version_metadata
+    #[test]
+    fn daemon_version_metadata_uses_daemon_program_name() {
+        let meta = daemon_version_metadata();
+        assert_eq!(meta.program_name(), DAEMON_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn daemon_version_metadata_has_same_version_as_client() {
+        let client = version_metadata();
+        let daemon = daemon_version_metadata();
+        assert_eq!(client.rust_version(), daemon.rust_version());
+        assert_eq!(client.protocol_version(), daemon.protocol_version());
+    }
+
+    // Tests for oc_version_metadata
+    #[test]
+    fn oc_version_metadata_uses_oc_program_name() {
+        let meta = oc_version_metadata();
+        assert_eq!(meta.program_name(), OC_PROGRAM_NAME);
+    }
+
+    // Tests for oc_daemon_version_metadata
+    #[test]
+    fn oc_daemon_version_metadata_uses_oc_daemon_program_name() {
+        let meta = oc_daemon_version_metadata();
+        assert_eq!(meta.program_name(), OC_DAEMON_PROGRAM_NAME);
+    }
+
+    // Tests for version_metadata_for_program
+    #[test]
+    fn version_metadata_for_program_uses_custom_name() {
+        let meta = version_metadata_for_program("custom-rsync");
+        assert_eq!(meta.program_name(), "custom-rsync");
+    }
+
+    #[test]
+    fn version_metadata_for_program_keeps_other_fields() {
+        let meta = version_metadata_for_program("custom-rsync");
+        assert_eq!(meta.rust_version(), RUST_VERSION);
+        assert_eq!(meta.protocol_version(), ProtocolVersion::NEWEST);
+    }
+
+    // Tests for version_metadata_for_client_brand
+    #[test]
+    fn version_metadata_for_client_brand_uses_brand_name() {
+        let meta = version_metadata_for_client_brand(Brand::Upstream);
+        assert_eq!(meta.program_name(), Brand::Upstream.client_program_name());
+    }
+
+    // Tests for version_metadata_for_daemon_brand
+    #[test]
+    fn version_metadata_for_daemon_brand_uses_brand_name() {
+        let meta = version_metadata_for_daemon_brand(Brand::Upstream);
+        assert_eq!(meta.program_name(), Brand::Upstream.daemon_program_name());
+    }
+
+    // Tests for accessor methods
+    #[test]
+    fn program_name_accessor_returns_correct_value() {
+        let meta = version_metadata();
+        assert!(!meta.program_name().is_empty());
+    }
+
+    #[test]
+    fn upstream_version_accessor_returns_correct_value() {
+        let meta = version_metadata();
+        assert!(!meta.upstream_version().is_empty());
+        assert!(meta.upstream_version().contains('.'));
+    }
+
+    #[test]
+    fn rust_version_accessor_contains_rust_suffix() {
+        let meta = version_metadata();
+        assert!(meta.rust_version().contains("rust"));
+    }
+
+    #[test]
+    fn subprotocol_version_is_accessible() {
+        let meta = version_metadata();
+        let _ = meta.subprotocol_version(); // Just verify it's accessible
+    }
+
+    // Tests for write_standard_banner
+    #[test]
+    fn write_standard_banner_includes_program_name() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.contains(meta.program_name()));
+    }
+
+    #[test]
+    fn write_standard_banner_includes_version() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.contains(meta.rust_version()));
+    }
+
+    #[test]
+    fn write_standard_banner_includes_protocol_version() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.contains(&format!("protocol version {}", meta.protocol_version().as_u8())));
+    }
+
+    #[test]
+    fn write_standard_banner_includes_copyright() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.contains("Copyright"));
+    }
+
+    #[test]
+    fn write_standard_banner_includes_source_url() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.contains("Source:"));
+        assert!(output.contains(meta.source_url()));
+    }
+
+    #[test]
+    fn write_standard_banner_ends_with_newline() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.ends_with('\n'));
+    }
+
+    // Tests for standard_banner
+    #[test]
+    fn standard_banner_returns_non_empty_string() {
+        let meta = version_metadata();
+        let banner = meta.standard_banner();
+        assert!(!banner.is_empty());
+    }
+
+    #[test]
+    fn standard_banner_matches_write_standard_banner() {
+        let meta = version_metadata();
+        let mut expected = String::new();
+        meta.write_standard_banner(&mut expected).unwrap();
+        let actual = meta.standard_banner();
+        assert_eq!(expected, actual);
+    }
+
+    // Tests for Default implementation
+    #[test]
+    fn default_returns_same_as_version_metadata() {
+        let default = VersionMetadata::default();
+        let explicit = version_metadata();
+        assert_eq!(default, explicit);
+    }
+
+    // Tests for trait implementations
+    #[test]
+    fn version_metadata_is_clone() {
+        let meta = version_metadata();
+        let cloned = meta.clone();
+        assert_eq!(meta, cloned);
+    }
+
+    #[test]
+    fn version_metadata_is_copy() {
+        let meta = version_metadata();
+        let copied = meta;
+        assert_eq!(meta, copied);
+    }
+
+    #[test]
+    fn version_metadata_debug_includes_struct_name() {
+        let meta = version_metadata();
+        let debug = format!("{:?}", meta);
+        assert!(debug.contains("VersionMetadata"));
+    }
+
+    #[test]
+    fn version_metadata_equality() {
+        let meta1 = version_metadata();
+        let meta2 = version_metadata();
+        assert_eq!(meta1, meta2);
+    }
+
+    #[test]
+    fn version_metadata_inequality_on_different_program_names() {
+        let meta1 = version_metadata_for_program("program-a");
+        let meta2 = version_metadata_for_program("program-b");
+        assert_ne!(meta1, meta2);
+    }
+}

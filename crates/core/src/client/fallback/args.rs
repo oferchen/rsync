@@ -335,3 +335,326 @@ where
         (stdout, stderr, args)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn default_args() -> RemoteFallbackArgs {
+        RemoteFallbackArgs {
+            dry_run: false,
+            list_only: false,
+            remote_shell: None,
+            remote_options: Vec::new(),
+            connect_program: None,
+            port: None,
+            bind_address: None,
+            sockopts: None,
+            blocking_io: None,
+            protect_args: None,
+            human_readable: None,
+            eight_bit_output: false,
+            archive: false,
+            recursive: None,
+            inc_recursive: None,
+            dirs: None,
+            delete: false,
+            delete_mode: DeleteMode::Disabled,
+            delete_excluded: false,
+            max_delete: None,
+            min_size: None,
+            max_size: None,
+            block_size: None,
+            checksum: None,
+            checksum_choice: None,
+            checksum_seed: None,
+            size_only: false,
+            ignore_times: false,
+            ignore_existing: false,
+            existing: false,
+            ignore_missing_args: false,
+            delete_missing_args: false,
+            update: false,
+            modify_window: None,
+            compress: false,
+            compress_disabled: false,
+            compress_level: None,
+            compress_choice: None,
+            skip_compress: None,
+            open_noatime: None,
+            iconv: IconvSetting::Unspecified,
+            stop_after: None,
+            stop_at: None,
+            chown: None,
+            owner: None,
+            group: None,
+            usermap: None,
+            groupmap: None,
+            chmod: Vec::new(),
+            executability: None,
+            perms: None,
+            super_mode: None,
+            times: None,
+            omit_dir_times: None,
+            omit_link_times: None,
+            numeric_ids: None,
+            hard_links: None,
+            links: None,
+            copy_links: None,
+            copy_dirlinks: false,
+            copy_unsafe_links: None,
+            keep_dirlinks: None,
+            safe_links: false,
+            sparse: None,
+            fuzzy: None,
+            devices: None,
+            copy_devices: false,
+            write_devices: false,
+            specials: None,
+            relative: None,
+            one_file_system: None,
+            implied_dirs: None,
+            mkpath: false,
+            prune_empty_dirs: None,
+            verbosity: 0,
+            progress: false,
+            stats: false,
+            itemize_changes: false,
+            partial: false,
+            preallocate: false,
+            fsync: None,
+            delay_updates: false,
+            partial_dir: None,
+            temp_directory: None,
+            backup: false,
+            backup_dir: None,
+            backup_suffix: None,
+            link_dests: Vec::new(),
+            remove_source_files: false,
+            append: None,
+            append_verify: false,
+            inplace: None,
+            msgs_to_stderr: None,
+            outbuf: None,
+            whole_file: None,
+            bwlimit: None,
+            excludes: Vec::new(),
+            includes: Vec::new(),
+            exclude_from: Vec::new(),
+            include_from: Vec::new(),
+            filters: Vec::new(),
+            rsync_filter_shortcuts: 0,
+            compare_destinations: Vec::new(),
+            copy_destinations: Vec::new(),
+            link_destinations: Vec::new(),
+            cvs_exclude: false,
+            info_flags: Vec::new(),
+            debug_flags: Vec::new(),
+            files_from_used: false,
+            file_list_entries: Vec::new(),
+            from0: false,
+            password_file: None,
+            daemon_password: None,
+            protocol: None,
+            timeout: TransferTimeout::Default,
+            connect_timeout: TransferTimeout::Default,
+            out_format: None,
+            log_file: None,
+            log_file_format: None,
+            no_motd: false,
+            address_mode: AddressMode::Default,
+            fallback_binary: None,
+            rsync_path: None,
+            remainder: Vec::new(),
+            write_batch: None,
+            only_write_batch: None,
+            read_batch: None,
+            #[cfg(feature = "acl")]
+            acls: None,
+            #[cfg(feature = "xattr")]
+            xattrs: None,
+        }
+    }
+
+    mod remote_fallback_args_tests {
+        use super::*;
+
+        #[test]
+        fn clone() {
+            let mut args = default_args();
+            args.dry_run = true;
+            args.verbosity = 3;
+            args.archive = true;
+
+            let cloned = args.clone();
+            assert!(cloned.dry_run);
+            assert_eq!(cloned.verbosity, 3);
+            assert!(cloned.archive);
+        }
+
+        #[test]
+        fn with_remote_shell() {
+            let mut args = default_args();
+            args.remote_shell = Some(OsString::from("ssh -i ~/.ssh/id_rsa"));
+
+            let cloned = args.clone();
+            assert_eq!(cloned.remote_shell, Some(OsString::from("ssh -i ~/.ssh/id_rsa")));
+        }
+
+        #[test]
+        fn with_remote_options() {
+            let mut args = default_args();
+            args.remote_options = vec![
+                OsString::from("--bwlimit=1000"),
+                OsString::from("--compress"),
+            ];
+
+            let cloned = args.clone();
+            assert_eq!(cloned.remote_options.len(), 2);
+        }
+
+        #[test]
+        fn with_filters() {
+            let mut args = default_args();
+            args.excludes = vec![OsString::from("*.tmp")];
+            args.includes = vec![OsString::from("*.rs")];
+            args.filters = vec![OsString::from("- .git/")];
+
+            let cloned = args.clone();
+            assert_eq!(cloned.excludes.len(), 1);
+            assert_eq!(cloned.includes.len(), 1);
+            assert_eq!(cloned.filters.len(), 1);
+        }
+
+        #[test]
+        fn with_port() {
+            let mut args = default_args();
+            args.port = Some(8873);
+
+            assert_eq!(args.port, Some(8873));
+        }
+
+        #[test]
+        fn with_delete_mode() {
+            let mut args = default_args();
+            args.delete = true;
+            args.delete_mode = DeleteMode::After;
+
+            assert!(args.delete);
+            assert_eq!(args.delete_mode, DeleteMode::After);
+        }
+
+        #[test]
+        fn with_checksum_settings() {
+            let mut args = default_args();
+            args.checksum = Some(true);
+            args.checksum_choice = Some(OsString::from("xxh3"));
+            args.checksum_seed = Some(12345);
+
+            assert_eq!(args.checksum, Some(true));
+            assert_eq!(args.checksum_choice, Some(OsString::from("xxh3")));
+            assert_eq!(args.checksum_seed, Some(12345));
+        }
+
+        #[test]
+        fn with_compression_settings() {
+            let mut args = default_args();
+            args.compress = true;
+            args.compress_level = Some(OsString::from("9"));
+            args.compress_choice = Some(OsString::from("zstd"));
+
+            assert!(args.compress);
+            assert_eq!(args.compress_level, Some(OsString::from("9")));
+            assert_eq!(args.compress_choice, Some(OsString::from("zstd")));
+        }
+
+        #[test]
+        fn with_backup_settings() {
+            let mut args = default_args();
+            args.backup = true;
+            args.backup_dir = Some(PathBuf::from("/backup"));
+            args.backup_suffix = Some(OsString::from(".bak"));
+
+            assert!(args.backup);
+            assert_eq!(args.backup_dir, Some(PathBuf::from("/backup")));
+            assert_eq!(args.backup_suffix, Some(OsString::from(".bak")));
+        }
+
+        #[test]
+        fn with_partial_settings() {
+            let mut args = default_args();
+            args.partial = true;
+            args.partial_dir = Some(PathBuf::from(".rsync-partial"));
+
+            assert!(args.partial);
+            assert_eq!(args.partial_dir, Some(PathBuf::from(".rsync-partial")));
+        }
+
+        #[test]
+        fn with_batch_settings() {
+            let mut args = default_args();
+            args.write_batch = Some(OsString::from("batch-out"));
+            args.read_batch = Some(OsString::from("batch-in"));
+
+            assert_eq!(args.write_batch, Some(OsString::from("batch-out")));
+            assert_eq!(args.read_batch, Some(OsString::from("batch-in")));
+        }
+    }
+
+    mod remote_fallback_context_tests {
+        use super::*;
+
+        #[test]
+        fn new_creates_context() {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let args = default_args();
+
+            let context = RemoteFallbackContext::new(&mut stdout, &mut stderr, args);
+            assert!(context.stdout.is_empty());
+            assert!(context.stderr.is_empty());
+        }
+
+        #[test]
+        fn split_returns_components() {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let mut args = default_args();
+            args.dry_run = true;
+
+            let context = RemoteFallbackContext::new(&mut stdout, &mut stderr, args);
+            let (out, err, returned_args) = context.split();
+
+            assert!(out.is_empty());
+            assert!(err.is_empty());
+            assert!(returned_args.dry_run);
+        }
+
+        #[test]
+        fn context_can_write_to_stdout() {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let args = default_args();
+
+            let context = RemoteFallbackContext::new(&mut stdout, &mut stderr, args);
+            let (out, _, _) = context.split();
+            out.write_all(b"hello").unwrap();
+
+            assert_eq!(stdout, b"hello");
+        }
+
+        #[test]
+        fn context_can_write_to_stderr() {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let args = default_args();
+
+            let context = RemoteFallbackContext::new(&mut stdout, &mut stderr, args);
+            let (_, err, _) = context.split();
+            err.write_all(b"error message").unwrap();
+
+            assert_eq!(stderr, b"error message");
+        }
+    }
+}

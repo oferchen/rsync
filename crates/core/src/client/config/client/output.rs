@@ -42,3 +42,55 @@ impl ClientConfig {
         self.force_event_collection || self.verbosity > 0 || self.progress || self.list_only
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for verbosity
+    #[test]
+    fn verbosity_default_is_zero() {
+        let config = default_config();
+        assert_eq!(config.verbosity(), 0);
+    }
+
+    // Tests for progress
+    #[test]
+    fn progress_default_is_false() {
+        let config = default_config();
+        assert!(!config.progress());
+    }
+
+    // Tests for stats
+    #[test]
+    fn stats_default_is_false() {
+        let config = default_config();
+        assert!(!config.stats());
+    }
+
+    // Tests for human readable
+    #[test]
+    fn human_readable_default_is_false() {
+        let config = default_config();
+        assert!(!config.human_readable());
+    }
+
+    // Tests for force event collection
+    #[test]
+    fn force_event_collection_default_is_false() {
+        let config = default_config();
+        assert!(!config.force_event_collection());
+    }
+
+    // Tests for collect_events
+    #[test]
+    fn collect_events_default_is_false() {
+        let config = default_config();
+        // By default: force_event_collection=false, verbosity=0, progress=false, list_only=false
+        assert!(!config.collect_events());
+    }
+}

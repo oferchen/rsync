@@ -127,3 +127,207 @@ pub(super) fn apply_rule_modifiers(
 
     Ok(rule)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_modifier_state_default() {
+        let state = RuleModifierState::default();
+        assert!(!state.anchor_root);
+        assert!(state.sender.is_none());
+        assert!(state.receiver.is_none());
+        assert!(!state.perishable);
+        assert!(!state.xattr_only);
+    }
+
+    #[test]
+    fn parse_rule_modifiers_empty_string() {
+        let result = parse_rule_modifiers("", "+", true, true).expect("parse");
+        assert!(!result.anchor_root);
+        assert!(result.sender.is_none());
+        assert!(result.receiver.is_none());
+    }
+
+    #[test]
+    fn parse_rule_modifiers_anchor_root() {
+        let result = parse_rule_modifiers("/", "+", true, true).expect("parse");
+        assert!(result.anchor_root);
+    }
+
+    #[test]
+    fn parse_rule_modifiers_sender_only() {
+        let result = parse_rule_modifiers("s", "+", true, true).expect("parse");
+        assert_eq!(result.sender, Some(true));
+        assert_eq!(result.receiver, Some(false));
+    }
+
+    #[test]
+    fn parse_rule_modifiers_receiver_only() {
+        let result = parse_rule_modifiers("r", "+", true, true).expect("parse");
+        assert_eq!(result.receiver, Some(true));
+        assert_eq!(result.sender, Some(false));
+    }
+
+    #[test]
+    fn parse_rule_modifiers_sender_and_receiver() {
+        let result = parse_rule_modifiers("sr", "+", true, true).expect("parse");
+        assert_eq!(result.sender, Some(true));
+        assert_eq!(result.receiver, Some(true));
+    }
+
+    #[test]
+    fn parse_rule_modifiers_perishable_when_allowed() {
+        let result = parse_rule_modifiers("p", "+", true, true).expect("parse");
+        assert!(result.perishable);
+    }
+
+    #[test]
+    fn parse_rule_modifiers_perishable_when_disallowed() {
+        let result = parse_rule_modifiers("p", "+", false, true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rule_modifiers_xattr_when_allowed() {
+        let result = parse_rule_modifiers("x", "+", true, true).expect("parse");
+        assert!(result.xattr_only);
+    }
+
+    #[test]
+    fn parse_rule_modifiers_xattr_when_disallowed() {
+        let result = parse_rule_modifiers("x", "+", true, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rule_modifiers_unknown_modifier() {
+        let result = parse_rule_modifiers("z", "+", true, true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rule_modifiers_case_insensitive() {
+        let result = parse_rule_modifiers("SR", "+", true, true).expect("parse");
+        assert_eq!(result.sender, Some(true));
+        assert_eq!(result.receiver, Some(true));
+    }
+
+    #[test]
+    fn parse_rule_modifiers_complex_combination() {
+        let result = parse_rule_modifiers("/srp", "+", true, true).expect("parse");
+        assert!(result.anchor_root);
+        assert_eq!(result.sender, Some(true));
+        assert_eq!(result.receiver, Some(true));
+        assert!(result.perishable);
+    }
+
+    #[test]
+    fn apply_rule_modifiers_anchor() {
+        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let modifiers = RuleModifierState {
+            anchor_root: true,
+            sender: None,
+            receiver: None,
+            perishable: false,
+            xattr_only: false,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        assert!(result.pattern().starts_with('/'));
+    }
+
+    #[test]
+    fn apply_rule_modifiers_sender() {
+        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let modifiers = RuleModifierState {
+            anchor_root: false,
+            sender: Some(true),
+            receiver: None,
+            perishable: false,
+            xattr_only: false,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        assert!(result.applies_to_sender());
+    }
+
+    #[test]
+    fn apply_rule_modifiers_receiver() {
+        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let modifiers = RuleModifierState {
+            anchor_root: false,
+            sender: None,
+            receiver: Some(true),
+            perishable: false,
+            xattr_only: false,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        assert!(result.applies_to_receiver());
+    }
+
+    #[test]
+    fn apply_rule_modifiers_perishable() {
+        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let modifiers = RuleModifierState {
+            anchor_root: false,
+            sender: None,
+            receiver: None,
+            perishable: true,
+            xattr_only: false,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        assert!(result.is_perishable());
+    }
+
+    #[test]
+    fn apply_rule_modifiers_xattr_only_for_include() {
+        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let modifiers = RuleModifierState {
+            anchor_root: false,
+            sender: None,
+            receiver: None,
+            perishable: false,
+            xattr_only: true,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
+        assert!(result.is_xattr_only());
+        assert!(result.applies_to_sender());
+        assert!(result.applies_to_receiver());
+    }
+
+    #[test]
+    fn apply_rule_modifiers_xattr_only_for_exclude() {
+        let rule = FilterRuleSpec::exclude("*.rs".to_string());
+        let modifiers = RuleModifierState {
+            anchor_root: false,
+            sender: None,
+            receiver: None,
+            perishable: false,
+            xattr_only: true,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "-").expect("apply");
+        assert!(result.is_xattr_only());
+    }
+
+    #[test]
+    fn apply_rule_modifiers_xattr_only_for_non_include_exclude_fails() {
+        let rule = FilterRuleSpec::protect("*.rs".to_string());
+        let modifiers = RuleModifierState {
+            anchor_root: false,
+            sender: None,
+            receiver: None,
+            perishable: false,
+            xattr_only: true,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "P");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn apply_rule_modifiers_empty_state() {
+        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let modifiers = RuleModifierState::default();
+        let result = apply_rule_modifiers(rule.clone(), modifiers, "+").expect("apply");
+        assert_eq!(result.pattern(), rule.pattern());
+    }
+}

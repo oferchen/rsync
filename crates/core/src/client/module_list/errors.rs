@@ -116,7 +116,7 @@ fn daemon_error_from_invalid_data(error: &io::Error) -> Option<ClientError> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_trimmed_line;
+    use super::*;
     use std::io::{self, BufRead, Cursor, Read};
 
     #[test]
@@ -232,5 +232,90 @@ mod tests {
         fn consume(&mut self, amt: usize) {
             self.offset = usize::min(self.bytes.len(), self.offset.saturating_add(amt));
         }
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_parses_at_error_prefix() {
+        let result = legacy_daemon_error_payload("@ERROR: access denied");
+        assert_eq!(result, Some("access denied".to_string()));
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_parses_at_error_without_colon() {
+        let result = legacy_daemon_error_payload("@ERROR access denied");
+        assert_eq!(result, Some("access denied".to_string()));
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_handles_leading_whitespace() {
+        let result = legacy_daemon_error_payload("  @ERROR: some error");
+        assert_eq!(result, Some("some error".to_string()));
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_handles_crlf() {
+        let result = legacy_daemon_error_payload("@ERROR: module not found\r\n");
+        assert_eq!(result, Some("module not found".to_string()));
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_returns_none_for_non_error() {
+        let result = legacy_daemon_error_payload("@RSYNCD: 31.0");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_returns_none_for_attached_text() {
+        // If @ERROR is followed by alphanumeric without separator, return None
+        let result = legacy_daemon_error_payload("@ERRORsome text");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_handles_empty_payload() {
+        let result = legacy_daemon_error_payload("@ERROR:");
+        assert_eq!(result, Some("".to_string()));
+    }
+
+    #[test]
+    fn legacy_daemon_error_payload_case_insensitive() {
+        let result = legacy_daemon_error_payload("@error: lowercase");
+        assert_eq!(result, Some("lowercase".to_string()));
+    }
+
+    #[test]
+    fn read_trimmed_line_returns_none_on_empty_input() {
+        let mut reader = Cursor::new(b"");
+        let result = read_trimmed_line(&mut reader).expect("read should succeed");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn read_trimmed_line_trims_multiple_newlines() {
+        let mut reader = Cursor::new(b"hello\r\n\r\n");
+        let result = read_trimmed_line(&mut reader).expect("read");
+        // First read_line returns "hello\r\n"
+        assert_eq!(result.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn read_trimmed_line_handles_lf_only() {
+        let mut reader = Cursor::new(b"line\n");
+        let result = read_trimmed_line(&mut reader).expect("read");
+        assert_eq!(result.as_deref(), Some("line"));
+    }
+
+    #[test]
+    fn read_trimmed_line_handles_cr_only() {
+        let mut reader = Cursor::new(b"line\r");
+        let result = read_trimmed_line(&mut reader).expect("read");
+        assert_eq!(result.as_deref(), Some("line"));
+    }
+
+    #[test]
+    fn read_trimmed_line_treats_broken_pipe_as_eof() {
+        let mut reader = ErrorReader::new(io::ErrorKind::BrokenPipe);
+        let result = read_trimmed_line(&mut reader).expect("broken pipe as eof");
+        assert!(result.is_none());
     }
 }

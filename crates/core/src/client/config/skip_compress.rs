@@ -49,3 +49,40 @@ pub fn skip_compress_from_env(variable: &str) -> Result<Option<SkipCompressList>
             .with_role(Role::Client)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    // Tests for parse_skip_compress_list
+    #[test]
+    fn parse_skip_compress_list_valid_pattern() {
+        let value = OsString::from("*.jpg/*.png/*.gif");
+        let result = parse_skip_compress_list(&value);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_skip_compress_list_empty_string() {
+        let value = OsString::from("");
+        let result = parse_skip_compress_list(&value);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_skip_compress_list_single_pattern() {
+        let value = OsString::from("*.zip");
+        let result = parse_skip_compress_list(&value);
+        assert!(result.is_ok());
+    }
+
+    // Tests for skip_compress_from_env
+    #[test]
+    fn skip_compress_from_env_unset_returns_none() {
+        // Use a unique variable name that won't be set
+        let result = skip_compress_from_env("RSYNC_SKIP_COMPRESS_TEST_UNSET_VAR_12345");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+}

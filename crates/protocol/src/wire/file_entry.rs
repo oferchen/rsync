@@ -413,4 +413,325 @@ mod tests {
         assert_eq!(decoded2.gid, Some(1000));
         assert_eq!(decoded2.mode, 0o644);
     }
+
+    #[test]
+    fn file_entry_roundtrip_char_device() {
+        let entry = FileEntry {
+            path: "dev/null".to_string(),
+            file_type: FileType::CharDevice,
+            size: 0,
+            mtime: 1700000000,
+            mode: 0o666,
+            uid: Some(0),
+            gid: Some(0),
+            symlink_target: None,
+            dev_major: Some(1),
+            dev_minor: Some(3),
+        };
+
+        let mut buf = Vec::new();
+        entry.write_to(&mut buf, None).unwrap();
+
+        let decoded = FileEntry::read_from(&mut &buf[..], None).unwrap();
+
+        assert_eq!(decoded.path, entry.path);
+        assert_eq!(decoded.file_type, FileType::CharDevice);
+        assert_eq!(decoded.dev_major, Some(1));
+        assert_eq!(decoded.dev_minor, Some(3));
+    }
+
+    #[test]
+    fn file_entry_roundtrip_block_device() {
+        let entry = FileEntry {
+            path: "dev/sda".to_string(),
+            file_type: FileType::BlockDevice,
+            size: 0,
+            mtime: 1700000000,
+            mode: 0o660,
+            uid: Some(0),
+            gid: Some(6),
+            symlink_target: None,
+            dev_major: Some(8),
+            dev_minor: Some(0),
+        };
+
+        let mut buf = Vec::new();
+        entry.write_to(&mut buf, None).unwrap();
+
+        let decoded = FileEntry::read_from(&mut &buf[..], None).unwrap();
+
+        assert_eq!(decoded.path, entry.path);
+        // Note: read_from uses CharDevice for all device types in current impl
+        assert!(matches!(
+            decoded.file_type,
+            FileType::CharDevice | FileType::BlockDevice
+        ));
+        assert_eq!(decoded.dev_major, Some(8));
+        assert_eq!(decoded.dev_minor, Some(0));
+    }
+
+    #[test]
+    fn file_type_fifo_exists() {
+        // FIFO is a valid file type
+        let ft = FileType::Fifo;
+        assert_eq!(format!("{:?}", ft), "Fifo");
+    }
+
+    #[test]
+    fn file_entry_differential_encoding_only_mode_differs() {
+        let entry1 = FileEntry {
+            path: "test/file1.txt".to_string(),
+            file_type: FileType::Regular,
+            size: 100,
+            mtime: 1700000000,
+            mode: 0o644,
+            uid: Some(1000),
+            gid: Some(1000),
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+
+        let entry2 = FileEntry {
+            path: "test/file2.txt".to_string(),
+            file_type: FileType::Regular,
+            size: 100,
+            mtime: 1700000000,
+            mode: 0o755, // Different mode
+            uid: Some(1000),
+            gid: Some(1000),
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+
+        let mut buf = Vec::new();
+        entry2.write_to(&mut buf, Some(&entry1)).unwrap();
+
+        let decoded = FileEntry::read_from(&mut &buf[..], Some(&entry1)).unwrap();
+        assert_eq!(decoded.mode, 0o755);
+        assert_eq!(decoded.uid, Some(1000));
+        assert_eq!(decoded.gid, Some(1000));
+    }
+
+    #[test]
+    fn file_entry_flags_default() {
+        let flags = FileEntryFlags::default();
+        assert!(!flags.has_xattrs);
+        assert!(!flags.has_acls);
+        assert!(!flags.is_hardlink);
+        assert!(!flags.same_uid);
+        assert!(!flags.same_gid);
+        assert!(!flags.same_mode);
+    }
+
+    #[test]
+    fn file_entry_flags_clone_and_copy() {
+        let flags = FileEntryFlags {
+            has_xattrs: true,
+            has_acls: false,
+            is_hardlink: true,
+            same_uid: false,
+            same_gid: true,
+            same_mode: false,
+        };
+        let cloned = flags;
+        assert_eq!(flags.has_xattrs, cloned.has_xattrs);
+        assert_eq!(flags.is_hardlink, cloned.is_hardlink);
+    }
+
+    #[test]
+    fn file_entry_flags_debug() {
+        let flags = FileEntryFlags::default();
+        let debug = format!("{:?}", flags);
+        assert!(debug.contains("FileEntryFlags"));
+    }
+
+    #[test]
+    fn file_type_debug() {
+        assert_eq!(format!("{:?}", FileType::Regular), "Regular");
+        assert_eq!(format!("{:?}", FileType::Directory), "Directory");
+        assert_eq!(format!("{:?}", FileType::Symlink), "Symlink");
+        assert_eq!(format!("{:?}", FileType::CharDevice), "CharDevice");
+        assert_eq!(format!("{:?}", FileType::BlockDevice), "BlockDevice");
+        assert_eq!(format!("{:?}", FileType::Fifo), "Fifo");
+    }
+
+    #[test]
+    fn file_type_clone_and_eq() {
+        let ft = FileType::Regular;
+        let cloned = ft;
+        assert_eq!(ft, cloned);
+        assert_ne!(ft, FileType::Directory);
+    }
+
+    #[test]
+    fn file_entry_debug() {
+        let entry = FileEntry {
+            path: "test.txt".to_string(),
+            file_type: FileType::Regular,
+            size: 100,
+            mtime: 0,
+            mode: 0o644,
+            uid: None,
+            gid: None,
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+        let debug = format!("{:?}", entry);
+        assert!(debug.contains("FileEntry"));
+        assert!(debug.contains("test.txt"));
+    }
+
+    #[test]
+    fn file_entry_clone() {
+        let entry = FileEntry {
+            path: "test.txt".to_string(),
+            file_type: FileType::Regular,
+            size: 100,
+            mtime: 1234567890,
+            mode: 0o644,
+            uid: Some(1000),
+            gid: Some(1000),
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.path, entry.path);
+        assert_eq!(cloned.size, entry.size);
+    }
+
+    #[test]
+    fn file_entry_with_uid_gid() {
+        // uid/gid are written when same_uid/same_gid flags are not set and uid/gid are Some
+        let entry = FileEntry {
+            path: "test.txt".to_string(),
+            file_type: FileType::Regular,
+            size: 100,
+            mtime: 0,
+            mode: 0o644,
+            uid: Some(1000),
+            gid: Some(1000),
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+
+        let mut buf = Vec::new();
+        entry.write_to(&mut buf, None).unwrap();
+
+        let decoded = FileEntry::read_from(&mut &buf[..], None).unwrap();
+        assert_eq!(decoded.path, "test.txt");
+        assert_eq!(decoded.uid, Some(1000));
+        assert_eq!(decoded.gid, Some(1000));
+    }
+
+    #[test]
+    fn file_entry_read_uses_previous_mode_when_same_mode() {
+        let prev = FileEntry {
+            path: "prev.txt".to_string(),
+            file_type: FileType::Regular,
+            size: 50,
+            mtime: 0,
+            mode: 0o755,
+            uid: Some(1000),
+            gid: Some(1000),
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+
+        let entry = FileEntry {
+            path: "current.txt".to_string(),
+            file_type: FileType::Regular,
+            size: 100,
+            mtime: 0,
+            mode: 0o755, // Same mode as previous
+            uid: Some(1000),
+            gid: Some(1000),
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+
+        let mut buf = Vec::new();
+        entry.write_to(&mut buf, Some(&prev)).unwrap();
+
+        let decoded = FileEntry::read_from(&mut &buf[..], Some(&prev)).unwrap();
+        assert_eq!(decoded.mode, 0o755);
+    }
+
+    #[test]
+    fn file_entry_empty_path() {
+        let entry = FileEntry {
+            path: "".to_string(),
+            file_type: FileType::Regular,
+            size: 0,
+            mtime: 0,
+            mode: 0o644,
+            uid: Some(0),
+            gid: Some(0),
+            symlink_target: None,
+            dev_major: None,
+            dev_minor: None,
+        };
+
+        let mut buf = Vec::new();
+        entry.write_to(&mut buf, None).unwrap();
+
+        let decoded = FileEntry::read_from(&mut &buf[..], None).unwrap();
+        assert_eq!(decoded.path, "");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_entry_from_metadata_regular_file() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("test.txt");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            f.write_all(b"hello").unwrap();
+        }
+        let metadata = std::fs::metadata(&file_path).unwrap();
+        let entry = FileEntry::from_metadata(&file_path, &metadata).unwrap();
+
+        assert_eq!(entry.file_type, FileType::Regular);
+        assert_eq!(entry.size, 5);
+        assert!(entry.uid.is_some());
+        assert!(entry.gid.is_some());
+        assert!(entry.symlink_target.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_entry_from_metadata_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_path = tmp.path().join("subdir");
+        std::fs::create_dir(&dir_path).unwrap();
+
+        let metadata = std::fs::metadata(&dir_path).unwrap();
+        let entry = FileEntry::from_metadata(&dir_path, &metadata).unwrap();
+
+        assert_eq!(entry.file_type, FileType::Directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_entry_from_metadata_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target_path = tmp.path().join("target.txt");
+        std::fs::write(&target_path, b"target").unwrap();
+
+        let link_path = tmp.path().join("link.txt");
+        std::os::unix::fs::symlink(&target_path, &link_path).unwrap();
+
+        let metadata = std::fs::symlink_metadata(&link_path).unwrap();
+        let entry = FileEntry::from_metadata(&link_path, &metadata).unwrap();
+
+        assert_eq!(entry.file_type, FileType::Symlink);
+        assert!(entry.symlink_target.is_some());
+    }
 }

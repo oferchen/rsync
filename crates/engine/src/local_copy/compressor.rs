@@ -76,3 +76,111 @@ impl ActiveCompressor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_compressor_new_zlib() {
+        let compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Zlib, CompressionLevel::Default);
+        assert!(compressor.is_ok());
+        let compressor = compressor.unwrap();
+        assert!(matches!(compressor, ActiveCompressor::Zlib(_)));
+    }
+
+    #[test]
+    fn active_compressor_zlib_bytes_written_initially_zero() {
+        let compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+                .expect("zlib compressor");
+        assert_eq!(compressor.bytes_written(), 0);
+    }
+
+    #[test]
+    fn active_compressor_zlib_write_and_finish() {
+        let mut compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+                .expect("zlib compressor");
+
+        let data = b"Hello, world! This is some test data to compress.";
+        compressor.write(data).expect("write data");
+
+        // After writing, bytes_written may or may not be updated (depends on buffering)
+        // But after finish, we should have some compressed bytes
+        let total = compressor.finish().expect("finish compression");
+        assert!(total > 0);
+    }
+
+    #[test]
+    fn active_compressor_zlib_empty_input() {
+        let compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+                .expect("zlib compressor");
+
+        // Even with no data, finish should succeed
+        // Zlib produces header bytes even for empty input, so finish returns Ok
+        let _total = compressor.finish().expect("finish compression");
+    }
+
+    #[test]
+    fn active_compressor_zlib_multiple_writes() {
+        let mut compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+                .expect("zlib compressor");
+
+        compressor.write(b"First chunk of data. ").expect("write 1");
+        compressor.write(b"Second chunk of data. ").expect("write 2");
+        compressor.write(b"Third chunk of data.").expect("write 3");
+
+        let total = compressor.finish().expect("finish compression");
+        assert!(total > 0);
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn active_compressor_new_lz4() {
+        let compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Lz4, CompressionLevel::Default);
+        assert!(compressor.is_ok());
+        let compressor = compressor.unwrap();
+        assert!(matches!(compressor, ActiveCompressor::Lz4(_)));
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn active_compressor_lz4_write_and_finish() {
+        let mut compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Lz4, CompressionLevel::Default)
+                .expect("lz4 compressor");
+
+        let data = b"Test data for LZ4 compression.";
+        compressor.write(data).expect("write data");
+        let total = compressor.finish().expect("finish compression");
+        assert!(total > 0);
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn active_compressor_new_zstd() {
+        let compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Zstd, CompressionLevel::Default);
+        assert!(compressor.is_ok());
+        let compressor = compressor.unwrap();
+        assert!(matches!(compressor, ActiveCompressor::Zstd(_)));
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn active_compressor_zstd_write_and_finish() {
+        let mut compressor =
+            ActiveCompressor::new(CompressionAlgorithm::Zstd, CompressionLevel::Default)
+                .expect("zstd compressor");
+
+        let data = b"Test data for Zstandard compression.";
+        compressor.write(data).expect("write data");
+        let total = compressor.finish().expect("finish compression");
+        assert!(total > 0);
+    }
+}

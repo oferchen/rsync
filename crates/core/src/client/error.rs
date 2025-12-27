@@ -202,3 +202,258 @@ pub(crate) fn daemon_listing_unavailable_error(reason: &str) -> ClientError {
 
     daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::ErrorKind;
+
+    mod exit_codes_tests {
+        use super::*;
+
+        #[test]
+        fn exit_codes_have_expected_values() {
+            assert_eq!(FEATURE_UNAVAILABLE_EXIT_CODE, 1);
+            assert_eq!(PROTOCOL_INCOMPATIBLE_EXIT_CODE, 2);
+            assert_eq!(FILE_SELECTION_EXIT_CODE, 3);
+            assert_eq!(CLIENT_SERVER_PROTOCOL_EXIT_CODE, 5);
+            assert_eq!(SOCKET_IO_EXIT_CODE, 10);
+            assert_eq!(FILE_IO_EXIT_CODE, 11);
+            assert_eq!(IPC_EXIT_CODE, 14);
+            assert_eq!(PARTIAL_TRANSFER_EXIT_CODE, 23);
+            assert_eq!(MAX_DELETE_EXIT_CODE, 25);
+            assert_eq!(REMOTE_COMMAND_NOT_FOUND_EXIT_CODE, 127);
+        }
+    }
+
+    mod client_error_tests {
+        use super::*;
+
+        #[test]
+        fn new_and_accessors() {
+            let message = rsync_error!(5, "test error").with_role(Role::Client);
+            let error = ClientError::new(5, message.clone());
+
+            assert_eq!(error.exit_code(), 5);
+            // Verify message is accessible
+            let _ = error.message();
+        }
+
+        #[test]
+        fn clone() {
+            let message = rsync_error!(10, "socket error").with_role(Role::Client);
+            let error = ClientError::new(10, message);
+            let cloned = error.clone();
+
+            assert_eq!(error.exit_code(), cloned.exit_code());
+        }
+
+        #[test]
+        fn debug_format() {
+            let message = rsync_error!(1, "debug test").with_role(Role::Client);
+            let error = ClientError::new(1, message);
+            let debug = format!("{:?}", error);
+
+            assert!(debug.contains("ClientError"));
+            assert!(debug.contains("exit_code"));
+        }
+
+        #[test]
+        fn display_format() {
+            let message = rsync_error!(1, "display test message").with_role(Role::Client);
+            let error = ClientError::new(1, message);
+            let display = format!("{}", error);
+
+            assert!(display.contains("display test message"));
+        }
+    }
+
+    mod error_factory_tests {
+        use super::*;
+
+        #[test]
+        fn missing_operands_error_uses_correct_code() {
+            let error = missing_operands_error();
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            assert!(error.to_string().contains("missing source operands"));
+        }
+
+        #[test]
+        fn fallback_disabled_error_uses_correct_code() {
+            let error = fallback_disabled_error();
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            assert!(error.to_string().contains("fallback"));
+        }
+
+        #[test]
+        fn invalid_argument_error_uses_provided_code() {
+            let error = invalid_argument_error("invalid option", 42);
+            assert_eq!(error.exit_code(), 42);
+            assert!(error.to_string().contains("invalid option"));
+        }
+
+        #[test]
+        fn compile_filter_error_uses_correct_code() {
+            let pattern = "*.txt";
+            let parse_error = "invalid regex";
+            let error = compile_filter_error(pattern, &parse_error);
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to compile filter pattern"));
+            assert!(msg.contains(pattern));
+            assert!(msg.contains(parse_error));
+        }
+
+        #[test]
+        fn io_error_uses_correct_code() {
+            let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+            let error = io_error("read", Path::new("/test/file.txt"), io_err);
+
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to read"));
+            assert!(msg.contains("/test/file.txt"));
+        }
+
+        #[test]
+        fn destination_access_error_uses_correct_code() {
+            let io_err = io::Error::new(ErrorKind::PermissionDenied, "access denied");
+            let error = destination_access_error(Path::new("/var/dest"), io_err);
+
+            assert_eq!(error.exit_code(), FILE_SELECTION_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to access destination directory"));
+            assert!(msg.contains("/var/dest"));
+        }
+
+        #[test]
+        fn socket_error_uses_correct_code() {
+            let io_err = io::Error::new(ErrorKind::ConnectionRefused, "connection refused");
+            let error = socket_error("connect to", "localhost:873", io_err);
+
+            assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("failed to connect to localhost:873"));
+        }
+
+        #[test]
+        fn daemon_error_uses_provided_code() {
+            let error = daemon_error("test daemon error", 99);
+            assert_eq!(error.exit_code(), 99);
+            assert!(error.to_string().contains("test daemon error"));
+        }
+
+        #[test]
+        fn daemon_protocol_error_uses_correct_code() {
+            let error = daemon_protocol_error("malformed response");
+
+            assert_eq!(error.exit_code(), PROTOCOL_INCOMPATIBLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("unexpected response from daemon"));
+            assert!(msg.contains("malformed response"));
+        }
+
+        #[test]
+        fn daemon_authentication_required_error_with_empty_reason() {
+            let error = daemon_authentication_required_error("");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon requires authentication for module listing"));
+            // When reason is empty, the message should not have a reason suffix
+            assert!(!msg.contains("module listing: "));
+        }
+
+        #[test]
+        fn daemon_authentication_required_error_with_reason() {
+            let error = daemon_authentication_required_error("password required");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("module listing: password required"));
+        }
+
+        #[test]
+        fn daemon_authentication_failed_error_with_none() {
+            let error = daemon_authentication_failed_error(None);
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon rejected provided credentials"));
+            // When reason is None, message should not have a reason suffix
+            assert!(!msg.contains("credentials: "));
+        }
+
+        #[test]
+        fn daemon_authentication_failed_error_with_empty_string() {
+            let error = daemon_authentication_failed_error(Some(""));
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon rejected provided credentials"));
+            // When reason is empty, message should not have a reason suffix
+            assert!(!msg.contains("credentials: "));
+        }
+
+        #[test]
+        fn daemon_authentication_failed_error_with_reason() {
+            let error = daemon_authentication_failed_error(Some("wrong password"));
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("credentials: wrong password"));
+        }
+
+        #[test]
+        fn daemon_access_denied_error_with_empty_reason() {
+            let error = daemon_access_denied_error("");
+
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon denied access to module listing"));
+            // When reason is empty, message should not have a reason suffix
+            assert!(!msg.contains("listing: "));
+        }
+
+        #[test]
+        fn daemon_access_denied_error_with_reason() {
+            let error = daemon_access_denied_error("IP not allowed");
+
+            assert_eq!(error.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("listing: IP not allowed"));
+        }
+
+        #[test]
+        fn daemon_listing_unavailable_error_with_empty_reason() {
+            let error = daemon_listing_unavailable_error("");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon refused module listing"));
+            // When reason is empty, message should not have a reason suffix
+            assert!(!msg.contains("listing: "));
+        }
+
+        #[test]
+        fn daemon_listing_unavailable_error_with_whitespace_reason() {
+            let error = daemon_listing_unavailable_error("   ");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("daemon refused module listing"));
+            // When reason is whitespace only, message should not have a reason suffix
+            assert!(!msg.contains("listing: "));
+        }
+
+        #[test]
+        fn daemon_listing_unavailable_error_with_reason() {
+            let error = daemon_listing_unavailable_error("listing disabled");
+
+            assert_eq!(error.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+            let msg = error.to_string();
+            assert!(msg.contains("listing: listing disabled"));
+        }
+    }
+}

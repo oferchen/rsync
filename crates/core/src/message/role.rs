@@ -106,3 +106,154 @@ impl FromStr for Role {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for Role::ALL constant
+    #[test]
+    fn all_contains_six_roles() {
+        assert_eq!(Role::ALL.len(), 6);
+    }
+
+    #[test]
+    fn all_starts_with_sender() {
+        assert_eq!(Role::ALL[0], Role::Sender);
+    }
+
+    #[test]
+    fn all_ends_with_daemon() {
+        assert_eq!(Role::ALL[5], Role::Daemon);
+    }
+
+    // Tests for Role::as_str
+    #[test]
+    fn sender_as_str() {
+        assert_eq!(Role::Sender.as_str(), "sender");
+    }
+
+    #[test]
+    fn receiver_as_str() {
+        assert_eq!(Role::Receiver.as_str(), "receiver");
+    }
+
+    #[test]
+    fn generator_as_str() {
+        assert_eq!(Role::Generator.as_str(), "generator");
+    }
+
+    #[test]
+    fn server_as_str() {
+        assert_eq!(Role::Server.as_str(), "server");
+    }
+
+    #[test]
+    fn client_as_str() {
+        assert_eq!(Role::Client.as_str(), "client");
+    }
+
+    #[test]
+    fn daemon_as_str() {
+        assert_eq!(Role::Daemon.as_str(), "daemon");
+    }
+
+    // Tests for Display trait
+    #[test]
+    fn display_matches_as_str() {
+        for role in Role::ALL {
+            assert_eq!(format!("{}", role), role.as_str());
+        }
+    }
+
+    // Tests for FromStr trait
+    #[test]
+    fn parse_sender() {
+        assert_eq!("sender".parse::<Role>().unwrap(), Role::Sender);
+    }
+
+    #[test]
+    fn parse_receiver() {
+        assert_eq!("receiver".parse::<Role>().unwrap(), Role::Receiver);
+    }
+
+    #[test]
+    fn parse_generator() {
+        assert_eq!("generator".parse::<Role>().unwrap(), Role::Generator);
+    }
+
+    #[test]
+    fn parse_server() {
+        assert_eq!("server".parse::<Role>().unwrap(), Role::Server);
+    }
+
+    #[test]
+    fn parse_client() {
+        assert_eq!("client".parse::<Role>().unwrap(), Role::Client);
+    }
+
+    #[test]
+    fn parse_daemon() {
+        assert_eq!("daemon".parse::<Role>().unwrap(), Role::Daemon);
+    }
+
+    #[test]
+    fn parse_unknown_fails() {
+        assert!("unknown".parse::<Role>().is_err());
+    }
+
+    #[test]
+    fn parse_empty_fails() {
+        assert!("".parse::<Role>().is_err());
+    }
+
+    #[test]
+    fn parse_uppercase_fails() {
+        assert!("SENDER".parse::<Role>().is_err());
+    }
+
+    // Tests for trait implementations
+    #[test]
+    fn role_is_clone() {
+        let role = Role::Sender;
+        let cloned = role.clone();
+        assert_eq!(role, cloned);
+    }
+
+    #[test]
+    fn role_is_copy() {
+        let role = Role::Sender;
+        let copied = role;
+        assert_eq!(role, copied);
+    }
+
+    #[test]
+    fn role_debug_contains_variant_name() {
+        let debug = format!("{:?}", Role::Sender);
+        assert!(debug.contains("Sender"));
+    }
+
+    #[test]
+    fn roles_are_hashable() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(Role::Sender);
+        set.insert(Role::Receiver);
+        assert_eq!(set.len(), 2);
+    }
+
+    // Tests for ParseRoleError
+    #[test]
+    fn parse_role_error_display() {
+        let err = "invalid".parse::<Role>().unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("unrecognised"));
+    }
+
+    #[test]
+    fn parse_role_error_is_clone() {
+        let err = "invalid".parse::<Role>().unwrap_err();
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+}

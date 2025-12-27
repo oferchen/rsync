@@ -5,6 +5,7 @@ use super::*;
 fn files_from_reports_read_failures() {
     use tempfile::tempdir;
 
+    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let tmp = tempdir().expect("tempdir");
     let missing = tmp.path().join("missing.list");
     let dest_dir = tmp.path().join("files-from-error-dest");
