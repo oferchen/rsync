@@ -106,3 +106,257 @@ impl<R> SessionHandshakeParts<R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sniff_negotiation_stream;
+    use protocol::CompatibilityFlags;
+    use std::io::Cursor;
+
+    // Helper to create binary handshake parts
+    fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        )
+    }
+
+    // Helper to create legacy handshake parts
+    fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
+    }
+
+    // ==== decision tests ====
+
+    #[test]
+    fn decision_returns_binary_for_binary_variant() {
+        let parts = create_binary_parts();
+        assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn decision_returns_legacy_ascii_for_legacy_variant() {
+        let parts = create_legacy_parts();
+        assert_eq!(parts.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== is_binary tests ====
+
+    #[test]
+    fn is_binary_true_for_binary_variant() {
+        let parts = create_binary_parts();
+        assert!(parts.is_binary());
+    }
+
+    #[test]
+    fn is_binary_false_for_legacy_variant() {
+        let parts = create_legacy_parts();
+        assert!(!parts.is_binary());
+    }
+
+    // ==== is_legacy tests ====
+
+    #[test]
+    fn is_legacy_true_for_legacy_variant() {
+        let parts = create_legacy_parts();
+        assert!(parts.is_legacy());
+    }
+
+    #[test]
+    fn is_legacy_false_for_binary_variant() {
+        let parts = create_binary_parts();
+        assert!(!parts.is_legacy());
+    }
+
+    // ==== negotiated_protocol tests ====
+
+    #[test]
+    fn negotiated_protocol_returns_correct_value_for_binary() {
+        let parts = create_binary_parts();
+        assert_eq!(parts.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn negotiated_protocol_returns_correct_value_for_legacy() {
+        let parts = create_legacy_parts();
+        assert_eq!(parts.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn negotiated_protocol_respects_clamping() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto30 = ProtocolVersion::from_supported(30).unwrap();
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto31,
+            proto30, // negotiated at 30
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
+        assert_eq!(parts.negotiated_protocol().as_u8(), 30);
+    }
+
+    // ==== remote_protocol tests ====
+
+    #[test]
+    fn remote_protocol_returns_clamped_value_for_binary() {
+        let parts = create_binary_parts();
+        assert_eq!(parts.remote_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn remote_protocol_returns_server_protocol_for_legacy() {
+        let parts = create_legacy_parts();
+        assert_eq!(parts.remote_protocol().as_u8(), 31);
+    }
+
+    // ==== remote_advertised_protocol tests ====
+
+    #[test]
+    fn remote_advertised_protocol_returns_raw_value_for_binary() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_binary_components(
+            999, // raw unsupported value
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
+        assert_eq!(parts.remote_advertised_protocol(), 999);
+    }
+
+    #[test]
+    fn remote_advertised_protocol_returns_greeting_protocol_for_legacy() {
+        let parts = create_legacy_parts();
+        assert_eq!(parts.remote_advertised_protocol(), 31);
+    }
+
+    // ==== local_advertised_protocol tests ====
+
+    #[test]
+    fn local_advertised_protocol_returns_value_for_binary() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto30 = ProtocolVersion::from_supported(30).unwrap();
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto30, // local advertised at 30
+            proto30,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
+        assert_eq!(parts.local_advertised_protocol().as_u8(), 30);
+    }
+
+    #[test]
+    fn local_advertised_protocol_returns_value_for_legacy() {
+        let parts = create_legacy_parts();
+        // Legacy uses negotiated protocol as local advertised
+        assert_eq!(parts.local_advertised_protocol().as_u8(), 31);
+    }
+
+    // ==== remote_advertisement tests ====
+
+    #[test]
+    fn remote_advertisement_returns_classification_for_binary() {
+        let parts = create_binary_parts();
+        let adv = parts.remote_advertisement();
+        // Protocol 31 is supported, so clamped() returns None
+        assert!(adv.supported().is_some());
+        assert_eq!(adv.supported().unwrap().as_u8(), 31);
+    }
+
+    #[test]
+    fn remote_advertisement_returns_classification_for_legacy() {
+        let parts = create_legacy_parts();
+        let adv = parts.remote_advertisement();
+        // Protocol 31 is supported, so clamped() returns None
+        assert!(adv.supported().is_some());
+        assert_eq!(adv.supported().unwrap().as_u8(), 31);
+    }
+
+    // ==== server_greeting tests ====
+
+    #[test]
+    fn server_greeting_none_for_binary() {
+        let parts = create_binary_parts();
+        assert!(parts.server_greeting().is_none());
+    }
+
+    #[test]
+    fn server_greeting_some_for_legacy() {
+        let parts = create_legacy_parts();
+        let greeting = parts.server_greeting().expect("legacy has greeting");
+        assert_eq!(greeting.advertised_protocol(), 31);
+    }
+
+    #[test]
+    fn server_greeting_includes_subprotocol() {
+        let parts = create_legacy_parts();
+        let greeting = parts.server_greeting().expect("legacy has greeting");
+        // Subprotocol is a u32 (0 in our test case)
+        assert_eq!(greeting.subprotocol(), 0);
+    }
+
+    // ==== stream tests ====
+
+    #[test]
+    fn stream_returns_reference_for_binary() {
+        let parts = create_binary_parts();
+        let stream = parts.stream();
+        assert!(!stream.buffered().is_empty());
+    }
+
+    #[test]
+    fn stream_returns_reference_for_legacy() {
+        let parts = create_legacy_parts();
+        let stream = parts.stream();
+        assert!(stream.buffered().starts_with(b"@RSYNCD:"));
+    }
+
+    #[test]
+    fn stream_decision_matches_parts_decision() {
+        let binary = create_binary_parts();
+        assert_eq!(binary.stream().decision(), binary.decision());
+
+        let legacy = create_legacy_parts();
+        assert_eq!(legacy.stream().decision(), legacy.decision());
+    }
+
+    // ==== stream_mut tests ====
+
+    #[test]
+    fn stream_mut_returns_mutable_reference_for_binary() {
+        let mut parts = create_binary_parts();
+        let stream = parts.stream_mut();
+        assert!(!stream.buffered().is_empty());
+    }
+
+    #[test]
+    fn stream_mut_returns_mutable_reference_for_legacy() {
+        let mut parts = create_legacy_parts();
+        let stream = parts.stream_mut();
+        assert!(stream.buffered().starts_with(b"@RSYNCD:"));
+    }
+}

@@ -206,3 +206,279 @@ impl<R> SessionHandshakeParts<R> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sniff_negotiation_stream;
+    use std::io::Cursor;
+
+    // Helper to create binary handshake parts
+    fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
+        // Binary negotiation: protocol 31 as BE u32
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        )
+    }
+
+    // Helper to create legacy handshake parts
+    fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
+    }
+
+    // ==== from_binary_components tests ====
+
+    #[test]
+    fn from_binary_components_creates_binary_variant() {
+        let parts = create_binary_parts();
+        assert!(matches!(parts, SessionHandshakeParts::Binary(_)));
+    }
+
+    #[test]
+    fn from_binary_components_preserves_remote_advertised() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_binary_components(
+            42, // Different raw value
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Binary(binary_parts) = parts {
+            assert_eq!(binary_parts.remote_advertised_protocol(), 42);
+        } else {
+            panic!("expected Binary variant");
+        }
+    }
+
+    #[test]
+    fn from_binary_components_preserves_remote_protocol() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto30 = ProtocolVersion::from_supported(30).unwrap();
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_binary_components(
+            31,
+            proto30, // remote_protocol
+            proto31, // local_advertised
+            proto30, // negotiated
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Binary(binary_parts) = parts {
+            assert_eq!(binary_parts.remote_protocol().as_u8(), 30);
+        } else {
+            panic!("expected Binary variant");
+        }
+    }
+
+    #[test]
+    fn from_binary_components_preserves_local_advertised() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto30 = ProtocolVersion::from_supported(30).unwrap();
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto30, // local_advertised
+            proto30, // negotiated
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Binary(binary_parts) = parts {
+            assert_eq!(binary_parts.local_advertised_protocol().as_u8(), 30);
+        } else {
+            panic!("expected Binary variant");
+        }
+    }
+
+    #[test]
+    fn from_binary_components_preserves_negotiated_protocol() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto30 = ProtocolVersion::from_supported(30).unwrap();
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto31,
+            proto30, // negotiated
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Binary(binary_parts) = parts {
+            assert_eq!(binary_parts.negotiated_protocol().as_u8(), 30);
+        } else {
+            panic!("expected Binary variant");
+        }
+    }
+
+    #[test]
+    fn from_binary_components_preserves_compatibility_flags() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let flags = CompatibilityFlags::SYMLINK_TIMES | CompatibilityFlags::SYMLINK_ICONV;
+        let parts = SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            flags,
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Binary(binary_parts) = parts {
+            assert!(binary_parts.remote_compatibility_flags().contains(CompatibilityFlags::SYMLINK_TIMES));
+        } else {
+            panic!("expected Binary variant");
+        }
+    }
+
+    // ==== from_legacy_components tests ====
+
+    #[test]
+    fn from_legacy_components_creates_legacy_variant() {
+        let parts = create_legacy_parts();
+        assert!(matches!(parts, SessionHandshakeParts::Legacy(_)));
+    }
+
+    #[test]
+    fn from_legacy_components_preserves_greeting() {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_legacy_components(
+            greeting,
+            proto31,
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Legacy(legacy_parts) = parts {
+            assert_eq!(legacy_parts.server_greeting().advertised_protocol(), 31);
+        } else {
+            panic!("expected Legacy variant");
+        }
+    }
+
+    #[test]
+    fn from_legacy_components_preserves_negotiated_protocol() {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto30 = ProtocolVersion::from_supported(30).unwrap();
+        let parts = SessionHandshakeParts::from_legacy_components(
+            greeting,
+            proto30, // clamped negotiated
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Legacy(legacy_parts) = parts {
+            assert_eq!(legacy_parts.negotiated_protocol().as_u8(), 30);
+        } else {
+            panic!("expected Legacy variant");
+        }
+    }
+
+    #[test]
+    fn from_legacy_components_with_digest_list() {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let digests = "md5 sha1".to_string();
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), Some(digests))
+            .expect("valid greeting with digests");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let parts = SessionHandshakeParts::from_legacy_components(
+            greeting,
+            proto31,
+            stream.into_parts(),
+        );
+        if let SessionHandshakeParts::Legacy(legacy_parts) = parts {
+            let greeting = legacy_parts.server_greeting();
+            assert!(greeting.digest_list().is_some());
+        } else {
+            panic!("expected Legacy variant");
+        }
+    }
+
+    // ==== Clone and Debug tests ====
+
+    #[test]
+    fn session_handshake_parts_clone_binary() {
+        let parts = create_binary_parts();
+        let cloned = parts.clone();
+        assert!(matches!(cloned, SessionHandshakeParts::Binary(_)));
+    }
+
+    #[test]
+    fn session_handshake_parts_clone_legacy() {
+        let parts = create_legacy_parts();
+        let cloned = parts.clone();
+        assert!(matches!(cloned, SessionHandshakeParts::Legacy(_)));
+    }
+
+    #[test]
+    fn session_handshake_parts_debug_binary() {
+        let parts = create_binary_parts();
+        let debug = format!("{parts:?}");
+        assert!(debug.contains("Binary"));
+    }
+
+    #[test]
+    fn session_handshake_parts_debug_legacy() {
+        let parts = create_legacy_parts();
+        let debug = format!("{parts:?}");
+        assert!(debug.contains("Legacy"));
+    }
+
+    // ==== Type alias tests ====
+
+    #[test]
+    fn binary_handshake_components_tuple_accessible() {
+        let parts = create_binary_parts();
+        if let SessionHandshakeParts::Binary(binary_parts) = parts {
+            let components: BinaryHandshakeComponents<_> = binary_parts.into_components();
+            let (raw, remote, local, negotiated, flags, stream) = components;
+            assert_eq!(raw, 31);
+            assert_eq!(remote.as_u8(), 31);
+            assert_eq!(local.as_u8(), 31);
+            assert_eq!(negotiated.as_u8(), 31);
+            assert_eq!(flags, CompatibilityFlags::EMPTY);
+            // Stream contains the buffered bytes captured during sniffing
+            assert!(!stream.buffered().is_empty());
+        } else {
+            panic!("expected Binary variant");
+        }
+    }
+
+    #[test]
+    fn legacy_handshake_components_tuple_accessible() {
+        let parts = create_legacy_parts();
+        if let SessionHandshakeParts::Legacy(legacy_parts) = parts {
+            let components: LegacyHandshakeComponents<_> = legacy_parts.into_components();
+            let (greeting, negotiated, stream) = components;
+            assert_eq!(greeting.advertised_protocol(), 31);
+            assert_eq!(negotiated.as_u8(), 31);
+            assert!(stream.buffered().starts_with(b"@RSYNCD:"));
+        } else {
+            panic!("expected Legacy variant");
+        }
+    }
+}
