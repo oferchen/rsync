@@ -191,3 +191,306 @@ impl fmt::Display for KnownCompatibilityFlag {
         f.write_str(self.name())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_variants_count() {
+        assert_eq!(KnownCompatibilityFlag::ALL.len(), 9);
+    }
+
+    #[test]
+    fn as_flag_inc_recurse() {
+        let flag = KnownCompatibilityFlag::IncRecurse;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::INC_RECURSE);
+    }
+
+    #[test]
+    fn as_flag_symlink_times() {
+        let flag = KnownCompatibilityFlag::SymlinkTimes;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::SYMLINK_TIMES);
+    }
+
+    #[test]
+    fn as_flag_symlink_iconv() {
+        let flag = KnownCompatibilityFlag::SymlinkIconv;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::SYMLINK_ICONV);
+    }
+
+    #[test]
+    fn as_flag_safe_file_list() {
+        let flag = KnownCompatibilityFlag::SafeFileList;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::SAFE_FILE_LIST);
+    }
+
+    #[test]
+    fn as_flag_avoid_xattr_optimization() {
+        let flag = KnownCompatibilityFlag::AvoidXattrOptimization;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::AVOID_XATTR_OPTIMIZATION);
+    }
+
+    #[test]
+    fn as_flag_checksum_seed_fix() {
+        let flag = KnownCompatibilityFlag::ChecksumSeedFix;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::CHECKSUM_SEED_FIX);
+    }
+
+    #[test]
+    fn as_flag_inplace_partial_dir() {
+        let flag = KnownCompatibilityFlag::InplacePartialDir;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::INPLACE_PARTIAL_DIR);
+    }
+
+    #[test]
+    fn as_flag_varint_flist_flags() {
+        let flag = KnownCompatibilityFlag::VarintFlistFlags;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::VARINT_FLIST_FLAGS);
+    }
+
+    #[test]
+    fn as_flag_id0_names() {
+        let flag = KnownCompatibilityFlag::Id0Names;
+        assert_eq!(flag.as_flag(), CompatibilityFlags::ID0_NAMES);
+    }
+
+    #[test]
+    fn name_inc_recurse() {
+        assert_eq!(KnownCompatibilityFlag::IncRecurse.name(), "CF_INC_RECURSE");
+    }
+
+    #[test]
+    fn name_symlink_times() {
+        assert_eq!(
+            KnownCompatibilityFlag::SymlinkTimes.name(),
+            "CF_SYMLINK_TIMES"
+        );
+    }
+
+    #[test]
+    fn name_symlink_iconv() {
+        assert_eq!(
+            KnownCompatibilityFlag::SymlinkIconv.name(),
+            "CF_SYMLINK_ICONV"
+        );
+    }
+
+    #[test]
+    fn name_safe_file_list() {
+        assert_eq!(KnownCompatibilityFlag::SafeFileList.name(), "CF_SAFE_FLIST");
+    }
+
+    #[test]
+    fn name_avoid_xattr_optimization() {
+        assert_eq!(
+            KnownCompatibilityFlag::AvoidXattrOptimization.name(),
+            "CF_AVOID_XATTR_OPTIM"
+        );
+    }
+
+    #[test]
+    fn name_checksum_seed_fix() {
+        assert_eq!(
+            KnownCompatibilityFlag::ChecksumSeedFix.name(),
+            "CF_CHKSUM_SEED_FIX"
+        );
+    }
+
+    #[test]
+    fn name_inplace_partial_dir() {
+        assert_eq!(
+            KnownCompatibilityFlag::InplacePartialDir.name(),
+            "CF_INPLACE_PARTIAL_DIR"
+        );
+    }
+
+    #[test]
+    fn name_varint_flist_flags() {
+        assert_eq!(
+            KnownCompatibilityFlag::VarintFlistFlags.name(),
+            "CF_VARINT_FLIST_FLAGS"
+        );
+    }
+
+    #[test]
+    fn name_id0_names() {
+        assert_eq!(KnownCompatibilityFlag::Id0Names.name(), "CF_ID0_NAMES");
+    }
+
+    #[test]
+    fn from_str_inc_recurse() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_INC_RECURSE").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::IncRecurse);
+    }
+
+    #[test]
+    fn from_str_symlink_times() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_SYMLINK_TIMES").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::SymlinkTimes);
+    }
+
+    #[test]
+    fn from_str_symlink_iconv() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_SYMLINK_ICONV").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::SymlinkIconv);
+    }
+
+    #[test]
+    fn from_str_safe_flist() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_SAFE_FLIST").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::SafeFileList);
+    }
+
+    #[test]
+    fn from_str_avoid_xattr_optim() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_AVOID_XATTR_OPTIM").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::AvoidXattrOptimization);
+    }
+
+    #[test]
+    fn from_str_chksum_seed_fix() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_CHKSUM_SEED_FIX").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::ChecksumSeedFix);
+    }
+
+    #[test]
+    fn from_str_inplace_partial_dir() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_INPLACE_PARTIAL_DIR").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::InplacePartialDir);
+    }
+
+    #[test]
+    fn from_str_varint_flist_flags() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_VARINT_FLIST_FLAGS").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::VarintFlistFlags);
+    }
+
+    #[test]
+    fn from_str_id0_names() {
+        let parsed = KnownCompatibilityFlag::from_str("CF_ID0_NAMES").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::Id0Names);
+    }
+
+    #[test]
+    fn from_str_unknown() {
+        let result = KnownCompatibilityFlag::from_str("CF_UNKNOWN");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_str_empty() {
+        let result = KnownCompatibilityFlag::from_str("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_str_lowercase() {
+        let result = KnownCompatibilityFlag::from_str("cf_inc_recurse");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_name_valid() {
+        let parsed = KnownCompatibilityFlag::from_name("CF_INC_RECURSE").unwrap();
+        assert_eq!(parsed, KnownCompatibilityFlag::IncRecurse);
+    }
+
+    #[test]
+    fn from_name_invalid() {
+        let result = KnownCompatibilityFlag::from_name("INVALID");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_error_identifier() {
+        let error = KnownCompatibilityFlag::from_str("UNKNOWN_FLAG").unwrap_err();
+        assert_eq!(error.identifier(), "UNKNOWN_FLAG");
+    }
+
+    #[test]
+    fn parse_error_display() {
+        let error = KnownCompatibilityFlag::from_str("BAD_FLAG").unwrap_err();
+        let display = format!("{}", error);
+        assert!(display.contains("BAD_FLAG"));
+        assert!(display.contains("unrecognized"));
+    }
+
+    #[test]
+    fn display_trait() {
+        let flag = KnownCompatibilityFlag::IncRecurse;
+        assert_eq!(format!("{}", flag), "CF_INC_RECURSE");
+    }
+
+    #[test]
+    fn display_all_variants() {
+        for flag in KnownCompatibilityFlag::ALL {
+            let display = format!("{}", flag);
+            assert!(display.starts_with("CF_"));
+        }
+    }
+
+    #[test]
+    fn from_bits_inc_recurse() {
+        let result = KnownCompatibilityFlag::from_bits(CompatibilityFlags::INC_RECURSE.bits());
+        assert_eq!(result, Some(KnownCompatibilityFlag::IncRecurse));
+    }
+
+    #[test]
+    fn from_bits_symlink_times() {
+        let result = KnownCompatibilityFlag::from_bits(CompatibilityFlags::SYMLINK_TIMES.bits());
+        assert_eq!(result, Some(KnownCompatibilityFlag::SymlinkTimes));
+    }
+
+    #[test]
+    fn from_bits_unknown() {
+        let result = KnownCompatibilityFlag::from_bits(0xFFFF_FFFF);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn from_bits_zero() {
+        let result = KnownCompatibilityFlag::from_bits(0);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn clone_and_eq() {
+        let flag = KnownCompatibilityFlag::IncRecurse;
+        let cloned = flag.clone();
+        assert_eq!(flag, cloned);
+    }
+
+    #[test]
+    fn copy_trait() {
+        let flag = KnownCompatibilityFlag::SymlinkTimes;
+        let copied = flag;
+        assert_eq!(flag, copied);
+    }
+
+    #[test]
+    fn hash_trait() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(KnownCompatibilityFlag::IncRecurse);
+        set.insert(KnownCompatibilityFlag::SymlinkTimes);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&KnownCompatibilityFlag::IncRecurse));
+    }
+
+    #[test]
+    fn all_flags_unique() {
+        use std::collections::HashSet;
+        let set: HashSet<_> = KnownCompatibilityFlag::ALL.iter().collect();
+        assert_eq!(set.len(), KnownCompatibilityFlag::ALL.len());
+    }
+
+    #[test]
+    fn roundtrip_all_flags() {
+        for flag in KnownCompatibilityFlag::ALL {
+            let name = flag.name();
+            let parsed = KnownCompatibilityFlag::from_str(name).unwrap();
+            assert_eq!(flag, parsed);
+        }
+    }
+}
