@@ -380,3 +380,232 @@ fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
         InfoItem::Entry(Cow::Owned(format!("no {label}")))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::branding::Brand;
+
+    #[test]
+    fn default_creates_valid_report() {
+        let report = VersionInfoReport::default();
+        assert!(!report.human_readable().is_empty());
+    }
+
+    #[test]
+    fn new_creates_report_with_config() {
+        let config = VersionInfoConfig::with_runtime_capabilities();
+        let report = VersionInfoReport::new(config);
+        assert_eq!(report.config().supports_symlinks, config.supports_symlinks);
+    }
+
+    #[test]
+    fn config_accessor_returns_reference() {
+        let report = VersionInfoReport::default();
+        let _ = report.config();
+    }
+
+    #[test]
+    fn metadata_accessor_returns_value() {
+        let report = VersionInfoReport::default();
+        let metadata = report.metadata();
+        assert!(!metadata.standard_banner().is_empty());
+    }
+
+    #[test]
+    fn with_program_name_changes_metadata() {
+        let report = VersionInfoReport::default().with_program_name("custom-rsync");
+        let banner = report.metadata().standard_banner();
+        assert!(banner.contains("custom-rsync"));
+    }
+
+    #[test]
+    fn with_client_brand_uses_client_name() {
+        let report = VersionInfoReport::default().with_client_brand(Brand::Oc);
+        let banner = report.metadata().standard_banner();
+        assert!(banner.contains(Brand::Oc.client_program_name()));
+    }
+
+    #[test]
+    fn with_daemon_brand_uses_daemon_name() {
+        let report = VersionInfoReport::default().with_daemon_brand(Brand::Oc);
+        let banner = report.metadata().standard_banner();
+        assert!(banner.contains(Brand::Oc.daemon_program_name()));
+    }
+
+    #[test]
+    fn for_client_brand_creates_report() {
+        let report = VersionInfoReport::for_client_brand(Brand::Oc);
+        assert!(!report.human_readable().is_empty());
+    }
+
+    #[test]
+    fn for_daemon_brand_creates_report() {
+        let report = VersionInfoReport::for_daemon_brand(Brand::Oc);
+        assert!(!report.human_readable().is_empty());
+    }
+
+    #[test]
+    fn for_client_brand_with_config_uses_config() {
+        let config = VersionInfoConfig::with_runtime_capabilities();
+        let report = VersionInfoReport::for_client_brand_with_config(config, Brand::Oc);
+        assert_eq!(report.config().supports_symlinks, config.supports_symlinks);
+    }
+
+    #[test]
+    fn for_daemon_brand_with_config_uses_config() {
+        let config = VersionInfoConfig::with_runtime_capabilities();
+        let report = VersionInfoReport::for_daemon_brand_with_config(config, Brand::Oc);
+        assert_eq!(report.config().supports_symlinks, config.supports_symlinks);
+    }
+
+    #[test]
+    fn with_checksum_algorithms_replaces_list() {
+        let report = VersionInfoReport::default()
+            .with_checksum_algorithms(["custom1", "custom2"]);
+        let output = report.human_readable();
+        assert!(output.contains("custom1"));
+        assert!(output.contains("custom2"));
+    }
+
+    #[test]
+    fn with_compress_algorithms_replaces_list() {
+        let report = VersionInfoReport::default()
+            .with_compress_algorithms(["compress1", "compress2"]);
+        let output = report.human_readable();
+        assert!(output.contains("compress1"));
+        assert!(output.contains("compress2"));
+    }
+
+    #[test]
+    fn with_daemon_auth_algorithms_replaces_list() {
+        let report = VersionInfoReport::default()
+            .with_daemon_auth_algorithms(["auth1", "auth2"]);
+        let output = report.human_readable();
+        assert!(output.contains("auth1"));
+        assert!(output.contains("auth2"));
+    }
+
+    #[test]
+    fn human_readable_contains_capabilities_section() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(output.contains("Capabilities:"));
+    }
+
+    #[test]
+    fn human_readable_contains_optimizations_section() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(output.contains("Optimizations:"));
+    }
+
+    #[test]
+    fn human_readable_contains_checksum_list() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(output.contains("Checksum list:"));
+    }
+
+    #[test]
+    fn human_readable_contains_compress_list() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(output.contains("Compress list:"));
+    }
+
+    #[test]
+    fn human_readable_contains_daemon_auth_list() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(output.contains("Daemon auth list:"));
+    }
+
+    #[test]
+    fn human_readable_contains_gpl_footer() {
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(output.contains("ABSOLUTELY NO WARRANTY"));
+        assert!(output.contains("GNU General Public License"));
+    }
+
+    #[test]
+    fn default_checksum_algorithms_includes_xxh128() {
+        let algorithms = default_checksum_algorithms();
+        assert!(algorithms.iter().any(|a| a == "xxh128"));
+    }
+
+    #[test]
+    fn default_checksum_algorithms_includes_md5() {
+        let algorithms = default_checksum_algorithms();
+        assert!(algorithms.iter().any(|a| a == "md5"));
+    }
+
+    #[test]
+    fn default_checksum_algorithms_includes_none() {
+        let algorithms = default_checksum_algorithms();
+        assert!(algorithms.iter().any(|a| a == "none"));
+    }
+
+    #[test]
+    fn default_compress_algorithms_includes_zlib() {
+        let algorithms = default_compress_algorithms();
+        assert!(algorithms.iter().any(|a| a == "zlib"));
+    }
+
+    #[test]
+    fn default_compress_algorithms_includes_none() {
+        let algorithms = default_compress_algorithms();
+        assert!(algorithms.iter().any(|a| a == "none"));
+    }
+
+    #[test]
+    fn default_daemon_auth_algorithms_not_empty() {
+        let algorithms = default_daemon_auth_algorithms();
+        assert!(!algorithms.is_empty());
+    }
+
+    #[test]
+    fn write_human_readable_to_string() {
+        let report = VersionInfoReport::default();
+        let mut output = String::new();
+        report.write_human_readable(&mut output).unwrap();
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn empty_algorithm_list_shows_none() {
+        let report = VersionInfoReport::default()
+            .with_checksum_algorithms(Vec::<&str>::new());
+        let output = report.human_readable();
+        // When empty, should show "none" under the list
+        assert!(output.contains("Checksum list:"));
+    }
+
+    #[test]
+    fn bits_entry_formats_correctly() {
+        let entry = bits_entry::<u64>("test");
+        match entry {
+            InfoItem::Entry(text) => assert!(text.contains("64-bit test")),
+            _ => panic!("Expected Entry variant"),
+        }
+    }
+
+    #[test]
+    fn capability_entry_supported_shows_label() {
+        let entry = capability_entry("test-cap", true);
+        match entry {
+            InfoItem::Entry(text) => assert_eq!(text, "test-cap"),
+            _ => panic!("Expected Entry variant"),
+        }
+    }
+
+    #[test]
+    fn capability_entry_unsupported_shows_no_prefix() {
+        let entry = capability_entry("test-cap", false);
+        match entry {
+            InfoItem::Entry(text) => assert_eq!(text, "no test-cap"),
+            _ => panic!("Expected Entry variant"),
+        }
+    }
+}

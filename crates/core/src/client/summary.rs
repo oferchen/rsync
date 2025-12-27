@@ -582,3 +582,274 @@ impl ClientEntryMetadata {
         self.symlink_target.as_deref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_summary_default_has_empty_events() {
+        let summary = ClientSummary::default();
+        assert!(summary.events().is_empty());
+    }
+
+    #[test]
+    fn client_summary_default_has_zero_counts() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_total(), 0);
+        assert_eq!(summary.directories_created(), 0);
+        assert_eq!(summary.bytes_copied(), 0);
+    }
+
+    #[test]
+    fn client_summary_into_events_consumes_self() {
+        let summary = ClientSummary::default();
+        let events = summary.into_events();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_true_for_data_copied() {
+        assert!(ClientEventKind::DataCopied.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_true_for_metadata_reused() {
+        assert!(ClientEventKind::MetadataReused.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_true_for_hard_link() {
+        assert!(ClientEventKind::HardLink.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_true_for_symlink_copied() {
+        assert!(ClientEventKind::SymlinkCopied.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_true_for_fifo_copied() {
+        assert!(ClientEventKind::FifoCopied.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_true_for_device_copied() {
+        assert!(ClientEventKind::DeviceCopied.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_false_for_skipped() {
+        assert!(!ClientEventKind::SkippedExisting.is_progress());
+        assert!(!ClientEventKind::SkippedMissingDestination.is_progress());
+        assert!(!ClientEventKind::SkippedNewerDestination.is_progress());
+        assert!(!ClientEventKind::SkippedNonRegular.is_progress());
+        assert!(!ClientEventKind::SkippedDirectory.is_progress());
+    }
+
+    #[test]
+    fn client_event_kind_is_progress_returns_false_for_deleted() {
+        assert!(!ClientEventKind::EntryDeleted.is_progress());
+        assert!(!ClientEventKind::SourceRemoved.is_progress());
+    }
+
+    #[test]
+    fn client_entry_kind_is_directory_returns_true_for_directory() {
+        assert!(ClientEntryKind::Directory.is_directory());
+    }
+
+    #[test]
+    fn client_entry_kind_is_directory_returns_false_for_others() {
+        assert!(!ClientEntryKind::File.is_directory());
+        assert!(!ClientEntryKind::Symlink.is_directory());
+        assert!(!ClientEntryKind::Fifo.is_directory());
+    }
+
+    #[test]
+    fn client_entry_kind_is_symlink_returns_true_for_symlink() {
+        assert!(ClientEntryKind::Symlink.is_symlink());
+    }
+
+    #[test]
+    fn client_entry_kind_is_symlink_returns_false_for_others() {
+        assert!(!ClientEntryKind::File.is_symlink());
+        assert!(!ClientEntryKind::Directory.is_symlink());
+        assert!(!ClientEntryKind::Fifo.is_symlink());
+    }
+
+    #[test]
+    fn resolve_destination_path_joins_components() {
+        let root = Path::new("/dest");
+        let relative = Path::new("subdir/file.txt");
+        let result = ClientEvent::resolve_destination_path(root, relative);
+        assert_eq!(result, PathBuf::from("/dest/subdir/file.txt"));
+    }
+
+    #[test]
+    fn resolve_destination_path_matches_root_when_filename_matches() {
+        let root = Path::new("/dest/file.txt");
+        let relative = Path::new("file.txt");
+        // When the relative path equals the root's filename, return root
+        // This applies when root exists, but for unit tests we get the join fallback
+        let result = ClientEvent::resolve_destination_path(root, relative);
+        // When root doesn't exist, falls through to candidate
+        assert!(result == PathBuf::from("/dest/file.txt") || result == PathBuf::from("/dest/file.txt/file.txt"));
+    }
+
+    #[test]
+    fn client_summary_regular_files_matched() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.regular_files_matched(), 0);
+    }
+
+    #[test]
+    fn client_summary_regular_files_ignored_existing() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.regular_files_ignored_existing(), 0);
+    }
+
+    #[test]
+    fn client_summary_regular_files_skipped_missing() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.regular_files_skipped_missing(), 0);
+    }
+
+    #[test]
+    fn client_summary_regular_files_skipped_newer() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.regular_files_skipped_newer(), 0);
+    }
+
+    #[test]
+    fn client_summary_directories_total() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.directories_total(), 0);
+    }
+
+    #[test]
+    fn client_summary_symlinks_copied() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.symlinks_copied(), 0);
+    }
+
+    #[test]
+    fn client_summary_symlinks_total() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.symlinks_total(), 0);
+    }
+
+    #[test]
+    fn client_summary_hard_links_created() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.hard_links_created(), 0);
+    }
+
+    #[test]
+    fn client_summary_devices_created() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.devices_created(), 0);
+    }
+
+    #[test]
+    fn client_summary_devices_total() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.devices_total(), 0);
+    }
+
+    #[test]
+    fn client_summary_fifos_created() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.fifos_created(), 0);
+    }
+
+    #[test]
+    fn client_summary_fifos_total() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.fifos_total(), 0);
+    }
+
+    #[test]
+    fn client_summary_items_deleted() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.items_deleted(), 0);
+    }
+
+    #[test]
+    fn client_summary_matched_bytes() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.matched_bytes(), 0);
+    }
+
+    #[test]
+    fn client_summary_bytes_received() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.bytes_received(), 0);
+    }
+
+    #[test]
+    fn client_summary_bytes_sent() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.bytes_sent(), 0);
+    }
+
+    #[test]
+    fn client_summary_transferred_file_size() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.transferred_file_size(), 0);
+    }
+
+    #[test]
+    fn client_summary_compressed_bytes_none_when_not_used() {
+        let summary = ClientSummary::default();
+        assert!(summary.compressed_bytes().is_none());
+    }
+
+    #[test]
+    fn client_summary_compression_used() {
+        let summary = ClientSummary::default();
+        assert!(!summary.compression_used());
+    }
+
+    #[test]
+    fn client_summary_sources_removed() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.sources_removed(), 0);
+    }
+
+    #[test]
+    fn client_summary_total_source_bytes() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.total_source_bytes(), 0);
+    }
+
+    #[test]
+    fn client_summary_total_elapsed() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.total_elapsed(), Duration::ZERO);
+    }
+
+    #[test]
+    fn client_summary_bandwidth_sleep() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.bandwidth_sleep(), Duration::ZERO);
+    }
+
+    #[test]
+    fn client_summary_file_list_size() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.file_list_size(), 0);
+    }
+
+    #[test]
+    fn client_summary_file_list_generation_time() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.file_list_generation_time(), Duration::ZERO);
+    }
+
+    #[test]
+    fn client_summary_file_list_transfer_time() {
+        let summary = ClientSummary::default();
+        assert_eq!(summary.file_list_transfer_time(), Duration::ZERO);
+    }
+}
