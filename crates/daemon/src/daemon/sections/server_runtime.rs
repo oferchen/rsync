@@ -1,3 +1,4 @@
+/// Logs a systemd notification failure if a log sink is available.
 fn log_sd_notify_failure(log: Option<&SharedLogSink>, context: &str, error: &io::Error) {
     if let Some(sink) = log {
         let payload = format!("failed to notify systemd about {context}: {error}");
@@ -6,21 +7,25 @@ fn log_sd_notify_failure(log: Option<&SharedLogSink>, context: &str, error: &io:
     }
 }
 
+/// Holds temporary files for an auto-generated fallback config.
 struct GeneratedFallbackConfig {
     config: NamedTempFile,
     _motd: Option<NamedTempFile>,
 }
 
 impl GeneratedFallbackConfig {
+    /// Returns the path to the generated config file.
     fn config_path(&self) -> &Path {
         self.config.path()
     }
 }
 
+/// Formats a boolean value for rsync config files ("yes" or "no").
 fn format_bool(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
+/// Converts a [`HostPattern`] to its config file string representation.
 fn host_pattern_token(pattern: &HostPattern) -> String {
     match pattern {
         HostPattern::Any => String::from("*"),
@@ -39,6 +44,7 @@ fn host_pattern_token(pattern: &HostPattern) -> String {
     }
 }
 
+/// Joins host patterns into a space-separated string for config output.
 fn join_pattern_tokens(patterns: &[HostPattern]) -> Option<String> {
     if patterns.is_empty() {
         None
@@ -53,38 +59,50 @@ fn join_pattern_tokens(patterns: &[HostPattern]) -> Option<String> {
     }
 }
 
+/// Joins a list of strings with a delimiter, returning `None` if empty.
+fn join_list_if_nonempty(items: &[String], delimiter: &str) -> Option<String> {
+    if items.is_empty() {
+        None
+    } else {
+        Some(items.join(delimiter))
+    }
+}
+
+/// Renders auth users as a comma-separated list for config output.
 fn render_auth_users(users: &[String]) -> Option<String> {
-    if users.is_empty() {
-        None
-    } else {
-        Some(users.join(","))
-    }
+    join_list_if_nonempty(users, ",")
 }
 
+/// Renders refused options as a space-separated list for config output.
 fn render_refused_options(options: &[String]) -> Option<String> {
-    if options.is_empty() {
-        None
-    } else {
-        Some(options.join(" "))
-    }
+    join_list_if_nonempty(options, " ")
 }
 
+/// Renders an optional u32 value as a string for config output.
 fn render_optional_u32(value: Option<u32>) -> Option<String> {
     value.map(|id| id.to_string())
 }
 
+/// Renders an optional timeout value as a string for config output.
 fn render_optional_timeout(value: Option<NonZeroU64>) -> Option<String> {
     value.map(|timeout| timeout.get().to_string())
 }
 
+/// Renders an optional bandwidth limit as a string for config output.
 fn render_optional_bwlimit(limit: Option<NonZeroU64>) -> Option<String> {
     limit.map(|rate| rate.get().to_string())
 }
 
+/// Renders an optional chmod string for config output.
 fn render_chmod(value: Option<&str>) -> Option<String> {
     value.map(str::to_string)
 }
 
+/// Generates a temporary fallback config file from inline module definitions.
+///
+/// Creates temporary files for the rsync config and MOTD, which are passed
+/// to the delegated rsync process. Returns `None` if there are no modules
+/// or MOTD lines to generate.
 fn generate_fallback_config(
     modules: &[ModuleDefinition],
     motd_lines: &[String],
@@ -183,6 +201,9 @@ fn generate_fallback_config(
     }))
 }
 
+/// Formats a human-readable connection status message for systemd notification.
+///
+/// Returns appropriate singular/plural forms based on the connection count.
 pub(crate) fn format_connection_status(active: usize) -> String {
     match active {
         0 => String::from("Idle; waiting for connections"),
@@ -697,6 +718,7 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
     }
 }
 
+/// Checks if an I/O error indicates a normal connection close.
 fn is_connection_closed_error(kind: io::ErrorKind) -> bool {
     matches!(
         kind,
@@ -704,6 +726,421 @@ fn is_connection_closed_error(kind: io::ErrorKind) -> bool {
             | io::ErrorKind::ConnectionReset
             | io::ErrorKind::ConnectionAborted
     )
+}
+
+#[cfg(test)]
+mod server_runtime_tests {
+    use super::*;
+
+    // Tests for format_bool
+
+    #[test]
+    fn format_bool_returns_yes_for_true() {
+        assert_eq!(format_bool(true), "yes");
+    }
+
+    #[test]
+    fn format_bool_returns_no_for_false() {
+        assert_eq!(format_bool(false), "no");
+    }
+
+    // Tests for join_list_if_nonempty
+
+    #[test]
+    fn join_list_if_nonempty_returns_none_for_empty() {
+        let items: Vec<String> = vec![];
+        assert!(join_list_if_nonempty(&items, ",").is_none());
+    }
+
+    #[test]
+    fn join_list_if_nonempty_joins_with_delimiter() {
+        let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(join_list_if_nonempty(&items, ","), Some("a,b,c".to_string()));
+    }
+
+    #[test]
+    fn join_list_if_nonempty_single_item() {
+        let items = vec!["single".to_string()];
+        assert_eq!(join_list_if_nonempty(&items, ","), Some("single".to_string()));
+    }
+
+    // Tests for render_auth_users
+
+    #[test]
+    fn render_auth_users_empty_returns_none() {
+        assert!(render_auth_users(&[]).is_none());
+    }
+
+    #[test]
+    fn render_auth_users_comma_separated() {
+        let users = vec!["alice".to_string(), "bob".to_string()];
+        assert_eq!(render_auth_users(&users), Some("alice,bob".to_string()));
+    }
+
+    // Tests for render_refused_options
+
+    #[test]
+    fn render_refused_options_empty_returns_none() {
+        assert!(render_refused_options(&[]).is_none());
+    }
+
+    #[test]
+    fn render_refused_options_space_separated() {
+        let options = vec!["delete".to_string(), "delete-after".to_string()];
+        assert_eq!(render_refused_options(&options), Some("delete delete-after".to_string()));
+    }
+
+    // Tests for render_optional_u32
+
+    #[test]
+    fn render_optional_u32_none_returns_none() {
+        assert!(render_optional_u32(None).is_none());
+    }
+
+    #[test]
+    fn render_optional_u32_returns_string() {
+        assert_eq!(render_optional_u32(Some(1000)), Some("1000".to_string()));
+    }
+
+    // Tests for render_optional_timeout
+
+    #[test]
+    fn render_optional_timeout_none_returns_none() {
+        assert!(render_optional_timeout(None).is_none());
+    }
+
+    #[test]
+    fn render_optional_timeout_returns_string() {
+        let timeout = NonZeroU64::new(300);
+        assert_eq!(render_optional_timeout(timeout), Some("300".to_string()));
+    }
+
+    // Tests for render_chmod
+
+    #[test]
+    fn render_chmod_none_returns_none() {
+        assert!(render_chmod(None).is_none());
+    }
+
+    #[test]
+    fn render_chmod_returns_string() {
+        assert_eq!(render_chmod(Some("Dg+s,ug+w,Fo-w,+X")), Some("Dg+s,ug+w,Fo-w,+X".to_string()));
+    }
+
+    // Tests for format_connection_status
+
+    #[test]
+    fn format_connection_status_zero_connections() {
+        assert_eq!(format_connection_status(0), "Idle; waiting for connections");
+    }
+
+    #[test]
+    fn format_connection_status_one_connection() {
+        assert_eq!(format_connection_status(1), "Serving 1 connection");
+    }
+
+    #[test]
+    fn format_connection_status_multiple_connections() {
+        assert_eq!(format_connection_status(5), "Serving 5 connections");
+    }
+
+    // Tests for normalize_peer_address
+
+    #[test]
+    fn normalize_peer_address_preserves_ipv4() {
+        let addr: SocketAddr = "192.168.1.1:8873".parse().unwrap();
+        assert_eq!(normalize_peer_address(addr), addr);
+    }
+
+    #[test]
+    fn normalize_peer_address_preserves_pure_ipv6() {
+        let addr: SocketAddr = "[2001:db8::1]:8873".parse().unwrap();
+        assert_eq!(normalize_peer_address(addr), addr);
+    }
+
+    #[test]
+    fn normalize_peer_address_converts_ipv4_mapped() {
+        use std::net::{Ipv6Addr, SocketAddrV6};
+        // IPv4-mapped IPv6: ::ffff:127.0.0.1
+        let v6 = Ipv6Addr::new(0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001);
+        let addr = SocketAddr::V6(SocketAddrV6::new(v6, 8873, 0, 0));
+        let normalized = normalize_peer_address(addr);
+        assert_eq!(normalized.to_string(), "127.0.0.1:8873");
+    }
+
+    // Tests for is_connection_closed_error
+
+    #[test]
+    fn is_connection_closed_error_broken_pipe() {
+        assert!(is_connection_closed_error(io::ErrorKind::BrokenPipe));
+    }
+
+    #[test]
+    fn is_connection_closed_error_connection_reset() {
+        assert!(is_connection_closed_error(io::ErrorKind::ConnectionReset));
+    }
+
+    #[test]
+    fn is_connection_closed_error_connection_aborted() {
+        assert!(is_connection_closed_error(io::ErrorKind::ConnectionAborted));
+    }
+
+    #[test]
+    fn is_connection_closed_error_other_errors_false() {
+        assert!(!is_connection_closed_error(io::ErrorKind::NotFound));
+        assert!(!is_connection_closed_error(io::ErrorKind::PermissionDenied));
+        assert!(!is_connection_closed_error(io::ErrorKind::TimedOut));
+    }
+
+    // Tests for render_optional_bwlimit
+
+    #[test]
+    fn render_optional_bwlimit_none_returns_none() {
+        assert!(render_optional_bwlimit(None).is_none());
+    }
+
+    #[test]
+    fn render_optional_bwlimit_returns_string() {
+        let limit = NonZeroU64::new(1_000_000);
+        assert_eq!(render_optional_bwlimit(limit), Some("1000000".to_string()));
+    }
+
+    // Tests for host_pattern_token
+
+    #[test]
+    fn host_pattern_token_any() {
+        assert_eq!(host_pattern_token(&HostPattern::Any), "*");
+    }
+
+    #[test]
+    fn host_pattern_token_ipv4() {
+        let pattern = HostPattern::Ipv4 {
+            network: Ipv4Addr::new(192, 168, 1, 0),
+            prefix: 24,
+        };
+        assert_eq!(host_pattern_token(&pattern), "192.168.1.0/24");
+    }
+
+    #[test]
+    fn host_pattern_token_ipv6() {
+        let network: Ipv6Addr = "2001:db8::".parse().unwrap();
+        let pattern = HostPattern::Ipv6 {
+            network,
+            prefix: 32,
+        };
+        assert_eq!(host_pattern_token(&pattern), "2001:db8::/32");
+    }
+
+    #[test]
+    fn host_pattern_token_hostname_exact() {
+        let pattern = HostPattern::Hostname(HostnamePattern {
+            kind: HostnamePatternKind::Exact("example.com".to_string()),
+        });
+        assert_eq!(host_pattern_token(&pattern), "example.com");
+    }
+
+    #[test]
+    fn host_pattern_token_hostname_suffix() {
+        let pattern = HostPattern::Hostname(HostnamePattern {
+            kind: HostnamePatternKind::Suffix("example.com".to_string()),
+        });
+        assert_eq!(host_pattern_token(&pattern), ".example.com");
+    }
+
+    #[test]
+    fn host_pattern_token_hostname_wildcard() {
+        let pattern = HostPattern::Hostname(HostnamePattern {
+            kind: HostnamePatternKind::Wildcard("*.example.*".to_string()),
+        });
+        assert_eq!(host_pattern_token(&pattern), "*.example.*");
+    }
+
+    // Tests for join_pattern_tokens
+
+    #[test]
+    fn join_pattern_tokens_empty_returns_none() {
+        assert!(join_pattern_tokens(&[]).is_none());
+    }
+
+    #[test]
+    fn join_pattern_tokens_single() {
+        let patterns = vec![HostPattern::Any];
+        assert_eq!(join_pattern_tokens(&patterns), Some("*".to_string()));
+    }
+
+    #[test]
+    fn join_pattern_tokens_multiple() {
+        let patterns = vec![
+            HostPattern::Any,
+            HostPattern::Ipv4 {
+                network: Ipv4Addr::new(10, 0, 0, 0),
+                prefix: 8,
+            },
+        ];
+        assert_eq!(join_pattern_tokens(&patterns), Some("* 10.0.0.0/8".to_string()));
+    }
+
+    // Tests for GeneratedFallbackConfig
+
+    #[test]
+    fn generated_fallback_config_returns_none_when_empty() {
+        let result = generate_fallback_config(&[], &[]).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn generated_fallback_config_creates_motd_file() {
+        let motd_lines = vec!["Welcome".to_string(), "to rsync".to_string()];
+        let result = generate_fallback_config(&[], &motd_lines).unwrap();
+        assert!(result.is_some());
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("motd file"));
+    }
+
+    #[test]
+    fn generated_fallback_config_creates_module_section() {
+        let modules = vec![ModuleDefinition {
+            name: "test".to_string(),
+            path: PathBuf::from("/tmp/test"),
+            comment: Some("Test module".to_string()),
+            read_only: true,
+            write_only: false,
+            listable: true,
+            use_chroot: false,
+            numeric_ids: false,
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        assert!(result.is_some());
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("[test]"));
+        assert!(content.contains("path = /tmp/test"));
+        assert!(content.contains("comment = Test module"));
+        assert!(content.contains("read only = yes"));
+        assert!(content.contains("write only = no"));
+        assert!(content.contains("list = yes"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_auth_users() {
+        let modules = vec![ModuleDefinition {
+            name: "secure".to_string(),
+            path: PathBuf::from("/secure"),
+            auth_users: vec!["alice".to_string(), "bob".to_string()],
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("auth users = alice,bob"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_hosts_allow() {
+        let modules = vec![ModuleDefinition {
+            name: "restricted".to_string(),
+            path: PathBuf::from("/restricted"),
+            hosts_allow: vec![HostPattern::Ipv4 {
+                network: Ipv4Addr::new(192, 168, 0, 0),
+                prefix: 16,
+            }],
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("hosts allow = 192.168.0.0/16"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_bandwidth_limit() {
+        let modules = vec![ModuleDefinition {
+            name: "limited".to_string(),
+            path: PathBuf::from("/limited"),
+            bandwidth_limit: NonZeroU64::new(100000),
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("bwlimit = 100000"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_max_connections() {
+        let modules = vec![ModuleDefinition {
+            name: "limited".to_string(),
+            path: PathBuf::from("/limited"),
+            max_connections: NonZeroU32::new(10),
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("max connections = 10"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_chmod_directives() {
+        let modules = vec![ModuleDefinition {
+            name: "chmod".to_string(),
+            path: PathBuf::from("/chmod"),
+            incoming_chmod: Some("Dg+s,ug+w".to_string()),
+            outgoing_chmod: Some("Fo-w,+X".to_string()),
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("incoming chmod = Dg+s,ug+w"));
+        assert!(content.contains("outgoing chmod = Fo-w,+X"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_uid_gid() {
+        let modules = vec![ModuleDefinition {
+            name: "ids".to_string(),
+            path: PathBuf::from("/ids"),
+            uid: Some(1000),
+            gid: Some(1000),
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("uid = 1000"));
+        assert!(content.contains("gid = 1000"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_timeout() {
+        let modules = vec![ModuleDefinition {
+            name: "timeout".to_string(),
+            path: PathBuf::from("/timeout"),
+            timeout: NonZeroU64::new(600),
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("timeout = 600"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_refuse_options() {
+        let modules = vec![ModuleDefinition {
+            name: "restricted".to_string(),
+            path: PathBuf::from("/restricted"),
+            refuse_options: vec!["delete".to_string(), "delete-after".to_string()],
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("refuse options = delete delete-after"));
+    }
 }
 
 fn configure_stream(stream: &TcpStream) -> io::Result<()> {

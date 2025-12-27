@@ -1,3 +1,293 @@
+/// Writes an error payload and exit sequence to the stream.
+///
+/// This helper consolidates the common pattern of sending an error message
+/// followed by the daemon exit marker and flushing the stream.
+#[allow(dead_code)]
+fn send_error_response(
+    stream: &mut TcpStream,
+    limiter: &mut Option<BandwidthLimiter>,
+    messages: &LegacyMessageCache,
+    payload: &str,
+) -> io::Result<()> {
+    write_limited(stream, limiter, payload.as_bytes())?;
+    write_limited(stream, limiter, b"\n")?;
+    messages.write_exit(stream, limiter)?;
+    stream.flush()
+}
+
+/// Context for module request handling containing common parameters.
+#[allow(dead_code)]
+struct ModuleRequestContext<'a> {
+    limiter: &'a mut Option<BandwidthLimiter>,
+    peer_ip: IpAddr,
+    session_peer_host: Option<&'a str>,
+    log_sink: Option<&'a SharedLogSink>,
+    messages: &'a LegacyMessageCache,
+}
+
+/// Handles the case when a module is not found.
+#[allow(dead_code)]
+fn handle_unknown_module(
+    stream: &mut TcpStream,
+    ctx: &mut ModuleRequestContext<'_>,
+    request: &str,
+) -> io::Result<()> {
+    let module_display = sanitize_module_identifier(request);
+    let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref());
+    write_limited(stream, ctx.limiter, payload.as_bytes())?;
+    write_limited(stream, ctx.limiter, b"\n")?;
+    if let Some(log) = ctx.log_sink {
+        log_unknown_module(log, ctx.session_peer_host, ctx.peer_ip, request);
+    }
+    ctx.messages.write_exit(stream, ctx.limiter)?;
+    stream.flush()
+}
+
+/// Handles access denied when module doesn't permit the peer.
+#[allow(dead_code)]
+fn handle_access_denied(
+    stream: &mut TcpStream,
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleDefinition,
+    module_peer_host: Option<&str>,
+    request: &str,
+) -> io::Result<()> {
+    if let Some(log) = ctx.log_sink {
+        log_module_denied(
+            log,
+            module_peer_host.or(ctx.session_peer_host),
+            ctx.peer_ip,
+            request,
+        );
+    }
+    deny_module(stream, module, ctx.peer_ip, ctx.limiter, ctx.messages)
+}
+
+/// Result of attempting to acquire a module connection.
+#[allow(dead_code)]
+enum ConnectionAcquisitionResult<'a> {
+    /// Successfully acquired the connection guard.
+    Acquired(ModuleConnectionGuard<'a>),
+    /// Connection limit reached, error response was sent.
+    LimitReached,
+    /// I/O error on lock file, error response was sent.
+    IoError,
+}
+
+/// Attempts to acquire a module connection, sending error responses on failure.
+#[allow(dead_code)]
+fn try_acquire_module_connection<'a>(
+    stream: &mut TcpStream,
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &'a ModuleRuntime,
+    module_peer_host: Option<&str>,
+    request: &str,
+) -> io::Result<ConnectionAcquisitionResult<'a>> {
+    match module.try_acquire_connection() {
+        Ok(guard) => Ok(ConnectionAcquisitionResult::Acquired(guard)),
+        Err(ModuleConnectionError::Limit(limit)) => {
+            let payload =
+                MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
+            send_error_response(stream, ctx.limiter, ctx.messages, &payload)?;
+            if let Some(log) = ctx.log_sink {
+                log_module_limit(
+                    log,
+                    module_peer_host.or(ctx.session_peer_host),
+                    ctx.peer_ip,
+                    request,
+                    limit,
+                );
+            }
+            Ok(ConnectionAcquisitionResult::LimitReached)
+        }
+        Err(ModuleConnectionError::Io(error)) => {
+            send_error_response(stream, ctx.limiter, ctx.messages, MODULE_LOCK_ERROR_PAYLOAD)?;
+            if let Some(log) = ctx.log_sink {
+                log_module_lock_error(
+                    log,
+                    module_peer_host.or(ctx.session_peer_host),
+                    ctx.peer_ip,
+                    request,
+                    &error,
+                );
+            }
+            Ok(ConnectionAcquisitionResult::IoError)
+        }
+    }
+}
+
+/// Checks for refused options and sends error response if found.
+///
+/// Returns `Ok(Some(refused))` if a refused option was found and error was sent,
+/// `Ok(None)` if no refused options were found, or an I/O error.
+#[allow(dead_code)]
+fn check_refused_options(
+    stream: &mut TcpStream,
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    options: &[String],
+    module_peer_host: Option<&str>,
+    request: &str,
+) -> io::Result<Option<()>> {
+    if let Some(refused) = refused_option(module, options) {
+        let payload = format!("@ERROR: The server is configured to refuse {refused}");
+        send_error_response(stream, ctx.limiter, ctx.messages, &payload)?;
+        if let Some(log) = ctx.log_sink {
+            log_module_refused_option(
+                log,
+                module_peer_host.or(ctx.session_peer_host),
+                ctx.peer_ip,
+                request,
+                refused,
+            );
+        }
+        Ok(Some(()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Handles module authentication if required.
+///
+/// Returns `Ok(true)` if authentication succeeded (or wasn't required),
+/// `Ok(false)` if authentication was denied, or an I/O error.
+#[allow(dead_code)]
+fn handle_module_authentication(
+    reader: &mut BufReader<TcpStream>,
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    module_peer_host: Option<&str>,
+    request: &str,
+) -> io::Result<bool> {
+    apply_module_timeout(reader.get_mut(), module)?;
+
+    if !module.requires_authentication() {
+        send_daemon_ok(reader.get_mut(), ctx.limiter, ctx.messages)?;
+        return Ok(true);
+    }
+
+    match perform_module_authentication(reader, ctx.limiter, module, ctx.peer_ip, ctx.messages)? {
+        AuthenticationStatus::Denied => {
+            if let Some(log) = ctx.log_sink {
+                log_module_auth_failure(
+                    log,
+                    module_peer_host.or(ctx.session_peer_host),
+                    ctx.peer_ip,
+                    request,
+                );
+            }
+            Ok(false)
+        }
+        AuthenticationStatus::Granted => {
+            if let Some(log) = ctx.log_sink {
+                log_module_auth_success(
+                    log,
+                    module_peer_host.or(ctx.session_peer_host),
+                    ctx.peer_ip,
+                    request,
+                );
+            }
+            send_daemon_ok(reader.get_mut(), ctx.limiter, ctx.messages)?;
+            Ok(true)
+        }
+    }
+}
+
+/// Determines the server role from client arguments.
+///
+/// The `--sender` flag indicates the server should act as sender (Generator).
+/// When absent, the server acts as receiver (Receiver).
+#[allow(dead_code)]
+fn determine_server_role(client_args: &[String]) -> ServerRole {
+    if client_args.iter().any(|arg| arg == "--sender") {
+        ServerRole::Generator
+    } else {
+        ServerRole::Receiver
+    }
+}
+
+/// Extracts the short flags argument from client arguments.
+///
+/// Client args are like: `["--server", "--sender", "-vvre.iLsfxCIvu", ".", "testmod/"]`
+#[allow(dead_code)]
+fn extract_flag_string(client_args: &[String]) -> String {
+    client_args
+        .iter()
+        .find(|arg| arg.starts_with('-') && !arg.starts_with("--"))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Builds server configuration from client arguments.
+#[allow(dead_code)]
+fn build_server_config(
+    client_args: &[String],
+    module_path: &Path,
+) -> Result<ServerConfig, String> {
+    let role = determine_server_role(client_args);
+    let flag_string = extract_flag_string(client_args);
+    ServerConfig::from_flag_string_and_args(
+        role,
+        flag_string,
+        vec![OsString::from(module_path)],
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Validates that the module path exists.
+#[allow(dead_code)]
+fn validate_module_path(module_path: &Path) -> bool {
+    module_path.exists()
+}
+
+/// Executes the file transfer and logs the result.
+#[allow(dead_code, clippy::too_many_arguments)]
+fn execute_transfer(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    read_stream: &mut TcpStream,
+    write_stream: &mut TcpStream,
+    log_sink: Option<&SharedLogSink>,
+    peer_host: Option<&str>,
+    peer_ip: IpAddr,
+    request: &str,
+) {
+    let result = run_server_with_handshake(config, handshake, read_stream, write_stream);
+    match result {
+        Ok(_server_stats) => {
+            if let Some(log) = log_sink {
+                let text = format!(
+                    "transfer to {} ({}): module={} status=success",
+                    peer_host.unwrap_or("unknown"),
+                    peer_ip,
+                    request
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+        Err(err) => {
+            if let Some(log) = log_sink {
+                let text = format!(
+                    "transfer failed to {} ({}): module={} error={}",
+                    peer_host.unwrap_or("unknown"),
+                    peer_ip,
+                    request,
+                    err
+                );
+                let message = rsync_error!(1, text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+    }
+}
+
+/// Sends the list of available modules to a client.
+///
+/// This responds to a module listing request by sending the MOTD (message of the
+/// day) lines followed by the names and comments of modules the peer is allowed
+/// to access. Only modules marked as listable and that permit the peer's IP
+/// address are included in the response.
 fn respond_with_module_list(
     stream: &mut TcpStream,
     limiter: &mut Option<BandwidthLimiter>,
@@ -43,12 +333,23 @@ fn respond_with_module_list(
     stream.flush()
 }
 
+/// Result of a module authentication attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AuthenticationStatus {
+    /// Authentication was successful.
     Granted,
+    /// Authentication was denied (bad credentials or missing response).
     Denied,
 }
 
+/// Performs challenge-response authentication for a protected module.
+///
+/// This implements the rsync daemon authentication protocol:
+/// 1. Sends a base64-encoded MD5 challenge to the client
+/// 2. Reads the client's response containing username and digest
+/// 3. Verifies the digest against the module's secrets file
+///
+/// Returns `Granted` if authentication succeeded, `Denied` otherwise.
 fn perform_module_authentication(
     reader: &mut BufReader<TcpStream>,
     limiter: &mut Option<BandwidthLimiter>,
@@ -102,6 +403,11 @@ fn perform_module_authentication(
     Ok(AuthenticationStatus::Granted)
 }
 
+/// Generates a unique authentication challenge string.
+///
+/// The challenge is created by combining the peer IP address, current timestamp,
+/// and process ID, then hashing with MD5 and encoding as base64. This produces
+/// a unique, time-sensitive challenge for each authentication attempt.
 fn generate_auth_challenge(peer_ip: IpAddr) -> String {
     let mut input = [0u8; 32];
     let address_text = peer_ip.to_string();
@@ -126,6 +432,14 @@ fn generate_auth_challenge(peer_ip: IpAddr) -> String {
     STANDARD_NO_PAD.encode(digest)
 }
 
+/// Verifies a client's authentication response against the secrets file.
+///
+/// Reads the module's secrets file line by line, looking for a matching
+/// username entry. For matching usernames, computes the expected digest
+/// using the stored secret and challenge, then compares with the client's
+/// response.
+///
+/// Returns `true` if the username exists and the digest matches, `false` otherwise.
 fn verify_secret_response(
     module: &ModuleDefinition,
     username: &str,
@@ -156,6 +470,10 @@ fn verify_secret_response(
     Ok(false)
 }
 
+/// Sends an access denied response to the client and closes the session.
+///
+/// This writes the "@ERROR: access denied" message with the module name
+/// and peer address, then sends the daemon exit marker.
 fn deny_module(
     stream: &mut TcpStream,
     module: &ModuleDefinition,
@@ -173,6 +491,10 @@ fn deny_module(
     stream.flush()
 }
 
+/// Sends the "@RSYNCD: OK" acknowledgment to the client.
+///
+/// This confirms that the module request was accepted and the client
+/// may proceed with sending its arguments.
 fn send_daemon_ok(
     stream: &mut TcpStream,
     limiter: &mut Option<BandwidthLimiter>,
@@ -350,6 +672,17 @@ pub(crate) fn apply_module_bandwidth_limit(
     .apply_to_limiter(limiter)
 }
 
+/// Handles a client's module access request.
+///
+/// This is the main entry point for processing a module request. It performs:
+/// 1. Module lookup and access permission verification
+/// 2. Bandwidth limit application from module configuration
+/// 3. Connection acquisition with max-connections enforcement
+/// 4. Refused options checking
+/// 5. Authentication (if the module requires it)
+/// 6. Protocol setup and transfer execution
+///
+/// Returns an I/O error if the connection fails, otherwise `Ok(())`.
 #[allow(clippy::too_many_arguments)]
 fn respond_with_module_request(
     reader: &mut BufReader<TcpStream>,
@@ -721,6 +1054,10 @@ fn respond_with_module_request(
     stream.flush()
 }
 
+/// Opens or creates a log file and wraps it in a shared message sink.
+///
+/// The log file is opened in append mode, creating it if it doesn't exist.
+/// Returns a thread-safe [`SharedLogSink`] for concurrent logging.
 pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
     let file = OpenOptions::new()
         .create(true)
@@ -730,6 +1067,7 @@ pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, 
     Ok(Arc::new(Mutex::new(MessageSink::with_brand(file, brand))))
 }
 
+/// Creates a [`DaemonError`] for log file open failures.
 fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
     DaemonError::new(
         FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -741,6 +1079,7 @@ fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
     )
 }
 
+/// Creates a [`DaemonError`] for PID file write failures.
 fn pid_file_error(path: &Path, error: io::Error) -> DaemonError {
     DaemonError::new(
         FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -752,6 +1091,7 @@ fn pid_file_error(path: &Path, error: io::Error) -> DaemonError {
     )
 }
 
+/// Creates a [`DaemonError`] for lock file open failures.
 fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
     DaemonError::new(
         FEATURE_UNAVAILABLE_EXIT_CODE,
@@ -763,6 +1103,7 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
     )
 }
 
+/// Writes a message to the shared log sink with proper locking.
 fn log_message(log: &SharedLogSink, message: &Message) {
     if let Ok(mut sink) = log.lock()
         && sink.write(message).is_ok() {
@@ -770,6 +1111,7 @@ fn log_message(log: &SharedLogSink, message: &Message) {
         }
 }
 
+/// Formats a host for logging, using the IP address as fallback.
 fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
     host.map(str::to_string)
         .unwrap_or_else(|| fallback.to_string())
@@ -800,6 +1142,10 @@ pub(crate) fn sanitize_module_identifier(input: &str) -> Cow<'_, str> {
     Cow::Owned(sanitized)
 }
 
+/// Formats a bandwidth rate in human-readable units (bytes/s, KiB/s, etc.).
+///
+/// Chooses the largest unit that divides evenly into the rate, falling back
+/// to raw bytes/s for values that don't align to a power-of-1024 boundary.
 pub(crate) fn format_bandwidth_rate(value: NonZeroU64) -> String {
     const KIB: u64 = 1024;
     const MIB: u64 = KIB * 1024;
@@ -1152,6 +1498,203 @@ mod module_access_tests {
 
         let rate = NonZeroU64::new(1025).unwrap();
         assert_eq!(format_bandwidth_rate(rate), "1025 bytes/s");
+    }
+
+    // Tests for determine_server_role
+
+    #[test]
+    fn determine_server_role_returns_generator_with_sender_flag() {
+        let args = vec![
+            "--server".to_string(),
+            "--sender".to_string(),
+            "-vvre.iLsfxCIvu".to_string(),
+            ".".to_string(),
+            "testmod/".to_string(),
+        ];
+        assert_eq!(determine_server_role(&args), ServerRole::Generator);
+    }
+
+    #[test]
+    fn determine_server_role_returns_receiver_without_sender_flag() {
+        let args = vec![
+            "--server".to_string(),
+            "-vvre.iLsfxCIvu".to_string(),
+            ".".to_string(),
+            "testmod/".to_string(),
+        ];
+        assert_eq!(determine_server_role(&args), ServerRole::Receiver);
+    }
+
+    #[test]
+    fn determine_server_role_returns_receiver_for_empty_args() {
+        let args: Vec<String> = vec![];
+        assert_eq!(determine_server_role(&args), ServerRole::Receiver);
+    }
+
+    #[test]
+    fn determine_server_role_ignores_sender_in_middle_of_other_arg() {
+        // The "--sender" must be an exact match, not a substring
+        let args = vec![
+            "--server".to_string(),
+            "--not-a-sender".to_string(),
+            ".".to_string(),
+        ];
+        assert_eq!(determine_server_role(&args), ServerRole::Receiver);
+    }
+
+    // Tests for extract_flag_string
+
+    #[test]
+    fn extract_flag_string_finds_short_flags() {
+        let args = vec![
+            "--server".to_string(),
+            "--sender".to_string(),
+            "-vvre.iLsfxCIvu".to_string(),
+            ".".to_string(),
+            "testmod/".to_string(),
+        ];
+        assert_eq!(extract_flag_string(&args), "-vvre.iLsfxCIvu");
+    }
+
+    #[test]
+    fn extract_flag_string_returns_empty_when_no_short_flags() {
+        let args = vec![
+            "--server".to_string(),
+            "--sender".to_string(),
+            ".".to_string(),
+            "testmod/".to_string(),
+        ];
+        assert_eq!(extract_flag_string(&args), "");
+    }
+
+    #[test]
+    fn extract_flag_string_returns_first_short_flag_group() {
+        let args = vec![
+            "--server".to_string(),
+            "-abc".to_string(),
+            "-xyz".to_string(),
+        ];
+        // Should return first match
+        assert_eq!(extract_flag_string(&args), "-abc");
+    }
+
+    #[test]
+    fn extract_flag_string_handles_empty_args() {
+        let args: Vec<String> = vec![];
+        assert_eq!(extract_flag_string(&args), "");
+    }
+
+    #[test]
+    fn extract_flag_string_ignores_double_dash_flags() {
+        let args = vec![
+            "--server".to_string(),
+            "--verbose".to_string(),
+        ];
+        assert_eq!(extract_flag_string(&args), "");
+    }
+
+    // Tests for validate_module_path
+
+    #[test]
+    fn validate_module_path_returns_true_for_existing_path() {
+        // Use temp_dir which always exists
+        let path = std::env::temp_dir();
+        assert!(validate_module_path(&path));
+    }
+
+    #[test]
+    fn validate_module_path_returns_false_for_nonexistent_path() {
+        let path = std::path::Path::new("/this/path/does/not/exist/at/all/12345");
+        assert!(!validate_module_path(path));
+    }
+
+    #[test]
+    fn validate_module_path_works_with_file_path() {
+        // Create a temp file and check it
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("test_validate_module_path.txt");
+        std::fs::write(&test_file, "test").unwrap();
+        assert!(validate_module_path(&test_file));
+        std::fs::remove_file(&test_file).unwrap();
+    }
+
+    // Tests for error file functions
+
+    #[test]
+    fn log_file_error_creates_daemon_error_with_correct_code() {
+        let path = std::path::Path::new("/tmp/test.log");
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test error");
+        let err = log_file_error(path, io_err);
+        assert_eq!(err.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    }
+
+    #[test]
+    fn log_file_error_message_contains_path() {
+        let path = std::path::Path::new("/var/log/rsyncd.log");
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let err = log_file_error(path, io_err);
+        let message = format!("{:?}", err.message());
+        assert!(message.contains("/var/log/rsyncd.log"));
+    }
+
+    #[test]
+    fn pid_file_error_creates_daemon_error_with_correct_code() {
+        let path = std::path::Path::new("/var/run/rsyncd.pid");
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "test error");
+        let err = pid_file_error(path, io_err);
+        assert_eq!(err.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    }
+
+    #[test]
+    fn pid_file_error_message_contains_path() {
+        let path = std::path::Path::new("/var/run/rsyncd.pid");
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
+        let err = pid_file_error(path, io_err);
+        let message = format!("{:?}", err.message());
+        assert!(message.contains("/var/run/rsyncd.pid"));
+    }
+
+    #[test]
+    fn lock_file_error_creates_daemon_error_with_correct_code() {
+        let path = std::path::Path::new("/var/lock/rsyncd.lock");
+        let io_err = std::io::Error::new(std::io::ErrorKind::AlreadyExists, "locked");
+        let err = lock_file_error(path, io_err);
+        assert_eq!(err.exit_code(), FEATURE_UNAVAILABLE_EXIT_CODE);
+    }
+
+    #[test]
+    fn lock_file_error_message_contains_path() {
+        let path = std::path::Path::new("/var/lock/rsyncd.lock");
+        let io_err = std::io::Error::new(std::io::ErrorKind::AlreadyExists, "file locked");
+        let err = lock_file_error(path, io_err);
+        let message = format!("{:?}", err.message());
+        assert!(message.contains("/var/lock/rsyncd.lock"));
+    }
+
+    // Tests for format_host
+
+    #[test]
+    fn format_host_returns_hostname_when_present() {
+        use std::net::IpAddr;
+        let host = Some("example.com");
+        let fallback: IpAddr = "192.168.1.1".parse().unwrap();
+        assert_eq!(format_host(host, fallback), "example.com");
+    }
+
+    #[test]
+    fn format_host_returns_ip_when_hostname_missing() {
+        use std::net::IpAddr;
+        let host: Option<&str> = None;
+        let fallback: IpAddr = "10.0.0.1".parse().unwrap();
+        assert_eq!(format_host(host, fallback), "10.0.0.1");
+    }
+
+    #[test]
+    fn format_host_returns_ipv6_when_hostname_missing() {
+        use std::net::IpAddr;
+        let host: Option<&str> = None;
+        let fallback: IpAddr = "::1".parse().unwrap();
+        assert_eq!(format_host(host, fallback), "::1");
     }
 }
 

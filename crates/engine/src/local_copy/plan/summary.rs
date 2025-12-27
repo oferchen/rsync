@@ -369,3 +369,184 @@ impl LocalCopySummary {
         self.sources_removed = self.sources_removed.saturating_add(1);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_summary_has_zero_counts() {
+        let summary = LocalCopySummary::default();
+        assert_eq!(summary.files_copied(), 0);
+        assert_eq!(summary.regular_files_total(), 0);
+        assert_eq!(summary.directories_created(), 0);
+        assert_eq!(summary.symlinks_copied(), 0);
+        assert_eq!(summary.bytes_copied(), 0);
+        assert_eq!(summary.total_elapsed(), Duration::ZERO);
+    }
+
+    #[test]
+    fn from_receiver_stats_sets_fields() {
+        let summary = LocalCopySummary::from_receiver_stats(100, 50, 1024);
+        assert_eq!(summary.regular_files_total(), 100);
+        assert_eq!(summary.files_copied(), 50);
+        assert_eq!(summary.bytes_received(), 1024);
+    }
+
+    #[test]
+    fn from_generator_stats_sets_fields() {
+        let summary = LocalCopySummary::from_generator_stats(200, 75, 2048);
+        assert_eq!(summary.regular_files_total(), 200);
+        assert_eq!(summary.files_copied(), 75);
+        assert_eq!(summary.bytes_sent(), 2048);
+    }
+
+    #[test]
+    fn record_file_increments_counters() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_file(1000, 800, None);
+
+        assert_eq!(summary.files_copied(), 1);
+        assert_eq!(summary.transferred_file_size(), 1000);
+        assert_eq!(summary.bytes_copied(), 800);
+        assert_eq!(summary.matched_bytes(), 200);
+        assert_eq!(summary.bytes_sent(), 800);
+        assert!(!summary.compression_used());
+    }
+
+    #[test]
+    fn record_file_with_compression() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_file(1000, 800, Some(400));
+
+        assert_eq!(summary.bytes_copied(), 800);
+        assert_eq!(summary.compressed_bytes(), 400);
+        assert!(summary.compression_used());
+        assert_eq!(summary.bytes_sent(), 400);
+    }
+
+    #[test]
+    fn record_multiple_files_accumulates() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_file(100, 80, None);
+        summary.record_file(200, 150, None);
+
+        assert_eq!(summary.files_copied(), 2);
+        assert_eq!(summary.transferred_file_size(), 300);
+        assert_eq!(summary.bytes_copied(), 230);
+    }
+
+    #[test]
+    fn record_regular_file_counters() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_regular_file_total();
+        summary.record_regular_file_total();
+        summary.record_regular_file_matched();
+        summary.record_regular_file_ignored_existing();
+        summary.record_regular_file_skipped_missing();
+        summary.record_regular_file_skipped_newer();
+
+        assert_eq!(summary.regular_files_total(), 2);
+        assert_eq!(summary.regular_files_matched(), 1);
+        assert_eq!(summary.regular_files_ignored_existing(), 1);
+        assert_eq!(summary.regular_files_skipped_missing(), 1);
+        assert_eq!(summary.regular_files_skipped_newer(), 1);
+    }
+
+    #[test]
+    fn record_directory_counters() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_directory_total();
+        summary.record_directory_total();
+        summary.record_directory();
+
+        assert_eq!(summary.directories_total(), 2);
+        assert_eq!(summary.directories_created(), 1);
+    }
+
+    #[test]
+    fn record_symlink_counters() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_symlink_total();
+        summary.record_symlink();
+
+        assert_eq!(summary.symlinks_total(), 1);
+        assert_eq!(summary.symlinks_copied(), 1);
+    }
+
+    #[test]
+    fn record_device_counters() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_device_total();
+        summary.record_device();
+
+        assert_eq!(summary.devices_total(), 1);
+        assert_eq!(summary.devices_created(), 1);
+    }
+
+    #[test]
+    fn record_fifo_counters() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_fifo_total();
+        summary.record_fifo();
+
+        assert_eq!(summary.fifos_total(), 1);
+        assert_eq!(summary.fifos_created(), 1);
+    }
+
+    #[test]
+    fn record_hard_link() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_hard_link();
+        summary.record_hard_link();
+
+        assert_eq!(summary.hard_links_created(), 2);
+    }
+
+    #[test]
+    fn record_deletion_and_source_removal() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_deletion();
+        summary.record_deletion();
+        summary.record_source_removed();
+
+        assert_eq!(summary.items_deleted(), 2);
+        assert_eq!(summary.sources_removed(), 1);
+    }
+
+    #[test]
+    fn record_elapsed_and_bandwidth_sleep() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_elapsed(Duration::from_millis(100));
+        summary.record_elapsed(Duration::from_millis(50));
+        summary.record_bandwidth_sleep(Duration::from_millis(20));
+
+        assert_eq!(summary.total_elapsed(), Duration::from_millis(150));
+        assert_eq!(summary.bandwidth_sleep(), Duration::from_millis(20));
+    }
+
+    #[test]
+    fn record_file_list_stats() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_file_list_entry(100);
+        summary.record_file_list_entry(200);
+        summary.record_file_list_generation(Duration::from_millis(50));
+        summary.record_file_list_transfer(Duration::from_millis(30));
+
+        assert_eq!(summary.file_list_size(), 300);
+        assert_eq!(
+            summary.file_list_generation_time(),
+            Duration::from_millis(50)
+        );
+        assert_eq!(summary.file_list_transfer_time(), Duration::from_millis(30));
+    }
+
+    #[test]
+    fn record_total_bytes() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_total_bytes(500);
+        summary.record_total_bytes(300);
+
+        assert_eq!(summary.total_source_bytes(), 800);
+    }
+}

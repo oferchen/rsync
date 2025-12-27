@@ -533,4 +533,166 @@ mod tests {
         assert!(restored.compat_flags.is_none());
         assert_eq!(99999, restored.checksum_seed);
     }
+
+    #[test]
+    fn test_batch_flags_default() {
+        let flags = BatchFlags::default();
+        assert!(!flags.recurse);
+        assert!(!flags.preserve_uid);
+        assert!(!flags.preserve_gid);
+        assert!(!flags.preserve_links);
+        assert!(!flags.preserve_devices);
+        assert!(!flags.preserve_hard_links);
+        assert!(!flags.always_checksum);
+    }
+
+    #[test]
+    fn test_batch_flags_protocol_30_features() {
+        let flags = BatchFlags {
+            iconv: true,
+            preserve_acls: true,
+            preserve_xattrs: true,
+            inplace: true,
+            append: true,
+            append_verify: true,
+            ..Default::default()
+        };
+
+        let bitmap = flags.to_bitmap(30);
+        let restored = BatchFlags::from_bitmap(bitmap, 30);
+
+        assert_eq!(flags.iconv, restored.iconv);
+        assert_eq!(flags.preserve_acls, restored.preserve_acls);
+        assert_eq!(flags.preserve_xattrs, restored.preserve_xattrs);
+        assert_eq!(flags.inplace, restored.inplace);
+        assert_eq!(flags.append, restored.append);
+        assert_eq!(flags.append_verify, restored.append_verify);
+    }
+
+    #[test]
+    fn test_batch_flags_protocol_30_not_in_28() {
+        let flags = BatchFlags {
+            iconv: true,
+            preserve_acls: true,
+            preserve_xattrs: true,
+            ..Default::default()
+        };
+
+        // Protocol 28 should not include protocol 30 flags
+        let bitmap = flags.to_bitmap(28);
+        let restored = BatchFlags::from_bitmap(bitmap, 28);
+
+        assert!(!restored.iconv);
+        assert!(!restored.preserve_acls);
+        assert!(!restored.preserve_xattrs);
+    }
+
+    #[test]
+    fn test_batch_flags_write_read_roundtrip() {
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: false,
+            preserve_gid: true,
+            preserve_links: false,
+            preserve_devices: true,
+            preserve_hard_links: false,
+            always_checksum: true,
+            xfer_dirs: false,
+            do_compression: true,
+            ..Default::default()
+        };
+
+        let mut buf = Vec::new();
+        flags.write_to(&mut buf).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let restored = BatchFlags::read_from(&mut cursor).unwrap();
+
+        // These depend on protocol version in read_from, so just check bitmap
+        assert_eq!(flags.to_bitmap(30), restored.to_bitmap(30));
+    }
+
+    #[test]
+    fn test_batch_header_new_creates_compat_flags_for_protocol_30() {
+        let header = BatchHeader::new(30, 42);
+        assert_eq!(header.compat_flags, Some(0));
+    }
+
+    #[test]
+    fn test_batch_header_new_no_compat_flags_for_protocol_29() {
+        let header = BatchHeader::new(29, 42);
+        assert!(header.compat_flags.is_none());
+    }
+
+    #[test]
+    fn test_batch_flags_clone() {
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            ..Default::default()
+        };
+        let cloned = flags;
+        assert_eq!(flags, cloned);
+    }
+
+    #[test]
+    fn test_batch_header_clone() {
+        let header = BatchHeader::new(30, 12345);
+        let cloned = header.clone();
+        assert_eq!(header.protocol_version, cloned.protocol_version);
+        assert_eq!(header.checksum_seed, cloned.checksum_seed);
+    }
+
+    #[test]
+    fn test_varint_edge_cases() {
+        // Test boundary values for varint encoding
+        let values = [0u64, 127, 128, 16383, 16384, 2097151, 2097152];
+        for &val in &values {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, val).unwrap();
+            let mut cursor = Cursor::new(buf);
+            let read_val = read_varint(&mut cursor).unwrap();
+            assert_eq!(val, read_val, "Failed for value {val}");
+        }
+    }
+
+    #[test]
+    fn test_batch_flags_all_set() {
+        let flags = BatchFlags {
+            recurse: true,
+            preserve_uid: true,
+            preserve_gid: true,
+            preserve_links: true,
+            preserve_devices: true,
+            preserve_hard_links: true,
+            always_checksum: true,
+            xfer_dirs: true,
+            do_compression: true,
+            iconv: true,
+            preserve_acls: true,
+            preserve_xattrs: true,
+            inplace: true,
+            append: true,
+            append_verify: true,
+        };
+
+        let bitmap = flags.to_bitmap(30);
+        let restored = BatchFlags::from_bitmap(bitmap, 30);
+        assert_eq!(flags, restored);
+    }
+
+    #[test]
+    fn test_batch_flags_debug_format() {
+        let flags = BatchFlags::default();
+        let debug = format!("{flags:?}");
+        assert!(debug.contains("BatchFlags"));
+    }
+
+    #[test]
+    fn test_batch_header_debug_format() {
+        let header = BatchHeader::new(30, 42);
+        let debug = format!("{header:?}");
+        assert!(debug.contains("BatchHeader"));
+        assert!(debug.contains("30"));
+    }
 }

@@ -301,3 +301,116 @@ fn handle_binary_session_internal(
     Ok(())
 }
 
+#[cfg(test)]
+mod session_runtime_tests {
+    use super::*;
+
+    // Tests for SessionStyle
+
+    #[test]
+    fn session_style_eq_legacy() {
+        assert_eq!(SessionStyle::Legacy, SessionStyle::Legacy);
+    }
+
+    #[test]
+    fn session_style_eq_binary() {
+        assert_eq!(SessionStyle::Binary, SessionStyle::Binary);
+    }
+
+    #[test]
+    fn session_style_ne() {
+        assert_ne!(SessionStyle::Legacy, SessionStyle::Binary);
+    }
+
+    #[test]
+    fn session_style_clone() {
+        let style = SessionStyle::Legacy;
+        let cloned = style;
+        assert_eq!(style, cloned);
+    }
+
+    #[test]
+    fn session_style_debug() {
+        let style = SessionStyle::Legacy;
+        let debug = format!("{style:?}");
+        assert!(debug.contains("Legacy"));
+    }
+
+    // Tests for SessionParams
+
+    #[test]
+    fn session_params_fields() {
+        let modules: Vec<ModuleRuntime> = vec![];
+        let motd_lines: Vec<String> = vec![];
+        let params = SessionParams {
+            modules: &modules,
+            motd_lines: &motd_lines,
+            daemon_limit: None,
+            daemon_burst: None,
+            log_sink: None,
+            reverse_lookup: false,
+            delegation: None,
+        };
+        assert!(params.modules.is_empty());
+        assert!(params.motd_lines.is_empty());
+        assert!(params.daemon_limit.is_none());
+        assert!(!params.reverse_lookup);
+    }
+
+    #[test]
+    fn session_params_with_limits() {
+        let modules: Vec<ModuleRuntime> = vec![];
+        let motd_lines: Vec<String> = vec![];
+        let limit = NonZeroU64::new(1000);
+        let burst = NonZeroU64::new(2000);
+        let params = SessionParams {
+            modules: &modules,
+            motd_lines: &motd_lines,
+            daemon_limit: limit,
+            daemon_burst: burst,
+            log_sink: None,
+            reverse_lookup: true,
+            delegation: None,
+        };
+        assert_eq!(params.daemon_limit, NonZeroU64::new(1000));
+        assert_eq!(params.daemon_burst, NonZeroU64::new(2000));
+        assert!(params.reverse_lookup);
+    }
+
+    // Tests for LegacySessionParams
+
+    #[test]
+    fn legacy_session_params_fields() {
+        let modules: Vec<ModuleRuntime> = vec![];
+        let motd_lines: Vec<String> = vec![];
+        let params = LegacySessionParams {
+            modules: &modules,
+            motd_lines: &motd_lines,
+            daemon_limit: None,
+            daemon_burst: None,
+            log_sink: None,
+            peer_host: None,
+            reverse_lookup: false,
+        };
+        assert!(params.modules.is_empty());
+        assert!(params.peer_host.is_none());
+    }
+
+    #[test]
+    fn legacy_session_params_with_host() {
+        let modules: Vec<ModuleRuntime> = vec![];
+        let motd_lines: Vec<String> = vec![];
+        let params = LegacySessionParams {
+            modules: &modules,
+            motd_lines: &motd_lines,
+            daemon_limit: None,
+            daemon_burst: None,
+            log_sink: None,
+            peer_host: Some("example.com".to_string()),
+            reverse_lookup: true,
+        };
+        assert_eq!(params.peer_host.as_deref(), Some("example.com"));
+        assert!(params.reverse_lookup);
+    }
+}
+

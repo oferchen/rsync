@@ -242,82 +242,334 @@ mod tests {
         writer.finalize().unwrap();
     }
 
-    #[test]
-    fn test_batch_reader_create() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("test.batch");
-        create_test_batch(&batch_path);
+    mod reader_creation_tests {
+        use super::*;
 
-        let config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            30,
-        );
+        #[test]
+        fn create_with_valid_file() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
 
-        let reader = BatchReader::new(config);
-        assert!(reader.is_ok());
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let reader = BatchReader::new(config);
+            assert!(reader.is_ok());
+        }
+
+        #[test]
+        fn create_with_nonexistent_file() {
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                "/nonexistent/path/batch.file".to_string(),
+                30,
+            );
+
+            let reader = BatchReader::new(config);
+            assert!(reader.is_err());
+        }
+
+        #[test]
+        fn header_is_none_before_read() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let reader = BatchReader::new(config).unwrap();
+            assert!(reader.header().is_none());
+        }
     }
 
-    #[test]
-    fn test_batch_reader_read_header() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("test.batch");
-        create_test_batch(&batch_path);
+    mod header_tests {
+        use super::*;
 
-        let config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            30,
-        );
+        #[test]
+        fn read_header_success() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
 
-        let mut reader = BatchReader::new(config).unwrap();
-        let flags = reader.read_header().unwrap();
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
 
-        assert!(flags.recurse);
-        assert!(reader.header().is_some());
+            let mut reader = BatchReader::new(config).unwrap();
+            let flags = reader.read_header().unwrap();
+
+            assert!(flags.recurse);
+            assert!(reader.header().is_some());
+        }
+
+        #[test]
+        fn double_header_read_error() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+            let result = reader.read_header();
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn protocol_mismatch() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                28, // Different from the 30 used to write
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            let result = reader.read_header();
+            assert!(result.is_err());
+        }
     }
 
-    #[test]
-    fn test_batch_reader_read_data() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("test.batch");
-        create_test_batch(&batch_path);
+    mod data_tests {
+        use super::*;
 
-        let config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            30,
-        );
+        #[test]
+        fn read_data_without_header() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
 
-        let mut reader = BatchReader::new(config).unwrap();
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
 
-        // Must read header first
-        let mut buf = [0u8; 100];
-        assert!(reader.read_data(&mut buf).is_err());
+            let mut reader = BatchReader::new(config).unwrap();
+            let mut buf = [0u8; 100];
+            assert!(reader.read_data(&mut buf).is_err());
+        }
 
-        reader.read_header().unwrap();
+        #[test]
+        fn read_data_success() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
 
-        // Now data read should succeed
-        let n = reader.read_data(&mut buf).unwrap();
-        assert!(n > 0);
-        assert_eq!(&buf[..14], b"test data here");
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            let mut buf = [0u8; 100];
+            let n = reader.read_data(&mut buf).unwrap();
+            assert!(n > 0);
+            assert_eq!(&buf[..14], b"test data here");
+        }
+
+        #[test]
+        fn read_exact_without_header() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            let mut buf = [0u8; 10];
+            assert!(reader.read_exact(&mut buf).is_err());
+        }
+
+        #[test]
+        fn read_exact_success() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf, b"test");
+        }
+
+        #[test]
+        fn read_exact_insufficient_data() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            // Try to read more data than available
+            let mut buf = [0u8; 1000];
+            let result = reader.read_exact(&mut buf);
+            assert!(result.is_err());
+        }
     }
 
-    #[test]
-    fn test_batch_reader_protocol_mismatch() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("test.batch");
-        create_test_batch(&batch_path);
+    mod file_entry_tests {
+        use super::*;
 
-        // Try to read with wrong protocol version
-        let config = BatchConfig::new(
-            BatchMode::Read,
-            batch_path.to_string_lossy().to_string(),
-            28, // Different from the 30 used to write
-        );
+        #[test]
+        fn read_file_entry_without_header() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
 
-        let mut reader = BatchReader::new(config).unwrap();
-        let result = reader.read_header();
-        assert!(result.is_err());
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            let result = reader.read_file_entry();
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn read_file_entry_returns_none_on_eof() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("empty.batch");
+
+            // Create a batch with just header, no file entries
+            let config = BatchConfig::new(
+                BatchMode::Write,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+            let mut writer = BatchWriter::new(config).unwrap();
+            writer.write_header(BatchFlags::default()).unwrap();
+            writer.finalize().unwrap();
+
+            // Read it back
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+
+            // Should return None on EOF
+            let entry = reader.read_file_entry().unwrap();
+            assert!(entry.is_none());
+        }
+    }
+
+    mod delta_ops_tests {
+        use super::*;
+
+        #[test]
+        fn read_delta_ops_without_header() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            let result = reader.read_all_delta_ops();
+            assert!(result.is_err());
+        }
+    }
+
+    mod config_tests {
+        use super::*;
+
+        #[test]
+        fn config_accessor() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let reader = BatchReader::new(config).unwrap();
+            assert_eq!(reader.config().protocol_version, 30);
+        }
+
+        #[test]
+        fn header_accessor_before_read() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let reader = BatchReader::new(config).unwrap();
+            assert!(reader.header().is_none());
+        }
+
+        #[test]
+        fn header_accessor_after_read() {
+            let temp_dir = TempDir::new().unwrap();
+            let batch_path = temp_dir.path().join("test.batch");
+            create_test_batch(&batch_path);
+
+            let config = BatchConfig::new(
+                BatchMode::Read,
+                batch_path.to_string_lossy().to_string(),
+                30,
+            );
+
+            let mut reader = BatchReader::new(config).unwrap();
+            reader.read_header().unwrap();
+            let header = reader.header().unwrap();
+            assert_eq!(header.protocol_version, 30);
+        }
     }
 }

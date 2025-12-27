@@ -1,52 +1,79 @@
+/// Parses a comma/whitespace-separated list with deduplication.
+///
+/// This generic helper handles the common pattern of:
+/// 1. Splitting input by comma and whitespace
+/// 2. Trimming tokens and skipping empty ones
+/// 3. Deduplicating based on a key function
+/// 4. Transforming tokens for storage
+///
+/// # Arguments
+/// * `value` - The input string to parse
+/// * `key_fn` - Function to generate deduplication key from token
+/// * `value_fn` - Function to transform token for storage
+/// * `empty_error` - Error message when list is empty
+fn parse_dedup_list<K, V, F, G>(
+    value: &str,
+    key_fn: F,
+    value_fn: G,
+    empty_error: &str,
+) -> Result<Vec<V>, String>
+where
+    K: Eq + std::hash::Hash,
+    F: Fn(&str) -> K,
+    G: Fn(&str) -> V,
+{
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+
+    for segment in value.split(',') {
+        for token in segment.split_whitespace() {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let key = key_fn(trimmed);
+            if seen.insert(key) {
+                items.push(value_fn(trimmed));
+            }
+        }
+    }
+
+    if items.is_empty() {
+        return Err(empty_error.to_string());
+    }
+
+    Ok(items)
+}
+
+/// Parses a comma/whitespace-separated list of usernames with deduplication.
+///
+/// Usernames are case-preserved but deduplicated case-insensitively.
 pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
-    let mut users = Vec::new();
-    let mut seen = HashSet::new();
-
-    for segment in value.split(',') {
-        for token in segment.split_whitespace() {
-            let trimmed = token.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            if seen.insert(trimmed.to_ascii_lowercase()) {
-                users.push(trimmed.to_string());
-            }
-        }
-    }
-
-    if users.is_empty() {
-        return Err("must specify at least one username".to_string());
-    }
-
-    Ok(users)
+    parse_dedup_list(
+        value,
+        |s| s.to_ascii_lowercase(),
+        |s| s.to_string(),
+        "must specify at least one username",
+    )
 }
 
+/// Parses a comma/whitespace-separated list of refused options with deduplication.
+///
+/// Options are normalized to lowercase for both storage and deduplication.
 pub(crate) fn parse_refuse_option_list(value: &str) -> Result<Vec<String>, String> {
-    let mut options = Vec::new();
-    let mut seen = HashSet::new();
-
-    for segment in value.split(',') {
-        for token in segment.split_whitespace() {
-            let trimmed = token.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let canonical = trimmed.to_ascii_lowercase();
-            if seen.insert(canonical.clone()) {
-                options.push(canonical);
-            }
-        }
-    }
-
-    if options.is_empty() {
-        return Err("must specify at least one option".to_string());
-    }
-
-    Ok(options)
+    parse_dedup_list(
+        value,
+        |s| s.to_ascii_lowercase(),
+        |s| s.to_ascii_lowercase(),
+        "must specify at least one option",
+    )
 }
 
+/// Validates a secrets file path from a config directive.
+///
+/// Checks that the file exists, is a regular file, and has secure permissions
+/// (0600 on Unix). Returns a [`DaemonError`] with config context on failure.
 fn validate_secrets_file(
     path: &Path,
     config_path: &Path,
@@ -71,6 +98,10 @@ fn validate_secrets_file(
     Ok(path.to_path_buf())
 }
 
+/// Validates a secrets file path from an environment variable.
+///
+/// Similar to [`validate_secrets_file`], but returns `Ok(None)` if the file
+/// doesn't exist, and includes the environment variable name in error messages.
 fn validate_secrets_file_from_env(
     path: &Path,
     env: &'static str,
@@ -97,6 +128,9 @@ fn validate_secrets_file_from_env(
     Ok(Some(path.to_path_buf()))
 }
 
+/// Ensures a file has proper secrets file permissions.
+///
+/// Verifies the file is a regular file and (on Unix) has mode 0600.
 fn ensure_secrets_file(path: &Path, metadata: &fs::Metadata) -> Result<(), String> {
     if !metadata.is_file() {
         return Err(format!(
@@ -119,6 +153,10 @@ fn ensure_secrets_file(path: &Path, metadata: &fs::Metadata) -> Result<(), Strin
     Ok(())
 }
 
+/// Parses a boolean value from a config directive.
+///
+/// Accepts common boolean representations: 1/0, true/false, yes/no, on/off.
+/// Returns `None` for unrecognized values.
 pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
     let normalized = value.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -128,6 +166,7 @@ pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
     }
 }
 
+/// Parses a numeric identifier (uid/gid) from a config value.
 pub(crate) fn parse_numeric_identifier(value: &str) -> Option<u32> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -137,6 +176,10 @@ pub(crate) fn parse_numeric_identifier(value: &str) -> Option<u32> {
     trimmed.parse().ok()
 }
 
+/// Parses a timeout value in seconds.
+///
+/// Returns `Some(None)` for "0" (disabled), `Some(Some(n))` for valid timeouts,
+/// or `None` for empty or invalid input.
 pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -151,6 +194,10 @@ pub(crate) fn parse_timeout_seconds(value: &str) -> Option<Option<NonZeroU64>> {
     }
 }
 
+/// Parses a max-connections directive value.
+///
+/// Returns `Some(None)` for "0" (unlimited), `Some(Some(n))` for a limit,
+/// or `None` for empty or invalid input.
 pub(crate) fn parse_max_connections_directive(value: &str) -> Option<Option<NonZeroU32>> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -164,14 +211,22 @@ pub(crate) fn parse_max_connections_directive(value: &str) -> Option<Option<NonZ
     trimmed.parse::<NonZeroU32>().ok().map(Some)
 }
 
+/// A pattern for matching hosts in allow/deny lists.
+///
+/// Supports wildcards (*), CIDR notation for IP addresses, and hostname patterns.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum HostPattern {
+    /// Matches any host ("*" or "all").
     Any,
+    /// Matches an IPv4 network with CIDR prefix.
     Ipv4 { network: Ipv4Addr, prefix: u8 },
+    /// Matches an IPv6 network with CIDR prefix.
     Ipv6 { network: Ipv6Addr, prefix: u8 },
+    /// Matches by hostname pattern (exact, suffix, or wildcard).
     Hostname(HostnamePattern),
 }
 
+/// IP address family for filtering.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AddressFamily {
     Ipv4,
