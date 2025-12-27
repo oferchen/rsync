@@ -229,3 +229,109 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         self.observer.on_progress(&update);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn create_test_update(
+        total: usize,
+        remaining: usize,
+        index: usize,
+        final_update: bool,
+    ) -> ClientProgressUpdate {
+        let event = ClientEvent::from_progress(
+            Path::new("test.txt"),
+            1024,
+            Some(2048),
+            Duration::from_secs(1),
+            Arc::new(PathBuf::from("/dest")),
+        );
+        ClientProgressUpdate {
+            event,
+            total,
+            remaining,
+            index,
+            total_bytes: Some(2048),
+            final_update,
+            overall_transferred: 5000,
+            overall_total_bytes: Some(10000),
+            overall_elapsed: Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn remaining_returns_count() {
+        let update = create_test_update(10, 5, 5, false);
+        assert_eq!(update.remaining(), 5);
+    }
+
+    #[test]
+    fn total_returns_count() {
+        let update = create_test_update(10, 5, 5, false);
+        assert_eq!(update.total(), 10);
+    }
+
+    #[test]
+    fn index_returns_position() {
+        let update = create_test_update(10, 5, 5, false);
+        assert_eq!(update.index(), 5);
+    }
+
+    #[test]
+    fn total_bytes_returns_value() {
+        let update = create_test_update(10, 5, 5, false);
+        assert_eq!(update.total_bytes(), Some(2048));
+    }
+
+    #[test]
+    fn is_final_returns_true_when_final() {
+        let update = create_test_update(10, 0, 10, true);
+        assert!(update.is_final());
+    }
+
+    #[test]
+    fn is_final_returns_false_when_not_final() {
+        let update = create_test_update(10, 5, 5, false);
+        assert!(!update.is_final());
+    }
+
+    #[test]
+    fn overall_transferred_returns_value() {
+        let update = create_test_update(10, 5, 5, false);
+        assert_eq!(update.overall_transferred(), 5000);
+    }
+
+    #[test]
+    fn overall_total_bytes_returns_value() {
+        let update = create_test_update(10, 5, 5, false);
+        assert_eq!(update.overall_total_bytes(), Some(10000));
+    }
+
+    #[test]
+    fn overall_elapsed_returns_duration() {
+        let update = create_test_update(10, 5, 5, false);
+        assert_eq!(update.overall_elapsed(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn event_returns_reference() {
+        let update = create_test_update(10, 5, 5, false);
+        let _event = update.event();
+        // Just verify we can access the event
+    }
+
+    #[test]
+    fn closure_implements_observer() {
+        let mut updates = Vec::new();
+        let mut observer = |update: &ClientProgressUpdate| {
+            updates.push(update.index());
+        };
+
+        let update = create_test_update(10, 5, 5, false);
+        observer.on_progress(&update);
+
+        assert_eq!(updates, vec![5]);
+    }
+}

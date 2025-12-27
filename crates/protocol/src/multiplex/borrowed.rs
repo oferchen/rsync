@@ -174,3 +174,135 @@ impl<'a> TryFrom<&'a [u8]> for BorrowedMessageFrame<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MessageHeader;
+
+    fn create_frame_bytes(code: MessageCode, payload: &[u8]) -> Vec<u8> {
+        let header = MessageHeader::new(code, payload.len() as u32).unwrap();
+        let mut bytes = Vec::from(header.encode());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    #[test]
+    fn borrowed_frame_code_returns_correct_value() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"test");
+        let (frame, _) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        assert_eq!(frame.code(), MessageCode::Info);
+    }
+
+    #[test]
+    fn borrowed_frame_payload_returns_slice() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"hello");
+        let (frame, _) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        assert_eq!(frame.payload(), b"hello");
+    }
+
+    #[test]
+    fn borrowed_frame_payload_len_matches() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"abc");
+        let (frame, _) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        assert_eq!(frame.payload_len(), 3);
+    }
+
+    #[test]
+    fn borrowed_frame_empty_payload() {
+        let bytes = create_frame_bytes(MessageCode::Error, b"");
+        let (frame, _) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        assert!(frame.payload().is_empty());
+        assert_eq!(frame.payload_len(), 0);
+    }
+
+    #[test]
+    fn borrowed_frame_into_owned() {
+        let bytes = create_frame_bytes(MessageCode::Warning, b"test");
+        let (frame, _) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        let owned = frame.into_owned().unwrap();
+        assert_eq!(owned.code(), MessageCode::Warning);
+        assert_eq!(owned.payload(), b"test");
+    }
+
+    #[test]
+    fn decode_from_slice_returns_remainder() {
+        let mut bytes = create_frame_bytes(MessageCode::Info, b"abc");
+        bytes.extend_from_slice(b"extra");
+        let (frame, remainder) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        assert_eq!(frame.payload(), b"abc");
+        assert_eq!(remainder, b"extra");
+    }
+
+    #[test]
+    fn decode_from_slice_empty_remainder() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"test");
+        let (_, remainder) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn try_from_slice_succeeds_exact() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"test");
+        let frame: BorrowedMessageFrame<'_> = bytes.as_slice().try_into().unwrap();
+        assert_eq!(frame.code(), MessageCode::Info);
+        assert_eq!(frame.payload(), b"test");
+    }
+
+    #[test]
+    fn try_from_slice_fails_with_trailing() {
+        let mut bytes = create_frame_bytes(MessageCode::Info, b"abc");
+        bytes.extend_from_slice(b"extra");
+        let result: Result<BorrowedMessageFrame<'_>, _> = bytes.as_slice().try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn iterator_yields_all_frames() {
+        let mut bytes = create_frame_bytes(MessageCode::Info, b"first");
+        bytes.extend_from_slice(&create_frame_bytes(MessageCode::Error, b"second"));
+        bytes.extend_from_slice(&create_frame_bytes(MessageCode::Warning, b"third"));
+
+        let iter = BorrowedMessageFrames::new(&bytes);
+        let frames: Vec<_> = iter.collect::<Result<Vec<_>, _>>().unwrap();
+
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0].code(), MessageCode::Info);
+        assert_eq!(frames[1].code(), MessageCode::Error);
+        assert_eq!(frames[2].code(), MessageCode::Warning);
+    }
+
+    #[test]
+    fn iterator_remainder_empty_after_complete() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"test");
+        let mut iter = BorrowedMessageFrames::new(&bytes);
+        let _ = iter.next();
+        assert!(iter.next().is_none());
+        assert!(iter.remainder().is_empty());
+    }
+
+    #[test]
+    fn iterator_stops_on_empty_input() {
+        let iter = BorrowedMessageFrames::new(&[]);
+        let frames: Vec<_> = iter.collect::<Result<Vec<_>, _>>().unwrap();
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn iterator_is_fused() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"a");
+        let mut iter = BorrowedMessageFrames::new(&bytes);
+        let _ = iter.next();
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn borrowed_frame_eq_and_clone() {
+        let bytes = create_frame_bytes(MessageCode::Info, b"test");
+        let (frame1, _) = BorrowedMessageFrame::decode_from_slice(&bytes).unwrap();
+        let frame2 = frame1;
+        assert_eq!(frame1, frame2);
+    }
+}
