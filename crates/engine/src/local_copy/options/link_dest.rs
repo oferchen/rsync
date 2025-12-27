@@ -89,3 +89,73 @@ impl LinkDestEntry {
         base.join(relative)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_link_dest_adds_entry() {
+        let options = LocalCopyOptions::new().with_link_dest(PathBuf::from("/backup"));
+        assert_eq!(options.link_dest_entries().len(), 1);
+    }
+
+    #[test]
+    fn with_link_dest_ignores_empty() {
+        let options = LocalCopyOptions::new().with_link_dest(PathBuf::from(""));
+        assert!(options.link_dest_entries().is_empty());
+    }
+
+    #[test]
+    fn extend_link_dests_adds_multiple() {
+        let paths = vec!["/backup1", "/backup2"];
+        let options = LocalCopyOptions::new().extend_link_dests(paths);
+        assert_eq!(options.link_dest_entries().len(), 2);
+    }
+
+    #[test]
+    fn hard_links_enabled() {
+        let options = LocalCopyOptions::new().hard_links(true);
+        assert!(options.hard_links_enabled());
+    }
+
+    #[test]
+    fn hard_links_disabled() {
+        let options = LocalCopyOptions::new().hard_links(false);
+        assert!(!options.hard_links_enabled());
+    }
+
+    #[test]
+    fn push_reference_directory() {
+        use super::super::types::ReferenceDirectoryKind;
+        let options = LocalCopyOptions::new()
+            .push_reference_directory(ReferenceDirectory::new(ReferenceDirectoryKind::Compare, "/compare"));
+        assert_eq!(options.reference_directories().len(), 1);
+    }
+
+    #[test]
+    fn link_dest_entry_new_absolute() {
+        let entry = LinkDestEntry::new(PathBuf::from("/absolute/path"));
+        assert!(!entry.is_relative);
+    }
+
+    #[test]
+    fn link_dest_entry_new_relative() {
+        let entry = LinkDestEntry::new(PathBuf::from("relative/path"));
+        assert!(entry.is_relative);
+    }
+
+    #[test]
+    fn link_dest_entry_resolve_absolute() {
+        let entry = LinkDestEntry::new(PathBuf::from("/absolute/backup"));
+        let resolved = entry.resolve(Path::new("/dest"), Path::new("file.txt"));
+        assert_eq!(resolved, PathBuf::from("/absolute/backup/file.txt"));
+    }
+
+    #[test]
+    fn link_dest_entry_resolve_relative() {
+        let entry = LinkDestEntry::new(PathBuf::from("backup"));
+        let resolved = entry.resolve(Path::new("/dest"), Path::new("file.txt"));
+        assert_eq!(resolved, PathBuf::from("/dest/backup/file.txt"));
+    }
+}
