@@ -496,4 +496,238 @@ mod tests {
         assert!(signature.blocks().is_empty());
         assert_eq!(signature.total_bytes(), 0);
     }
+
+    // SignatureAlgorithm tests
+    #[test]
+    fn signature_algorithm_md4_digest_len() {
+        assert_eq!(SignatureAlgorithm::Md4.digest_len(), 16);
+    }
+
+    #[test]
+    fn signature_algorithm_md5_digest_len() {
+        let algo = SignatureAlgorithm::Md5 {
+            seed_config: Md5Seed::none(),
+        };
+        assert_eq!(algo.digest_len(), 16);
+    }
+
+    #[test]
+    fn signature_algorithm_sha1_digest_len() {
+        assert_eq!(SignatureAlgorithm::Sha1.digest_len(), 20);
+    }
+
+    #[test]
+    fn signature_algorithm_xxh64_digest_len() {
+        let algo = SignatureAlgorithm::Xxh64 { seed: 0 };
+        assert_eq!(algo.digest_len(), 8);
+    }
+
+    #[test]
+    fn signature_algorithm_xxh3_digest_len() {
+        let algo = SignatureAlgorithm::Xxh3 { seed: 0 };
+        assert_eq!(algo.digest_len(), 8);
+    }
+
+    #[test]
+    fn signature_algorithm_xxh3_128_digest_len() {
+        let algo = SignatureAlgorithm::Xxh3_128 { seed: 0 };
+        assert_eq!(algo.digest_len(), 16);
+    }
+
+    #[test]
+    fn signature_algorithm_compute_truncated_shorter_than_full() {
+        let algo = SignatureAlgorithm::Md4;
+        let data = b"test data";
+        let truncated = algo.compute_truncated(data, 8);
+        assert_eq!(truncated.len(), 8);
+    }
+
+    #[test]
+    fn signature_algorithm_compute_truncated_at_full_length() {
+        let algo = SignatureAlgorithm::Md4;
+        let data = b"test data";
+        let truncated = algo.compute_truncated(data, 16);
+        assert_eq!(truncated.len(), 16);
+    }
+
+    #[test]
+    fn signature_algorithm_compute_truncated_longer_than_full() {
+        let algo = SignatureAlgorithm::Xxh64 { seed: 42 };
+        let data = b"test data";
+        // Requesting more than digest length returns full digest
+        let truncated = algo.compute_truncated(data, 16);
+        assert_eq!(truncated.len(), 8);
+    }
+
+    #[test]
+    fn signature_algorithm_clone() {
+        let algo = SignatureAlgorithm::Md4;
+        let cloned = algo;
+        assert_eq!(algo, cloned);
+    }
+
+    #[test]
+    fn signature_algorithm_debug() {
+        let algo = SignatureAlgorithm::Md4;
+        let debug = format!("{algo:?}");
+        assert!(debug.contains("Md4"));
+    }
+
+    #[test]
+    fn signature_algorithm_eq() {
+        let algo1 = SignatureAlgorithm::Xxh64 { seed: 42 };
+        let algo2 = SignatureAlgorithm::Xxh64 { seed: 42 };
+        let algo3 = SignatureAlgorithm::Xxh64 { seed: 0 };
+        assert_eq!(algo1, algo2);
+        assert_ne!(algo1, algo3);
+    }
+
+    // SignatureBlock tests
+    #[test]
+    fn signature_block_from_raw_parts() {
+        let rolling = RollingDigest::from_bytes(b"test");
+        let strong = vec![1, 2, 3, 4];
+        let block = SignatureBlock::from_raw_parts(42, rolling, strong.clone());
+        assert_eq!(block.index(), 42);
+        assert_eq!(block.rolling(), rolling);
+        assert_eq!(block.strong(), &strong);
+    }
+
+    #[test]
+    fn signature_block_len_matches_rolling_digest_len() {
+        let rolling = RollingDigest::from_bytes(b"hello world");
+        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        assert_eq!(block.len(), 11);
+    }
+
+    #[test]
+    fn signature_block_is_empty_for_zero_length() {
+        let rolling = RollingDigest::from_bytes(b"");
+        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        assert!(block.is_empty());
+    }
+
+    #[test]
+    fn signature_block_is_not_empty_for_non_zero_length() {
+        let rolling = RollingDigest::from_bytes(b"data");
+        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        assert!(!block.is_empty());
+    }
+
+    #[test]
+    fn signature_block_clone() {
+        let rolling = RollingDigest::from_bytes(b"test");
+        let block = SignatureBlock::from_raw_parts(1, rolling, vec![1, 2, 3]);
+        let cloned = block.clone();
+        assert_eq!(block, cloned);
+    }
+
+    #[test]
+    fn signature_block_debug() {
+        let rolling = RollingDigest::from_bytes(b"test");
+        let block = SignatureBlock::from_raw_parts(0, rolling, vec![]);
+        let debug = format!("{block:?}");
+        assert!(debug.contains("SignatureBlock"));
+    }
+
+    // FileSignature tests
+    #[test]
+    fn file_signature_from_raw_parts() {
+        let sig_layout = layout(100, 16);
+        let blocks = vec![];
+        let sig = FileSignature::from_raw_parts(sig_layout, blocks.clone(), 100);
+        assert_eq!(sig.layout(), sig_layout);
+        assert_eq!(sig.blocks(), &blocks);
+        assert_eq!(sig.total_bytes(), 100);
+    }
+
+    #[test]
+    fn file_signature_clone() {
+        let sig_layout = layout(50, 16);
+        let sig = FileSignature::from_raw_parts(sig_layout, vec![], 50);
+        let cloned = sig.clone();
+        assert_eq!(sig, cloned);
+    }
+
+    #[test]
+    fn file_signature_debug() {
+        let sig_layout = layout(50, 16);
+        let sig = FileSignature::from_raw_parts(sig_layout, vec![], 50);
+        let debug = format!("{sig:?}");
+        assert!(debug.contains("FileSignature"));
+    }
+
+    // SignatureError tests
+    #[test]
+    fn signature_error_io_displays_message() {
+        let error: SignatureError =
+            io::Error::new(io::ErrorKind::NotFound, "file not found").into();
+        let display = format!("{error}");
+        assert!(display.contains("read"));
+    }
+
+    #[test]
+    fn signature_error_trailing_data_displays_bytes() {
+        let error = SignatureError::TrailingData { bytes: 42 };
+        let display = format!("{error}");
+        assert!(display.contains("42"));
+    }
+
+    #[test]
+    fn signature_error_too_many_blocks_displays_count() {
+        let error = SignatureError::TooManyBlocks(999999);
+        let display = format!("{error}");
+        assert!(display.contains("999999"));
+    }
+
+    #[test]
+    fn signature_error_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        // thiserror generated Error types are Send + Sync if their fields are
+        assert_send_sync::<io::Error>();
+    }
+
+    // Algorithm-specific signature tests
+    #[test]
+    fn generate_signature_sha1() {
+        let sig_layout = layout(11, 16);
+        let input = Cursor::new(b"hello world".to_vec());
+        let signature =
+            generate_file_signature(input, sig_layout, SignatureAlgorithm::Sha1)
+                .expect("signature generation succeeds");
+
+        assert_eq!(signature.blocks().len(), 1);
+        // SHA1 produces 20 bytes, truncated to 16 by layout
+        assert_eq!(signature.blocks()[0].strong().len(), 16);
+    }
+
+    #[test]
+    fn generate_signature_xxh3() {
+        let sig_layout = layout(11, 8);
+        let input = Cursor::new(b"hello world".to_vec());
+        let signature = generate_file_signature(
+            input,
+            sig_layout,
+            SignatureAlgorithm::Xxh3 { seed: 12345 },
+        )
+        .expect("signature generation succeeds");
+
+        assert_eq!(signature.blocks().len(), 1);
+        assert_eq!(signature.blocks()[0].strong().len(), 8);
+    }
+
+    #[test]
+    fn generate_signature_xxh3_128() {
+        let sig_layout = layout(11, 16);
+        let input = Cursor::new(b"hello world".to_vec());
+        let signature = generate_file_signature(
+            input,
+            sig_layout,
+            SignatureAlgorithm::Xxh3_128 { seed: 12345 },
+        )
+        .expect("signature generation succeeds");
+
+        assert_eq!(signature.blocks().len(), 1);
+        assert_eq!(signature.blocks()[0].strong().len(), 16);
+    }
 }

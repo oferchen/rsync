@@ -195,4 +195,174 @@ mod tests {
             .expect("match");
         assert_eq!(found, 0);
     }
+
+    // Additional index tests
+    #[test]
+    fn delta_signature_index_block_length() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        assert!(index.block_length() > 0);
+    }
+
+    #[test]
+    fn delta_signature_index_strong_length() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        assert_eq!(index.strong_length(), 16);
+    }
+
+    #[test]
+    fn delta_signature_index_block_accessor() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let block = index.block(0);
+        assert_eq!(block.len(), index.block_length());
+    }
+
+    #[test]
+    fn delta_signature_index_clone() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+        let cloned = index.clone();
+
+        assert_eq!(index.block_length(), cloned.block_length());
+        assert_eq!(index.strong_length(), cloned.strong_length());
+    }
+
+    #[test]
+    fn delta_signature_index_debug() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let debug = format!("{index:?}");
+        assert!(debug.contains("DeltaSignatureIndex"));
+    }
+
+    #[test]
+    fn find_match_bytes_wrong_length_returns_none() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let digest = index.block(0).rolling();
+        // Window with wrong length
+        let window = vec![b'a'; index.block_length() - 1];
+        assert!(index.find_match_bytes(digest, &window).is_none());
+    }
+
+    #[test]
+    fn find_match_bytes_no_match_returns_none() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let digest = index.block(0).rolling();
+        // Window with right length but different content
+        let window = vec![b'z'; index.block_length()];
+        assert!(index.find_match_bytes(digest, &window).is_none());
+    }
+
+    #[test]
+    fn find_match_window_wrong_length_returns_none() {
+        let data = vec![b'a'; 2048];
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let digest = index.block(0).rolling();
+        let mut window = VecDeque::new();
+        let mut scratch = Vec::new();
+        // Add fewer bytes than block length
+        for _ in 0..index.block_length() - 1 {
+            window.push_back(b'a');
+        }
+        assert!(index.find_match_window(digest, &window, &mut scratch).is_none());
+    }
 }

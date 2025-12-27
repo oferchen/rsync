@@ -108,4 +108,98 @@ mod tests {
         assert!(notifier.status("serving 0 connections").is_ok());
         assert!(notifier.stopping().is_ok());
     }
+
+    #[test]
+    fn notifier_default_eq() {
+        let a = ServiceNotifier::default();
+        let b = ServiceNotifier::default();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn notifier_clone() {
+        let notifier = ServiceNotifier::new();
+        let cloned = notifier;
+        assert_eq!(notifier, cloned);
+    }
+
+    #[test]
+    fn notifier_debug() {
+        let notifier = ServiceNotifier::new();
+        let debug = format!("{notifier:?}");
+        assert!(debug.contains("ServiceNotifier"));
+    }
+
+    #[test]
+    fn notifier_ready_with_status_succeeds() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        assert!(notifier.ready(Some("status message")).is_ok());
+    }
+
+    #[test]
+    fn notifier_ready_without_status_succeeds() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        assert!(notifier.ready(None).is_ok());
+    }
+
+    #[test]
+    fn notifier_status_with_empty_message_succeeds() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        assert!(notifier.status("").is_ok());
+    }
+
+    #[test]
+    fn notifier_status_with_long_message_succeeds() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        let long_message = "x".repeat(1000);
+        assert!(notifier.status(&long_message).is_ok());
+    }
+
+    #[test]
+    fn notifier_multiple_status_updates_succeed() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        for i in 0..10 {
+            assert!(notifier.status(&format!("update {i}")).is_ok());
+        }
+    }
+
+    #[test]
+    fn notifier_stopping_multiple_times_succeeds() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        // Multiple stopping calls should not fail
+        assert!(notifier.stopping().is_ok());
+        assert!(notifier.stopping().is_ok());
+    }
+
+    #[test]
+    fn notifier_full_lifecycle() {
+        let _env_lock = ENV_LOCK.lock().expect("lock environment guard");
+        let _guard = EnvGuard::remove("NOTIFY_SOCKET");
+
+        let notifier = ServiceNotifier::new();
+        // Simulate typical daemon lifecycle
+        assert!(notifier.ready(Some("Listening on port 873")).is_ok());
+        assert!(notifier.status("Active connections: 0").is_ok());
+        assert!(notifier.status("Active connections: 5").is_ok());
+        assert!(notifier.status("Shutting down...").is_ok());
+        assert!(notifier.stopping().is_ok());
+    }
 }
