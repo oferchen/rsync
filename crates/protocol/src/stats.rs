@@ -97,7 +97,7 @@ impl TransferStats {
         write_varlong30(writer, self.total_written as i64, 3)?;
         write_varlong30(writer, self.total_size as i64, 3)?;
 
-        if protocol.as_u8() >= 29 {
+        if protocol.supports_flist_times() {
             write_varlong30(writer, self.flist_buildtime as i64, 3)?;
             write_varlong30(writer, self.flist_xfertime as i64, 3)?;
         }
@@ -119,7 +119,7 @@ impl TransferStats {
         let total_written = read_varlong30(reader, 3)? as u64;
         let total_size = read_varlong30(reader, 3)? as u64;
 
-        let (flist_buildtime, flist_xfertime) = if protocol.as_u8() >= 29 {
+        let (flist_buildtime, flist_xfertime) = if protocol.supports_flist_times() {
             let buildtime = read_varlong30(reader, 3)? as u64;
             let xfertime = read_varlong30(reader, 3)? as u64;
             (buildtime, xfertime)

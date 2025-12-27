@@ -297,15 +297,15 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
                 rule.xattr_only = true;
                 pattern_start += 1;
             }
-            's' if protocol.as_u8() >= 29 => {
+            's' if protocol.supports_sender_receiver_modifiers() => {
                 rule.sender_side = true;
                 pattern_start += 1;
             }
-            'r' if protocol.as_u8() >= 29 => {
+            'r' if protocol.supports_sender_receiver_modifiers() => {
                 rule.receiver_side = true;
                 pattern_start += 1;
             }
-            'p' if protocol.as_u8() >= 30 => {
+            'p' if protocol.supports_perishable_modifier() => {
                 rule.perishable = true;
                 pattern_start += 1;
             }
