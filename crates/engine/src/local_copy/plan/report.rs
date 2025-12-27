@@ -53,3 +53,70 @@ impl LocalCopyReport {
         &self.destination_root
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_report() {
+        let report = LocalCopyReport::default();
+        assert!(report.records().is_empty());
+        assert_eq!(report.destination_root(), Path::new(""));
+    }
+
+    #[test]
+    fn new_stores_values() {
+        let summary = LocalCopySummary::default();
+        let records = vec![];
+        let dest = PathBuf::from("/dest");
+        let report = LocalCopyReport::new(summary, records, dest.clone());
+        assert_eq!(report.destination_root(), dest);
+    }
+
+    #[test]
+    fn summary_returns_reference() {
+        let report = LocalCopyReport::default();
+        let _summary = report.summary();
+    }
+
+    #[test]
+    fn into_summary_consumes_report() {
+        let report = LocalCopyReport::default();
+        let _summary = report.into_summary();
+    }
+
+    #[test]
+    fn records_returns_slice() {
+        let report = LocalCopyReport::default();
+        assert!(report.records().is_empty());
+    }
+
+    #[test]
+    fn into_records_consumes_report() {
+        let report = LocalCopyReport::default();
+        let records = report.into_records();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn destination_root_returns_path() {
+        let dest = PathBuf::from("/my/destination");
+        let report = LocalCopyReport::new(LocalCopySummary::default(), vec![], dest.clone());
+        assert_eq!(report.destination_root(), dest);
+    }
+
+    #[test]
+    fn clone_works() {
+        let report = LocalCopyReport::default();
+        let cloned = report.clone();
+        assert!(cloned.records().is_empty());
+    }
+
+    #[test]
+    fn debug_format() {
+        let report = LocalCopyReport::default();
+        let debug = format!("{:?}", report);
+        assert!(debug.contains("LocalCopyReport"));
+    }
+}
