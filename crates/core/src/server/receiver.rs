@@ -34,7 +34,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
-use checksums::strong::{Md4, Md5, Md5Seed, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use protocol::filters::read_filter_list;
 
 /// State tracker for sparse file writing.
@@ -170,10 +170,9 @@ impl ChecksumVerifier {
     fn new(
         negotiated: Option<&NegotiationResult>,
         protocol: ProtocolVersion,
-        seed: i32,
-        compat_flags: Option<&CompatibilityFlags>,
+        _seed: i32,
+        _compat_flags: Option<&CompatibilityFlags>,
     ) -> Self {
-        let seed_u64 = seed as u64;
 
         if let Some(neg) = negotiated {
             match neg.checksum {
@@ -181,27 +180,20 @@ impl ChecksumVerifier {
                     ChecksumVerifier::Md4(Md4::new())
                 }
                 ChecksumAlgorithm::MD5 => {
-                    let seed_config = if let Some(flags) = compat_flags {
-                        if flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX) {
-                            Md5Seed::proper(seed)
-                        } else {
-                            Md5Seed::legacy(seed)
-                        }
-                    } else {
-                        Md5Seed::legacy(seed)
-                    };
-                    ChecksumVerifier::Md5(Md5::with_seed(seed_config))
+                    // Upstream checksum.c sum_init() for MD5: just md5_begin()
+                    // The seed is NOT used for file transfer checksums.
+                    // (Seed is only used for block checksums in get_checksum2)
+                    ChecksumVerifier::Md5(Md5::new())
                 }
                 ChecksumAlgorithm::SHA1 => ChecksumVerifier::Sha1(Sha1::new()),
-                ChecksumAlgorithm::XXH64 => ChecksumVerifier::Xxh64(Xxh64::with_seed(seed_u64)),
-                ChecksumAlgorithm::XXH3 => ChecksumVerifier::Xxh3(Xxh3::with_seed(seed_u64)),
-                ChecksumAlgorithm::XXH128 => {
-                    ChecksumVerifier::Xxh3_128(Xxh3_128::with_seed(seed_u64))
-                }
+                // Upstream sum_init() uses 0 for XXH seeds, not checksum_seed
+                ChecksumAlgorithm::XXH64 => ChecksumVerifier::Xxh64(Xxh64::with_seed(0)),
+                ChecksumAlgorithm::XXH3 => ChecksumVerifier::Xxh3(Xxh3::with_seed(0)),
+                ChecksumAlgorithm::XXH128 => ChecksumVerifier::Xxh3_128(Xxh3_128::with_seed(0))
             }
         } else if protocol.as_u8() >= 30 {
-            // Protocol 30+ default: MD5 with legacy seed
-            ChecksumVerifier::Md5(Md5::with_seed(Md5Seed::legacy(seed)))
+            // Protocol 30+ default: MD5 (no seed for file transfer checksums)
+            ChecksumVerifier::Md5(Md5::new())
         } else {
             // Protocol < 30: MD4
             ChecksumVerifier::Md4(Md4::new())

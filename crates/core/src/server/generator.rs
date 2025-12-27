@@ -1143,7 +1143,7 @@ fn generate_whole_file_delta<R: Read>(mut source: R) -> io::Result<DeltaScript> 
 fn compute_file_checksum(
     script: &DeltaScript,
     algorithm: ChecksumAlgorithm,
-    seed: i32,
+    _seed: i32,
     _compat_flags: Option<&CompatibilityFlags>,
 ) -> Vec<u8> {
     // Collect all literal bytes from the script
@@ -1164,10 +1164,10 @@ fn compute_file_checksum(
             vec![0u8]
         }
         ChecksumAlgorithm::MD4 => {
-            // Upstream checksum.c:sum_init() for MD4: prepends seed as 4 LE bytes
-            // SIVAL(s.buf, 0, seed); md4_update(&m, s.buf, 4);
+            // Upstream checksum.c sum_init() for CSUM_MD4: just mdfour_begin()
+            // The seed is NOT used for file transfer checksums.
+            // (Only CSUM_MD4_OLD/BUSTED/ARCHAIC variants use the seed)
             let mut hasher = Md4::new();
-            hasher.update(&seed.to_le_bytes());
             hasher.update(&all_bytes);
             hasher.finalize().to_vec()
         }
