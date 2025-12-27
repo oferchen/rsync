@@ -95,3 +95,138 @@ impl Message {
         self.source.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn severity_returns_message_severity() {
+        let msg = Message::info("test");
+        assert_eq!(msg.severity(), Severity::Info);
+    }
+
+    #[test]
+    fn is_info_true_for_info_message() {
+        let msg = Message::info("info message");
+        assert!(msg.is_info());
+    }
+
+    #[test]
+    fn is_info_false_for_warning() {
+        let msg = Message::warning("warning");
+        assert!(!msg.is_info());
+    }
+
+    #[test]
+    fn is_info_false_for_error() {
+        let msg = Message::error(1, "error");
+        assert!(!msg.is_info());
+    }
+
+    #[test]
+    fn is_warning_true_for_warning_message() {
+        let msg = Message::warning("warning");
+        assert!(msg.is_warning());
+    }
+
+    #[test]
+    fn is_warning_false_for_info() {
+        let msg = Message::info("info");
+        assert!(!msg.is_warning());
+    }
+
+    #[test]
+    fn is_warning_false_for_error() {
+        let msg = Message::error(1, "error");
+        assert!(!msg.is_warning());
+    }
+
+    #[test]
+    fn is_error_true_for_error_message() {
+        let msg = Message::error(1, "error");
+        assert!(msg.is_error());
+    }
+
+    #[test]
+    fn is_error_false_for_info() {
+        let msg = Message::info("info");
+        assert!(!msg.is_error());
+    }
+
+    #[test]
+    fn is_error_false_for_warning() {
+        let msg = Message::warning("warning");
+        assert!(!msg.is_error());
+    }
+
+    #[test]
+    fn code_returns_none_for_info() {
+        let msg = Message::info("no code");
+        assert_eq!(msg.code(), None);
+    }
+
+    #[test]
+    fn code_returns_some_for_error() {
+        let msg = Message::error(23, "with code");
+        assert_eq!(msg.code(), Some(23));
+    }
+
+    #[test]
+    fn text_returns_message_text() {
+        let msg = Message::info("the text");
+        assert_eq!(msg.text(), "the text");
+    }
+
+    #[test]
+    fn parts_returns_all_components() {
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 10);
+        let msg = Message::error(42, "error text")
+            .with_role(Role::Sender)
+            .with_source(source);
+
+        let (severity, code, text, role, src) = msg.parts();
+        assert_eq!(severity, Severity::Error);
+        assert_eq!(code, Some(42));
+        assert_eq!(text, "error text");
+        assert_eq!(role, Some(Role::Sender));
+        assert!(src.is_some());
+    }
+
+    #[test]
+    fn into_parts_consumes_and_returns_owned() {
+        let msg = Message::info("owned text");
+        let (severity, code, text, role, source) = msg.into_parts();
+        assert_eq!(severity, Severity::Info);
+        assert_eq!(code, None);
+        assert_eq!(text.as_ref(), "owned text");
+        assert_eq!(role, None);
+        assert!(source.is_none());
+    }
+
+    #[test]
+    fn role_returns_none_by_default() {
+        let msg = Message::info("test");
+        assert_eq!(msg.role(), None);
+    }
+
+    #[test]
+    fn role_returns_some_when_set() {
+        let msg = Message::info("test").with_role(Role::Receiver);
+        assert_eq!(msg.role(), Some(Role::Receiver));
+    }
+
+    #[test]
+    fn source_returns_none_by_default() {
+        let msg = Message::info("test");
+        assert!(msg.source().is_none());
+    }
+
+    #[test]
+    fn source_returns_some_when_set() {
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 42);
+        let msg = Message::info("test").with_source(source);
+        let retrieved = msg.source().unwrap();
+        assert_eq!(retrieved.line(), 42);
+    }
+}
