@@ -79,7 +79,9 @@ mod tests {
     fn engine_result_ok() {
         let result: EngineResult<i32> = Ok(42);
         assert!(result.is_ok());
-        let Ok(value) = result else { panic!("expected Ok") };
+        let Ok(value) = result else {
+            panic!("expected Ok")
+        };
         assert_eq!(value, 42);
     }
 

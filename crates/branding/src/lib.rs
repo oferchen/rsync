@@ -7,6 +7,7 @@
 mod generated;
 
 pub mod branding;
+pub mod validation;
 pub mod workspace;
 
 pub use generated::{BUILD_REVISION, BUILD_TOOLCHAIN};
