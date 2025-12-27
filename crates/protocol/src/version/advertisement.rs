@@ -119,3 +119,107 @@ impl_protocol_version_advertisement!(
         clamped as u32
     },
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn u8_converts_correctly() {
+        assert_eq!(42_u8.into_advertised_version(), 42);
+        assert_eq!(u8::MAX.into_advertised_version(), 255);
+    }
+
+    #[test]
+    fn u16_converts_correctly() {
+        assert_eq!(1000_u16.into_advertised_version(), 1000);
+    }
+
+    #[test]
+    fn u32_passes_through() {
+        assert_eq!(12345_u32.into_advertised_version(), 12345);
+        assert_eq!(u32::MAX.into_advertised_version(), u32::MAX);
+    }
+
+    #[test]
+    fn u64_clamps_to_u32_max() {
+        assert_eq!(100_u64.into_advertised_version(), 100);
+        assert_eq!(u64::MAX.into_advertised_version(), u32::MAX);
+    }
+
+    #[test]
+    fn u128_clamps_to_u32_max() {
+        assert_eq!(100_u128.into_advertised_version(), 100);
+        assert_eq!(u128::MAX.into_advertised_version(), u32::MAX);
+    }
+
+    #[test]
+    fn usize_clamps_properly() {
+        assert_eq!(100_usize.into_advertised_version(), 100);
+    }
+
+    #[test]
+    fn i8_clamps_negative_to_zero() {
+        assert_eq!((-5_i8).into_advertised_version(), 0);
+        assert_eq!(50_i8.into_advertised_version(), 50);
+    }
+
+    #[test]
+    fn i16_clamps_negative_to_zero() {
+        assert_eq!((-100_i16).into_advertised_version(), 0);
+        assert_eq!(100_i16.into_advertised_version(), 100);
+    }
+
+    #[test]
+    fn i32_clamps_negative_to_zero() {
+        assert_eq!((-1000_i32).into_advertised_version(), 0);
+        assert_eq!(1000_i32.into_advertised_version(), 1000);
+    }
+
+    #[test]
+    fn i64_clamps_properly() {
+        assert_eq!((-1_i64).into_advertised_version(), 0);
+        assert_eq!(i64::MAX.into_advertised_version(), u32::MAX);
+    }
+
+    #[test]
+    fn protocol_version_converts() {
+        let version = ProtocolVersion::V31;
+        assert_eq!(version.into_advertised_version(), 31);
+    }
+
+    #[test]
+    fn nonzero_u8_converts() {
+        let value = NonZeroU8::new(30).unwrap();
+        assert_eq!(value.into_advertised_version(), 30);
+    }
+
+    #[test]
+    fn nonzero_i32_clamps_properly() {
+        let positive = NonZeroI32::new(100).unwrap();
+        assert_eq!(positive.into_advertised_version(), 100);
+
+        let negative = NonZeroI32::new(-100).unwrap();
+        assert_eq!(negative.into_advertised_version(), 0);
+    }
+
+    #[test]
+    fn wrapping_u32_extracts_value() {
+        let value = Wrapping(12345_u32);
+        assert_eq!(value.into_advertised_version(), 12345);
+    }
+
+    #[test]
+    fn wrapping_i32_clamps_negative() {
+        let negative = Wrapping(-50_i32);
+        assert_eq!(negative.into_advertised_version(), 0);
+    }
+
+    #[test]
+    fn reference_types_work() {
+        let value = 42_u32;
+        assert_eq!((&value).into_advertised_version(), 42);
+        let mut mutable = 100_u32;
+        assert_eq!((&mut mutable).into_advertised_version(), 100);
+    }
+}
