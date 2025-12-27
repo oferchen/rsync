@@ -449,3 +449,190 @@ fn format_full_checksum(event: &ClientEvent) -> String {
     }
     rendered
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_with_separator_zero() {
+        assert_eq!(format_with_separator(0), "0");
+    }
+
+    #[test]
+    fn format_with_separator_small() {
+        assert_eq!(format_with_separator(1), "1");
+        assert_eq!(format_with_separator(999), "999");
+    }
+
+    #[test]
+    fn format_with_separator_thousands() {
+        assert_eq!(format_with_separator(1000), "1,000");
+        assert_eq!(format_with_separator(1234), "1,234");
+        assert_eq!(format_with_separator(999999), "999,999");
+    }
+
+    #[test]
+    fn format_with_separator_millions() {
+        assert_eq!(format_with_separator(1_000_000), "1,000,000");
+        assert_eq!(format_with_separator(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn format_with_separator_billions() {
+        assert_eq!(format_with_separator(1_000_000_000), "1,000,000,000");
+    }
+
+    #[test]
+    fn format_with_separator_negative() {
+        assert_eq!(format_with_separator(-1), "-1");
+        assert_eq!(format_with_separator(-999), "-999");
+        assert_eq!(format_with_separator(-1000), "-1,000");
+        assert_eq!(format_with_separator(-1_234_567), "-1,234,567");
+    }
+
+    #[test]
+    fn format_with_units_below_base() {
+        assert_eq!(format_with_units(999, 1000), None);
+        assert_eq!(format_with_units(1023, 1024), None);
+    }
+
+    #[test]
+    fn format_with_units_decimal_kilo() {
+        assert_eq!(format_with_units(1000, 1000), Some("1.00K".to_string()));
+        assert_eq!(format_with_units(1500, 1000), Some("1.50K".to_string()));
+        assert_eq!(format_with_units(999_999, 1000), Some("1000.00K".to_string()));
+    }
+
+    #[test]
+    fn format_with_units_binary_kilo() {
+        assert_eq!(format_with_units(1024, 1024), Some("1.00K".to_string()));
+        assert_eq!(format_with_units(1536, 1024), Some("1.50K".to_string()));
+    }
+
+    #[test]
+    fn format_with_units_decimal_mega() {
+        assert_eq!(format_with_units(1_000_000, 1000), Some("1.00M".to_string()));
+        assert_eq!(format_with_units(2_500_000, 1000), Some("2.50M".to_string()));
+    }
+
+    #[test]
+    fn format_with_units_binary_mega() {
+        assert_eq!(format_with_units(1_048_576, 1024), Some("1.00M".to_string()));
+    }
+
+    #[test]
+    fn format_with_units_giga() {
+        assert_eq!(format_with_units(1_000_000_000, 1000), Some("1.00G".to_string()));
+        assert_eq!(format_with_units(1_073_741_824, 1024), Some("1.00G".to_string()));
+    }
+
+    #[test]
+    fn format_with_units_tera() {
+        assert_eq!(format_with_units(1_000_000_000_000, 1000), Some("1.00T".to_string()));
+    }
+
+    #[test]
+    fn format_with_units_negative() {
+        assert_eq!(format_with_units(-1000, 1000), Some("-1.00K".to_string()));
+        assert_eq!(format_with_units(-1_000_000, 1000), Some("-1.00M".to_string()));
+    }
+
+    #[test]
+    fn apply_placeholder_format_no_width() {
+        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test");
+    }
+
+    #[test]
+    fn apply_placeholder_format_right_align() {
+        let format = PlaceholderFormat::new(Some(10), PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(apply_placeholder_format("test".to_string(), &format), "      test");
+    }
+
+    #[test]
+    fn apply_placeholder_format_left_align() {
+        let format = PlaceholderFormat::new(Some(10), PlaceholderAlignment::Left, HumanizeMode::None);
+        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test      ");
+    }
+
+    #[test]
+    fn apply_placeholder_format_exact_width() {
+        let format = PlaceholderFormat::new(Some(4), PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test");
+    }
+
+    #[test]
+    fn apply_placeholder_format_exceed_width() {
+        let format = PlaceholderFormat::new(Some(2), PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test");
+    }
+
+    #[test]
+    fn apply_placeholder_format_max_width_capped() {
+        // Width is capped to MAX_PLACEHOLDER_WIDTH
+        let format = PlaceholderFormat::new(Some(MAX_PLACEHOLDER_WIDTH + 100), PlaceholderAlignment::Right, HumanizeMode::None);
+        let result = apply_placeholder_format("x".to_string(), &format);
+        assert_eq!(result.len(), MAX_PLACEHOLDER_WIDTH);
+    }
+
+    #[test]
+    fn remote_placeholder_value_some() {
+        assert_eq!(remote_placeholder_value(Some("example.com"), 'h'), "example.com");
+        assert_eq!(remote_placeholder_value(Some("192.168.1.1"), 'a'), "192.168.1.1");
+    }
+
+    #[test]
+    fn remote_placeholder_value_none() {
+        assert_eq!(remote_placeholder_value(None, 'h'), "%h");
+        assert_eq!(remote_placeholder_value(None, 'a'), "%a");
+        assert_eq!(remote_placeholder_value(None, 'm'), "%m");
+        assert_eq!(remote_placeholder_value(None, 'P'), "%P");
+    }
+
+    #[test]
+    fn format_numeric_value_plain() {
+        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(format_numeric_value(12345, &format), "12345");
+    }
+
+    #[test]
+    fn format_numeric_value_with_separator() {
+        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::Separator);
+        assert_eq!(format_numeric_value(1234567, &format), "1,234,567");
+    }
+
+    #[test]
+    fn format_numeric_value_decimal_units() {
+        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::DecimalUnits);
+        assert_eq!(format_numeric_value(1000, &format), "1.00K");
+        assert_eq!(format_numeric_value(999, &format), "999");
+    }
+
+    #[test]
+    fn format_numeric_value_binary_units() {
+        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
+        assert_eq!(format_numeric_value(1024, &format), "1.00K");
+        assert_eq!(format_numeric_value(1023, &format), "1,023");
+    }
+
+    #[test]
+    fn format_out_format_permissions_none() {
+        assert_eq!(format_out_format_permissions(None), "---------");
+    }
+
+    #[test]
+    fn format_owner_name_none() {
+        assert_eq!(format_owner_name(None), "0");
+    }
+
+    #[test]
+    fn format_group_name_none() {
+        assert_eq!(format_group_name(None), "0");
+    }
+
+    #[test]
+    fn format_out_format_mtime_none() {
+        assert_eq!(format_out_format_mtime(None), "1970/01/01-00:00:00");
+    }
+}

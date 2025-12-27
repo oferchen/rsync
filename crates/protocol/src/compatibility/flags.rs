@@ -376,3 +376,322 @@ impl From<KnownCompatibilityFlag> for CompatibilityFlags {
         flag.as_flag()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_is_zero() {
+        assert_eq!(CompatibilityFlags::EMPTY.bits(), 0);
+        assert!(CompatibilityFlags::EMPTY.is_empty());
+    }
+
+    #[test]
+    fn from_bits_roundtrip() {
+        let flags = CompatibilityFlags::from_bits(0x1F);
+        assert_eq!(flags.bits(), 0x1F);
+    }
+
+    #[test]
+    fn is_empty_false_when_bits_set() {
+        let flags = CompatibilityFlags::INC_RECURSE;
+        assert!(!flags.is_empty());
+    }
+
+    #[test]
+    fn contains_single_flag() {
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+        assert!(flags.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(flags.contains(CompatibilityFlags::SYMLINK_TIMES));
+        assert!(!flags.contains(CompatibilityFlags::SAFE_FILE_LIST));
+    }
+
+    #[test]
+    fn contains_multiple_flags() {
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+        let subset = CompatibilityFlags::INC_RECURSE;
+        assert!(flags.contains(subset));
+        let not_subset = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
+        assert!(!flags.contains(not_subset));
+    }
+
+    #[test]
+    fn union_combines_bits() {
+        let a = CompatibilityFlags::INC_RECURSE;
+        let b = CompatibilityFlags::SYMLINK_TIMES;
+        let c = a.union(b);
+        assert!(c.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(c.contains(CompatibilityFlags::SYMLINK_TIMES));
+    }
+
+    #[test]
+    fn intersection_retains_common_bits() {
+        let a = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+        let b = CompatibilityFlags::SYMLINK_TIMES | CompatibilityFlags::SAFE_FILE_LIST;
+        let c = a.intersection(b);
+        assert!(!c.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(c.contains(CompatibilityFlags::SYMLINK_TIMES));
+        assert!(!c.contains(CompatibilityFlags::SAFE_FILE_LIST));
+    }
+
+    #[test]
+    fn difference_removes_bits() {
+        let a = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+        let b = CompatibilityFlags::SYMLINK_TIMES;
+        let c = a.difference(b);
+        assert!(c.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(!c.contains(CompatibilityFlags::SYMLINK_TIMES));
+    }
+
+    #[test]
+    fn unknown_bits_returns_extra() {
+        let flags = CompatibilityFlags::from_bits(0x8000_0000);
+        assert_eq!(flags.unknown_bits(), 0x8000_0000);
+    }
+
+    #[test]
+    fn unknown_bits_zero_for_known() {
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+        assert_eq!(flags.unknown_bits(), 0);
+    }
+
+    #[test]
+    fn has_unknown_bits_true() {
+        let flags = CompatibilityFlags::from_bits(0x1000);
+        assert!(flags.has_unknown_bits());
+    }
+
+    #[test]
+    fn has_unknown_bits_false() {
+        let flags = CompatibilityFlags::INC_RECURSE;
+        assert!(!flags.has_unknown_bits());
+    }
+
+    #[test]
+    fn without_unknown_bits_clears_extras() {
+        let flags = CompatibilityFlags::from_bits(0x8000_0001);
+        let sanitized = flags.without_unknown_bits();
+        assert!(sanitized.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(!sanitized.has_unknown_bits());
+    }
+
+    #[test]
+    fn bitor_operator() {
+        let a = CompatibilityFlags::INC_RECURSE;
+        let b = CompatibilityFlags::SYMLINK_TIMES;
+        let c = a | b;
+        assert!(c.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(c.contains(CompatibilityFlags::SYMLINK_TIMES));
+    }
+
+    #[test]
+    fn bitor_assign_operator() {
+        let mut flags = CompatibilityFlags::INC_RECURSE;
+        flags |= CompatibilityFlags::SYMLINK_TIMES;
+        assert!(flags.contains(CompatibilityFlags::SYMLINK_TIMES));
+    }
+
+    #[test]
+    fn bitand_operator() {
+        let a = CompatibilityFlags::from_bits(0x03);
+        let b = CompatibilityFlags::from_bits(0x02);
+        let c = a & b;
+        assert_eq!(c.bits(), 0x02);
+    }
+
+    #[test]
+    fn bitand_assign_operator() {
+        let mut flags = CompatibilityFlags::from_bits(0x03);
+        flags &= CompatibilityFlags::from_bits(0x02);
+        assert_eq!(flags.bits(), 0x02);
+    }
+
+    #[test]
+    fn bitxor_operator() {
+        let a = CompatibilityFlags::from_bits(0x03);
+        let b = CompatibilityFlags::from_bits(0x01);
+        let c = a ^ b;
+        assert_eq!(c.bits(), 0x02);
+    }
+
+    #[test]
+    fn bitxor_assign_operator() {
+        let mut flags = CompatibilityFlags::from_bits(0x03);
+        flags ^= CompatibilityFlags::from_bits(0x01);
+        assert_eq!(flags.bits(), 0x02);
+    }
+
+    #[test]
+    fn not_operator() {
+        let flags = CompatibilityFlags::from_bits(0);
+        let inverted = !flags;
+        assert_eq!(inverted.bits(), 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn default_is_empty() {
+        let flags: CompatibilityFlags = Default::default();
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn from_u32() {
+        let flags: CompatibilityFlags = 0x05.into();
+        assert_eq!(flags.bits(), 0x05);
+    }
+
+    #[test]
+    fn into_u32() {
+        let flags = CompatibilityFlags::from_bits(0x0A);
+        let bits: u32 = flags.into();
+        assert_eq!(bits, 0x0A);
+    }
+
+    #[test]
+    fn from_known_flag() {
+        let flags: CompatibilityFlags = KnownCompatibilityFlag::IncRecurse.into();
+        assert!(flags.contains(CompatibilityFlags::INC_RECURSE));
+    }
+
+    #[test]
+    fn from_iterator() {
+        let flags: CompatibilityFlags = [
+            KnownCompatibilityFlag::IncRecurse,
+            KnownCompatibilityFlag::SymlinkTimes,
+        ]
+        .into_iter()
+        .collect();
+        assert!(flags.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(flags.contains(CompatibilityFlags::SYMLINK_TIMES));
+    }
+
+    #[test]
+    fn extend_adds_flags() {
+        let mut flags = CompatibilityFlags::INC_RECURSE;
+        flags.extend([KnownCompatibilityFlag::SymlinkTimes]);
+        assert!(flags.contains(CompatibilityFlags::SYMLINK_TIMES));
+    }
+
+    #[test]
+    fn into_iterator() {
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+        let vec: Vec<_> = flags.into_iter().collect();
+        assert!(vec.contains(&KnownCompatibilityFlag::IncRecurse));
+        assert!(vec.contains(&KnownCompatibilityFlag::SymlinkTimes));
+    }
+
+    #[test]
+    fn iter_known_skips_unknown() {
+        let flags = CompatibilityFlags::from_bits(0x8000_0001);
+        let vec: Vec<_> = flags.iter_known().collect();
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec[0], KnownCompatibilityFlag::IncRecurse);
+    }
+
+    #[test]
+    fn debug_format() {
+        let flags = CompatibilityFlags::from_bits(0x05);
+        let debug = format!("{:?}", flags);
+        assert!(debug.contains("CompatibilityFlags"));
+        assert!(debug.contains("0x5"));
+    }
+
+    #[test]
+    fn display_empty() {
+        let flags = CompatibilityFlags::EMPTY;
+        assert_eq!(format!("{}", flags), "CF_NONE");
+    }
+
+    #[test]
+    fn display_single() {
+        let flags = CompatibilityFlags::INC_RECURSE;
+        let display = format!("{}", flags);
+        assert_eq!(display, "CF_INC_RECURSE");
+    }
+
+    #[test]
+    fn display_multiple() {
+        let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
+        let display = format!("{}", flags);
+        assert!(display.contains("CF_INC_RECURSE"));
+        assert!(display.contains("CF_SYMLINK_TIMES"));
+        assert!(display.contains(" | "));
+    }
+
+    #[test]
+    fn display_with_unknown() {
+        let flags = CompatibilityFlags::from_bits(0x8000_0001);
+        let display = format!("{}", flags);
+        assert!(display.contains("CF_INC_RECURSE"));
+        assert!(display.contains("unknown"));
+    }
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        let original = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SAFE_FILE_LIST;
+        let mut encoded = Vec::new();
+        original.encode_to_vec(&mut encoded).unwrap();
+        let (decoded, remainder) = CompatibilityFlags::decode_from_slice(&encoded).unwrap();
+        assert_eq!(decoded, original);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn decode_from_slice_mut() {
+        let original = CompatibilityFlags::from_bits(0x09);
+        let mut encoded = Vec::new();
+        original.encode_to_vec(&mut encoded).unwrap();
+        encoded.push(0xFF);
+        let mut slice: &[u8] = &encoded;
+        let decoded = CompatibilityFlags::decode_from_slice_mut(&mut slice).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(slice, &[0xFF]);
+    }
+
+    #[test]
+    fn write_and_read_roundtrip() {
+        let original = CompatibilityFlags::from_bits(0x1FF);
+        let mut buffer = Vec::new();
+        original.write_to(&mut buffer).unwrap();
+        let decoded = CompatibilityFlags::read_from(&mut buffer.as_slice()).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn all_known_contains_all_flags() {
+        let all = CompatibilityFlags::ALL_KNOWN;
+        assert!(all.contains(CompatibilityFlags::INC_RECURSE));
+        assert!(all.contains(CompatibilityFlags::SYMLINK_TIMES));
+        assert!(all.contains(CompatibilityFlags::SYMLINK_ICONV));
+        assert!(all.contains(CompatibilityFlags::SAFE_FILE_LIST));
+        assert!(all.contains(CompatibilityFlags::AVOID_XATTR_OPTIMIZATION));
+        assert!(all.contains(CompatibilityFlags::CHECKSUM_SEED_FIX));
+        assert!(all.contains(CompatibilityFlags::INPLACE_PARTIAL_DIR));
+        assert!(all.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
+        assert!(all.contains(CompatibilityFlags::ID0_NAMES));
+    }
+
+    #[test]
+    fn ord_implementation() {
+        let a = CompatibilityFlags::from_bits(0x01);
+        let b = CompatibilityFlags::from_bits(0x02);
+        assert!(a < b);
+    }
+
+    #[test]
+    fn hash_implementation() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(CompatibilityFlags::INC_RECURSE);
+        set.insert(CompatibilityFlags::INC_RECURSE);
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn clone_implementation() {
+        let flags = CompatibilityFlags::INC_RECURSE;
+        let cloned = flags;
+        assert_eq!(flags, cloned);
+    }
+}

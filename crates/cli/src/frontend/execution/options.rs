@@ -534,3 +534,483 @@ pub(crate) fn pow_u128_for_size(base: u32, exponent: u32) -> Result<u128, SizePa
         .checked_pow(exponent)
         .ok_or(SizeParseError::TooLarge)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn os(s: &str) -> OsString {
+        OsString::from(s)
+    }
+
+    // --- parse_size_spec tests ---
+
+    #[test]
+    fn parse_size_spec_empty() {
+        assert_eq!(parse_size_spec(""), Err(SizeParseError::Empty));
+    }
+
+    #[test]
+    fn parse_size_spec_just_sign() {
+        assert_eq!(parse_size_spec("+"), Err(SizeParseError::Empty));
+        assert_eq!(parse_size_spec("-"), Err(SizeParseError::Empty));
+    }
+
+    #[test]
+    fn parse_size_spec_negative() {
+        assert_eq!(parse_size_spec("-100"), Err(SizeParseError::Negative));
+        assert_eq!(parse_size_spec("-1K"), Err(SizeParseError::Negative));
+    }
+
+    #[test]
+    fn parse_size_spec_plain_number() {
+        assert_eq!(parse_size_spec("0"), Ok(0));
+        assert_eq!(parse_size_spec("1"), Ok(1));
+        assert_eq!(parse_size_spec("100"), Ok(100));
+        assert_eq!(parse_size_spec("12345"), Ok(12345));
+    }
+
+    #[test]
+    fn parse_size_spec_positive_prefix() {
+        assert_eq!(parse_size_spec("+100"), Ok(100));
+        assert_eq!(parse_size_spec("+1K"), Ok(1024));
+    }
+
+    #[test]
+    fn parse_size_spec_kibibytes() {
+        assert_eq!(parse_size_spec("1K"), Ok(1024));
+        assert_eq!(parse_size_spec("1k"), Ok(1024));
+        assert_eq!(parse_size_spec("2K"), Ok(2048));
+        assert_eq!(parse_size_spec("10K"), Ok(10240));
+    }
+
+    #[test]
+    fn parse_size_spec_kilobytes_decimal() {
+        assert_eq!(parse_size_spec("1KB"), Ok(1000));
+        assert_eq!(parse_size_spec("1Kb"), Ok(1000));
+        assert_eq!(parse_size_spec("2KB"), Ok(2000));
+    }
+
+    #[test]
+    fn parse_size_spec_kilobytes_binary_explicit() {
+        assert_eq!(parse_size_spec("1KiB"), Ok(1024));
+        assert_eq!(parse_size_spec("1kib"), Ok(1024));
+    }
+
+    #[test]
+    fn parse_size_spec_mebibytes() {
+        assert_eq!(parse_size_spec("1M"), Ok(1024 * 1024));
+        assert_eq!(parse_size_spec("1m"), Ok(1024 * 1024));
+    }
+
+    #[test]
+    fn parse_size_spec_megabytes_decimal() {
+        assert_eq!(parse_size_spec("1MB"), Ok(1000 * 1000));
+    }
+
+    #[test]
+    fn parse_size_spec_gibibytes() {
+        assert_eq!(parse_size_spec("1G"), Ok(1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn parse_size_spec_gigabytes_decimal() {
+        assert_eq!(parse_size_spec("1GB"), Ok(1000 * 1000 * 1000));
+    }
+
+    #[test]
+    fn parse_size_spec_tebibytes() {
+        assert_eq!(parse_size_spec("1T"), Ok(1024u64.pow(4)));
+    }
+
+    #[test]
+    fn parse_size_spec_pebibytes() {
+        assert_eq!(parse_size_spec("1P"), Ok(1024u64.pow(5)));
+    }
+
+    #[test]
+    fn parse_size_spec_exbibytes() {
+        assert_eq!(parse_size_spec("1E"), Ok(1024u64.pow(6)));
+    }
+
+    #[test]
+    fn parse_size_spec_bytes_suffix() {
+        assert_eq!(parse_size_spec("100B"), Ok(100));
+        assert_eq!(parse_size_spec("100b"), Ok(100));
+    }
+
+    #[test]
+    fn parse_size_spec_fractional() {
+        assert_eq!(parse_size_spec("1.5K"), Ok(1536));
+        assert_eq!(parse_size_spec("2.5M"), Ok(2621440));
+    }
+
+    #[test]
+    fn parse_size_spec_fractional_comma() {
+        assert_eq!(parse_size_spec("1,5K"), Ok(1536));
+    }
+
+    #[test]
+    fn parse_size_spec_invalid_suffix() {
+        assert_eq!(parse_size_spec("100X"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("100Q"), Err(SizeParseError::Invalid));
+    }
+
+    #[test]
+    fn parse_size_spec_invalid_format() {
+        assert_eq!(parse_size_spec("abc"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("."), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec(","), Err(SizeParseError::Invalid));
+    }
+
+    #[test]
+    fn parse_size_spec_incomplete_binary_suffix() {
+        assert_eq!(parse_size_spec("1Ki"), Err(SizeParseError::Invalid));
+    }
+
+    // --- pow_u128_for_size tests ---
+
+    #[test]
+    fn pow_u128_for_size_zero_exponent() {
+        assert_eq!(pow_u128_for_size(1024, 0), Ok(1));
+        assert_eq!(pow_u128_for_size(1000, 0), Ok(1));
+    }
+
+    #[test]
+    fn pow_u128_for_size_one_exponent() {
+        assert_eq!(pow_u128_for_size(1024, 1), Ok(1024));
+        assert_eq!(pow_u128_for_size(1000, 1), Ok(1000));
+    }
+
+    #[test]
+    fn pow_u128_for_size_small_exponents() {
+        assert_eq!(pow_u128_for_size(1024, 2), Ok(1_048_576));
+        assert_eq!(pow_u128_for_size(1000, 3), Ok(1_000_000_000));
+    }
+
+    // --- SizeParseError tests ---
+
+    #[test]
+    fn size_parse_error_eq() {
+        assert_eq!(SizeParseError::Empty, SizeParseError::Empty);
+        assert_eq!(SizeParseError::Negative, SizeParseError::Negative);
+        assert_eq!(SizeParseError::Invalid, SizeParseError::Invalid);
+        assert_eq!(SizeParseError::TooLarge, SizeParseError::TooLarge);
+    }
+
+    #[test]
+    fn size_parse_error_ne() {
+        assert_ne!(SizeParseError::Empty, SizeParseError::Negative);
+        assert_ne!(SizeParseError::Invalid, SizeParseError::TooLarge);
+    }
+
+    #[test]
+    fn size_parse_error_clone() {
+        let err = SizeParseError::Empty;
+        let cloned = err;
+        assert_eq!(err, cloned);
+    }
+
+    // --- parse_timeout_argument tests ---
+
+    #[test]
+    fn parse_timeout_argument_zero() {
+        let result = parse_timeout_argument(&os("0")).unwrap();
+        assert_eq!(result, TransferTimeout::Disabled);
+    }
+
+    #[test]
+    fn parse_timeout_argument_positive() {
+        let result = parse_timeout_argument(&os("30")).unwrap();
+        assert!(matches!(result, TransferTimeout::Seconds(n) if n.get() == 30));
+    }
+
+    #[test]
+    fn parse_timeout_argument_with_plus() {
+        let result = parse_timeout_argument(&os("+60")).unwrap();
+        assert!(matches!(result, TransferTimeout::Seconds(n) if n.get() == 60));
+    }
+
+    #[test]
+    fn parse_timeout_argument_empty() {
+        let result = parse_timeout_argument(&os(""));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_timeout_argument_negative() {
+        let result = parse_timeout_argument(&os("-10"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_timeout_argument_invalid() {
+        let result = parse_timeout_argument(&os("abc"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_timeout_argument_whitespace() {
+        let result = parse_timeout_argument(&os("  30  ")).unwrap();
+        assert!(matches!(result, TransferTimeout::Seconds(n) if n.get() == 30));
+    }
+
+    // --- parse_max_delete_argument tests ---
+
+    #[test]
+    fn parse_max_delete_argument_zero() {
+        assert_eq!(parse_max_delete_argument(&os("0")).unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_max_delete_argument_positive() {
+        assert_eq!(parse_max_delete_argument(&os("100")).unwrap(), 100);
+    }
+
+    #[test]
+    fn parse_max_delete_argument_with_plus() {
+        assert_eq!(parse_max_delete_argument(&os("+50")).unwrap(), 50);
+    }
+
+    #[test]
+    fn parse_max_delete_argument_empty() {
+        assert!(parse_max_delete_argument(&os("")).is_err());
+    }
+
+    #[test]
+    fn parse_max_delete_argument_negative() {
+        assert!(parse_max_delete_argument(&os("-10")).is_err());
+    }
+
+    #[test]
+    fn parse_max_delete_argument_invalid() {
+        assert!(parse_max_delete_argument(&os("xyz")).is_err());
+    }
+
+    // --- parse_checksum_seed_argument tests ---
+
+    #[test]
+    fn parse_checksum_seed_argument_zero() {
+        assert_eq!(parse_checksum_seed_argument(&os("0")).unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_positive() {
+        assert_eq!(parse_checksum_seed_argument(&os("12345")).unwrap(), 12345);
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_with_plus() {
+        assert_eq!(parse_checksum_seed_argument(&os("+999")).unwrap(), 999);
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_empty() {
+        assert!(parse_checksum_seed_argument(&os("")).is_err());
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_negative() {
+        assert!(parse_checksum_seed_argument(&os("-1")).is_err());
+    }
+
+    #[test]
+    fn parse_checksum_seed_argument_invalid() {
+        assert!(parse_checksum_seed_argument(&os("abc")).is_err());
+    }
+
+    // --- parse_modify_window_argument tests ---
+
+    #[test]
+    fn parse_modify_window_argument_zero() {
+        assert_eq!(parse_modify_window_argument(&os("0")).unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_modify_window_argument_positive() {
+        assert_eq!(parse_modify_window_argument(&os("2")).unwrap(), 2);
+    }
+
+    #[test]
+    fn parse_modify_window_argument_with_plus() {
+        assert_eq!(parse_modify_window_argument(&os("+5")).unwrap(), 5);
+    }
+
+    #[test]
+    fn parse_modify_window_argument_empty() {
+        assert!(parse_modify_window_argument(&os("")).is_err());
+    }
+
+    #[test]
+    fn parse_modify_window_argument_negative() {
+        assert!(parse_modify_window_argument(&os("-1")).is_err());
+    }
+
+    #[test]
+    fn parse_modify_window_argument_invalid() {
+        assert!(parse_modify_window_argument(&os("foo")).is_err());
+    }
+
+    // --- parse_size_limit_argument tests ---
+
+    #[test]
+    fn parse_size_limit_argument_valid() {
+        assert_eq!(parse_size_limit_argument(&os("1K"), "--max-size").unwrap(), 1024);
+        assert_eq!(parse_size_limit_argument(&os("1M"), "--max-size").unwrap(), 1024 * 1024);
+    }
+
+    #[test]
+    fn parse_size_limit_argument_empty() {
+        assert!(parse_size_limit_argument(&os(""), "--max-size").is_err());
+    }
+
+    #[test]
+    fn parse_size_limit_argument_negative() {
+        assert!(parse_size_limit_argument(&os("-1K"), "--max-size").is_err());
+    }
+
+    #[test]
+    fn parse_size_limit_argument_invalid() {
+        assert!(parse_size_limit_argument(&os("abc"), "--max-size").is_err());
+    }
+
+    // --- parse_block_size_argument tests ---
+
+    #[test]
+    fn parse_block_size_argument_valid() {
+        let result = parse_block_size_argument(&os("1K")).unwrap();
+        assert_eq!(result.get(), 1024);
+    }
+
+    #[test]
+    fn parse_block_size_argument_small() {
+        let result = parse_block_size_argument(&os("512")).unwrap();
+        assert_eq!(result.get(), 512);
+    }
+
+    #[test]
+    fn parse_block_size_argument_zero() {
+        assert!(parse_block_size_argument(&os("0")).is_err());
+    }
+
+    #[test]
+    fn parse_block_size_argument_empty() {
+        assert!(parse_block_size_argument(&os("")).is_err());
+    }
+
+    #[test]
+    fn parse_block_size_argument_negative() {
+        assert!(parse_block_size_argument(&os("-1")).is_err());
+    }
+
+    // --- resolve_iconv_setting tests ---
+
+    #[test]
+    fn resolve_iconv_setting_none_not_disabled() {
+        let result = resolve_iconv_setting(None, false).unwrap();
+        assert_eq!(result, IconvSetting::Unspecified);
+    }
+
+    #[test]
+    fn resolve_iconv_setting_none_disabled() {
+        let result = resolve_iconv_setting(None, true).unwrap();
+        assert_eq!(result, IconvSetting::Disabled);
+    }
+
+    #[test]
+    fn resolve_iconv_setting_valid_spec() {
+        let result = resolve_iconv_setting(Some(&os("UTF-8")), false).unwrap();
+        assert_eq!(result, IconvSetting::Explicit {
+            local: "UTF-8".to_string(),
+            remote: None,
+        });
+    }
+
+    #[test]
+    fn resolve_iconv_setting_both_charsets() {
+        let result = resolve_iconv_setting(Some(&os("UTF-8,ISO-8859-1")), false).unwrap();
+        assert_eq!(result, IconvSetting::Explicit {
+            local: "UTF-8".to_string(),
+            remote: Some("ISO-8859-1".to_string()),
+        });
+    }
+
+    #[test]
+    fn resolve_iconv_setting_empty() {
+        let result = resolve_iconv_setting(Some(&os("")), false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_iconv_setting_locale_default() {
+        let result = resolve_iconv_setting(Some(&os(".")), false).unwrap();
+        assert_eq!(result, IconvSetting::LocaleDefault);
+    }
+
+    // --- parse_human_readable_level tests ---
+
+    #[test]
+    fn parse_human_readable_level_zero() {
+        let result = parse_human_readable_level(&os("0")).unwrap();
+        assert_eq!(result, HumanReadableMode::Disabled);
+    }
+
+    #[test]
+    fn parse_human_readable_level_one() {
+        let result = parse_human_readable_level(&os("1")).unwrap();
+        assert_eq!(result, HumanReadableMode::Enabled);
+    }
+
+    #[test]
+    fn parse_human_readable_level_two() {
+        let result = parse_human_readable_level(&os("2")).unwrap();
+        assert_eq!(result, HumanReadableMode::Combined);
+    }
+
+    #[test]
+    fn parse_human_readable_level_invalid() {
+        let result = parse_human_readable_level(&os("invalid"));
+        assert!(result.is_err());
+    }
+
+    // --- parse_decimal_components_for_size tests ---
+
+    #[test]
+    fn parse_decimal_components_integer_only() {
+        let (integer, fraction, denominator) = parse_decimal_components_for_size("123").unwrap();
+        assert_eq!(integer, 123);
+        assert_eq!(fraction, 0);
+        assert_eq!(denominator, 1);
+    }
+
+    #[test]
+    fn parse_decimal_components_with_fraction() {
+        let (integer, fraction, denominator) = parse_decimal_components_for_size("1.5").unwrap();
+        assert_eq!(integer, 1);
+        assert_eq!(fraction, 5);
+        assert_eq!(denominator, 10);
+    }
+
+    #[test]
+    fn parse_decimal_components_with_comma() {
+        let (integer, fraction, denominator) = parse_decimal_components_for_size("2,25").unwrap();
+        assert_eq!(integer, 2);
+        assert_eq!(fraction, 25);
+        assert_eq!(denominator, 100);
+    }
+
+    #[test]
+    fn parse_decimal_components_zero_fraction() {
+        let (integer, fraction, denominator) = parse_decimal_components_for_size("10.0").unwrap();
+        assert_eq!(integer, 10);
+        assert_eq!(fraction, 0);
+        assert_eq!(denominator, 10);
+    }
+
+    #[test]
+    fn parse_decimal_components_multiple_decimal_points() {
+        let result = parse_decimal_components_for_size("1.2.3");
+        assert!(result.is_err());
+    }
+}
