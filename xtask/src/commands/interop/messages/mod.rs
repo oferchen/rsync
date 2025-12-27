@@ -6,10 +6,22 @@ mod normalizer;
 
 use crate::commands::interop::args::MessagesOptions;
 use crate::error::TaskResult;
+use extractor::ExtractorOptions;
 use std::path::Path;
 
 /// Execute message format validation.
 pub fn execute(workspace: &Path, options: MessagesOptions) -> TaskResult<()> {
+    // Create log directory if specified
+    if let Some(ref log_dir) = options.log_dir {
+        std::fs::create_dir_all(log_dir).map_err(|e| {
+            crate::error::TaskError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to create log directory '{}': {}", log_dir, e),
+            ))
+        })?;
+        eprintln!("[interop] Logs will be saved to: {}", log_dir);
+    }
+
     if options.regenerate {
         eprintln!("[interop] Regenerating message golden files...");
         regenerate_goldens(workspace, options)?;
@@ -96,7 +108,13 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
             };
 
             // Execute and extract messages
-            match msg_scenario.execute(binary.binary_path(), options.verbose) {
+            let extractor_opts = ExtractorOptions {
+                verbose: options.verbose,
+                show_output: options.show_output,
+                log_dir: options.log_dir.clone(),
+                version: Some(binary.version.clone()),
+            };
+            match msg_scenario.execute(binary.binary_path(), &extractor_opts) {
                 Ok(messages) => {
                     // Normalize and store messages
                     let normalized = normalizer::normalize_messages(&messages);
@@ -201,7 +219,13 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
             };
 
             // Execute and extract messages
-            match msg_scenario.execute(binary.binary_path(), options.verbose) {
+            let extractor_opts = ExtractorOptions {
+                verbose: options.verbose,
+                show_output: options.show_output,
+                log_dir: options.log_dir.clone(),
+                version: Some(binary.version.clone()),
+            };
+            match msg_scenario.execute(binary.binary_path(), &extractor_opts) {
                 Ok(messages) => {
                     let actual_normalized = normalizer::normalize_messages(&messages);
                     let expected_messages = golden.get_messages_for_scenario(&scenario.name);
