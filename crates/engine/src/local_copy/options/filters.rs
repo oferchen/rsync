@@ -36,3 +36,38 @@ impl LocalCopyOptions {
         self.filter_program.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_filters_none() {
+        let options = LocalCopyOptions::new().with_filters(None);
+        assert!(options.filter_set().is_none());
+    }
+
+    #[test]
+    fn filters_alias_works() {
+        let options = LocalCopyOptions::new().filters(None);
+        assert!(options.filter_set().is_none());
+    }
+
+    #[test]
+    fn with_filter_program_none() {
+        let options = LocalCopyOptions::new().with_filter_program(None);
+        assert!(options.filter_program().is_none());
+    }
+
+    #[test]
+    fn filter_set_returns_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(options.filter_set().is_none());
+    }
+
+    #[test]
+    fn filter_program_returns_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(options.filter_program().is_none());
+    }
+}
