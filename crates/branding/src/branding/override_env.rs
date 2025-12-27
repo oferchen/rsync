@@ -73,3 +73,59 @@ fn decode_brand_override(state: u8) -> Option<Brand> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_decode_roundtrip_none() {
+        let encoded = encode_brand_override(None);
+        assert_eq!(encoded, BRAND_OVERRIDE_NONE);
+        assert_eq!(decode_brand_override(encoded), None);
+    }
+
+    #[test]
+    fn encode_decode_roundtrip_oc() {
+        let encoded = encode_brand_override(Some(Brand::Oc));
+        assert_eq!(encoded, BRAND_OVERRIDE_OC);
+        assert_eq!(decode_brand_override(encoded), Some(Brand::Oc));
+    }
+
+    #[test]
+    fn encode_decode_roundtrip_upstream() {
+        let encoded = encode_brand_override(Some(Brand::Upstream));
+        assert_eq!(encoded, BRAND_OVERRIDE_UPSTREAM);
+        assert_eq!(decode_brand_override(encoded), Some(Brand::Upstream));
+    }
+
+    #[test]
+    fn decode_uninitialized_returns_none() {
+        assert_eq!(decode_brand_override(BRAND_OVERRIDE_UNINITIALIZED), None);
+    }
+
+    #[test]
+    fn all_brand_variants_covered() {
+        // Ensure encode covers all Brand variants
+        for brand in [Brand::Oc, Brand::Upstream] {
+            let encoded = encode_brand_override(Some(brand));
+            let decoded = decode_brand_override(encoded);
+            assert_eq!(decoded, Some(brand));
+        }
+    }
+
+    #[test]
+    fn constants_are_distinct() {
+        let values = [
+            BRAND_OVERRIDE_UNINITIALIZED,
+            BRAND_OVERRIDE_NONE,
+            BRAND_OVERRIDE_UPSTREAM,
+            BRAND_OVERRIDE_OC,
+        ];
+        for i in 0..values.len() {
+            for j in (i + 1)..values.len() {
+                assert_ne!(values[i], values[j], "constants must be distinct");
+            }
+        }
+    }
+}
