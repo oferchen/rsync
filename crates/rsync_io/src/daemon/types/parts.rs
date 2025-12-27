@@ -418,3 +418,191 @@ impl<R> LegacyDaemonHandshakeParts<R> {
         LegacyDaemonHandshake::from_parts(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sniff_negotiation_stream;
+    use protocol::{LegacyDaemonGreetingOwned, NegotiationPrologue};
+    use std::io::{self, Cursor};
+
+    fn create_test_parts() -> LegacyDaemonHandshakeParts<Cursor<Vec<u8>>> {
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto = ProtocolVersion::from_supported(31).unwrap();
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        LegacyDaemonHandshakeParts::from_components(greeting, proto, stream.into_parts())
+    }
+
+    // ==== Server greeting accessors ====
+
+    #[test]
+    fn server_greeting_returns_reference() {
+        let parts = create_test_parts();
+        let greeting = parts.server_greeting();
+        assert_eq!(greeting.protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn server_protocol_returns_clamped_version() {
+        let parts = create_test_parts();
+        assert_eq!(parts.server_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn remote_advertised_protocol_returns_raw() {
+        let parts = create_test_parts();
+        assert_eq!(parts.remote_advertised_protocol(), 31);
+    }
+
+    // ==== Negotiated protocol accessors ====
+
+    #[test]
+    fn negotiated_protocol_returns_version() {
+        let parts = create_test_parts();
+        assert_eq!(parts.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn local_advertised_protocol_mirrors_negotiated() {
+        let parts = create_test_parts();
+        assert_eq!(parts.local_advertised_protocol(), parts.negotiated_protocol());
+    }
+
+    // ==== Protocol clamping ====
+
+    #[test]
+    fn remote_protocol_was_clamped_false_when_supported() {
+        let parts = create_test_parts();
+        assert!(!parts.remote_protocol_was_clamped());
+    }
+
+    #[test]
+    fn remote_advertisement_returns_classification() {
+        let parts = create_test_parts();
+        let adv = parts.remote_advertisement();
+        assert!(!adv.was_clamped());
+    }
+
+    #[test]
+    fn local_protocol_was_capped_true_when_reduced() {
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto = ProtocolVersion::from_supported(29).unwrap();
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let parts = LegacyDaemonHandshakeParts::from_components(greeting, proto, stream.into_parts());
+        assert!(parts.local_protocol_was_capped());
+    }
+
+    #[test]
+    fn local_protocol_was_capped_false_when_not_reduced() {
+        let parts = create_test_parts();
+        assert!(!parts.local_protocol_was_capped());
+    }
+
+    // ==== Stream parts accessors ====
+
+    #[test]
+    fn stream_parts_returns_reference() {
+        let parts = create_test_parts();
+        let stream = parts.stream_parts();
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    #[test]
+    fn stream_parts_mut_returns_mutable_reference() {
+        let mut parts = create_test_parts();
+        let stream = parts.stream_parts_mut();
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    #[test]
+    fn into_stream_parts_returns_owned() {
+        let parts = create_test_parts();
+        let stream = parts.into_stream_parts();
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== Decomposition ====
+
+    #[test]
+    fn into_components_returns_all_parts() {
+        let parts = create_test_parts();
+        let (greeting, proto, stream) = parts.into_components();
+        assert_eq!(greeting.protocol().as_u8(), 31);
+        assert_eq!(proto.as_u8(), 31);
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== Reconstruction ====
+
+    #[test]
+    fn into_handshake_rebuilds_wrapper() {
+        let parts = create_test_parts();
+        let handshake = parts.into_handshake();
+        assert_eq!(handshake.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn roundtrip_through_handshake_preserves_state() {
+        let parts = create_test_parts();
+        let expected_proto = parts.negotiated_protocol();
+        let handshake = parts.into_handshake();
+        let restored_parts = handshake.into_parts();
+        assert_eq!(restored_parts.negotiated_protocol(), expected_proto);
+    }
+
+    // ==== Mapping ====
+
+    #[test]
+    fn map_stream_inner_transforms_transport() {
+        let parts = create_test_parts();
+        let mapped = parts.map_stream_inner(|cursor| {
+            let pos = cursor.position();
+            let mut new_cursor = Cursor::new(cursor.into_inner());
+            new_cursor.set_position(pos);
+            new_cursor
+        });
+        assert_eq!(mapped.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn try_map_stream_inner_succeeds() {
+        let parts = create_test_parts();
+        let result = parts.try_map_stream_inner(|cursor| -> Result<_, (io::Error, _)> { Ok(cursor) });
+        assert!(result.is_ok());
+        let mapped = result.unwrap();
+        assert_eq!(mapped.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn try_map_stream_inner_fails_preserves_parts() {
+        let parts = create_test_parts();
+        let result = parts.try_map_stream_inner(|cursor| -> Result<Cursor<Vec<u8>>, _> {
+            Err((io::Error::new(io::ErrorKind::Other, "test error"), cursor))
+        });
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let recovered = err.into_original();
+        assert_eq!(recovered.negotiated_protocol().as_u8(), 31);
+    }
+
+    // ==== Clone and Debug ====
+
+    #[test]
+    fn clone_produces_independent_copy() {
+        let parts = create_test_parts();
+        let cloned = parts.clone();
+        assert_eq!(parts.negotiated_protocol(), cloned.negotiated_protocol());
+    }
+
+    #[test]
+    fn debug_format_contains_type_name() {
+        let parts = create_test_parts();
+        let debug = format!("{parts:?}");
+        assert!(debug.contains("LegacyDaemonHandshakeParts"));
+    }
+}
