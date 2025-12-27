@@ -116,3 +116,138 @@ impl Message {
         self.append_to_vec_with_scratch_inner(scratch, buffer, true)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_to_with_scratch_writes_to_string() {
+        let msg = Message::info("test message");
+        let mut scratch = MessageScratch::new();
+        let mut output = String::new();
+        msg.render_to_with_scratch(&mut scratch, &mut output).unwrap();
+        assert!(output.contains("test message"));
+    }
+
+    #[test]
+    fn render_to_with_scratch_does_not_add_newline() {
+        let msg = Message::info("test");
+        let mut scratch = MessageScratch::new();
+        let mut output = String::new();
+        msg.render_to_with_scratch(&mut scratch, &mut output).unwrap();
+        assert!(!output.ends_with('\n'));
+    }
+
+    #[test]
+    fn render_line_to_with_scratch_appends_newline() {
+        let msg = Message::info("test");
+        let mut scratch = MessageScratch::new();
+        let mut output = String::new();
+        msg.render_line_to_with_scratch(&mut scratch, &mut output).unwrap();
+        assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn to_bytes_with_scratch_returns_vec() {
+        let msg = Message::info("hello");
+        let mut scratch = MessageScratch::new();
+        let bytes = msg.to_bytes_with_scratch(&mut scratch).unwrap();
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn to_bytes_with_scratch_contains_message_text() {
+        let msg = Message::info("specific text");
+        let mut scratch = MessageScratch::new();
+        let bytes = msg.to_bytes_with_scratch(&mut scratch).unwrap();
+        let output = String::from_utf8_lossy(&bytes);
+        assert!(output.contains("specific text"));
+    }
+
+    #[test]
+    fn to_line_bytes_with_scratch_includes_newline() {
+        let msg = Message::info("test");
+        let mut scratch = MessageScratch::new();
+        let bytes = msg.to_line_bytes_with_scratch(&mut scratch).unwrap();
+        assert!(bytes.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn render_to_writer_with_scratch_writes_bytes() {
+        let msg = Message::info("writer test");
+        let mut scratch = MessageScratch::new();
+        let mut buffer = Vec::new();
+        msg.render_to_writer_with_scratch(&mut scratch, &mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn render_line_to_writer_with_scratch_includes_newline() {
+        let msg = Message::info("line test");
+        let mut scratch = MessageScratch::new();
+        let mut buffer = Vec::new();
+        msg.render_line_to_writer_with_scratch(&mut scratch, &mut buffer).unwrap();
+        assert!(buffer.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn append_to_vec_with_scratch_extends_buffer() {
+        let msg = Message::info("append test");
+        let mut scratch = MessageScratch::new();
+        let mut buffer = b"prefix:".to_vec();
+        let prefix_len = buffer.len();
+        msg.append_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        assert!(buffer.len() > prefix_len);
+    }
+
+    #[test]
+    fn append_to_vec_with_scratch_preserves_prefix() {
+        let msg = Message::info("test");
+        let mut scratch = MessageScratch::new();
+        let mut buffer = b"prefix:".to_vec();
+        msg.append_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        assert_eq!(&buffer[..7], b"prefix:");
+    }
+
+    #[test]
+    fn append_line_to_vec_with_scratch_includes_newline() {
+        let msg = Message::info("line");
+        let mut scratch = MessageScratch::new();
+        let mut buffer = Vec::new();
+        msg.append_line_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        assert!(buffer.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn scratch_can_be_reused_for_multiple_messages() {
+        let msg1 = Message::info("first");
+        let msg2 = Message::warning("second");
+        let mut scratch = MessageScratch::new();
+
+        let bytes1 = msg1.to_bytes_with_scratch(&mut scratch).unwrap();
+        let bytes2 = msg2.to_bytes_with_scratch(&mut scratch).unwrap();
+
+        assert!(!bytes1.is_empty());
+        assert!(!bytes2.is_empty());
+    }
+
+    #[test]
+    fn append_to_vec_with_scratch_returns_appended_length() {
+        let msg = Message::info("test");
+        let mut scratch = MessageScratch::new();
+        let mut buffer = Vec::new();
+        let appended = msg.append_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        assert_eq!(appended, buffer.len());
+    }
+
+    #[test]
+    fn append_line_to_vec_with_scratch_returns_length_with_newline() {
+        let msg = Message::info("test");
+        let mut scratch = MessageScratch::new();
+        let mut buffer = Vec::new();
+        let appended = msg.append_line_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        assert_eq!(appended, buffer.len());
+        assert!(buffer.ends_with(b"\n"));
+    }
+}
