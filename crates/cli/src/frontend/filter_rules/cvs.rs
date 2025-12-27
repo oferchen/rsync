@@ -84,3 +84,127 @@ fn remove_cvs_pattern(rules: &mut Vec<FilterRuleSpec>, pattern: &str) {
         !(matches!(rule.kind(), FilterRuleKind::Exclude) && rule.pattern() == pattern)
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_cvsignore_tokens_adds_basic_pattern() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o"].iter().copied());
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].kind(), FilterRuleKind::Exclude);
+        assert_eq!(rules[0].pattern(), "*.o");
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_adds_multiple_patterns() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "*.a", "*.so"].iter().copied());
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern(), "*.o");
+        assert_eq!(rules[1].pattern(), "*.a");
+        assert_eq!(rules[2].pattern(), "*.so");
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_skips_empty_tokens() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "", "*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_skips_hash_comments() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "# comment", "*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_handles_bang_clear() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+        append_cvsignore_tokens(&mut rules, ["!"].iter().copied());
+        assert_eq!(rules.len(), 0);
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_handles_bang_removal() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o", "*.a", "*.so"].iter().copied());
+        assert_eq!(rules.len(), 3);
+        append_cvsignore_tokens(&mut rules, ["!*.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "*.o");
+        assert_eq!(rules[1].pattern(), "*.so");
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_ignores_empty_bang() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["*.o"].iter().copied());
+        append_cvsignore_tokens(&mut rules, ["!"].iter().copied());
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn append_cvsignore_tokens_trims_whitespace() {
+        let mut rules = Vec::new();
+        append_cvsignore_tokens(&mut rules, ["  *.o  ", "  *.a"].iter().copied());
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "*.o");
+        assert_eq!(rules[1].pattern(), "*.a");
+    }
+
+    #[test]
+    fn remove_cvs_pattern_removes_matching_exclude() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_string()),
+            FilterRuleSpec::exclude("*.a".to_string()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern(), "*.a");
+    }
+
+    #[test]
+    fn remove_cvs_pattern_preserves_non_matching() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_string()),
+            FilterRuleSpec::exclude("*.a".to_string()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.xyz");
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn remove_cvs_pattern_preserves_include_rules() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_string()),
+            FilterRuleSpec::include("*.o".to_string()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].kind(), FilterRuleKind::Include);
+    }
+
+    #[test]
+    fn remove_cvs_pattern_removes_all_matching() {
+        let mut rules = vec![
+            FilterRuleSpec::exclude("*.o".to_string()),
+            FilterRuleSpec::exclude("*.o".to_string()),
+        ];
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn remove_cvs_pattern_empty_rules() {
+        let mut rules: Vec<FilterRuleSpec> = Vec::new();
+        remove_cvs_pattern(&mut rules, "*.o");
+        assert!(rules.is_empty());
+    }
+}

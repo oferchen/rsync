@@ -345,6 +345,14 @@ mod tests {
     }
 
     #[test]
+    fn file_type_from_mode_invalid() {
+        // Invalid mode (bits that don't match any file type)
+        assert_eq!(FileType::from_mode(0o000644), None);
+        assert_eq!(FileType::from_mode(0o050000), None);
+        assert_eq!(FileType::from_mode(0o070000), None);
+    }
+
+    #[test]
     fn file_type_round_trip() {
         for ft in [
             FileType::Regular,
@@ -361,6 +369,49 @@ mod tests {
     }
 
     #[test]
+    fn file_type_predicates() {
+        assert!(FileType::Regular.is_regular());
+        assert!(!FileType::Directory.is_regular());
+
+        assert!(FileType::Directory.is_dir());
+        assert!(!FileType::Regular.is_dir());
+
+        assert!(FileType::Symlink.is_symlink());
+        assert!(!FileType::Regular.is_symlink());
+
+        assert!(FileType::BlockDevice.is_device());
+        assert!(FileType::CharDevice.is_device());
+        assert!(!FileType::Regular.is_device());
+        assert!(!FileType::Directory.is_device());
+        assert!(!FileType::Fifo.is_device());
+        assert!(!FileType::Socket.is_device());
+    }
+
+    #[test]
+    fn file_type_clone_and_eq() {
+        let ft = FileType::Regular;
+        let cloned = ft;
+        assert_eq!(ft, cloned);
+    }
+
+    #[test]
+    fn file_type_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(FileType::Regular);
+        set.insert(FileType::Directory);
+        assert!(set.contains(&FileType::Regular));
+        assert!(set.contains(&FileType::Directory));
+        assert!(!set.contains(&FileType::Symlink));
+    }
+
+    #[test]
+    fn file_type_debug() {
+        let debug = format!("{:?}", FileType::Regular);
+        assert_eq!(debug, "Regular");
+    }
+
+    #[test]
     fn new_file_entry() {
         let entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
         assert_eq!(entry.name(), "test.txt");
@@ -369,6 +420,13 @@ mod tests {
         assert_eq!(entry.file_type(), FileType::Regular);
         assert!(entry.is_file());
         assert!(!entry.is_dir());
+    }
+
+    #[test]
+    fn new_file_entry_permissions_masked() {
+        // Permissions should be masked to 0o7777
+        let entry = FileEntry::new_file("test.txt".into(), 100, 0o177777);
+        assert_eq!(entry.permissions(), 0o7777);
     }
 
     #[test]
@@ -399,5 +457,129 @@ mod tests {
         entry.set_mtime(1700000000, 123456789);
         assert_eq!(entry.mtime(), 1700000000);
         assert_eq!(entry.mtime_nsec(), 123456789);
+    }
+
+    #[test]
+    fn entry_uid_gid_setting() {
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        assert_eq!(entry.uid(), None);
+        assert_eq!(entry.gid(), None);
+
+        entry.set_uid(1000);
+        entry.set_gid(1001);
+
+        assert_eq!(entry.uid(), Some(1000));
+        assert_eq!(entry.gid(), Some(1001));
+    }
+
+    #[test]
+    fn entry_link_target_setting() {
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        assert!(entry.link_target().is_none());
+
+        entry.set_link_target("/some/target".into());
+        assert_eq!(
+            entry.link_target().map(|p| p.as_path()),
+            Some("/some/target".as_ref())
+        );
+    }
+
+    #[test]
+    fn entry_rdev_setting() {
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        assert_eq!(entry.rdev_major(), None);
+        assert_eq!(entry.rdev_minor(), None);
+
+        entry.set_rdev(8, 1);
+
+        assert_eq!(entry.rdev_major(), Some(8));
+        assert_eq!(entry.rdev_minor(), Some(1));
+    }
+
+    #[test]
+    fn entry_path_accessor() {
+        let entry = FileEntry::new_file("some/nested/path.txt".into(), 100, 0o644);
+        assert_eq!(entry.path(), &PathBuf::from("some/nested/path.txt"));
+    }
+
+    #[test]
+    fn entry_mode_accessor() {
+        let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        let mode = entry.mode();
+        // Mode should include both type and permissions
+        assert_eq!(mode & 0o7777, 0o644);
+        assert_eq!(mode & 0o170000, 0o100000); // Regular file type
+    }
+
+    #[test]
+    fn entry_clone_and_eq() {
+        let entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
+        let cloned = entry.clone();
+        assert_eq!(entry, cloned);
+    }
+
+    #[test]
+    fn entry_debug_format() {
+        let entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
+        let debug = format!("{:?}", entry);
+        assert!(debug.contains("FileEntry"));
+        assert!(debug.contains("test.txt"));
+    }
+
+    #[test]
+    fn entry_from_raw() {
+        let flags = super::super::flags::FileFlags::default();
+        let entry = FileEntry::from_raw(
+            "raw_file.txt".into(),
+            2048,
+            0o100755,
+            1700000000,
+            999999,
+            flags,
+        );
+
+        assert_eq!(entry.name(), "raw_file.txt");
+        assert_eq!(entry.size(), 2048);
+        assert_eq!(entry.mode(), 0o100755);
+        assert_eq!(entry.mtime(), 1700000000);
+        assert_eq!(entry.mtime_nsec(), 999999);
+        assert!(entry.is_file());
+    }
+
+    #[test]
+    fn entry_file_type_fallback() {
+        // Create an entry with invalid mode via from_raw
+        let flags = super::super::flags::FileFlags::default();
+        let entry = FileEntry::from_raw(
+            "unknown.txt".into(),
+            100,
+            0o000644, // Invalid mode type bits
+            0,
+            0,
+            flags,
+        );
+
+        // Should fall back to Regular
+        assert_eq!(entry.file_type(), FileType::Regular);
+    }
+
+    #[test]
+    fn symlink_not_file() {
+        let entry = FileEntry::new_symlink("link".into(), "target".into());
+        assert!(!entry.is_file());
+        assert!(!entry.is_dir());
+        assert!(entry.is_symlink());
+    }
+
+    #[test]
+    fn directory_size_is_zero() {
+        let entry = FileEntry::new_directory("dir".into(), 0o755);
+        assert_eq!(entry.size(), 0);
+    }
+
+    #[test]
+    fn file_entry_flags_accessor() {
+        let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        let _flags = entry.flags(); // Just ensure the accessor works
     }
 }

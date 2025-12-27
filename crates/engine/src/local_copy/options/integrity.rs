@@ -159,3 +159,153 @@ impl LocalCopyOptions {
         self.modify_window
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checksum_enables() {
+        let opts = LocalCopyOptions::new().checksum(true);
+        assert!(opts.checksum_enabled());
+    }
+
+    #[test]
+    fn checksum_disables() {
+        let opts = LocalCopyOptions::new().checksum(true).checksum(false);
+        assert!(!opts.checksum_enabled());
+    }
+
+    #[test]
+    fn with_checksum_algorithm_sets_value() {
+        let opts = LocalCopyOptions::new()
+            .with_checksum_algorithm(SignatureAlgorithm::Xxh64 { seed: 42 });
+        assert!(matches!(opts.checksum_algorithm(), SignatureAlgorithm::Xxh64 { seed: 42 }));
+    }
+
+    #[test]
+    fn size_only_enables() {
+        let opts = LocalCopyOptions::new().size_only(true);
+        assert!(opts.size_only_enabled());
+    }
+
+    #[test]
+    fn size_only_disables() {
+        let opts = LocalCopyOptions::new().size_only(true).size_only(false);
+        assert!(!opts.size_only_enabled());
+    }
+
+    #[test]
+    fn ignore_times_enables() {
+        let opts = LocalCopyOptions::new().ignore_times(true);
+        assert!(opts.ignore_times_enabled());
+    }
+
+    #[test]
+    fn ignore_times_disables() {
+        let opts = LocalCopyOptions::new().ignore_times(true).ignore_times(false);
+        assert!(!opts.ignore_times_enabled());
+    }
+
+    #[test]
+    fn ignore_existing_enables() {
+        let opts = LocalCopyOptions::new().ignore_existing(true);
+        assert!(opts.ignore_existing_enabled());
+    }
+
+    #[test]
+    fn ignore_existing_disables() {
+        let opts = LocalCopyOptions::new().ignore_existing(true).ignore_existing(false);
+        assert!(!opts.ignore_existing_enabled());
+    }
+
+    #[test]
+    fn existing_only_enables() {
+        let opts = LocalCopyOptions::new().existing_only(true);
+        assert!(opts.existing_only_enabled());
+    }
+
+    #[test]
+    fn existing_only_disables() {
+        let opts = LocalCopyOptions::new().existing_only(true).existing_only(false);
+        assert!(!opts.existing_only_enabled());
+    }
+
+    #[test]
+    fn ignore_missing_args_enables() {
+        let opts = LocalCopyOptions::new().ignore_missing_args(true);
+        assert!(opts.ignore_missing_args_enabled());
+    }
+
+    #[test]
+    fn ignore_missing_args_disables() {
+        let opts = LocalCopyOptions::new()
+            .ignore_missing_args(true)
+            .ignore_missing_args(false);
+        assert!(!opts.ignore_missing_args_enabled());
+    }
+
+    #[test]
+    fn delete_missing_args_enables() {
+        let opts = LocalCopyOptions::new().delete_missing_args(true);
+        assert!(opts.delete_missing_args_enabled());
+    }
+
+    #[test]
+    fn delete_missing_args_disables() {
+        let opts = LocalCopyOptions::new()
+            .delete_missing_args(true)
+            .delete_missing_args(false);
+        assert!(!opts.delete_missing_args_enabled());
+    }
+
+    #[test]
+    fn update_enables() {
+        let opts = LocalCopyOptions::new().update(true);
+        assert!(opts.update_enabled());
+    }
+
+    #[test]
+    fn update_disables() {
+        let opts = LocalCopyOptions::new().update(true).update(false);
+        assert!(!opts.update_enabled());
+    }
+
+    #[test]
+    fn with_block_size_override_sets_value() {
+        let block_size = NonZeroU32::new(4096).unwrap();
+        let opts = LocalCopyOptions::new().with_block_size_override(Some(block_size));
+        assert_eq!(opts.block_size_override(), Some(block_size));
+    }
+
+    #[test]
+    fn with_block_size_override_none_clears() {
+        let block_size = NonZeroU32::new(4096).unwrap();
+        let opts = LocalCopyOptions::new()
+            .with_block_size_override(Some(block_size))
+            .with_block_size_override(None);
+        assert!(opts.block_size_override().is_none());
+    }
+
+    #[test]
+    fn with_modify_window_sets_value() {
+        let window = Duration::from_secs(2);
+        let opts = LocalCopyOptions::new().with_modify_window(window);
+        assert_eq!(opts.modify_window(), window);
+    }
+
+    #[test]
+    fn defaults_have_no_integrity_overrides() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.checksum_enabled());
+        assert!(!opts.size_only_enabled());
+        assert!(!opts.ignore_times_enabled());
+        assert!(!opts.ignore_existing_enabled());
+        assert!(!opts.existing_only_enabled());
+        assert!(!opts.ignore_missing_args_enabled());
+        assert!(!opts.delete_missing_args_enabled());
+        assert!(!opts.update_enabled());
+        assert!(opts.block_size_override().is_none());
+        assert_eq!(opts.modify_window(), Duration::ZERO);
+    }
+}

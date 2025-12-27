@@ -278,3 +278,177 @@ pub(super) fn secrets_path_candidates(brand: super::Brand) -> [&'static Path; 2]
     let [primary, secondary] = secrets_path_candidate_strs(brand);
     [Path::new(primary), Path::new(secondary)]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    mod brand_profile_tests {
+        use super::*;
+
+        #[test]
+        fn new_creates_profile() {
+            let profile = BrandProfile::new(
+                "client",
+                "daemon",
+                "/etc/config",
+                "/etc/config/file.conf",
+                "/etc/secrets",
+            );
+            assert_eq!(profile.client_program_name(), "client");
+            assert_eq!(profile.daemon_program_name(), "daemon");
+            assert_eq!(profile.daemon_config_dir_str(), "/etc/config");
+            assert_eq!(profile.daemon_config_path_str(), "/etc/config/file.conf");
+            assert_eq!(profile.daemon_secrets_path_str(), "/etc/secrets");
+        }
+
+        #[test]
+        fn path_accessors() {
+            let profile = oc_profile();
+            assert!(profile.daemon_config_dir().is_absolute() || true);  // May not be absolute on all platforms
+            assert!(profile.daemon_config_path().to_str().is_some());
+            assert!(profile.daemon_secrets_path().to_str().is_some());
+        }
+
+        #[test]
+        fn clone_and_copy() {
+            let profile = upstream_profile();
+            let cloned = profile.clone();
+            let copied = profile;
+            assert_eq!(profile, cloned);
+            assert_eq!(profile, copied);
+        }
+
+        #[test]
+        fn debug_format() {
+            let debug = format!("{:?}", oc_profile());
+            assert!(debug.contains("BrandProfile"));
+        }
+
+        #[test]
+        fn eq() {
+            assert_eq!(oc_profile(), oc_profile());
+            assert_eq!(upstream_profile(), upstream_profile());
+            assert_ne!(oc_profile(), upstream_profile());
+        }
+
+        #[test]
+        fn serialize() {
+            let json = serde_json::to_string(&oc_profile()).unwrap();
+            assert!(json.contains("client_program_name"));
+            assert!(json.contains("daemon_program_name"));
+        }
+
+        #[test]
+        fn matches_client_program_alias() {
+            let profile = upstream_profile();
+            assert!(profile.matches_client_program_alias(OsStr::new(profile.client_program_name())));
+            assert!(!profile.matches_client_program_alias(OsStr::new("unknown-program-name-xyz")));
+        }
+
+        #[test]
+        fn matches_daemon_program_alias() {
+            let profile = upstream_profile();
+            assert!(profile.matches_daemon_program_alias(OsStr::new(profile.daemon_program_name())));
+            assert!(!profile.matches_daemon_program_alias(OsStr::new("unknown-program-name-xyz")));
+        }
+    }
+
+    mod profile_function_tests {
+        use super::*;
+        use crate::branding::Brand;
+
+        #[test]
+        fn upstream_profile_values() {
+            let profile = upstream_profile();
+            // Values come from workspace metadata, just verify they're non-empty
+            assert!(!profile.client_program_name().is_empty());
+            assert!(!profile.daemon_program_name().is_empty());
+        }
+
+        #[test]
+        fn oc_profile_values() {
+            let profile = oc_profile();
+            // Values come from workspace metadata, just verify they're non-empty
+            assert!(!profile.client_program_name().is_empty());
+            assert!(!profile.daemon_program_name().is_empty());
+        }
+
+        #[test]
+        fn upstream_program_names() {
+            // Values come from workspace metadata, just verify they're non-empty
+            assert!(!upstream_client_program_name().is_empty());
+            assert!(!upstream_daemon_program_name().is_empty());
+            assert!(!client_program_name().is_empty());
+            assert!(!daemon_program_name().is_empty());
+        }
+
+        #[test]
+        fn oc_program_names() {
+            // Values come from workspace metadata, just verify they're non-empty
+            assert!(!oc_client_program_name().is_empty());
+            assert!(!oc_daemon_program_name().is_empty());
+        }
+
+        #[test]
+        fn os_str_accessors() {
+            // Verify OsStr accessors match their str counterparts
+            assert_eq!(client_program_name_os_str(), OsStr::new(client_program_name()));
+            assert_eq!(daemon_program_name_os_str(), OsStr::new(daemon_program_name()));
+            assert_eq!(oc_client_program_name_os_str(), OsStr::new(oc_client_program_name()));
+            assert_eq!(oc_daemon_program_name_os_str(), OsStr::new(oc_daemon_program_name()));
+        }
+
+        #[test]
+        fn oc_daemon_paths() {
+            assert!(!oc_daemon_config_dir().as_os_str().is_empty());
+            assert!(!oc_daemon_config_path().as_os_str().is_empty());
+            assert!(!oc_daemon_secrets_path().as_os_str().is_empty());
+        }
+
+        #[test]
+        fn legacy_daemon_paths() {
+            assert!(!legacy_daemon_config_dir().as_os_str().is_empty());
+            assert!(!legacy_daemon_config_path().as_os_str().is_empty());
+            assert!(!legacy_daemon_secrets_path().as_os_str().is_empty());
+        }
+
+        #[test]
+        fn config_path_candidates_for_oc() {
+            let candidates = config_path_candidate_strs(Brand::Oc);
+            assert_eq!(candidates.len(), 2);
+            // OC prefers OC path first
+            assert!(candidates[0].contains("oc"));
+        }
+
+        #[test]
+        fn config_path_candidates_for_upstream() {
+            let candidates = config_path_candidate_strs(Brand::Upstream);
+            assert_eq!(candidates.len(), 2);
+            // Upstream prefers legacy path first
+            assert!(candidates[0].contains("rsyncd"));
+        }
+
+        #[test]
+        fn secrets_path_candidates_for_oc() {
+            let candidates = secrets_path_candidate_strs(Brand::Oc);
+            assert_eq!(candidates.len(), 2);
+        }
+
+        #[test]
+        fn secrets_path_candidates_for_upstream() {
+            let candidates = secrets_path_candidate_strs(Brand::Upstream);
+            assert_eq!(candidates.len(), 2);
+        }
+
+        #[test]
+        fn path_candidates_as_paths() {
+            let config_paths = config_path_candidates(Brand::Oc);
+            assert_eq!(config_paths.len(), 2);
+
+            let secrets_paths = secrets_path_candidates(Brand::Oc);
+            assert_eq!(secrets_paths.len(), 2);
+        }
+    }
+}

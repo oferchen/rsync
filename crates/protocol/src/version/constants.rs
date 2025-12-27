@@ -34,3 +34,95 @@ pub const SUPPORTED_PROTOCOL_RANGE: RangeInclusive<u8> =
 /// duplicating literals.
 pub const SUPPORTED_PROTOCOL_BOUNDS: (u8, u8) =
     (OLDEST_SUPPORTED_PROTOCOL, NEWEST_SUPPORTED_PROTOCOL);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for protocol version constants
+    #[test]
+    fn oldest_supported_protocol_is_28() {
+        assert_eq!(OLDEST_SUPPORTED_PROTOCOL, 28);
+    }
+
+    #[test]
+    fn newest_supported_protocol_is_32() {
+        assert_eq!(NEWEST_SUPPORTED_PROTOCOL, 32);
+    }
+
+    #[test]
+    fn first_binary_negotiation_protocol_is_30() {
+        assert_eq!(FIRST_BINARY_NEGOTIATION_PROTOCOL, 30);
+    }
+
+    #[test]
+    fn maximum_protocol_advertisement_is_40() {
+        assert_eq!(MAXIMUM_PROTOCOL_ADVERTISEMENT, 40);
+    }
+
+    // Tests for range consistency
+    #[test]
+    fn oldest_is_less_than_newest() {
+        assert!(OLDEST_SUPPORTED_PROTOCOL < NEWEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn binary_negotiation_is_within_supported_range() {
+        assert!(FIRST_BINARY_NEGOTIATION_PROTOCOL >= OLDEST_SUPPORTED_PROTOCOL);
+        assert!(FIRST_BINARY_NEGOTIATION_PROTOCOL <= NEWEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn maximum_advertisement_is_above_newest() {
+        assert!(MAXIMUM_PROTOCOL_ADVERTISEMENT > NEWEST_SUPPORTED_PROTOCOL);
+    }
+
+    // Tests for upstream_protocol_range
+    #[test]
+    fn upstream_protocol_range_start_is_oldest() {
+        assert_eq!(*UPSTREAM_PROTOCOL_RANGE.start(), OLDEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn upstream_protocol_range_end_is_newest() {
+        assert_eq!(*UPSTREAM_PROTOCOL_RANGE.end(), NEWEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn upstream_protocol_range_contains_binary_negotiation() {
+        assert!(UPSTREAM_PROTOCOL_RANGE.contains(&FIRST_BINARY_NEGOTIATION_PROTOCOL));
+    }
+
+    // Tests for supported_protocol_range
+    #[test]
+    fn supported_protocol_range_start_is_oldest() {
+        assert_eq!(*SUPPORTED_PROTOCOL_RANGE.start(), OLDEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn supported_protocol_range_end_is_newest() {
+        assert_eq!(*SUPPORTED_PROTOCOL_RANGE.end(), NEWEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn supported_protocol_range_matches_upstream() {
+        assert_eq!(SUPPORTED_PROTOCOL_RANGE, UPSTREAM_PROTOCOL_RANGE);
+    }
+
+    // Tests for supported_protocol_bounds
+    #[test]
+    fn supported_protocol_bounds_oldest() {
+        assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.0, OLDEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn supported_protocol_bounds_newest() {
+        assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.1, NEWEST_SUPPORTED_PROTOCOL);
+    }
+
+    #[test]
+    fn supported_protocol_bounds_matches_range() {
+        assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.0, *SUPPORTED_PROTOCOL_RANGE.start());
+        assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.1, *SUPPORTED_PROTOCOL_RANGE.end());
+    }
+}

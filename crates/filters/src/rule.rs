@@ -201,3 +201,139 @@ impl FilterRule {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod filter_rule_tests {
+        use super::*;
+
+        #[test]
+        fn include_rule() {
+            let rule = FilterRule::include("*.txt");
+            assert_eq!(rule.action(), FilterAction::Include);
+            assert_eq!(rule.pattern(), "*.txt");
+            assert!(rule.applies_to_sender());
+            assert!(rule.applies_to_receiver());
+            assert!(!rule.is_perishable());
+            assert!(!rule.is_xattr_only());
+        }
+
+        #[test]
+        fn exclude_rule() {
+            let rule = FilterRule::exclude("*.bak");
+            assert_eq!(rule.action(), FilterAction::Exclude);
+            assert_eq!(rule.pattern(), "*.bak");
+            assert!(rule.applies_to_sender());
+            assert!(rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn protect_rule() {
+            let rule = FilterRule::protect("/important");
+            assert_eq!(rule.action(), FilterAction::Protect);
+            assert!(!rule.applies_to_sender());
+            assert!(rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn risk_rule() {
+            let rule = FilterRule::risk("/temp");
+            assert_eq!(rule.action(), FilterAction::Risk);
+            assert!(!rule.applies_to_sender());
+            assert!(rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn clear_rule() {
+            let rule = FilterRule::clear();
+            assert_eq!(rule.action(), FilterAction::Clear);
+            assert!(rule.pattern().is_empty());
+            assert!(rule.applies_to_sender());
+            assert!(rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn show_rule() {
+            let rule = FilterRule::show("logs/**");
+            assert_eq!(rule.action(), FilterAction::Include);
+            assert!(rule.applies_to_sender());
+            assert!(!rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn hide_rule() {
+            let rule = FilterRule::hide("*.bak");
+            assert_eq!(rule.action(), FilterAction::Exclude);
+            assert!(rule.applies_to_sender());
+            assert!(!rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn with_sender() {
+            let rule = FilterRule::include("*").with_sender(false);
+            assert!(!rule.applies_to_sender());
+        }
+
+        #[test]
+        fn with_receiver() {
+            let rule = FilterRule::include("*").with_receiver(false);
+            assert!(!rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn with_sides() {
+            let rule = FilterRule::include("*").with_sides(true, false);
+            assert!(rule.applies_to_sender());
+            assert!(!rule.applies_to_receiver());
+        }
+
+        #[test]
+        fn with_perishable() {
+            let rule = FilterRule::include("*").with_perishable(true);
+            assert!(rule.is_perishable());
+        }
+
+        #[test]
+        fn with_xattr_only() {
+            let rule = FilterRule::include("*").with_xattr_only(true);
+            assert!(rule.is_xattr_only());
+        }
+
+        #[test]
+        fn anchor_to_root_adds_slash() {
+            let rule = FilterRule::include("test").anchor_to_root();
+            assert_eq!(rule.pattern(), "/test");
+        }
+
+        #[test]
+        fn anchor_to_root_idempotent() {
+            let rule = FilterRule::include("/test").anchor_to_root();
+            assert_eq!(rule.pattern(), "/test");
+        }
+
+        #[test]
+        fn clone_and_eq() {
+            let rule = FilterRule::include("test");
+            let cloned = rule.clone();
+            assert_eq!(rule, cloned);
+        }
+
+        #[test]
+        fn debug_format() {
+            let rule = FilterRule::include("test");
+            let debug = format!("{:?}", rule);
+            assert!(debug.contains("FilterRule"));
+            assert!(debug.contains("Include"));
+            assert!(debug.contains("test"));
+        }
+
+        #[test]
+        fn pattern_accepts_string() {
+            let pattern = String::from("dynamic");
+            let rule = FilterRule::include(pattern);
+            assert_eq!(rule.pattern(), "dynamic");
+        }
+    }
+}

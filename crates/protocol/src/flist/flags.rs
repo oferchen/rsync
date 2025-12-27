@@ -240,4 +240,91 @@ mod tests {
         assert!(flags.same_time());
         assert!(!flags.same_mode());
     }
+
+    #[test]
+    fn flags_long_name() {
+        let flags = FileFlags::new(XMIT_LONG_NAME, 0);
+        assert!(flags.long_name());
+    }
+
+    #[test]
+    fn flags_same_mode() {
+        let flags = FileFlags::new(XMIT_SAME_MODE, 0);
+        assert!(flags.same_mode());
+    }
+
+    #[test]
+    fn flags_top_dir() {
+        let flags = FileFlags::new(XMIT_TOP_DIR, 0);
+        assert!(flags.top_dir());
+    }
+
+    #[test]
+    fn flags_same_high_rdev() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_SAME_RDEV_MAJOR);
+        assert!(flags.same_high_rdev());
+        assert!(flags.same_rdev_major());
+    }
+
+    #[test]
+    fn flags_mod_nsec() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_MOD_NSEC);
+        assert!(flags.mod_nsec());
+    }
+
+    #[test]
+    fn flags_io_error_endlist() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST);
+        assert!(flags.io_error_endlist());
+    }
+
+    #[test]
+    fn file_flags_clone() {
+        let flags = FileFlags::new(XMIT_SAME_NAME, XMIT_HLINKED);
+        let cloned = flags;
+        assert_eq!(flags, cloned);
+    }
+
+    #[test]
+    fn file_flags_eq() {
+        let a = FileFlags::new(XMIT_SAME_NAME, XMIT_HLINKED);
+        let b = FileFlags::new(XMIT_SAME_NAME, XMIT_HLINKED);
+        let c = FileFlags::new(XMIT_SAME_UID, 0);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn xmit_constants_have_expected_values() {
+        assert_eq!(XMIT_TOP_DIR, 0b0000_0001);
+        assert_eq!(XMIT_SAME_MODE, 0b0000_0010);
+        assert_eq!(XMIT_EXTENDED_FLAGS, 0b0000_0100);
+        assert_eq!(XMIT_SAME_UID, 0b0000_1000);
+        assert_eq!(XMIT_SAME_GID, 0b0001_0000);
+        assert_eq!(XMIT_SAME_NAME, 0b0010_0000);
+        assert_eq!(XMIT_LONG_NAME, 0b0100_0000);
+        assert_eq!(XMIT_SAME_TIME, 0b1000_0000);
+    }
+
+    #[test]
+    fn extended_constants_have_expected_values() {
+        assert_eq!(XMIT_SAME_RDEV_MAJOR, 0b0000_0001);
+        assert_eq!(XMIT_HLINKED, 0b0000_0010);
+        assert_eq!(XMIT_USER_NAME_FOLLOWS, 0b0000_0100);
+        assert_eq!(XMIT_GROUP_NAME_FOLLOWS, 0b0000_1000);
+        assert_eq!(XMIT_HLINK_FIRST, 0b0001_0000);
+        assert_eq!(XMIT_MOD_NSEC, 0b0010_0000);
+        assert_eq!(XMIT_SAME_ACL, 0b0100_0000);
+        assert_eq!(XMIT_SAME_XATTR, 0b1000_0000);
+    }
+
+    #[test]
+    fn xmit_same_high_rdev_alias() {
+        assert_eq!(XMIT_SAME_HIGH_RDEV, XMIT_SAME_RDEV_MAJOR);
+    }
+
+    #[test]
+    fn xmit_io_error_endlist_alias() {
+        assert_eq!(XMIT_IO_ERROR_ENDLIST, XMIT_HLINK_FIRST);
+    }
 }

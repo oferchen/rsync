@@ -122,6 +122,8 @@ impl<R: Read> MultiplexReader<R> {
     }
 }
 
+// Allow debug checkpoint code to remain - it's controlled at runtime
+#[allow(dead_code)]
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.read_seq += 1;
@@ -242,5 +244,202 @@ impl<R: Read> Read for MultiplexReader<R> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn server_reader_new_plain() {
+        let data = vec![1, 2, 3, 4, 5];
+        let reader = ServerReader::new_plain(Cursor::new(data));
+        assert!(matches!(reader, ServerReader::Plain(_)));
+    }
+
+    #[test]
+    fn server_reader_activate_multiplex() {
+        let data = vec![1, 2, 3, 4, 5];
+        let reader = ServerReader::new_plain(Cursor::new(data));
+        let result = reader.activate_multiplex();
+        assert!(result.is_ok());
+        let multiplexed = result.unwrap();
+        assert!(matches!(multiplexed, ServerReader::Multiplex(_)));
+    }
+
+    #[test]
+    fn server_reader_activate_multiplex_twice_fails() {
+        let data = vec![1, 2, 3, 4, 5];
+        let reader = ServerReader::new_plain(Cursor::new(data));
+        let multiplexed = reader.activate_multiplex().unwrap();
+        let result = multiplexed.activate_multiplex();
+        assert!(result.is_err());
+        match result {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::AlreadyExists),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn server_reader_is_multiplexed_plain() {
+        let data = vec![1, 2, 3, 4, 5];
+        let reader = ServerReader::new_plain(Cursor::new(data));
+        assert!(!reader.is_multiplexed());
+    }
+
+    #[test]
+    fn server_reader_is_multiplexed_multiplex() {
+        let data = vec![1, 2, 3, 4, 5];
+        let reader = ServerReader::new_plain(Cursor::new(data))
+            .activate_multiplex()
+            .unwrap();
+        assert!(reader.is_multiplexed());
+    }
+
+    #[test]
+    fn server_reader_plain_read() {
+        let data = vec![1, 2, 3, 4, 5];
+        let mut reader = ServerReader::new_plain(Cursor::new(data));
+        let mut buf = [0u8; 5];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(buf, [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn server_reader_plain_partial_read() {
+        let data = vec![1, 2, 3, 4, 5];
+        let mut reader = ServerReader::new_plain(Cursor::new(data));
+        let mut buf = [0u8; 3];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(buf, [1, 2, 3]);
+    }
+
+    #[test]
+    fn server_reader_plain_empty_read() {
+        let data: Vec<u8> = vec![];
+        let mut reader = ServerReader::new_plain(Cursor::new(data));
+        let mut buf = [0u8; 5];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn server_reader_activate_compression_on_plain_fails() {
+        let data = vec![1, 2, 3, 4, 5];
+        let reader = ServerReader::new_plain(Cursor::new(data));
+        let result = reader.activate_compression(CompressionAlgorithm::Zlib);
+        assert!(result.is_err());
+        match result {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::InvalidInput),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn server_reader_activate_compression_on_multiplex_succeeds() {
+        let data = vec![1, 2, 3, 4, 5];
+        let reader = ServerReader::new_plain(Cursor::new(data))
+            .activate_multiplex()
+            .unwrap();
+        let result = reader.activate_compression(CompressionAlgorithm::Zlib);
+        assert!(result.is_ok());
+        let compressed = result.unwrap();
+        assert!(compressed.is_multiplexed());
+    }
+
+    #[test]
+    fn server_reader_activate_compression_twice_fails() {
+        let data = vec![1, 2, 3, 4, 5];
+        let compressed = ServerReader::new_plain(Cursor::new(data))
+            .activate_multiplex()
+            .unwrap()
+            .activate_compression(CompressionAlgorithm::Zlib)
+            .unwrap();
+        let result = compressed.activate_compression(CompressionAlgorithm::Zlib);
+        assert!(result.is_err());
+        match result {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::AlreadyExists),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn multiplex_reader_new() {
+        let data = vec![1, 2, 3, 4, 5];
+        let mux = MultiplexReader::new(Cursor::new(data));
+        assert!(mux.buffer.is_empty());
+        assert_eq!(mux.pos, 0);
+        assert_eq!(mux.read_seq, 0);
+        assert_eq!(mux.msg_seq, 0);
+    }
+
+    #[test]
+    fn multiplex_reader_buffered_read() {
+        // Create a MultiplexReader with pre-populated buffer (simulating internal state)
+        let data = vec![];
+        let mut mux = MultiplexReader::new(Cursor::new(data));
+
+        // Manually populate the buffer as if we had read a message
+        mux.buffer = vec![10, 20, 30, 40, 50];
+        mux.pos = 0;
+
+        // Read from buffer
+        let mut buf = [0u8; 3];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(buf, [10, 20, 30]);
+        assert_eq!(mux.pos, 3);
+    }
+
+    #[test]
+    fn multiplex_reader_buffered_read_complete() {
+        let data = vec![];
+        let mut mux = MultiplexReader::new(Cursor::new(data));
+
+        // Populate buffer
+        mux.buffer = vec![10, 20, 30];
+        mux.pos = 0;
+
+        // Read entire buffer
+        let mut buf = [0u8; 5];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(&buf[..3], &[10, 20, 30]);
+        // Buffer should be cleared when exhausted
+        assert!(mux.buffer.is_empty());
+        assert_eq!(mux.pos, 0);
+    }
+
+    #[test]
+    fn multiplex_reader_buffered_partial_read() {
+        let data = vec![];
+        let mut mux = MultiplexReader::new(Cursor::new(data));
+
+        // Populate buffer
+        mux.buffer = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        mux.pos = 2; // Start from position 2
+
+        // Read 3 bytes
+        let mut buf = [0u8; 3];
+        let n = mux.read(&mut buf).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(buf, [3, 4, 5]);
+        assert_eq!(mux.pos, 5);
+    }
+
+    #[test]
+    fn multiplex_reader_read_increments_seq() {
+        let data = vec![];
+        let mut mux = MultiplexReader::new(Cursor::new(data));
+        mux.buffer = vec![1, 2, 3];
+        mux.pos = 0;
+
+        let mut buf = [0u8; 3];
+        let _ = mux.read(&mut buf);
+        assert_eq!(mux.read_seq, 1);
     }
 }
