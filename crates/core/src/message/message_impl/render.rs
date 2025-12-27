@@ -105,3 +105,133 @@ impl fmt::Display for Message {
         self.render_to(f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_to_writes_to_string() {
+        let msg = Message::info("test message");
+        let mut output = String::new();
+        msg.render_to(&mut output).unwrap();
+        assert!(output.contains("test message"));
+    }
+
+    #[test]
+    fn render_line_to_appends_newline() {
+        let msg = Message::info("test");
+        let mut output = String::new();
+        msg.render_line_to(&mut output).unwrap();
+        assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn to_bytes_returns_vec() {
+        let msg = Message::info("hello");
+        let bytes = msg.to_bytes().unwrap();
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn to_bytes_contains_message_text() {
+        let msg = Message::info("specific text");
+        let bytes = msg.to_bytes().unwrap();
+        let output = String::from_utf8_lossy(&bytes);
+        assert!(output.contains("specific text"));
+    }
+
+    #[test]
+    fn to_line_bytes_includes_newline() {
+        let msg = Message::info("test");
+        let bytes = msg.to_line_bytes().unwrap();
+        assert!(bytes.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn render_to_writer_writes_bytes() {
+        let msg = Message::info("writer test");
+        let mut buffer = Vec::new();
+        msg.render_to_writer(&mut buffer).unwrap();
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn render_line_to_writer_includes_newline() {
+        let msg = Message::info("line test");
+        let mut buffer = Vec::new();
+        msg.render_line_to_writer(&mut buffer).unwrap();
+        assert!(buffer.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn append_to_vec_extends_buffer() {
+        let msg = Message::info("append test");
+        let mut buffer = b"prefix:".to_vec();
+        let prefix_len = buffer.len();
+        msg.append_to_vec(&mut buffer).unwrap();
+        assert!(buffer.len() > prefix_len);
+    }
+
+    #[test]
+    fn append_to_vec_preserves_prefix() {
+        let msg = Message::info("test");
+        let mut buffer = b"prefix:".to_vec();
+        msg.append_to_vec(&mut buffer).unwrap();
+        assert_eq!(&buffer[..7], b"prefix:");
+    }
+
+    #[test]
+    fn append_line_to_vec_includes_newline() {
+        let msg = Message::info("line");
+        let mut buffer = Vec::new();
+        msg.append_line_to_vec(&mut buffer).unwrap();
+        assert!(buffer.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn display_trait_works() {
+        let msg = Message::info("display test");
+        let output = format!("{}", msg);
+        assert!(output.contains("display test"));
+    }
+
+    #[test]
+    fn display_does_not_include_newline() {
+        let msg = Message::info("test");
+        let output = format!("{}", msg);
+        assert!(!output.ends_with('\n'));
+    }
+
+    #[test]
+    fn error_message_includes_code() {
+        let msg = Message::error(42, "error text");
+        let bytes = msg.to_bytes().unwrap();
+        let output = String::from_utf8_lossy(&bytes);
+        assert!(output.contains("error text"));
+    }
+
+    #[test]
+    fn warning_message_renders() {
+        let msg = Message::warning("warning text");
+        let bytes = msg.to_bytes().unwrap();
+        assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn append_to_vec_returns_appended_length() {
+        let msg = Message::info("test");
+        let mut buffer = Vec::new();
+        let appended = msg.append_to_vec(&mut buffer).unwrap();
+        assert_eq!(appended, buffer.len());
+    }
+
+    #[test]
+    fn append_line_to_vec_returns_length_with_newline() {
+        let msg = Message::info("test");
+        let mut buffer = Vec::new();
+        let appended = msg.append_line_to_vec(&mut buffer).unwrap();
+        assert_eq!(appended, buffer.len());
+        assert!(buffer.ends_with(b"\n"));
+    }
+}
