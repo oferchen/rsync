@@ -516,4 +516,345 @@ mod tests {
             );
         }
     }
+
+    // ==== Additional varint tests ====
+
+    #[test]
+    fn write_varint_to_writer() {
+        let mut output = Vec::new();
+        write_varint(&mut output, 42).expect("write succeeds");
+        assert_eq!(output, vec![42]);
+    }
+
+    #[test]
+    fn write_varint_multiple_values() {
+        let mut output = Vec::new();
+        write_varint(&mut output, 0).expect("write 0");
+        write_varint(&mut output, 127).expect("write 127");
+        write_varint(&mut output, 128).expect("write 128");
+        assert!(!output.is_empty());
+
+        // Verify we can read them back
+        let mut cursor = Cursor::new(&output);
+        assert_eq!(read_varint(&mut cursor).unwrap(), 0);
+        assert_eq!(read_varint(&mut cursor).unwrap(), 127);
+        assert_eq!(read_varint(&mut cursor).unwrap(), 128);
+    }
+
+    #[test]
+    fn read_varint_empty_input() {
+        let data: [u8; 0] = [];
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_varint(&mut cursor).expect_err("empty input must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn decode_varint_empty_input() {
+        let data: [u8; 0] = [];
+        let err = decode_varint(&data).expect_err("empty input must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn decode_varint_single_byte() {
+        let data = [42u8];
+        let (value, remainder) = decode_varint(&data).expect("decode succeeds");
+        assert_eq!(value, 42);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn decode_varint_boundary_127() {
+        // 127 is the max single-byte value
+        let data = [127u8];
+        let (value, remainder) = decode_varint(&data).expect("decode succeeds");
+        assert_eq!(value, 127);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn decode_varint_boundary_128() {
+        // 128 requires two bytes
+        let mut data = Vec::new();
+        encode_varint_to_vec(128, &mut data);
+        assert_eq!(data.len(), 2);
+        let (value, remainder) = decode_varint(&data).expect("decode succeeds");
+        assert_eq!(value, 128);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn varint_negative_values() {
+        let negatives = [-1, -127, -128, -255, -256, -32768, -65536, i32::MIN];
+        for value in negatives {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "failed for {value}");
+        }
+    }
+
+    #[test]
+    fn varint_max_values() {
+        let extremes = [i32::MAX, i32::MIN, 0];
+        for value in extremes {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value);
+        }
+    }
+
+    #[test]
+    fn encode_varint_length_varies_with_value() {
+        // Small values should have shorter encodings
+        let mut small = Vec::new();
+        encode_varint_to_vec(1, &mut small);
+
+        let mut large = Vec::new();
+        encode_varint_to_vec(1_000_000_000, &mut large);
+
+        assert!(small.len() < large.len());
+    }
+
+    // ==== Longint tests ====
+
+    #[test]
+    fn write_longint_small_positive() {
+        let mut output = Vec::new();
+        write_longint(&mut output, 42).expect("write succeeds");
+        assert_eq!(output.len(), 4);
+        // Read back as i32 LE
+        let value = i32::from_le_bytes(output.try_into().unwrap());
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn write_longint_max_inline() {
+        // 0x7FFFFFFF is the max value that fits inline (4 bytes)
+        let max_inline = 0x7FFF_FFFF_i64;
+        let mut output = Vec::new();
+        write_longint(&mut output, max_inline).expect("write succeeds");
+        assert_eq!(output.len(), 4);
+    }
+
+    #[test]
+    fn write_longint_above_max_inline() {
+        // 0x80000000 requires the full 12-byte encoding
+        let above_inline = 0x8000_0000_i64;
+        let mut output = Vec::new();
+        write_longint(&mut output, above_inline).expect("write succeeds");
+        assert_eq!(output.len(), 12); // 4 (marker) + 8 (full value)
+
+        // First 4 bytes should be 0xFFFFFFFF marker
+        let marker = u32::from_le_bytes(output[0..4].try_into().unwrap());
+        assert_eq!(marker, 0xFFFF_FFFF);
+
+        // Last 8 bytes should be the value
+        let value = i64::from_le_bytes(output[4..12].try_into().unwrap());
+        assert_eq!(value, above_inline);
+    }
+
+    #[test]
+    fn write_longint_zero() {
+        let mut output = Vec::new();
+        write_longint(&mut output, 0).expect("write succeeds");
+        assert_eq!(output.len(), 4);
+        let value = i32::from_le_bytes(output.try_into().unwrap());
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn write_longint_large_values() {
+        let large_values = [
+            i64::MAX,
+            0x8000_0000_i64,
+            0xFFFF_FFFF_i64,
+            0x1_0000_0000_i64,
+            1_000_000_000_000_i64,
+        ];
+
+        for value in large_values {
+            let mut output = Vec::new();
+            write_longint(&mut output, value).expect("write succeeds");
+            assert_eq!(output.len(), 12, "large value {value} should use 12 bytes");
+        }
+    }
+
+    // ==== Varlong30 wrapper tests ====
+
+    #[test]
+    fn varlong30_is_alias_for_varlong() {
+        let value = 1234567i64;
+        let min_bytes = 3u8;
+
+        let mut encoded_30 = Vec::new();
+        write_varlong30(&mut encoded_30, value, min_bytes).expect("write succeeds");
+
+        let mut encoded_varlong = Vec::new();
+        write_varlong(&mut encoded_varlong, value, min_bytes).expect("write succeeds");
+
+        assert_eq!(encoded_30, encoded_varlong);
+
+        let mut cursor = Cursor::new(&encoded_30);
+        let decoded = read_varlong30(&mut cursor, min_bytes).expect("read succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    // ==== Varlong with different min_bytes ====
+
+    #[test]
+    fn varlong_min_bytes_1() {
+        let value = 42i64;
+        let mut encoded = Vec::new();
+        write_varlong(&mut encoded, value, 1).expect("write succeeds");
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varlong(&mut cursor, 1).expect("read succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn varlong_min_bytes_4() {
+        let value = 1_000_000i64;
+        let mut encoded = Vec::new();
+        write_varlong(&mut encoded, value, 4).expect("write succeeds");
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varlong(&mut cursor, 4).expect("read succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn varlong_zero_value() {
+        for min_bytes in 1u8..=8 {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, 0, min_bytes).expect("write succeeds");
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
+            assert_eq!(decoded, 0, "zero failed for min_bytes={min_bytes}");
+        }
+    }
+
+    #[test]
+    fn varlong_typical_timestamps() {
+        // Typical Unix timestamps (seconds since 1970)
+        let timestamps = [
+            0i64,
+            1_000_000_000i64,      // Sep 2001
+            1_700_000_000i64,      // Nov 2023
+            2_000_000_000i64,      // May 2033
+            i32::MAX as i64,       // Jan 2038
+            (i32::MAX as i64) + 1, // After Y2038
+        ];
+
+        for ts in timestamps {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, ts, 4).expect("write succeeds");
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, 4).expect("read succeeds");
+            assert_eq!(decoded, ts, "timestamp {ts} failed");
+        }
+    }
+
+    #[test]
+    fn varlong_typical_file_sizes() {
+        // Typical file sizes
+        let sizes = [
+            0i64,
+            1024i64,                     // 1 KB
+            1_048_576i64,                // 1 MB
+            1_073_741_824i64,            // 1 GB
+            1_099_511_627_776i64,        // 1 TB
+            1_125_899_906_842_624i64,    // 1 PB
+            100_000_000_000_000_000i64,  // 100 PB
+        ];
+
+        for size in sizes {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, size, 3).expect("write succeeds");
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, 3).expect("read succeeds");
+            assert_eq!(decoded, size, "file size {size} failed");
+        }
+    }
+
+    // ==== Error handling tests ====
+
+    #[test]
+    fn read_varlong_truncated_input() {
+        // A leading byte that indicates more bytes follow, but truncated
+        let data = [0x80u8]; // Indicates at least 1 more byte
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_varlong(&mut cursor, 1).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_varlong_empty_input() {
+        let data: [u8; 0] = [];
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_varlong(&mut cursor, 3).expect_err("empty must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    // ==== INT_BYTE_EXTRA table tests ====
+
+    #[test]
+    fn int_byte_extra_table_structure() {
+        // Verify the structure of INT_BYTE_EXTRA table
+        // 0x00-0x7F / 4 (indices 0-31) should be 0 extra bytes
+        for (i, &val) in INT_BYTE_EXTRA[..32].iter().enumerate() {
+            assert_eq!(val, 0, "index {i} should be 0");
+        }
+        // 0x80-0xBF / 4 (indices 32-47) should be 1 extra byte
+        for (i, &val) in INT_BYTE_EXTRA[32..48].iter().enumerate() {
+            assert_eq!(val, 1, "index {} should be 1", i + 32);
+        }
+        // 0xC0-0xDF / 4 (indices 48-55) should be 2 extra bytes
+        for (i, &val) in INT_BYTE_EXTRA[48..56].iter().enumerate() {
+            assert_eq!(val, 2, "index {} should be 2", i + 48);
+        }
+    }
+
+    #[test]
+    fn decode_bytes_validates_int_byte_extra() {
+        // Test that various leading bytes produce correct extra byte counts
+        // Leading byte 0x00-0x7F: 0 extra bytes (single byte encoding)
+        let (value, consumed) = decode_bytes(&[0x42]).expect("decode succeeds");
+        assert_eq!(value, 0x42);
+        assert_eq!(consumed, 1);
+
+        // Leading byte 0x80: 1 extra byte
+        let (value, consumed) = decode_bytes(&[0x80, 0x01]).expect("decode succeeds");
+        assert_eq!(consumed, 2);
+        assert_eq!(value & 0xFFFF, 1); // Low byte is 0x01
+    }
+
+    #[test]
+    fn invalid_data_error_message() {
+        let err = invalid_data("test error");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("test error"));
+    }
+
+    // ==== Encoding length tests ====
+
+    #[test]
+    fn encode_bytes_length_for_boundary_values() {
+        // 0-127: 1 byte
+        let (len, _) = encode_bytes(0);
+        assert_eq!(len, 1);
+        let (len, _) = encode_bytes(127);
+        assert_eq!(len, 1);
+
+        // 128-255: 2 bytes
+        let (len, _) = encode_bytes(128);
+        assert_eq!(len, 2);
+        let (len, _) = encode_bytes(255);
+        assert_eq!(len, 2);
+
+        // Larger values need more bytes
+        let (len, _) = encode_bytes(65536);
+        assert!(len >= 3);
+    }
 }
