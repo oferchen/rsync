@@ -5,6 +5,9 @@
 #![doc = include_str!("../README.md")]
 
 /// Protocol version-aware encoding/decoding using the Strategy pattern.
+///
+/// This module includes both `ProtocolCodec` for general wire encoding and
+/// `NdxCodec` for file-list index encoding. See [`codec`] for details.
 pub mod codec;
 mod compatibility;
 /// Debug tracing system for protocol analysis
@@ -19,8 +22,6 @@ pub mod flist;
 pub mod iconv;
 mod legacy;
 mod multiplex;
-/// NDX (file-list index) encoding and decoding.
-pub mod ndx;
 mod negotiation;
 /// Transfer statistics wire format encoding and decoding.
 pub mod stats;
