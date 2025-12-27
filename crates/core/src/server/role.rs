@@ -27,14 +27,14 @@ mod tests {
     #[test]
     fn receiver_debug_format() {
         let role = ServerRole::Receiver;
-        let debug = format!("{:?}", role);
+        let debug = format!("{role:?}");
         assert_eq!(debug, "Receiver");
     }
 
     #[test]
     fn receiver_clone() {
         let role = ServerRole::Receiver;
-        let cloned = role.clone();
+        let cloned = role;
         assert_eq!(role, cloned);
     }
 
@@ -49,14 +49,14 @@ mod tests {
     #[test]
     fn generator_debug_format() {
         let role = ServerRole::Generator;
-        let debug = format!("{:?}", role);
+        let debug = format!("{role:?}");
         assert_eq!(debug, "Generator");
     }
 
     #[test]
     fn generator_clone() {
         let role = ServerRole::Generator;
-        let cloned = role.clone();
+        let cloned = role;
         assert_eq!(role, cloned);
     }
 

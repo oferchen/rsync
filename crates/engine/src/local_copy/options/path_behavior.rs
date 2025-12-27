@@ -332,7 +332,9 @@ mod tests {
 
     #[test]
     fn open_noatime_disables() {
-        let opts = LocalCopyOptions::new().open_noatime(true).open_noatime(false);
+        let opts = LocalCopyOptions::new()
+            .open_noatime(true)
+            .open_noatime(false);
         assert!(!opts.open_noatime_enabled());
     }
 
@@ -344,7 +346,9 @@ mod tests {
 
     #[test]
     fn copy_unsafe_links_disables() {
-        let opts = LocalCopyOptions::new().copy_unsafe_links(true).copy_unsafe_links(false);
+        let opts = LocalCopyOptions::new()
+            .copy_unsafe_links(true)
+            .copy_unsafe_links(false);
         assert!(!opts.copy_unsafe_links_enabled());
     }
 
@@ -368,7 +372,9 @@ mod tests {
 
     #[test]
     fn copy_dirlinks_disables() {
-        let opts = LocalCopyOptions::new().copy_dirlinks(true).copy_dirlinks(false);
+        let opts = LocalCopyOptions::new()
+            .copy_dirlinks(true)
+            .copy_dirlinks(false);
         assert!(!opts.copy_dirlinks_enabled());
     }
 
@@ -380,7 +386,9 @@ mod tests {
 
     #[test]
     fn keep_dirlinks_disables() {
-        let opts = LocalCopyOptions::new().keep_dirlinks(true).keep_dirlinks(false);
+        let opts = LocalCopyOptions::new()
+            .keep_dirlinks(true)
+            .keep_dirlinks(false);
         assert!(!opts.keep_dirlinks_enabled());
     }
 
@@ -392,7 +400,9 @@ mod tests {
 
     #[test]
     fn relative_paths_disables() {
-        let opts = LocalCopyOptions::new().relative_paths(true).relative_paths(false);
+        let opts = LocalCopyOptions::new()
+            .relative_paths(true)
+            .relative_paths(false);
         assert!(!opts.relative_paths_enabled());
     }
 
@@ -428,7 +438,9 @@ mod tests {
 
     #[test]
     fn implied_dirs_disables() {
-        let opts = LocalCopyOptions::new().implied_dirs(true).implied_dirs(false);
+        let opts = LocalCopyOptions::new()
+            .implied_dirs(true)
+            .implied_dirs(false);
         assert!(!opts.implied_dirs_enabled());
     }
 
@@ -452,7 +464,9 @@ mod tests {
 
     #[test]
     fn prune_empty_dirs_disables() {
-        let opts = LocalCopyOptions::new().prune_empty_dirs(true).prune_empty_dirs(false);
+        let opts = LocalCopyOptions::new()
+            .prune_empty_dirs(true)
+            .prune_empty_dirs(false);
         assert!(!opts.prune_empty_dirs_enabled());
     }
 
@@ -476,7 +490,9 @@ mod tests {
 
     #[test]
     fn copy_devices_as_files_disables() {
-        let opts = LocalCopyOptions::new().copy_devices_as_files(true).copy_devices_as_files(false);
+        let opts = LocalCopyOptions::new()
+            .copy_devices_as_files(true)
+            .copy_devices_as_files(false);
         assert!(!opts.copy_devices_as_files_enabled());
     }
 
@@ -500,7 +516,9 @@ mod tests {
 
     #[test]
     fn force_replacements_disables() {
-        let opts = LocalCopyOptions::new().force_replacements(true).force_replacements(false);
+        let opts = LocalCopyOptions::new()
+            .force_replacements(true)
+            .force_replacements(false);
         assert!(!opts.force_replacements_enabled());
     }
 
@@ -512,7 +530,9 @@ mod tests {
 
     #[test]
     fn one_file_system_disables() {
-        let opts = LocalCopyOptions::new().one_file_system(true).one_file_system(false);
+        let opts = LocalCopyOptions::new()
+            .one_file_system(true)
+            .one_file_system(false);
         assert!(!opts.one_file_system_enabled());
     }
 

@@ -223,10 +223,7 @@ mod tests {
 
     #[test]
     fn owner_false_clears_preserve() {
-        let config = builder()
-            .owner(true)
-            .owner(false)
-            .build();
+        let config = builder().owner(true).owner(false).build();
         assert!(!config.preserve_owner());
     }
 
@@ -253,10 +250,7 @@ mod tests {
 
     #[test]
     fn group_false_clears_preserve() {
-        let config = builder()
-            .group(true)
-            .group(false)
-            .build();
+        let config = builder().group(true).group(false).build();
         assert!(!config.preserve_group());
     }
 
@@ -277,7 +271,9 @@ mod tests {
 
     #[test]
     fn copy_as_sets_value() {
-        let config = builder().copy_as(Some(OsString::from("user:group"))).build();
+        let config = builder()
+            .copy_as(Some(OsString::from("user:group")))
+            .build();
         assert!(config.copy_as().is_some());
     }
 
@@ -298,10 +294,7 @@ mod tests {
 
     #[test]
     fn executability_false_clears_flag() {
-        let config = builder()
-            .executability(true)
-            .executability(false)
-            .build();
+        let config = builder().executability(true).executability(false).build();
         assert!(!config.preserve_executability());
     }
 
@@ -313,10 +306,7 @@ mod tests {
 
     #[test]
     fn permissions_false_clears_flag() {
-        let config = builder()
-            .permissions(true)
-            .permissions(false)
-            .build();
+        let config = builder().permissions(true).permissions(false).build();
         assert!(!config.preserve_permissions());
     }
 
@@ -328,10 +318,7 @@ mod tests {
 
     #[test]
     fn fake_super_false_clears_flag() {
-        let config = builder()
-            .fake_super(true)
-            .fake_super(false)
-            .build();
+        let config = builder().fake_super(true).fake_super(false).build();
         assert!(!config.fake_super());
     }
 
@@ -343,10 +330,7 @@ mod tests {
 
     #[test]
     fn times_false_clears_flag() {
-        let config = builder()
-            .times(true)
-            .times(false)
-            .build();
+        let config = builder().times(true).times(false).build();
         assert!(!config.preserve_times());
     }
 
@@ -358,10 +342,7 @@ mod tests {
 
     #[test]
     fn atimes_false_clears_flag() {
-        let config = builder()
-            .atimes(true)
-            .atimes(false)
-            .build();
+        let config = builder().atimes(true).atimes(false).build();
         assert!(!config.preserve_atimes());
     }
 
@@ -373,10 +354,7 @@ mod tests {
 
     #[test]
     fn crtimes_false_clears_flag() {
-        let config = builder()
-            .crtimes(true)
-            .crtimes(false)
-            .build();
+        let config = builder().crtimes(true).crtimes(false).build();
         assert!(!config.preserve_crtimes());
     }
 
@@ -388,10 +366,7 @@ mod tests {
 
     #[test]
     fn omit_dir_times_false_clears_flag() {
-        let config = builder()
-            .omit_dir_times(true)
-            .omit_dir_times(false)
-            .build();
+        let config = builder().omit_dir_times(true).omit_dir_times(false).build();
         assert!(!config.omit_dir_times());
     }
 
@@ -418,10 +393,7 @@ mod tests {
 
     #[test]
     fn numeric_ids_false_clears_flag() {
-        let config = builder()
-            .numeric_ids(true)
-            .numeric_ids(false)
-            .build();
+        let config = builder().numeric_ids(true).numeric_ids(false).build();
         assert!(!config.numeric_ids());
     }
 
@@ -433,10 +405,7 @@ mod tests {
 
     #[test]
     fn preallocate_false_clears_flag() {
-        let config = builder()
-            .preallocate(true)
-            .preallocate(false)
-            .build();
+        let config = builder().preallocate(true).preallocate(false).build();
         assert!(!config.preallocate());
     }
 
@@ -448,10 +417,7 @@ mod tests {
 
     #[test]
     fn hard_links_false_clears_flag() {
-        let config = builder()
-            .hard_links(true)
-            .hard_links(false)
-            .build();
+        let config = builder().hard_links(true).hard_links(false).build();
         assert!(!config.preserve_hard_links());
     }
 
@@ -463,10 +429,7 @@ mod tests {
 
     #[test]
     fn devices_false_clears_flag() {
-        let config = builder()
-            .devices(true)
-            .devices(false)
-            .build();
+        let config = builder().devices(true).devices(false).build();
         assert!(!config.preserve_devices());
     }
 
@@ -478,10 +441,7 @@ mod tests {
 
     #[test]
     fn specials_false_clears_flag() {
-        let config = builder()
-            .specials(true)
-            .specials(false)
-            .build();
+        let config = builder().specials(true).specials(false).build();
         assert!(!config.preserve_specials());
     }
 

@@ -49,7 +49,7 @@ mod tests {
     #[test]
     fn action_debug() {
         let action = LocalCopyAction::DataCopied;
-        let debug = format!("{:?}", action);
+        let debug = format!("{action:?}");
         assert!(debug.contains("DataCopied"));
     }
 
@@ -114,7 +114,7 @@ mod tests {
         ];
 
         for action in &actions {
-            let debug = format!("{:?}", action);
+            let debug = format!("{action:?}");
             assert!(!debug.is_empty());
         }
     }

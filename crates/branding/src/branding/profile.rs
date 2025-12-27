@@ -306,7 +306,8 @@ mod tests {
         #[test]
         fn path_accessors() {
             let profile = oc_profile();
-            assert!(profile.daemon_config_dir().is_absolute() || true);  // May not be absolute on all platforms
+            // Call to ensure it doesn't panic - may not be absolute on all platforms
+            let _ = profile.daemon_config_dir().is_absolute();
             assert!(profile.daemon_config_path().to_str().is_some());
             assert!(profile.daemon_secrets_path().to_str().is_some());
         }
@@ -314,7 +315,7 @@ mod tests {
         #[test]
         fn clone_and_copy() {
             let profile = upstream_profile();
-            let cloned = profile.clone();
+            let cloned = profile;
             let copied = profile;
             assert_eq!(profile, cloned);
             assert_eq!(profile, copied);
@@ -343,14 +344,18 @@ mod tests {
         #[test]
         fn matches_client_program_alias() {
             let profile = upstream_profile();
-            assert!(profile.matches_client_program_alias(OsStr::new(profile.client_program_name())));
+            assert!(
+                profile.matches_client_program_alias(OsStr::new(profile.client_program_name()))
+            );
             assert!(!profile.matches_client_program_alias(OsStr::new("unknown-program-name-xyz")));
         }
 
         #[test]
         fn matches_daemon_program_alias() {
             let profile = upstream_profile();
-            assert!(profile.matches_daemon_program_alias(OsStr::new(profile.daemon_program_name())));
+            assert!(
+                profile.matches_daemon_program_alias(OsStr::new(profile.daemon_program_name()))
+            );
             assert!(!profile.matches_daemon_program_alias(OsStr::new("unknown-program-name-xyz")));
         }
     }
@@ -394,10 +399,22 @@ mod tests {
         #[test]
         fn os_str_accessors() {
             // Verify OsStr accessors match their str counterparts
-            assert_eq!(client_program_name_os_str(), OsStr::new(client_program_name()));
-            assert_eq!(daemon_program_name_os_str(), OsStr::new(daemon_program_name()));
-            assert_eq!(oc_client_program_name_os_str(), OsStr::new(oc_client_program_name()));
-            assert_eq!(oc_daemon_program_name_os_str(), OsStr::new(oc_daemon_program_name()));
+            assert_eq!(
+                client_program_name_os_str(),
+                OsStr::new(client_program_name())
+            );
+            assert_eq!(
+                daemon_program_name_os_str(),
+                OsStr::new(daemon_program_name())
+            );
+            assert_eq!(
+                oc_client_program_name_os_str(),
+                OsStr::new(oc_client_program_name())
+            );
+            assert_eq!(
+                oc_daemon_program_name_os_str(),
+                OsStr::new(oc_daemon_program_name())
+            );
         }
 
         #[test]

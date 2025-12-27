@@ -336,21 +336,27 @@ mod tests {
     #[test]
     fn filter_segment_push_include() {
         let mut segment = FilterSegment::default();
-        segment.push_rule(FilterRule::include("*.txt".to_string())).unwrap();
+        segment
+            .push_rule(FilterRule::include("*.txt".to_string()))
+            .unwrap();
         assert!(!segment.is_empty());
     }
 
     #[test]
     fn filter_segment_push_exclude() {
         let mut segment = FilterSegment::default();
-        segment.push_rule(FilterRule::exclude("*.bak".to_string())).unwrap();
+        segment
+            .push_rule(FilterRule::exclude("*.bak".to_string()))
+            .unwrap();
         assert!(!segment.is_empty());
     }
 
     #[test]
     fn filter_segment_push_protect() {
         let mut segment = FilterSegment::default();
-        segment.push_rule(FilterRule::protect("important/".to_string())).unwrap();
+        segment
+            .push_rule(FilterRule::protect("important/".to_string()))
+            .unwrap();
         assert!(!segment.is_empty());
     }
 

@@ -36,6 +36,7 @@ pub const SUPPORTED_PROTOCOL_BOUNDS: (u8, u8) =
     (OLDEST_SUPPORTED_PROTOCOL, NEWEST_SUPPORTED_PROTOCOL);
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 
@@ -122,7 +123,10 @@ mod tests {
 
     #[test]
     fn supported_protocol_bounds_matches_range() {
-        assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.0, *SUPPORTED_PROTOCOL_RANGE.start());
+        assert_eq!(
+            SUPPORTED_PROTOCOL_BOUNDS.0,
+            *SUPPORTED_PROTOCOL_RANGE.start()
+        );
         assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.1, *SUPPORTED_PROTOCOL_RANGE.end());
     }
 }

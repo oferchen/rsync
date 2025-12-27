@@ -163,7 +163,9 @@ mod tests {
 
     #[test]
     fn sockopts_sets_value() {
-        let config = builder().sockopts(Some(OsString::from("SO_SNDBUF=65536"))).build();
+        let config = builder()
+            .sockopts(Some(OsString::from("SO_SNDBUF=65536")))
+            .build();
         assert!(config.sockopts().is_some());
     }
 
@@ -216,7 +218,9 @@ mod tests {
     #[test]
     fn connect_timeout_sets_value() {
         let seconds = NonZeroU64::new(30).unwrap();
-        let config = builder().connect_timeout(TransferTimeout::Seconds(seconds)).build();
+        let config = builder()
+            .connect_timeout(TransferTimeout::Seconds(seconds))
+            .build();
         assert_eq!(config.connect_timeout().as_seconds(), Some(seconds));
     }
 
@@ -230,16 +234,15 @@ mod tests {
     #[test]
     fn stop_at_none_clears_deadline() {
         let deadline = SystemTime::now() + Duration::from_secs(3600);
-        let config = builder()
-            .stop_at(Some(deadline))
-            .stop_at(None)
-            .build();
+        let config = builder().stop_at(Some(deadline)).stop_at(None).build();
         assert!(config.stop_at().is_none());
     }
 
     #[test]
     fn connect_program_sets_value() {
-        let config = builder().connect_program(Some(OsString::from("/usr/bin/nc"))).build();
+        let config = builder()
+            .connect_program(Some(OsString::from("/usr/bin/nc")))
+            .build();
         assert!(config.connect_program().is_some());
     }
 
@@ -282,9 +285,7 @@ mod tests {
 
     #[test]
     fn set_rsync_path_sets_value() {
-        let config = builder()
-            .set_rsync_path("/opt/rsync/bin/rsync")
-            .build();
+        let config = builder().set_rsync_path("/opt/rsync/bin/rsync").build();
         assert!(config.rsync_path().is_some());
     }
 

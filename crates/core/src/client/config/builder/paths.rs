@@ -89,9 +89,7 @@ mod tests {
 
     #[test]
     fn compare_destination_adds_directory() {
-        let config = builder()
-            .compare_destination("/tmp/compare")
-            .build();
+        let config = builder().compare_destination("/tmp/compare").build();
         assert_eq!(config.reference_directories().len(), 1);
         assert_eq!(
             config.reference_directories()[0].kind(),
@@ -101,9 +99,7 @@ mod tests {
 
     #[test]
     fn copy_destination_adds_directory() {
-        let config = builder()
-            .copy_destination("/tmp/copy")
-            .build();
+        let config = builder().copy_destination("/tmp/copy").build();
         assert_eq!(config.reference_directories().len(), 1);
         assert_eq!(
             config.reference_directories()[0].kind(),
@@ -113,9 +109,7 @@ mod tests {
 
     #[test]
     fn link_destination_adds_directory() {
-        let config = builder()
-            .link_destination("/tmp/link")
-            .build();
+        let config = builder().link_destination("/tmp/link").build();
         assert_eq!(config.reference_directories().len(), 1);
         assert_eq!(
             config.reference_directories()[0].kind(),
@@ -141,18 +135,13 @@ mod tests {
 
     #[test]
     fn backup_false_clears_flag() {
-        let config = builder()
-            .backup(true)
-            .backup(false)
-            .build();
+        let config = builder().backup(true).backup(false).build();
         assert!(!config.backup());
     }
 
     #[test]
     fn backup_directory_sets_path() {
-        let config = builder()
-            .backup_directory(Some("/tmp/backup"))
-            .build();
+        let config = builder().backup_directory(Some("/tmp/backup")).build();
         assert!(config.backup_directory().is_some());
         assert_eq!(
             config.backup_directory().unwrap().to_str().unwrap(),
@@ -162,9 +151,7 @@ mod tests {
 
     #[test]
     fn backup_directory_enables_backup() {
-        let config = builder()
-            .backup_directory(Some("/tmp/backup"))
-            .build();
+        let config = builder().backup_directory(Some("/tmp/backup")).build();
         assert!(config.backup());
     }
 
@@ -179,18 +166,14 @@ mod tests {
 
     #[test]
     fn backup_suffix_sets_value() {
-        let config = builder()
-            .backup_suffix(Some("~"))
-            .build();
+        let config = builder().backup_suffix(Some("~")).build();
         assert!(config.backup_suffix().is_some());
         assert_eq!(config.backup_suffix().unwrap().to_str().unwrap(), "~");
     }
 
     #[test]
     fn backup_suffix_enables_backup() {
-        let config = builder()
-            .backup_suffix(Some(".bak"))
-            .build();
+        let config = builder().backup_suffix(Some(".bak")).build();
         assert!(config.backup());
     }
 

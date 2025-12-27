@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn scratch_is_clone() {
         let scratch = MessageScratch::new();
-        let cloned = scratch.clone();
+        let cloned = scratch;
         assert_eq!(cloned.code_digits, scratch.code_digits);
     }
 

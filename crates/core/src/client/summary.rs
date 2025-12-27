@@ -694,7 +694,10 @@ mod tests {
         // This applies when root exists, but for unit tests we get the join fallback
         let result = ClientEvent::resolve_destination_path(root, relative);
         // When root doesn't exist, falls through to candidate
-        assert!(result == PathBuf::from("/dest/file.txt") || result == PathBuf::from("/dest/file.txt/file.txt"));
+        assert!(
+            result == PathBuf::from("/dest/file.txt")
+                || result == PathBuf::from("/dest/file.txt/file.txt")
+        );
     }
 
     #[test]

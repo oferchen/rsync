@@ -501,7 +501,10 @@ mod tests {
     fn format_with_units_decimal_kilo() {
         assert_eq!(format_with_units(1000, 1000), Some("1.00K".to_string()));
         assert_eq!(format_with_units(1500, 1000), Some("1.50K".to_string()));
-        assert_eq!(format_with_units(999_999, 1000), Some("1000.00K".to_string()));
+        assert_eq!(
+            format_with_units(999_999, 1000),
+            Some("1000.00K".to_string())
+        );
     }
 
     #[test]
@@ -512,74 +515,124 @@ mod tests {
 
     #[test]
     fn format_with_units_decimal_mega() {
-        assert_eq!(format_with_units(1_000_000, 1000), Some("1.00M".to_string()));
-        assert_eq!(format_with_units(2_500_000, 1000), Some("2.50M".to_string()));
+        assert_eq!(
+            format_with_units(1_000_000, 1000),
+            Some("1.00M".to_string())
+        );
+        assert_eq!(
+            format_with_units(2_500_000, 1000),
+            Some("2.50M".to_string())
+        );
     }
 
     #[test]
     fn format_with_units_binary_mega() {
-        assert_eq!(format_with_units(1_048_576, 1024), Some("1.00M".to_string()));
+        assert_eq!(
+            format_with_units(1_048_576, 1024),
+            Some("1.00M".to_string())
+        );
     }
 
     #[test]
     fn format_with_units_giga() {
-        assert_eq!(format_with_units(1_000_000_000, 1000), Some("1.00G".to_string()));
-        assert_eq!(format_with_units(1_073_741_824, 1024), Some("1.00G".to_string()));
+        assert_eq!(
+            format_with_units(1_000_000_000, 1000),
+            Some("1.00G".to_string())
+        );
+        assert_eq!(
+            format_with_units(1_073_741_824, 1024),
+            Some("1.00G".to_string())
+        );
     }
 
     #[test]
     fn format_with_units_tera() {
-        assert_eq!(format_with_units(1_000_000_000_000, 1000), Some("1.00T".to_string()));
+        assert_eq!(
+            format_with_units(1_000_000_000_000, 1000),
+            Some("1.00T".to_string())
+        );
     }
 
     #[test]
     fn format_with_units_negative() {
         assert_eq!(format_with_units(-1000, 1000), Some("-1.00K".to_string()));
-        assert_eq!(format_with_units(-1_000_000, 1000), Some("-1.00M".to_string()));
+        assert_eq!(
+            format_with_units(-1_000_000, 1000),
+            Some("-1.00M".to_string())
+        );
     }
 
     #[test]
     fn apply_placeholder_format_no_width() {
         let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test");
+        assert_eq!(
+            apply_placeholder_format("test".to_string(), &format),
+            "test"
+        );
     }
 
     #[test]
     fn apply_placeholder_format_right_align() {
-        let format = PlaceholderFormat::new(Some(10), PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_string(), &format), "      test");
+        let format =
+            PlaceholderFormat::new(Some(10), PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(
+            apply_placeholder_format("test".to_string(), &format),
+            "      test"
+        );
     }
 
     #[test]
     fn apply_placeholder_format_left_align() {
-        let format = PlaceholderFormat::new(Some(10), PlaceholderAlignment::Left, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test      ");
+        let format =
+            PlaceholderFormat::new(Some(10), PlaceholderAlignment::Left, HumanizeMode::None);
+        assert_eq!(
+            apply_placeholder_format("test".to_string(), &format),
+            "test      "
+        );
     }
 
     #[test]
     fn apply_placeholder_format_exact_width() {
-        let format = PlaceholderFormat::new(Some(4), PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test");
+        let format =
+            PlaceholderFormat::new(Some(4), PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(
+            apply_placeholder_format("test".to_string(), &format),
+            "test"
+        );
     }
 
     #[test]
     fn apply_placeholder_format_exceed_width() {
-        let format = PlaceholderFormat::new(Some(2), PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(apply_placeholder_format("test".to_string(), &format), "test");
+        let format =
+            PlaceholderFormat::new(Some(2), PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(
+            apply_placeholder_format("test".to_string(), &format),
+            "test"
+        );
     }
 
     #[test]
     fn apply_placeholder_format_max_width_capped() {
         // Width is capped to MAX_PLACEHOLDER_WIDTH
-        let format = PlaceholderFormat::new(Some(MAX_PLACEHOLDER_WIDTH + 100), PlaceholderAlignment::Right, HumanizeMode::None);
+        let format = PlaceholderFormat::new(
+            Some(MAX_PLACEHOLDER_WIDTH + 100),
+            PlaceholderAlignment::Right,
+            HumanizeMode::None,
+        );
         let result = apply_placeholder_format("x".to_string(), &format);
         assert_eq!(result.len(), MAX_PLACEHOLDER_WIDTH);
     }
 
     #[test]
     fn remote_placeholder_value_some() {
-        assert_eq!(remote_placeholder_value(Some("example.com"), 'h'), "example.com");
-        assert_eq!(remote_placeholder_value(Some("192.168.1.1"), 'a'), "192.168.1.1");
+        assert_eq!(
+            remote_placeholder_value(Some("example.com"), 'h'),
+            "example.com"
+        );
+        assert_eq!(
+            remote_placeholder_value(Some("192.168.1.1"), 'a'),
+            "192.168.1.1"
+        );
     }
 
     #[test]
@@ -598,20 +651,26 @@ mod tests {
 
     #[test]
     fn format_numeric_value_with_separator() {
-        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::Separator);
+        let format =
+            PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::Separator);
         assert_eq!(format_numeric_value(1234567, &format), "1,234,567");
     }
 
     #[test]
     fn format_numeric_value_decimal_units() {
-        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::DecimalUnits);
+        let format = PlaceholderFormat::new(
+            None,
+            PlaceholderAlignment::Right,
+            HumanizeMode::DecimalUnits,
+        );
         assert_eq!(format_numeric_value(1000, &format), "1.00K");
         assert_eq!(format_numeric_value(999, &format), "999");
     }
 
     #[test]
     fn format_numeric_value_binary_units() {
-        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
+        let format =
+            PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
         assert_eq!(format_numeric_value(1024, &format), "1.00K");
         assert_eq!(format_numeric_value(1023, &format), "1,023");
     }

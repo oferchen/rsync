@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn rolling_digest_debug_format() {
         let digest = RollingDigest::new(1, 2, 3);
-        let debug = format!("{:?}", digest);
+        let debug = format!("{digest:?}");
         assert!(debug.contains("RollingDigest"));
     }
 

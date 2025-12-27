@@ -369,7 +369,10 @@ mod tests {
     #[test]
     fn parse_filter_directive_line_exclude_if_present() {
         let result = parse_filter_directive_line("exclude-if-present .nobackup").unwrap();
-        assert!(matches!(result, Some(ParsedFilterDirective::ExcludeIfPresent(_))));
+        assert!(matches!(
+            result,
+            Some(ParsedFilterDirective::ExcludeIfPresent(_))
+        ));
     }
 
     #[test]

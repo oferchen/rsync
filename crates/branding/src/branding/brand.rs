@@ -383,15 +383,24 @@ mod tests {
             let oc = super::oc_profile();
             let upstream = super::upstream_profile();
 
-            assert_eq!(oc.client_program_name().parse::<Brand>().unwrap(), Brand::Oc);
-            assert_eq!(upstream.client_program_name().parse::<Brand>().unwrap(), Brand::Upstream);
-            assert_eq!(upstream.daemon_program_name().parse::<Brand>().unwrap(), Brand::Upstream);
+            assert_eq!(
+                oc.client_program_name().parse::<Brand>().unwrap(),
+                Brand::Oc
+            );
+            assert_eq!(
+                upstream.client_program_name().parse::<Brand>().unwrap(),
+                Brand::Upstream
+            );
+            assert_eq!(
+                upstream.daemon_program_name().parse::<Brand>().unwrap(),
+                Brand::Upstream
+            );
         }
 
         #[test]
         fn clone_and_copy() {
             let brand = Brand::Oc;
-            let cloned = brand.clone();
+            let cloned = brand;
             let copied = brand;
             assert_eq!(brand, cloned);
             assert_eq!(brand, copied);
@@ -432,7 +441,8 @@ mod tests {
         fn config_paths() {
             assert!(!Brand::Oc.daemon_config_path_str().is_empty());
             assert!(!Brand::Upstream.daemon_config_path_str().is_empty());
-            assert!(Brand::Oc.daemon_config_path().exists() || true);  // Path may not exist, just test it doesn't panic
+            // Call to test it doesn't panic - path may not exist in test environment
+            let _ = Brand::Oc.daemon_config_path().exists();
         }
 
         #[test]
@@ -467,20 +477,20 @@ mod tests {
         #[test]
         fn display_format() {
             let err = BrandParseError;
-            let display = format!("{}", err);
+            let display = format!("{err}");
             assert!(display.contains("unrecognised brand"));
         }
 
         #[test]
         fn clone_and_eq() {
             let err = BrandParseError;
-            let cloned = err.clone();
+            let cloned = err;
             assert_eq!(err, cloned);
         }
 
         #[test]
         fn debug_format() {
-            let debug = format!("{:?}", BrandParseError);
+            let debug = format!("{BrandParseError:?}");
             assert!(debug.contains("BrandParseError"));
         }
     }
@@ -518,7 +528,7 @@ mod tests {
 
         #[test]
         fn invalid_suffix_rejected() {
-            assert!(!version_suffix_is_allowed("abc"));  // No leading separator
+            assert!(!version_suffix_is_allowed("abc")); // No leading separator
         }
     }
 

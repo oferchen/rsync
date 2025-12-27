@@ -222,7 +222,10 @@ mod tests {
     #[test]
     fn with_partial_directory_sets_path_and_enables_partial() {
         let opts = LocalCopyOptions::new().with_partial_directory(Some("/tmp/partial"));
-        assert_eq!(opts.partial_directory_path(), Some(Path::new("/tmp/partial")));
+        assert_eq!(
+            opts.partial_directory_path(),
+            Some(Path::new("/tmp/partial"))
+        );
         assert!(opts.partial_enabled());
     }
 
@@ -254,9 +257,7 @@ mod tests {
 
     #[test]
     fn append_false_clears_verify() {
-        let opts = LocalCopyOptions::new()
-            .append_verify(true)
-            .append(false);
+        let opts = LocalCopyOptions::new().append_verify(true).append(false);
         assert!(!opts.append_enabled());
         assert!(!opts.append_verify_enabled());
     }

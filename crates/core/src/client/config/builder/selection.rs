@@ -209,10 +209,7 @@ mod tests {
 
     #[test]
     fn modify_window_none_clears_value() {
-        let config = builder()
-            .modify_window(Some(2))
-            .modify_window(None)
-            .build();
+        let config = builder().modify_window(Some(2)).modify_window(None).build();
         assert!(config.modify_window().is_none());
     }
 

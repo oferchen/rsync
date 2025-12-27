@@ -131,7 +131,9 @@ mod tests {
                 .expect("zlib compressor");
 
         compressor.write(b"First chunk of data. ").expect("write 1");
-        compressor.write(b"Second chunk of data. ").expect("write 2");
+        compressor
+            .write(b"Second chunk of data. ")
+            .expect("write 2");
         compressor.write(b"Third chunk of data.").expect("write 3");
 
         let total = compressor.finish().expect("finish compression");

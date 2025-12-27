@@ -96,10 +96,7 @@ mod tests {
 
     #[test]
     fn copy_links_false_clears_flag() {
-        let config = builder()
-            .copy_links(true)
-            .copy_links(false)
-            .build();
+        let config = builder().copy_links(true).copy_links(false).build();
         assert!(!config.copy_links());
     }
 
@@ -111,10 +108,7 @@ mod tests {
 
     #[test]
     fn links_false_clears_flag() {
-        let config = builder()
-            .links(true)
-            .links(false)
-            .build();
+        let config = builder().links(true).links(false).build();
         assert!(!config.links());
     }
 
@@ -141,10 +135,7 @@ mod tests {
 
     #[test]
     fn copy_dirlinks_false_clears_flag() {
-        let config = builder()
-            .copy_dirlinks(true)
-            .copy_dirlinks(false)
-            .build();
+        let config = builder().copy_dirlinks(true).copy_dirlinks(false).build();
         assert!(!config.copy_dirlinks());
     }
 
@@ -156,10 +147,7 @@ mod tests {
 
     #[test]
     fn copy_devices_false_clears_flag() {
-        let config = builder()
-            .copy_devices(true)
-            .copy_devices(false)
-            .build();
+        let config = builder().copy_devices(true).copy_devices(false).build();
         assert!(!config.copy_devices());
     }
 
@@ -171,10 +159,7 @@ mod tests {
 
     #[test]
     fn write_devices_false_clears_flag() {
-        let config = builder()
-            .write_devices(true)
-            .write_devices(false)
-            .build();
+        let config = builder().write_devices(true).write_devices(false).build();
         assert!(!config.write_devices());
     }
 
@@ -186,10 +171,7 @@ mod tests {
 
     #[test]
     fn keep_dirlinks_false_clears_flag() {
-        let config = builder()
-            .keep_dirlinks(true)
-            .keep_dirlinks(false)
-            .build();
+        let config = builder().keep_dirlinks(true).keep_dirlinks(false).build();
         assert!(!config.keep_dirlinks());
     }
 
@@ -201,10 +183,7 @@ mod tests {
 
     #[test]
     fn safe_links_false_clears_flag() {
-        let config = builder()
-            .safe_links(true)
-            .safe_links(false)
-            .build();
+        let config = builder().safe_links(true).safe_links(false).build();
         assert!(!config.safe_links());
     }
 
@@ -216,10 +195,7 @@ mod tests {
 
     #[test]
     fn munge_links_false_clears_flag() {
-        let config = builder()
-            .munge_links(true)
-            .munge_links(false)
-            .build();
+        let config = builder().munge_links(true).munge_links(false).build();
         assert!(!config.munge_links());
     }
 

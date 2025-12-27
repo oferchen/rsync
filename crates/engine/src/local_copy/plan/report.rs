@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let report = LocalCopyReport::default();
-        let debug = format!("{:?}", report);
+        let debug = format!("{report:?}");
         assert!(debug.contains("LocalCopyReport"));
     }
 }

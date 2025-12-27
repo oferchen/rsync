@@ -154,7 +154,8 @@ mod tests {
 
     #[test]
     fn filter_set_protect_blocks_deletion() {
-        let set = FilterSet::from_rules(vec![FilterRule::protect("/important".to_string())]).unwrap();
+        let set =
+            FilterSet::from_rules(vec![FilterRule::protect("/important".to_string())]).unwrap();
         assert!(!set.allows_deletion(Path::new("important"), false));
     }
 }

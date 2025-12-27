@@ -370,7 +370,8 @@ mod tests {
 
     #[test]
     fn message_frame_roundtrip() {
-        let original = MessageFrame::new(MessageCode::Warning, b"warning message".to_vec()).unwrap();
+        let original =
+            MessageFrame::new(MessageCode::Warning, b"warning message".to_vec()).unwrap();
         let mut encoded = Vec::new();
         original.encode_into_vec(&mut encoded).unwrap();
 
@@ -435,7 +436,7 @@ mod tests {
     #[test]
     fn message_frame_deref() {
         let frame = MessageFrame::new(MessageCode::Data, b"abc".to_vec()).unwrap();
-        let slice: &[u8] = &*frame;
+        let slice: &[u8] = &frame;
         assert_eq!(slice, b"abc");
     }
 
@@ -456,7 +457,7 @@ mod tests {
     #[test]
     fn message_frame_debug() {
         let frame = MessageFrame::new(MessageCode::Info, b"x".to_vec()).unwrap();
-        let debug = format!("{:?}", frame);
+        let debug = format!("{frame:?}");
         assert!(debug.contains("MessageFrame"));
     }
 

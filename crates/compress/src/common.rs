@@ -97,7 +97,11 @@ mod tests {
     #[test]
     fn counting_sink_write_vectored_sums_lengths() {
         let mut sink = CountingSink;
-        let bufs = [IoSlice::new(b"hello"), IoSlice::new(b" "), IoSlice::new(b"world")];
+        let bufs = [
+            IoSlice::new(b"hello"),
+            IoSlice::new(b" "),
+            IoSlice::new(b"world"),
+        ];
         let result = sink.write_vectored(&bufs).unwrap();
         assert_eq!(result, 11);
     }
@@ -118,7 +122,7 @@ mod tests {
     #[test]
     fn counting_sink_is_clone() {
         let sink = CountingSink;
-        let cloned = sink.clone();
+        let cloned = sink;
         assert_eq!(std::mem::size_of_val(&sink), std::mem::size_of_val(&cloned));
     }
 
@@ -131,7 +135,7 @@ mod tests {
 
     #[test]
     fn counting_sink_default() {
-        let sink = CountingSink::default();
+        let sink = CountingSink;
         let mut w = sink;
         assert!(w.write(b"test").is_ok());
     }
@@ -139,7 +143,7 @@ mod tests {
     #[test]
     fn counting_sink_debug() {
         let sink = CountingSink;
-        let debug = format!("{:?}", sink);
+        let debug = format!("{sink:?}");
         assert!(debug.contains("CountingSink"));
     }
 
@@ -169,7 +173,8 @@ mod tests {
     fn counting_writer_write_vectored_counts() {
         let mut writer = CountingWriter::new(Vec::new());
         let bufs = [IoSlice::new(b"hello"), IoSlice::new(b" world")];
-        writer.write_vectored(&bufs).unwrap();
+        let written = writer.write_vectored(&bufs).unwrap();
+        assert_eq!(written, 11);
         assert_eq!(writer.bytes(), 11);
     }
 
