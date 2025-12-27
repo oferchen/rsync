@@ -572,4 +572,225 @@ mod tests {
             "ServerConfig should accept empty flags when args are provided"
         );
     }
+
+    #[test]
+    fn command_output_into_stdout() {
+        let output = CommandOutput::new(vec![1, 2, 3], vec![4, 5, 6]);
+        let stdout = output.into_stdout();
+        assert_eq!(stdout, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn command_output_into_stderr() {
+        let output = CommandOutput::new(vec![1, 2, 3], vec![4, 5, 6]);
+        let stderr = output.into_stderr();
+        assert_eq!(stderr, vec![4, 5, 6]);
+    }
+
+    #[test]
+    fn command_output_eq() {
+        let a = CommandOutput::new(vec![1, 2], vec![3, 4]);
+        let b = CommandOutput::new(vec![1, 2], vec![3, 4]);
+        let c = CommandOutput::new(vec![5, 6], vec![7, 8]);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn command_output_clone() {
+        let output = CommandOutput::new(vec![1, 2, 3], vec![4, 5, 6]);
+        let cloned = output.clone();
+        assert_eq!(output, cloned);
+    }
+
+    #[test]
+    fn command_output_debug() {
+        let output = CommandOutput::new(vec![1, 2], vec![3, 4]);
+        let debug = format!("{output:?}");
+        assert!(debug.contains("CommandOutput"));
+    }
+
+    #[test]
+    fn command_kind_display() {
+        assert_eq!(format!("{}", CommandKind::Client), "client");
+        assert_eq!(format!("{}", CommandKind::Server), "server");
+        assert_eq!(format!("{}", CommandKind::Daemon), "daemon");
+    }
+
+    #[test]
+    fn command_kind_eq() {
+        assert_eq!(CommandKind::Client, CommandKind::Client);
+        assert_ne!(CommandKind::Client, CommandKind::Server);
+        assert_ne!(CommandKind::Server, CommandKind::Daemon);
+    }
+
+    #[test]
+    fn command_kind_clone() {
+        let kind = CommandKind::Client;
+        let cloned = kind;
+        assert_eq!(kind, cloned);
+    }
+
+    #[test]
+    fn command_kind_debug() {
+        let debug = format!("{:?}", CommandKind::Client);
+        assert!(debug.contains("Client"));
+    }
+
+    #[test]
+    fn exit_status_error_bounds_negative() {
+        // Negative values should be clamped to 0
+        let error = ExitStatusError::new(CommandKind::Client, -5);
+        assert_eq!(error.exit_status(), 0);
+    }
+
+    #[test]
+    fn exit_status_error_bounds_large() {
+        // Values > 255 should be clamped to 255
+        let error = ExitStatusError::new(CommandKind::Client, 300);
+        assert_eq!(error.exit_status(), 255);
+    }
+
+    #[test]
+    fn exit_status_error_bounds_max() {
+        // Value at 255 boundary
+        let error = ExitStatusError::new(CommandKind::Client, 255);
+        assert_eq!(error.exit_status(), 255);
+    }
+
+    #[test]
+    fn exit_status_error_normal_value() {
+        let error = ExitStatusError::new(CommandKind::Server, 42);
+        assert_eq!(error.exit_status(), 42);
+        assert_eq!(error.command_kind(), CommandKind::Server);
+    }
+
+    #[test]
+    fn exit_status_error_display() {
+        let error = ExitStatusError::new(CommandKind::Daemon, 12);
+        let display = format!("{error}");
+        assert!(display.contains("daemon"));
+        assert!(display.contains("12"));
+    }
+
+    #[test]
+    fn exit_status_error_debug() {
+        let error = ExitStatusError::new(CommandKind::Client, 1);
+        let debug = format!("{error:?}");
+        assert!(debug.contains("ExitStatusError"));
+    }
+
+    #[test]
+    fn exit_status_error_eq() {
+        let a = ExitStatusError::new(CommandKind::Client, 1);
+        let b = ExitStatusError::new(CommandKind::Client, 1);
+        let c = ExitStatusError::new(CommandKind::Server, 1);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn exit_status_error_clone() {
+        let error = ExitStatusError::new(CommandKind::Client, 5);
+        let cloned = error;
+        assert_eq!(error, cloned);
+    }
+
+    #[test]
+    fn command_error_accessors() {
+        let output = CommandOutput::new(vec![1, 2], vec![3, 4]);
+        let error = CommandError::new(CommandKind::Server, 42, output);
+        assert_eq!(error.exit_status(), 42);
+        assert_eq!(error.command_kind(), CommandKind::Server);
+        assert_eq!(error.output().stdout(), &[1, 2]);
+        assert_eq!(error.output().stderr(), &[3, 4]);
+    }
+
+    #[test]
+    fn command_error_into_output() {
+        let output = CommandOutput::new(vec![5, 6], vec![7, 8]);
+        let error = CommandError::new(CommandKind::Client, 1, output);
+        let recovered = error.into_output();
+        assert_eq!(recovered.stdout(), &[5, 6]);
+        assert_eq!(recovered.stderr(), &[7, 8]);
+    }
+
+    #[test]
+    fn command_error_display() {
+        let output = CommandOutput::new(vec![], vec![]);
+        let error = CommandError::new(CommandKind::Daemon, 23, output);
+        let display = format!("{error}");
+        assert!(display.contains("daemon"));
+        assert!(display.contains("23"));
+    }
+
+    #[test]
+    fn command_error_debug() {
+        let output = CommandOutput::new(vec![], vec![]);
+        let error = CommandError::new(CommandKind::Client, 1, output);
+        let debug = format!("{error:?}");
+        assert!(debug.contains("CommandError"));
+    }
+
+    #[test]
+    fn command_error_eq() {
+        let output1 = CommandOutput::new(vec![1], vec![2]);
+        let output2 = CommandOutput::new(vec![1], vec![2]);
+        let output3 = CommandOutput::new(vec![3], vec![4]);
+        let a = CommandError::new(CommandKind::Client, 1, output1);
+        let b = CommandError::new(CommandKind::Client, 1, output2);
+        let c = CommandError::new(CommandKind::Client, 1, output3);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn command_error_clone() {
+        let output = CommandOutput::new(vec![1], vec![2]);
+        let error = CommandError::new(CommandKind::Client, 1, output);
+        let cloned = error.clone();
+        assert_eq!(error, cloned);
+    }
+
+    #[test]
+    fn run_daemon_with_forwards_streams() {
+        let args = [daemon_program_name(), "--help"];
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_daemon_with(args, &mut stdout, &mut stderr).expect("--help succeeds");
+
+        // Verify we got some output
+        assert!(
+            !stdout.is_empty() || !stderr.is_empty(),
+            "daemon --help should produce output"
+        );
+    }
+
+    #[test]
+    fn run_daemon_reports_failure_status() {
+        let args = [daemon_program_name(), "--definitely-invalid-flag"];
+        let error = run_daemon(args).expect_err("invalid flag should fail");
+        assert_ne!(error.exit_status(), 0);
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let status =
+            run_daemon_with(args, &mut stdout, &mut stderr).expect_err("invalid flag should fail");
+        assert_ne!(status.exit_status(), 0);
+    }
+
+    #[test]
+    fn exit_status_error_is_error_trait() {
+        let error: Box<dyn std::error::Error> =
+            Box::new(ExitStatusError::new(CommandKind::Client, 1));
+        let _ = error.to_string();
+    }
+
+    #[test]
+    fn command_error_is_error_trait() {
+        let output = CommandOutput::new(vec![], vec![]);
+        let error: Box<dyn std::error::Error> =
+            Box::new(CommandError::new(CommandKind::Client, 1, output));
+        let _ = error.to_string();
+    }
 }
