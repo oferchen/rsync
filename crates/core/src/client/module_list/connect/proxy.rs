@@ -381,3 +381,331 @@ fn proxy_response_error(text: impl Into<String>) -> ClientError {
         rsync_error!(SOCKET_IO_EXIT_CODE, "proxy error: {}", text.into()).with_role(Role::Client);
     ClientError::new(SOCKET_IO_EXIT_CODE, message)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== parse_proxy_spec tests ====================
+
+    #[test]
+    fn parse_proxy_spec_simple_host_port() {
+        let config = parse_proxy_spec("proxy.example.com:8080").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert_eq!(config.port, 8080);
+        assert!(config.credentials.is_none());
+    }
+
+    #[test]
+    fn parse_proxy_spec_with_http_scheme() {
+        let config = parse_proxy_spec("http://proxy.example.com:3128").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert_eq!(config.port, 3128);
+    }
+
+    #[test]
+    fn parse_proxy_spec_with_https_scheme() {
+        let config = parse_proxy_spec("https://proxy.example.com:443").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert_eq!(config.port, 443);
+    }
+
+    #[test]
+    fn parse_proxy_spec_scheme_case_insensitive() {
+        let config = parse_proxy_spec("HTTP://proxy.example.com:8080").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+
+        let config = parse_proxy_spec("HTTPS://proxy.example.com:8080").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+    }
+
+    #[test]
+    fn parse_proxy_spec_with_credentials() {
+        let config = parse_proxy_spec("user:pass@proxy.example.com:8080").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert_eq!(config.port, 8080);
+        assert!(config.credentials.is_some());
+    }
+
+    #[test]
+    fn parse_proxy_spec_with_scheme_and_credentials() {
+        let config = parse_proxy_spec("http://user:pass@proxy.example.com:8080").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert_eq!(config.port, 8080);
+        assert!(config.credentials.is_some());
+    }
+
+    #[test]
+    fn parse_proxy_spec_with_whitespace_trimmed() {
+        let config = parse_proxy_spec("  proxy.example.com:8080  ").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn parse_proxy_spec_empty_returns_error() {
+        let result = parse_proxy_spec("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_spec_whitespace_only_returns_error() {
+        let result = parse_proxy_spec("   ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_spec_invalid_scheme_returns_error() {
+        let result = parse_proxy_spec("socks://proxy.example.com:1080");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_spec_scheme_only_returns_error() {
+        let result = parse_proxy_spec("http://");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_spec_with_path_returns_error() {
+        let result = parse_proxy_spec("proxy.example.com:8080/path");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_spec_empty_userinfo_returns_error() {
+        let result = parse_proxy_spec("@proxy.example.com:8080");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_spec_missing_password_returns_error() {
+        let result = parse_proxy_spec("user@proxy.example.com:8080");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_spec_percent_encoded_credentials() {
+        let config = parse_proxy_spec("user%40domain:p%40ss@proxy.example.com:8080").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert!(config.credentials.is_some());
+    }
+
+    #[test]
+    fn parse_proxy_spec_ipv4_address() {
+        let config = parse_proxy_spec("192.168.1.1:8080").unwrap();
+        assert_eq!(config.host, "192.168.1.1");
+        assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn parse_proxy_spec_ipv6_bracketed() {
+        let config = parse_proxy_spec("[::1]:8080").unwrap();
+        assert_eq!(config.host, "::1");
+        assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn parse_proxy_spec_ipv6_bracketed_full() {
+        let config = parse_proxy_spec("[2001:db8::1]:3128").unwrap();
+        assert_eq!(config.host, "2001:db8::1");
+        assert_eq!(config.port, 3128);
+    }
+
+    // ==================== parse_proxy_host_port tests ====================
+
+    #[test]
+    fn parse_proxy_host_port_simple() {
+        let (host, port) = parse_proxy_host_port("example.com:8080").unwrap();
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn parse_proxy_host_port_empty_returns_error() {
+        let result = parse_proxy_host_port("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_host_port_no_port_returns_error() {
+        let result = parse_proxy_host_port("example.com");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_host_port_empty_port_returns_error() {
+        let result = parse_proxy_host_port("example.com:");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_host_port_invalid_port_returns_error() {
+        let result = parse_proxy_host_port("example.com:notanumber");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_host_port_port_out_of_range_returns_error() {
+        let result = parse_proxy_host_port("example.com:99999");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_host_port_ipv6_bracketed() {
+        let (host, port) = parse_proxy_host_port("[::1]:8080").unwrap();
+        assert_eq!(host, "::1");
+        assert_eq!(port, 8080);
+    }
+
+    #[test]
+    fn parse_proxy_host_port_ipv6_no_port_returns_error() {
+        let result = parse_proxy_host_port("[::1]");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_proxy_host_port_percent_encoded_host() {
+        let (host, _port) = parse_proxy_host_port("my%20host:8080").unwrap();
+        assert_eq!(host, "my host");
+    }
+
+    // ==================== decode_proxy_component tests ====================
+
+    #[test]
+    fn decode_proxy_component_plain_text() {
+        let result = decode_proxy_component("username", "test").unwrap();
+        assert_eq!(result, "username");
+    }
+
+    #[test]
+    fn decode_proxy_component_percent_encoded() {
+        let result = decode_proxy_component("user%40domain", "test").unwrap();
+        assert_eq!(result, "user@domain");
+    }
+
+    #[test]
+    fn decode_proxy_component_multiple_encoded() {
+        let result = decode_proxy_component("a%20b%20c", "test").unwrap();
+        assert_eq!(result, "a b c");
+    }
+
+    #[test]
+    fn decode_proxy_component_hex_case_insensitive() {
+        let result1 = decode_proxy_component("a%2Fb", "test").unwrap();
+        let result2 = decode_proxy_component("a%2fb", "test").unwrap();
+        assert_eq!(result1, "a/b");
+        assert_eq!(result2, "a/b");
+    }
+
+    #[test]
+    fn decode_proxy_component_truncated_encoding_returns_error() {
+        let result = decode_proxy_component("user%4", "field");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_proxy_component_invalid_hex_returns_error() {
+        let result = decode_proxy_component("user%ZZ", "field");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_proxy_component_trailing_percent_returns_error() {
+        let result = decode_proxy_component("test%", "field");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_proxy_component_invalid_utf8_returns_error() {
+        // %FF %FE are not valid UTF-8 sequence starters
+        let result = decode_proxy_component("%FF%FE", "field");
+        assert!(result.is_err());
+    }
+
+    // ==================== ProxyCredentials tests ====================
+
+    #[test]
+    fn proxy_credentials_authorization_value_basic_auth() {
+        let creds = ProxyCredentials::new("user".to_string(), "pass".to_string());
+        // user:pass base64 encoded should be "dXNlcjpwYXNz"
+        assert_eq!(creds.authorization_value(), "dXNlcjpwYXNz");
+    }
+
+    #[test]
+    fn proxy_credentials_authorization_value_empty_password() {
+        let creds = ProxyCredentials::new("user".to_string(), "".to_string());
+        // user: base64 encoded should be "dXNlcjo="
+        assert_eq!(creds.authorization_value(), "dXNlcjo=");
+    }
+
+    #[test]
+    fn proxy_credentials_authorization_value_special_chars() {
+        let creds = ProxyCredentials::new("user@domain".to_string(), "p@ss:word".to_string());
+        let decoded = STANDARD.decode(creds.authorization_value()).unwrap();
+        assert_eq!(decoded, b"user@domain:p@ss:word");
+    }
+
+    // ==================== ProxyConfig tests ====================
+
+    #[test]
+    fn proxy_config_display_returns_socket_addr() {
+        let config = parse_proxy_spec("proxy.example.com:8080").unwrap();
+        let display = config.display();
+        assert_eq!(display.host, "proxy.example.com");
+        assert_eq!(display.port, 8080);
+    }
+
+    #[test]
+    fn proxy_config_authorization_header_none_when_no_credentials() {
+        let config = parse_proxy_spec("proxy.example.com:8080").unwrap();
+        assert!(config.authorization_header().is_none());
+    }
+
+    #[test]
+    fn proxy_config_authorization_header_present_with_credentials() {
+        let config = parse_proxy_spec("user:pass@proxy.example.com:8080").unwrap();
+        assert!(config.authorization_header().is_some());
+        assert_eq!(config.authorization_header().unwrap(), "dXNlcjpwYXNz");
+    }
+
+    // ==================== Edge cases and integration tests ====================
+
+    #[test]
+    fn parse_proxy_spec_localhost() {
+        let config = parse_proxy_spec("localhost:8080").unwrap();
+        assert_eq!(config.host, "localhost");
+        assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn parse_proxy_spec_minimum_port() {
+        let config = parse_proxy_spec("proxy.example.com:1").unwrap();
+        assert_eq!(config.port, 1);
+    }
+
+    #[test]
+    fn parse_proxy_spec_maximum_port() {
+        let config = parse_proxy_spec("proxy.example.com:65535").unwrap();
+        assert_eq!(config.port, 65535);
+    }
+
+    #[test]
+    fn parse_proxy_spec_complex_password_with_special_chars() {
+        let config = parse_proxy_spec("user:p%40ss%3Aword%2F123@proxy.example.com:8080").unwrap();
+        assert_eq!(config.host, "proxy.example.com");
+        assert!(config.credentials.is_some());
+    }
+
+    #[test]
+    fn parse_proxy_spec_colon_in_password() {
+        // Password containing colons should work (only first colon splits user:pass)
+        let config = parse_proxy_spec("user:pass:with:colons@proxy.example.com:8080").unwrap();
+        assert!(config.credentials.is_some());
+        // The password should be "pass:with:colons"
+        let decoded = STANDARD
+            .decode(config.credentials.unwrap().authorization_value())
+            .unwrap();
+        assert_eq!(decoded, b"user:pass:with:colons");
+    }
+}
