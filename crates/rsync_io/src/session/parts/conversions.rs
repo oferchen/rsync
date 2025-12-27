@@ -55,14 +55,200 @@ impl<R> TryFrom<SessionHandshakeParts<R>> for LegacyDaemonHandshakeParts<R> {
 
 #[cfg(test)]
 mod tests {
-    // Conversion tests require creating BinaryHandshake and LegacyDaemonHandshake instances,
-    // which have complex construction requirements. Basic type conversions are verified
-    // through integration tests. Here we ensure the module compiles correctly with
-    // its From/TryFrom implementations.
+    use super::*;
+    use crate::sniff_negotiation_stream;
+    use protocol::{CompatibilityFlags, LegacyDaemonGreetingOwned, ProtocolVersion};
+    use std::io::Cursor;
+
+    // Helper to create a BinaryHandshake
+    fn create_binary_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        BinaryHandshake::from_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream,
+        )
+    }
+
+    // Helper to create a LegacyDaemonHandshake
+    fn create_legacy_handshake() -> LegacyDaemonHandshake<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        LegacyDaemonHandshake::from_components(greeting, proto31, stream)
+    }
+
+    // Helper to create SessionHandshakeParts (binary)
+    fn create_binary_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        SessionHandshakeParts::from_binary_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        )
+    }
+
+    // Helper to create SessionHandshakeParts (legacy)
+    fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
+            .expect("valid greeting");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
+    }
+
+    // ==== From<BinaryHandshake> tests ====
 
     #[test]
-    fn module_compiles() {
-        // This test ensures the module with its trait implementations compiles
-        // The actual conversions are tested through higher-level integration tests
+    fn from_binary_handshake_creates_binary_parts() {
+        let handshake = create_binary_handshake();
+        let parts: SessionHandshakeParts<_> = handshake.into();
+        assert!(matches!(parts, SessionHandshakeParts::Binary(_)));
+    }
+
+    #[test]
+    fn from_binary_handshake_preserves_negotiated_protocol() {
+        let handshake = create_binary_handshake();
+        let negotiated = handshake.negotiated_protocol();
+        let parts: SessionHandshakeParts<_> = handshake.into();
+        assert_eq!(parts.negotiated_protocol(), negotiated);
+    }
+
+    // ==== From<LegacyDaemonHandshake> tests ====
+
+    #[test]
+    fn from_legacy_handshake_creates_legacy_parts() {
+        let handshake = create_legacy_handshake();
+        let parts: SessionHandshakeParts<_> = handshake.into();
+        assert!(matches!(parts, SessionHandshakeParts::Legacy(_)));
+    }
+
+    #[test]
+    fn from_legacy_handshake_preserves_negotiated_protocol() {
+        let handshake = create_legacy_handshake();
+        let negotiated = handshake.negotiated_protocol();
+        let parts: SessionHandshakeParts<_> = handshake.into();
+        assert_eq!(parts.negotiated_protocol(), negotiated);
+    }
+
+    // ==== TryFrom<SessionHandshakeParts> for BinaryHandshake tests ====
+
+    #[test]
+    fn try_from_parts_to_binary_handshake_succeeds_for_binary() {
+        let parts = create_binary_parts();
+        let result: Result<BinaryHandshake<_>, _> = parts.try_into();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_parts_to_binary_handshake_fails_for_legacy() {
+        let parts = create_legacy_parts();
+        let result: Result<BinaryHandshake<_>, _> = parts.try_into();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_legacy());
+    }
+
+    #[test]
+    fn try_from_parts_to_binary_handshake_preserves_protocol() {
+        let parts = create_binary_parts();
+        let negotiated = parts.negotiated_protocol();
+        let handshake: BinaryHandshake<_> = parts.try_into().unwrap();
+        assert_eq!(handshake.negotiated_protocol(), negotiated);
+    }
+
+    // ==== TryFrom<SessionHandshakeParts> for LegacyDaemonHandshake tests ====
+
+    #[test]
+    fn try_from_parts_to_legacy_handshake_succeeds_for_legacy() {
+        let parts = create_legacy_parts();
+        let result: Result<LegacyDaemonHandshake<_>, _> = parts.try_into();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_parts_to_legacy_handshake_fails_for_binary() {
+        let parts = create_binary_parts();
+        let result: Result<LegacyDaemonHandshake<_>, _> = parts.try_into();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().is_binary());
+    }
+
+    #[test]
+    fn try_from_parts_to_legacy_handshake_preserves_protocol() {
+        let parts = create_legacy_parts();
+        let negotiated = parts.negotiated_protocol();
+        let handshake: LegacyDaemonHandshake<_> = parts.try_into().unwrap();
+        assert_eq!(handshake.negotiated_protocol(), negotiated);
+    }
+
+    // ==== TryFrom<SessionHandshakeParts> for BinaryHandshakeParts tests ====
+
+    #[test]
+    fn try_from_parts_to_binary_parts_succeeds_for_binary() {
+        let parts = create_binary_parts();
+        let result: Result<BinaryHandshakeParts<_>, _> = parts.try_into();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_parts_to_binary_parts_fails_for_legacy() {
+        let parts = create_legacy_parts();
+        let result: Result<BinaryHandshakeParts<_>, _> = parts.try_into();
+        assert!(result.is_err());
+    }
+
+    // ==== TryFrom<SessionHandshakeParts> for LegacyDaemonHandshakeParts tests ====
+
+    #[test]
+    fn try_from_parts_to_legacy_parts_succeeds_for_legacy() {
+        let parts = create_legacy_parts();
+        let result: Result<LegacyDaemonHandshakeParts<_>, _> = parts.try_into();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_parts_to_legacy_parts_fails_for_binary() {
+        let parts = create_binary_parts();
+        let result: Result<LegacyDaemonHandshakeParts<_>, _> = parts.try_into();
+        assert!(result.is_err());
+    }
+
+    // ==== Round-trip tests ====
+
+    #[test]
+    fn binary_handshake_round_trip_preserves_data() {
+        let original = create_binary_handshake();
+        let negotiated = original.negotiated_protocol();
+        let remote = original.remote_protocol();
+
+        let parts: SessionHandshakeParts<_> = original.into();
+        let recovered: BinaryHandshake<_> = parts.try_into().unwrap();
+
+        assert_eq!(recovered.negotiated_protocol(), negotiated);
+        assert_eq!(recovered.remote_protocol(), remote);
+    }
+
+    #[test]
+    fn legacy_handshake_round_trip_preserves_data() {
+        let original = create_legacy_handshake();
+        let negotiated = original.negotiated_protocol();
+
+        let parts: SessionHandshakeParts<_> = original.into();
+        let recovered: LegacyDaemonHandshake<_> = parts.try_into().unwrap();
+
+        assert_eq!(recovered.negotiated_protocol(), negotiated);
     }
 }
