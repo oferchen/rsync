@@ -136,3 +136,172 @@ impl From<BufferedCopyTooSmall> for io::Error {
         io::Error::new(io::ErrorKind::InvalidInput, err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== CopyToSliceError tests ====
+
+    #[test]
+    fn copy_to_slice_error_new_stores_values() {
+        let err = CopyToSliceError::new(100, 50);
+        assert_eq!(err.required(), 100);
+        assert_eq!(err.provided(), 50);
+    }
+
+    #[test]
+    fn copy_to_slice_error_missing_calculates_difference() {
+        let err = CopyToSliceError::new(100, 60);
+        assert_eq!(err.missing(), 40);
+    }
+
+    #[test]
+    fn copy_to_slice_error_missing_saturates_on_inconsistent_input() {
+        // provided > required (inconsistent, but should not panic)
+        let err = CopyToSliceError::new(50, 100);
+        assert_eq!(err.missing(), 0);
+    }
+
+    #[test]
+    fn copy_to_slice_error_missing_zero_when_equal() {
+        let err = CopyToSliceError::new(100, 100);
+        assert_eq!(err.missing(), 0);
+    }
+
+    #[test]
+    fn copy_to_slice_error_display_includes_values() {
+        let err = CopyToSliceError::new(256, 128);
+        let msg = err.to_string();
+        assert!(msg.contains("256"));
+        assert!(msg.contains("128"));
+        assert!(msg.contains("insufficient"));
+    }
+
+    #[test]
+    fn copy_to_slice_error_converts_to_io_error() {
+        let err = CopyToSliceError::new(100, 50);
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+        assert!(io_err.to_string().contains("100"));
+    }
+
+    #[test]
+    fn copy_to_slice_error_clone() {
+        let err = CopyToSliceError::new(100, 50);
+        let cloned = err;
+        assert_eq!(err.required(), cloned.required());
+        assert_eq!(err.provided(), cloned.provided());
+    }
+
+    #[test]
+    fn copy_to_slice_error_debug_format() {
+        let err = CopyToSliceError::new(100, 50);
+        let debug = format!("{err:?}");
+        assert!(debug.contains("CopyToSliceError"));
+    }
+
+    #[test]
+    fn copy_to_slice_error_equality() {
+        let a = CopyToSliceError::new(100, 50);
+        let b = CopyToSliceError::new(100, 50);
+        let c = CopyToSliceError::new(100, 60);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // ==== BufferedCopyTooSmall tests ====
+
+    #[test]
+    fn buffered_copy_too_small_new_stores_values() {
+        let err = BufferedCopyTooSmall::new(200, 100);
+        assert_eq!(err.required(), 200);
+        assert_eq!(err.provided(), 100);
+    }
+
+    #[test]
+    fn buffered_copy_too_small_missing_calculates_difference() {
+        let err = BufferedCopyTooSmall::new(150, 50);
+        assert_eq!(err.missing(), 100);
+    }
+
+    #[test]
+    fn buffered_copy_too_small_missing_saturates() {
+        // provided > required should not panic
+        let err = BufferedCopyTooSmall::new(50, 100);
+        assert_eq!(err.missing(), 0);
+    }
+
+    #[test]
+    fn buffered_copy_too_small_missing_zero_when_equal() {
+        let err = BufferedCopyTooSmall::new(100, 100);
+        assert_eq!(err.missing(), 0);
+    }
+
+    #[test]
+    fn buffered_copy_too_small_display_includes_values() {
+        let err = BufferedCopyTooSmall::new(512, 256);
+        let msg = err.to_string();
+        assert!(msg.contains("512"));
+        assert!(msg.contains("256"));
+        assert!(msg.contains("requires"));
+    }
+
+    #[test]
+    fn buffered_copy_too_small_converts_to_io_error() {
+        let err = BufferedCopyTooSmall::new(200, 100);
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+        assert!(io_err.to_string().contains("200"));
+    }
+
+    #[test]
+    fn buffered_copy_too_small_clone() {
+        let err = BufferedCopyTooSmall::new(200, 100);
+        let cloned = err;
+        assert_eq!(err.required(), cloned.required());
+        assert_eq!(err.provided(), cloned.provided());
+    }
+
+    #[test]
+    fn buffered_copy_too_small_debug_format() {
+        let err = BufferedCopyTooSmall::new(200, 100);
+        let debug = format!("{err:?}");
+        assert!(debug.contains("BufferedCopyTooSmall"));
+    }
+
+    #[test]
+    fn buffered_copy_too_small_equality() {
+        let a = BufferedCopyTooSmall::new(200, 100);
+        let b = BufferedCopyTooSmall::new(200, 100);
+        let c = BufferedCopyTooSmall::new(300, 100);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // ==== Edge cases ====
+
+    #[test]
+    fn errors_handle_zero_values() {
+        let copy_err = CopyToSliceError::new(0, 0);
+        assert_eq!(copy_err.required(), 0);
+        assert_eq!(copy_err.provided(), 0);
+        assert_eq!(copy_err.missing(), 0);
+
+        let buffered_err = BufferedCopyTooSmall::new(0, 0);
+        assert_eq!(buffered_err.required(), 0);
+        assert_eq!(buffered_err.provided(), 0);
+        assert_eq!(buffered_err.missing(), 0);
+    }
+
+    #[test]
+    fn errors_handle_large_values() {
+        let copy_err = CopyToSliceError::new(usize::MAX, 0);
+        assert_eq!(copy_err.required(), usize::MAX);
+        assert_eq!(copy_err.missing(), usize::MAX);
+
+        let buffered_err = BufferedCopyTooSmall::new(usize::MAX, usize::MAX / 2);
+        assert_eq!(buffered_err.required(), usize::MAX);
+        assert_eq!(buffered_err.missing(), usize::MAX - usize::MAX / 2);
+    }
+}
