@@ -221,3 +221,490 @@ impl Default for NegotiationPrologueSniffer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== new() tests ====
+
+    #[test]
+    fn new_creates_empty_sniffer() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.buffered().is_empty());
+    }
+
+    #[test]
+    fn new_has_undecided_state() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.decision().is_none());
+    }
+
+    #[test]
+    fn new_requires_more_data() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn new_has_capacity_for_legacy_prefix() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.buffered_storage().capacity() >= LEGACY_DAEMON_PREFIX_LEN);
+    }
+
+    // ==== with_buffer() tests ====
+
+    #[test]
+    fn with_buffer_reuses_allocation() {
+        let mut buffer = Vec::with_capacity(64);
+        buffer.extend_from_slice(b"existing data");
+        let original_ptr = buffer.as_ptr();
+        let sniffer = NegotiationPrologueSniffer::with_buffer(buffer);
+        // Buffer is cleared but allocation reused
+        assert!(sniffer.buffered().is_empty());
+        // Pointer should be the same if capacity was sufficient
+        assert_eq!(sniffer.buffered_storage().as_ptr(), original_ptr);
+    }
+
+    #[test]
+    fn with_buffer_clears_content() {
+        let buffer = b"@RSYNCD:31.0".to_vec();
+        let sniffer = NegotiationPrologueSniffer::with_buffer(buffer);
+        assert!(sniffer.buffered().is_empty());
+        assert!(sniffer.decision().is_none());
+    }
+
+    #[test]
+    fn with_buffer_normalizes_capacity() {
+        let buffer = Vec::with_capacity(1024);
+        let sniffer = NegotiationPrologueSniffer::with_buffer(buffer);
+        // Capacity should be normalized (shrunk to reasonable size)
+        assert!(sniffer.buffered_storage().capacity() <= LEGACY_DAEMON_PREFIX_LEN * 2);
+    }
+
+    // ==== buffered() tests ====
+
+    #[test]
+    fn buffered_empty_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.buffered().is_empty());
+    }
+
+    #[test]
+    fn buffered_returns_observed_bytes() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        assert_eq!(sniffer.buffered(), b"@RSY");
+    }
+
+    // ==== buffered_remainder() tests ====
+
+    #[test]
+    fn buffered_remainder_empty_when_no_remainder() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        // Only prefix, no remainder added
+        assert!(sniffer.buffered_remainder().is_empty());
+    }
+
+    #[test]
+    fn buffered_remainder_returns_bytes_beyond_prefix() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        sniffer.buffered_storage_mut().extend_from_slice(b" 31.0\n");
+        assert_eq!(sniffer.buffered_remainder(), b" 31.0\n");
+    }
+
+    #[test]
+    fn buffered_remainder_binary_prefix_is_single_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x1f\x00\x00\x00rest").unwrap();
+        // Binary prefix is 1 byte, remainder is the rest of buffered data
+        assert_eq!(sniffer.sniffed_prefix_len(), 1);
+    }
+
+    // ==== buffered_split() tests ====
+
+    #[test]
+    fn buffered_split_with_remainder() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        sniffer.buffered_storage_mut().extend_from_slice(b" 31.0\n");
+        let (prefix, remainder) = sniffer.buffered_split();
+        assert_eq!(prefix, b"@RSYNCD:");
+        assert_eq!(remainder, b" 31.0\n");
+    }
+
+    #[test]
+    fn buffered_split_no_remainder() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        let (prefix, remainder) = sniffer.buffered_split();
+        assert_eq!(prefix, b"@RSYNCD:");
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn buffered_split_empty_before_observation() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        let (prefix, remainder) = sniffer.buffered_split();
+        assert!(prefix.is_empty());
+        assert!(remainder.is_empty());
+    }
+
+    // ==== is_decided() tests ====
+
+    #[test]
+    fn is_decided_false_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(!sniffer.is_decided());
+    }
+
+    #[test]
+    fn is_decided_true_after_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert!(sniffer.is_decided());
+    }
+
+    #[test]
+    fn is_decided_true_after_legacy_prefix() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert!(sniffer.is_decided());
+    }
+
+    // ==== requires_more_data() tests ====
+
+    #[test]
+    fn requires_more_data_true_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn requires_more_data_false_after_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert!(!sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn requires_more_data_false_after_complete_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert!(!sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn requires_more_data_true_for_partial_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        assert!(sniffer.requires_more_data());
+    }
+
+    // ==== buffered_len() tests ====
+
+    #[test]
+    fn buffered_len_zero_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert_eq!(sniffer.buffered_len(), 0);
+    }
+
+    #[test]
+    fn buffered_len_reflects_observed_bytes() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        assert_eq!(sniffer.buffered_len(), 4);
+    }
+
+    #[test]
+    fn buffered_len_includes_manually_added_bytes() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        sniffer.buffered_storage_mut().extend_from_slice(b" 31.0");
+        assert_eq!(sniffer.buffered_len(), 13);
+    }
+
+    // ==== try_reserve_buffered() tests ====
+
+    #[test]
+    fn try_reserve_buffered_ensures_capacity() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.try_reserve_buffered(100).unwrap();
+        // After reserving, capacity should be at least 100
+        assert!(sniffer.buffered_storage().capacity() >= 100);
+    }
+
+    #[test]
+    fn try_reserve_buffered_succeeds_when_already_large() {
+        let buffer = Vec::with_capacity(1024);
+        let mut sniffer = NegotiationPrologueSniffer::with_buffer(buffer);
+        // Even after capacity normalization, should be able to reserve more
+        sniffer.try_reserve_buffered(50).unwrap();
+    }
+
+    // ==== sniffed_prefix_len() tests ====
+
+    #[test]
+    fn sniffed_prefix_len_zero_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert_eq!(sniffer.sniffed_prefix_len(), 0);
+    }
+
+    #[test]
+    fn sniffed_prefix_len_one_for_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x1f").unwrap();
+        assert_eq!(sniffer.sniffed_prefix_len(), 1);
+    }
+
+    #[test]
+    fn sniffed_prefix_len_eight_for_complete_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert_eq!(sniffer.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+    }
+
+    #[test]
+    fn sniffed_prefix_len_partial_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        assert_eq!(sniffer.sniffed_prefix_len(), 4);
+    }
+
+    // ==== sniffed_prefix() tests ====
+
+    #[test]
+    fn sniffed_prefix_empty_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.sniffed_prefix().is_empty());
+    }
+
+    #[test]
+    fn sniffed_prefix_returns_prefix_bytes() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert_eq!(sniffer.sniffed_prefix(), b"@RSYNCD:");
+    }
+
+    #[test]
+    fn sniffed_prefix_excludes_remainder() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        sniffer.buffered_storage_mut().extend_from_slice(b" 31.0\n");
+        // sniffed_prefix() should not include the remainder
+        assert_eq!(sniffer.sniffed_prefix(), b"@RSYNCD:");
+    }
+
+    // ==== rehydrate_from_parts() tests ====
+
+    #[test]
+    fn rehydrate_from_parts_restores_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer
+            .rehydrate_from_parts(NegotiationPrologue::Binary, 1, b"\x1f\x00\x00\x00")
+            .unwrap();
+        assert!(sniffer.is_binary());
+        assert_eq!(sniffer.sniffed_prefix_len(), 1);
+        assert_eq!(sniffer.buffered(), b"\x1f\x00\x00\x00");
+    }
+
+    #[test]
+    fn rehydrate_from_parts_restores_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer
+            .rehydrate_from_parts(NegotiationPrologue::LegacyAscii, 8, b"@RSYNCD: 31.0\n")
+            .unwrap();
+        assert!(sniffer.is_legacy());
+        assert_eq!(sniffer.sniffed_prefix_len(), 8);
+        assert_eq!(sniffer.buffered(), b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn rehydrate_from_parts_clamps_prefix_len_to_buffer() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        // prefix_len larger than buffer length
+        sniffer
+            .rehydrate_from_parts(NegotiationPrologue::LegacyAscii, 100, b"@RSY")
+            .unwrap();
+        assert_eq!(sniffer.sniffed_prefix_len(), 4);
+    }
+
+    #[test]
+    fn rehydrate_from_parts_clamps_prefix_len_to_max() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        // prefix_len larger than LEGACY_DAEMON_PREFIX_LEN
+        sniffer
+            .rehydrate_from_parts(
+                NegotiationPrologue::LegacyAscii,
+                100,
+                b"@RSYNCD: 31.0\nmore data",
+            )
+            .unwrap();
+        assert_eq!(sniffer.sniffed_prefix_len(), LEGACY_DAEMON_PREFIX_LEN);
+    }
+
+    #[test]
+    fn rehydrate_from_parts_resets_first() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert!(sniffer.is_binary());
+        // Rehydrating with legacy should reset first
+        sniffer
+            .rehydrate_from_parts(NegotiationPrologue::LegacyAscii, 8, b"@RSYNCD:")
+            .unwrap();
+        assert!(sniffer.is_legacy());
+    }
+
+    // ==== into_buffered() tests ====
+
+    #[test]
+    fn into_buffered_returns_buffer() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        sniffer.buffered_storage_mut().extend_from_slice(b" 31.0\n");
+        let buffer = sniffer.into_buffered();
+        assert_eq!(buffer, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn into_buffered_shrinks_large_capacity() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.try_reserve_buffered(1024).unwrap();
+        sniffer.observe(b"@").unwrap();
+        let buffer = sniffer.into_buffered();
+        // Should shrink to reasonable capacity
+        assert!(buffer.capacity() <= LEGACY_DAEMON_PREFIX_LEN * 2);
+    }
+
+    // ==== into_parts() tests ====
+
+    #[test]
+    fn into_parts_returns_binary_decision() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x1f").unwrap();
+        let (decision, prefix_len, buffer) = sniffer.into_parts();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(prefix_len, 1);
+        assert_eq!(buffer, b"\x1f");
+    }
+
+    #[test]
+    fn into_parts_returns_legacy_decision() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        let (decision, prefix_len, buffer) = sniffer.into_parts();
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(prefix_len, 8);
+        assert_eq!(buffer, b"@RSYNCD:");
+    }
+
+    #[test]
+    fn into_parts_returns_need_more_data_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        let (decision, prefix_len, buffer) = sniffer.into_parts();
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+        assert_eq!(prefix_len, 0);
+        assert!(buffer.is_empty());
+    }
+
+    // ==== decision() tests ====
+
+    #[test]
+    fn decision_none_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.decision().is_none());
+    }
+
+    #[test]
+    fn decision_binary_after_non_at_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::Binary));
+    }
+
+    #[test]
+    fn decision_legacy_after_at_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@").unwrap();
+        assert_eq!(sniffer.decision(), Some(NegotiationPrologue::LegacyAscii));
+    }
+
+    // ==== is_legacy() tests ====
+
+    #[test]
+    fn is_legacy_false_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(!sniffer.is_legacy());
+    }
+
+    #[test]
+    fn is_legacy_true_after_at_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@").unwrap();
+        assert!(sniffer.is_legacy());
+    }
+
+    #[test]
+    fn is_legacy_false_after_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert!(!sniffer.is_legacy());
+    }
+
+    // ==== is_binary() tests ====
+
+    #[test]
+    fn is_binary_false_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(!sniffer.is_binary());
+    }
+
+    #[test]
+    fn is_binary_true_after_non_at_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x1f").unwrap();
+        assert!(sniffer.is_binary());
+    }
+
+    #[test]
+    fn is_binary_false_after_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@").unwrap();
+        assert!(!sniffer.is_binary());
+    }
+
+    // ==== Default impl tests ====
+
+    #[test]
+    fn default_matches_new() {
+        let default_sniffer = NegotiationPrologueSniffer::default();
+        let new_sniffer = NegotiationPrologueSniffer::new();
+        assert_eq!(
+            default_sniffer.buffered().len(),
+            new_sniffer.buffered().len()
+        );
+        assert!(default_sniffer.decision().is_none());
+        assert!(new_sniffer.decision().is_none());
+    }
+
+    // ==== Clone/Debug tests ====
+
+    #[test]
+    fn clone_preserves_state() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        let cloned = sniffer.clone();
+        assert_eq!(cloned.buffered(), sniffer.buffered());
+        assert_eq!(cloned.decision(), sniffer.decision());
+        assert_eq!(cloned.sniffed_prefix_len(), sniffer.sniffed_prefix_len());
+    }
+
+    #[test]
+    fn debug_format_contains_expected_info() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        let debug = format!("{sniffer:?}");
+        assert!(debug.contains("NegotiationPrologueSniffer"));
+    }
+}

@@ -318,10 +318,7 @@ fn roll_on_empty_window_fails() {
     let mut checksum = RollingChecksum::new();
     let result = checksum.roll(b'a', b'b');
     assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        RollingError::EmptyWindow
-    ));
+    assert!(matches!(result.unwrap_err(), RollingError::EmptyWindow));
 }
 
 #[test]
@@ -377,10 +374,7 @@ fn roll_many_on_empty_window_fails() {
     let mut checksum = RollingChecksum::new();
     let result = checksum.roll_many(&[1, 2], &[3, 4]);
     assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        RollingError::EmptyWindow
-    ));
+    assert!(matches!(result.unwrap_err(), RollingError::EmptyWindow));
 }
 
 #[test]

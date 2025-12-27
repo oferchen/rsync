@@ -428,7 +428,14 @@ mod tests {
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
-        BinaryHandshake::from_components(31, proto31, proto31, proto31, CompatibilityFlags::EMPTY, stream)
+        BinaryHandshake::from_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream,
+        )
     }
 
     // ==== Protocol accessors ====
@@ -485,7 +492,14 @@ mod tests {
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let proto29 = ProtocolVersion::from_supported(29).unwrap();
-        let hs = BinaryHandshake::from_components(31, proto31, proto29, proto29, CompatibilityFlags::EMPTY, stream);
+        let hs = BinaryHandshake::from_components(
+            31,
+            proto31,
+            proto29,
+            proto29,
+            CompatibilityFlags::EMPTY,
+            stream,
+        );
         assert!(hs.local_protocol_was_capped());
     }
 
@@ -542,7 +556,8 @@ mod tests {
     #[test]
     fn into_stream_parts_returns_components() {
         let hs = create_test_handshake();
-        let (remote_adv, remote_proto, local_adv, negotiated, flags, parts) = hs.into_stream_parts();
+        let (remote_adv, remote_proto, local_adv, negotiated, flags, parts) =
+            hs.into_stream_parts();
         assert_eq!(remote_adv, 31);
         assert_eq!(remote_proto.as_u8(), 31);
         assert_eq!(local_adv.as_u8(), 31);
@@ -558,7 +573,14 @@ mod tests {
         let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
-        let hs = BinaryHandshake::from_components(31, proto31, proto31, proto31, CompatibilityFlags::EMPTY, stream);
+        let hs = BinaryHandshake::from_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream,
+        );
         assert_eq!(hs.negotiated_protocol().as_u8(), 31);
     }
 
@@ -573,8 +595,16 @@ mod tests {
     #[test]
     fn from_stream_parts_reconstructs_handshake() {
         let hs = create_test_handshake();
-        let (remote_adv, remote_proto, local_adv, negotiated, flags, parts) = hs.into_stream_parts();
-        let reconstructed = BinaryHandshake::from_stream_parts(remote_adv, remote_proto, local_adv, negotiated, flags, parts);
+        let (remote_adv, remote_proto, local_adv, negotiated, flags, parts) =
+            hs.into_stream_parts();
+        let reconstructed = BinaryHandshake::from_stream_parts(
+            remote_adv,
+            remote_proto,
+            local_adv,
+            negotiated,
+            flags,
+            parts,
+        );
         assert_eq!(reconstructed.negotiated_protocol().as_u8(), 31);
     }
 
@@ -605,7 +635,7 @@ mod tests {
     fn try_map_stream_inner_fails_preserves_handshake() {
         let hs = create_test_handshake();
         let result = hs.try_map_stream_inner(|cursor| -> Result<Cursor<Vec<u8>>, _> {
-            Err((io::Error::new(io::ErrorKind::Other, "test error"), cursor))
+            Err((io::Error::other("test error"), cursor))
         });
         assert!(result.is_err());
         let err = result.unwrap_err();

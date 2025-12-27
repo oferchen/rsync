@@ -233,8 +233,8 @@ mod tests {
     fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
     }
@@ -345,7 +345,11 @@ mod tests {
             stream.into_parts(),
         );
         if let SessionHandshakeParts::Binary(binary_parts) = parts {
-            assert!(binary_parts.remote_compatibility_flags().contains(CompatibilityFlags::SYMLINK_TIMES));
+            assert!(
+                binary_parts
+                    .remote_compatibility_flags()
+                    .contains(CompatibilityFlags::SYMLINK_TIMES)
+            );
         } else {
             panic!("expected Binary variant");
         }
@@ -363,14 +367,11 @@ mod tests {
     fn from_legacy_components_preserves_greeting() {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
-        let parts = SessionHandshakeParts::from_legacy_components(
-            greeting,
-            proto31,
-            stream.into_parts(),
-        );
+        let parts =
+            SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts());
         if let SessionHandshakeParts::Legacy(legacy_parts) = parts {
             assert_eq!(legacy_parts.server_greeting().advertised_protocol(), 31);
         } else {
@@ -382,8 +383,8 @@ mod tests {
     fn from_legacy_components_preserves_negotiated_protocol() {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto30 = ProtocolVersion::from_supported(30).unwrap();
         let parts = SessionHandshakeParts::from_legacy_components(
             greeting,
@@ -405,11 +406,8 @@ mod tests {
         let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), Some(digests))
             .expect("valid greeting with digests");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
-        let parts = SessionHandshakeParts::from_legacy_components(
-            greeting,
-            proto31,
-            stream.into_parts(),
-        );
+        let parts =
+            SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts());
         if let SessionHandshakeParts::Legacy(legacy_parts) = parts {
             let greeting = legacy_parts.server_greeting();
             assert!(greeting.digest_list().is_some());

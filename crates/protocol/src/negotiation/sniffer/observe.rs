@@ -202,3 +202,297 @@ impl NegotiationPrologueSniffer {
         };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    // ==== observe tests ====
+
+    #[test]
+    fn observe_binary_first_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(b"\x00").unwrap();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn observe_legacy_first_byte() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(b"@").unwrap();
+        // After just '@', we need more data to confirm legacy
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn observe_full_legacy_prefix() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(b"@RSYNCD:").unwrap();
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 8);
+    }
+
+    #[test]
+    fn observe_empty_chunk_returns_need_more_data() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(b"").unwrap();
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn observe_empty_chunk_after_decision_returns_cached() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00\x00\x00\x1f").unwrap();
+        let (decision, consumed) = sniffer.observe(b"").unwrap();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 0);
+    }
+
+    #[test]
+    fn observe_incremental_legacy_detection() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        // Feed bytes one at a time
+        for (i, byte) in b"@RSYNCD:".iter().enumerate() {
+            let (decision, consumed) = sniffer.observe(slice::from_ref(byte)).unwrap();
+            assert_eq!(consumed, 1);
+            if i < 7 {
+                assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+            } else {
+                assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+            }
+        }
+    }
+
+    #[test]
+    fn observe_consumes_only_needed_bytes_for_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        // Binary decision is made on first non-'@' byte
+        let (decision, consumed) = sniffer.observe(b"\x01extra_data").unwrap();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn observe_consumes_full_prefix_for_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let (decision, consumed) = sniffer.observe(b"@RSYNCD: 31.0\n").unwrap();
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+        assert_eq!(consumed, 8);
+    }
+
+    #[test]
+    fn observe_does_not_consume_after_decision() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        let (decision, consumed) = sniffer.observe(b"more_data").unwrap();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+        assert_eq!(consumed, 0);
+    }
+
+    // ==== observe_byte tests ====
+
+    #[test]
+    fn observe_byte_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let decision = sniffer.observe_byte(0x00).unwrap();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn observe_byte_legacy_start() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let decision = sniffer.observe_byte(b'@').unwrap();
+        assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+    }
+
+    #[test]
+    fn observe_byte_incremental() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        for &byte in b"@RSYNC" {
+            let decision = sniffer.observe_byte(byte).unwrap();
+            assert_eq!(decision, NegotiationPrologue::NeedMoreData);
+        }
+        sniffer.observe_byte(b'D').unwrap();
+        let decision = sniffer.observe_byte(b':').unwrap();
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== reset tests ====
+
+    #[test]
+    fn reset_clears_state() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00\x00\x00\x1f").unwrap();
+        assert!(sniffer.is_decided());
+        sniffer.reset();
+        assert!(!sniffer.is_decided());
+        assert!(sniffer.buffered().is_empty());
+    }
+
+    #[test]
+    fn reset_allows_reuse() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert!(sniffer.is_binary());
+        sniffer.reset();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert!(sniffer.is_legacy());
+    }
+
+    // ==== read_from tests ====
+
+    #[test]
+    fn read_from_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = Cursor::new(b"\x00\x00\x00\x1f".to_vec());
+        let decision = sniffer.read_from(&mut reader).unwrap();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn read_from_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = Cursor::new(b"@RSYNCD: 31.0\n".to_vec());
+        let decision = sniffer.read_from(&mut reader).unwrap();
+        assert_eq!(decision, NegotiationPrologue::LegacyAscii);
+    }
+
+    #[test]
+    fn read_from_eof_before_decision() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = Cursor::new(Vec::new());
+        let result = sniffer.read_from(&mut reader);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_from_partial_legacy_eof() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let mut reader = Cursor::new(b"@RSY".to_vec());
+        let result = sniffer.read_from(&mut reader);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_from_returns_cached_decision() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        let mut reader = Cursor::new(Vec::new());
+        let decision = sniffer.read_from(&mut reader).unwrap();
+        assert_eq!(decision, NegotiationPrologue::Binary);
+    }
+
+    // ==== legacy_prefix_complete tests ====
+
+    #[test]
+    fn legacy_prefix_complete_false_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(!sniffer.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_complete_false_partial() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        assert!(!sniffer.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_complete_true_full() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert!(sniffer.legacy_prefix_complete());
+    }
+
+    // ==== legacy_prefix_remaining tests ====
+
+    #[test]
+    fn legacy_prefix_remaining_none_before_start() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.legacy_prefix_remaining().is_none());
+    }
+
+    #[test]
+    fn legacy_prefix_remaining_some_partial() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        let remaining = sniffer.legacy_prefix_remaining();
+        assert!(remaining.is_some());
+        assert_eq!(remaining.unwrap(), 4);
+    }
+
+    #[test]
+    fn legacy_prefix_remaining_none_after_complete() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        // Once prefix is complete, legacy_prefix_remaining() returns None
+        // (it only returns Some(n) while prefix is incomplete)
+        assert!(sniffer.legacy_prefix_remaining().is_none());
+    }
+
+    // ==== State transition tests ====
+
+    #[test]
+    fn is_decided_false_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(!sniffer.is_decided());
+    }
+
+    #[test]
+    fn is_decided_true_after_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert!(sniffer.is_decided());
+    }
+
+    #[test]
+    fn is_decided_true_after_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert!(sniffer.is_decided());
+    }
+
+    #[test]
+    fn is_decided_partial_legacy_is_technically_decided() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        // After seeing '@', detector decides it's legacy even though more bytes needed
+        // is_decided() returns true because decision is LegacyAscii, not NeedMoreData
+        // But requires_more_data() returns true because prefix is incomplete
+        assert!(sniffer.is_decided());
+        assert!(sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn requires_more_data_true_initially() {
+        let sniffer = NegotiationPrologueSniffer::new();
+        assert!(sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn requires_more_data_false_after_binary() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"\x00").unwrap();
+        assert!(!sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn requires_more_data_false_after_full_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSYNCD:").unwrap();
+        assert!(!sniffer.requires_more_data());
+    }
+
+    #[test]
+    fn requires_more_data_true_partial_legacy() {
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        sniffer.observe(b"@RSY").unwrap();
+        assert!(sniffer.requires_more_data());
+    }
+}
