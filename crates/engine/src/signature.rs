@@ -692,9 +692,8 @@ mod tests {
     fn generate_signature_sha1() {
         let sig_layout = layout(11, 16);
         let input = Cursor::new(b"hello world".to_vec());
-        let signature =
-            generate_file_signature(input, sig_layout, SignatureAlgorithm::Sha1)
-                .expect("signature generation succeeds");
+        let signature = generate_file_signature(input, sig_layout, SignatureAlgorithm::Sha1)
+            .expect("signature generation succeeds");
 
         assert_eq!(signature.blocks().len(), 1);
         // SHA1 produces 20 bytes, truncated to 16 by layout
@@ -705,12 +704,9 @@ mod tests {
     fn generate_signature_xxh3() {
         let sig_layout = layout(11, 8);
         let input = Cursor::new(b"hello world".to_vec());
-        let signature = generate_file_signature(
-            input,
-            sig_layout,
-            SignatureAlgorithm::Xxh3 { seed: 12345 },
-        )
-        .expect("signature generation succeeds");
+        let signature =
+            generate_file_signature(input, sig_layout, SignatureAlgorithm::Xxh3 { seed: 12345 })
+                .expect("signature generation succeeds");
 
         assert_eq!(signature.blocks().len(), 1);
         assert_eq!(signature.blocks()[0].strong().len(), 8);

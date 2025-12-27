@@ -427,8 +427,8 @@ mod tests {
     use std::io::{self, Cursor};
 
     fn create_test_parts() -> LegacyDaemonHandshakeParts<Cursor<Vec<u8>>> {
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto = ProtocolVersion::from_supported(31).unwrap();
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
@@ -467,7 +467,10 @@ mod tests {
     #[test]
     fn local_advertised_protocol_mirrors_negotiated() {
         let parts = create_test_parts();
-        assert_eq!(parts.local_advertised_protocol(), parts.negotiated_protocol());
+        assert_eq!(
+            parts.local_advertised_protocol(),
+            parts.negotiated_protocol()
+        );
     }
 
     // ==== Protocol clamping ====
@@ -487,12 +490,13 @@ mod tests {
 
     #[test]
     fn local_protocol_was_capped_true_when_reduced() {
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto = ProtocolVersion::from_supported(29).unwrap();
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
-        let parts = LegacyDaemonHandshakeParts::from_components(greeting, proto, stream.into_parts());
+        let parts =
+            LegacyDaemonHandshakeParts::from_components(greeting, proto, stream.into_parts());
         assert!(parts.local_protocol_was_capped());
     }
 
@@ -571,7 +575,8 @@ mod tests {
     #[test]
     fn try_map_stream_inner_succeeds() {
         let parts = create_test_parts();
-        let result = parts.try_map_stream_inner(|cursor| -> Result<_, (io::Error, _)> { Ok(cursor) });
+        let result =
+            parts.try_map_stream_inner(|cursor| -> Result<_, (io::Error, _)> { Ok(cursor) });
         assert!(result.is_ok());
         let mapped = result.unwrap();
         assert_eq!(mapped.negotiated_protocol().as_u8(), 31);
@@ -581,7 +586,7 @@ mod tests {
     fn try_map_stream_inner_fails_preserves_parts() {
         let parts = create_test_parts();
         let result = parts.try_map_stream_inner(|cursor| -> Result<Cursor<Vec<u8>>, _> {
-            Err((io::Error::new(io::ErrorKind::Other, "test error"), cursor))
+            Err((io::Error::other("test error"), cursor))
         });
         assert!(result.is_err());
         let err = result.unwrap_err();
