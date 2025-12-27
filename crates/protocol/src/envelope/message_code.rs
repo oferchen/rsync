@@ -287,3 +287,163 @@ impl From<MessageCode> for u8 {
         value.as_u8()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn as_u8_returns_correct_value() {
+        assert_eq!(MessageCode::Data.as_u8(), 0);
+        assert_eq!(MessageCode::ErrorXfer.as_u8(), 1);
+        assert_eq!(MessageCode::Info.as_u8(), 2);
+        assert_eq!(MessageCode::Error.as_u8(), 3);
+        assert_eq!(MessageCode::Warning.as_u8(), 4);
+        assert_eq!(MessageCode::Success.as_u8(), 100);
+        assert_eq!(MessageCode::Deleted.as_u8(), 101);
+        assert_eq!(MessageCode::NoSend.as_u8(), 102);
+    }
+
+    #[test]
+    fn from_u8_roundtrips_all_codes() {
+        for code in MessageCode::ALL {
+            let value = code.as_u8();
+            assert_eq!(MessageCode::from_u8(value), Some(code));
+        }
+    }
+
+    #[test]
+    fn from_u8_returns_none_for_unknown() {
+        assert!(MessageCode::from_u8(11).is_none());
+        assert!(MessageCode::from_u8(99).is_none());
+        assert!(MessageCode::from_u8(200).is_none());
+    }
+
+    #[test]
+    fn all_contains_18_codes() {
+        assert_eq!(MessageCode::ALL.len(), 18);
+        assert_eq!(MessageCode::all().len(), 18);
+    }
+
+    #[test]
+    fn flush_alias_equals_info() {
+        assert_eq!(MessageCode::FLUSH, MessageCode::Info);
+        assert_eq!(MessageCode::FLUSH.as_u8(), 2);
+    }
+
+    #[test]
+    fn is_logging_for_log_codes() {
+        assert!(MessageCode::ErrorXfer.is_logging());
+        assert!(MessageCode::Info.is_logging());
+        assert!(MessageCode::Error.is_logging());
+        assert!(MessageCode::Warning.is_logging());
+        assert!(MessageCode::Log.is_logging());
+        assert!(MessageCode::Client.is_logging());
+    }
+
+    #[test]
+    fn is_logging_false_for_non_log_codes() {
+        assert!(!MessageCode::Data.is_logging());
+        assert!(!MessageCode::Redo.is_logging());
+        assert!(!MessageCode::Stats.is_logging());
+        assert!(!MessageCode::Success.is_logging());
+        assert!(!MessageCode::Deleted.is_logging());
+    }
+
+    #[test]
+    fn log_code_returns_correct_mapping() {
+        assert_eq!(MessageCode::ErrorXfer.log_code(), Some(LogCode::ErrorXfer));
+        assert_eq!(MessageCode::Info.log_code(), Some(LogCode::Info));
+        assert_eq!(MessageCode::Error.log_code(), Some(LogCode::Error));
+        assert_eq!(MessageCode::Warning.log_code(), Some(LogCode::Warning));
+        assert_eq!(MessageCode::Data.log_code(), None);
+        assert_eq!(MessageCode::Success.log_code(), None);
+    }
+
+    #[test]
+    fn from_log_code_roundtrips() {
+        assert_eq!(
+            MessageCode::from_log_code(LogCode::ErrorXfer),
+            Some(MessageCode::ErrorXfer)
+        );
+        assert_eq!(
+            MessageCode::from_log_code(LogCode::Info),
+            Some(MessageCode::Info)
+        );
+        assert_eq!(
+            MessageCode::from_log_code(LogCode::Error),
+            Some(MessageCode::Error)
+        );
+        assert_eq!(MessageCode::from_log_code(LogCode::None), None);
+    }
+
+    #[test]
+    fn name_returns_msg_prefix() {
+        assert_eq!(MessageCode::Data.name(), "MSG_DATA");
+        assert_eq!(MessageCode::ErrorXfer.name(), "MSG_ERROR_XFER");
+        assert_eq!(MessageCode::Info.name(), "MSG_INFO");
+        assert_eq!(MessageCode::NoOp.name(), "MSG_NOOP");
+        assert_eq!(MessageCode::NoSend.name(), "MSG_NO_SEND");
+    }
+
+    #[test]
+    fn display_matches_name() {
+        for code in MessageCode::ALL {
+            assert_eq!(format!("{}", code), code.name());
+        }
+    }
+
+    #[test]
+    fn from_str_parses_all_names() {
+        for code in MessageCode::ALL {
+            let parsed: MessageCode = code.name().parse().unwrap();
+            assert_eq!(parsed, code);
+        }
+    }
+
+    #[test]
+    fn from_str_accepts_msg_flush() {
+        let parsed: MessageCode = "MSG_FLUSH".parse().unwrap();
+        assert_eq!(parsed, MessageCode::Info);
+    }
+
+    #[test]
+    fn from_str_rejects_unknown() {
+        let result: Result<MessageCode, _> = "MSG_UNKNOWN".parse();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert_eq!(err.invalid_name(), "MSG_UNKNOWN");
+    }
+
+    #[test]
+    fn try_from_u8_success() {
+        let code: Result<MessageCode, _> = 0_u8.try_into();
+        assert_eq!(code.unwrap(), MessageCode::Data);
+    }
+
+    #[test]
+    fn try_from_u8_error() {
+        let code: Result<MessageCode, _> = 255_u8.try_into();
+        assert!(code.is_err());
+    }
+
+    #[test]
+    fn into_u8_works() {
+        let value: u8 = MessageCode::Success.into();
+        assert_eq!(value, 100);
+    }
+
+    #[test]
+    fn parse_message_code_error_new() {
+        let err = ParseMessageCodeError::new("invalid");
+        assert_eq!(err.invalid_name(), "invalid");
+    }
+
+    #[test]
+    fn parse_message_code_error_display() {
+        let err = ParseMessageCodeError::new("BAD_CODE");
+        let display = format!("{}", err);
+        assert!(display.contains("BAD_CODE"));
+    }
+}
