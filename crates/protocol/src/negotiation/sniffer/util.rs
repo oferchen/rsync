@@ -46,3 +46,81 @@ pub(super) fn ensure_vec_capacity(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_into_vectored_copies_bytes() {
+        let source = b"hello world";
+        let mut buf1 = [0u8; 6];
+        let mut buf2 = [0u8; 6];
+        let mut slices = [IoSliceMut::new(&mut buf1), IoSliceMut::new(&mut buf2)];
+        let result = copy_into_vectored(source, &mut slices);
+        assert!(result.is_ok());
+        assert_eq!(&buf1, b"hello ");
+        assert_eq!(&buf2[..5], b"world");
+    }
+
+    #[test]
+    fn copy_into_vectored_single_buffer() {
+        let source = b"test";
+        let mut buf = [0u8; 10];
+        let mut slices = [IoSliceMut::new(&mut buf)];
+        let result = copy_into_vectored(source, &mut slices);
+        assert!(result.is_ok());
+        assert_eq!(&buf[..4], b"test");
+    }
+
+    #[test]
+    fn copy_into_vectored_exact_fit() {
+        let source = b"abc";
+        let mut buf = [0u8; 3];
+        let mut slices = [IoSliceMut::new(&mut buf)];
+        let result = copy_into_vectored(source, &mut slices);
+        assert!(result.is_ok());
+        assert_eq!(&buf, b"abc");
+    }
+
+    #[test]
+    fn copy_into_vectored_empty_source() {
+        let source = b"";
+        let mut buf = [0u8; 5];
+        let mut slices = [IoSliceMut::new(&mut buf)];
+        let result = copy_into_vectored(source, &mut slices);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn copy_into_vectored_insufficient_space() {
+        let source = b"hello world";
+        let mut buf = [0u8; 5];
+        let mut slices = [IoSliceMut::new(&mut buf)];
+        let result = copy_into_vectored(source, &mut slices);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn ensure_vec_capacity_already_sufficient() {
+        let mut vec = Vec::with_capacity(100);
+        vec.push(1);
+        let result = ensure_vec_capacity(&mut vec, 50);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ensure_vec_capacity_grows_vec() {
+        let mut vec: Vec<u8> = Vec::new();
+        let result = ensure_vec_capacity(&mut vec, 100);
+        assert!(result.is_ok());
+        assert!(vec.capacity() >= 100);
+    }
+
+    #[test]
+    fn ensure_vec_capacity_zero_required() {
+        let mut vec: Vec<u8> = Vec::new();
+        let result = ensure_vec_capacity(&mut vec, 0);
+        assert!(result.is_ok());
+    }
+}
