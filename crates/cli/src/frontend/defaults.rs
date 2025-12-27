@@ -79,3 +79,55 @@ pub(super) const CVS_EXCLUDE_PATTERNS: &[&str] = &[
 pub(crate) const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_description!(
     "[year]/[month padding:zero]/[day padding:zero] [hour padding:zero]:[minute padding:zero]:[second padding:zero]"
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supported_options_list_not_empty() {
+        assert!(!SUPPORTED_OPTIONS_LIST.is_empty());
+    }
+
+    #[test]
+    fn supported_options_list_contains_help() {
+        assert!(SUPPORTED_OPTIONS_LIST.contains("--help"));
+    }
+
+    #[test]
+    fn supported_options_list_contains_archive() {
+        assert!(SUPPORTED_OPTIONS_LIST.contains("--archive"));
+    }
+
+    #[test]
+    fn itemize_changes_format_valid() {
+        assert!(ITEMIZE_CHANGES_FORMAT.contains("%i"));
+        assert!(ITEMIZE_CHANGES_FORMAT.contains("%n"));
+    }
+
+    #[test]
+    fn cvs_exclude_patterns_not_empty() {
+        assert!(!CVS_EXCLUDE_PATTERNS.is_empty());
+    }
+
+    #[test]
+    fn cvs_exclude_patterns_contains_git() {
+        assert!(CVS_EXCLUDE_PATTERNS.contains(&".git/"));
+    }
+
+    #[test]
+    fn cvs_exclude_patterns_contains_svn() {
+        assert!(CVS_EXCLUDE_PATTERNS.contains(&".svn/"));
+    }
+
+    #[test]
+    fn cvs_exclude_patterns_contains_object_files() {
+        assert!(CVS_EXCLUDE_PATTERNS.contains(&"*.o"));
+        assert!(CVS_EXCLUDE_PATTERNS.contains(&"*.obj"));
+    }
+
+    #[test]
+    fn list_timestamp_format_not_empty() {
+        assert!(!LIST_TIMESTAMP_FORMAT.is_empty());
+    }
+}
