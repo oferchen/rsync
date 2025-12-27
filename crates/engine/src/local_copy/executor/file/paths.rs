@@ -50,3 +50,67 @@ pub(crate) fn temporary_destination_path(
         None => destination.with_file_name(temp_name),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_destination_path_adds_prefix() {
+        let dest = Path::new("/path/to/file.txt");
+        let partial = partial_destination_path(dest);
+        assert!(partial.to_string_lossy().contains(".rsync-partial-"));
+        assert!(partial.to_string_lossy().contains("file.txt"));
+    }
+
+    #[test]
+    fn partial_destination_path_preserves_directory() {
+        let dest = Path::new("/path/to/file.txt");
+        let partial = partial_destination_path(dest);
+        assert_eq!(partial.parent(), dest.parent());
+    }
+
+    #[test]
+    fn partial_destination_path_handles_no_filename() {
+        let dest = Path::new("/");
+        let partial = partial_destination_path(dest);
+        assert!(partial.to_string_lossy().contains("partial"));
+    }
+
+    #[test]
+    fn temporary_destination_path_adds_prefix() {
+        let dest = Path::new("/path/to/file.txt");
+        let temp = temporary_destination_path(dest, 42, None);
+        assert!(temp.to_string_lossy().contains(".rsync-tmp-"));
+        assert!(temp.to_string_lossy().contains("file.txt"));
+    }
+
+    #[test]
+    fn temporary_destination_path_includes_unique_id() {
+        let dest = Path::new("/path/to/file.txt");
+        let temp = temporary_destination_path(dest, 123, None);
+        assert!(temp.to_string_lossy().contains("123"));
+    }
+
+    #[test]
+    fn temporary_destination_path_uses_temp_dir() {
+        let dest = Path::new("/path/to/file.txt");
+        let temp_dir = Path::new("/tmp/rsync");
+        let temp = temporary_destination_path(dest, 1, Some(temp_dir));
+        assert!(temp.starts_with(temp_dir));
+    }
+
+    #[test]
+    fn temporary_destination_path_preserves_directory_without_temp_dir() {
+        let dest = Path::new("/path/to/file.txt");
+        let temp = temporary_destination_path(dest, 1, None);
+        assert_eq!(temp.parent(), dest.parent());
+    }
+
+    #[test]
+    fn temporary_destination_path_handles_no_filename() {
+        let dest = Path::new("/");
+        let temp = temporary_destination_path(dest, 1, None);
+        assert!(temp.to_string_lossy().contains("temp"));
+    }
+}
