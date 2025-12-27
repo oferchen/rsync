@@ -159,3 +159,167 @@ where
         Some(&self.error)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    fn make_sink() -> MessageSink<Vec<u8>> {
+        MessageSink::new(Vec::new())
+    }
+
+    #[test]
+    fn new_creates_error_with_sink_and_error() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "test error");
+        assert_eq!(err.error(), &"test error");
+    }
+
+    #[test]
+    fn sink_returns_reference() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "error");
+        let _ = err.sink();
+    }
+
+    #[test]
+    fn sink_mut_returns_mutable_reference() {
+        let sink = make_sink();
+        let mut err = TryMapWriterError::new(sink, "error");
+        let _ = err.sink_mut();
+    }
+
+    #[test]
+    fn error_returns_reference() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, 42);
+        assert_eq!(err.error(), &42);
+    }
+
+    #[test]
+    fn error_mut_returns_mutable_reference() {
+        let sink = make_sink();
+        let mut err = TryMapWriterError::new(sink, 42);
+        *err.error_mut() = 100;
+        assert_eq!(err.error(), &100);
+    }
+
+    #[test]
+    fn as_ref_returns_both_references() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "error");
+        let (sink_ref, error_ref) = err.as_ref();
+        let _ = sink_ref;
+        assert_eq!(error_ref, &"error");
+    }
+
+    #[test]
+    fn as_mut_returns_both_mutable_references() {
+        let sink = make_sink();
+        let mut err = TryMapWriterError::new(sink, 42);
+        let (_sink_mut, error_mut) = err.as_mut();
+        *error_mut = 100;
+        assert_eq!(err.error(), &100);
+    }
+
+    #[test]
+    fn into_parts_consumes_and_returns_both() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "error");
+        let (_sink, error) = err.into_parts();
+        assert_eq!(error, "error");
+    }
+
+    #[test]
+    fn into_sink_consumes_and_returns_sink() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "error");
+        let _ = err.into_sink();
+    }
+
+    #[test]
+    fn into_error_consumes_and_returns_error() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "test error");
+        assert_eq!(err.into_error(), "test error");
+    }
+
+    #[test]
+    fn map_sink_transforms_sink() {
+        let sink = make_sink();
+        let err: TryMapWriterError<Vec<u8>, &str> = TryMapWriterError::new(sink, "error");
+        let mapped = err.map_sink(|s| s.map_writer(|w| io::Cursor::new(w)));
+        assert_eq!(mapped.error(), &"error");
+    }
+
+    #[test]
+    fn map_error_transforms_error() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, 42);
+        let mapped = err.map_error(|e| e * 2);
+        assert_eq!(mapped.error(), &84);
+    }
+
+    #[test]
+    fn map_parts_transforms_both() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, 10);
+        let mapped = err.map_parts(|s, e| (s, e + 5));
+        assert_eq!(mapped.error(), &15);
+    }
+
+    #[test]
+    fn from_tuple_creates_error() {
+        let sink = make_sink();
+        let err: TryMapWriterError<Vec<u8>, &str> = (sink, "error").into();
+        assert_eq!(err.error(), &"error");
+    }
+
+    #[test]
+    fn debug_format_contains_fields() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "test error");
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("TryMapWriterError"));
+        assert!(debug.contains("sink"));
+        assert!(debug.contains("error"));
+    }
+
+    #[test]
+    fn display_format_shows_message() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "inner error");
+        let display = format!("{}", err);
+        assert!(display.contains("failed to map"));
+        assert!(display.contains("inner error"));
+    }
+
+    #[test]
+    fn clone_creates_copy() {
+        let sink = make_sink();
+        let err = TryMapWriterError::new(sink, "error");
+        let cloned = err.clone();
+        assert_eq!(cloned.error(), &"error");
+    }
+
+    #[derive(Debug, Clone)]
+    struct TestError(&'static str);
+
+    impl fmt::Display for TestError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    impl std::error::Error for TestError {}
+
+    #[test]
+    fn error_source_returns_inner_error() {
+        let sink = make_sink();
+        let inner = TestError("inner");
+        let err = TryMapWriterError::new(sink, inner);
+        let source = std::error::Error::source(&err);
+        assert!(source.is_some());
+    }
+}
