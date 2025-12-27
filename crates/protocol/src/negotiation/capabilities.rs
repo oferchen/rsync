@@ -259,11 +259,11 @@ pub fn negotiate_capabilities(
     is_server: bool,
 ) -> io::Result<NegotiationResult> {
     // Protocol < 30 doesn't support negotiation, use defaults
-    if protocol.as_u8() < 30 {
+    if protocol.uses_fixed_encoding() {
         debug_log!(
             Proto,
             1,
-            "protocol {} < 30, using legacy defaults (MD4, Zlib)",
+            "protocol {} uses legacy encoding, using defaults (MD4, Zlib)",
             protocol.as_u8()
         );
         return Ok(NegotiationResult {
