@@ -198,4 +198,144 @@ mod tests {
 
         assert_eq!(trait_digest.as_ref(), Sha512::digest(input).as_ref());
     }
+
+    #[test]
+    fn md5_digest_len_is_16() {
+        assert_eq!(Md5::DIGEST_LEN, 16);
+        let digest = Md5::digest(b"test");
+        assert_eq!(digest.as_ref().len(), 16);
+    }
+
+    #[test]
+    fn md4_digest_len_is_16() {
+        assert_eq!(Md4::DIGEST_LEN, 16);
+        let digest = Md4::digest(b"test");
+        assert_eq!(digest.as_ref().len(), 16);
+    }
+
+    #[test]
+    fn sha1_digest_len_is_20() {
+        assert_eq!(Sha1::DIGEST_LEN, 20);
+        let digest = Sha1::digest(b"test");
+        assert_eq!(digest.as_ref().len(), 20);
+    }
+
+    #[test]
+    fn sha256_digest_len_is_32() {
+        assert_eq!(Sha256::DIGEST_LEN, 32);
+        let digest = Sha256::digest(b"test");
+        assert_eq!(digest.as_ref().len(), 32);
+    }
+
+    #[test]
+    fn sha512_digest_len_is_64() {
+        assert_eq!(Sha512::DIGEST_LEN, 64);
+        let digest = Sha512::digest(b"test");
+        assert_eq!(digest.as_ref().len(), 64);
+    }
+
+    #[test]
+    fn xxh64_digest_len_is_8() {
+        assert_eq!(Xxh64::DIGEST_LEN, 8);
+        let digest = Xxh64::digest(0, b"test");
+        assert_eq!(digest.as_ref().len(), 8);
+    }
+
+    #[test]
+    fn xxh3_digest_len_is_8() {
+        assert_eq!(Xxh3::DIGEST_LEN, 8);
+        let digest = Xxh3::digest(0, b"test");
+        assert_eq!(digest.as_ref().len(), 8);
+    }
+
+    #[test]
+    fn xxh3_128_digest_len_is_16() {
+        assert_eq!(Xxh3_128::DIGEST_LEN, 16);
+        let digest = Xxh3_128::digest(0, b"test");
+        assert_eq!(digest.as_ref().len(), 16);
+    }
+
+    #[test]
+    fn md5_multiple_updates() {
+        let mut hasher = Md5::new();
+        hasher.update(b"hello");
+        hasher.update(b" ");
+        hasher.update(b"world");
+        let split_digest = hasher.finalize();
+
+        let combined_digest = Md5::digest(b"hello world");
+        assert_eq!(split_digest.as_ref(), combined_digest.as_ref());
+    }
+
+    #[test]
+    fn sha256_multiple_updates() {
+        let mut hasher = Sha256::new();
+        hasher.update(b"foo");
+        hasher.update(b"bar");
+        let split_digest = hasher.finalize();
+
+        let combined_digest = Sha256::digest(b"foobar");
+        assert_eq!(split_digest.as_ref(), combined_digest.as_ref());
+    }
+
+    #[test]
+    fn xxh64_different_seeds_different_digests() {
+        let input = b"test input";
+        let digest1 = Xxh64::digest(0, input);
+        let digest2 = Xxh64::digest(1, input);
+        assert_ne!(digest1.as_ref(), digest2.as_ref());
+    }
+
+    #[test]
+    fn xxh3_different_seeds_different_digests() {
+        let input = b"test input";
+        let digest1 = Xxh3::digest(0, input);
+        let digest2 = Xxh3::digest(1, input);
+        assert_ne!(digest1.as_ref(), digest2.as_ref());
+    }
+
+    #[test]
+    fn xxh3_128_different_seeds_different_digests() {
+        let input = b"test input";
+        let digest1 = Xxh3_128::digest(0, input);
+        let digest2 = Xxh3_128::digest(1, input);
+        assert_ne!(digest1.as_ref(), digest2.as_ref());
+    }
+
+    #[test]
+    fn empty_input_produces_valid_digests() {
+        let empty = b"";
+        assert_eq!(Md4::digest(empty).as_ref().len(), Md4::DIGEST_LEN);
+        assert_eq!(Md5::digest(empty).as_ref().len(), Md5::DIGEST_LEN);
+        assert_eq!(Sha1::digest(empty).as_ref().len(), Sha1::DIGEST_LEN);
+        assert_eq!(Sha256::digest(empty).as_ref().len(), Sha256::DIGEST_LEN);
+        assert_eq!(Sha512::digest(empty).as_ref().len(), Sha512::DIGEST_LEN);
+        assert_eq!(Xxh64::digest(0, empty).as_ref().len(), Xxh64::DIGEST_LEN);
+        assert_eq!(Xxh3::digest(0, empty).as_ref().len(), Xxh3::DIGEST_LEN);
+        assert_eq!(
+            Xxh3_128::digest(0, empty).as_ref().len(),
+            Xxh3_128::DIGEST_LEN
+        );
+    }
+
+    #[test]
+    fn same_input_same_digest() {
+        let input = b"deterministic";
+        assert_eq!(Md5::digest(input).as_ref(), Md5::digest(input).as_ref());
+        assert_eq!(
+            Sha256::digest(input).as_ref(),
+            Sha256::digest(input).as_ref()
+        );
+    }
+
+    #[test]
+    fn different_input_different_digest() {
+        let input1 = b"input1";
+        let input2 = b"input2";
+        assert_ne!(Md5::digest(input1).as_ref(), Md5::digest(input2).as_ref());
+        assert_ne!(
+            Sha256::digest(input1).as_ref(),
+            Sha256::digest(input2).as_ref()
+        );
+    }
 }
