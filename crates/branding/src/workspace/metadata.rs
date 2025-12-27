@@ -142,3 +142,117 @@ const WORKSPACE_METADATA: Metadata = Metadata {
 pub const fn metadata() -> Metadata {
     WORKSPACE_METADATA
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_brand_is_not_empty() {
+        assert!(!metadata().brand().is_empty());
+    }
+
+    #[test]
+    fn metadata_upstream_version_is_not_empty() {
+        assert!(!metadata().upstream_version().is_empty());
+    }
+
+    #[test]
+    fn metadata_rust_version_is_not_empty() {
+        assert!(!metadata().rust_version().is_empty());
+    }
+
+    #[test]
+    fn metadata_protocol_version_is_nonzero() {
+        assert!(metadata().protocol_version() > 0);
+    }
+
+    #[test]
+    fn metadata_client_program_name_is_not_empty() {
+        assert!(!metadata().client_program_name().is_empty());
+    }
+
+    #[test]
+    fn metadata_daemon_program_name_is_not_empty() {
+        assert!(!metadata().daemon_program_name().is_empty());
+    }
+
+    #[test]
+    fn metadata_legacy_client_program_name_is_not_empty() {
+        assert!(!metadata().legacy_client_program_name().is_empty());
+    }
+
+    #[test]
+    fn metadata_legacy_daemon_program_name_is_not_empty() {
+        assert!(!metadata().legacy_daemon_program_name().is_empty());
+    }
+
+    #[test]
+    fn metadata_daemon_config_dir_is_not_empty() {
+        assert!(!metadata().daemon_config_dir().is_empty());
+    }
+
+    #[test]
+    fn metadata_daemon_config_path_is_not_empty() {
+        assert!(!metadata().daemon_config_path().is_empty());
+    }
+
+    #[test]
+    fn metadata_daemon_secrets_path_is_not_empty() {
+        assert!(!metadata().daemon_secrets_path().is_empty());
+    }
+
+    #[test]
+    fn metadata_legacy_daemon_config_dir_is_not_empty() {
+        assert!(!metadata().legacy_daemon_config_dir().is_empty());
+    }
+
+    #[test]
+    fn metadata_legacy_daemon_config_path_is_not_empty() {
+        assert!(!metadata().legacy_daemon_config_path().is_empty());
+    }
+
+    #[test]
+    fn metadata_legacy_daemon_secrets_path_is_not_empty() {
+        assert!(!metadata().legacy_daemon_secrets_path().is_empty());
+    }
+
+    #[test]
+    fn metadata_source_url_is_not_empty() {
+        assert!(!metadata().source_url().is_empty());
+    }
+
+    #[test]
+    fn metadata_clone_is_equal() {
+        let m1 = metadata();
+        let m2 = m1;
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn metadata_debug_format_works() {
+        let m = metadata();
+        let debug = format!("{:?}", m);
+        assert!(debug.contains("Metadata"));
+    }
+
+    #[test]
+    fn metadata_brand_matches_constant() {
+        assert_eq!(metadata().brand(), BRAND);
+    }
+
+    #[test]
+    fn metadata_upstream_version_matches_constant() {
+        assert_eq!(metadata().upstream_version(), UPSTREAM_VERSION);
+    }
+
+    #[test]
+    fn metadata_rust_version_matches_constant() {
+        assert_eq!(metadata().rust_version(), RUST_VERSION);
+    }
+
+    #[test]
+    fn metadata_source_url_matches_constant() {
+        assert_eq!(metadata().source_url(), SOURCE_URL);
+    }
+}

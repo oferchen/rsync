@@ -91,3 +91,74 @@ pub fn legacy_daemon_config_path() -> &'static Path {
 pub fn legacy_daemon_secrets_path() -> &'static Path {
     Path::new(LEGACY_DAEMON_SECRETS_PATH)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_config_dir_returns_path() {
+        let path = daemon_config_dir();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn daemon_config_dir_matches_constant() {
+        assert_eq!(daemon_config_dir(), Path::new(DAEMON_CONFIG_DIR));
+    }
+
+    #[test]
+    fn daemon_config_path_returns_path() {
+        let path = daemon_config_path();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn daemon_config_path_matches_constant() {
+        assert_eq!(daemon_config_path(), Path::new(DAEMON_CONFIG_PATH));
+    }
+
+    #[test]
+    fn daemon_secrets_path_returns_path() {
+        let path = daemon_secrets_path();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn daemon_secrets_path_matches_constant() {
+        assert_eq!(daemon_secrets_path(), Path::new(DAEMON_SECRETS_PATH));
+    }
+
+    #[test]
+    fn legacy_daemon_config_dir_returns_path() {
+        let path = legacy_daemon_config_dir();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_config_dir_matches_constant() {
+        assert_eq!(legacy_daemon_config_dir(), Path::new(LEGACY_DAEMON_CONFIG_DIR));
+    }
+
+    #[test]
+    fn legacy_daemon_config_path_returns_path() {
+        let path = legacy_daemon_config_path();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_config_path_matches_constant() {
+        assert_eq!(legacy_daemon_config_path(), Path::new(LEGACY_DAEMON_CONFIG_PATH));
+    }
+
+    #[test]
+    fn legacy_daemon_secrets_path_returns_path() {
+        let path = legacy_daemon_secrets_path();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_secrets_path_matches_constant() {
+        assert_eq!(legacy_daemon_secrets_path(), Path::new(LEGACY_DAEMON_SECRETS_PATH));
+    }
+}
