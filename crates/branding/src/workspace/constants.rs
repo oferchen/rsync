@@ -185,3 +185,118 @@ pub const SOURCE_URL: &str = crate::generated::SOURCE_URL;
 pub const fn source_url() -> &'static str {
     SOURCE_URL
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn brand_constant_is_not_empty() {
+        assert!(!BRAND.is_empty());
+    }
+
+    #[test]
+    fn brand_function_returns_same_as_constant() {
+        assert_eq!(brand(), BRAND);
+    }
+
+    #[test]
+    fn upstream_version_constant_is_not_empty() {
+        assert!(!UPSTREAM_VERSION.is_empty());
+    }
+
+    #[test]
+    fn upstream_version_function_returns_same_as_constant() {
+        assert_eq!(upstream_version(), UPSTREAM_VERSION);
+    }
+
+    #[test]
+    fn rust_version_constant_is_not_empty() {
+        assert!(!RUST_VERSION.is_empty());
+    }
+
+    #[test]
+    fn rust_version_function_returns_same_as_constant() {
+        assert_eq!(rust_version(), RUST_VERSION);
+    }
+
+    #[test]
+    fn client_program_name_constant_is_not_empty() {
+        assert!(!CLIENT_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn client_program_name_function_returns_same_as_constant() {
+        assert_eq!(client_program_name(), CLIENT_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn daemon_program_name_constant_is_not_empty() {
+        assert!(!DAEMON_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn daemon_program_name_function_returns_same_as_constant() {
+        assert_eq!(daemon_program_name(), DAEMON_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn legacy_client_program_name_constant_is_not_empty() {
+        assert!(!LEGACY_CLIENT_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn legacy_client_program_name_function_returns_same_as_constant() {
+        assert_eq!(legacy_client_program_name(), LEGACY_CLIENT_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn legacy_daemon_program_name_constant_is_not_empty() {
+        assert!(!LEGACY_DAEMON_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_program_name_function_returns_same_as_constant() {
+        assert_eq!(legacy_daemon_program_name(), LEGACY_DAEMON_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn daemon_config_dir_constant_is_not_empty() {
+        assert!(!DAEMON_CONFIG_DIR.is_empty());
+    }
+
+    #[test]
+    fn daemon_config_path_constant_is_not_empty() {
+        assert!(!DAEMON_CONFIG_PATH.is_empty());
+    }
+
+    #[test]
+    fn daemon_secrets_path_constant_is_not_empty() {
+        assert!(!DAEMON_SECRETS_PATH.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_config_dir_constant_is_not_empty() {
+        assert!(!LEGACY_DAEMON_CONFIG_DIR.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_config_path_constant_is_not_empty() {
+        assert!(!LEGACY_DAEMON_CONFIG_PATH.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_secrets_path_constant_is_not_empty() {
+        assert!(!LEGACY_DAEMON_SECRETS_PATH.is_empty());
+    }
+
+    #[test]
+    fn source_url_constant_is_not_empty() {
+        assert!(!SOURCE_URL.is_empty());
+    }
+
+    #[test]
+    fn source_url_function_returns_same_as_constant() {
+        assert_eq!(source_url(), SOURCE_URL);
+    }
+}
