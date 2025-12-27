@@ -34,3 +34,88 @@ pub enum LocalCopyAction {
     /// A source entry was removed after a successful transfer.
     SourceRemoved,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_clone() {
+        let action = LocalCopyAction::DataCopied;
+        let cloned = action.clone();
+        assert_eq!(action, cloned);
+    }
+
+    #[test]
+    fn action_debug() {
+        let action = LocalCopyAction::DataCopied;
+        let debug = format!("{:?}", action);
+        assert!(debug.contains("DataCopied"));
+    }
+
+    #[test]
+    fn action_eq() {
+        assert_eq!(LocalCopyAction::DataCopied, LocalCopyAction::DataCopied);
+        assert_ne!(LocalCopyAction::DataCopied, LocalCopyAction::MetadataReused);
+    }
+
+    #[test]
+    fn all_action_variants_are_distinct() {
+        let actions = [
+            LocalCopyAction::DataCopied,
+            LocalCopyAction::MetadataReused,
+            LocalCopyAction::HardLink,
+            LocalCopyAction::SymlinkCopied,
+            LocalCopyAction::FifoCopied,
+            LocalCopyAction::DeviceCopied,
+            LocalCopyAction::DirectoryCreated,
+            LocalCopyAction::SkippedExisting,
+            LocalCopyAction::SkippedMissingDestination,
+            LocalCopyAction::SkippedNewerDestination,
+            LocalCopyAction::SkippedNonRegular,
+            LocalCopyAction::SkippedDirectory,
+            LocalCopyAction::SkippedUnsafeSymlink,
+            LocalCopyAction::SkippedMountPoint,
+            LocalCopyAction::EntryDeleted,
+            LocalCopyAction::SourceRemoved,
+        ];
+
+        // Each action should be equal only to itself
+        for (i, a) in actions.iter().enumerate() {
+            for (j, b) in actions.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn action_debug_formats_all_variants() {
+        let actions = [
+            LocalCopyAction::DataCopied,
+            LocalCopyAction::MetadataReused,
+            LocalCopyAction::HardLink,
+            LocalCopyAction::SymlinkCopied,
+            LocalCopyAction::FifoCopied,
+            LocalCopyAction::DeviceCopied,
+            LocalCopyAction::DirectoryCreated,
+            LocalCopyAction::SkippedExisting,
+            LocalCopyAction::SkippedMissingDestination,
+            LocalCopyAction::SkippedNewerDestination,
+            LocalCopyAction::SkippedNonRegular,
+            LocalCopyAction::SkippedDirectory,
+            LocalCopyAction::SkippedUnsafeSymlink,
+            LocalCopyAction::SkippedMountPoint,
+            LocalCopyAction::EntryDeleted,
+            LocalCopyAction::SourceRemoved,
+        ];
+
+        for action in &actions {
+            let debug = format!("{:?}", action);
+            assert!(!debug.is_empty());
+        }
+    }
+}
