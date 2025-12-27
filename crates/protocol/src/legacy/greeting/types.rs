@@ -411,3 +411,207 @@ impl<'a> From<LegacyDaemonGreeting<'a>> for LegacyDaemonGreetingOwned {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_borrowed<'a>(
+        protocol: ProtocolVersion,
+        advertised: u32,
+        subprotocol: Option<u32>,
+        digest_list: Option<&'a str>,
+    ) -> LegacyDaemonGreeting<'a> {
+        LegacyDaemonGreeting::new(protocol, advertised, subprotocol, digest_list)
+    }
+
+    #[test]
+    fn borrowed_greeting_protocol() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, None);
+        assert_eq!(greeting.protocol(), proto);
+    }
+
+    #[test]
+    fn borrowed_greeting_advertised_protocol() {
+        let proto = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = make_borrowed(proto, 32, Some(0), None);
+        assert_eq!(greeting.advertised_protocol(), 32);
+    }
+
+    #[test]
+    fn borrowed_greeting_subprotocol_present() {
+        let proto = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = make_borrowed(proto, 31, Some(5), None);
+        assert_eq!(greeting.subprotocol(), 5);
+        assert!(greeting.has_subprotocol());
+        assert_eq!(greeting.subprotocol_raw(), Some(5));
+    }
+
+    #[test]
+    fn borrowed_greeting_subprotocol_absent() {
+        let proto = ProtocolVersion::from_supported(29).unwrap();
+        let greeting = make_borrowed(proto, 29, None, None);
+        assert_eq!(greeting.subprotocol(), 0);
+        assert!(!greeting.has_subprotocol());
+        assert_eq!(greeting.subprotocol_raw(), None);
+    }
+
+    #[test]
+    fn borrowed_greeting_digest_list_present() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4 md5"));
+        assert_eq!(greeting.digest_list(), Some("md4 md5"));
+        assert!(greeting.has_digest_list());
+    }
+
+    #[test]
+    fn borrowed_greeting_digest_list_absent() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, None);
+        assert_eq!(greeting.digest_list(), None);
+        assert!(!greeting.has_digest_list());
+    }
+
+    #[test]
+    fn borrowed_greeting_supports_digest_case_insensitive() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4 MD5"));
+        assert!(greeting.supports_digest("md4"));
+        assert!(greeting.supports_digest("MD4"));
+        assert!(greeting.supports_digest("md5"));
+        assert!(greeting.supports_digest("MD5"));
+        assert!(!greeting.supports_digest("sha1"));
+    }
+
+    #[test]
+    fn borrowed_greeting_supports_digest_empty_query() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4"));
+        assert!(!greeting.supports_digest(""));
+        assert!(!greeting.supports_digest("   "));
+    }
+
+    #[test]
+    fn borrowed_greeting_digest_tokens() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = make_borrowed(proto, 30, None, Some("md4 md5 sha1"));
+        let tokens: Vec<_> = greeting.digest_tokens().collect();
+        assert_eq!(tokens, vec!["md4", "md5", "sha1"]);
+    }
+
+    #[test]
+    fn borrowed_greeting_into_owned() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let borrowed = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let owned = borrowed.into_owned();
+        assert_eq!(owned.protocol(), proto);
+        assert_eq!(owned.advertised_protocol(), 30);
+        assert_eq!(owned.subprotocol(), 5);
+        assert_eq!(owned.digest_list(), Some("md4"));
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_valid() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4 md5".into()))
+            .unwrap();
+        assert_eq!(owned.advertised_protocol(), 30);
+        assert_eq!(owned.subprotocol(), 5);
+        assert!(owned.has_subprotocol());
+        assert_eq!(owned.digest_list(), Some("md4 md5"));
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_trims_digest_list() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("  md4 md5  ".into()))
+            .unwrap();
+        assert_eq!(owned.digest_list(), Some("md4 md5"));
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_empty_digest_becomes_none() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("   ".into())).unwrap();
+        assert!(owned.digest_list().is_none());
+        assert!(!owned.has_digest_list());
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_protocol_31_requires_subprotocol() {
+        let result = LegacyDaemonGreetingOwned::from_parts(31, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn owned_greeting_from_parts_protocol_31_with_subprotocol_ok() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).unwrap();
+        assert_eq!(owned.advertised_protocol(), 31);
+        assert_eq!(owned.subprotocol(), 0);
+    }
+
+    #[test]
+    fn owned_greeting_supports_digest() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
+        assert!(owned.supports_digest("md4"));
+        assert!(owned.supports_digest("MD5"));
+        assert!(!owned.supports_digest("sha256"));
+    }
+
+    #[test]
+    fn owned_greeting_digest_tokens() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4\tmd5".into())).unwrap();
+        let tokens: Vec<_> = owned.digest_tokens().collect();
+        assert_eq!(tokens, vec!["md4", "md5"]);
+    }
+
+    #[test]
+    fn owned_greeting_as_borrowed() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        let borrowed = owned.as_borrowed();
+        assert_eq!(borrowed.advertised_protocol(), 30);
+        assert_eq!(borrowed.subprotocol(), 5);
+        assert_eq!(borrowed.digest_list(), Some("md4"));
+    }
+
+    #[test]
+    fn owned_greeting_into_parts() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        let (protocol, advertised, subprotocol, digest) = owned.into_parts();
+        assert_eq!(protocol, ProtocolVersion::from_supported(30).unwrap());
+        assert_eq!(advertised, 30);
+        assert_eq!(subprotocol, Some(5));
+        assert_eq!(digest, Some("md4".into()));
+    }
+
+    #[test]
+    fn owned_greeting_into_digest_list() {
+        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
+        let digest = owned.into_digest_list();
+        assert_eq!(digest, Some("md4 md5".into()));
+    }
+
+    #[test]
+    fn borrowed_greeting_eq() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let a = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let b = make_borrowed(proto, 30, Some(5), Some("md4"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn owned_greeting_eq() {
+        let a = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        let b = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4".into())).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn from_borrowed_to_owned_conversion() {
+        let proto = ProtocolVersion::from_supported(30).unwrap();
+        let borrowed = make_borrowed(proto, 30, Some(5), Some("md4"));
+        let owned: LegacyDaemonGreetingOwned = borrowed.into();
+        assert_eq!(owned.protocol(), proto);
+        assert_eq!(owned.advertised_protocol(), 30);
+        assert_eq!(owned.subprotocol_raw(), Some(5));
+        assert_eq!(owned.digest_list(), Some("md4"));
+    }
+}

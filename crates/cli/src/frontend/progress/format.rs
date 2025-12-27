@@ -407,3 +407,196 @@ pub(crate) fn compute_rate(bytes: u64, elapsed: Duration) -> Option<f64> {
         Some(bytes as f64 / seconds)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_decimal_bytes_small() {
+        assert_eq!(format_decimal_bytes(0), "0");
+        assert_eq!(format_decimal_bytes(999), "999");
+    }
+
+    #[test]
+    fn format_decimal_bytes_thousands() {
+        assert_eq!(format_decimal_bytes(1_000), "1,000");
+        assert_eq!(format_decimal_bytes(12_345), "12,345");
+    }
+
+    #[test]
+    fn format_decimal_bytes_millions() {
+        assert_eq!(format_decimal_bytes(1_000_000), "1,000,000");
+        assert_eq!(format_decimal_bytes(123_456_789), "123,456,789");
+    }
+
+    #[test]
+    fn format_human_bytes_small() {
+        assert_eq!(format_human_bytes(0), "0");
+        assert_eq!(format_human_bytes(999), "999");
+    }
+
+    #[test]
+    fn format_human_bytes_kilo() {
+        assert_eq!(format_human_bytes(1_000), "1.00K");
+        assert_eq!(format_human_bytes(1_500), "1.50K");
+    }
+
+    #[test]
+    fn format_human_bytes_mega() {
+        assert_eq!(format_human_bytes(1_000_000), "1.00M");
+        assert_eq!(format_human_bytes(2_500_000), "2.50M");
+    }
+
+    #[test]
+    fn format_human_bytes_giga() {
+        assert_eq!(format_human_bytes(1_000_000_000), "1.00G");
+    }
+
+    #[test]
+    fn format_human_bytes_tera() {
+        assert_eq!(format_human_bytes(1_000_000_000_000), "1.00T");
+    }
+
+    #[test]
+    fn format_progress_percent_with_total() {
+        assert_eq!(format_progress_percent(50, Some(100)), "50%");
+        assert_eq!(format_progress_percent(100, Some(100)), "100%");
+        assert_eq!(format_progress_percent(0, Some(100)), "0%");
+    }
+
+    #[test]
+    fn format_progress_percent_zero_total() {
+        assert_eq!(format_progress_percent(0, Some(0)), "100%");
+    }
+
+    #[test]
+    fn format_progress_percent_no_total() {
+        assert_eq!(format_progress_percent(50, None), "??%");
+    }
+
+    #[test]
+    fn format_progress_percent_capped_to_total() {
+        assert_eq!(format_progress_percent(150, Some(100)), "100%");
+    }
+
+    #[test]
+    fn format_progress_elapsed_zero() {
+        assert_eq!(format_progress_elapsed(Duration::ZERO), "0:00:00");
+    }
+
+    #[test]
+    fn format_progress_elapsed_seconds() {
+        assert_eq!(format_progress_elapsed(Duration::from_secs(45)), "0:00:45");
+    }
+
+    #[test]
+    fn format_progress_elapsed_minutes() {
+        assert_eq!(format_progress_elapsed(Duration::from_secs(125)), "0:02:05");
+    }
+
+    #[test]
+    fn format_progress_elapsed_hours() {
+        assert_eq!(format_progress_elapsed(Duration::from_secs(3661)), "1:01:01");
+    }
+
+    #[test]
+    fn format_stat_categories_empty() {
+        let categories: &[(&str, u64)] = &[];
+        assert_eq!(format_stat_categories(categories), "");
+    }
+
+    #[test]
+    fn format_stat_categories_all_zero() {
+        let categories: &[(&str, u64)] = &[("files", 0), ("dirs", 0)];
+        assert_eq!(format_stat_categories(categories), "");
+    }
+
+    #[test]
+    fn format_stat_categories_some_nonzero() {
+        let categories: &[(&str, u64)] = &[("files", 5), ("dirs", 0), ("symlinks", 3)];
+        assert_eq!(format_stat_categories(categories), " (files: 5, symlinks: 3)");
+    }
+
+    #[test]
+    fn compute_rate_zero_elapsed() {
+        assert_eq!(compute_rate(1000, Duration::ZERO), None);
+    }
+
+    #[test]
+    fn compute_rate_valid() {
+        let rate = compute_rate(1000, Duration::from_secs(1)).unwrap();
+        assert!((rate - 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn compute_rate_fractional() {
+        let rate = compute_rate(500, Duration::from_millis(500)).unwrap();
+        assert!((rate - 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn format_human_rate_small() {
+        assert_eq!(format_human_rate(500.0), "500.00");
+    }
+
+    #[test]
+    fn format_human_rate_kilo() {
+        assert_eq!(format_human_rate(1_500.0), "1.50K");
+    }
+
+    #[test]
+    fn format_human_rate_mega() {
+        assert_eq!(format_human_rate(2_500_000.0), "2.50M");
+    }
+
+    #[test]
+    fn test_format_verbose_rate_decimal() {
+        let (value, unit) = super::format_verbose_rate_decimal(1234.5);
+        assert_eq!(value, "1234.5");
+        assert_eq!(unit, "B/s");
+    }
+
+    #[test]
+    fn format_verbose_rate_human_small() {
+        let (value, unit) = format_verbose_rate_human(500.0);
+        assert_eq!(value, "500.00");
+        assert_eq!(unit, "B/s");
+    }
+
+    #[test]
+    fn format_verbose_rate_human_kilo() {
+        let (value, unit) = format_verbose_rate_human(1_500.0);
+        assert_eq!(value, "1.50");
+        assert_eq!(unit, "kB/s");
+    }
+
+    #[test]
+    fn format_verbose_rate_human_mega() {
+        let (value, unit) = format_verbose_rate_human(2_500_000.0);
+        assert_eq!(value, "2.50");
+        assert_eq!(unit, "MB/s");
+    }
+
+    #[test]
+    fn format_list_size_pads_to_15() {
+        let result = format_list_size(123, HumanReadableMode::Disabled);
+        assert_eq!(result.len(), 15);
+        assert!(result.trim_start().starts_with("123"));
+    }
+
+    #[test]
+    fn describe_event_kind_data_copied() {
+        assert_eq!(describe_event_kind(&ClientEventKind::DataCopied), "copied");
+    }
+
+    #[test]
+    fn describe_event_kind_metadata_reused() {
+        assert_eq!(describe_event_kind(&ClientEventKind::MetadataReused), "metadata reused");
+    }
+
+    #[test]
+    fn describe_event_kind_deleted() {
+        assert_eq!(describe_event_kind(&ClientEventKind::EntryDeleted), "deleted");
+    }
+}
