@@ -251,87 +251,352 @@ fn common_suffix_length(a: &str, b: &str) -> usize {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_common_prefix_length() {
-        assert_eq!(common_prefix_length("hello", "help"), 3);
-        assert_eq!(common_prefix_length("abc", "def"), 0);
-        assert_eq!(common_prefix_length("test", "test"), 4);
-        assert_eq!(common_prefix_length("", "test"), 0);
-        assert_eq!(common_prefix_length("test", ""), 0);
+    mod common_prefix_tests {
+        use super::*;
+
+        #[test]
+        fn partial_match() {
+            assert_eq!(common_prefix_length("hello", "help"), 3);
+        }
+
+        #[test]
+        fn no_match() {
+            assert_eq!(common_prefix_length("abc", "def"), 0);
+        }
+
+        #[test]
+        fn exact_match() {
+            assert_eq!(common_prefix_length("test", "test"), 4);
+        }
+
+        #[test]
+        fn empty_first() {
+            assert_eq!(common_prefix_length("", "test"), 0);
+        }
+
+        #[test]
+        fn empty_second() {
+            assert_eq!(common_prefix_length("test", ""), 0);
+        }
+
+        #[test]
+        fn both_empty() {
+            assert_eq!(common_prefix_length("", ""), 0);
+        }
+
+        #[test]
+        fn single_char_match() {
+            assert_eq!(common_prefix_length("a", "a"), 1);
+        }
+
+        #[test]
+        fn single_char_no_match() {
+            assert_eq!(common_prefix_length("a", "b"), 0);
+        }
+
+        #[test]
+        fn unicode_characters() {
+            assert_eq!(common_prefix_length("日本語", "日本人"), 2);
+        }
+
+        #[test]
+        fn case_sensitive() {
+            assert_eq!(common_prefix_length("Hello", "hello"), 0);
+        }
     }
 
-    #[test]
-    fn test_common_suffix_length() {
-        assert_eq!(common_suffix_length("testing", "running"), 3); // "ing"
-        assert_eq!(common_suffix_length("abc", "def"), 0);
-        assert_eq!(common_suffix_length("test", "test"), 4);
-        assert_eq!(common_suffix_length("file.txt", "data.txt"), 4); // ".txt"
+    mod common_suffix_tests {
+        use super::*;
+
+        #[test]
+        fn partial_match() {
+            assert_eq!(common_suffix_length("testing", "running"), 3); // "ing"
+        }
+
+        #[test]
+        fn no_match() {
+            assert_eq!(common_suffix_length("abc", "def"), 0);
+        }
+
+        #[test]
+        fn exact_match() {
+            assert_eq!(common_suffix_length("test", "test"), 4);
+        }
+
+        #[test]
+        fn extension_like() {
+            assert_eq!(common_suffix_length("file.txt", "data.txt"), 4); // ".txt"
+        }
+
+        #[test]
+        fn both_empty() {
+            assert_eq!(common_suffix_length("", ""), 0);
+        }
+
+        #[test]
+        fn single_char_match() {
+            assert_eq!(common_suffix_length("a", "a"), 1);
+        }
+
+        #[test]
+        fn unicode_suffix() {
+            assert_eq!(common_suffix_length("世界", "全世界"), 2);
+        }
     }
 
-    #[test]
-    fn test_split_name_extension() {
-        assert_eq!(split_name_extension("file.txt"), ("file", "txt"));
-        assert_eq!(split_name_extension("file.tar.gz"), ("file.tar", "gz"));
-        assert_eq!(split_name_extension("noextension"), ("noextension", ""));
-        assert_eq!(split_name_extension(".hidden"), (".hidden", ""));
-        assert_eq!(split_name_extension("file."), ("file.", ""));
+    mod split_extension_tests {
+        use super::*;
+
+        #[test]
+        fn simple_extension() {
+            assert_eq!(split_name_extension("file.txt"), ("file", "txt"));
+        }
+
+        #[test]
+        fn double_extension() {
+            assert_eq!(split_name_extension("file.tar.gz"), ("file.tar", "gz"));
+        }
+
+        #[test]
+        fn no_extension() {
+            assert_eq!(split_name_extension("noextension"), ("noextension", ""));
+        }
+
+        #[test]
+        fn hidden_file() {
+            assert_eq!(split_name_extension(".hidden"), (".hidden", ""));
+        }
+
+        #[test]
+        fn trailing_dot() {
+            assert_eq!(split_name_extension("file."), ("file.", ""));
+        }
+
+        #[test]
+        fn hidden_with_extension() {
+            assert_eq!(split_name_extension(".gitignore"), (".gitignore", ""));
+        }
+
+        #[test]
+        fn multiple_dots() {
+            assert_eq!(split_name_extension("a.b.c.d"), ("a.b.c", "d"));
+        }
+
+        #[test]
+        fn empty_string() {
+            assert_eq!(split_name_extension(""), ("", ""));
+        }
+
+        #[test]
+        fn single_char() {
+            assert_eq!(split_name_extension("a"), ("a", ""));
+        }
+
+        #[test]
+        fn single_dot() {
+            assert_eq!(split_name_extension("."), (".", ""));
+        }
     }
 
-    #[test]
-    fn test_similarity_score_same_extension() {
-        let score = compute_similarity_score("data.csv", "backup.csv", 1000, 1000);
-        assert!(
-            score >= EXTENSION_MATCH_BONUS,
-            "Same extension should give bonus"
-        );
+    mod similarity_score_tests {
+        use super::*;
+
+        #[test]
+        fn same_extension_bonus() {
+            let score = compute_similarity_score("data.csv", "backup.csv", 1000, 1000);
+            assert!(
+                score >= EXTENSION_MATCH_BONUS,
+                "Same extension should give bonus"
+            );
+        }
+
+        #[test]
+        fn common_prefix_scores_high() {
+            let score = compute_similarity_score("report_2024.pdf", "report_2023.pdf", 1000, 1000);
+            assert!(score > 100, "Common prefix should give high score: {score}");
+        }
+
+        #[test]
+        fn different_files_score_low() {
+            let score = compute_similarity_score("image.png", "document.pdf", 1000, 100);
+            assert!(
+                score < MIN_FUZZY_SCORE,
+                "Unrelated files should have low score: {score}"
+            );
+        }
+
+        #[test]
+        fn size_similarity_bonus() {
+            let score_similar = compute_similarity_score("file.txt", "data.txt", 1000, 800);
+            let score_different = compute_similarity_score("file.txt", "data.txt", 1000, 100);
+            assert!(
+                score_similar > score_different,
+                "Similar sizes should score higher"
+            );
+        }
+
+        #[test]
+        fn versioned_files_match_well() {
+            let score =
+                compute_similarity_score("app-1.2.3.tar.gz", "app-1.2.2.tar.gz", 50000, 48000);
+            assert!(score > 100, "Versioned files should match well: {score}");
+        }
+
+        #[test]
+        fn zero_target_size() {
+            let score = compute_similarity_score("file.txt", "data.txt", 0, 1000);
+            // Should not get size bonus when target size is 0
+            assert!(score >= EXTENSION_MATCH_BONUS);
+        }
+
+        #[test]
+        fn zero_candidate_size() {
+            let score = compute_similarity_score("file.txt", "data.txt", 1000, 0);
+            // Should not get size bonus when candidate size is 0
+            assert!(score >= EXTENSION_MATCH_BONUS);
+        }
+
+        #[test]
+        fn both_sizes_zero() {
+            let score = compute_similarity_score("file.txt", "data.txt", 0, 0);
+            // Should not get size bonus when both are 0
+            assert!(score >= EXTENSION_MATCH_BONUS);
+        }
+
+        #[test]
+        fn exact_size_match() {
+            let score = compute_similarity_score("a.txt", "b.txt", 1000, 1000);
+            assert!(
+                score >= EXTENSION_MATCH_BONUS + SIZE_SIMILARITY_BONUS,
+                "Exact size match should include size bonus"
+            );
+        }
+
+        #[test]
+        fn candidate_larger_than_target() {
+            let score = compute_similarity_score("a.txt", "b.txt", 500, 1000);
+            // 500/1000 = 0.5, should still get size bonus
+            assert!(score >= EXTENSION_MATCH_BONUS + SIZE_SIMILARITY_BONUS);
+        }
+
+        #[test]
+        fn candidate_much_larger() {
+            // ratio < 0.5
+            let score = compute_similarity_score("a.txt", "b.txt", 100, 1000);
+            assert!(
+                score < EXTENSION_MATCH_BONUS + SIZE_SIMILARITY_BONUS,
+                "Very different sizes should not get size bonus"
+            );
+        }
+
+        #[test]
+        fn no_extension_match() {
+            let score = compute_similarity_score("file.txt", "file.csv", 1000, 1000);
+            // Same prefix "file" but different extension
+            assert!(score >= PREFIX_MATCH_POINTS * 4); // "file" is 4 chars
+            assert!(
+                score < EXTENSION_MATCH_BONUS + PREFIX_MATCH_POINTS * 4 + SIZE_SIMILARITY_BONUS
+            );
+        }
+
+        #[test]
+        fn suffix_contributes_to_score() {
+            let score_with_suffix =
+                compute_similarity_score("aaa_backup.txt", "bbb_backup.txt", 1000, 1000);
+            let score_without_suffix =
+                compute_similarity_score("aaa_backup.txt", "bbb_other.txt", 1000, 1000);
+            assert!(
+                score_with_suffix > score_without_suffix,
+                "Common suffix should increase score"
+            );
+        }
     }
 
-    #[test]
-    fn test_similarity_score_common_prefix() {
-        let score = compute_similarity_score("report_2024.pdf", "report_2023.pdf", 1000, 1000);
-        // Should have: extension match (50) + prefix "report_202" (70) + suffix ".pdf" handled by ext
-        assert!(score > 100, "Common prefix should give high score: {score}");
+    mod fuzzy_matcher_tests {
+        use super::*;
+
+        #[test]
+        fn new_default_values() {
+            let matcher = FuzzyMatcher::new();
+            assert_eq!(matcher.min_score, MIN_FUZZY_SCORE);
+            assert!(matcher.fuzzy_basis_dirs.is_empty());
+        }
+
+        #[test]
+        fn default_trait() {
+            // Default derive uses 0, not MIN_FUZZY_SCORE
+            let matcher = FuzzyMatcher::default();
+            assert_eq!(matcher.min_score, 0);
+        }
+
+        #[test]
+        fn with_min_score() {
+            let matcher = FuzzyMatcher::new().with_min_score(100);
+            assert_eq!(matcher.min_score, 100);
+        }
+
+        #[test]
+        fn with_fuzzy_basis_dirs() {
+            let dirs = vec![PathBuf::from("/tmp/basis1"), PathBuf::from("/tmp/basis2")];
+            let matcher = FuzzyMatcher::new().with_fuzzy_basis_dirs(dirs.clone());
+            assert_eq!(matcher.fuzzy_basis_dirs, dirs);
+        }
+
+        #[test]
+        fn builder_chaining() {
+            let dirs = vec![PathBuf::from("/tmp/basis")];
+            let matcher = FuzzyMatcher::new()
+                .with_min_score(50)
+                .with_fuzzy_basis_dirs(dirs.clone());
+            assert_eq!(matcher.min_score, 50);
+            assert_eq!(matcher.fuzzy_basis_dirs, dirs);
+        }
+
+        #[test]
+        fn debug_impl() {
+            let matcher = FuzzyMatcher::new();
+            let debug = format!("{matcher:?}");
+            assert!(debug.contains("FuzzyMatcher"));
+        }
+
+        #[test]
+        fn find_in_nonexistent_dir() {
+            let matcher = FuzzyMatcher::new();
+            let result = matcher.find_fuzzy_basis(
+                std::ffi::OsStr::new("test.txt"),
+                Path::new("/nonexistent/dir"),
+                1000,
+            );
+            assert!(result.is_none());
+        }
     }
 
-    #[test]
-    fn test_similarity_score_different_files() {
-        // Use very different sizes to avoid size similarity bonus (ratio < 0.5)
-        let score = compute_similarity_score("image.png", "document.pdf", 1000, 100);
-        // Different extension, no common prefix/suffix, no size bonus
-        assert!(
-            score < MIN_FUZZY_SCORE,
-            "Unrelated files should have low score: {score}"
-        );
+    mod fuzzy_match_tests {
+        use super::*;
+
+        #[test]
+        fn clone() {
+            let m = FuzzyMatch {
+                path: PathBuf::from("/tmp/test.txt"),
+                score: 100,
+            };
+            let cloned = m.clone();
+            assert_eq!(cloned.path, m.path);
+            assert_eq!(cloned.score, m.score);
+        }
+
+        #[test]
+        fn debug() {
+            let m = FuzzyMatch {
+                path: PathBuf::from("/tmp/test.txt"),
+                score: 100,
+            };
+            let debug = format!("{m:?}");
+            assert!(debug.contains("FuzzyMatch"));
+            assert!(debug.contains("100"));
+        }
     }
 
-    #[test]
-    fn test_similarity_score_size_bonus() {
-        let score_similar = compute_similarity_score("file.txt", "data.txt", 1000, 800);
-        let score_different = compute_similarity_score("file.txt", "data.txt", 1000, 100);
-
-        assert!(
-            score_similar > score_different,
-            "Similar sizes should score higher"
-        );
-    }
-
-    #[test]
-    fn test_similarity_score_versioned_files() {
-        // Common pattern: versioned files
-        let score = compute_similarity_score("app-1.2.3.tar.gz", "app-1.2.2.tar.gz", 50000, 48000);
-        assert!(score > 100, "Versioned files should match well: {score}");
-    }
-
-    #[test]
-    fn test_fuzzy_matcher_min_score_threshold() {
-        let matcher = FuzzyMatcher::new().with_min_score(100);
-        assert_eq!(matcher.min_score, 100);
-    }
-
-    #[test]
-    fn test_fuzzy_matcher_basis_dirs() {
-        let dirs = vec![PathBuf::from("/tmp/basis1"), PathBuf::from("/tmp/basis2")];
-        let matcher = FuzzyMatcher::new().with_fuzzy_basis_dirs(dirs.clone());
-        assert_eq!(matcher.fuzzy_basis_dirs, dirs);
-    }
+    // Constants validation: These values are compile-time constants.
+    // The tests above exercise them through compute_similarity_score calls.
 }

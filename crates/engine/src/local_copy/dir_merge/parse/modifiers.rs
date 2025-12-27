@@ -211,3 +211,260 @@ pub(super) fn parse_merge_modifiers(
 
     Ok((options, assume_cvsignore))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod trim_short_rule_remainder_tests {
+        use super::*;
+
+        #[test]
+        fn empty_string() {
+            assert_eq!(trim_short_rule_remainder(""), "");
+        }
+
+        #[test]
+        fn only_underscores() {
+            assert_eq!(trim_short_rule_remainder("___"), "");
+        }
+
+        #[test]
+        fn only_whitespace() {
+            assert_eq!(trim_short_rule_remainder("   "), "");
+        }
+
+        #[test]
+        fn mixed_underscore_whitespace() {
+            assert_eq!(trim_short_rule_remainder("_ _ _"), "");
+        }
+
+        #[test]
+        fn comma_prefix() {
+            assert_eq!(trim_short_rule_remainder(",pattern"), "pattern");
+        }
+
+        #[test]
+        fn comma_with_leading_underscores() {
+            assert_eq!(trim_short_rule_remainder("__,pattern"), "pattern");
+        }
+
+        #[test]
+        fn comma_with_trailing_underscores() {
+            assert_eq!(trim_short_rule_remainder(",__pattern"), "pattern");
+        }
+
+        #[test]
+        fn pattern_without_separator() {
+            assert_eq!(trim_short_rule_remainder("pattern"), "pattern");
+        }
+    }
+
+    mod split_short_rule_modifiers_tests {
+        use super::*;
+
+        #[test]
+        fn empty_string() {
+            assert_eq!(split_short_rule_modifiers(""), ("", ""));
+        }
+
+        #[test]
+        fn comma_separated() {
+            let (mods, rest) = split_short_rule_modifiers(",pattern");
+            assert_eq!(mods, "");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn whitespace_separated() {
+            let (mods, rest) = split_short_rule_modifiers(" pattern");
+            assert_eq!(mods, "");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn underscore_separated() {
+            let (mods, rest) = split_short_rule_modifiers("_pattern");
+            assert_eq!(mods, "");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn modifiers_with_comma() {
+            let (mods, rest) = split_short_rule_modifiers("abc,pattern");
+            assert_eq!(mods, "abc");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn modifiers_with_underscore() {
+            let (mods, rest) = split_short_rule_modifiers("abc_pattern");
+            assert_eq!(mods, "abc");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn modifiers_with_whitespace() {
+            let (mods, rest) = split_short_rule_modifiers("abc pattern");
+            assert_eq!(mods, "abc");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn no_separator_returns_empty_modifiers() {
+            let (mods, rest) = split_short_rule_modifiers("pattern");
+            assert_eq!(mods, "");
+            assert_eq!(rest, "pattern");
+        }
+    }
+
+    mod split_short_merge_modifiers_tests {
+        use super::*;
+
+        #[test]
+        fn empty_string() {
+            assert_eq!(split_short_merge_modifiers("", false), ("", ""));
+        }
+
+        #[test]
+        fn basic_modifiers() {
+            let (mods, rest) = split_short_merge_modifiers("+-C filename", true);
+            assert_eq!(mods, "+-C");
+            assert_eq!(rest, "filename");
+        }
+
+        #[test]
+        fn extended_modifiers_allowed() {
+            let (mods, rest) = split_short_merge_modifiers("en filename", true);
+            assert_eq!(mods, "en");
+            assert_eq!(rest, "filename");
+        }
+
+        #[test]
+        fn extended_modifiers_disallowed() {
+            let (mods, rest) = split_short_merge_modifiers("en filename", false);
+            assert_eq!(mods, "");
+            assert_eq!(rest, "en filename");
+        }
+
+        #[test]
+        fn path_modifier() {
+            let (mods, rest) = split_short_merge_modifiers("/ pattern", true);
+            assert_eq!(mods, "/");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn comma_prefix() {
+            // 'f' is not a valid modifier, so ",filename" should return no modifiers
+            let (mods, rest) = split_short_merge_modifiers(",filename", true);
+            assert_eq!(mods, "");
+            assert_eq!(rest, "filename");
+        }
+
+        #[test]
+        fn modifiers_with_comma_separator() {
+            let (mods, rest) = split_short_merge_modifiers("+-,pattern", true);
+            assert_eq!(mods, "+-");
+            assert_eq!(rest, "pattern");
+        }
+
+        #[test]
+        fn w_modifier_allowed_when_extended() {
+            let (mods, rest) = split_short_merge_modifiers("w filename", true);
+            assert_eq!(mods, "w");
+            assert_eq!(rest, "filename");
+        }
+
+        #[test]
+        fn all_modifiers_no_remainder() {
+            let (mods, rest) = split_short_merge_modifiers("+-Cwsrp/", true);
+            assert_eq!(mods, "+-Cwsrp/");
+            assert_eq!(rest, "");
+        }
+    }
+
+    mod parse_merge_modifiers_tests {
+        use super::*;
+
+        #[test]
+        fn empty_modifiers() {
+            let (options, assume_cvsignore) = parse_merge_modifiers("", ".", true).unwrap();
+            assert!(!assume_cvsignore);
+            assert!(options.list_clear_allowed());
+        }
+
+        #[test]
+        fn exclude_modifier() {
+            let (options, _) = parse_merge_modifiers("-", ".", true).unwrap();
+            assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+        }
+
+        #[test]
+        fn include_modifier() {
+            let (options, _) = parse_merge_modifiers("+", ".", true).unwrap();
+            assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Include));
+        }
+
+        #[test]
+        fn conflicting_plus_minus_error() {
+            let result = parse_merge_modifiers("+-", ".", true);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn conflicting_minus_plus_error() {
+            let result = parse_merge_modifiers("-+", ".", true);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn c_modifier_sets_cvsignore() {
+            let (options, assume_cvsignore) = parse_merge_modifiers("C", ".", true).unwrap();
+            assert!(assume_cvsignore);
+            assert!(!options.inherit_rules());
+        }
+
+        #[test]
+        fn c_with_plus_is_error() {
+            let result = parse_merge_modifiers("+C", ".", true);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn n_modifier_disables_inherit() {
+            let (options, _) = parse_merge_modifiers("n", ".", true).unwrap();
+            assert!(!options.inherit_rules());
+        }
+
+        #[test]
+        fn n_modifier_without_extended_is_error() {
+            let result = parse_merge_modifiers("n", ".", false);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn e_modifier_sets_exclude_filter() {
+            let (options, _) = parse_merge_modifiers("e", ".", true).unwrap();
+            assert!(options.excludes_self());
+        }
+
+        #[test]
+        fn e_modifier_without_extended_is_error() {
+            let result = parse_merge_modifiers("e", ".", false);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn unknown_modifier_is_error() {
+            let result = parse_merge_modifiers("x", ".", true);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn slash_modifier_sets_anchor_root() {
+            let (options, _) = parse_merge_modifiers("/", ".", true).unwrap();
+            assert!(options.anchor_root_enabled());
+        }
+    }
+}
