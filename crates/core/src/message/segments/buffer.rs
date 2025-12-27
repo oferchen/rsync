@@ -168,3 +168,107 @@ impl<'a> MessageSegments<'a> {
         Ok(buffer)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::message::{Message, MessageScratch};
+
+    #[test]
+    fn try_extend_vec_appends_to_buffer() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        let result = segments.try_extend_vec(&mut buffer);
+        assert!(result.is_ok());
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn try_extend_vec_returns_appended_length() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        let appended = segments.try_extend_vec(&mut buffer).unwrap();
+        assert_eq!(appended, buffer.len());
+        assert_eq!(appended, segments.len());
+    }
+
+    #[test]
+    fn try_extend_vec_preserves_prefix() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = b"prefix:".to_vec();
+        let prefix_len = buffer.len();
+        let _ = segments.try_extend_vec(&mut buffer).unwrap();
+        assert_eq!(&buffer[..prefix_len], b"prefix:");
+    }
+
+    #[test]
+    fn extend_vec_maps_error_to_io() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = Vec::new();
+        let result = segments.extend_vec(&mut buffer);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn copy_to_slice_copies_bytes() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = vec![0u8; segments.len()];
+        let result = segments.copy_to_slice(&mut buffer);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), segments.len());
+    }
+
+    #[test]
+    fn copy_to_slice_error_on_undersized_buffer() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = vec![0u8; 1];
+        let result = segments.copy_to_slice(&mut buffer);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn copy_to_slice_error_contains_sizes() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let mut buffer = vec![0u8; 1];
+        let err = segments.copy_to_slice(&mut buffer).unwrap_err();
+        assert_eq!(err.required(), segments.len());
+        assert_eq!(err.provided(), 1);
+    }
+
+    #[test]
+    fn to_vec_returns_collected_bytes() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let collected = segments.to_vec().unwrap();
+        assert_eq!(collected.len(), segments.len());
+    }
+
+    #[test]
+    fn to_vec_matches_extend_vec() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let collected = segments.to_vec().unwrap();
+
+        let mut scratch2 = MessageScratch::new();
+        let segments2 = msg.as_segments(&mut scratch2, false);
+        let mut extended = Vec::new();
+        segments2.extend_vec(&mut extended).unwrap();
+
+        assert_eq!(collected, extended);
+    }
+}
