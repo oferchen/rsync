@@ -46,7 +46,7 @@ pub fn build_rule_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion)
     }
 
     // Protocol version gated modifiers
-    if protocol.as_u8() >= 29 {
+    if protocol.supports_sender_receiver_modifiers() {
         if rule.sender_side {
             prefix.push('s');
         }
@@ -55,7 +55,7 @@ pub fn build_rule_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion)
         }
     }
 
-    if protocol.as_u8() >= 30 && rule.perishable {
+    if protocol.supports_perishable_modifier() && rule.perishable {
         prefix.push('p');
     }
 
