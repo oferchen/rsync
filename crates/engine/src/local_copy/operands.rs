@@ -395,3 +395,122 @@ pub(crate) mod windows_operand_detection {
         assert!(operand_is_remote(OsStr::new("rsync://example.com/module")));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operand_is_remote_rsync_url() {
+        assert!(operand_is_remote(OsStr::new("rsync://example.com/module")));
+        assert!(operand_is_remote(OsStr::new("rsync://user@host/path")));
+    }
+
+    #[test]
+    fn operand_is_remote_double_colon() {
+        assert!(operand_is_remote(OsStr::new("host::module")));
+        assert!(operand_is_remote(OsStr::new("user@host::module/path")));
+    }
+
+    #[test]
+    fn operand_is_remote_ssh_style() {
+        assert!(operand_is_remote(OsStr::new("host:/path")));
+        assert!(operand_is_remote(OsStr::new("user@host:/path")));
+    }
+
+    #[test]
+    fn operand_is_local_plain_path() {
+        assert!(!operand_is_remote(OsStr::new("/tmp/file.txt")));
+        assert!(!operand_is_remote(OsStr::new("relative/path")));
+        assert!(!operand_is_remote(OsStr::new("./file.txt")));
+    }
+
+    #[test]
+    fn operand_is_local_path_with_slash_before_colon() {
+        assert!(!operand_is_remote(OsStr::new("/path/to:file")));
+        assert!(!operand_is_remote(OsStr::new("./dir:name/file")));
+    }
+
+    #[test]
+    fn has_trailing_separator_true() {
+        assert!(has_trailing_separator(OsStr::new("/tmp/dir/")));
+        assert!(has_trailing_separator(OsStr::new("path/")));
+    }
+
+    #[test]
+    fn has_trailing_separator_false() {
+        assert!(!has_trailing_separator(OsStr::new("/tmp/file")));
+        assert!(!has_trailing_separator(OsStr::new("path")));
+    }
+
+    #[test]
+    fn has_trailing_separator_empty() {
+        assert!(!has_trailing_separator(OsStr::new("")));
+    }
+
+    #[test]
+    fn source_spec_from_operand_valid() {
+        let spec = SourceSpec::from_operand(&OsString::from("/tmp/file.txt")).unwrap();
+        assert_eq!(spec.path(), Path::new("/tmp/file.txt"));
+        assert!(!spec.copy_contents());
+    }
+
+    #[test]
+    fn source_spec_from_operand_with_trailing_slash() {
+        let spec = SourceSpec::from_operand(&OsString::from("/tmp/dir/")).unwrap();
+        assert!(spec.copy_contents());
+    }
+
+    #[test]
+    fn source_spec_from_operand_empty_fails() {
+        let result = SourceSpec::from_operand(&OsString::from(""));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn source_spec_from_operand_remote_fails() {
+        let result = SourceSpec::from_operand(&OsString::from("host:/path"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn source_spec_relative_root_simple() {
+        let spec = SourceSpec::from_operand(&OsString::from("file.txt")).unwrap();
+        let root = spec.relative_root();
+        assert_eq!(root, Some(PathBuf::from("file.txt")));
+    }
+
+    #[test]
+    fn source_spec_relative_root_absolute() {
+        let spec = SourceSpec::from_operand(&OsString::from("/tmp/file.txt")).unwrap();
+        let root = spec.relative_root();
+        assert_eq!(root, Some(PathBuf::from("tmp/file.txt")));
+    }
+
+    #[test]
+    fn destination_spec_from_operand_basic() {
+        let spec = DestinationSpec::from_operand(&OsString::from("/dest"));
+        assert_eq!(spec.path(), Path::new("/dest"));
+        assert!(!spec.force_directory());
+    }
+
+    #[test]
+    fn destination_spec_from_operand_trailing_slash() {
+        let spec = DestinationSpec::from_operand(&OsString::from("/dest/"));
+        assert!(spec.force_directory());
+    }
+
+    #[test]
+    fn destination_spec_eq() {
+        let a = DestinationSpec::from_operand(&OsString::from("/dest"));
+        let b = DestinationSpec::from_operand(&OsString::from("/dest"));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn source_spec_eq() {
+        let a = SourceSpec::from_operand(&OsString::from("/src")).unwrap();
+        let b = SourceSpec::from_operand(&OsString::from("/src")).unwrap();
+        assert_eq!(a, b);
+    }
+}
