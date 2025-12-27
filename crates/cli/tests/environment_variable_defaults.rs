@@ -4,6 +4,7 @@
 //! options when not explicitly specified on the command line.
 
 use cli::test_utils::parse_args;
+use serial_test::serial;
 use std::env;
 
 // Helper to ensure environment cleanup even if tests panic
@@ -49,6 +50,7 @@ impl Drop for EnvGuard {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_rsync_protect_args_env_enables_protect_args() {
     let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "1");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -60,6 +62,7 @@ fn test_rsync_protect_args_env_enables_protect_args() {
 }
 
 #[test]
+#[serial]
 fn test_rsync_protect_args_empty_enables_protect_args() {
     let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -71,6 +74,7 @@ fn test_rsync_protect_args_empty_enables_protect_args() {
 }
 
 #[test]
+#[serial]
 fn test_rsync_protect_args_zero_disables_protect_args() {
     let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "0");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -82,6 +86,7 @@ fn test_rsync_protect_args_zero_disables_protect_args() {
 }
 
 #[test]
+#[serial]
 fn test_protect_args_flag_overrides_env() {
     let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "0");
     let args = parse_args(["oc-rsync", "--protect-args", "src", "dest"]).unwrap();
@@ -93,6 +98,7 @@ fn test_protect_args_flag_overrides_env() {
 }
 
 #[test]
+#[serial]
 fn test_no_protect_args_flag_overrides_env() {
     let _guard = EnvGuard::set("RSYNC_PROTECT_ARGS", "1");
     let args = parse_args(["oc-rsync", "--no-protect-args", "src", "dest"]).unwrap();
@@ -104,6 +110,7 @@ fn test_no_protect_args_flag_overrides_env() {
 }
 
 #[test]
+#[serial]
 fn test_no_rsync_protect_args_env() {
     let _guard = EnvGuard::remove("RSYNC_PROTECT_ARGS");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -119,6 +126,7 @@ fn test_no_rsync_protect_args_env() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_rsync_rsh_env_sets_remote_shell() {
     let _guard = EnvGuard::set("RSYNC_RSH", "/usr/bin/ssh");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -130,6 +138,7 @@ fn test_rsync_rsh_env_sets_remote_shell() {
 }
 
 #[test]
+#[serial]
 fn test_rsync_rsh_env_with_options() {
     let _guard = EnvGuard::set("RSYNC_RSH", "ssh -p 2222");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -141,6 +150,7 @@ fn test_rsync_rsh_env_with_options() {
 }
 
 #[test]
+#[serial]
 fn test_rsync_rsh_empty_ignored() {
     let _guard = EnvGuard::set("RSYNC_RSH", "");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -148,6 +158,7 @@ fn test_rsync_rsh_empty_ignored() {
 }
 
 #[test]
+#[serial]
 fn test_rsh_flag_overrides_rsync_rsh_env() {
     let _guard = EnvGuard::set("RSYNC_RSH", "/usr/bin/ssh");
     let args = parse_args(["oc-rsync", "-e", "rsh", "src", "dest"]).unwrap();
@@ -159,6 +170,7 @@ fn test_rsh_flag_overrides_rsync_rsh_env() {
 }
 
 #[test]
+#[serial]
 fn test_no_rsync_rsh_env() {
     let _guard = EnvGuard::remove("RSYNC_RSH");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -173,6 +185,7 @@ fn test_no_rsync_rsh_env() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_rsync_partial_dir_env_sets_partial_dir() {
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -184,6 +197,7 @@ fn test_rsync_partial_dir_env_sets_partial_dir() {
 }
 
 #[test]
+#[serial]
 fn test_rsync_partial_dir_env_enables_partial() {
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -194,6 +208,7 @@ fn test_rsync_partial_dir_env_enables_partial() {
 }
 
 #[test]
+#[serial]
 fn test_rsync_partial_dir_empty_ignored() {
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -204,6 +219,7 @@ fn test_rsync_partial_dir_empty_ignored() {
 }
 
 #[test]
+#[serial]
 fn test_partial_dir_flag_overrides_rsync_partial_dir_env() {
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
     let args = parse_args(["oc-rsync", "--partial-dir=/var/tmp", "src", "dest"]).unwrap();
@@ -215,6 +231,7 @@ fn test_partial_dir_flag_overrides_rsync_partial_dir_env() {
 }
 
 #[test]
+#[serial]
 fn test_no_partial_clears_rsync_partial_dir_env() {
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
     let args = parse_args(["oc-rsync", "--no-partial", "src", "dest"]).unwrap();
@@ -226,6 +243,7 @@ fn test_no_partial_clears_rsync_partial_dir_env() {
 }
 
 #[test]
+#[serial]
 fn test_no_rsync_partial_dir_env() {
     let _guard = EnvGuard::remove("RSYNC_PARTIAL_DIR");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -240,6 +258,7 @@ fn test_no_rsync_partial_dir_env() {
 // ============================================================================
 
 #[test]
+#[serial]
 fn test_multiple_env_vars_together() {
     let _guard1 = EnvGuard::set("RSYNC_PROTECT_ARGS", "1");
     let _guard2 = EnvGuard::set("RSYNC_RSH", "ssh");
@@ -254,6 +273,7 @@ fn test_multiple_env_vars_together() {
 }
 
 #[test]
+#[serial]
 fn test_flags_override_all_env_vars() {
     let _guard1 = EnvGuard::set("RSYNC_PROTECT_ARGS", "1");
     let _guard2 = EnvGuard::set("RSYNC_RSH", "ssh");

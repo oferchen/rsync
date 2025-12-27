@@ -173,7 +173,6 @@ impl ChecksumVerifier {
         _seed: i32,
         _compat_flags: Option<&CompatibilityFlags>,
     ) -> Self {
-
         if let Some(neg) = negotiated {
             match neg.checksum {
                 ChecksumAlgorithm::None | ChecksumAlgorithm::MD4 => {
@@ -189,7 +188,7 @@ impl ChecksumVerifier {
                 // Upstream sum_init() uses 0 for XXH seeds, not checksum_seed
                 ChecksumAlgorithm::XXH64 => ChecksumVerifier::Xxh64(Xxh64::with_seed(0)),
                 ChecksumAlgorithm::XXH3 => ChecksumVerifier::Xxh3(Xxh3::with_seed(0)),
-                ChecksumAlgorithm::XXH128 => ChecksumVerifier::Xxh3_128(Xxh3_128::with_seed(0))
+                ChecksumAlgorithm::XXH128 => ChecksumVerifier::Xxh3_128(Xxh3_128::with_seed(0)),
             }
         } else if protocol.as_u8() >= 30 {
             // Protocol 30+ default: MD5 (no seed for file transfer checksums)
