@@ -92,3 +92,71 @@ impl<'a, W> std::ops::DerefMut for LineModeGuard<'a, W> {
             .expect("line mode guard remains active while borrowed")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_sink() -> MessageSink<Vec<u8>> {
+        MessageSink::new(Vec::new())
+    }
+
+    #[test]
+    fn previous_line_mode_returns_stored_mode() {
+        let mut sink = make_sink();
+        let guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
+        assert_eq!(guard.previous_line_mode(), LineMode::WithNewline);
+    }
+
+    #[test]
+    fn previous_line_mode_returns_without_newline() {
+        let mut sink = make_sink();
+        let guard = LineModeGuard::new(&mut sink, LineMode::WithoutNewline);
+        assert_eq!(guard.previous_line_mode(), LineMode::WithoutNewline);
+    }
+
+    #[test]
+    fn into_inner_returns_sink_reference() {
+        let mut sink = make_sink();
+        let guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
+        let inner = guard.into_inner();
+        let _ = inner;
+    }
+
+    #[test]
+    fn drop_restores_previous_line_mode() {
+        let mut sink = make_sink();
+        sink.set_line_mode(LineMode::WithNewline);
+        {
+            sink.set_line_mode(LineMode::WithoutNewline);
+            let _guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
+        }
+        assert_eq!(sink.line_mode(), LineMode::WithNewline);
+    }
+
+    #[test]
+    fn deref_allows_access_to_sink() {
+        let mut sink = make_sink();
+        let guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
+        let _ = guard.line_mode();
+    }
+
+    #[test]
+    fn deref_mut_allows_mutable_access() {
+        let mut sink = make_sink();
+        let mut guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
+        guard.set_line_mode(LineMode::WithoutNewline);
+    }
+
+    #[test]
+    fn into_inner_skips_restoration() {
+        let mut sink = make_sink();
+        sink.set_line_mode(LineMode::WithNewline);
+        {
+            let guard = LineModeGuard::new(&mut sink, LineMode::WithNewline);
+            let inner = guard.into_inner();
+            inner.set_line_mode(LineMode::WithoutNewline);
+        }
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+    }
+}
