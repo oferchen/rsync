@@ -344,3 +344,226 @@ impl<T, E> From<TryMapInnerError<T, E>> for (E, T) {
         error.into_parts()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    // ==== Construction ====
+
+    #[test]
+    fn new_stores_error_and_original() {
+        let err = TryMapInnerError::new("error message", 42);
+        assert_eq!(err.error(), &"error message");
+        assert_eq!(err.original(), &42);
+    }
+
+    #[test]
+    fn from_tuple_creates_error() {
+        let err: TryMapInnerError<i32, &str> = ("error", 100).into();
+        assert_eq!(err.error(), &"error");
+        assert_eq!(err.original(), &100);
+    }
+
+    // ==== Accessors ====
+
+    #[test]
+    fn error_returns_shared_reference() {
+        let err = TryMapInnerError::new("test error", "original");
+        assert_eq!(*err.error(), "test error");
+    }
+
+    #[test]
+    fn error_mut_allows_modification() {
+        let mut err = TryMapInnerError::new(String::from("initial"), 0);
+        *err.error_mut() = String::from("modified");
+        assert_eq!(err.error(), "modified");
+    }
+
+    #[test]
+    fn original_returns_shared_reference() {
+        let err = TryMapInnerError::new("err", vec![1, 2, 3]);
+        assert_eq!(err.original(), &vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn original_mut_allows_modification() {
+        let mut err = TryMapInnerError::new("err", vec![1, 2, 3]);
+        err.original_mut().push(4);
+        assert_eq!(err.original(), &vec![1, 2, 3, 4]);
+    }
+
+    // ==== as_ref and as_mut ====
+
+    #[test]
+    fn as_ref_returns_both_references() {
+        let err = TryMapInnerError::new("the error", "the original");
+        let (e, o) = err.as_ref();
+        assert_eq!(*e, "the error");
+        assert_eq!(*o, "the original");
+    }
+
+    #[test]
+    fn as_mut_returns_mutable_references() {
+        let mut err = TryMapInnerError::new(String::from("err"), String::from("orig"));
+        {
+            let (e, o) = err.as_mut();
+            e.push_str("_modified");
+            o.push_str("_changed");
+        }
+        assert_eq!(err.error(), "err_modified");
+        assert_eq!(err.original(), "orig_changed");
+    }
+
+    // ==== into_* methods ====
+
+    #[test]
+    fn into_parts_returns_both_owned() {
+        let err = TryMapInnerError::new("my error", 99);
+        let (e, o) = err.into_parts();
+        assert_eq!(e, "my error");
+        assert_eq!(o, 99);
+    }
+
+    #[test]
+    fn into_error_returns_error_only() {
+        let err = TryMapInnerError::new("dropped original", "will be gone");
+        assert_eq!(err.into_error(), "dropped original");
+    }
+
+    #[test]
+    fn into_original_returns_original_only() {
+        let err = TryMapInnerError::new("will be gone", "kept original");
+        assert_eq!(err.into_original(), "kept original");
+    }
+
+    // ==== Mapping methods ====
+
+    #[test]
+    fn map_original_transforms_original() {
+        let err = TryMapInnerError::new("error", 10);
+        let mapped = err.map_original(|n| n * 2);
+        assert_eq!(mapped.error(), &"error");
+        assert_eq!(mapped.original(), &20);
+    }
+
+    #[test]
+    fn map_error_transforms_error() {
+        let err = TryMapInnerError::new("original error", 42);
+        let mapped = err.map_error(|s| s.len());
+        assert_eq!(mapped.error(), &14); // "original error".len()
+        assert_eq!(mapped.original(), &42);
+    }
+
+    #[test]
+    fn map_parts_transforms_both() {
+        let err = TryMapInnerError::new("err", 5);
+        let mapped = err.map_parts(|e, o| (e.len(), o * 10));
+        assert_eq!(mapped.error(), &3); // "err".len()
+        assert_eq!(mapped.original(), &50);
+    }
+
+    #[test]
+    fn map_original_changes_type() {
+        let err: TryMapInnerError<i32, &str> = TryMapInnerError::new("err", 42);
+        let mapped: TryMapInnerError<String, &str> = err.map_original(|n| n.to_string());
+        assert_eq!(mapped.original(), "42");
+    }
+
+    // ==== From/Into conversions ====
+
+    #[test]
+    fn into_tuple_from_error() {
+        let err = TryMapInnerError::new("err", 123);
+        let (e, o): (&str, i32) = err.into();
+        assert_eq!(e, "err");
+        assert_eq!(o, 123);
+    }
+
+    // ==== Clone ====
+
+    #[test]
+    fn clone_produces_independent_copy() {
+        let err = TryMapInnerError::new(String::from("err"), vec![1, 2, 3]);
+        let cloned = err.clone();
+        assert_eq!(err.error(), cloned.error());
+        assert_eq!(err.original(), cloned.original());
+    }
+
+    // ==== Debug ====
+
+    #[test]
+    fn debug_contains_error_and_type() {
+        let err = TryMapInnerError::new("debug test", 42i32);
+        let debug = format!("{err:?}");
+        assert!(debug.contains("TryMapInnerError"));
+        assert!(debug.contains("debug test"));
+        assert!(debug.contains("i32"));
+    }
+
+    #[test]
+    fn debug_alternate_includes_recovery_hint() {
+        let err = TryMapInnerError::new("test", 0i32);
+        let debug = format!("{err:#?}");
+        assert!(debug.contains("into_original"));
+    }
+
+    // ==== Display ====
+
+    #[test]
+    fn display_contains_error_message() {
+        let err = TryMapInnerError::new("display test error", 0i32);
+        let display = format!("{err}");
+        assert!(display.contains("display test error"));
+        assert!(display.contains("i32"));
+    }
+
+    #[test]
+    fn display_alternate_includes_recovery_hint() {
+        let err = TryMapInnerError::new("test", 0i32);
+        let display = format!("{err:#}");
+        assert!(display.contains("recover via into_original"));
+    }
+
+    // ==== Error trait ====
+
+    #[test]
+    fn error_source_returns_inner_error() {
+        let inner = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let err = TryMapInnerError::new(inner, "preserved");
+        let source = std::error::Error::source(&err).unwrap();
+        let downcasted = source.downcast_ref::<io::Error>().unwrap();
+        assert_eq!(downcasted.kind(), io::ErrorKind::NotFound);
+    }
+
+    // ==== Edge cases ====
+
+    #[test]
+    fn works_with_unit_types() {
+        let err = TryMapInnerError::new((), ());
+        assert_eq!(err.error(), &());
+        assert_eq!(err.original(), &());
+    }
+
+    #[test]
+    fn works_with_complex_types() {
+        let err = TryMapInnerError::new(
+            vec![1, 2, 3],
+            std::collections::HashMap::<String, i32>::new(),
+        );
+        assert_eq!(err.error(), &vec![1, 2, 3]);
+        assert!(err.original().is_empty());
+    }
+
+    #[test]
+    fn chain_multiple_maps() {
+        let err = TryMapInnerError::new(1, 2);
+        let mapped = err
+            .map_error(|e| e + 10)
+            .map_original(|o| o * 5)
+            .map_parts(|e, o| (e * 2, o + 1));
+        assert_eq!(mapped.error(), &22); // (1 + 10) * 2
+        assert_eq!(mapped.original(), &11); // (2 * 5) + 1
+    }
+}

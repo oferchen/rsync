@@ -371,3 +371,384 @@ impl NegotiationBuffer {
         (sniffed_prefix_len, buffered_pos, buffered)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::IoSliceMut;
+
+    // ==== Construction and clamping ====
+
+    #[test]
+    fn new_stores_values() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(3, 1, data.clone());
+        assert_eq!(buf.sniffed_prefix_len(), 3);
+        assert_eq!(buf.buffered_consumed(), 1);
+        assert_eq!(buf.buffered(), &data[..]);
+    }
+
+    #[test]
+    fn new_clamps_prefix_len_to_buffer_len() {
+        let data = vec![1, 2, 3];
+        let buf = NegotiationBuffer::new(100, 0, data);
+        // prefix_len should be clamped to buffer length (3)
+        assert_eq!(buf.sniffed_prefix_len(), 3);
+    }
+
+    #[test]
+    fn new_clamps_pos_to_buffer_len() {
+        let data = vec![1, 2, 3];
+        let buf = NegotiationBuffer::new(0, 100, data);
+        // pos should be clamped to buffer length (3)
+        assert_eq!(buf.buffered_consumed(), 3);
+    }
+
+    #[test]
+    fn new_with_empty_buffer() {
+        let buf = NegotiationBuffer::new(5, 5, Vec::new());
+        assert_eq!(buf.sniffed_prefix_len(), 0);
+        assert_eq!(buf.buffered_consumed(), 0);
+        assert!(buf.buffered().is_empty());
+    }
+
+    // ==== Accessor methods ====
+
+    #[test]
+    fn sniffed_prefix_returns_correct_slice() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(3, 0, data);
+        assert_eq!(buf.sniffed_prefix(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn buffered_remainder_returns_unconsumed_bytes() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(2, 3, data);
+        // buffered_remainder starts after max(pos, prefix_len) = max(3, 2) = 3
+        assert_eq!(buf.buffered_remainder(), &[4, 5]);
+    }
+
+    #[test]
+    fn buffered_len_returns_total_length() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(2, 1, data);
+        assert_eq!(buf.buffered_len(), 5);
+    }
+
+    #[test]
+    fn buffered_remaining_returns_bytes_left() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(2, 2, data);
+        assert_eq!(buf.buffered_remaining(), 3); // 5 - 2 = 3
+    }
+
+    #[test]
+    fn has_remaining_true_when_not_consumed() {
+        let data = vec![1, 2, 3];
+        let buf = NegotiationBuffer::new(0, 0, data);
+        assert!(buf.has_remaining());
+    }
+
+    #[test]
+    fn has_remaining_false_when_fully_consumed() {
+        let data = vec![1, 2, 3];
+        let buf = NegotiationBuffer::new(0, 3, data);
+        assert!(!buf.has_remaining());
+    }
+
+    #[test]
+    fn remaining_slice_returns_unconsumed() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 2, data);
+        assert_eq!(buf.remaining_slice(), &[3, 4, 5]);
+    }
+
+    #[test]
+    fn buffered_consumed_slice_returns_consumed() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 3, data);
+        assert_eq!(buf.buffered_consumed_slice(), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn sniffed_prefix_remaining_accounts_for_consumption() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(3, 1, data);
+        // prefix_len=3, consumed=1, so 2 prefix bytes remain
+        assert_eq!(buf.sniffed_prefix_remaining(), 2);
+    }
+
+    #[test]
+    fn sniffed_prefix_remaining_zero_when_past_prefix() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(2, 5, data);
+        assert_eq!(buf.sniffed_prefix_remaining(), 0);
+    }
+
+    // ==== copy_into ====
+
+    #[test]
+    fn copy_into_copies_and_advances_position() {
+        let data = vec![1, 2, 3, 4, 5];
+        let mut buf = NegotiationBuffer::new(0, 0, data);
+        let mut dest = [0u8; 3];
+        let copied = buf.copy_into(&mut dest);
+        assert_eq!(copied, 3);
+        assert_eq!(dest, [1, 2, 3]);
+        assert_eq!(buf.buffered_consumed(), 3);
+    }
+
+    #[test]
+    fn copy_into_partial_when_dest_small() {
+        let data = vec![1, 2, 3, 4, 5];
+        let mut buf = NegotiationBuffer::new(0, 0, data);
+        let mut dest = [0u8; 2];
+        let copied = buf.copy_into(&mut dest);
+        assert_eq!(copied, 2);
+        assert_eq!(dest, [1, 2]);
+    }
+
+    #[test]
+    fn copy_into_returns_zero_when_empty_dest() {
+        let data = vec![1, 2, 3];
+        let mut buf = NegotiationBuffer::new(0, 0, data);
+        let mut dest = [0u8; 0];
+        assert_eq!(buf.copy_into(&mut dest), 0);
+    }
+
+    #[test]
+    fn copy_into_returns_zero_when_fully_consumed() {
+        let data = vec![1, 2, 3];
+        let mut buf = NegotiationBuffer::new(0, 3, data);
+        let mut dest = [0u8; 10];
+        assert_eq!(buf.copy_into(&mut dest), 0);
+    }
+
+    // ==== consume ====
+
+    #[test]
+    fn consume_advances_position() {
+        let data = vec![1, 2, 3, 4, 5];
+        let mut buf = NegotiationBuffer::new(0, 0, data);
+        let leftover = buf.consume(2);
+        assert_eq!(leftover, 0);
+        assert_eq!(buf.buffered_consumed(), 2);
+    }
+
+    #[test]
+    fn consume_returns_excess_when_consuming_more() {
+        let data = vec![1, 2, 3];
+        let mut buf = NegotiationBuffer::new(0, 0, data);
+        let leftover = buf.consume(5);
+        assert_eq!(leftover, 2); // consumed 3, leftover 2
+        assert_eq!(buf.buffered_consumed(), 3);
+    }
+
+    #[test]
+    fn consume_returns_full_amount_when_already_consumed() {
+        let data = vec![1, 2, 3];
+        let mut buf = NegotiationBuffer::new(0, 3, data);
+        let leftover = buf.consume(10);
+        assert_eq!(leftover, 10);
+    }
+
+    // ==== copy methods ====
+
+    #[test]
+    fn copy_into_vec_copies_all_buffered() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(2, 1, data.clone());
+        let mut target = Vec::new();
+        let copied = buf.copy_into_vec(&mut target).unwrap();
+        assert_eq!(copied, 5);
+        assert_eq!(target, data);
+    }
+
+    #[test]
+    fn extend_into_vec_appends_to_existing() {
+        let data = vec![1, 2, 3];
+        let buf = NegotiationBuffer::new(0, 0, data);
+        let mut target = vec![9, 8, 7];
+        let extended = buf.extend_into_vec(&mut target).unwrap();
+        assert_eq!(extended, 3);
+        assert_eq!(target, vec![9, 8, 7, 1, 2, 3]);
+    }
+
+    #[test]
+    fn copy_all_into_slice_succeeds() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 0, data);
+        let mut target = [0u8; 10];
+        let copied = buf.copy_all_into_slice(&mut target).unwrap();
+        assert_eq!(copied, 5);
+        assert_eq!(&target[..5], &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn copy_all_into_slice_fails_when_too_small() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 0, data);
+        let mut target = [0u8; 3];
+        let err = buf.copy_all_into_slice(&mut target).unwrap_err();
+        assert_eq!(err.required(), 5);
+        assert_eq!(err.provided(), 3);
+    }
+
+    #[test]
+    fn copy_remaining_into_slice_succeeds() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 2, data);
+        let mut target = [0u8; 10];
+        let copied = buf.copy_remaining_into_slice(&mut target).unwrap();
+        assert_eq!(copied, 3);
+        assert_eq!(&target[..3], &[3, 4, 5]);
+    }
+
+    #[test]
+    fn copy_all_into_writer_succeeds() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 0, data.clone());
+        let mut target = Vec::new();
+        let written = buf.copy_all_into_writer(&mut target).unwrap();
+        assert_eq!(written, 5);
+        assert_eq!(target, data);
+    }
+
+    #[test]
+    fn copy_remaining_into_writer_succeeds() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 3, data);
+        let mut target = Vec::new();
+        let written = buf.copy_remaining_into_writer(&mut target).unwrap();
+        assert_eq!(written, 2);
+        assert_eq!(target, vec![4, 5]);
+    }
+
+    // ==== vectored copy ====
+
+    #[test]
+    fn copy_into_vectored_spans_multiple_slices() {
+        let data = vec![1, 2, 3, 4, 5, 6];
+        let mut buf = NegotiationBuffer::new(0, 0, data);
+        let mut buf1 = [0u8; 2];
+        let mut buf2 = [0u8; 2];
+        let mut buf3 = [0u8; 2];
+        let mut slices = [
+            IoSliceMut::new(&mut buf1),
+            IoSliceMut::new(&mut buf2),
+            IoSliceMut::new(&mut buf3),
+        ];
+        let copied = buf.copy_into_vectored(&mut slices);
+        assert_eq!(copied, 6);
+        assert_eq!(buf1, [1, 2]);
+        assert_eq!(buf2, [3, 4]);
+        assert_eq!(buf3, [5, 6]);
+    }
+
+    #[test]
+    fn copy_remaining_into_vectored_fails_when_insufficient() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 0, data);
+        let mut buf1 = [0u8; 2];
+        let mut slices = [IoSliceMut::new(&mut buf1)];
+        let err = buf.copy_remaining_into_vectored(&mut slices).unwrap_err();
+        assert_eq!(err.required(), 5);
+        assert_eq!(err.provided(), 2);
+    }
+
+    // ==== into_raw_parts ====
+
+    #[test]
+    fn into_raw_parts_returns_components() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(3, 2, data.clone());
+        let (prefix_len, pos, buffer) = buf.into_raw_parts();
+        assert_eq!(prefix_len, 3);
+        assert_eq!(pos, 2);
+        assert_eq!(buffer, data);
+    }
+
+    // ==== buffered_split ====
+
+    #[test]
+    fn buffered_split_returns_prefix_and_remainder() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(2, 0, data);
+        let (prefix, remainder) = buf.buffered_split();
+        assert_eq!(prefix, &[1, 2]);
+        assert_eq!(remainder, &[3, 4, 5]);
+    }
+
+    #[test]
+    fn buffered_split_accounts_for_consumed_prefix() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(3, 1, data);
+        let (prefix, remainder) = buf.buffered_split();
+        // prefix starts at pos 1, goes to prefix_len 3
+        assert_eq!(prefix, &[2, 3]);
+        assert_eq!(remainder, &[4, 5]);
+    }
+
+    // ==== legacy prefix complete ====
+
+    #[test]
+    fn legacy_prefix_complete_true_when_enough() {
+        let data = vec![0u8; 20];
+        let buf = NegotiationBuffer::new(LEGACY_DAEMON_PREFIX_LEN, 0, data);
+        assert!(buf.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn legacy_prefix_complete_false_when_short() {
+        let data = vec![0u8; 5];
+        let buf = NegotiationBuffer::new(3, 0, data);
+        assert!(!buf.legacy_prefix_complete());
+    }
+
+    // ==== Clone and Debug ====
+
+    #[test]
+    fn clone_produces_independent_copy() {
+        let data = vec![1, 2, 3];
+        let buf = NegotiationBuffer::new(1, 0, data);
+        let cloned = buf.clone();
+        assert_eq!(buf.buffered(), cloned.buffered());
+        assert_eq!(buf.sniffed_prefix_len(), cloned.sniffed_prefix_len());
+    }
+
+    #[test]
+    fn debug_format_contains_type_name() {
+        let buf = NegotiationBuffer::new(0, 0, vec![1, 2, 3]);
+        let debug = format!("{buf:?}");
+        assert!(debug.contains("NegotiationBuffer"));
+    }
+
+    // ==== Edge cases ====
+
+    #[test]
+    fn extend_remaining_into_vec_with_partial_consumption() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(0, 3, data);
+        let mut target = vec![9];
+        let extended = buf.extend_remaining_into_vec(&mut target).unwrap();
+        assert_eq!(extended, 2);
+        assert_eq!(target, vec![9, 4, 5]);
+    }
+
+    #[test]
+    fn buffered_to_vec_returns_all_buffered() {
+        let data = vec![1, 2, 3, 4, 5];
+        let buf = NegotiationBuffer::new(2, 0, data.clone());
+        let result = buf.buffered_to_vec().unwrap();
+        assert_eq!(result, data);
+    }
+
+    #[test]
+    fn buffered_remaining_to_vec_with_empty_remainder() {
+        let data = vec![1, 2, 3];
+        let buf = NegotiationBuffer::new(0, 3, data);
+        let result = buf.buffered_remaining_to_vec().unwrap();
+        assert!(result.is_empty());
+    }
+}
