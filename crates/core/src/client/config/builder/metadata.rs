@@ -206,3 +206,306 @@ impl ClientConfigBuilder {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn builder() -> ClientConfigBuilder {
+        ClientConfigBuilder::default()
+    }
+
+    #[test]
+    fn owner_sets_preserve() {
+        let config = builder().owner(true).build();
+        assert!(config.preserve_owner());
+    }
+
+    #[test]
+    fn owner_false_clears_preserve() {
+        let config = builder()
+            .owner(true)
+            .owner(false)
+            .build();
+        assert!(!config.preserve_owner());
+    }
+
+    #[test]
+    fn owner_override_sets_value() {
+        let config = builder().owner_override(Some(1000)).build();
+        assert_eq!(config.owner_override(), Some(1000));
+    }
+
+    #[test]
+    fn owner_override_none_clears_value() {
+        let config = builder()
+            .owner_override(Some(1000))
+            .owner_override(None)
+            .build();
+        assert!(config.owner_override().is_none());
+    }
+
+    #[test]
+    fn group_sets_preserve() {
+        let config = builder().group(true).build();
+        assert!(config.preserve_group());
+    }
+
+    #[test]
+    fn group_false_clears_preserve() {
+        let config = builder()
+            .group(true)
+            .group(false)
+            .build();
+        assert!(!config.preserve_group());
+    }
+
+    #[test]
+    fn group_override_sets_value() {
+        let config = builder().group_override(Some(1000)).build();
+        assert_eq!(config.group_override(), Some(1000));
+    }
+
+    #[test]
+    fn group_override_none_clears_value() {
+        let config = builder()
+            .group_override(Some(1000))
+            .group_override(None)
+            .build();
+        assert!(config.group_override().is_none());
+    }
+
+    #[test]
+    fn copy_as_sets_value() {
+        let config = builder().copy_as(Some(OsString::from("user:group"))).build();
+        assert!(config.copy_as().is_some());
+    }
+
+    #[test]
+    fn copy_as_none_clears_value() {
+        let config = builder()
+            .copy_as(Some(OsString::from("user:group")))
+            .copy_as(None)
+            .build();
+        assert!(config.copy_as().is_none());
+    }
+
+    #[test]
+    fn executability_sets_flag() {
+        let config = builder().executability(true).build();
+        assert!(config.preserve_executability());
+    }
+
+    #[test]
+    fn executability_false_clears_flag() {
+        let config = builder()
+            .executability(true)
+            .executability(false)
+            .build();
+        assert!(!config.preserve_executability());
+    }
+
+    #[test]
+    fn permissions_sets_flag() {
+        let config = builder().permissions(true).build();
+        assert!(config.preserve_permissions());
+    }
+
+    #[test]
+    fn permissions_false_clears_flag() {
+        let config = builder()
+            .permissions(true)
+            .permissions(false)
+            .build();
+        assert!(!config.preserve_permissions());
+    }
+
+    #[test]
+    fn fake_super_sets_flag() {
+        let config = builder().fake_super(true).build();
+        assert!(config.fake_super());
+    }
+
+    #[test]
+    fn fake_super_false_clears_flag() {
+        let config = builder()
+            .fake_super(true)
+            .fake_super(false)
+            .build();
+        assert!(!config.fake_super());
+    }
+
+    #[test]
+    fn times_sets_flag() {
+        let config = builder().times(true).build();
+        assert!(config.preserve_times());
+    }
+
+    #[test]
+    fn times_false_clears_flag() {
+        let config = builder()
+            .times(true)
+            .times(false)
+            .build();
+        assert!(!config.preserve_times());
+    }
+
+    #[test]
+    fn atimes_sets_flag() {
+        let config = builder().atimes(true).build();
+        assert!(config.preserve_atimes());
+    }
+
+    #[test]
+    fn atimes_false_clears_flag() {
+        let config = builder()
+            .atimes(true)
+            .atimes(false)
+            .build();
+        assert!(!config.preserve_atimes());
+    }
+
+    #[test]
+    fn crtimes_sets_flag() {
+        let config = builder().crtimes(true).build();
+        assert!(config.preserve_crtimes());
+    }
+
+    #[test]
+    fn crtimes_false_clears_flag() {
+        let config = builder()
+            .crtimes(true)
+            .crtimes(false)
+            .build();
+        assert!(!config.preserve_crtimes());
+    }
+
+    #[test]
+    fn omit_dir_times_sets_flag() {
+        let config = builder().omit_dir_times(true).build();
+        assert!(config.omit_dir_times());
+    }
+
+    #[test]
+    fn omit_dir_times_false_clears_flag() {
+        let config = builder()
+            .omit_dir_times(true)
+            .omit_dir_times(false)
+            .build();
+        assert!(!config.omit_dir_times());
+    }
+
+    #[test]
+    fn omit_link_times_sets_flag() {
+        let config = builder().omit_link_times(true).build();
+        assert!(config.omit_link_times());
+    }
+
+    #[test]
+    fn omit_link_times_false_clears_flag() {
+        let config = builder()
+            .omit_link_times(true)
+            .omit_link_times(false)
+            .build();
+        assert!(!config.omit_link_times());
+    }
+
+    #[test]
+    fn numeric_ids_sets_flag() {
+        let config = builder().numeric_ids(true).build();
+        assert!(config.numeric_ids());
+    }
+
+    #[test]
+    fn numeric_ids_false_clears_flag() {
+        let config = builder()
+            .numeric_ids(true)
+            .numeric_ids(false)
+            .build();
+        assert!(!config.numeric_ids());
+    }
+
+    #[test]
+    fn preallocate_sets_flag() {
+        let config = builder().preallocate(true).build();
+        assert!(config.preallocate());
+    }
+
+    #[test]
+    fn preallocate_false_clears_flag() {
+        let config = builder()
+            .preallocate(true)
+            .preallocate(false)
+            .build();
+        assert!(!config.preallocate());
+    }
+
+    #[test]
+    fn hard_links_sets_flag() {
+        let config = builder().hard_links(true).build();
+        assert!(config.preserve_hard_links());
+    }
+
+    #[test]
+    fn hard_links_false_clears_flag() {
+        let config = builder()
+            .hard_links(true)
+            .hard_links(false)
+            .build();
+        assert!(!config.preserve_hard_links());
+    }
+
+    #[test]
+    fn devices_sets_flag() {
+        let config = builder().devices(true).build();
+        assert!(config.preserve_devices());
+    }
+
+    #[test]
+    fn devices_false_clears_flag() {
+        let config = builder()
+            .devices(true)
+            .devices(false)
+            .build();
+        assert!(!config.preserve_devices());
+    }
+
+    #[test]
+    fn specials_sets_flag() {
+        let config = builder().specials(true).build();
+        assert!(config.preserve_specials());
+    }
+
+    #[test]
+    fn specials_false_clears_flag() {
+        let config = builder()
+            .specials(true)
+            .specials(false)
+            .build();
+        assert!(!config.preserve_specials());
+    }
+
+    #[test]
+    fn default_preserve_owner_is_false() {
+        let config = builder().build();
+        assert!(!config.preserve_owner());
+    }
+
+    #[test]
+    fn default_preserve_group_is_false() {
+        let config = builder().build();
+        assert!(!config.preserve_group());
+    }
+
+    #[test]
+    fn default_preserve_times_is_false() {
+        let config = builder().build();
+        assert!(!config.preserve_times());
+    }
+
+    #[test]
+    fn default_preserve_permissions_is_false() {
+        let config = builder().build();
+        assert!(!config.preserve_permissions());
+    }
+}
