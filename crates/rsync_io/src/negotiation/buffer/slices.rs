@@ -336,3 +336,275 @@ impl<'a> IntoIterator for NegotiationBufferedSlices<'a> {
         self.segments.into_iter().take(self.count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==== Construction ====
+
+    #[test]
+    fn new_with_both_slices() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" 31.0\n";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        assert_eq!(slices.segment_count(), 2);
+        assert_eq!(slices.len(), prefix.len() + remainder.len());
+    }
+
+    #[test]
+    fn new_with_only_prefix() {
+        let prefix = b"@RSYNCD:";
+        let slices = NegotiationBufferedSlices::new(prefix, &[]);
+        assert_eq!(slices.segment_count(), 1);
+        assert_eq!(slices.len(), prefix.len());
+    }
+
+    #[test]
+    fn new_with_only_remainder() {
+        let remainder = b"some data";
+        let slices = NegotiationBufferedSlices::new(&[], remainder);
+        assert_eq!(slices.segment_count(), 1);
+        assert_eq!(slices.len(), remainder.len());
+    }
+
+    #[test]
+    fn new_with_empty_slices() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        assert_eq!(slices.segment_count(), 0);
+        assert_eq!(slices.len(), 0);
+        assert!(slices.is_empty());
+    }
+
+    // ==== Accessors ====
+
+    #[test]
+    fn as_slices_returns_populated_segments() {
+        let prefix = b"pre";
+        let remainder = b"rest";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let io_slices = slices.as_slices();
+        assert_eq!(io_slices.len(), 2);
+        assert_eq!(io_slices[0].as_ref(), prefix.as_slice());
+        assert_eq!(io_slices[1].as_ref(), remainder.as_slice());
+    }
+
+    #[test]
+    fn len_returns_total_bytes() {
+        let prefix = b"hello";
+        let remainder = b"world";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        assert_eq!(slices.len(), 10);
+    }
+
+    #[test]
+    fn is_empty_false_when_has_data() {
+        let slices = NegotiationBufferedSlices::new(b"x", &[]);
+        assert!(!slices.is_empty());
+    }
+
+    #[test]
+    fn is_empty_true_when_no_data() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        assert!(slices.is_empty());
+    }
+
+    #[test]
+    fn segment_count_reflects_populated_segments() {
+        let slices1 = NegotiationBufferedSlices::new(b"a", b"b");
+        assert_eq!(slices1.segment_count(), 2);
+
+        let slices2 = NegotiationBufferedSlices::new(b"a", &[]);
+        assert_eq!(slices2.segment_count(), 1);
+
+        let slices3 = NegotiationBufferedSlices::new(&[], &[]);
+        assert_eq!(slices3.segment_count(), 0);
+    }
+
+    // ==== Iterator ====
+
+    #[test]
+    fn iter_yields_all_segments() {
+        let prefix = b"abc";
+        let remainder = b"def";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let collected: Vec<&[u8]> = slices.iter().map(|s| s.as_ref()).collect();
+        assert_eq!(collected, vec![prefix.as_slice(), remainder.as_slice()]);
+    }
+
+    #[test]
+    fn into_iter_by_ref_yields_all_segments() {
+        let prefix = b"123";
+        let remainder = b"456";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut count = 0;
+        for slice in &slices {
+            count += slice.len();
+        }
+        assert_eq!(count, 6);
+    }
+
+    #[test]
+    fn into_iter_by_value_yields_all_segments() {
+        let prefix = b"ab";
+        let remainder = b"cd";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let collected: Vec<Vec<u8>> = slices.into_iter().map(|s| s.to_vec()).collect();
+        assert_eq!(collected, vec![b"ab".to_vec(), b"cd".to_vec()]);
+    }
+
+    // ==== extend_vec ====
+
+    #[test]
+    fn extend_vec_appends_all_data() {
+        let prefix = b"hello";
+        let remainder = b"world";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut buffer = Vec::new();
+        let appended = slices.extend_vec(&mut buffer).unwrap();
+        assert_eq!(appended, 10);
+        assert_eq!(buffer, b"helloworld");
+    }
+
+    #[test]
+    fn extend_vec_appends_to_existing() {
+        let slices = NegotiationBufferedSlices::new(b"two", &[]);
+        let mut buffer = b"one".to_vec();
+        let appended = slices.extend_vec(&mut buffer).unwrap();
+        assert_eq!(appended, 3);
+        assert_eq!(buffer, b"onetwo");
+    }
+
+    #[test]
+    fn extend_vec_returns_zero_when_empty() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        let mut buffer = vec![1, 2, 3];
+        let appended = slices.extend_vec(&mut buffer).unwrap();
+        assert_eq!(appended, 0);
+        assert_eq!(buffer, vec![1, 2, 3]); // unchanged
+    }
+
+    // ==== to_vec ====
+
+    #[test]
+    fn to_vec_returns_all_data() {
+        let prefix = b"@RSYNCD:";
+        let remainder = b" 31.0\n";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let vec = slices.to_vec().unwrap();
+        assert_eq!(vec, b"@RSYNCD: 31.0\n");
+    }
+
+    #[test]
+    fn to_vec_returns_empty_when_no_data() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        let vec = slices.to_vec().unwrap();
+        assert!(vec.is_empty());
+    }
+
+    // ==== copy_to_slice ====
+
+    #[test]
+    fn copy_to_slice_succeeds_with_sufficient_buffer() {
+        let prefix = b"abc";
+        let remainder = b"def";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut buffer = [0u8; 10];
+        let copied = slices.copy_to_slice(&mut buffer).unwrap();
+        assert_eq!(copied, 6);
+        assert_eq!(&buffer[..6], b"abcdef");
+    }
+
+    #[test]
+    fn copy_to_slice_fails_with_insufficient_buffer() {
+        let slices = NegotiationBufferedSlices::new(b"hello", b"world");
+        let mut buffer = [0u8; 5];
+        let err = slices.copy_to_slice(&mut buffer).unwrap_err();
+        assert_eq!(err.required(), 10);
+        assert_eq!(err.provided(), 5);
+        assert_eq!(err.missing(), 5);
+    }
+
+    #[test]
+    fn copy_to_slice_returns_zero_when_empty() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        let mut buffer = [0u8; 5];
+        let copied = slices.copy_to_slice(&mut buffer).unwrap();
+        assert_eq!(copied, 0);
+    }
+
+    // ==== write_to ====
+
+    #[test]
+    fn write_to_writes_all_data() {
+        let prefix = b"prefix";
+        let remainder = b"suffix";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let mut output = Vec::new();
+        slices.write_to(&mut output).unwrap();
+        assert_eq!(output, b"prefixsuffix");
+    }
+
+    #[test]
+    fn write_to_succeeds_with_single_segment() {
+        let slices = NegotiationBufferedSlices::new(b"single", &[]);
+        let mut output = Vec::new();
+        slices.write_to(&mut output).unwrap();
+        assert_eq!(output, b"single");
+    }
+
+    #[test]
+    fn write_to_succeeds_when_empty() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        let mut output = Vec::new();
+        slices.write_to(&mut output).unwrap();
+        assert!(output.is_empty());
+    }
+
+    // ==== AsRef ====
+
+    #[test]
+    fn as_ref_returns_io_slices() {
+        let slices = NegotiationBufferedSlices::new(b"a", b"b");
+        let io_slices: &[IoSlice<'_>] = slices.as_ref();
+        assert_eq!(io_slices.len(), 2);
+    }
+
+    // ==== Clone and Debug ====
+
+    #[test]
+    fn clone_produces_equivalent_copy() {
+        let prefix = b"test";
+        let remainder = b"data";
+        let slices = NegotiationBufferedSlices::new(prefix, remainder);
+        let cloned = slices.clone();
+        assert_eq!(slices.len(), cloned.len());
+        assert_eq!(slices.segment_count(), cloned.segment_count());
+    }
+
+    #[test]
+    fn debug_format_contains_type_name() {
+        let slices = NegotiationBufferedSlices::new(b"x", &[]);
+        let debug = format!("{slices:?}");
+        assert!(debug.contains("NegotiationBufferedSlices"));
+    }
+
+    // ==== Edge cases ====
+
+    #[test]
+    fn handles_large_segments() {
+        let large_prefix = vec![b'a'; 1000];
+        let large_remainder = vec![b'b'; 2000];
+        let slices = NegotiationBufferedSlices::new(&large_prefix, &large_remainder);
+        assert_eq!(slices.len(), 3000);
+        let vec = slices.to_vec().unwrap();
+        assert_eq!(vec.len(), 3000);
+    }
+
+    #[test]
+    fn iter_empty_yields_nothing() {
+        let slices = NegotiationBufferedSlices::new(&[], &[]);
+        let count = slices.iter().count();
+        assert_eq!(count, 0);
+    }
+}
