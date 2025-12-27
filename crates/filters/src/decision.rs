@@ -147,3 +147,78 @@ impl Default for FilterDecision {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_decision_default() {
+        let decision = FilterDecision::default();
+        assert!(decision.allows_transfer());
+        assert!(decision.allows_deletion());
+        assert!(!decision.allows_deletion_when_excluded_removed());
+    }
+
+    #[test]
+    fn filter_decision_protect() {
+        let mut decision = FilterDecision::default();
+        decision.protect();
+        assert!(decision.allows_transfer());
+        assert!(!decision.allows_deletion());
+    }
+
+    #[test]
+    fn filter_decision_unprotect() {
+        let mut decision = FilterDecision::default();
+        decision.protect();
+        decision.unprotect();
+        assert!(decision.allows_transfer());
+        assert!(decision.allows_deletion());
+    }
+
+    #[test]
+    fn filter_decision_transfer_not_allowed() {
+        let decision = FilterDecision {
+            transfer_allowed: false,
+            protected: false,
+            excluded_for_delete_excluded: false,
+        };
+        assert!(!decision.allows_transfer());
+        assert!(!decision.allows_deletion());
+    }
+
+    #[test]
+    fn filter_decision_excluded_for_delete_excluded() {
+        let decision = FilterDecision {
+            transfer_allowed: false,
+            protected: false,
+            excluded_for_delete_excluded: true,
+        };
+        assert!(decision.allows_deletion_when_excluded_removed());
+    }
+
+    #[test]
+    fn filter_decision_protected_blocks_excluded_removal() {
+        let decision = FilterDecision {
+            transfer_allowed: false,
+            protected: true,
+            excluded_for_delete_excluded: true,
+        };
+        assert!(!decision.allows_deletion_when_excluded_removed());
+    }
+
+    #[test]
+    fn decision_context_eq() {
+        assert_eq!(DecisionContext::Transfer, DecisionContext::Transfer);
+        assert_eq!(DecisionContext::Deletion, DecisionContext::Deletion);
+        assert_ne!(DecisionContext::Transfer, DecisionContext::Deletion);
+    }
+
+    #[test]
+    fn filter_set_inner_default_is_empty() {
+        let inner = FilterSetInner::default();
+        assert!(inner.include_exclude.is_empty());
+        assert!(inner.protect_risk.is_empty());
+    }
+}
