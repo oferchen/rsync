@@ -32,6 +32,10 @@ pub struct ExitCodesOptions {
     pub verbose: bool,
     /// Implementation to test: "upstream" (default) or "oc-rsync".
     pub implementation: Option<String>,
+    /// Show stdout/stderr output from rsync commands.
+    pub show_output: bool,
+    /// Directory to save rsync logs (uses --log-file).
+    pub log_dir: Option<String>,
 }
 
 /// Options for message format validation.
@@ -46,6 +50,10 @@ pub struct MessagesOptions {
     /// Implementation to test: "upstream" (default) or "oc-rsync".
     #[allow(dead_code)]
     pub implementation: Option<String>,
+    /// Show stdout/stderr output from rsync commands.
+    pub show_output: bool,
+    /// Directory to save rsync logs (uses --log-file).
+    pub log_dir: Option<String>,
 }
 
 /// Parse interop command arguments.
@@ -73,6 +81,8 @@ where
                 version: opts.version,
                 verbose: opts.verbose,
                 implementation: opts.implementation,
+                show_output: opts.show_output,
+                log_dir: opts.log_dir,
             })
         }
         "messages" => {
@@ -82,6 +92,8 @@ where
                 version: opts.version,
                 verbose: opts.verbose,
                 implementation: opts.implementation,
+                show_output: opts.show_output,
+                log_dir: opts.log_dir,
             })
         }
         "all" => InteropCommand::All,
@@ -102,14 +114,18 @@ struct CommonOptions {
     version: Option<String>,
     verbose: bool,
     implementation: Option<String>,
+    show_output: bool,
+    log_dir: Option<String>,
 }
 
-/// Parse common options (--regenerate, --version, --verbose, --impl).
+/// Parse common options (--regenerate, --version, --verbose, --impl, --show-output, --log-dir).
 fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
     let mut regenerate = false;
     let mut version = None;
     let mut verbose = false;
     let mut implementation = None;
+    let mut show_output = false;
+    let mut log_dir = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -140,6 +156,19 @@ fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
                 verbose = true;
                 i += 1;
             }
+            "--show-output" | "-o" => {
+                show_output = true;
+                i += 1;
+            }
+            "--log-dir" => {
+                if i + 1 >= args.len() {
+                    return Err(TaskError::Usage(String::from(
+                        "--log-dir requires a directory path",
+                    )));
+                }
+                log_dir = Some(args[i + 1].to_string_lossy().into_owned());
+                i += 2;
+            }
             "--help" | "-h" => {
                 return Err(TaskError::Help(usage()));
             }
@@ -154,6 +183,8 @@ fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
         version,
         verbose,
         implementation,
+        show_output,
+        log_dir,
     })
 }
 
@@ -169,15 +200,23 @@ SUBCOMMANDS:
     all           Run all validations (default)
 
 OPTIONS:
-    --regenerate     Regenerate golden files instead of validating
-    --version VER    Test against specific upstream version (3.0.9, 3.1.3, 3.4.1)
-    --impl IMPL      Implementation to test: "upstream" (default) or "oc-rsync"
-    --verbose, -v    Enable verbose output
-    --help, -h       Show this help message
+    --regenerate       Regenerate golden files instead of validating
+    --version VER      Test against specific upstream version (3.0.9, 3.1.3, 3.4.1)
+    --impl IMPL        Implementation to test: "upstream" (default) or "oc-rsync"
+    --verbose, -v      Enable verbose output
+    --show-output, -o  Show stdout/stderr from rsync commands
+    --log-dir DIR      Save rsync logs to directory (uses rsync --log-file)
+    --help, -h         Show this help message
 
 EXAMPLES:
     # Validate exit codes against all upstream versions
     cargo xtask interop exit-codes
+
+    # Validate with rsync output displayed
+    cargo xtask interop exit-codes -v --show-output
+
+    # Save rsync logs to a directory
+    cargo xtask interop exit-codes --log-dir /tmp/interop-logs
 
     # Validate oc-rsync against golden files
     cargo xtask interop exit-codes --impl oc-rsync
@@ -187,9 +226,6 @@ EXAMPLES:
 
     # Validate messages for specific upstream version
     cargo xtask interop messages --version 3.4.1
-
-    # Validate oc-rsync messages
-    cargo xtask interop messages --impl oc-rsync
 
     # Run all validations (exit codes + messages)
     cargo xtask interop all

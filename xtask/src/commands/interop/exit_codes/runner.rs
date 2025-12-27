@@ -20,11 +20,24 @@ pub struct ScenarioResult {
     pub passed: bool,
 }
 
+/// Options for running scenarios.
+#[derive(Debug, Clone, Default)]
+pub struct RunnerOptions {
+    /// Enable verbose output.
+    pub verbose: bool,
+    /// Show stdout/stderr from rsync commands.
+    pub show_output: bool,
+    /// Directory to save rsync logs (uses --log-file).
+    pub log_dir: Option<String>,
+    /// Version string for log file naming.
+    pub version: Option<String>,
+}
+
 /// Execute a scenario against a specific rsync binary.
 pub fn run_scenario(
     scenario: &Scenario,
     rsync_binary: &Path,
-    verbose: bool,
+    options: &RunnerOptions,
 ) -> TaskResult<ScenarioResult> {
     // Create a temporary directory for this test
     let temp_dir = tempfile::tempdir().map_err(|e| {
@@ -39,7 +52,7 @@ pub fn run_scenario(
 
     let work_dir = temp_dir.path();
 
-    if verbose {
+    if options.verbose {
         eprintln!(
             "[runner] Executing scenario '{}' in {}",
             scenario.name,
@@ -49,7 +62,7 @@ pub fn run_scenario(
 
     // Run setup commands if specified
     if let Some(ref setup) = scenario.setup {
-        if verbose {
+        if options.verbose {
             eprintln!("[runner] Running setup: {}", setup);
         }
 
@@ -65,7 +78,7 @@ pub fn run_scenario(
                 ))
             })?;
 
-        if !setup_status.success() && verbose {
+        if !setup_status.success() && options.verbose {
             eprintln!(
                 "[runner] Warning: setup exited with code {:?}",
                 setup_status.code()
@@ -80,27 +93,60 @@ pub fn run_scenario(
         cmd_args[0] = rsync_binary.to_string_lossy().to_string();
     }
 
-    if verbose {
+    // Add --log-file if log_dir is specified
+    if let Some(ref log_dir) = options.log_dir {
+        let version_str = options.version.as_deref().unwrap_or("unknown");
+        let log_file = format!("{}/{}-{}.log", log_dir, scenario.name, version_str);
+        cmd_args.push(format!("--log-file={}", log_file));
+    }
+
+    if options.verbose {
         eprintln!("[runner] Executing: {:?}", cmd_args);
     }
 
-    let rsync_status = Command::new(&cmd_args[0])
-        .args(&cmd_args[1..])
-        .current_dir(work_dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| {
-            TaskError::Io(std::io::Error::new(
-                e.kind(),
-                format!("Failed to execute rsync for '{}': {}", scenario.name, e),
-            ))
-        })?;
+    // Choose between capturing output or discarding it
+    let output = if options.show_output {
+        Command::new(&cmd_args[0])
+            .args(&cmd_args[1..])
+            .current_dir(work_dir)
+            .output()
+            .map_err(|e| {
+                TaskError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to execute rsync for '{}': {}", scenario.name, e),
+                ))
+            })?
+    } else {
+        Command::new(&cmd_args[0])
+            .args(&cmd_args[1..])
+            .current_dir(work_dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map_err(|e| {
+                TaskError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("Failed to execute rsync for '{}': {}", scenario.name, e),
+                ))
+            })?
+    };
 
-    let actual_exit_code = rsync_status.code().unwrap_or(-1);
+    let actual_exit_code = output.status.code().unwrap_or(-1);
     let passed = actual_exit_code == scenario.exit_code;
 
-    if verbose {
+    // Display output if requested
+    if options.show_output {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stdout.is_empty() {
+            eprintln!("[runner] stdout:\n{}", stdout);
+        }
+        if !stderr.is_empty() {
+            eprintln!("[runner] stderr:\n{}", stderr);
+        }
+    }
+
+    if options.verbose {
         let status = if passed { "PASS" } else { "FAIL" };
         eprintln!(
             "[runner] {} - Expected: {}, Got: {}",
@@ -120,12 +166,12 @@ pub fn run_scenario(
 pub fn run_scenarios(
     scenarios: &[Scenario],
     rsync_binary: &Path,
-    verbose: bool,
+    options: &RunnerOptions,
 ) -> TaskResult<Vec<ScenarioResult>> {
     let mut results = Vec::new();
 
     for scenario in scenarios {
-        let result = run_scenario(scenario, rsync_binary, verbose)?;
+        let result = run_scenario(scenario, rsync_binary, options)?;
         results.push(result);
     }
 

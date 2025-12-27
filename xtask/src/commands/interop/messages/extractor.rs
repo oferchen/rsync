@@ -84,6 +84,7 @@ pub fn extract_messages_from_output(stderr: &str) -> Vec<Message> {
 }
 
 /// Run rsync and capture stderr messages.
+#[allow(dead_code)]
 pub fn run_and_extract_messages(
     rsync_binary: &Path,
     args: &[String],
@@ -120,9 +121,22 @@ pub struct MessageScenario {
     pub description: String,
 }
 
+/// Options for running message extraction.
+#[derive(Debug, Clone, Default)]
+pub struct ExtractorOptions {
+    /// Enable verbose output.
+    pub verbose: bool,
+    /// Show stdout/stderr from rsync commands.
+    pub show_output: bool,
+    /// Directory to save rsync logs (uses --log-file).
+    pub log_dir: Option<String>,
+    /// Version string for log file naming.
+    pub version: Option<String>,
+}
+
 impl MessageScenario {
     /// Execute this scenario and extract messages.
-    pub fn execute(&self, rsync_binary: &Path, verbose: bool) -> TaskResult<Vec<Message>> {
+    pub fn execute(&self, rsync_binary: &Path, options: &ExtractorOptions) -> TaskResult<Vec<Message>> {
         let temp_dir = tempfile::tempdir().map_err(|e| {
             TaskError::Io(std::io::Error::new(
                 e.kind(),
@@ -135,7 +149,7 @@ impl MessageScenario {
 
         let work_dir = temp_dir.path();
 
-        if verbose {
+        if options.verbose {
             eprintln!(
                 "[extractor] Executing scenario '{}' in {}",
                 self.name,
@@ -145,7 +159,7 @@ impl MessageScenario {
 
         // Run setup commands if specified
         if let Some(ref setup) = self.setup {
-            if verbose {
+            if options.verbose {
                 eprintln!("[extractor] Running setup: {}", setup);
             }
 
@@ -168,11 +182,45 @@ impl MessageScenario {
             cmd_args[0] = rsync_binary.to_string_lossy().to_string();
         }
 
-        if verbose {
+        // Add --log-file if log_dir is specified
+        if let Some(ref log_dir) = options.log_dir {
+            let version_str = options.version.as_deref().unwrap_or("unknown");
+            let log_file = format!("{}/{}-{}-msg.log", log_dir, self.name, version_str);
+            cmd_args.push(format!("--log-file={}", log_file));
+        }
+
+        if options.verbose {
             eprintln!("[extractor] Executing: {:?}", cmd_args);
         }
 
-        run_and_extract_messages(rsync_binary, &cmd_args[1..], work_dir)
+        // Execute and capture output
+        let mut cmd = Command::new(rsync_binary);
+        cmd.args(&cmd_args[1..])
+            .current_dir(work_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let output = cmd.output().map_err(|e| {
+            TaskError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to execute rsync: {}", e),
+            ))
+        })?;
+
+        // Display output if requested
+        if options.show_output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stdout.is_empty() {
+                eprintln!("[extractor] stdout:\n{}", stdout);
+            }
+            if !stderr.is_empty() {
+                eprintln!("[extractor] stderr:\n{}", stderr);
+            }
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        Ok(extract_messages_from_output(&stderr))
     }
 }
 
