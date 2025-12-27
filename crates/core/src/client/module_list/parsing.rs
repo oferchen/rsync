@@ -277,3 +277,207 @@ pub(crate) fn parse_host_port(
     let address = DaemonAddress::new(host, default_port)?;
     Ok(ParsedDaemonTarget { address, username })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_prefix_ignore_ascii_case_matches_exact() {
+        let result = strip_prefix_ignore_ascii_case("@ERROR: message", "@ERROR");
+        assert_eq!(result, Some(": message"));
+    }
+
+    #[test]
+    fn strip_prefix_ignore_ascii_case_matches_lowercase() {
+        let result = strip_prefix_ignore_ascii_case("@error: message", "@ERROR");
+        assert_eq!(result, Some(": message"));
+    }
+
+    #[test]
+    fn strip_prefix_ignore_ascii_case_matches_mixed_case() {
+        let result = strip_prefix_ignore_ascii_case("@ErRoR: message", "@ERROR");
+        assert_eq!(result, Some(": message"));
+    }
+
+    #[test]
+    fn strip_prefix_ignore_ascii_case_returns_none_for_mismatch() {
+        let result = strip_prefix_ignore_ascii_case("@RSYNCD: 31", "@ERROR");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strip_prefix_ignore_ascii_case_returns_none_for_short_text() {
+        let result = strip_prefix_ignore_ascii_case("@E", "@ERROR");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn hex_value_parses_digits() {
+        assert_eq!(hex_value(b'0'), Some(0));
+        assert_eq!(hex_value(b'5'), Some(5));
+        assert_eq!(hex_value(b'9'), Some(9));
+    }
+
+    #[test]
+    fn hex_value_parses_lowercase_hex() {
+        assert_eq!(hex_value(b'a'), Some(10));
+        assert_eq!(hex_value(b'c'), Some(12));
+        assert_eq!(hex_value(b'f'), Some(15));
+    }
+
+    #[test]
+    fn hex_value_parses_uppercase_hex() {
+        assert_eq!(hex_value(b'A'), Some(10));
+        assert_eq!(hex_value(b'C'), Some(12));
+        assert_eq!(hex_value(b'F'), Some(15));
+    }
+
+    #[test]
+    fn hex_value_returns_none_for_invalid() {
+        assert!(hex_value(b'g').is_none());
+        assert!(hex_value(b'G').is_none());
+        assert!(hex_value(b'z').is_none());
+        assert!(hex_value(b' ').is_none());
+        assert!(hex_value(b'%').is_none());
+    }
+
+    #[test]
+    fn split_host_port_splits_on_last_colon() {
+        let result = split_host_port("localhost:8873");
+        assert_eq!(result, Some(("localhost", "8873")));
+    }
+
+    #[test]
+    fn split_host_port_handles_ipv6() {
+        let result = split_host_port("::1:8873");
+        assert_eq!(result, Some(("::1", "8873")));
+    }
+
+    #[test]
+    fn split_host_port_returns_none_without_colon() {
+        let result = split_host_port("localhost");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn split_daemon_username_extracts_username() {
+        let result = split_daemon_username("user@host").expect("split");
+        assert_eq!(result, (Some("user"), "host"));
+    }
+
+    #[test]
+    fn split_daemon_username_returns_none_without_at() {
+        let result = split_daemon_username("host").expect("split");
+        assert_eq!(result, (None, "host"));
+    }
+
+    #[test]
+    fn split_daemon_username_rejects_empty_username() {
+        let result = split_daemon_username("@host");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decode_host_component_passes_through_plain_text() {
+        let result = decode_host_component("localhost").expect("decode");
+        assert_eq!(result, "localhost");
+    }
+
+    #[test]
+    fn decode_host_component_decodes_percent_encoding() {
+        let result = decode_host_component("hello%20world").expect("decode");
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn decode_host_component_decodes_multiple_percent_encodings() {
+        let result = decode_host_component("%41%42%43").expect("decode");
+        assert_eq!(result, "ABC");
+    }
+
+    #[test]
+    fn decode_daemon_username_passes_through_plain_text() {
+        let result = decode_daemon_username("testuser").expect("decode");
+        assert_eq!(result, "testuser");
+    }
+
+    #[test]
+    fn decode_daemon_username_decodes_percent_encoding() {
+        let result = decode_daemon_username("user%40domain").expect("decode");
+        assert_eq!(result, "user@domain");
+    }
+
+    #[test]
+    fn parse_bracketed_host_extracts_ipv6() {
+        let result = parse_bracketed_host("::1]", 873).expect("parse");
+        assert_eq!(result, ("::1".to_string(), 873));
+    }
+
+    #[test]
+    fn parse_bracketed_host_extracts_ipv6_with_port() {
+        let result = parse_bracketed_host("::1]:8873", 873).expect("parse");
+        assert_eq!(result, ("::1".to_string(), 8873));
+    }
+
+    #[test]
+    fn parse_bracketed_host_rejects_missing_bracket() {
+        let result = parse_bracketed_host("::1", 873);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_bracketed_host_rejects_text_after_bracket() {
+        let result = parse_bracketed_host("::1]garbage", 873);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn split_daemon_host_module_splits_on_double_colon() {
+        let result = split_daemon_host_module("host::module").expect("split");
+        assert_eq!(result, Some(("host", "module")));
+    }
+
+    #[test]
+    fn split_daemon_host_module_returns_none_without_double_colon() {
+        let result = split_daemon_host_module("host:port").expect("split");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn split_daemon_host_module_handles_bracketed_ipv6() {
+        let result = split_daemon_host_module("[::1]::module").expect("split");
+        assert_eq!(result, Some(("[::1]", "module")));
+    }
+
+    #[test]
+    fn parse_host_port_parses_simple_host() {
+        let result = parse_host_port("localhost", 873).expect("parse");
+        assert_eq!(result.address.port(), 873);
+        assert!(result.username.is_none());
+    }
+
+    #[test]
+    fn parse_host_port_parses_host_with_port() {
+        let result = parse_host_port("localhost:8873", 873).expect("parse");
+        assert_eq!(result.address.port(), 8873);
+    }
+
+    #[test]
+    fn parse_host_port_parses_with_username() {
+        let result = parse_host_port("user@localhost", 873).expect("parse");
+        assert_eq!(result.username, Some("user".to_string()));
+    }
+
+    #[test]
+    fn parse_host_port_parses_bracketed_ipv6() {
+        let result = parse_host_port("[::1]", 873).expect("parse");
+        assert_eq!(result.address.port(), 873);
+    }
+
+    #[test]
+    fn parse_host_port_uses_default_for_empty_input() {
+        let result = parse_host_port("", 873).expect("parse");
+        assert_eq!(result.address.port(), 873);
+    }
+}

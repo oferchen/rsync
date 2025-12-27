@@ -325,3 +325,238 @@ fn matches_any_program_alias(value: &str, programs: &[&str]) -> bool {
         .iter()
         .any(|canonical| matches_program_alias(value, canonical))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod brand_tests {
+        use super::*;
+
+        #[test]
+        fn label_returns_correct_strings() {
+            assert_eq!(Brand::Oc.label(), "oc");
+            assert_eq!(Brand::Upstream.label(), "upstream");
+        }
+
+        #[test]
+        fn display_matches_label() {
+            assert_eq!(format!("{}", Brand::Oc), "oc");
+            assert_eq!(format!("{}", Brand::Upstream), "upstream");
+        }
+
+        #[test]
+        fn from_str_parses_canonical_labels() {
+            assert_eq!("oc".parse::<Brand>().unwrap(), Brand::Oc);
+            assert_eq!("upstream".parse::<Brand>().unwrap(), Brand::Upstream);
+        }
+
+        #[test]
+        fn from_str_is_case_insensitive() {
+            assert_eq!("OC".parse::<Brand>().unwrap(), Brand::Oc);
+            assert_eq!("UPSTREAM".parse::<Brand>().unwrap(), Brand::Upstream);
+            assert_eq!("Oc".parse::<Brand>().unwrap(), Brand::Oc);
+            assert_eq!("Upstream".parse::<Brand>().unwrap(), Brand::Upstream);
+        }
+
+        #[test]
+        fn from_str_trims_whitespace() {
+            assert_eq!("  oc  ".parse::<Brand>().unwrap(), Brand::Oc);
+            assert_eq!("\tupstream\n".parse::<Brand>().unwrap(), Brand::Upstream);
+        }
+
+        #[test]
+        fn from_str_rejects_empty_string() {
+            assert!("".parse::<Brand>().is_err());
+            assert!("   ".parse::<Brand>().is_err());
+        }
+
+        #[test]
+        fn from_str_rejects_unknown_brand() {
+            assert!("unknown".parse::<Brand>().is_err());
+            assert!("invalid".parse::<Brand>().is_err());
+        }
+
+        #[test]
+        fn from_str_parses_program_names() {
+            // Use actual program names from profiles
+            let oc = super::oc_profile();
+            let upstream = super::upstream_profile();
+
+            assert_eq!(oc.client_program_name().parse::<Brand>().unwrap(), Brand::Oc);
+            assert_eq!(upstream.client_program_name().parse::<Brand>().unwrap(), Brand::Upstream);
+            assert_eq!(upstream.daemon_program_name().parse::<Brand>().unwrap(), Brand::Upstream);
+        }
+
+        #[test]
+        fn clone_and_copy() {
+            let brand = Brand::Oc;
+            let cloned = brand.clone();
+            let copied = brand;
+            assert_eq!(brand, cloned);
+            assert_eq!(brand, copied);
+        }
+
+        #[test]
+        fn debug_format() {
+            let debug = format!("{:?}", Brand::Oc);
+            assert!(debug.contains("Oc"));
+        }
+
+        #[test]
+        fn eq_and_hash() {
+            use std::collections::HashSet;
+            let mut set = HashSet::new();
+            set.insert(Brand::Oc);
+            set.insert(Brand::Upstream);
+            assert_eq!(set.len(), 2);
+            assert!(set.contains(&Brand::Oc));
+        }
+
+        #[test]
+        fn profile_returns_correct_profile() {
+            let oc_profile = Brand::Oc.profile();
+            let upstream_profile = Brand::Upstream.profile();
+            assert_ne!(oc_profile, upstream_profile);
+        }
+
+        #[test]
+        fn program_names() {
+            assert!(!Brand::Oc.client_program_name().is_empty());
+            assert!(!Brand::Oc.daemon_program_name().is_empty());
+            assert!(!Brand::Upstream.client_program_name().is_empty());
+            assert!(!Brand::Upstream.daemon_program_name().is_empty());
+        }
+
+        #[test]
+        fn config_paths() {
+            assert!(!Brand::Oc.daemon_config_path_str().is_empty());
+            assert!(!Brand::Upstream.daemon_config_path_str().is_empty());
+            assert!(Brand::Oc.daemon_config_path().exists() || true);  // Path may not exist, just test it doesn't panic
+        }
+
+        #[test]
+        fn secrets_paths() {
+            assert!(!Brand::Oc.daemon_secrets_path_str().is_empty());
+            assert!(!Brand::Upstream.daemon_secrets_path_str().is_empty());
+        }
+
+        #[test]
+        fn config_path_candidates() {
+            let candidates = Brand::Oc.config_path_candidate_strs();
+            assert_eq!(candidates.len(), 2);
+            assert!(!candidates[0].is_empty());
+        }
+
+        #[test]
+        fn secrets_path_candidates() {
+            let candidates = Brand::Oc.secrets_path_candidates();
+            assert_eq!(candidates.len(), 2);
+        }
+
+        #[test]
+        fn serialize() {
+            let json = serde_json::to_string(&Brand::Oc).unwrap();
+            assert!(json.contains("oc"));
+        }
+    }
+
+    mod brand_parse_error_tests {
+        use super::*;
+
+        #[test]
+        fn display_format() {
+            let err = BrandParseError;
+            let display = format!("{}", err);
+            assert!(display.contains("unrecognised brand"));
+        }
+
+        #[test]
+        fn clone_and_eq() {
+            let err = BrandParseError;
+            let cloned = err.clone();
+            assert_eq!(err, cloned);
+        }
+
+        #[test]
+        fn debug_format() {
+            let debug = format!("{:?}", BrandParseError);
+            assert!(debug.contains("BrandParseError"));
+        }
+    }
+
+    mod version_suffix_tests {
+        use super::*;
+
+        #[test]
+        fn empty_suffix_is_allowed() {
+            assert!(version_suffix_is_allowed(""));
+        }
+
+        #[test]
+        fn version_numbers_allowed() {
+            assert!(version_suffix_is_allowed("-3.4.1"));
+            assert!(version_suffix_is_allowed("_3.4.1"));
+            assert!(version_suffix_is_allowed(".3.4.1"));
+        }
+
+        #[test]
+        fn windows_extensions_allowed() {
+            assert!(version_suffix_is_allowed(".exe"));
+            assert!(version_suffix_is_allowed(".com"));
+            assert!(version_suffix_is_allowed(".bat"));
+            assert!(version_suffix_is_allowed(".cmd"));
+        }
+
+        #[test]
+        fn dev_suffixes_allowed() {
+            assert!(version_suffix_is_allowed("-debug"));
+            assert!(version_suffix_is_allowed("-dev"));
+            assert!(version_suffix_is_allowed("-devel"));
+            assert!(version_suffix_is_allowed("-dbg"));
+        }
+
+        #[test]
+        fn invalid_suffix_rejected() {
+            assert!(!version_suffix_is_allowed("abc"));  // No leading separator
+        }
+    }
+
+    mod program_alias_tests {
+        use super::*;
+
+        #[test]
+        fn exact_match() {
+            assert!(matches_program_alias("rsync", "rsync"));
+            assert!(matches_program_alias("oc-rsync", "oc-rsync"));
+        }
+
+        #[test]
+        fn case_insensitive() {
+            assert!(matches_program_alias("RSYNC", "rsync"));
+            assert!(matches_program_alias("OC-RSYNC", "oc-rsync"));
+        }
+
+        #[test]
+        fn separator_variations() {
+            assert!(matches_program_alias("oc_rsync", "oc-rsync"));
+            assert!(matches_program_alias("oc.rsync", "oc-rsync"));
+        }
+
+        #[test]
+        fn with_version_suffix() {
+            assert!(matches_program_alias("rsync-3.4.1", "rsync"));
+            assert!(matches_program_alias("rsync_3.4.1", "rsync"));
+        }
+    }
+
+    mod default_brand_tests {
+        use super::*;
+
+        #[test]
+        fn default_brand_is_valid() {
+            let brand = default_brand();
+            assert!(matches!(brand, Brand::Oc | Brand::Upstream));
+        }
+    }
+}

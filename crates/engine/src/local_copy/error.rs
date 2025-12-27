@@ -203,3 +203,173 @@ impl LocalCopyArgumentError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn local_copy_error_missing_operands() {
+        let error = LocalCopyError::missing_operands();
+        assert_eq!(error.exit_code(), MISSING_OPERANDS_EXIT_CODE);
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::MissingSourceOperands
+        ));
+    }
+
+    #[test]
+    fn local_copy_error_missing_operands_message() {
+        let error = LocalCopyError::missing_operands();
+        let message = error.to_string();
+        assert!(message.contains("missing source operands"));
+    }
+
+    #[test]
+    fn local_copy_error_invalid_argument() {
+        let error = LocalCopyError::invalid_argument(LocalCopyArgumentError::EmptySourceOperand);
+        assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::InvalidArgument(_)
+        ));
+    }
+
+    #[test]
+    fn local_copy_error_delete_limit_exceeded() {
+        let error = LocalCopyError::delete_limit_exceeded(100);
+        assert_eq!(error.exit_code(), MAX_DELETE_EXIT_CODE);
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::DeleteLimitExceeded { skipped: 100 }
+        ));
+    }
+
+    #[test]
+    fn local_copy_error_delete_limit_exceeded_message_singular() {
+        let error = LocalCopyError::delete_limit_exceeded(1);
+        let message = error.to_string();
+        assert!(message.contains("1 entry skipped"));
+    }
+
+    #[test]
+    fn local_copy_error_delete_limit_exceeded_message_plural() {
+        let error = LocalCopyError::delete_limit_exceeded(5);
+        let message = error.to_string();
+        assert!(message.contains("5 entries skipped"));
+    }
+
+    #[test]
+    fn local_copy_error_io() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let error = LocalCopyError::io("read", PathBuf::from("/test/file.txt"), io_err);
+        assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
+        assert!(matches!(error.kind(), LocalCopyErrorKind::Io { .. }));
+    }
+
+    #[test]
+    fn local_copy_error_io_message() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let error = LocalCopyError::io("read", PathBuf::from("/test/file.txt"), io_err);
+        let message = error.to_string();
+        assert!(message.contains("read"));
+        assert!(message.contains("/test/file.txt"));
+    }
+
+    #[test]
+    fn local_copy_error_timeout() {
+        let error = LocalCopyError::timeout(Duration::from_secs(30));
+        assert_eq!(error.exit_code(), TIMEOUT_EXIT_CODE);
+        assert!(matches!(error.kind(), LocalCopyErrorKind::Timeout { .. }));
+    }
+
+    #[test]
+    fn local_copy_error_timeout_message() {
+        let error = LocalCopyError::timeout(Duration::from_secs(30));
+        let message = error.to_string();
+        assert!(message.contains("timed out"));
+        assert!(message.contains("30"));
+    }
+
+    #[test]
+    fn local_copy_error_stop_at_reached() {
+        let target = SystemTime::now();
+        let error = LocalCopyError::stop_at_reached(target);
+        assert_eq!(error.exit_code(), TIMEOUT_EXIT_CODE);
+        assert!(matches!(
+            error.kind(),
+            LocalCopyErrorKind::StopAtReached { .. }
+        ));
+    }
+
+    #[test]
+    fn local_copy_error_into_kind() {
+        let error = LocalCopyError::missing_operands();
+        let kind = error.into_kind();
+        assert!(matches!(kind, LocalCopyErrorKind::MissingSourceOperands));
+    }
+
+    #[test]
+    fn local_copy_error_kind_as_io() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let error = LocalCopyError::io("read", PathBuf::from("/test/file.txt"), io_err);
+        let (action, path, _source) = error.kind().as_io().expect("should be Io variant");
+        assert_eq!(action, "read");
+        assert_eq!(path, Path::new("/test/file.txt"));
+    }
+
+    #[test]
+    fn local_copy_error_kind_as_io_returns_none_for_other_variants() {
+        let error = LocalCopyError::missing_operands();
+        assert!(error.kind().as_io().is_none());
+    }
+
+    #[test]
+    fn local_copy_argument_error_empty_source_message() {
+        let error = LocalCopyArgumentError::EmptySourceOperand;
+        assert!(error.message().contains("source operands"));
+    }
+
+    #[test]
+    fn local_copy_argument_error_empty_destination_message() {
+        let error = LocalCopyArgumentError::EmptyDestinationOperand;
+        assert!(error.message().contains("destination operand"));
+    }
+
+    #[test]
+    fn local_copy_argument_error_destination_must_be_directory_message() {
+        let error = LocalCopyArgumentError::DestinationMustBeDirectory;
+        assert!(error.message().contains("existing directory"));
+    }
+
+    #[test]
+    fn local_copy_argument_error_remote_operand_message() {
+        let error = LocalCopyArgumentError::RemoteOperandUnsupported;
+        assert!(error.message().contains("remote operands"));
+        assert!(error.message().contains("OC_RSYNC_FALLBACK"));
+    }
+
+    #[test]
+    fn local_copy_argument_error_all_variants_have_messages() {
+        // Test that all variants have non-empty messages
+        let variants = [
+            LocalCopyArgumentError::EmptySourceOperand,
+            LocalCopyArgumentError::EmptyDestinationOperand,
+            LocalCopyArgumentError::DestinationMustBeDirectory,
+            LocalCopyArgumentError::DirectoryNameUnavailable,
+            LocalCopyArgumentError::FileNameUnavailable,
+            LocalCopyArgumentError::LinkNameUnavailable,
+            LocalCopyArgumentError::UnsupportedFileType,
+            LocalCopyArgumentError::ReplaceDirectoryWithSymlink,
+            LocalCopyArgumentError::ReplaceDirectoryWithFile,
+            LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
+            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+            LocalCopyArgumentError::RemoteOperandUnsupported,
+        ];
+
+        for variant in variants {
+            assert!(!variant.message().is_empty());
+        }
+    }
+}

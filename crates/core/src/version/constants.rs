@@ -73,3 +73,143 @@ pub const HIGHEST_PROTOCOL_VERSION: u8 = workspace::protocol_version_u8();
 pub fn build_revision() -> &'static str {
     branding_build_revision()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for program name constants
+    #[test]
+    fn program_name_is_not_empty() {
+        assert!(!PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn daemon_program_name_is_not_empty() {
+        assert!(!DAEMON_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn oc_program_name_equals_program_name() {
+        assert_eq!(OC_PROGRAM_NAME, PROGRAM_NAME);
+    }
+
+    #[test]
+    fn oc_daemon_program_name_equals_daemon_program_name() {
+        assert_eq!(OC_DAEMON_PROGRAM_NAME, DAEMON_PROGRAM_NAME);
+    }
+
+    #[test]
+    fn legacy_program_name_is_not_empty() {
+        assert!(!LEGACY_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_program_name_is_not_empty() {
+        assert!(!LEGACY_DAEMON_PROGRAM_NAME.is_empty());
+    }
+
+    // Tests for copyright constants
+    #[test]
+    fn copyright_start_year_is_valid() {
+        let year: u32 = COPYRIGHT_START_YEAR.parse().expect("valid year");
+        assert!(year >= 2020 && year <= 2100);
+    }
+
+    #[test]
+    fn latest_copyright_year_is_valid() {
+        let year: u32 = LATEST_COPYRIGHT_YEAR.parse().expect("valid year");
+        assert!(year >= 2020 && year <= 2100);
+    }
+
+    #[test]
+    fn latest_copyright_year_is_not_before_start() {
+        let start: u32 = COPYRIGHT_START_YEAR.parse().unwrap();
+        let latest: u32 = LATEST_COPYRIGHT_YEAR.parse().unwrap();
+        assert!(latest >= start);
+    }
+
+    #[test]
+    fn copyright_notice_is_not_empty() {
+        assert!(!COPYRIGHT_NOTICE.is_empty());
+    }
+
+    #[test]
+    fn copyright_notice_contains_year() {
+        assert!(COPYRIGHT_NOTICE.contains(LATEST_COPYRIGHT_YEAR));
+    }
+
+    // Tests for source URL
+    #[test]
+    fn source_url_is_not_empty() {
+        assert!(!SOURCE_URL.is_empty());
+    }
+
+    #[test]
+    fn source_url_is_valid_url() {
+        assert!(SOURCE_URL.starts_with("http://") || SOURCE_URL.starts_with("https://"));
+    }
+
+    // Tests for build toolchain
+    #[test]
+    fn build_toolchain_is_not_empty() {
+        assert!(!BUILD_TOOLCHAIN.is_empty());
+    }
+
+    // Tests for version constants
+    #[test]
+    fn upstream_base_version_is_not_empty() {
+        assert!(!UPSTREAM_BASE_VERSION.is_empty());
+    }
+
+    #[test]
+    fn upstream_base_version_contains_dot() {
+        assert!(UPSTREAM_BASE_VERSION.contains('.'));
+    }
+
+    #[test]
+    fn rust_version_is_not_empty() {
+        assert!(!RUST_VERSION.is_empty());
+    }
+
+    #[test]
+    fn rust_version_contains_rust_suffix() {
+        assert!(RUST_VERSION.contains("rust"));
+    }
+
+    #[test]
+    fn rust_version_starts_with_upstream_version() {
+        assert!(RUST_VERSION.starts_with(UPSTREAM_BASE_VERSION));
+    }
+
+    // Tests for protocol version
+    #[test]
+    fn highest_protocol_version_in_valid_range() {
+        assert!(HIGHEST_PROTOCOL_VERSION >= 28);
+        assert!(HIGHEST_PROTOCOL_VERSION <= 40);
+    }
+
+    #[test]
+    fn highest_protocol_version_matches_newest() {
+        assert_eq!(HIGHEST_PROTOCOL_VERSION, ProtocolVersion::NEWEST.as_u8());
+    }
+
+    // Tests for build_revision function
+    #[test]
+    fn build_revision_returns_non_empty_string() {
+        let revision = build_revision();
+        assert!(!revision.is_empty());
+    }
+
+    #[test]
+    fn build_revision_has_no_leading_whitespace() {
+        let revision = build_revision();
+        assert_eq!(revision, revision.trim_start());
+    }
+
+    #[test]
+    fn build_revision_has_no_trailing_whitespace() {
+        let revision = build_revision();
+        assert_eq!(revision, revision.trim_end());
+    }
+}

@@ -135,3 +135,138 @@ impl LocalCopyOptions {
         self.delete_excluded
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_enables_deletion() {
+        let opts = LocalCopyOptions::new().delete(true);
+        assert!(opts.delete_extraneous());
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::During));
+    }
+
+    #[test]
+    fn delete_false_disables_deletion() {
+        let opts = LocalCopyOptions::new().delete(false);
+        assert!(!opts.delete_extraneous());
+    }
+
+    #[test]
+    fn delete_after_enables_with_after_timing() {
+        let opts = LocalCopyOptions::new().delete_after(true);
+        assert!(opts.delete_extraneous());
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::After));
+        assert!(opts.delete_after_enabled());
+    }
+
+    #[test]
+    fn delete_after_false_disables_if_timing_is_after() {
+        let opts = LocalCopyOptions::new().delete_after(true).delete_after(false);
+        assert!(!opts.delete_extraneous());
+        assert!(opts.delete_timing().is_none());
+    }
+
+    #[test]
+    fn delete_before_enables_with_before_timing() {
+        let opts = LocalCopyOptions::new().delete_before(true);
+        assert!(opts.delete_extraneous());
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::Before));
+        assert!(opts.delete_before_enabled());
+    }
+
+    #[test]
+    fn delete_before_false_disables_if_timing_is_before() {
+        let opts = LocalCopyOptions::new().delete_before(true).delete_before(false);
+        assert!(!opts.delete_extraneous());
+    }
+
+    #[test]
+    fn delete_delay_enables_with_delay_timing() {
+        let opts = LocalCopyOptions::new().delete_delay(true);
+        assert!(opts.delete_extraneous());
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::Delay));
+        assert!(opts.delete_delay_enabled());
+    }
+
+    #[test]
+    fn delete_delay_false_disables_if_timing_is_delay() {
+        let opts = LocalCopyOptions::new().delete_delay(true).delete_delay(false);
+        assert!(!opts.delete_extraneous());
+    }
+
+    #[test]
+    fn delete_during_enables_with_during_timing() {
+        let opts = LocalCopyOptions::new().delete_during();
+        assert!(opts.delete_extraneous());
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::During));
+        assert!(opts.delete_during_enabled());
+    }
+
+    #[test]
+    fn delete_during_changes_timing_if_already_enabled() {
+        let opts = LocalCopyOptions::new().delete_after(true).delete_during();
+        assert!(opts.delete_extraneous());
+        assert_eq!(opts.delete_timing(), Some(DeleteTiming::During));
+    }
+
+    #[test]
+    fn delete_excluded_enables_exclusion_deletion() {
+        let opts = LocalCopyOptions::new().delete_excluded(true);
+        assert!(opts.delete_excluded_enabled());
+    }
+
+    #[test]
+    fn delete_excluded_false_disables() {
+        let opts = LocalCopyOptions::new().delete_excluded(true).delete_excluded(false);
+        assert!(!opts.delete_excluded_enabled());
+    }
+
+    #[test]
+    fn max_deletions_sets_limit() {
+        let opts = LocalCopyOptions::new().max_deletions(Some(100));
+        assert_eq!(opts.max_deletion_limit(), Some(100));
+    }
+
+    #[test]
+    fn max_deletions_none_clears_limit() {
+        let opts = LocalCopyOptions::new().max_deletions(Some(100)).max_deletions(None);
+        assert!(opts.max_deletion_limit().is_none());
+    }
+
+    #[test]
+    fn delete_timing_returns_none_when_delete_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(opts.delete_timing().is_none());
+    }
+
+    #[test]
+    fn delete_before_enabled_returns_false_when_delete_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.delete_before_enabled());
+    }
+
+    #[test]
+    fn delete_after_enabled_returns_false_when_delete_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.delete_after_enabled());
+    }
+
+    #[test]
+    fn delete_delay_enabled_returns_false_when_delete_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.delete_delay_enabled());
+    }
+
+    #[test]
+    fn delete_during_enabled_returns_false_when_delete_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.delete_during_enabled());
+    }
+
+    #[test]
+    fn delete_timing_default_is_during() {
+        assert_eq!(DeleteTiming::default(), DeleteTiming::During);
+    }
+}

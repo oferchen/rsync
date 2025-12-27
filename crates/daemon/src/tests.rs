@@ -120,6 +120,8 @@ include!("tests/chunks/first_existing_config_path_prefers_primary_candidate.rs")
 include!("tests/chunks/first_existing_config_path_returns_none_when_absent.rs");
 include!("tests/chunks/format_bandwidth_rate_prefers_largest_whole_unit.rs");
 include!("tests/chunks/help_flag_renders_static_help_snapshot.rs");
+include!("tests/chunks/legacy_daemon_greeting_has_single_newline.rs");
+include!("tests/chunks/legacy_daemon_greeting_includes_version_and_digests.rs");
 include!("tests/chunks/log_module_bandwidth_change_ignores_unchanged.rs");
 include!("tests/chunks/log_module_bandwidth_change_logs_disable.rs");
 include!("tests/chunks/log_module_bandwidth_change_logs_updates.rs");
@@ -160,7 +162,12 @@ include!("tests/chunks/parse_max_connections_directive_handles_zero_and_positive
 include!("tests/chunks/parse_numeric_identifier_rejects_blank_or_invalid_input.rs");
 include!("tests/chunks/parse_refuse_option_list_normalises_and_deduplicates.rs");
 include!("tests/chunks/parse_timeout_seconds_supports_zero_and_non_zero_values.rs");
+include!("tests/chunks/read_trimmed_line_handles_consecutive_lines.rs");
+include!("tests/chunks/read_trimmed_line_handles_line_without_terminator.rs");
+include!("tests/chunks/read_trimmed_line_returns_none_on_empty_input.rs");
 include!("tests/chunks/read_trimmed_line_strips_crlf_terminators.rs");
+include!("tests/chunks/read_trimmed_line_strips_lf_only.rs");
+include!("tests/chunks/read_trimmed_line_strips_multiple_cr_lf.rs");
 include!("tests/chunks/run_daemon_accepts_valid_credentials.rs");
 include!("tests/chunks/run_daemon_denies_module_when_host_not_allowed.rs");
 include!("tests/chunks/run_daemon_enforces_bwlimit_during_module_list.rs");

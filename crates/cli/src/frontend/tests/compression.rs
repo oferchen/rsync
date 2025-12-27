@@ -77,6 +77,7 @@ fn compress_level_out_of_range_reports_error() {
 
 #[test]
 fn skip_compress_invalid_reports_error() {
+    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--skip-compress=mp[]"),
@@ -144,6 +145,7 @@ fn compress_flag_is_accepted_for_local_copies() {
 fn compress_level_flag_is_accepted_for_local_copies() {
     use tempfile::tempdir;
 
+    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("compress.txt");
     let destination = tmp.path().join("compress.out");

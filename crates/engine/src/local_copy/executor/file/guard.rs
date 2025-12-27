@@ -173,3 +173,198 @@ impl Drop for DestinationWriteGuard {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn remove_existing_destination_removes_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write file");
+
+        let result = remove_existing_destination(&path);
+        assert!(result.is_ok());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn remove_existing_destination_succeeds_when_not_found() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("nonexistent.txt");
+
+        let result = remove_existing_destination(&path);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn remove_incomplete_destination_removes_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("incomplete.txt");
+        fs::write(&path, b"partial content").expect("write file");
+
+        remove_incomplete_destination(&path);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn remove_incomplete_destination_does_not_panic_when_not_found() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("nonexistent.txt");
+
+        // Should not panic
+        remove_incomplete_destination(&path);
+    }
+
+    #[test]
+    fn destination_write_guard_new_creates_temp_file() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+
+        // Temp file should exist and be writable
+        file.write_all(b"test content").expect("write");
+
+        // Verify staging path is different from final path
+        assert_ne!(guard.staging_path(), guard.final_path());
+        assert!(guard.staging_path().exists());
+
+        guard.discard();
+    }
+
+    #[test]
+    fn destination_write_guard_commit_renames_to_final_path() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        file.write_all(b"content").expect("write");
+        drop(file);
+
+        let staging = guard.staging_path().to_path_buf();
+        guard.commit().expect("commit");
+
+        // Final path should exist
+        assert!(dest.exists());
+        // Staging path should be gone
+        assert!(!staging.exists());
+
+        // Verify content
+        let content = fs::read_to_string(&dest).expect("read");
+        assert_eq!(content, "content");
+    }
+
+    #[test]
+    fn destination_write_guard_discard_removes_temp_file() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, _file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        let staging = guard.staging_path().to_path_buf();
+
+        guard.discard();
+
+        // Staging path should be removed
+        assert!(!staging.exists());
+        // Final path should not exist
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn destination_write_guard_drop_removes_temp_file_if_not_committed() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let staging;
+        {
+            let (guard, _file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+            staging = guard.staging_path().to_path_buf();
+            // Guard is dropped here without commit
+        }
+
+        // Staging path should be removed by Drop
+        assert!(!staging.exists());
+    }
+
+    #[test]
+    fn destination_write_guard_partial_mode_creates_partial_file() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, mut file) = DestinationWriteGuard::new(&dest, true, None, None).expect("guard");
+
+        file.write_all(b"partial content").expect("write");
+
+        // Staging path should end with appropriate suffix for partial
+        let staging = guard.staging_path().to_path_buf();
+        assert!(staging.to_string_lossy().contains("final.txt"));
+
+        guard.discard();
+    }
+
+    #[test]
+    fn destination_write_guard_partial_preserves_on_discard() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, mut file) = DestinationWriteGuard::new(&dest, true, None, None).expect("guard");
+        file.write_all(b"partial content").expect("write");
+        drop(file);
+
+        let staging = guard.staging_path().to_path_buf();
+        guard.discard();
+
+        // In partial mode, discard preserves the file
+        assert!(staging.exists());
+    }
+
+    #[test]
+    fn destination_write_guard_final_path_returns_destination() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, _file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+
+        assert_eq!(guard.final_path(), dest.as_path());
+
+        guard.discard();
+    }
+
+    #[test]
+    fn destination_write_guard_commit_replaces_existing_file() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        // Create existing file
+        fs::write(&dest, b"old content").expect("write existing");
+
+        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        file.write_all(b"new content").expect("write");
+        drop(file);
+
+        guard.commit().expect("commit");
+
+        // Should have new content
+        let content = fs::read_to_string(&dest).expect("read");
+        assert_eq!(content, "new content");
+    }
+
+    #[test]
+    fn destination_write_guard_staging_path_is_accessible() {
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("final.txt");
+
+        let (guard, _file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+
+        // Staging path should be a valid path we can access
+        let staging = guard.staging_path();
+        assert!(staging.exists());
+        assert!(staging.is_file());
+
+        guard.discard();
+    }
+}

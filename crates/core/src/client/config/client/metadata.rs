@@ -182,3 +182,159 @@ impl ClientConfig {
         self.preserve_specials
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for preserve_owner
+    #[test]
+    fn preserve_owner_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_owner());
+    }
+
+    // Tests for owner_override
+    #[test]
+    fn owner_override_default_is_none() {
+        let config = default_config();
+        assert!(config.owner_override().is_none());
+    }
+
+    // Tests for preserve_group
+    #[test]
+    fn preserve_group_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_group());
+    }
+
+    // Tests for group_override
+    #[test]
+    fn group_override_default_is_none() {
+        let config = default_config();
+        assert!(config.group_override().is_none());
+    }
+
+    // Tests for copy_as
+    #[test]
+    fn copy_as_default_is_none() {
+        let config = default_config();
+        assert!(config.copy_as().is_none());
+    }
+
+    // Tests for preserve_executability
+    #[test]
+    fn preserve_executability_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_executability());
+    }
+
+    // Tests for chmod
+    #[test]
+    fn chmod_default_is_none() {
+        let config = default_config();
+        assert!(config.chmod().is_none());
+    }
+
+    // Tests for user_mapping
+    #[test]
+    fn user_mapping_default_is_none() {
+        let config = default_config();
+        assert!(config.user_mapping().is_none());
+    }
+
+    // Tests for group_mapping
+    #[test]
+    fn group_mapping_default_is_none() {
+        let config = default_config();
+        assert!(config.group_mapping().is_none());
+    }
+
+    // Tests for preserve_permissions
+    #[test]
+    fn preserve_permissions_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_permissions());
+    }
+
+    // Tests for fake_super
+    #[test]
+    fn fake_super_default_is_false() {
+        let config = default_config();
+        assert!(!config.fake_super());
+    }
+
+    // Tests for preserve_times
+    #[test]
+    fn preserve_times_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_times());
+    }
+
+    // Tests for preserve_atimes
+    #[test]
+    fn preserve_atimes_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_atimes());
+    }
+
+    // Tests for preserve_crtimes
+    #[test]
+    fn preserve_crtimes_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_crtimes());
+    }
+
+    // Tests for omit_dir_times
+    #[test]
+    fn omit_dir_times_default_is_false() {
+        let config = default_config();
+        assert!(!config.omit_dir_times());
+    }
+
+    // Tests for omit_link_times
+    #[test]
+    fn omit_link_times_default_is_false() {
+        let config = default_config();
+        assert!(!config.omit_link_times());
+    }
+
+    // Tests for preserve_hard_links
+    #[test]
+    fn preserve_hard_links_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_hard_links());
+    }
+
+    // Tests for numeric_ids
+    #[test]
+    fn numeric_ids_default_is_false() {
+        let config = default_config();
+        assert!(!config.numeric_ids());
+    }
+
+    // Tests for preallocate
+    #[test]
+    fn preallocate_default_is_false() {
+        let config = default_config();
+        assert!(!config.preallocate());
+    }
+
+    // Tests for preserve_devices
+    #[test]
+    fn preserve_devices_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_devices());
+    }
+
+    // Tests for preserve_specials
+    #[test]
+    fn preserve_specials_default_is_false() {
+        let config = default_config();
+        assert!(!config.preserve_specials());
+    }
+}

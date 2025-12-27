@@ -73,3 +73,94 @@ impl StderrMode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_mode_eq() {
+        assert_eq!(ProgressMode::PerFile, ProgressMode::PerFile);
+        assert_eq!(ProgressMode::Overall, ProgressMode::Overall);
+        assert_ne!(ProgressMode::PerFile, ProgressMode::Overall);
+    }
+
+    #[test]
+    fn progress_setting_default() {
+        let setting = ProgressSetting::default();
+        assert_eq!(setting, ProgressSetting::Unspecified);
+    }
+
+    #[test]
+    fn progress_setting_resolved_per_file() {
+        assert_eq!(
+            ProgressSetting::PerFile.resolved(),
+            Some(ProgressMode::PerFile)
+        );
+    }
+
+    #[test]
+    fn progress_setting_resolved_overall() {
+        assert_eq!(
+            ProgressSetting::Overall.resolved(),
+            Some(ProgressMode::Overall)
+        );
+    }
+
+    #[test]
+    fn progress_setting_resolved_disabled() {
+        assert_eq!(ProgressSetting::Disabled.resolved(), None);
+    }
+
+    #[test]
+    fn progress_setting_resolved_unspecified() {
+        assert_eq!(ProgressSetting::Unspecified.resolved(), None);
+    }
+
+    #[test]
+    fn stderr_mode_default() {
+        assert_eq!(StderrMode::default(), StderrMode::Errors);
+    }
+
+    #[test]
+    fn stderr_mode_from_str_errors() {
+        assert_eq!(StderrMode::from_str("errors"), Some(StderrMode::Errors));
+        assert_eq!(StderrMode::from_str("e"), Some(StderrMode::Errors));
+        assert_eq!(StderrMode::from_str("ERRORS"), Some(StderrMode::Errors));
+        assert_eq!(StderrMode::from_str("E"), Some(StderrMode::Errors));
+    }
+
+    #[test]
+    fn stderr_mode_from_str_all() {
+        assert_eq!(StderrMode::from_str("all"), Some(StderrMode::All));
+        assert_eq!(StderrMode::from_str("a"), Some(StderrMode::All));
+        assert_eq!(StderrMode::from_str("ALL"), Some(StderrMode::All));
+        assert_eq!(StderrMode::from_str("A"), Some(StderrMode::All));
+    }
+
+    #[test]
+    fn stderr_mode_from_str_client() {
+        assert_eq!(StderrMode::from_str("client"), Some(StderrMode::Client));
+        assert_eq!(StderrMode::from_str("c"), Some(StderrMode::Client));
+        assert_eq!(StderrMode::from_str("CLIENT"), Some(StderrMode::Client));
+        assert_eq!(StderrMode::from_str("C"), Some(StderrMode::Client));
+    }
+
+    #[test]
+    fn stderr_mode_from_str_invalid() {
+        assert!(StderrMode::from_str("invalid").is_none());
+        assert!(StderrMode::from_str("").is_none());
+        assert!(StderrMode::from_str("xyz").is_none());
+    }
+
+    #[test]
+    fn name_output_level_eq() {
+        assert_eq!(NameOutputLevel::Disabled, NameOutputLevel::Disabled);
+        assert_eq!(NameOutputLevel::UpdatedOnly, NameOutputLevel::UpdatedOnly);
+        assert_eq!(
+            NameOutputLevel::UpdatedAndUnchanged,
+            NameOutputLevel::UpdatedAndUnchanged
+        );
+        assert_ne!(NameOutputLevel::Disabled, NameOutputLevel::UpdatedOnly);
+    }
+}

@@ -39,4 +39,5 @@ tokio-util = { version = "0.7", features = ["codec"], optional = true }
 [dev-dependencies]
 proptest = "1.4"
 serde_json = { workspace = true }
+tempfile = "3.10"
 tokio = { version = "1.43", features = ["macros", "rt"] }

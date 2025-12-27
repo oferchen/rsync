@@ -6,6 +6,7 @@ fn dry_run_flag_skips_destination_mutation() {
     use std::fs;
     use tempfile::tempdir;
 
+    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("source.txt");
     fs::write(&source, b"contents").expect("write source");
@@ -29,6 +30,7 @@ fn short_dry_run_flag_skips_destination_mutation() {
     use std::fs;
     use tempfile::tempdir;
 
+    let _lock = ENV_LOCK.lock().expect("env mutex poisoned");
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("source.txt");
     fs::write(&source, b"contents").expect("write source");

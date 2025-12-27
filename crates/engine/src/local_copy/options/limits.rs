@@ -118,3 +118,141 @@ impl LocalCopyOptions {
         self.stop_at
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn min_file_size_sets_limit() {
+        let opts = LocalCopyOptions::new().min_file_size(Some(1024));
+        assert_eq!(opts.min_file_size_limit(), Some(1024));
+    }
+
+    #[test]
+    fn min_file_size_none_clears_limit() {
+        let opts = LocalCopyOptions::new()
+            .min_file_size(Some(1024))
+            .min_file_size(None);
+        assert!(opts.min_file_size_limit().is_none());
+    }
+
+    #[test]
+    fn max_file_size_sets_limit() {
+        let opts = LocalCopyOptions::new().max_file_size(Some(1_000_000));
+        assert_eq!(opts.max_file_size_limit(), Some(1_000_000));
+    }
+
+    #[test]
+    fn max_file_size_none_clears_limit() {
+        let opts = LocalCopyOptions::new()
+            .max_file_size(Some(1_000_000))
+            .max_file_size(None);
+        assert!(opts.max_file_size_limit().is_none());
+    }
+
+    #[test]
+    fn remove_source_files_enables() {
+        let opts = LocalCopyOptions::new().remove_source_files(true);
+        assert!(opts.remove_source_files_enabled());
+    }
+
+    #[test]
+    fn remove_source_files_disables() {
+        let opts = LocalCopyOptions::new()
+            .remove_source_files(true)
+            .remove_source_files(false);
+        assert!(!opts.remove_source_files_enabled());
+    }
+
+    #[test]
+    fn preallocate_enables() {
+        let opts = LocalCopyOptions::new().preallocate(true);
+        assert!(opts.preallocate_enabled());
+    }
+
+    #[test]
+    fn preallocate_disables() {
+        let opts = LocalCopyOptions::new()
+            .preallocate(true)
+            .preallocate(false);
+        assert!(!opts.preallocate_enabled());
+    }
+
+    #[test]
+    fn bandwidth_limit_sets_value() {
+        let limit = NonZeroU64::new(1_000_000).unwrap();
+        let opts = LocalCopyOptions::new().bandwidth_limit(Some(limit));
+        assert_eq!(opts.bandwidth_limit_bytes(), Some(limit));
+    }
+
+    #[test]
+    fn bandwidth_limit_none_clears() {
+        let limit = NonZeroU64::new(1_000_000).unwrap();
+        let opts = LocalCopyOptions::new()
+            .bandwidth_limit(Some(limit))
+            .bandwidth_limit(None);
+        assert!(opts.bandwidth_limit_bytes().is_none());
+    }
+
+    #[test]
+    fn bandwidth_burst_sets_value() {
+        let burst = NonZeroU64::new(8192).unwrap();
+        let opts = LocalCopyOptions::new().bandwidth_burst(Some(burst));
+        assert_eq!(opts.bandwidth_burst_bytes(), Some(burst));
+    }
+
+    #[test]
+    fn bandwidth_burst_none_clears() {
+        let burst = NonZeroU64::new(8192).unwrap();
+        let opts = LocalCopyOptions::new()
+            .bandwidth_burst(Some(burst))
+            .bandwidth_burst(None);
+        assert!(opts.bandwidth_burst_bytes().is_none());
+    }
+
+    #[test]
+    fn with_timeout_sets_value() {
+        let timeout = Duration::from_secs(60);
+        let opts = LocalCopyOptions::new().with_timeout(Some(timeout));
+        assert_eq!(opts.timeout(), Some(timeout));
+    }
+
+    #[test]
+    fn with_timeout_none_clears() {
+        let timeout = Duration::from_secs(60);
+        let opts = LocalCopyOptions::new()
+            .with_timeout(Some(timeout))
+            .with_timeout(None);
+        assert!(opts.timeout().is_none());
+    }
+
+    #[test]
+    fn with_stop_at_sets_value() {
+        let deadline = SystemTime::now();
+        let opts = LocalCopyOptions::new().with_stop_at(Some(deadline));
+        assert!(opts.stop_at().is_some());
+    }
+
+    #[test]
+    fn with_stop_at_none_clears() {
+        let deadline = SystemTime::now();
+        let opts = LocalCopyOptions::new()
+            .with_stop_at(Some(deadline))
+            .with_stop_at(None);
+        assert!(opts.stop_at().is_none());
+    }
+
+    #[test]
+    fn defaults_have_no_limits() {
+        let opts = LocalCopyOptions::new();
+        assert!(opts.min_file_size_limit().is_none());
+        assert!(opts.max_file_size_limit().is_none());
+        assert!(!opts.remove_source_files_enabled());
+        assert!(!opts.preallocate_enabled());
+        assert!(opts.bandwidth_limit_bytes().is_none());
+        assert!(opts.bandwidth_burst_bytes().is_none());
+        assert!(opts.timeout().is_none());
+        assert!(opts.stop_at().is_none());
+    }
+}

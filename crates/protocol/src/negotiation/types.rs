@@ -268,3 +268,288 @@ pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
         None => NegotiationPrologue::NeedMoreData,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for BufferedPrefixTooSmall
+    #[test]
+    fn buffered_prefix_too_small_new() {
+        let err = BufferedPrefixTooSmall::new(100, 50);
+        assert_eq!(err.required(), 100);
+        assert_eq!(err.available(), 50);
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_missing() {
+        let err = BufferedPrefixTooSmall::new(100, 50);
+        assert_eq!(err.missing(), 50);
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_missing_saturates() {
+        // When available exceeds required, missing should be 0
+        let err = BufferedPrefixTooSmall::new(50, 100);
+        assert_eq!(err.missing(), 0);
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_missing_exact() {
+        let err = BufferedPrefixTooSmall::new(100, 100);
+        assert_eq!(err.missing(), 0);
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_display() {
+        let err = BufferedPrefixTooSmall::new(100, 50);
+        let msg = format!("{}", err);
+        assert!(msg.contains("100"));
+        assert!(msg.contains("50"));
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_into_io_error() {
+        let err = BufferedPrefixTooSmall::new(100, 50);
+        let io_err: io::Error = err.into();
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_clone() {
+        let err = BufferedPrefixTooSmall::new(100, 50);
+        assert_eq!(err.clone(), err);
+    }
+
+    #[test]
+    fn buffered_prefix_too_small_copy() {
+        let err = BufferedPrefixTooSmall::new(100, 50);
+        let copy = err;
+        assert_eq!(err, copy);
+    }
+
+    // Tests for ParseNegotiationPrologueError
+    #[test]
+    fn parse_error_empty_kind() {
+        let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Empty);
+        assert_eq!(err.kind(), ParseNegotiationPrologueErrorKind::Empty);
+    }
+
+    #[test]
+    fn parse_error_invalid_kind() {
+        let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Invalid);
+        assert_eq!(err.kind(), ParseNegotiationPrologueErrorKind::Invalid);
+    }
+
+    #[test]
+    fn parse_error_display_empty() {
+        let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Empty);
+        let msg = format!("{}", err);
+        assert!(msg.contains("empty"));
+    }
+
+    #[test]
+    fn parse_error_display_invalid() {
+        let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Invalid);
+        let msg = format!("{}", err);
+        assert!(msg.contains("unrecognized"));
+    }
+
+    #[test]
+    fn parse_error_clone() {
+        let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Empty);
+        assert_eq!(err.clone(), err);
+    }
+
+    // Tests for NegotiationPrologue
+    #[test]
+    fn negotiation_prologue_as_str() {
+        assert_eq!(NegotiationPrologue::NeedMoreData.as_str(), "need-more-data");
+        assert_eq!(NegotiationPrologue::LegacyAscii.as_str(), "legacy-ascii");
+        assert_eq!(NegotiationPrologue::Binary.as_str(), "binary");
+    }
+
+    #[test]
+    fn negotiation_prologue_is_decided() {
+        assert!(!NegotiationPrologue::NeedMoreData.is_decided());
+        assert!(NegotiationPrologue::LegacyAscii.is_decided());
+        assert!(NegotiationPrologue::Binary.is_decided());
+    }
+
+    #[test]
+    fn negotiation_prologue_requires_more_data() {
+        assert!(NegotiationPrologue::NeedMoreData.requires_more_data());
+        assert!(!NegotiationPrologue::LegacyAscii.requires_more_data());
+        assert!(!NegotiationPrologue::Binary.requires_more_data());
+    }
+
+    #[test]
+    fn negotiation_prologue_is_legacy() {
+        assert!(!NegotiationPrologue::NeedMoreData.is_legacy());
+        assert!(NegotiationPrologue::LegacyAscii.is_legacy());
+        assert!(!NegotiationPrologue::Binary.is_legacy());
+    }
+
+    #[test]
+    fn negotiation_prologue_is_binary() {
+        assert!(!NegotiationPrologue::NeedMoreData.is_binary());
+        assert!(!NegotiationPrologue::LegacyAscii.is_binary());
+        assert!(NegotiationPrologue::Binary.is_binary());
+    }
+
+    #[test]
+    fn negotiation_prologue_from_initial_byte_at_sign() {
+        assert_eq!(
+            NegotiationPrologue::from_initial_byte(b'@'),
+            NegotiationPrologue::LegacyAscii
+        );
+    }
+
+    #[test]
+    fn negotiation_prologue_from_initial_byte_other() {
+        assert_eq!(
+            NegotiationPrologue::from_initial_byte(b'\x00'),
+            NegotiationPrologue::Binary
+        );
+        assert_eq!(
+            NegotiationPrologue::from_initial_byte(b'A'),
+            NegotiationPrologue::Binary
+        );
+        assert_eq!(
+            NegotiationPrologue::from_initial_byte(0xFF),
+            NegotiationPrologue::Binary
+        );
+    }
+
+    #[test]
+    fn negotiation_prologue_from_str_valid() {
+        assert_eq!(
+            NegotiationPrologue::from_str("need-more-data").unwrap(),
+            NegotiationPrologue::NeedMoreData
+        );
+        assert_eq!(
+            NegotiationPrologue::from_str("legacy-ascii").unwrap(),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(
+            NegotiationPrologue::from_str("binary").unwrap(),
+            NegotiationPrologue::Binary
+        );
+    }
+
+    #[test]
+    fn negotiation_prologue_from_str_with_whitespace() {
+        assert_eq!(
+            NegotiationPrologue::from_str("  legacy-ascii  ").unwrap(),
+            NegotiationPrologue::LegacyAscii
+        );
+    }
+
+    #[test]
+    fn negotiation_prologue_from_str_empty() {
+        let result = NegotiationPrologue::from_str("");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().kind(),
+            ParseNegotiationPrologueErrorKind::Empty
+        );
+    }
+
+    #[test]
+    fn negotiation_prologue_from_str_whitespace_only() {
+        let result = NegotiationPrologue::from_str("   ");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().kind(),
+            ParseNegotiationPrologueErrorKind::Empty
+        );
+    }
+
+    #[test]
+    fn negotiation_prologue_from_str_invalid() {
+        let result = NegotiationPrologue::from_str("unknown");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().kind(),
+            ParseNegotiationPrologueErrorKind::Invalid
+        );
+    }
+
+    #[test]
+    fn negotiation_prologue_default() {
+        assert_eq!(NegotiationPrologue::default(), NegotiationPrologue::NeedMoreData);
+    }
+
+    #[test]
+    fn negotiation_prologue_display() {
+        assert_eq!(format!("{}", NegotiationPrologue::NeedMoreData), "need-more-data");
+        assert_eq!(format!("{}", NegotiationPrologue::LegacyAscii), "legacy-ascii");
+        assert_eq!(format!("{}", NegotiationPrologue::Binary), "binary");
+    }
+
+    #[test]
+    fn negotiation_prologue_into_str() {
+        let s: &'static str = NegotiationPrologue::Binary.into();
+        assert_eq!(s, "binary");
+    }
+
+    #[test]
+    fn negotiation_prologue_clone() {
+        let p = NegotiationPrologue::Binary;
+        assert_eq!(p.clone(), p);
+    }
+
+    #[test]
+    fn negotiation_prologue_copy() {
+        let p = NegotiationPrologue::Binary;
+        let copy = p;
+        assert_eq!(p, copy);
+    }
+
+    #[test]
+    fn negotiation_prologue_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(NegotiationPrologue::Binary);
+        set.insert(NegotiationPrologue::LegacyAscii);
+        assert!(set.contains(&NegotiationPrologue::Binary));
+        assert!(set.contains(&NegotiationPrologue::LegacyAscii));
+    }
+
+    // Tests for detect_negotiation_prologue
+    #[test]
+    fn detect_negotiation_prologue_empty() {
+        assert_eq!(
+            detect_negotiation_prologue(&[]),
+            NegotiationPrologue::NeedMoreData
+        );
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_at_sign() {
+        assert_eq!(
+            detect_negotiation_prologue(b"@RSYNCD: 31.0"),
+            NegotiationPrologue::LegacyAscii
+        );
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_binary() {
+        assert_eq!(
+            detect_negotiation_prologue(&[0x00, 0x01, 0x02]),
+            NegotiationPrologue::Binary
+        );
+    }
+
+    #[test]
+    fn detect_negotiation_prologue_single_byte() {
+        assert_eq!(
+            detect_negotiation_prologue(&[b'@']),
+            NegotiationPrologue::LegacyAscii
+        );
+        assert_eq!(
+            detect_negotiation_prologue(&[b'A']),
+            NegotiationPrologue::Binary
+        );
+    }
+}

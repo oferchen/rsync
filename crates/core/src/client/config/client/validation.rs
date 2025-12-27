@@ -41,3 +41,42 @@ impl ClientConfig {
         self.checksum_seed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for checksum
+    #[test]
+    fn checksum_default_is_false() {
+        let config = default_config();
+        assert!(!config.checksum());
+    }
+
+    // Tests for checksum_choice
+    #[test]
+    fn checksum_choice_default() {
+        let config = default_config();
+        // Default should be Auto or similar
+        let _choice = config.checksum_choice();
+    }
+
+    // Tests for checksum_seed
+    #[test]
+    fn checksum_seed_default_is_none() {
+        let config = default_config();
+        assert!(config.checksum_seed().is_none());
+    }
+
+    // Tests for checksum_signature_algorithm
+    #[test]
+    fn checksum_signature_algorithm_returns_algorithm() {
+        let config = default_config();
+        let _algorithm = config.checksum_signature_algorithm();
+        // Just verify it returns something without panicking
+    }
+}

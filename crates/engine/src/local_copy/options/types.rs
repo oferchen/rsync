@@ -272,3 +272,80 @@ pub(crate) struct LinkDestEntry {
     pub(super) path: PathBuf,
     pub(super) is_relative: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_timing_default_is_during() {
+        assert_eq!(DeleteTiming::default(), DeleteTiming::During);
+    }
+
+    #[test]
+    fn delete_timing_eq() {
+        assert_eq!(DeleteTiming::Before, DeleteTiming::Before);
+        assert_eq!(DeleteTiming::During, DeleteTiming::During);
+        assert_eq!(DeleteTiming::Delay, DeleteTiming::Delay);
+        assert_eq!(DeleteTiming::After, DeleteTiming::After);
+        assert_ne!(DeleteTiming::Before, DeleteTiming::After);
+    }
+
+    #[test]
+    fn reference_directory_kind_eq() {
+        assert_eq!(ReferenceDirectoryKind::Compare, ReferenceDirectoryKind::Compare);
+        assert_eq!(ReferenceDirectoryKind::Copy, ReferenceDirectoryKind::Copy);
+        assert_eq!(ReferenceDirectoryKind::Link, ReferenceDirectoryKind::Link);
+        assert_ne!(ReferenceDirectoryKind::Compare, ReferenceDirectoryKind::Link);
+    }
+
+    #[test]
+    fn reference_directory_new_creates_entry() {
+        let dir = ReferenceDirectory::new(ReferenceDirectoryKind::Compare, "/tmp/ref");
+        assert_eq!(dir.kind(), ReferenceDirectoryKind::Compare);
+        assert_eq!(dir.path().to_str().unwrap(), "/tmp/ref");
+    }
+
+    #[test]
+    fn reference_directory_new_with_path_buf() {
+        let path = PathBuf::from("/tmp/ref");
+        let dir = ReferenceDirectory::new(ReferenceDirectoryKind::Copy, path);
+        assert_eq!(dir.kind(), ReferenceDirectoryKind::Copy);
+    }
+
+    #[test]
+    fn reference_directory_clone() {
+        let dir = ReferenceDirectory::new(ReferenceDirectoryKind::Link, "/tmp/link");
+        let cloned = dir.clone();
+        assert_eq!(dir, cloned);
+    }
+
+    #[test]
+    fn local_copy_options_new_has_defaults() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.delete);
+        assert_eq!(opts.delete_timing, DeleteTiming::During);
+        assert!(!opts.delete_excluded);
+        assert!(opts.max_deletions.is_none());
+        assert!(!opts.preallocate);
+        assert!(!opts.fsync);
+        assert!(opts.whole_file);
+        assert!(opts.recursive);
+    }
+
+    #[test]
+    fn local_copy_options_default_same_as_new() {
+        let new_opts = LocalCopyOptions::new();
+        let default_opts = LocalCopyOptions::default();
+        assert_eq!(new_opts.delete, default_opts.delete);
+        assert_eq!(new_opts.recursive, default_opts.recursive);
+    }
+
+    #[test]
+    fn local_copy_options_clone() {
+        let opts = LocalCopyOptions::new();
+        let cloned = opts.clone();
+        assert_eq!(opts.delete, cloned.delete);
+        assert_eq!(opts.recursive, cloned.recursive);
+    }
+}
