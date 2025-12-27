@@ -93,3 +93,69 @@ pub(crate) fn directory_has_marker(
 
     Ok(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dir_merge_rule_new() {
+        let rule = DirMergeRule::new("/filter", DirMergeOptions::default());
+        assert_eq!(rule.pattern(), Path::new("/filter"));
+    }
+
+    #[test]
+    fn dir_merge_rule_pattern() {
+        let rule = DirMergeRule::new(".rsync-filter", DirMergeOptions::default());
+        assert_eq!(rule.pattern(), Path::new(".rsync-filter"));
+    }
+
+    #[test]
+    fn dir_merge_rule_eq() {
+        let a = DirMergeRule::new("filter", DirMergeOptions::default());
+        let b = DirMergeRule::new("filter", DirMergeOptions::default());
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn exclude_if_present_rule_new() {
+        let rule = ExcludeIfPresentRule::new(".nobackup");
+        assert_eq!(rule.pattern, PathBuf::from(".nobackup"));
+        assert_eq!(rule.raw_pattern, ".nobackup");
+    }
+
+    #[test]
+    fn exclude_if_present_marker_path_relative() {
+        let rule = ExcludeIfPresentRule::new(".nobackup");
+        let path = rule.marker_path(Path::new("/home/user/docs"));
+        assert_eq!(path, PathBuf::from("/home/user/docs/.nobackup"));
+    }
+
+    #[test]
+    fn exclude_if_present_marker_path_absolute() {
+        let rule = ExcludeIfPresentRule::new("/etc/nobackup");
+        let path = rule.marker_path(Path::new("/home/user/docs"));
+        assert_eq!(path, PathBuf::from("/etc/nobackup"));
+    }
+
+    #[test]
+    fn exclude_if_present_rule_eq() {
+        let a = ExcludeIfPresentRule::new(".nobackup");
+        let b = ExcludeIfPresentRule::new(".nobackup");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn exclude_if_present_rule_ne() {
+        let a = ExcludeIfPresentRule::new(".nobackup");
+        let b = ExcludeIfPresentRule::new(".skip");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn directory_has_marker_empty_rules() {
+        let rules: Vec<ExcludeIfPresentRule> = vec![];
+        let result = directory_has_marker(&rules, Path::new("/nonexistent")).unwrap();
+        assert!(!result);
+    }
+}

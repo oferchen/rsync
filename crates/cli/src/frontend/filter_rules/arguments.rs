@@ -100,3 +100,133 @@ fn push_rsync_filter_shortcut(target: &mut Vec<OsString>, occurrence: usize) {
         target.push(OsString::from("dir-merge .rsync-filter"));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn os(s: &str) -> OsString {
+        OsString::from(s)
+    }
+
+    #[test]
+    fn locate_filter_arguments_empty() {
+        let args: Vec<OsString> = vec![os("rsync")];
+        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
+        assert!(filter_indices.is_empty());
+        assert!(rsync_filter_indices.is_empty());
+    }
+
+    #[test]
+    fn locate_filter_arguments_finds_filter() {
+        let args = vec![os("rsync"), os("--filter"), os("- *.bak")];
+        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
+        assert_eq!(filter_indices, vec![1]);
+        assert!(rsync_filter_indices.is_empty());
+    }
+
+    #[test]
+    fn locate_filter_arguments_finds_filter_equals() {
+        let args = vec![os("rsync"), os("--filter=- *.bak")];
+        let (filter_indices, _) = locate_filter_arguments(&args);
+        assert_eq!(filter_indices, vec![1]);
+    }
+
+    #[test]
+    fn locate_filter_arguments_finds_short_f() {
+        let args = vec![os("rsync"), os("-avF")];
+        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
+        assert!(filter_indices.is_empty());
+        assert_eq!(rsync_filter_indices, vec![1]);
+    }
+
+    #[test]
+    fn locate_filter_arguments_multiple_f() {
+        let args = vec![os("rsync"), os("-F"), os("-F")];
+        let (_, rsync_filter_indices) = locate_filter_arguments(&args);
+        assert_eq!(rsync_filter_indices, vec![1, 2]);
+    }
+
+    #[test]
+    fn locate_filter_arguments_stops_at_double_dash() {
+        let args = vec![os("rsync"), os("--"), os("--filter"), os("pattern")];
+        let (filter_indices, _) = locate_filter_arguments(&args);
+        assert!(filter_indices.is_empty());
+    }
+
+    #[test]
+    fn locate_filter_arguments_mixed() {
+        let args = vec![
+            os("rsync"),
+            os("-avF"),
+            os("--filter"),
+            os("- *.tmp"),
+            os("-F"),
+        ];
+        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
+        assert_eq!(filter_indices, vec![2]);
+        assert_eq!(rsync_filter_indices, vec![1, 4]);
+    }
+
+    #[test]
+    fn collect_filter_arguments_no_aliases() {
+        let filters = vec![os("- *.bak"), os("+ *.txt")];
+        let filter_indices = vec![1, 2];
+        let rsync_filter_indices: Vec<usize> = vec![];
+        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
+        assert_eq!(result, filters);
+    }
+
+    #[test]
+    fn collect_filter_arguments_first_f_alias() {
+        let filters: Vec<OsString> = vec![];
+        let filter_indices: Vec<usize> = vec![];
+        let rsync_filter_indices = vec![1];
+        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], os("dir-merge /.rsync-filter"));
+        assert_eq!(result[1], os("exclude .rsync-filter"));
+    }
+
+    #[test]
+    fn collect_filter_arguments_second_f_alias() {
+        let filters: Vec<OsString> = vec![];
+        let filter_indices: Vec<usize> = vec![];
+        let rsync_filter_indices = vec![1, 2];
+        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], os("dir-merge /.rsync-filter"));
+        assert_eq!(result[1], os("exclude .rsync-filter"));
+        assert_eq!(result[2], os("dir-merge .rsync-filter"));
+    }
+
+    #[test]
+    fn collect_filter_arguments_interleaved() {
+        let filters = vec![os("- *.bak")];
+        let filter_indices = vec![3];
+        let rsync_filter_indices = vec![1];
+        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
+        // -F at position 1 comes before --filter at position 3
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], os("dir-merge /.rsync-filter"));
+        assert_eq!(result[1], os("exclude .rsync-filter"));
+        assert_eq!(result[2], os("- *.bak"));
+    }
+
+    #[test]
+    fn push_rsync_filter_shortcut_first() {
+        let mut target = Vec::new();
+        push_rsync_filter_shortcut(&mut target, 0);
+        assert_eq!(target.len(), 2);
+        assert_eq!(target[0], os("dir-merge /.rsync-filter"));
+        assert_eq!(target[1], os("exclude .rsync-filter"));
+    }
+
+    #[test]
+    fn push_rsync_filter_shortcut_subsequent() {
+        let mut target = Vec::new();
+        push_rsync_filter_shortcut(&mut target, 1);
+        assert_eq!(target.len(), 1);
+        assert_eq!(target[0], os("dir-merge .rsync-filter"));
+    }
+}
