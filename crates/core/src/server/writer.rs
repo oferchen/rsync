@@ -322,3 +322,184 @@ impl<W: Write> Write for MultiplexWriter<W> {
         self.inner.flush()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_writer_new_plain() {
+        let buf = Vec::new();
+        let writer = ServerWriter::new_plain(buf);
+        assert!(matches!(writer, ServerWriter::Plain(_)));
+    }
+
+    #[test]
+    fn server_writer_activate_multiplex() {
+        let buf = Vec::new();
+        let writer = ServerWriter::new_plain(buf);
+        let result = writer.activate_multiplex();
+        assert!(result.is_ok());
+        let multiplexed = result.unwrap();
+        assert!(matches!(multiplexed, ServerWriter::Multiplex(_)));
+    }
+
+    #[test]
+    fn server_writer_activate_multiplex_twice_fails() {
+        let buf = Vec::new();
+        let writer = ServerWriter::new_plain(buf);
+        let multiplexed = writer.activate_multiplex().unwrap();
+        let result = multiplexed.activate_multiplex();
+        assert!(result.is_err());
+        match result {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::AlreadyExists),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn server_writer_is_multiplexed() {
+        let buf = Vec::new();
+        let plain_writer = ServerWriter::new_plain(buf);
+        assert!(!plain_writer.is_multiplexed());
+
+        let buf2 = Vec::new();
+        let mux_writer = ServerWriter::new_plain(buf2)
+            .activate_multiplex()
+            .unwrap();
+        assert!(mux_writer.is_multiplexed());
+    }
+
+    #[test]
+    fn server_writer_activate_multiplex_in_place() {
+        let buf = Vec::new();
+        let mut writer = ServerWriter::new_plain(buf);
+        assert!(!writer.is_multiplexed());
+
+        let result = writer.activate_multiplex_in_place();
+        assert!(result.is_ok());
+        assert!(writer.is_multiplexed());
+    }
+
+    #[test]
+    fn server_writer_activate_multiplex_in_place_twice_fails() {
+        let buf = Vec::new();
+        let mut writer = ServerWriter::new_plain(buf);
+        writer.activate_multiplex_in_place().unwrap();
+
+        let result = writer.activate_multiplex_in_place();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn server_writer_plain_write() {
+        let mut buf = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut buf);
+            writer.write_all(b"hello").unwrap();
+            writer.flush().unwrap();
+        }
+        assert_eq!(buf, b"hello");
+    }
+
+    #[test]
+    fn server_writer_send_message_plain_mode_fails() {
+        let mut buf = Vec::new();
+        let mut writer = ServerWriter::new_plain(&mut buf);
+        let result = writer.send_message(MessageCode::Data, b"test");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn server_writer_write_raw_plain() {
+        let mut buf = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut buf);
+            writer.write_raw(b"raw data").unwrap();
+        }
+        assert_eq!(buf, b"raw data");
+    }
+
+    #[test]
+    fn server_writer_write_raw_multiplexed() {
+        let mut buf = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut buf)
+                .activate_multiplex()
+                .unwrap();
+            writer.write_raw(b"raw").unwrap();
+        }
+        // Raw data should be written directly, not wrapped in MSG_DATA
+        assert_eq!(buf, b"raw");
+    }
+
+    #[test]
+    fn multiplex_writer_empty_write() {
+        let mut buf = Vec::new();
+        let mut mux = MultiplexWriter::new(&mut buf);
+        let n = mux.write(&[]).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn multiplex_writer_flush_empty_buffer() {
+        let mut buf = Vec::new();
+        {
+            let mut mux = MultiplexWriter::new(&mut buf);
+            mux.flush().unwrap();
+        }
+        // Empty flush should not write anything
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn activate_compression_on_plain_mode_fails() {
+        use std::num::NonZeroU8;
+        let buf = Vec::new();
+        let writer = ServerWriter::new_plain(buf);
+        let level = CompressionLevel::precise(NonZeroU8::new(6).unwrap());
+        let result = writer.activate_compression(CompressionAlgorithm::Zlib, level);
+        assert!(result.is_err());
+        match result {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::InvalidInput),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn activate_compression_on_multiplex_succeeds() {
+        use std::num::NonZeroU8;
+        let buf = Vec::new();
+        let writer = ServerWriter::new_plain(buf)
+            .activate_multiplex()
+            .unwrap();
+        let level = CompressionLevel::precise(NonZeroU8::new(6).unwrap());
+        let result = writer.activate_compression(CompressionAlgorithm::Zlib, level);
+        assert!(result.is_ok());
+        let compressed = result.unwrap();
+        assert!(compressed.is_multiplexed());
+    }
+
+    #[test]
+    fn activate_compression_twice_fails() {
+        use std::num::NonZeroU8;
+        let buf = Vec::new();
+        let level = CompressionLevel::precise(NonZeroU8::new(6).unwrap());
+        let writer = ServerWriter::new_plain(buf)
+            .activate_multiplex()
+            .unwrap()
+            .activate_compression(CompressionAlgorithm::Zlib, level)
+            .unwrap();
+        let level2 = CompressionLevel::precise(NonZeroU8::new(6).unwrap());
+        let result = writer.activate_compression(CompressionAlgorithm::Zlib, level2);
+        assert!(result.is_err());
+        match result {
+            Err(err) => assert_eq!(err.kind(), io::ErrorKind::AlreadyExists),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+}

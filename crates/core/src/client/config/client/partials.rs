@@ -58,3 +58,68 @@ impl ClientConfig {
         self.fsync
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for partial
+    #[test]
+    fn partial_default_is_false() {
+        let config = default_config();
+        assert!(!config.partial());
+    }
+
+    // Tests for delay_updates
+    #[test]
+    fn delay_updates_default_is_false() {
+        let config = default_config();
+        assert!(!config.delay_updates());
+    }
+
+    // Tests for partial_directory
+    #[test]
+    fn partial_directory_default_is_none() {
+        let config = default_config();
+        assert!(config.partial_directory().is_none());
+    }
+
+    // Tests for temp_directory
+    #[test]
+    fn temp_directory_default_is_none() {
+        let config = default_config();
+        assert!(config.temp_directory().is_none());
+    }
+
+    // Tests for inplace
+    #[test]
+    fn inplace_default_is_false() {
+        let config = default_config();
+        assert!(!config.inplace());
+    }
+
+    // Tests for append
+    #[test]
+    fn append_default_is_false() {
+        let config = default_config();
+        assert!(!config.append());
+    }
+
+    // Tests for append_verify
+    #[test]
+    fn append_verify_default_is_false() {
+        let config = default_config();
+        assert!(!config.append_verify());
+    }
+
+    // Tests for fsync
+    #[test]
+    fn fsync_default_is_false() {
+        let config = default_config();
+        assert!(!config.fsync());
+    }
+}

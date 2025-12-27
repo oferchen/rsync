@@ -62,3 +62,68 @@ impl ClientConfig {
         self.munge_links
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> ClientConfig {
+        ClientConfig::default()
+    }
+
+    // Tests for copy_links
+    #[test]
+    fn copy_links_default_is_false() {
+        let config = default_config();
+        assert!(!config.copy_links());
+    }
+
+    // Tests for copy_dirlinks
+    #[test]
+    fn copy_dirlinks_default_is_false() {
+        let config = default_config();
+        assert!(!config.copy_dirlinks());
+    }
+
+    // Tests for copy_devices
+    #[test]
+    fn copy_devices_default_is_false() {
+        let config = default_config();
+        assert!(!config.copy_devices());
+    }
+
+    // Tests for write_devices
+    #[test]
+    fn write_devices_default_is_false() {
+        let config = default_config();
+        assert!(!config.write_devices());
+    }
+
+    // Tests for copy_unsafe_links
+    #[test]
+    fn copy_unsafe_links_default_is_false() {
+        let config = default_config();
+        assert!(!config.copy_unsafe_links());
+    }
+
+    // Tests for keep_dirlinks
+    #[test]
+    fn keep_dirlinks_default_is_false() {
+        let config = default_config();
+        assert!(!config.keep_dirlinks());
+    }
+
+    // Tests for safe_links
+    #[test]
+    fn safe_links_default_is_false() {
+        let config = default_config();
+        assert!(!config.safe_links());
+    }
+
+    // Tests for munge_links
+    #[test]
+    fn munge_links_default_is_false() {
+        let config = default_config();
+        assert!(!config.munge_links());
+    }
+}

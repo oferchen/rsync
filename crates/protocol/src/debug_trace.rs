@@ -237,6 +237,7 @@ fn ascii_dump(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
     fn test_hex_dump() {
@@ -246,9 +247,194 @@ mod tests {
     }
 
     #[test]
+    fn test_hex_dump_empty() {
+        let data: &[u8] = &[];
+        let dump = hex_dump(data);
+        assert_eq!(dump, "");
+    }
+
+    #[test]
+    fn test_hex_dump_longer_than_16_bytes() {
+        let data = b"This is a longer string with more than 16 bytes";
+        let dump = hex_dump(data);
+        // Should contain line break after 16 bytes
+        assert!(dump.contains('\n'));
+    }
+
+    #[test]
     fn test_ascii_dump() {
         let data = b"Hello\x00\x01\x02";
         let dump = ascii_dump(data);
         assert_eq!(dump, "Hello...");
+    }
+
+    #[test]
+    fn test_ascii_dump_empty() {
+        let data: &[u8] = &[];
+        let dump = ascii_dump(data);
+        assert_eq!(dump, "");
+    }
+
+    #[test]
+    fn test_ascii_dump_all_printable() {
+        let data = b"ABC123";
+        let dump = ascii_dump(data);
+        assert_eq!(dump, "ABC123");
+    }
+
+    #[test]
+    fn test_ascii_dump_all_non_printable() {
+        let data = &[0x00, 0x01, 0x02, 0x1F];
+        let dump = ascii_dump(data);
+        assert_eq!(dump, "....");
+    }
+
+    #[test]
+    fn test_ascii_dump_boundary_chars() {
+        // Test boundary characters: 0x1F (non-printable), 0x20 (space), 0x7E (~), 0x7F (non-printable)
+        let data = &[0x1F, 0x20, 0x7E, 0x7F];
+        let dump = ascii_dump(data);
+        assert_eq!(dump, ". ~.");
+    }
+
+    #[test]
+    fn test_ascii_dump_longer_than_16_chars() {
+        let data = b"This is longer than sixteen bytes easily";
+        let dump = ascii_dump(data);
+        // Should contain line break after 16 chars
+        assert!(dump.contains('\n'));
+    }
+
+    #[test]
+    fn trace_config_disabled_defaults() {
+        let config = TraceConfig::disabled();
+        assert!(!config.enabled);
+        assert_eq!(config.trace_dir, "/tmp/rsync-trace");
+        assert_eq!(config.prefix, "trace");
+    }
+
+    #[test]
+    fn trace_config_enabled_with_prefix() {
+        let config = TraceConfig::enabled("server");
+        assert!(config.enabled);
+        assert_eq!(config.prefix, "server");
+        assert_eq!(config.trace_dir, "/tmp/rsync-trace");
+    }
+
+    #[test]
+    fn trace_config_clone() {
+        let config = TraceConfig::enabled("test");
+        let cloned = config.clone();
+        assert_eq!(config.enabled, cloned.enabled);
+        assert_eq!(config.prefix, cloned.prefix);
+        assert_eq!(config.trace_dir, cloned.trace_dir);
+    }
+
+    #[test]
+    fn tracing_reader_disabled_reads_normally() {
+        let data = b"test data";
+        let cursor = Cursor::new(data.to_vec());
+        let mut reader = TracingReader::new(cursor, TraceConfig::disabled());
+
+        let mut buf = [0u8; 9];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 9);
+        assert_eq!(&buf, b"test data");
+    }
+
+    #[test]
+    fn tracing_reader_enabled_reads_normally() {
+        let data = b"test data";
+        let cursor = Cursor::new(data.to_vec());
+        let config = TraceConfig {
+            trace_dir: std::env::temp_dir()
+                .join("rsync-trace-test")
+                .to_string_lossy()
+                .into_owned(),
+            prefix: "test_reader".to_string(),
+            enabled: true,
+        };
+        let mut reader = TracingReader::new(cursor, config);
+
+        let mut buf = [0u8; 9];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 9);
+        assert_eq!(&buf, b"test data");
+    }
+
+    #[test]
+    fn tracing_reader_partial_read() {
+        let data = b"test data with more";
+        let cursor = Cursor::new(data.to_vec());
+        let mut reader = TracingReader::new(cursor, TraceConfig::disabled());
+
+        let mut buf = [0u8; 4];
+        let n = reader.read(&mut buf).unwrap();
+        assert_eq!(n, 4);
+        assert_eq!(&buf, b"test");
+    }
+
+    #[test]
+    fn tracing_writer_disabled_writes_normally() {
+        let mut output = Vec::new();
+        {
+            let mut writer = TracingWriter::new(&mut output, TraceConfig::disabled());
+            writer.write_all(b"test data").unwrap();
+            writer.flush().unwrap();
+        }
+        assert_eq!(output, b"test data");
+    }
+
+    #[test]
+    fn tracing_writer_enabled_writes_normally() {
+        let mut output = Vec::new();
+        let config = TraceConfig {
+            trace_dir: std::env::temp_dir()
+                .join("rsync-trace-test")
+                .to_string_lossy()
+                .into_owned(),
+            prefix: "test_writer".to_string(),
+            enabled: true,
+        };
+        {
+            let mut writer = TracingWriter::new(&mut output, config);
+            writer.write_all(b"test data").unwrap();
+            writer.flush().unwrap();
+        }
+        assert_eq!(output, b"test data");
+    }
+
+    #[test]
+    fn tracing_writer_flush() {
+        let mut output = Vec::new();
+        let mut writer = TracingWriter::new(&mut output, TraceConfig::disabled());
+        writer.write_all(b"data").unwrap();
+        assert!(writer.flush().is_ok());
+    }
+
+    #[test]
+    fn tracing_reader_sequence_increments() {
+        let config = TraceConfig::disabled();
+        let cursor1 = Cursor::new(vec![1, 2, 3]);
+        let cursor2 = Cursor::new(vec![4, 5, 6]);
+
+        let reader1 = TracingReader::new(cursor1, config.clone());
+        let reader2 = TracingReader::new(cursor2, config);
+
+        // Sequences should be different (incremented)
+        assert_ne!(reader1.sequence, reader2.sequence);
+    }
+
+    #[test]
+    fn tracing_writer_sequence_increments() {
+        let config = TraceConfig::disabled();
+        let mut output1 = Vec::new();
+        let mut output2 = Vec::new();
+
+        let writer1 = TracingWriter::new(&mut output1, config.clone());
+        let writer2 = TracingWriter::new(&mut output2, config);
+
+        // Sequences should be different (incremented)
+        assert_ne!(writer1.sequence, writer2.sequence);
     }
 }

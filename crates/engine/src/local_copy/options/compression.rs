@@ -117,3 +117,146 @@ impl LocalCopyOptions {
         self.skip_compress.matches_path(path)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compress_enables_compression() {
+        let opts = LocalCopyOptions::new().compress(true);
+        assert!(opts.compress_enabled());
+    }
+
+    #[test]
+    fn compress_false_disables_compression() {
+        let opts = LocalCopyOptions::new().compress(true).compress(false);
+        assert!(!opts.compress_enabled());
+    }
+
+    #[test]
+    fn compress_false_clears_level_override() {
+        let opts = LocalCopyOptions::new()
+            .compress(true)
+            .with_compression_level(CompressionLevel::Best)
+            .compress(false);
+        assert!(opts.compression_level_override().is_none());
+    }
+
+    #[test]
+    fn with_compression_level_sets_override() {
+        let opts = LocalCopyOptions::new().with_compression_level(CompressionLevel::Fast);
+        assert_eq!(opts.compression_level_override(), Some(CompressionLevel::Fast));
+    }
+
+    #[test]
+    fn with_compression_level_override_sets_level() {
+        let opts = LocalCopyOptions::new()
+            .with_compression_level_override(Some(CompressionLevel::Best));
+        assert_eq!(opts.compression_level_override(), Some(CompressionLevel::Best));
+    }
+
+    #[test]
+    fn with_compression_level_override_none_clears_level() {
+        let opts = LocalCopyOptions::new()
+            .with_compression_level(CompressionLevel::Fast)
+            .with_compression_level_override(None);
+        assert!(opts.compression_level_override().is_none());
+    }
+
+    #[test]
+    fn with_compression_algorithm_sets_algorithm() {
+        let opts = LocalCopyOptions::new()
+            .with_compression_algorithm(CompressionAlgorithm::Zstd);
+        assert_eq!(opts.compression_algorithm(), CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    fn with_default_compression_level_sets_level() {
+        let opts = LocalCopyOptions::new()
+            .with_default_compression_level(CompressionLevel::Best);
+        assert_eq!(opts.compression_level(), CompressionLevel::Best);
+    }
+
+    #[test]
+    fn compression_level_returns_override_when_set() {
+        let opts = LocalCopyOptions::new()
+            .with_default_compression_level(CompressionLevel::Default)
+            .with_compression_level(CompressionLevel::Best);
+        assert_eq!(opts.compression_level(), CompressionLevel::Best);
+    }
+
+    #[test]
+    fn compression_level_returns_default_when_no_override() {
+        let opts = LocalCopyOptions::new()
+            .with_default_compression_level(CompressionLevel::Fast);
+        assert_eq!(opts.compression_level(), CompressionLevel::Fast);
+    }
+
+    #[test]
+    fn effective_compression_level_returns_some_when_enabled() {
+        let opts = LocalCopyOptions::new()
+            .compress(true)
+            .with_compression_level(CompressionLevel::Best);
+        assert_eq!(
+            opts.effective_compression_level(),
+            Some(CompressionLevel::Best)
+        );
+    }
+
+    #[test]
+    fn effective_compression_level_returns_none_when_disabled() {
+        let opts = LocalCopyOptions::new()
+            .compress(false)
+            .with_compression_level(CompressionLevel::Best);
+        assert!(opts.effective_compression_level().is_none());
+    }
+
+    #[test]
+    fn effective_compression_algorithm_returns_some_when_enabled() {
+        let opts = LocalCopyOptions::new()
+            .compress(true)
+            .with_compression_algorithm(CompressionAlgorithm::Zstd);
+        assert_eq!(
+            opts.effective_compression_algorithm(),
+            Some(CompressionAlgorithm::Zstd)
+        );
+    }
+
+    #[test]
+    fn effective_compression_algorithm_returns_none_when_disabled() {
+        let opts = LocalCopyOptions::new()
+            .compress(false)
+            .with_compression_algorithm(CompressionAlgorithm::Zstd);
+        assert!(opts.effective_compression_algorithm().is_none());
+    }
+
+    #[test]
+    fn with_skip_compress_sets_list() {
+        let list = SkipCompressList::parse("gz/zip").unwrap();
+        let opts = LocalCopyOptions::new().with_skip_compress(list);
+        assert!(opts.should_skip_compress(Path::new("file.gz")));
+    }
+
+    #[test]
+    fn should_skip_compress_returns_false_for_non_matching() {
+        let list = SkipCompressList::parse("gz").unwrap();
+        let opts = LocalCopyOptions::new().with_skip_compress(list);
+        assert!(!opts.should_skip_compress(Path::new("file.txt")));
+    }
+
+    #[test]
+    fn compress_default_is_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.compress_enabled());
+    }
+
+    #[test]
+    fn compression_algorithm_default() {
+        let opts = LocalCopyOptions::new();
+        assert_eq!(
+            opts.compression_algorithm(),
+            CompressionAlgorithm::default_algorithm()
+        );
+    }
+}

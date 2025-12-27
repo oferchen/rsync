@@ -50,3 +50,66 @@ impl RecognizedVersions {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_empty_set() {
+        let set = RecognizedVersions::new();
+        assert!(set.into_vec().is_empty());
+    }
+
+    #[test]
+    fn insert_single_value() {
+        let mut set = RecognizedVersions::new();
+        set.insert(30);
+        assert_eq!(set.into_vec(), vec![30]);
+    }
+
+    #[test]
+    fn insert_maintains_sorted_order() {
+        let mut set = RecognizedVersions::new();
+        set.insert(31);
+        set.insert(29);
+        set.insert(30);
+        assert_eq!(set.into_vec(), vec![29, 30, 31]);
+    }
+
+    #[test]
+    fn insert_ignores_duplicates() {
+        let mut set = RecognizedVersions::new();
+        set.insert(30);
+        set.insert(30);
+        set.insert(30);
+        assert_eq!(set.into_vec(), vec![30]);
+    }
+
+    #[test]
+    fn insert_multiple_unique() {
+        let mut set = RecognizedVersions::new();
+        set.insert(28);
+        set.insert(29);
+        set.insert(30);
+        set.insert(31);
+        assert_eq!(set.into_vec(), vec![28, 29, 30, 31]);
+    }
+
+    #[test]
+    fn into_vec_creates_owned_vector() {
+        let mut set = RecognizedVersions::new();
+        set.insert(30);
+        let vec = set.into_vec();
+        assert_eq!(vec.len(), 1);
+        assert_eq!(vec[0], 30);
+    }
+
+    #[test]
+    fn clone_creates_independent_copy() {
+        let mut set = RecognizedVersions::new();
+        set.insert(30);
+        let cloned = set.clone();
+        assert_eq!(cloned.into_vec(), vec![30]);
+    }
+}

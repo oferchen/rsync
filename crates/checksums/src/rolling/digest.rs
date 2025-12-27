@@ -276,3 +276,313 @@ impl Default for RollingDigest {
         Self::ZERO
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn rolling_digest_zero_constant() {
+        let zero = RollingDigest::ZERO;
+        assert_eq!(zero.sum1(), 0);
+        assert_eq!(zero.sum2(), 0);
+        assert_eq!(zero.len(), 0);
+        assert!(zero.is_empty());
+    }
+
+    #[test]
+    fn rolling_digest_new_stores_components() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        assert_eq!(digest.sum1(), 0x1234);
+        assert_eq!(digest.sum2(), 0x5678);
+        assert_eq!(digest.len(), 100);
+    }
+
+    #[test]
+    fn rolling_digest_from_bytes_computes_checksum() {
+        let data = b"hello world";
+        let digest = RollingDigest::from_bytes(data);
+        assert_eq!(digest.len(), data.len());
+        assert!(!digest.is_empty());
+        // Verify it matches manual computation
+        let mut checksum = RollingChecksum::new();
+        checksum.update(data);
+        assert_eq!(digest, checksum.digest());
+    }
+
+    #[test]
+    fn rolling_digest_from_bytes_empty() {
+        let digest = RollingDigest::from_bytes(b"");
+        assert_eq!(digest.len(), 0);
+        assert!(digest.is_empty());
+        assert_eq!(digest, RollingDigest::ZERO);
+    }
+
+    #[test]
+    fn rolling_digest_from_reader_with_buffer() {
+        let data = b"streamed input data";
+        let mut reader = Cursor::new(data.to_vec());
+        let mut buffer = [0u8; 8];
+        let digest = RollingDigest::from_reader_with_buffer(&mut reader, &mut buffer).unwrap();
+        assert_eq!(digest.len(), data.len());
+        assert_eq!(digest, RollingDigest::from_bytes(data));
+    }
+
+    #[test]
+    fn rolling_digest_from_reader_with_buffer_empty_buffer_fails() {
+        let mut reader = Cursor::new(b"data".to_vec());
+        let mut buffer: [u8; 0] = [];
+        let result = RollingDigest::from_reader_with_buffer(&mut reader, &mut buffer);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rolling_digest_from_reader() {
+        let data = b"test data for reader";
+        let mut reader = Cursor::new(data.to_vec());
+        let digest = RollingDigest::from_reader(&mut reader).unwrap();
+        assert_eq!(digest.len(), data.len());
+        assert_eq!(digest, RollingDigest::from_bytes(data));
+    }
+
+    #[test]
+    fn rolling_digest_from_reader_empty() {
+        let mut reader = Cursor::new(Vec::<u8>::new());
+        let digest = RollingDigest::from_reader(&mut reader).unwrap();
+        assert!(digest.is_empty());
+    }
+
+    #[test]
+    fn rolling_digest_from_value_unpacks_correctly() {
+        // Pack s2 in high 16 bits, s1 in low 16 bits
+        let s1: u16 = 0x1234;
+        let s2: u16 = 0x5678;
+        let packed: u32 = ((s2 as u32) << 16) | (s1 as u32);
+        let digest = RollingDigest::from_value(packed, 42);
+        assert_eq!(digest.sum1(), s1);
+        assert_eq!(digest.sum2(), s2);
+        assert_eq!(digest.len(), 42);
+    }
+
+    #[test]
+    fn rolling_digest_value_packs_correctly() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let value = digest.value();
+        // s2 should be in high 16 bits, s1 in low 16 bits
+        assert_eq!(value & 0xFFFF, 0x1234);
+        assert_eq!((value >> 16) & 0xFFFF, 0x5678);
+    }
+
+    #[test]
+    fn rolling_digest_from_value_and_value_roundtrip() {
+        let original = RollingDigest::new(0xABCD, 0xEF01, 256);
+        let value = original.value();
+        let reconstructed = RollingDigest::from_value(value, 256);
+        assert_eq!(original, reconstructed);
+    }
+
+    #[test]
+    fn rolling_digest_from_le_bytes() {
+        let bytes: [u8; 4] = [0x34, 0x12, 0x78, 0x56]; // Little-endian for 0x56781234
+        let digest = RollingDigest::from_le_bytes(bytes, 100);
+        assert_eq!(digest.sum1(), 0x1234);
+        assert_eq!(digest.sum2(), 0x5678);
+        assert_eq!(digest.len(), 100);
+    }
+
+    #[test]
+    fn rolling_digest_to_le_bytes() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let bytes = digest.to_le_bytes();
+        assert_eq!(bytes, [0x34, 0x12, 0x78, 0x56]);
+    }
+
+    #[test]
+    fn rolling_digest_le_bytes_roundtrip() {
+        let original = RollingDigest::new(0xABCD, 0xEF01, 500);
+        let bytes = original.to_le_bytes();
+        let reconstructed = RollingDigest::from_le_bytes(bytes, 500);
+        assert_eq!(original, reconstructed);
+    }
+
+    #[test]
+    fn rolling_digest_from_le_slice_valid() {
+        let slice: &[u8] = &[0x34, 0x12, 0x78, 0x56];
+        let digest = RollingDigest::from_le_slice(slice, 100).unwrap();
+        assert_eq!(digest.sum1(), 0x1234);
+        assert_eq!(digest.sum2(), 0x5678);
+    }
+
+    #[test]
+    fn rolling_digest_from_le_slice_wrong_length() {
+        let result = RollingDigest::from_le_slice(&[0x01, 0x02, 0x03], 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.len(), 3);
+    }
+
+    #[test]
+    fn rolling_digest_from_le_slice_empty() {
+        let result = RollingDigest::from_le_slice(&[], 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.is_empty());
+    }
+
+    #[test]
+    fn rolling_digest_from_le_slice_too_long() {
+        let result = RollingDigest::from_le_slice(&[1, 2, 3, 4, 5], 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.len(), 5);
+    }
+
+    #[test]
+    fn rolling_digest_write_le_bytes_valid() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let mut out = [0u8; 4];
+        digest.write_le_bytes(&mut out).unwrap();
+        assert_eq!(out, [0x34, 0x12, 0x78, 0x56]);
+    }
+
+    #[test]
+    fn rolling_digest_write_le_bytes_wrong_length() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let mut out = [0u8; 3];
+        let result = digest.write_le_bytes(&mut out);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rolling_digest_write_le_bytes_too_long() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let mut out = [0u8; 5];
+        let result = digest.write_le_bytes(&mut out);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rolling_digest_read_le_from() {
+        let data: [u8; 4] = [0x34, 0x12, 0x78, 0x56];
+        let mut reader = Cursor::new(data);
+        let digest = RollingDigest::read_le_from(&mut reader, 100).unwrap();
+        assert_eq!(digest.sum1(), 0x1234);
+        assert_eq!(digest.sum2(), 0x5678);
+        assert_eq!(digest.len(), 100);
+    }
+
+    #[test]
+    fn rolling_digest_read_le_from_short_read() {
+        let data: [u8; 2] = [0x34, 0x12];
+        let mut reader = Cursor::new(data);
+        let result = RollingDigest::read_le_from(&mut reader, 100);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rolling_digest_write_le_to() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let mut buffer = Vec::new();
+        digest.write_le_to(&mut buffer).unwrap();
+        assert_eq!(buffer, vec![0x34, 0x12, 0x78, 0x56]);
+    }
+
+    #[test]
+    fn rolling_digest_read_write_roundtrip() {
+        let original = RollingDigest::new(0xABCD, 0xEF01, 256);
+        let mut buffer = Vec::new();
+        original.write_le_to(&mut buffer).unwrap();
+        let mut reader = Cursor::new(buffer);
+        let reconstructed = RollingDigest::read_le_from(&mut reader, 256).unwrap();
+        assert_eq!(original, reconstructed);
+    }
+
+    #[test]
+    fn rolling_digest_len_and_is_empty() {
+        let empty = RollingDigest::new(0, 0, 0);
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+
+        let non_empty = RollingDigest::new(1, 2, 100);
+        assert!(!non_empty.is_empty());
+        assert_eq!(non_empty.len(), 100);
+    }
+
+    #[test]
+    fn rolling_digest_from_u32_owned() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let value: u32 = digest.into();
+        assert_eq!(value, digest.value());
+    }
+
+    #[test]
+    fn rolling_digest_from_u32_ref() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let value: u32 = (&digest).into();
+        assert_eq!(value, digest.value());
+    }
+
+    #[test]
+    fn rolling_digest_from_bytes_array_owned() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let bytes: [u8; 4] = digest.into();
+        assert_eq!(bytes, [0x34, 0x12, 0x78, 0x56]);
+    }
+
+    #[test]
+    fn rolling_digest_from_bytes_array_ref() {
+        let digest = RollingDigest::new(0x1234, 0x5678, 100);
+        let bytes: [u8; 4] = (&digest).into();
+        assert_eq!(bytes, [0x34, 0x12, 0x78, 0x56]);
+    }
+
+    #[test]
+    fn rolling_digest_default_is_zero() {
+        assert_eq!(RollingDigest::default(), RollingDigest::ZERO);
+    }
+
+    #[test]
+    fn rolling_digest_clone_equals_original() {
+        let digest = RollingDigest::new(100, 200, 300);
+        assert_eq!(digest.clone(), digest);
+    }
+
+    #[test]
+    fn rolling_digest_debug_format() {
+        let digest = RollingDigest::new(1, 2, 3);
+        let debug = format!("{:?}", digest);
+        assert!(debug.contains("RollingDigest"));
+    }
+
+    #[test]
+    fn rolling_digest_copy_semantics() {
+        let original = RollingDigest::new(1, 2, 3);
+        let copy = original;
+        assert_eq!(original, copy);
+    }
+
+    #[test]
+    fn rolling_digest_equality() {
+        let a = RollingDigest::new(1, 2, 3);
+        let b = RollingDigest::new(1, 2, 3);
+        let c = RollingDigest::new(1, 2, 4);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn rolling_digest_from_bytes_deterministic() {
+        let data = b"test data";
+        let digest1 = RollingDigest::from_bytes(data);
+        let digest2 = RollingDigest::from_bytes(data);
+        assert_eq!(digest1, digest2);
+    }
+
+    #[test]
+    fn rolling_digest_different_data_different_digest() {
+        let digest1 = RollingDigest::from_bytes(b"hello");
+        let digest2 = RollingDigest::from_bytes(b"world");
+        assert_ne!(digest1, digest2);
+    }
+}

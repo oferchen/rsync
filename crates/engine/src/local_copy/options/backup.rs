@@ -58,3 +58,82 @@ impl LocalCopyOptions {
         &self.backup_suffix
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_enables_backup_mode() {
+        let opts = LocalCopyOptions::new().backup(true);
+        assert!(opts.backup_enabled());
+    }
+
+    #[test]
+    fn backup_false_disables_backup_mode() {
+        let opts = LocalCopyOptions::new().backup(true).backup(false);
+        assert!(!opts.backup_enabled());
+    }
+
+    #[test]
+    fn with_backup_directory_sets_path_and_enables_backup() {
+        let opts = LocalCopyOptions::new().with_backup_directory(Some("/tmp/backup"));
+        assert!(opts.backup_enabled());
+        assert_eq!(opts.backup_directory(), Some(Path::new("/tmp/backup")));
+    }
+
+    #[test]
+    fn with_backup_directory_none_clears_path() {
+        let opts = LocalCopyOptions::new()
+            .with_backup_directory(Some("/tmp/backup"))
+            .with_backup_directory::<PathBuf>(None);
+        assert!(opts.backup_directory().is_none());
+    }
+
+    #[test]
+    fn with_backup_suffix_sets_suffix_and_enables_backup() {
+        let opts = LocalCopyOptions::new().with_backup_suffix(Some(".bak"));
+        assert!(opts.backup_enabled());
+        assert_eq!(opts.backup_suffix(), OsStr::new(".bak"));
+    }
+
+    #[test]
+    fn with_backup_suffix_none_resets_to_default() {
+        let opts = LocalCopyOptions::new()
+            .with_backup_suffix(Some(".bak"))
+            .with_backup_suffix::<OsString>(None);
+        assert_eq!(opts.backup_suffix(), OsStr::new("~"));
+    }
+
+    #[test]
+    fn backup_suffix_default_is_tilde() {
+        let opts = LocalCopyOptions::new();
+        assert_eq!(opts.backup_suffix(), OsStr::new("~"));
+    }
+
+    #[test]
+    fn backup_directory_default_is_none() {
+        let opts = LocalCopyOptions::new();
+        assert!(opts.backup_directory().is_none());
+    }
+
+    #[test]
+    fn backup_default_is_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.backup_enabled());
+    }
+
+    #[test]
+    fn with_backup_directory_accepts_pathbuf() {
+        let path = PathBuf::from("/var/backups");
+        let opts = LocalCopyOptions::new().with_backup_directory(Some(path));
+        assert_eq!(opts.backup_directory(), Some(Path::new("/var/backups")));
+    }
+
+    #[test]
+    fn with_backup_suffix_accepts_osstring() {
+        let suffix = OsString::from(".backup");
+        let opts = LocalCopyOptions::new().with_backup_suffix(Some(suffix));
+        assert_eq!(opts.backup_suffix(), OsStr::new(".backup"));
+    }
+}

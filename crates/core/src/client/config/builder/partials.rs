@@ -80,3 +80,142 @@ impl ClientConfigBuilder {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn builder() -> ClientConfigBuilder {
+        ClientConfigBuilder::default()
+    }
+
+    #[test]
+    fn partial_sets_flag() {
+        let config = builder().partial(true).build();
+        assert!(config.partial());
+    }
+
+    #[test]
+    fn partial_false_clears_flag() {
+        let config = builder()
+            .partial(true)
+            .partial(false)
+            .build();
+        assert!(!config.partial());
+    }
+
+    #[test]
+    fn delay_updates_sets_flag() {
+        let config = builder().delay_updates(true).build();
+        assert!(config.delay_updates());
+    }
+
+    #[test]
+    fn partial_directory_sets_path() {
+        let config = builder()
+            .partial_directory(Some("/tmp/partial"))
+            .build();
+        assert!(config.partial_directory().is_some());
+        assert_eq!(
+            config.partial_directory().unwrap().to_str().unwrap(),
+            "/tmp/partial"
+        );
+    }
+
+    #[test]
+    fn partial_directory_enables_partial() {
+        let config = builder()
+            .partial_directory(Some("/tmp/partial"))
+            .build();
+        assert!(config.partial());
+    }
+
+    #[test]
+    fn partial_directory_none_clears_path() {
+        let config = builder()
+            .partial_directory(Some("/tmp/partial"))
+            .partial_directory(None::<&str>)
+            .build();
+        assert!(config.partial_directory().is_none());
+    }
+
+    #[test]
+    fn temp_directory_sets_path() {
+        let config = builder()
+            .temp_directory(Some("/tmp/staging"))
+            .build();
+        assert!(config.temp_directory().is_some());
+    }
+
+    #[test]
+    fn temp_directory_none_clears_path() {
+        let config = builder()
+            .temp_directory(Some("/tmp/staging"))
+            .temp_directory(None::<&str>)
+            .build();
+        assert!(config.temp_directory().is_none());
+    }
+
+    #[test]
+    fn inplace_sets_flag() {
+        let config = builder().inplace(true).build();
+        assert!(config.inplace());
+    }
+
+    #[test]
+    fn inplace_false_clears_flag() {
+        let config = builder()
+            .inplace(true)
+            .inplace(false)
+            .build();
+        assert!(!config.inplace());
+    }
+
+    #[test]
+    fn append_sets_flag() {
+        let config = builder().append(true).build();
+        assert!(config.append());
+    }
+
+    #[test]
+    fn append_false_clears_flag_and_verify() {
+        let config = builder()
+            .append_verify(true)
+            .append(false)
+            .build();
+        assert!(!config.append());
+        assert!(!config.append_verify());
+    }
+
+    #[test]
+    fn append_verify_enables_append() {
+        let config = builder().append_verify(true).build();
+        assert!(config.append());
+        assert!(config.append_verify());
+    }
+
+    #[test]
+    fn append_verify_false_only_clears_verify() {
+        let config = builder()
+            .append_verify(true)
+            .append_verify(false)
+            .build();
+        assert!(config.append());
+        assert!(!config.append_verify());
+    }
+
+    #[test]
+    fn fsync_sets_flag() {
+        let config = builder().fsync(true).build();
+        assert!(config.fsync());
+    }
+
+    #[test]
+    fn fsync_false_clears_flag() {
+        let config = builder()
+            .fsync(true)
+            .fsync(false)
+            .build();
+        assert!(!config.fsync());
+    }
+}

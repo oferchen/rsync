@@ -194,3 +194,242 @@ const _: () = {
         "supported protocol range must match upstream rsync's protocol span",
     );
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for select_highest_mutual with empty input
+    #[test]
+    fn select_highest_mutual_empty_iterator_returns_no_mutual_protocol() {
+        let empty: Vec<u8> = vec![];
+        let result = select_highest_mutual(empty);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            NegotiationError::NoMutualProtocol { peer_versions } => {
+                assert!(peer_versions.is_empty());
+            }
+            _ => panic!("expected NoMutualProtocol error"),
+        }
+    }
+
+    // Tests for select_highest_mutual with single version
+    #[test]
+    fn select_highest_mutual_single_supported_version() {
+        let versions = vec![30_u8];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V30);
+    }
+
+    #[test]
+    fn select_highest_mutual_single_newest_version_returns_early() {
+        let versions = vec![ProtocolVersion::NEWEST.as_u8()];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    // Tests for select_highest_mutual with multiple versions
+    #[test]
+    fn select_highest_mutual_multiple_versions_returns_highest() {
+        let versions = vec![28_u8, 29, 30];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V30);
+    }
+
+    #[test]
+    fn select_highest_mutual_unsorted_versions_returns_highest() {
+        let versions = vec![29_u8, 31, 28, 30];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V31);
+    }
+
+    #[test]
+    fn select_highest_mutual_all_supported_returns_newest() {
+        let versions = vec![28_u8, 29, 30, 31, 32];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    // Tests for select_highest_mutual with NEWEST version early return
+    #[test]
+    fn select_highest_mutual_newest_first_returns_immediately() {
+        // When NEWEST is first, we return early without processing the rest
+        let versions = vec![ProtocolVersion::NEWEST.as_u8(), 28, 29];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    // Tests for select_highest_mutual with unsupported versions
+    #[test]
+    fn select_highest_mutual_only_too_old_versions() {
+        // Versions below OLDEST (28) should trigger UnsupportedVersion
+        let versions = vec![27_u8, 26, 25];
+        let result = select_highest_mutual(versions);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            NegotiationError::UnsupportedVersion(v) => {
+                // Should report the oldest rejection
+                assert_eq!(v, 25);
+            }
+            _ => panic!("expected UnsupportedVersion error"),
+        }
+    }
+
+    #[test]
+    fn select_highest_mutual_reports_oldest_rejection() {
+        let versions = vec![27_u8, 20, 26];
+        let result = select_highest_mutual(versions);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            NegotiationError::UnsupportedVersion(v) => {
+                assert_eq!(v, 20); // Oldest rejected version
+            }
+            _ => panic!("expected UnsupportedVersion error"),
+        }
+    }
+
+    #[test]
+    fn select_highest_mutual_versions_above_newest_are_clamped() {
+        // Versions between NEWEST and MAXIMUM_PROTOCOL_ADVERTISEMENT are clamped to NEWEST
+        let versions = vec![35_u8, 36, 37];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_mixed_supported_and_clamped() {
+        let versions = vec![35_u8, 30, 29]; // 35 is clamped to NEWEST (32)
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_version_above_maximum_fails() {
+        // Versions above MAXIMUM_PROTOCOL_ADVERTISEMENT (40) should fail
+        let versions = vec![50_u32];
+        let result = select_highest_mutual(versions);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            NegotiationError::UnsupportedVersion(v) => {
+                assert_eq!(v, 50);
+            }
+            _ => panic!("expected UnsupportedVersion error"),
+        }
+    }
+
+    // Tests with different input types
+    #[test]
+    fn select_highest_mutual_accepts_u8_slice() {
+        let versions: &[u8] = &[30, 31];
+        let result = select_highest_mutual(versions.iter()).unwrap();
+        assert_eq!(result, ProtocolVersion::V31);
+    }
+
+    #[test]
+    fn select_highest_mutual_accepts_u32_values() {
+        let versions: Vec<u32> = vec![30, 31, 32];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_accepts_protocol_version() {
+        let versions = vec![ProtocolVersion::V29, ProtocolVersion::V30];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V30);
+    }
+
+    // Tests for edge cases
+    #[test]
+    fn select_highest_mutual_zero_version_is_ignored_but_valid_versions_win() {
+        // Zero is rejected by from_peer_advertisement, but if there are valid versions, they win
+        let versions: Vec<u32> = vec![0, 30];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V30);
+    }
+
+    #[test]
+    fn select_highest_mutual_only_zero_version() {
+        let versions: Vec<u32> = vec![0];
+        let result = select_highest_mutual(versions);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            NegotiationError::UnsupportedVersion(v) => {
+                assert_eq!(v, 0);
+            }
+            _ => panic!("expected UnsupportedVersion error"),
+        }
+    }
+
+    #[test]
+    fn select_highest_mutual_version_at_bitmap_boundary() {
+        // Version 63 is at the boundary of u64 bitmap (bit 63)
+        // But it's above MAXIMUM_PROTOCOL_ADVERTISEMENT
+        let versions: Vec<u32> = vec![63];
+        let result = select_highest_mutual(versions);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn select_highest_mutual_version_above_bitmap_boundary() {
+        // Version 64 would overflow the u64 bitmap
+        // But it's above MAXIMUM_PROTOCOL_ADVERTISEMENT so it's rejected first
+        let versions: Vec<u32> = vec![64];
+        let result = select_highest_mutual(versions);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn select_highest_mutual_duplicate_versions_handled() {
+        let versions = vec![30_u8, 30, 30, 31, 31];
+        let result = select_highest_mutual(versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V31);
+    }
+
+    #[test]
+    fn select_highest_mutual_mixed_valid_and_invalid() {
+        // Mix of too-old, valid, and clamped versions
+        let versions: Vec<u32> = vec![27, 30, 35];
+        let result = select_highest_mutual(versions).unwrap();
+        // 27 is too old (ignored for bitmap, tracked as rejection)
+        // 30 is valid
+        // 35 is clamped to NEWEST (32)
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_mutual_no_mutual_with_unrecognized_versions() {
+        // Versions that parse successfully but are above our bitmap range
+        // Actually, versions 33-40 are clamped to NEWEST, so they work
+        // We need versions that are recognized but not in bitmap
+        // All versions 28-32 are in our bitmap, so we can't test this easily
+        // Let's test NoMutualProtocol with versions that get filtered out differently
+
+        // This scenario is hard to trigger since all recognized versions 28-32 are supported
+        // But we can verify the behavior when only versions above MAXIMUM are given
+        let versions: Vec<u32> = vec![50, 60, 70];
+        let result = select_highest_mutual(versions);
+        // All are UnsupportedVersion errors, first one (50) should be returned
+        match result.unwrap_err() {
+            NegotiationError::UnsupportedVersion(v) => {
+                assert_eq!(v, 50);
+            }
+            _ => panic!("expected UnsupportedVersion error"),
+        }
+    }
+
+    // Test with references
+    #[test]
+    fn select_highest_mutual_accepts_references() {
+        let versions = vec![30_u8, 31];
+        let result = select_highest_mutual(&versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V31);
+    }
+
+    #[test]
+    fn select_highest_mutual_accepts_mutable_references() {
+        let mut versions = vec![30_u8, 31];
+        let result = select_highest_mutual(&mut versions).unwrap();
+        assert_eq!(result, ProtocolVersion::V31);
+    }
+}

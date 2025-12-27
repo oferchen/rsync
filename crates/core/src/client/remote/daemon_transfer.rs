@@ -799,7 +799,23 @@ fn build_wire_format_rules(
             FilterRuleKind::Risk => RuleType::Risk,
             FilterRuleKind::DirMerge => RuleType::DirMerge,
             FilterRuleKind::ExcludeIfPresent => {
-                // ExcludeIfPresent is a client-side-only rule type, skip it
+                // ExcludeIfPresent is transmitted as Exclude with 'e' flag
+                // (FILTRULE_EXCLUDE_SELF in upstream rsync)
+                wire_rules.push(FilterRuleWireFormat {
+                    rule_type: RuleType::Exclude,
+                    pattern: spec.pattern().to_string(),
+                    anchored: spec.pattern().starts_with('/'),
+                    directory_only: spec.pattern().ends_with('/'),
+                    no_inherit: false,
+                    cvs_exclude: false,
+                    word_split: false,
+                    exclude_from_merge: true, // 'e' flag = EXCLUDE_SELF
+                    xattr_only: spec.is_xattr_only(),
+                    sender_side: spec.applies_to_sender(),
+                    receiver_side: spec.applies_to_receiver(),
+                    perishable: spec.is_perishable(),
+                    negate: false,
+                });
                 continue;
             }
         };
