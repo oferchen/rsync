@@ -83,3 +83,116 @@ impl Message {
         self.brand
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_text_replaces_text() {
+        let msg = Message::info("original").with_text("replaced");
+        assert_eq!(msg.text(), "replaced");
+    }
+
+    #[test]
+    fn with_text_owned_string() {
+        let text = String::from("owned");
+        let msg = Message::info("original").with_text(text);
+        assert_eq!(msg.text(), "owned");
+    }
+
+    #[test]
+    fn with_severity_changes_severity() {
+        let msg = Message::info("test").with_severity(Severity::Error);
+        assert!(msg.is_error());
+    }
+
+    #[test]
+    fn with_severity_preserves_text() {
+        let msg = Message::info("preserved").with_severity(Severity::Warning);
+        assert_eq!(msg.text(), "preserved");
+    }
+
+    #[test]
+    fn with_role_attaches_role() {
+        let msg = Message::info("test").with_role(Role::Sender);
+        assert_eq!(msg.role(), Some(Role::Sender));
+    }
+
+    #[test]
+    fn with_role_replaces_existing() {
+        let msg = Message::info("test")
+            .with_role(Role::Sender)
+            .with_role(Role::Receiver);
+        assert_eq!(msg.role(), Some(Role::Receiver));
+    }
+
+    #[test]
+    fn without_role_clears_role() {
+        let msg = Message::info("test").with_role(Role::Sender).without_role();
+        assert_eq!(msg.role(), None);
+    }
+
+    #[test]
+    fn with_source_attaches_source() {
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 42);
+        let msg = Message::info("test").with_source(source);
+        assert!(msg.source().is_some());
+    }
+
+    #[test]
+    fn without_source_clears_source() {
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 42);
+        let msg = Message::info("test").with_source(source).without_source();
+        assert!(msg.source().is_none());
+    }
+
+    #[test]
+    fn with_code_attaches_code() {
+        let msg = Message::info("test").with_code(23);
+        assert_eq!(msg.code(), Some(23));
+    }
+
+    #[test]
+    fn with_code_replaces_existing() {
+        let msg = Message::error(1, "test").with_code(42);
+        assert_eq!(msg.code(), Some(42));
+    }
+
+    #[test]
+    fn without_code_clears_code() {
+        let msg = Message::error(23, "test").without_code();
+        assert_eq!(msg.code(), None);
+    }
+
+    #[test]
+    fn with_brand_changes_brand() {
+        let msg = Message::info("test").with_brand(Brand::Oc);
+        assert_eq!(msg.brand(), Brand::Oc);
+    }
+
+    #[test]
+    fn brand_returns_current_brand() {
+        let msg = Message::info("test");
+        assert_eq!(msg.brand(), Brand::Upstream);
+    }
+
+    #[test]
+    fn chained_mutations_preserve_all_changes() {
+        let source = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 100);
+        let msg = Message::info("original")
+            .with_text("updated")
+            .with_severity(Severity::Warning)
+            .with_role(Role::Sender)
+            .with_source(source)
+            .with_code(42)
+            .with_brand(Brand::Oc);
+
+        assert_eq!(msg.text(), "updated");
+        assert!(msg.is_warning());
+        assert_eq!(msg.role(), Some(Role::Sender));
+        assert!(msg.source().is_some());
+        assert_eq!(msg.code(), Some(42));
+        assert_eq!(msg.brand(), Brand::Oc);
+    }
+}

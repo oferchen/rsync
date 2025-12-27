@@ -56,3 +56,86 @@ impl Message {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_message_with_severity_and_text() {
+        let msg = Message::new(Severity::Info, "test message");
+        assert!(msg.is_info());
+        assert_eq!(msg.text(), "test message");
+    }
+
+    #[test]
+    fn new_without_code() {
+        let msg = Message::new(Severity::Error, "error");
+        assert_eq!(msg.code(), None);
+    }
+
+    #[test]
+    fn new_without_role() {
+        let msg = Message::new(Severity::Warning, "warn");
+        assert_eq!(msg.role(), None);
+    }
+
+    #[test]
+    fn new_without_source() {
+        let msg = Message::new(Severity::Info, "info");
+        assert!(msg.source().is_none());
+    }
+
+    #[test]
+    fn info_creates_info_severity() {
+        let msg = Message::info("informational");
+        assert!(msg.is_info());
+        assert_eq!(msg.severity(), Severity::Info);
+    }
+
+    #[test]
+    fn warning_creates_warning_severity() {
+        let msg = Message::warning("warning text");
+        assert!(msg.is_warning());
+        assert_eq!(msg.severity(), Severity::Warning);
+    }
+
+    #[test]
+    fn error_creates_error_severity_with_code() {
+        let msg = Message::error(23, "error text");
+        assert!(msg.is_error());
+        assert_eq!(msg.severity(), Severity::Error);
+        assert_eq!(msg.code(), Some(23));
+    }
+
+    #[test]
+    fn from_exit_code_known_code() {
+        let msg = Message::from_exit_code(1);
+        assert!(msg.is_some());
+    }
+
+    #[test]
+    fn from_exit_code_unknown_code() {
+        let msg = Message::from_exit_code(999);
+        assert!(msg.is_none());
+    }
+
+    #[test]
+    fn new_with_owned_string() {
+        let text = String::from("owned string");
+        let msg = Message::new(Severity::Info, text);
+        assert_eq!(msg.text(), "owned string");
+    }
+
+    #[test]
+    fn new_with_static_str() {
+        let msg = Message::new(Severity::Info, "static string");
+        assert_eq!(msg.text(), "static string");
+    }
+
+    #[test]
+    fn new_default_brand_is_upstream() {
+        let msg = Message::new(Severity::Info, "test");
+        assert_eq!(msg.brand(), Brand::Upstream);
+    }
+}
