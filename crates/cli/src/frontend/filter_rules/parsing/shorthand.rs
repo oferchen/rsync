@@ -41,3 +41,59 @@ pub(super) fn parse_filter_shorthand(
 
     Some(Ok(FilterDirective::Rule(builder(pattern.to_string()))))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mock_builder(pattern: String) -> FilterRuleSpec {
+        FilterRuleSpec::exclude(pattern)
+    }
+
+    #[test]
+    fn returns_none_for_non_matching_first_char() {
+        let result = parse_filter_shorthand("x pattern", 'e', "exclude", mock_builder);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn returns_none_without_separator() {
+        let result = parse_filter_shorthand("epattern", 'e', "exclude", mock_builder);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parses_with_space_separator() {
+        let result = parse_filter_shorthand("e pattern", 'e', "exclude", mock_builder);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
+    }
+
+    #[test]
+    fn parses_with_underscore_separator() {
+        let result = parse_filter_shorthand("e_pattern", 'e', "exclude", mock_builder);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
+    }
+
+    #[test]
+    fn returns_error_for_missing_pattern() {
+        let result = parse_filter_shorthand("e ", 'e', "exclude", mock_builder);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn returns_error_for_empty_remainder() {
+        let result = parse_filter_shorthand("e", 'e', "exclude", mock_builder);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn case_insensitive_matching() {
+        let result = parse_filter_shorthand("E pattern", 'e', "exclude", mock_builder);
+        assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
+    }
+}

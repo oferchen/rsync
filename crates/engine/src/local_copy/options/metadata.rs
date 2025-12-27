@@ -241,3 +241,86 @@ impl LocalCopyOptions {
         self.preserve_nfsv4_acls
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_preservation() {
+        let options = LocalCopyOptions::new().owner(true);
+        assert!(options.preserve_owner());
+    }
+
+    #[test]
+    fn owner_override() {
+        let options = LocalCopyOptions::new().with_owner_override(Some(1000));
+        assert_eq!(options.owner_override(), Some(1000));
+    }
+
+    #[test]
+    fn group_preservation() {
+        let options = LocalCopyOptions::new().group(true);
+        assert!(options.preserve_group());
+    }
+
+    #[test]
+    fn group_override() {
+        let options = LocalCopyOptions::new().with_group_override(Some(1000));
+        assert_eq!(options.group_override(), Some(1000));
+    }
+
+    #[test]
+    fn executability_preservation() {
+        let options = LocalCopyOptions::new().executability(true);
+        assert!(options.preserve_executability());
+    }
+
+    #[test]
+    fn permissions_preservation() {
+        let options = LocalCopyOptions::new().permissions(true);
+        assert!(options.preserve_permissions());
+    }
+
+    #[test]
+    fn times_preservation() {
+        let options = LocalCopyOptions::new().times(true);
+        assert!(options.preserve_times());
+    }
+
+    #[test]
+    fn omit_dir_times() {
+        let options = LocalCopyOptions::new().omit_dir_times(true);
+        assert!(options.omit_dir_times_enabled());
+    }
+
+    #[test]
+    fn omit_link_times() {
+        let options = LocalCopyOptions::new().omit_link_times(true);
+        assert!(options.omit_link_times_enabled());
+    }
+
+    #[test]
+    fn numeric_ids() {
+        let options = LocalCopyOptions::new().numeric_ids(true);
+        assert!(options.numeric_ids_enabled());
+    }
+
+    #[test]
+    fn chmod_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(options.chmod().is_none());
+    }
+
+    #[test]
+    fn user_mapping_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(options.user_mapping().is_none());
+    }
+
+    #[test]
+    fn group_mapping_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(options.group_mapping().is_none());
+    }
+}

@@ -388,3 +388,72 @@ fn effective_timeout(timeout: TransferTimeout, default: Duration) -> Option<Dura
         TransferTimeout::Seconds(value) => Some(Duration::from_secs(value.get())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZeroU64;
+
+    #[test]
+    fn module_list_entry_from_line_name_only() {
+        let entry = ModuleListEntry::from_line("testmodule");
+        assert_eq!(entry.name(), "testmodule");
+        assert!(entry.comment().is_none());
+    }
+
+    #[test]
+    fn module_list_entry_from_line_with_comment() {
+        let entry = ModuleListEntry::from_line("backup\tBackup storage area");
+        assert_eq!(entry.name(), "backup");
+        assert_eq!(entry.comment(), Some("Backup storage area"));
+    }
+
+    #[test]
+    fn module_list_entry_from_line_empty_comment() {
+        let entry = ModuleListEntry::from_line("data\t");
+        assert_eq!(entry.name(), "data");
+        assert!(entry.comment().is_none());
+    }
+
+    #[test]
+    fn module_list_entry_from_line_multiple_tabs() {
+        let entry = ModuleListEntry::from_line("module\tfirst\tsecond");
+        assert_eq!(entry.name(), "module");
+        assert_eq!(entry.comment(), Some("first\tsecond"));
+    }
+
+    #[test]
+    fn module_list_new_and_accessors() {
+        let motd = vec!["Welcome".to_string()];
+        let warnings = vec!["Warning1".to_string()];
+        let capabilities = vec!["cap1".to_string()];
+        let entries = vec![ModuleListEntry::from_line("test")];
+        let list = ModuleList::new(motd.clone(), warnings.clone(), capabilities.clone(), entries);
+        assert_eq!(list.motd_lines(), &["Welcome"]);
+        assert_eq!(list.warnings(), &["Warning1"]);
+        assert_eq!(list.capabilities(), &["cap1"]);
+        assert_eq!(list.entries().len(), 1);
+    }
+
+    #[test]
+    fn effective_timeout_default() {
+        let default = Duration::from_secs(30);
+        let result = effective_timeout(TransferTimeout::Default, default);
+        assert_eq!(result, Some(default));
+    }
+
+    #[test]
+    fn effective_timeout_disabled() {
+        let default = Duration::from_secs(30);
+        let result = effective_timeout(TransferTimeout::Disabled, default);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn effective_timeout_custom() {
+        let default = Duration::from_secs(30);
+        let custom = NonZeroU64::new(60).unwrap();
+        let result = effective_timeout(TransferTimeout::Seconds(custom), default);
+        assert_eq!(result, Some(Duration::from_secs(60)));
+    }
+}

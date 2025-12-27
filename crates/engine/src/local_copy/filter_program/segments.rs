@@ -258,3 +258,106 @@ fn normalise_pattern(pattern: &str) -> (bool, bool, String) {
     }
     (anchored, directory_only, core.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalise_pattern_basic() {
+        let (anchored, directory_only, core) = normalise_pattern("*.txt");
+        assert!(!anchored);
+        assert!(!directory_only);
+        assert_eq!(core, "*.txt");
+    }
+
+    #[test]
+    fn normalise_pattern_anchored() {
+        let (anchored, directory_only, core) = normalise_pattern("/foo");
+        assert!(anchored);
+        assert!(!directory_only);
+        assert_eq!(core, "foo");
+    }
+
+    #[test]
+    fn normalise_pattern_directory_only() {
+        let (anchored, directory_only, core) = normalise_pattern("bar/");
+        assert!(!anchored);
+        assert!(directory_only);
+        assert_eq!(core, "bar");
+    }
+
+    #[test]
+    fn normalise_pattern_anchored_and_directory() {
+        let (anchored, directory_only, core) = normalise_pattern("/baz/");
+        assert!(anchored);
+        assert!(directory_only);
+        assert_eq!(core, "baz");
+    }
+
+    #[test]
+    fn filter_outcome_default() {
+        let outcome = FilterOutcome::default();
+        assert!(outcome.allows_transfer());
+        assert!(outcome.allows_deletion());
+    }
+
+    #[test]
+    fn filter_outcome_transfer_not_allowed() {
+        let mut outcome = FilterOutcome::default();
+        outcome.set_transfer_allowed(false);
+        assert!(!outcome.allows_transfer());
+        assert!(!outcome.allows_deletion());
+    }
+
+    #[test]
+    fn filter_outcome_protected() {
+        let mut outcome = FilterOutcome::default();
+        outcome.protect();
+        assert!(outcome.allows_transfer());
+        assert!(!outcome.allows_deletion());
+    }
+
+    #[test]
+    fn filter_outcome_unprotect() {
+        let mut outcome = FilterOutcome::default();
+        outcome.protect();
+        outcome.unprotect();
+        assert!(outcome.allows_transfer());
+        assert!(outcome.allows_deletion());
+    }
+
+    #[test]
+    fn filter_segment_is_empty() {
+        let segment = FilterSegment::default();
+        assert!(segment.is_empty());
+    }
+
+    #[test]
+    fn filter_segment_push_include() {
+        let mut segment = FilterSegment::default();
+        segment.push_rule(FilterRule::include("*.txt".to_string())).unwrap();
+        assert!(!segment.is_empty());
+    }
+
+    #[test]
+    fn filter_segment_push_exclude() {
+        let mut segment = FilterSegment::default();
+        segment.push_rule(FilterRule::exclude("*.bak".to_string())).unwrap();
+        assert!(!segment.is_empty());
+    }
+
+    #[test]
+    fn filter_segment_push_protect() {
+        let mut segment = FilterSegment::default();
+        segment.push_rule(FilterRule::protect("important/".to_string())).unwrap();
+        assert!(!segment.is_empty());
+    }
+
+    #[test]
+    fn filter_context_eq() {
+        assert_eq!(FilterContext::Transfer, FilterContext::Transfer);
+        assert_eq!(FilterContext::Deletion, FilterContext::Deletion);
+        assert_ne!(FilterContext::Transfer, FilterContext::Deletion);
+    }
+}

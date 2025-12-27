@@ -590,3 +590,196 @@ pub(crate) const DEBUG_HELP_TEXT: &str = "The following --debug flags are suppor
 Flags may be prefixed with 'no' or '-' to disable a category. Multiple flags\n\
 may be combined by separating them with commas. Level suffixes may be used\n\
 (for example, --debug=io2 or --debug=flist0).\n";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn info_flag_parse_flag_and_level_default() {
+        let settings = InfoFlagSettings::default();
+        let (name, level) = settings.parse_flag_and_level("progress");
+        assert_eq!(name, "progress");
+        assert_eq!(level, 1);
+    }
+
+    #[test]
+    fn info_flag_parse_flag_and_level_with_number() {
+        let settings = InfoFlagSettings::default();
+        let (name, level) = settings.parse_flag_and_level("progress2");
+        assert_eq!(name, "progress");
+        assert_eq!(level, 2);
+    }
+
+    #[test]
+    fn info_flag_parse_flag_and_level_no_prefix() {
+        let settings = InfoFlagSettings::default();
+        let (name, level) = settings.parse_flag_and_level("noprogress");
+        assert_eq!(name, "progress");
+        assert_eq!(level, 0);
+    }
+
+    #[test]
+    fn info_flag_parse_flag_and_level_dash_prefix() {
+        let settings = InfoFlagSettings::default();
+        let (name, level) = settings.parse_flag_and_level("-progress");
+        assert_eq!(name, "progress");
+        assert_eq!(level, 0);
+    }
+
+    #[test]
+    fn info_flag_apply_help() {
+        let mut settings = InfoFlagSettings::default();
+        assert!(!settings.help_requested);
+        settings.apply("help", "help").unwrap();
+        assert!(settings.help_requested);
+    }
+
+    #[test]
+    fn info_flag_apply_all() {
+        let mut settings = InfoFlagSettings::default();
+        settings.apply("all", "all").unwrap();
+        assert_eq!(settings.progress, ProgressSetting::PerFile);
+        assert_eq!(settings.stats, Some(1));
+    }
+
+    #[test]
+    fn info_flag_apply_none() {
+        let mut settings = InfoFlagSettings::default();
+        settings.apply("all", "all").unwrap();
+        settings.apply("none", "none").unwrap();
+        assert_eq!(settings.progress, ProgressSetting::Disabled);
+        assert_eq!(settings.stats, Some(0));
+    }
+
+    #[test]
+    fn info_flag_apply_progress() {
+        let mut settings = InfoFlagSettings::default();
+        settings.apply("progress", "progress").unwrap();
+        assert_eq!(settings.progress, ProgressSetting::PerFile);
+    }
+
+    #[test]
+    fn info_flag_apply_progress2() {
+        let mut settings = InfoFlagSettings::default();
+        settings.apply("progress2", "progress2").unwrap();
+        assert_eq!(settings.progress, ProgressSetting::Overall);
+    }
+
+    #[test]
+    fn info_flag_apply_invalid() {
+        let mut settings = InfoFlagSettings::default();
+        let result = settings.apply("invalid", "invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_info_flags_empty_value() {
+        let values = vec![OsString::from("")];
+        let result = parse_info_flags(&values);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_info_flags_comma_separated() {
+        let values = vec![OsString::from("progress,stats")];
+        let result = parse_info_flags(&values).unwrap();
+        assert_eq!(result.progress, ProgressSetting::PerFile);
+        assert_eq!(result.stats, Some(1));
+    }
+
+    #[test]
+    fn debug_flag_parse_flag_and_level_default() {
+        let settings = DebugFlagSettings::default();
+        let (name, level) = settings.parse_flag_and_level("io");
+        assert_eq!(name, "io");
+        assert_eq!(level, 1);
+    }
+
+    #[test]
+    fn debug_flag_parse_flag_and_level_with_number() {
+        let settings = DebugFlagSettings::default();
+        let (name, level) = settings.parse_flag_and_level("io3");
+        assert_eq!(name, "io");
+        assert_eq!(level, 3);
+    }
+
+    #[test]
+    fn debug_flag_apply_all() {
+        let mut settings = DebugFlagSettings::default();
+        settings.apply("all", "all").unwrap();
+        assert_eq!(settings.io, Some(1));
+        assert_eq!(settings.flist, Some(1));
+    }
+
+    #[test]
+    fn debug_flag_apply_none() {
+        let mut settings = DebugFlagSettings::default();
+        settings.apply("all", "all").unwrap();
+        settings.apply("none", "none").unwrap();
+        assert_eq!(settings.io, Some(0));
+        assert_eq!(settings.flist, Some(0));
+    }
+
+    #[test]
+    fn debug_flag_apply_io() {
+        let mut settings = DebugFlagSettings::default();
+        settings.apply("io", "io").unwrap();
+        assert_eq!(settings.io, Some(1));
+    }
+
+    #[test]
+    fn debug_flag_apply_io_level_too_high() {
+        let mut settings = DebugFlagSettings::default();
+        let result = settings.apply("io5", "io5");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn debug_flag_apply_invalid() {
+        let mut settings = DebugFlagSettings::default();
+        let result = settings.apply("invalid", "invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_debug_flags_empty_value() {
+        let values = vec![OsString::from("")];
+        let result = parse_debug_flags(&values);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_debug_flags_help_requested() {
+        let values = vec![OsString::from("help")];
+        let result = parse_debug_flags(&values).unwrap();
+        assert!(result.help_requested);
+    }
+
+    #[test]
+    fn parse_debug_flags_comma_separated() {
+        let values = vec![OsString::from("io,flist")];
+        let result = parse_debug_flags(&values).unwrap();
+        assert_eq!(result.io, Some(1));
+        assert_eq!(result.flist, Some(1));
+    }
+
+    #[test]
+    fn info_flags_include_progress_basic() {
+        let flags = vec![OsString::from("progress")];
+        assert!(info_flags_include_progress(&flags));
+    }
+
+    #[test]
+    fn info_flags_include_progress_no_prefix() {
+        let flags = vec![OsString::from("noprogress")];
+        assert!(info_flags_include_progress(&flags));
+    }
+
+    #[test]
+    fn info_flags_include_progress_not_found() {
+        let flags = vec![OsString::from("stats")];
+        assert!(!info_flags_include_progress(&flags));
+    }
+}
