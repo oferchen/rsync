@@ -98,3 +98,103 @@ impl<W> MessageSink<W> {
         self.brand = brand;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_sink() -> MessageSink<Vec<u8>> {
+        MessageSink::new(Vec::new())
+    }
+
+    #[test]
+    fn writer_returns_reference() {
+        let sink = make_sink();
+        let writer = sink.writer();
+        assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn writer_mut_returns_mutable_reference() {
+        let mut sink = make_sink();
+        sink.writer_mut().push(1);
+        assert_eq!(sink.writer(), &vec![1]);
+    }
+
+    #[test]
+    fn line_mode_returns_current_mode() {
+        let sink = make_sink();
+        assert_eq!(sink.line_mode(), LineMode::WithNewline);
+    }
+
+    #[test]
+    fn set_line_mode_changes_mode() {
+        let mut sink = make_sink();
+        sink.set_line_mode(LineMode::WithoutNewline);
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+    }
+
+    #[test]
+    fn scoped_line_mode_changes_temporarily() {
+        let mut sink = make_sink();
+        {
+            let _guard = sink.scoped_line_mode(LineMode::WithoutNewline);
+            // Mode is changed within the guard scope
+        }
+        assert_eq!(sink.line_mode(), LineMode::WithNewline);
+    }
+
+    #[test]
+    fn get_ref_returns_reference() {
+        let sink = make_sink();
+        let writer = sink.get_ref();
+        assert!(writer.is_empty());
+    }
+
+    #[test]
+    fn get_mut_returns_mutable_reference() {
+        let mut sink = make_sink();
+        sink.get_mut().push(42);
+        assert_eq!(sink.get_ref(), &vec![42]);
+    }
+
+    #[test]
+    fn scratch_returns_reference() {
+        let sink = make_sink();
+        let _scratch = sink.scratch();
+    }
+
+    #[test]
+    fn scratch_mut_returns_mutable_reference() {
+        let mut sink = make_sink();
+        let _scratch = sink.scratch_mut();
+        // Just verify we can get a mutable reference
+    }
+
+    #[test]
+    fn brand_returns_current_brand() {
+        let sink = make_sink();
+        assert_eq!(sink.brand(), Brand::Upstream);
+    }
+
+    #[test]
+    fn set_brand_changes_brand() {
+        let mut sink = make_sink();
+        sink.set_brand(Brand::Oc);
+        assert_eq!(sink.brand(), Brand::Oc);
+    }
+
+    #[test]
+    fn writer_and_get_ref_are_equivalent() {
+        let sink = make_sink();
+        assert_eq!(sink.writer(), sink.get_ref());
+    }
+
+    #[test]
+    fn writer_mut_and_get_mut_are_equivalent() {
+        let mut sink = make_sink();
+        sink.writer_mut().push(1);
+        sink.get_mut().push(2);
+        assert_eq!(sink.writer(), &vec![1, 2]);
+    }
+}
