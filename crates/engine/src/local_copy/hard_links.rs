@@ -67,3 +67,79 @@ impl HardLinkTracker {
 
     pub(crate) fn record(&mut self, _metadata: &fs::Metadata, _destination: &Path) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_tracker() {
+        let tracker = HardLinkTracker::new();
+        let _ = tracker;
+    }
+
+    #[test]
+    fn default_creates_tracker() {
+        let tracker = HardLinkTracker::default();
+        let _ = tracker;
+    }
+
+    #[test]
+    fn existing_target_returns_none_for_new_tracker() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("test.txt");
+        std::fs::write(&file, "content").unwrap();
+        let metadata = std::fs::metadata(&file).unwrap();
+
+        let tracker = HardLinkTracker::new();
+        assert!(tracker.existing_target(&metadata).is_none());
+    }
+
+    #[test]
+    fn record_does_not_panic() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("test.txt");
+        std::fs::write(&file, "content").unwrap();
+        let metadata = std::fs::metadata(&file).unwrap();
+
+        let mut tracker = HardLinkTracker::new();
+        tracker.record(&metadata, Path::new("/dest/test.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_link_key_eq() {
+        let key1 = HardLinkKey { device: 1, inode: 100 };
+        let key2 = HardLinkKey { device: 1, inode: 100 };
+        let key3 = HardLinkKey { device: 2, inode: 100 };
+        assert_eq!(key1, key2);
+        assert_ne!(key1, key3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_link_key_hash() {
+        use std::collections::HashSet;
+        let key1 = HardLinkKey { device: 1, inode: 100 };
+        let key2 = HardLinkKey { device: 1, inode: 100 };
+        let mut set = HashSet::new();
+        set.insert(key1);
+        assert!(set.contains(&key2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_link_key_debug() {
+        let key = HardLinkKey { device: 1, inode: 100 };
+        let debug = format!("{:?}", key);
+        assert!(debug.contains("HardLinkKey"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_link_key_clone() {
+        let key = HardLinkKey { device: 1, inode: 100 };
+        let cloned = key;
+        assert_eq!(key, cloned);
+    }
+}

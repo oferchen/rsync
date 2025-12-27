@@ -75,3 +75,103 @@ impl FileListEntry {
         self.is_root
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::FileListBuilder;
+
+    #[test]
+    fn entry_debug_format() {
+        // Create a temporary directory for testing
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut walker = FileListBuilder::new(root).build().unwrap();
+        let entry = walker.next().unwrap().unwrap();
+        let debug = format!("{:?}", entry);
+        assert!(debug.contains("FileListEntry"));
+    }
+
+    #[test]
+    fn full_path_returns_absolute() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut walker = FileListBuilder::new(root).build().unwrap();
+        let entry = walker.next().unwrap().unwrap();
+        assert!(entry.full_path().is_absolute());
+    }
+
+    #[test]
+    fn relative_path_returns_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut walker = FileListBuilder::new(root).build().unwrap();
+        let entry = walker.next().unwrap().unwrap();
+        let _ = entry.relative_path();
+    }
+
+    #[test]
+    fn metadata_returns_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut walker = FileListBuilder::new(root).build().unwrap();
+        let entry = walker.next().unwrap().unwrap();
+        assert!(entry.metadata().is_dir());
+    }
+
+    #[test]
+    fn file_name_none_for_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut walker = FileListBuilder::new(root).build().unwrap();
+        let entry = walker.next().unwrap().unwrap();
+        assert!(entry.is_root());
+        assert!(entry.file_name().is_none());
+    }
+
+    #[test]
+    fn depth_zero_for_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut walker = FileListBuilder::new(root).build().unwrap();
+        let entry = walker.next().unwrap().unwrap();
+        assert_eq!(entry.depth(), 0);
+    }
+
+    #[test]
+    fn is_root_true_for_root_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut walker = FileListBuilder::new(root).build().unwrap();
+        let entry = walker.next().unwrap().unwrap();
+        assert!(entry.is_root());
+    }
+
+    #[test]
+    fn child_entry_has_file_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let child = temp.path().join("child.txt");
+        std::fs::write(&child, "content").unwrap();
+
+        let mut walker = FileListBuilder::new(temp.path()).build().unwrap();
+        // Skip root
+        let _ = walker.next();
+        if let Some(Ok(entry)) = walker.next() {
+            assert!(!entry.is_root());
+            assert!(entry.file_name().is_some());
+        }
+    }
+
+    #[test]
+    fn child_entry_has_depth_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let child = temp.path().join("child.txt");
+        std::fs::write(&child, "content").unwrap();
+
+        let mut walker = FileListBuilder::new(temp.path()).build().unwrap();
+        // Skip root
+        let _ = walker.next();
+        if let Some(Ok(entry)) = walker.next() {
+            assert_eq!(entry.depth(), 1);
+        }
+    }
+}
