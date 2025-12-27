@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn buffered_prefix_too_small_display() {
         let err = BufferedPrefixTooSmall::new(100, 50);
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("100"));
         assert!(msg.contains("50"));
     }
@@ -344,14 +344,14 @@ mod tests {
     #[test]
     fn parse_error_display_empty() {
         let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Empty);
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("empty"));
     }
 
     #[test]
     fn parse_error_display_invalid() {
         let err = ParseNegotiationPrologueError::new(ParseNegotiationPrologueErrorKind::Invalid);
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("unrecognized"));
     }
 
@@ -477,13 +477,22 @@ mod tests {
 
     #[test]
     fn negotiation_prologue_default() {
-        assert_eq!(NegotiationPrologue::default(), NegotiationPrologue::NeedMoreData);
+        assert_eq!(
+            NegotiationPrologue::default(),
+            NegotiationPrologue::NeedMoreData
+        );
     }
 
     #[test]
     fn negotiation_prologue_display() {
-        assert_eq!(format!("{}", NegotiationPrologue::NeedMoreData), "need-more-data");
-        assert_eq!(format!("{}", NegotiationPrologue::LegacyAscii), "legacy-ascii");
+        assert_eq!(
+            format!("{}", NegotiationPrologue::NeedMoreData),
+            "need-more-data"
+        );
+        assert_eq!(
+            format!("{}", NegotiationPrologue::LegacyAscii),
+            "legacy-ascii"
+        );
         assert_eq!(format!("{}", NegotiationPrologue::Binary), "binary");
     }
 
@@ -544,11 +553,11 @@ mod tests {
     #[test]
     fn detect_negotiation_prologue_single_byte() {
         assert_eq!(
-            detect_negotiation_prologue(&[b'@']),
+            detect_negotiation_prologue(b"@"),
             NegotiationPrologue::LegacyAscii
         );
         assert_eq!(
-            detect_negotiation_prologue(&[b'A']),
+            detect_negotiation_prologue(b"A"),
             NegotiationPrologue::Binary
         );
     }

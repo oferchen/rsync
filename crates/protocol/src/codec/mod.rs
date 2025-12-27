@@ -10,8 +10,8 @@
 //!
 //! # Module Structure
 //!
-//! - [`protocol`] - `ProtocolCodec` trait for general wire encoding (file sizes, mtimes, etc.)
-//! - [`ndx`] - `NdxCodec` trait for file-list index (NDX) encoding
+//! - [`ProtocolCodec`](crate::codec::ProtocolCodec) trait for general wire encoding (file sizes, mtimes, etc.)
+//! - [`NdxCodec`](crate::codec::NdxCodec) trait for file-list index (NDX) encoding
 //!
 //! # Strategy Pattern
 //!

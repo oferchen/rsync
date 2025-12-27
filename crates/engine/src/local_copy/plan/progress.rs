@@ -76,15 +76,13 @@ mod tests {
 
     #[test]
     fn bytes_transferred_returns_value() {
-        let progress =
-            LocalCopyProgress::new(Path::new("test.txt"), 12345, None, Duration::ZERO);
+        let progress = LocalCopyProgress::new(Path::new("test.txt"), 12345, None, Duration::ZERO);
         assert_eq!(progress.bytes_transferred(), 12345);
     }
 
     #[test]
     fn total_bytes_some() {
-        let progress =
-            LocalCopyProgress::new(Path::new("test.txt"), 50, Some(100), Duration::ZERO);
+        let progress = LocalCopyProgress::new(Path::new("test.txt"), 50, Some(100), Duration::ZERO);
         assert_eq!(progress.total_bytes(), Some(100));
     }
 
@@ -103,8 +101,12 @@ mod tests {
 
     #[test]
     fn clone_works() {
-        let progress =
-            LocalCopyProgress::new(Path::new("test.txt"), 100, Some(200), Duration::from_secs(1));
+        let progress = LocalCopyProgress::new(
+            Path::new("test.txt"),
+            100,
+            Some(200),
+            Duration::from_secs(1),
+        );
         let cloned = progress;
         assert_eq!(cloned.bytes_transferred(), 100);
     }
@@ -112,7 +114,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let progress = LocalCopyProgress::new(Path::new("test.txt"), 0, None, Duration::ZERO);
-        let debug = format!("{:?}", progress);
+        let debug = format!("{progress:?}");
         assert!(debug.contains("LocalCopyProgress"));
     }
 }

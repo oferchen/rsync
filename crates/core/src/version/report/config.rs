@@ -408,17 +408,13 @@ mod tests {
 
     #[test]
     fn builder_supports_symlinks() {
-        let config = VersionInfoConfig::builder()
-            .supports_symlinks(true)
-            .build();
+        let config = VersionInfoConfig::builder().supports_symlinks(true).build();
         assert!(config.supports_symlinks);
     }
 
     #[test]
     fn builder_supports_symtimes() {
-        let config = VersionInfoConfig::builder()
-            .supports_symtimes(true)
-            .build();
+        let config = VersionInfoConfig::builder().supports_symtimes(true).build();
         assert!(config.supports_symtimes);
     }
 
@@ -448,17 +444,13 @@ mod tests {
 
     #[test]
     fn builder_supports_ipv6_false() {
-        let config = VersionInfoConfig::builder()
-            .supports_ipv6(false)
-            .build();
+        let config = VersionInfoConfig::builder().supports_ipv6(false).build();
         assert!(!config.supports_ipv6);
     }
 
     #[test]
     fn builder_supports_atimes_false() {
-        let config = VersionInfoConfig::builder()
-            .supports_atimes(false)
-            .build();
+        let config = VersionInfoConfig::builder().supports_atimes(false).build();
         assert!(!config.supports_atimes);
     }
 
@@ -472,17 +464,13 @@ mod tests {
 
     #[test]
     fn builder_supports_inplace_false() {
-        let config = VersionInfoConfig::builder()
-            .supports_inplace(false)
-            .build();
+        let config = VersionInfoConfig::builder().supports_inplace(false).build();
         assert!(!config.supports_inplace);
     }
 
     #[test]
     fn builder_supports_append_false() {
-        let config = VersionInfoConfig::builder()
-            .supports_append(false)
-            .build();
+        let config = VersionInfoConfig::builder().supports_append(false).build();
         assert!(!config.supports_append);
     }
 
@@ -496,17 +484,13 @@ mod tests {
 
     #[test]
     fn builder_supports_stop_at_false() {
-        let config = VersionInfoConfig::builder()
-            .supports_stop_at(false)
-            .build();
+        let config = VersionInfoConfig::builder().supports_stop_at(false).build();
         assert!(!config.supports_stop_at);
     }
 
     #[test]
     fn builder_supports_crtimes() {
-        let config = VersionInfoConfig::builder()
-            .supports_crtimes(true)
-            .build();
+        let config = VersionInfoConfig::builder().supports_crtimes(true).build();
         assert!(config.supports_crtimes);
     }
 
@@ -520,9 +504,7 @@ mod tests {
 
     #[test]
     fn builder_supports_asm_roll() {
-        let config = VersionInfoConfig::builder()
-            .supports_asm_roll(true)
-            .build();
+        let config = VersionInfoConfig::builder().supports_asm_roll(true).build();
         assert!(config.supports_asm_roll);
     }
 
@@ -536,9 +518,7 @@ mod tests {
 
     #[test]
     fn builder_supports_asm_md5() {
-        let config = VersionInfoConfig::builder()
-            .supports_asm_md5(true)
-            .build();
+        let config = VersionInfoConfig::builder().supports_asm_md5(true).build();
         assert!(config.supports_asm_md5);
     }
 
@@ -564,9 +544,7 @@ mod tests {
     #[test]
     fn to_builder_allows_modification() {
         let original = VersionInfoConfig::new();
-        let modified = original.to_builder()
-            .supports_crtimes(true)
-            .build();
+        let modified = original.to_builder().supports_crtimes(true).build();
         assert!(!original.supports_crtimes);
         assert!(modified.supports_crtimes);
     }
@@ -600,7 +578,7 @@ mod tests {
     #[test]
     fn config_is_clone() {
         let config = VersionInfoConfig::new();
-        let cloned = config.clone();
+        let cloned = config;
         assert_eq!(config, cloned);
     }
 
@@ -614,7 +592,7 @@ mod tests {
     #[test]
     fn config_debug_is_not_empty() {
         let config = VersionInfoConfig::new();
-        let debug = format!("{:?}", config);
+        let debug = format!("{config:?}");
         assert!(!debug.is_empty());
         assert!(debug.contains("VersionInfoConfig"));
     }
@@ -622,7 +600,7 @@ mod tests {
     #[test]
     fn builder_is_clone() {
         let builder = VersionInfoConfigBuilder::new();
-        let cloned = builder.clone();
+        let cloned = builder;
         assert_eq!(builder, cloned);
     }
 

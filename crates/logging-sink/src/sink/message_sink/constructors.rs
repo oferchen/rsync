@@ -111,23 +111,22 @@ mod tests {
 
     #[test]
     fn with_line_mode_sets_line_mode() {
-        let sink: MessageSink<Vec<u8>> = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        let sink: MessageSink<Vec<u8>> =
+            MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
     }
 
     #[test]
     fn with_line_mode_uses_upstream_brand() {
-        let sink: MessageSink<Vec<u8>> = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        let sink: MessageSink<Vec<u8>> =
+            MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
         assert_eq!(sink.brand(), Brand::Upstream);
     }
 
     #[test]
     fn with_line_mode_and_brand_sets_both() {
-        let sink: MessageSink<Vec<u8>> = MessageSink::with_line_mode_and_brand(
-            Vec::new(),
-            LineMode::WithoutNewline,
-            Brand::Oc,
-        );
+        let sink: MessageSink<Vec<u8>> =
+            MessageSink::with_line_mode_and_brand(Vec::new(), LineMode::WithoutNewline, Brand::Oc);
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
         assert_eq!(sink.brand(), Brand::Oc);
     }
@@ -135,11 +134,8 @@ mod tests {
     #[test]
     fn with_parts_sets_all_values() {
         let scratch = MessageScratch::new();
-        let sink: MessageSink<Vec<u8>> = MessageSink::with_parts(
-            Vec::new(),
-            scratch,
-            LineMode::WithoutNewline,
-        );
+        let sink: MessageSink<Vec<u8>> =
+            MessageSink::with_parts(Vec::new(), scratch, LineMode::WithoutNewline);
         assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
         assert_eq!(sink.brand(), Brand::Upstream);
     }

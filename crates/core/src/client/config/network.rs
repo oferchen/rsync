@@ -85,7 +85,7 @@ mod tests {
         let raw = OsString::from("192.168.1.1");
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 0);
         let bind = BindAddress::new(raw, socket);
-        let debug = format!("{:?}", bind);
+        let debug = format!("{bind:?}");
         assert!(debug.contains("BindAddress"));
     }
 

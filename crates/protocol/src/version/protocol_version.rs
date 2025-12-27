@@ -589,7 +589,10 @@ mod tests {
     fn supported_protocols_are_in_descending_order() {
         let protocols = ProtocolVersion::supported_protocol_numbers();
         for window in protocols.windows(2) {
-            assert!(window[0] > window[1], "protocols should be in descending order");
+            assert!(
+                window[0] > window[1],
+                "protocols should be in descending order"
+            );
         }
     }
 
@@ -598,8 +601,7 @@ mod tests {
         for version in [28, 29, 30, 31, 32] {
             assert!(
                 ProtocolVersion::is_supported_protocol_number(version),
-                "version {} should be supported",
-                version
+                "version {version} should be supported"
             );
         }
     }
@@ -609,8 +611,7 @@ mod tests {
         for version in [0, 1, 27, 33, 100, 255] {
             assert!(
                 !ProtocolVersion::is_supported_protocol_number(version),
-                "version {} should not be supported",
-                version
+                "version {version} should not be supported"
             );
         }
     }
@@ -697,8 +698,14 @@ mod tests {
 
     #[test]
     fn next_newer_returns_next_version() {
-        assert_eq!(ProtocolVersion::V28.next_newer(), Some(ProtocolVersion::V29));
-        assert_eq!(ProtocolVersion::V31.next_newer(), Some(ProtocolVersion::V32));
+        assert_eq!(
+            ProtocolVersion::V28.next_newer(),
+            Some(ProtocolVersion::V29)
+        );
+        assert_eq!(
+            ProtocolVersion::V31.next_newer(),
+            Some(ProtocolVersion::V32)
+        );
     }
 
     #[test]
@@ -708,8 +715,14 @@ mod tests {
 
     #[test]
     fn next_older_returns_previous_version() {
-        assert_eq!(ProtocolVersion::V32.next_older(), Some(ProtocolVersion::V31));
-        assert_eq!(ProtocolVersion::V29.next_older(), Some(ProtocolVersion::V28));
+        assert_eq!(
+            ProtocolVersion::V32.next_older(),
+            Some(ProtocolVersion::V31)
+        );
+        assert_eq!(
+            ProtocolVersion::V29.next_older(),
+            Some(ProtocolVersion::V28)
+        );
     }
 
     #[test]
@@ -931,12 +944,17 @@ mod tests {
         for version in [28, 29, 30, 31, 32] {
             assert!(
                 (bitmap & (1u64 << version)) != 0,
-                "bit for version {} should be set",
-                version
+                "bit for version {version} should be set"
             );
         }
-        assert!((bitmap & (1u64 << 27)) == 0, "bit for version 27 should not be set");
-        assert!((bitmap & (1u64 << 33)) == 0, "bit for version 33 should not be set");
+        assert!(
+            (bitmap & (1u64 << 27)) == 0,
+            "bit for version 27 should not be set"
+        );
+        assert!(
+            (bitmap & (1u64 << 33)) == 0,
+            "bit for version 33 should not be set"
+        );
     }
 
     #[test]
@@ -958,7 +976,7 @@ mod tests {
     #[test]
     fn clone_produces_equal_value() {
         let v = ProtocolVersion::V30;
-        let cloned = v.clone();
+        let cloned = v;
         assert_eq!(v, cloned);
     }
 

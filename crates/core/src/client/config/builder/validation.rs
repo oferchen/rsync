@@ -50,19 +50,14 @@ mod tests {
 
     #[test]
     fn checksum_false_clears_flag() {
-        let config = builder()
-            .checksum(true)
-            .checksum(false)
-            .build();
+        let config = builder().checksum(true).checksum(false).build();
         assert!(!config.checksum());
     }
 
     #[test]
     fn checksum_choice_sets_value() {
         let choice = StrongChecksumChoice::parse("xxh3").unwrap();
-        let config = builder()
-            .checksum_choice(choice)
-            .build();
+        let config = builder().checksum_choice(choice).build();
         // Verify the choice was set by checking the argument representation
         assert_eq!(config.checksum_choice().to_argument(), "xxh3");
     }
@@ -70,9 +65,7 @@ mod tests {
     #[test]
     fn checksum_choice_md5() {
         let choice = StrongChecksumChoice::parse("md5").unwrap();
-        let config = builder()
-            .checksum_choice(choice)
-            .build();
+        let config = builder().checksum_choice(choice).build();
         assert_eq!(config.checksum_choice().to_argument(), "md5");
     }
 

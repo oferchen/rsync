@@ -56,6 +56,7 @@ pub const LEGACY_DAEMON_SECRETS_PATH: &str = workspace::metadata().legacy_daemon
 pub const SOURCE_URL: &str = workspace::metadata().source_url();
 
 #[cfg(test)]
+#[allow(clippy::const_is_empty)]
 mod tests {
     use super::*;
 

@@ -178,9 +178,12 @@ mod tests {
 
     #[test]
     fn with_checksum_algorithm_sets_value() {
-        let opts = LocalCopyOptions::new()
-            .with_checksum_algorithm(SignatureAlgorithm::Xxh64 { seed: 42 });
-        assert!(matches!(opts.checksum_algorithm(), SignatureAlgorithm::Xxh64 { seed: 42 }));
+        let opts =
+            LocalCopyOptions::new().with_checksum_algorithm(SignatureAlgorithm::Xxh64 { seed: 42 });
+        assert!(matches!(
+            opts.checksum_algorithm(),
+            SignatureAlgorithm::Xxh64 { seed: 42 }
+        ));
     }
 
     #[test]
@@ -203,7 +206,9 @@ mod tests {
 
     #[test]
     fn ignore_times_disables() {
-        let opts = LocalCopyOptions::new().ignore_times(true).ignore_times(false);
+        let opts = LocalCopyOptions::new()
+            .ignore_times(true)
+            .ignore_times(false);
         assert!(!opts.ignore_times_enabled());
     }
 
@@ -215,7 +220,9 @@ mod tests {
 
     #[test]
     fn ignore_existing_disables() {
-        let opts = LocalCopyOptions::new().ignore_existing(true).ignore_existing(false);
+        let opts = LocalCopyOptions::new()
+            .ignore_existing(true)
+            .ignore_existing(false);
         assert!(!opts.ignore_existing_enabled());
     }
 
@@ -227,7 +234,9 @@ mod tests {
 
     #[test]
     fn existing_only_disables() {
-        let opts = LocalCopyOptions::new().existing_only(true).existing_only(false);
+        let opts = LocalCopyOptions::new()
+            .existing_only(true)
+            .existing_only(false);
         assert!(!opts.existing_only_enabled());
     }
 

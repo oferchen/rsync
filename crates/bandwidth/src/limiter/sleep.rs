@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn limiter_sleep_debug() {
         let sleep = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
-        let debug = format!("{:?}", sleep);
+        let debug = format!("{sleep:?}");
         assert!(debug.contains("LimiterSleep"));
     }
 
@@ -147,9 +147,18 @@ mod tests {
 
     #[test]
     fn duration_from_microseconds_converts_correctly() {
-        assert_eq!(duration_from_microseconds(1_000_000), Duration::from_secs(1));
-        assert_eq!(duration_from_microseconds(500_000), Duration::from_millis(500));
-        assert_eq!(duration_from_microseconds(1_500_000), Duration::from_millis(1500));
+        assert_eq!(
+            duration_from_microseconds(1_000_000),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            duration_from_microseconds(500_000),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            duration_from_microseconds(1_500_000),
+            Duration::from_millis(1500)
+        );
     }
 
     #[test]

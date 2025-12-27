@@ -100,14 +100,15 @@ mod tests {
     #[test]
     fn map_writer_changes_writer_type() {
         let sink = MessageSink::new(vec![1u8, 2, 3]);
-        let mapped: MessageSink<String> = sink.map_writer(|v| String::from_utf8(v).unwrap_or_default());
+        let mapped: MessageSink<String> =
+            sink.map_writer(|v| String::from_utf8(v).unwrap_or_default());
         assert!(mapped.writer().contains('\u{1}'));
     }
 
     #[test]
     fn try_map_writer_succeeds_on_ok() {
         let sink = make_sink();
-        let result = sink.try_map_writer(|w| Ok::<_, (Vec<u8>, &str)>(w));
+        let result = sink.try_map_writer(Ok::<_, (Vec<u8>, &str)>);
         assert!(result.is_ok());
     }
 
@@ -140,7 +141,7 @@ mod tests {
     #[test]
     fn try_map_writer_preserves_line_mode_on_success() {
         let sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
-        let result = sink.try_map_writer(|w| Ok::<_, (Vec<u8>, &str)>(w));
+        let result = sink.try_map_writer(Ok::<_, (Vec<u8>, &str)>);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().line_mode(), LineMode::WithoutNewline);
     }
@@ -148,7 +149,7 @@ mod tests {
     #[test]
     fn try_map_writer_preserves_brand_on_success() {
         let sink = MessageSink::with_brand(Vec::new(), Brand::Oc);
-        let result = sink.try_map_writer(|w| Ok::<_, (Vec<u8>, &str)>(w));
+        let result = sink.try_map_writer(Ok::<_, (Vec<u8>, &str)>);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().brand(), Brand::Oc);
     }

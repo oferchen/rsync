@@ -153,6 +153,7 @@ pub(crate) struct OutFormatContext {
 }
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 
@@ -190,7 +191,11 @@ mod tests {
 
     #[test]
     fn placeholder_format_with_width() {
-        let format = PlaceholderFormat::new(Some(20), PlaceholderAlignment::Left, HumanizeMode::Separator);
+        let format = PlaceholderFormat::new(
+            Some(20),
+            PlaceholderAlignment::Left,
+            HumanizeMode::Separator,
+        );
         assert_eq!(format.width(), Some(20));
         assert_eq!(format.align(), PlaceholderAlignment::Left);
         assert_eq!(format.humanize(), HumanizeMode::Separator);
@@ -198,13 +203,18 @@ mod tests {
 
     #[test]
     fn placeholder_format_decimal_units() {
-        let format = PlaceholderFormat::new(Some(10), PlaceholderAlignment::Right, HumanizeMode::DecimalUnits);
+        let format = PlaceholderFormat::new(
+            Some(10),
+            PlaceholderAlignment::Right,
+            HumanizeMode::DecimalUnits,
+        );
         assert_eq!(format.humanize(), HumanizeMode::DecimalUnits);
     }
 
     #[test]
     fn placeholder_format_binary_units() {
-        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
+        let format =
+            PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
         assert_eq!(format.humanize(), HumanizeMode::BinaryUnits);
     }
 
@@ -245,7 +255,11 @@ mod tests {
     fn out_format_token_placeholder() {
         let inner = PlaceholderToken::new(
             OutFormatPlaceholder::FileLength,
-            PlaceholderFormat::new(Some(15), PlaceholderAlignment::Left, HumanizeMode::Separator),
+            PlaceholderFormat::new(
+                Some(15),
+                PlaceholderAlignment::Left,
+                HumanizeMode::Separator,
+            ),
         );
         let token = OutFormatToken::Placeholder(inner);
         if let OutFormatToken::Placeholder(p) = token {
@@ -287,7 +301,8 @@ mod tests {
 
     #[test]
     fn placeholder_format_clone() {
-        let format = PlaceholderFormat::new(Some(5), PlaceholderAlignment::Left, HumanizeMode::Separator);
+        let format =
+            PlaceholderFormat::new(Some(5), PlaceholderAlignment::Left, HumanizeMode::Separator);
         let cloned = format;
         assert_eq!(cloned.width(), Some(5));
     }

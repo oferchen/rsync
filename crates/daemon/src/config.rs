@@ -127,9 +127,7 @@ mod tests {
 
         #[test]
         fn builder_with_brand() {
-            let config = DaemonConfig::builder()
-                .brand(Brand::Upstream)
-                .build();
+            let config = DaemonConfig::builder().brand(Brand::Upstream).build();
 
             assert_eq!(config.brand(), Brand::Upstream);
         }
@@ -149,9 +147,7 @@ mod tests {
 
         #[test]
         fn builder_disable_default_paths() {
-            let config = DaemonConfig::builder()
-                .disable_default_paths()
-                .build();
+            let config = DaemonConfig::builder().disable_default_paths().build();
 
             assert!(!config.load_default_paths());
         }
@@ -184,7 +180,7 @@ mod tests {
         #[test]
         fn debug_format() {
             let config = DaemonConfig::builder().build();
-            let debug = format!("{:?}", config);
+            let debug = format!("{config:?}");
 
             assert!(debug.contains("DaemonConfig"));
             assert!(debug.contains("brand"));
@@ -214,7 +210,7 @@ mod tests {
         #[test]
         fn debug_format() {
             let builder = DaemonConfigBuilder::default();
-            let debug = format!("{:?}", builder);
+            let debug = format!("{builder:?}");
 
             assert!(debug.contains("DaemonConfigBuilder"));
         }
@@ -222,9 +218,7 @@ mod tests {
         #[test]
         fn arguments_from_vec() {
             let args = vec!["--help".to_string(), "--version".to_string()];
-            let config = DaemonConfig::builder()
-                .arguments(args)
-                .build();
+            let config = DaemonConfig::builder().arguments(args).build();
 
             assert_eq!(config.arguments().len(), 2);
         }
@@ -232,9 +226,7 @@ mod tests {
         #[test]
         fn arguments_from_osstrings() {
             let args = vec![OsString::from("--once")];
-            let config = DaemonConfig::builder()
-                .arguments(args)
-                .build();
+            let config = DaemonConfig::builder().arguments(args).build();
 
             assert_eq!(config.arguments().len(), 1);
             assert_eq!(config.arguments()[0], "--once");

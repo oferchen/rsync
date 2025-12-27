@@ -87,7 +87,7 @@ mod tests {
         let root = temp.path();
         let mut walker = FileListBuilder::new(root).build().unwrap();
         let entry = walker.next().unwrap().unwrap();
-        let debug = format!("{:?}", entry);
+        let debug = format!("{entry:?}");
         assert!(debug.contains("FileListEntry"));
     }
 

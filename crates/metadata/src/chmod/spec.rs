@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn target_selector_debug() {
         let selector = TargetSelector::All;
-        let debug = format!("{:?}", selector);
+        let debug = format!("{selector:?}");
         assert!(debug.contains("All"));
     }
 

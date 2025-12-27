@@ -103,13 +103,14 @@ mod tests {
 
     #[test]
     fn from_flag_string_and_args_rejects_empty_without_args() {
-        let result = ServerConfig::from_flag_string_and_args(
-            ServerRole::Receiver,
-            "".to_string(),
-            vec![],
-        );
+        let result =
+            ServerConfig::from_flag_string_and_args(ServerRole::Receiver, "".to_string(), vec![]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing rsync server flag string"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("missing rsync server flag string")
+        );
     }
 
     #[test]
@@ -192,7 +193,7 @@ mod tests {
             vec![OsString::from("/path")],
         )
         .unwrap();
-        let debug = format!("{:?}", config);
+        let debug = format!("{config:?}");
         assert!(debug.contains("ServerConfig"));
     }
 

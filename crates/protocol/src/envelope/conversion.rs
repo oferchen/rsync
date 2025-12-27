@@ -91,14 +91,14 @@ mod tests {
     #[test]
     fn error_debug() {
         let err = LogCodeConversionError::NoMessageEquivalent(LogCode::Error);
-        let debug = format!("{:?}", err);
+        let debug = format!("{err:?}");
         assert!(debug.contains("NoMessageEquivalent"));
     }
 
     #[test]
     fn error_display() {
         let err = LogCodeConversionError::NoMessageEquivalent(LogCode::Error);
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("no multiplexed message"));
     }
 

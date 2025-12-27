@@ -81,6 +81,7 @@ pub(crate) const LIST_TIMESTAMP_FORMAT: &[FormatItem<'static>] = format_descript
 );
 
 #[cfg(test)]
+#[allow(clippy::const_is_empty)]
 mod tests {
     use super::*;
 

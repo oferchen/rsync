@@ -474,7 +474,7 @@ mod tests {
     fn file_type_fifo_exists() {
         // FIFO is a valid file type
         let ft = FileType::Fifo;
-        assert_eq!(format!("{:?}", ft), "Fifo");
+        assert_eq!(format!("{ft:?}"), "Fifo");
     }
 
     #[test]
@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn file_entry_flags_debug() {
         let flags = FileEntryFlags::default();
-        let debug = format!("{:?}", flags);
+        let debug = format!("{flags:?}");
         assert!(debug.contains("FileEntryFlags"));
     }
 
@@ -579,7 +579,7 @@ mod tests {
             dev_major: None,
             dev_minor: None,
         };
-        let debug = format!("{:?}", entry);
+        let debug = format!("{entry:?}");
         assert!(debug.contains("FileEntry"));
         assert!(debug.contains("test.txt"));
     }

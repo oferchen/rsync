@@ -856,8 +856,14 @@ mod tests {
 
     #[test]
     fn parse_size_limit_argument_valid() {
-        assert_eq!(parse_size_limit_argument(&os("1K"), "--max-size").unwrap(), 1024);
-        assert_eq!(parse_size_limit_argument(&os("1M"), "--max-size").unwrap(), 1024 * 1024);
+        assert_eq!(
+            parse_size_limit_argument(&os("1K"), "--max-size").unwrap(),
+            1024
+        );
+        assert_eq!(
+            parse_size_limit_argument(&os("1M"), "--max-size").unwrap(),
+            1024 * 1024
+        );
     }
 
     #[test]
@@ -921,19 +927,25 @@ mod tests {
     #[test]
     fn resolve_iconv_setting_valid_spec() {
         let result = resolve_iconv_setting(Some(&os("UTF-8")), false).unwrap();
-        assert_eq!(result, IconvSetting::Explicit {
-            local: "UTF-8".to_string(),
-            remote: None,
-        });
+        assert_eq!(
+            result,
+            IconvSetting::Explicit {
+                local: "UTF-8".to_string(),
+                remote: None,
+            }
+        );
     }
 
     #[test]
     fn resolve_iconv_setting_both_charsets() {
         let result = resolve_iconv_setting(Some(&os("UTF-8,ISO-8859-1")), false).unwrap();
-        assert_eq!(result, IconvSetting::Explicit {
-            local: "UTF-8".to_string(),
-            remote: Some("ISO-8859-1".to_string()),
-        });
+        assert_eq!(
+            result,
+            IconvSetting::Explicit {
+                local: "UTF-8".to_string(),
+                remote: Some("ISO-8859-1".to_string()),
+            }
+        );
     }
 
     #[test]

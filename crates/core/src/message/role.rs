@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn display_matches_as_str() {
         for role in Role::ALL {
-            assert_eq!(format!("{}", role), role.as_str());
+            assert_eq!(format!("{role}"), role.as_str());
         }
     }
 
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn role_is_clone() {
         let role = Role::Sender;
-        let cloned = role.clone();
+        let cloned = role;
         assert_eq!(role, cloned);
     }
 
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn parse_role_error_display() {
         let err = "invalid".parse::<Role>().unwrap_err();
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("unrecognised"));
     }
 

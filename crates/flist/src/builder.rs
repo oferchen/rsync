@@ -65,38 +65,38 @@ mod tests {
     fn new_creates_builder() {
         let builder = FileListBuilder::new("/some/path");
         // Just verify construction doesn't panic
-        let _ = format!("{:?}", builder);
+        let _ = format!("{builder:?}");
     }
 
     #[test]
     fn new_with_pathbuf() {
         let path = PathBuf::from("/some/path");
         let builder = FileListBuilder::new(path);
-        let _ = format!("{:?}", builder);
+        let _ = format!("{builder:?}");
     }
 
     #[test]
     fn follow_symlinks_sets_option() {
         let builder = FileListBuilder::new("/path").follow_symlinks(true);
-        let _ = format!("{:?}", builder);
+        let _ = format!("{builder:?}");
     }
 
     #[test]
     fn follow_symlinks_false() {
         let builder = FileListBuilder::new("/path").follow_symlinks(false);
-        let _ = format!("{:?}", builder);
+        let _ = format!("{builder:?}");
     }
 
     #[test]
     fn include_root_sets_option() {
         let builder = FileListBuilder::new("/path").include_root(true);
-        let _ = format!("{:?}", builder);
+        let _ = format!("{builder:?}");
     }
 
     #[test]
     fn include_root_false() {
         let builder = FileListBuilder::new("/path").include_root(false);
-        let _ = format!("{:?}", builder);
+        let _ = format!("{builder:?}");
     }
 
     #[test]
@@ -104,20 +104,20 @@ mod tests {
         let builder = FileListBuilder::new("/path")
             .follow_symlinks(true)
             .include_root(false);
-        let _ = format!("{:?}", builder);
+        let _ = format!("{builder:?}");
     }
 
     #[test]
     fn clone_works() {
         let builder = FileListBuilder::new("/path");
         let cloned = builder.clone();
-        let _ = format!("{:?}", cloned);
+        let _ = format!("{cloned:?}");
     }
 
     #[test]
     fn debug_format() {
         let builder = FileListBuilder::new("/path");
-        let debug = format!("{:?}", builder);
+        let debug = format!("{builder:?}");
         assert!(debug.contains("FileListBuilder"));
     }
 

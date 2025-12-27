@@ -461,8 +461,7 @@ mod tests {
 
     #[test]
     fn with_checksum_algorithms_replaces_list() {
-        let report = VersionInfoReport::default()
-            .with_checksum_algorithms(["custom1", "custom2"]);
+        let report = VersionInfoReport::default().with_checksum_algorithms(["custom1", "custom2"]);
         let output = report.human_readable();
         assert!(output.contains("custom1"));
         assert!(output.contains("custom2"));
@@ -470,8 +469,8 @@ mod tests {
 
     #[test]
     fn with_compress_algorithms_replaces_list() {
-        let report = VersionInfoReport::default()
-            .with_compress_algorithms(["compress1", "compress2"]);
+        let report =
+            VersionInfoReport::default().with_compress_algorithms(["compress1", "compress2"]);
         let output = report.human_readable();
         assert!(output.contains("compress1"));
         assert!(output.contains("compress2"));
@@ -479,8 +478,7 @@ mod tests {
 
     #[test]
     fn with_daemon_auth_algorithms_replaces_list() {
-        let report = VersionInfoReport::default()
-            .with_daemon_auth_algorithms(["auth1", "auth2"]);
+        let report = VersionInfoReport::default().with_daemon_auth_algorithms(["auth1", "auth2"]);
         let output = report.human_readable();
         assert!(output.contains("auth1"));
         assert!(output.contains("auth2"));
@@ -575,8 +573,7 @@ mod tests {
 
     #[test]
     fn empty_algorithm_list_shows_none() {
-        let report = VersionInfoReport::default()
-            .with_checksum_algorithms(Vec::<&str>::new());
+        let report = VersionInfoReport::default().with_checksum_algorithms(Vec::<&str>::new());
         let output = report.human_readable();
         // When empty, should show "none" under the list
         assert!(output.contains("Checksum list:"));

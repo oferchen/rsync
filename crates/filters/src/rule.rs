@@ -323,7 +323,7 @@ mod tests {
         #[test]
         fn debug_format() {
             let rule = FilterRule::include("test");
-            let debug = format!("{:?}", rule);
+            let debug = format!("{rule:?}");
             assert!(debug.contains("FilterRule"));
             assert!(debug.contains("Include"));
             assert!(debug.contains("test"));

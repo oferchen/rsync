@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn parse_error_display() {
         let error = KnownCompatibilityFlag::from_str("BAD_FLAG").unwrap_err();
-        let display = format!("{}", error);
+        let display = format!("{error}");
         assert!(display.contains("BAD_FLAG"));
         assert!(display.contains("unrecognized"));
     }
@@ -419,13 +419,13 @@ mod tests {
     #[test]
     fn display_trait() {
         let flag = KnownCompatibilityFlag::IncRecurse;
-        assert_eq!(format!("{}", flag), "CF_INC_RECURSE");
+        assert_eq!(format!("{flag}"), "CF_INC_RECURSE");
     }
 
     #[test]
     fn display_all_variants() {
         for flag in KnownCompatibilityFlag::ALL {
-            let display = format!("{}", flag);
+            let display = format!("{flag}");
             assert!(display.starts_with("CF_"));
         }
     }
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn clone_and_eq() {
         let flag = KnownCompatibilityFlag::IncRecurse;
-        let cloned = flag.clone();
+        let cloned = flag;
         assert_eq!(flag, cloned);
     }
 

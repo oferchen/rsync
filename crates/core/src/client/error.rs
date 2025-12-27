@@ -252,7 +252,7 @@ mod tests {
         fn debug_format() {
             let message = rsync_error!(1, "debug test").with_role(Role::Client);
             let error = ClientError::new(1, message);
-            let debug = format!("{:?}", error);
+            let debug = format!("{error:?}");
 
             assert!(debug.contains("ClientError"));
             assert!(debug.contains("exit_code"));
@@ -262,7 +262,7 @@ mod tests {
         fn display_format() {
             let message = rsync_error!(1, "display test message").with_role(Role::Client);
             let error = ClientError::new(1, message);
-            let display = format!("{}", error);
+            let display = format!("{error}");
 
             assert!(display.contains("display test message"));
         }

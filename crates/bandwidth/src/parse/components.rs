@@ -319,12 +319,7 @@ mod tests {
 
     #[test]
     fn new_with_flags_with_rate() {
-        let c = BandwidthLimitComponents::new_with_flags(
-            Some(nz(1000)),
-            Some(nz(500)),
-            true,
-            true,
-        );
+        let c = BandwidthLimitComponents::new_with_flags(Some(nz(1000)), Some(nz(500)), true, true);
         assert_eq!(c.rate(), Some(nz(1000)));
         assert_eq!(c.burst(), Some(nz(500)));
         assert!(c.limit_specified());
@@ -512,7 +507,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let c = BandwidthLimitComponents::new(Some(nz(1000)), None);
-        let debug = format!("{:?}", c);
+        let debug = format!("{c:?}");
         assert!(debug.contains("BandwidthLimitComponents"));
     }
 

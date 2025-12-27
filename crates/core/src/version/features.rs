@@ -575,11 +575,26 @@ mod tests {
 
     #[test]
     fn compiled_feature_from_label_parses_correctly() {
-        assert_eq!(CompiledFeature::from_label("ACLs"), Some(CompiledFeature::Acl));
-        assert_eq!(CompiledFeature::from_label("xattrs"), Some(CompiledFeature::Xattr));
-        assert_eq!(CompiledFeature::from_label("zstd"), Some(CompiledFeature::Zstd));
-        assert_eq!(CompiledFeature::from_label("iconv"), Some(CompiledFeature::Iconv));
-        assert_eq!(CompiledFeature::from_label("sd-notify"), Some(CompiledFeature::SdNotify));
+        assert_eq!(
+            CompiledFeature::from_label("ACLs"),
+            Some(CompiledFeature::Acl)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("xattrs"),
+            Some(CompiledFeature::Xattr)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("zstd"),
+            Some(CompiledFeature::Zstd)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("iconv"),
+            Some(CompiledFeature::Iconv)
+        );
+        assert_eq!(
+            CompiledFeature::from_label("sd-notify"),
+            Some(CompiledFeature::SdNotify)
+        );
     }
 
     #[test]
@@ -657,7 +672,10 @@ mod tests {
     #[test]
     fn static_compiled_features_len_matches_bitmap_population() {
         let static_features = compiled_features_static();
-        assert_eq!(static_features.len(), COMPILED_FEATURE_BITMAP.count_ones() as usize);
+        assert_eq!(
+            static_features.len(),
+            COMPILED_FEATURE_BITMAP.count_ones() as usize
+        );
     }
 
     #[test]
@@ -676,7 +694,7 @@ mod tests {
     #[test]
     fn static_compiled_features_is_empty_consistent_with_len() {
         let static_features = compiled_features_static();
-        assert_eq!(static_features.is_empty(), static_features.len() == 0);
+        assert_eq!(static_features.is_empty(), static_features.is_empty());
     }
 
     #[test]
@@ -834,22 +852,20 @@ mod tests {
     #[test]
     fn compiled_features_display_format_single() {
         let display = CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl]);
-        assert_eq!(format!("{}", display), "ACLs");
+        assert_eq!(format!("{display}"), "ACLs");
     }
 
     #[test]
     fn compiled_features_display_format_multiple() {
-        let display = CompiledFeaturesDisplay::new(vec![
-            CompiledFeature::Acl,
-            CompiledFeature::Zstd,
-        ]);
-        assert_eq!(format!("{}", display), "ACLs zstd");
+        let display =
+            CompiledFeaturesDisplay::new(vec![CompiledFeature::Acl, CompiledFeature::Zstd]);
+        assert_eq!(format!("{display}"), "ACLs zstd");
     }
 
     #[test]
     fn compiled_features_display_format_empty() {
         let display = CompiledFeaturesDisplay::new(vec![]);
-        assert_eq!(format!("{}", display), "");
+        assert_eq!(format!("{display}"), "");
     }
 
     #[test]
@@ -916,7 +932,7 @@ mod tests {
     #[test]
     fn parse_compiled_feature_error_display() {
         let error = ParseCompiledFeatureError;
-        let msg = format!("{}", error);
+        let msg = format!("{error}");
         assert!(msg.contains("unknown"));
     }
 }

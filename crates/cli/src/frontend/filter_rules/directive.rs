@@ -248,7 +248,8 @@ mod tests {
 
     #[test]
     fn merge_directive_options_enforced_kind_from_base() {
-        let base = DirMergeOptions::default().with_enforced_kind(Some(DirMergeEnforcedKind::Include));
+        let base =
+            DirMergeOptions::default().with_enforced_kind(Some(DirMergeEnforcedKind::Include));
         let directive = MergeDirective::new(OsString::from("rules"), None);
         let merged = merge_directive_options(&base, &directive);
         assert_eq!(merged.enforced_kind(), Some(DirMergeEnforcedKind::Include));
@@ -256,9 +257,9 @@ mod tests {
 
     #[test]
     fn merge_directive_options_enforced_kind_override() {
-        let base = DirMergeOptions::default().with_enforced_kind(Some(DirMergeEnforcedKind::Include));
-        let directive =
-            MergeDirective::new(OsString::from("rules"), Some(FilterRuleKind::Exclude));
+        let base =
+            DirMergeOptions::default().with_enforced_kind(Some(DirMergeEnforcedKind::Include));
+        let directive = MergeDirective::new(OsString::from("rules"), Some(FilterRuleKind::Exclude));
         let merged = merge_directive_options(&base, &directive);
         // Directive's enforced_kind should override base
         assert_eq!(merged.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
@@ -319,7 +320,7 @@ mod tests {
     #[test]
     fn filter_directive_debug() {
         let directive = FilterDirective::Clear;
-        let debug_str = format!("{:?}", directive);
+        let debug_str = format!("{directive:?}");
         assert!(debug_str.contains("Clear"));
     }
 }

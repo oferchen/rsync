@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn entry_debug_format() {
         let entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
-        let debug = format!("{:?}", entry);
+        let debug = format!("{entry:?}");
         assert!(debug.contains("FileEntry"));
         assert!(debug.contains("test.txt"));
     }

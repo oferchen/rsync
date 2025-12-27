@@ -163,7 +163,8 @@ mod tests {
     fn write_with_mode_uses_provided_mode() {
         let mut sink = make_sink();
         let msg = Message::info("test");
-        sink.write_with_mode(&msg, LineMode::WithoutNewline).unwrap();
+        sink.write_with_mode(&msg, LineMode::WithoutNewline)
+            .unwrap();
         assert!(!sink.writer().ends_with(b"\n"));
     }
 

@@ -249,7 +249,7 @@ mod tests {
     fn map_sink_transforms_sink() {
         let sink = make_sink();
         let err: TryMapWriterError<Vec<u8>, &str> = TryMapWriterError::new(sink, "error");
-        let mapped = err.map_sink(|s| s.map_writer(|w| io::Cursor::new(w)));
+        let mapped = err.map_sink(|s| s.map_writer(io::Cursor::new));
         assert_eq!(mapped.error(), &"error");
     }
 
@@ -280,7 +280,7 @@ mod tests {
     fn debug_format_contains_fields() {
         let sink = make_sink();
         let err = TryMapWriterError::new(sink, "test error");
-        let debug = format!("{:?}", err);
+        let debug = format!("{err:?}");
         assert!(debug.contains("TryMapWriterError"));
         assert!(debug.contains("sink"));
         assert!(debug.contains("error"));
@@ -290,7 +290,7 @@ mod tests {
     fn display_format_shows_message() {
         let sink = make_sink();
         let err = TryMapWriterError::new(sink, "inner error");
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("failed to map"));
         assert!(display.contains("inner error"));
     }

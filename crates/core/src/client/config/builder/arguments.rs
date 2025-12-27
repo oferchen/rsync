@@ -67,9 +67,7 @@ mod tests {
 
     #[test]
     fn transfer_args_sets_values() {
-        let config = builder()
-            .transfer_args(["--verbose", "--progress"])
-            .build();
+        let config = builder().transfer_args(["--verbose", "--progress"]).build();
         assert_eq!(config.transfer_args().len(), 2);
     }
 
@@ -97,10 +95,7 @@ mod tests {
 
     #[test]
     fn dry_run_false_clears_flag() {
-        let config = builder()
-            .dry_run(true)
-            .dry_run(false)
-            .build();
+        let config = builder().dry_run(true).dry_run(false).build();
         assert!(!config.dry_run());
     }
 
@@ -112,10 +107,7 @@ mod tests {
 
     #[test]
     fn list_only_false_clears_flag() {
-        let config = builder()
-            .list_only(true)
-            .list_only(false)
-            .build();
+        let config = builder().list_only(true).list_only(false).build();
         assert!(!config.list_only());
     }
 

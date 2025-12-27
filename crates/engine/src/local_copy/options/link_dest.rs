@@ -128,8 +128,10 @@ mod tests {
     #[test]
     fn push_reference_directory() {
         use super::super::types::ReferenceDirectoryKind;
-        let options = LocalCopyOptions::new()
-            .push_reference_directory(ReferenceDirectory::new(ReferenceDirectoryKind::Compare, "/compare"));
+        let options = LocalCopyOptions::new().push_reference_directory(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            "/compare",
+        ));
         assert_eq!(options.reference_directories().len(), 1);
     }
 

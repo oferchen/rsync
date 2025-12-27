@@ -60,19 +60,14 @@ mod tests {
 
     #[test]
     fn describe_missing_fallback_binary_three_env_vars() {
-        let result = describe_missing_fallback_binary(
-            OsStr::new("rsync"),
-            &["VAR1", "VAR2", "VAR3"],
-        );
+        let result =
+            describe_missing_fallback_binary(OsStr::new("rsync"), &["VAR1", "VAR2", "VAR3"]);
         assert!(result.contains("set VAR1, VAR2, or VAR3"));
     }
 
     #[test]
     fn describe_missing_fallback_binary_four_env_vars() {
-        let result = describe_missing_fallback_binary(
-            OsStr::new("rsync"),
-            &["A", "B", "C", "D"],
-        );
+        let result = describe_missing_fallback_binary(OsStr::new("rsync"), &["A", "B", "C", "D"]);
         assert!(result.contains("set A, B, C, or D"));
     }
 

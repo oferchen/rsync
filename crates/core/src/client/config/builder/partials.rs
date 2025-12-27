@@ -97,10 +97,7 @@ mod tests {
 
     #[test]
     fn partial_false_clears_flag() {
-        let config = builder()
-            .partial(true)
-            .partial(false)
-            .build();
+        let config = builder().partial(true).partial(false).build();
         assert!(!config.partial());
     }
 
@@ -112,9 +109,7 @@ mod tests {
 
     #[test]
     fn partial_directory_sets_path() {
-        let config = builder()
-            .partial_directory(Some("/tmp/partial"))
-            .build();
+        let config = builder().partial_directory(Some("/tmp/partial")).build();
         assert!(config.partial_directory().is_some());
         assert_eq!(
             config.partial_directory().unwrap().to_str().unwrap(),
@@ -124,9 +119,7 @@ mod tests {
 
     #[test]
     fn partial_directory_enables_partial() {
-        let config = builder()
-            .partial_directory(Some("/tmp/partial"))
-            .build();
+        let config = builder().partial_directory(Some("/tmp/partial")).build();
         assert!(config.partial());
     }
 
@@ -141,9 +134,7 @@ mod tests {
 
     #[test]
     fn temp_directory_sets_path() {
-        let config = builder()
-            .temp_directory(Some("/tmp/staging"))
-            .build();
+        let config = builder().temp_directory(Some("/tmp/staging")).build();
         assert!(config.temp_directory().is_some());
     }
 
@@ -164,10 +155,7 @@ mod tests {
 
     #[test]
     fn inplace_false_clears_flag() {
-        let config = builder()
-            .inplace(true)
-            .inplace(false)
-            .build();
+        let config = builder().inplace(true).inplace(false).build();
         assert!(!config.inplace());
     }
 
@@ -179,10 +167,7 @@ mod tests {
 
     #[test]
     fn append_false_clears_flag_and_verify() {
-        let config = builder()
-            .append_verify(true)
-            .append(false)
-            .build();
+        let config = builder().append_verify(true).append(false).build();
         assert!(!config.append());
         assert!(!config.append_verify());
     }
@@ -196,10 +181,7 @@ mod tests {
 
     #[test]
     fn append_verify_false_only_clears_verify() {
-        let config = builder()
-            .append_verify(true)
-            .append_verify(false)
-            .build();
+        let config = builder().append_verify(true).append_verify(false).build();
         assert!(config.append());
         assert!(!config.append_verify());
     }
@@ -212,10 +194,7 @@ mod tests {
 
     #[test]
     fn fsync_false_clears_flag() {
-        let config = builder()
-            .fsync(true)
-            .fsync(false)
-            .build();
+        let config = builder().fsync(true).fsync(false).build();
         assert!(!config.fsync());
     }
 }

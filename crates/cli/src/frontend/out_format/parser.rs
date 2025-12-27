@@ -427,7 +427,9 @@ mod tests {
 
     #[test]
     fn parse_out_format_all_placeholders_combined() {
-        let result = parse_out_format(&os("%n %N %f %i %l %b %c %o %M %B %L %t %u %g %U %G %p %h %a %m %P %C"));
+        let result = parse_out_format(&os(
+            "%n %N %f %i %l %b %c %o %M %B %L %t %u %g %U %G %p %h %a %m %P %C",
+        ));
         assert!(result.is_ok());
     }
 

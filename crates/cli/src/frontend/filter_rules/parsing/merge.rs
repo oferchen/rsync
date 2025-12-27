@@ -204,19 +204,13 @@ mod tests {
     #[test]
     fn parse_merge_modifiers_exclude() {
         let (options, _) = parse_merge_modifiers("-", ":- file", true).unwrap();
-        assert_eq!(
-            options.enforced_kind(),
-            Some(DirMergeEnforcedKind::Exclude)
-        );
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
     }
 
     #[test]
     fn parse_merge_modifiers_include() {
         let (options, _) = parse_merge_modifiers("+", ":+ file", true).unwrap();
-        assert_eq!(
-            options.enforced_kind(),
-            Some(DirMergeEnforcedKind::Include)
-        );
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Include));
     }
 
     #[test]
@@ -235,10 +229,7 @@ mod tests {
     fn parse_merge_modifiers_cvsignore() {
         let (options, assume_cvsignore) = parse_merge_modifiers("C", ":C", true).unwrap();
         assert!(assume_cvsignore);
-        assert_eq!(
-            options.enforced_kind(),
-            Some(DirMergeEnforcedKind::Exclude)
-        );
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
         assert!(options.uses_whitespace());
         assert!(!options.allows_comments());
     }
@@ -313,10 +304,7 @@ mod tests {
     #[test]
     fn parse_merge_modifiers_combined() {
         let (options, _) = parse_merge_modifiers("-sp", ":- file", true).unwrap();
-        assert_eq!(
-            options.enforced_kind(),
-            Some(DirMergeEnforcedKind::Exclude)
-        );
+        assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
         assert_eq!(options.sender_side_override(), Some(true));
         assert!(options.perishable());
     }

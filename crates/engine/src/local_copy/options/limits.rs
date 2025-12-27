@@ -173,9 +173,7 @@ mod tests {
 
     #[test]
     fn preallocate_disables() {
-        let opts = LocalCopyOptions::new()
-            .preallocate(true)
-            .preallocate(false);
+        let opts = LocalCopyOptions::new().preallocate(true).preallocate(false);
         assert!(!opts.preallocate_enabled());
     }
 

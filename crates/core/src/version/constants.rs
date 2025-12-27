@@ -75,6 +75,7 @@ pub fn build_revision() -> &'static str {
 }
 
 #[cfg(test)]
+#[allow(clippy::const_is_empty, clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 
@@ -113,13 +114,13 @@ mod tests {
     #[test]
     fn copyright_start_year_is_valid() {
         let year: u32 = COPYRIGHT_START_YEAR.parse().expect("valid year");
-        assert!(year >= 2020 && year <= 2100);
+        assert!((2020..=2100).contains(&year));
     }
 
     #[test]
     fn latest_copyright_year_is_valid() {
         let year: u32 = LATEST_COPYRIGHT_YEAR.parse().expect("valid year");
-        assert!(year >= 2020 && year <= 2100);
+        assert!((2020..=2100).contains(&year));
     }
 
     #[test]
