@@ -91,6 +91,7 @@ pub(crate) fn load_daemon_connect_program(
         .map_err(connect_program_configuration_error)
 }
 
+#[derive(Debug)]
 pub(crate) struct ConnectProgramConfig {
     template: OsString,
     shell: Option<OsString>,
@@ -217,4 +218,160 @@ fn connect_program_configuration_error(text: impl Into<String>) -> ClientError {
     let message = crate::rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, "{}", text.into())
         .with_role(crate::message::Role::Client);
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== ConnectProgramConfig::new tests ====================
+
+    #[test]
+    fn connect_program_config_new_valid() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None);
+        assert!(config.is_ok());
+    }
+
+    #[test]
+    fn connect_program_config_new_with_shell() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), Some("/bin/bash".into()));
+        assert!(config.is_ok());
+        assert!(config.unwrap().shell().is_some());
+    }
+
+    #[test]
+    fn connect_program_config_new_empty_template_error() {
+        let config = ConnectProgramConfig::new("".into(), None);
+        assert!(config.is_err());
+        assert!(config.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn connect_program_config_new_empty_shell_error() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), Some("".into()));
+        assert!(config.is_err());
+        assert!(config.unwrap_err().contains("RSYNC_SHELL"));
+    }
+
+    // ==================== ConnectProgramConfig::shell tests ====================
+
+    #[test]
+    fn connect_program_config_shell_none() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        assert!(config.shell().is_none());
+    }
+
+    #[test]
+    fn connect_program_config_shell_some() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), Some("/bin/zsh".into())).unwrap();
+        assert_eq!(config.shell().unwrap(), "/bin/zsh");
+    }
+
+    // ==================== ConnectProgramConfig::format_command tests ====================
+
+    #[test]
+    fn format_command_substitutes_host() {
+        let config = ConnectProgramConfig::new("connect to %H".into(), None).unwrap();
+        let result = config.format_command("example.com", 873).unwrap();
+        assert_eq!(result, "connect to example.com");
+    }
+
+    #[test]
+    fn format_command_substitutes_port() {
+        let config = ConnectProgramConfig::new("port %P".into(), None).unwrap();
+        let result = config.format_command("host", 8080).unwrap();
+        assert_eq!(result, "port 8080");
+    }
+
+    #[test]
+    fn format_command_substitutes_both() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        let result = config.format_command("server.local", 22).unwrap();
+        assert_eq!(result, "nc server.local 22");
+    }
+
+    #[test]
+    fn format_command_escapes_percent() {
+        let config = ConnectProgramConfig::new("echo 100%%".into(), None).unwrap();
+        let result = config.format_command("host", 873).unwrap();
+        assert_eq!(result, "echo 100%");
+    }
+
+    #[test]
+    fn format_command_preserves_unknown_specifiers() {
+        let config = ConnectProgramConfig::new("echo %X".into(), None).unwrap();
+        let result = config.format_command("host", 873).unwrap();
+        assert_eq!(result, "echo %X");
+    }
+
+    #[test]
+    fn format_command_trailing_percent() {
+        let config = ConnectProgramConfig::new("test%".into(), None).unwrap();
+        let result = config.format_command("host", 873).unwrap();
+        assert_eq!(result, "test%");
+    }
+
+    #[test]
+    fn format_command_multiple_substitutions() {
+        let config = ConnectProgramConfig::new("%H:%P and %H again".into(), None).unwrap();
+        let result = config.format_command("myhost", 9999).unwrap();
+        assert_eq!(result, "myhost:9999 and myhost again");
+    }
+
+    #[test]
+    fn format_command_no_substitutions() {
+        let config = ConnectProgramConfig::new("static command".into(), None).unwrap();
+        let result = config.format_command("host", 873).unwrap();
+        assert_eq!(result, "static command");
+    }
+
+    #[test]
+    fn format_command_adjacent_specifiers() {
+        let config = ConnectProgramConfig::new("%H%P".into(), None).unwrap();
+        let result = config.format_command("test", 123).unwrap();
+        assert_eq!(result, "test123");
+    }
+
+    #[test]
+    fn format_command_complex_template() {
+        let config =
+            ConnectProgramConfig::new("ssh -p %P %H -o 'Port=%P' %% done".into(), None).unwrap();
+        let result = config.format_command("server", 2222).unwrap();
+        assert_eq!(result, "ssh -p 2222 server -o 'Port=2222' % done");
+    }
+
+    #[test]
+    fn format_command_ipv6_host() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        let result = config.format_command("::1", 873).unwrap();
+        assert_eq!(result, "nc ::1 873");
+    }
+
+    #[test]
+    fn format_command_empty_host() {
+        let config = ConnectProgramConfig::new("nc '%H' %P".into(), None).unwrap();
+        let result = config.format_command("", 873).unwrap();
+        assert_eq!(result, "nc '' 873");
+    }
+
+    #[test]
+    fn format_command_port_zero() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        let result = config.format_command("host", 0).unwrap();
+        assert_eq!(result, "nc host 0");
+    }
+
+    #[test]
+    fn format_command_port_max() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        let result = config.format_command("host", 65535).unwrap();
+        assert_eq!(result, "nc host 65535");
+    }
+
+    #[test]
+    fn format_command_special_chars_in_host() {
+        let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
+        let result = config.format_command("user@host.example.com", 22).unwrap();
+        assert_eq!(result, "nc user@host.example.com 22");
+    }
 }
