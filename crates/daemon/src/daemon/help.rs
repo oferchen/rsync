@@ -1,6 +1,7 @@
 use core::branding::{Brand, manifest, source_line};
 
 /// Renders the deterministic daemon help text for the supplied branding profile.
+#[allow(dead_code)] // Used in integration tests and by daemon binary
 pub(crate) fn help_text(brand: Brand) -> String {
     let manifest = manifest();
     let program = brand.daemon_program_name();
@@ -42,4 +43,64 @@ pub(crate) fn help_text(brand: Brand) -> String {
         source_line = source_line(),
         default_config = default_config,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn help_text_upstream_contains_program_name() {
+        let text = help_text(Brand::Upstream);
+        assert!(text.contains("rsync"));
+    }
+
+    #[test]
+    fn help_text_oc_contains_program_name() {
+        let text = help_text(Brand::Oc);
+        assert!(text.contains("oc-rsync"));
+    }
+
+    #[test]
+    fn help_text_contains_version() {
+        let text = help_text(Brand::Upstream);
+        // Should contain version information
+        assert!(text.contains('.'));
+    }
+
+    #[test]
+    fn help_text_contains_usage() {
+        let text = help_text(Brand::Upstream);
+        assert!(text.contains("Usage:"));
+    }
+
+    #[test]
+    fn help_text_contains_help_option() {
+        let text = help_text(Brand::Upstream);
+        assert!(text.contains("--help"));
+    }
+
+    #[test]
+    fn help_text_contains_version_option() {
+        let text = help_text(Brand::Upstream);
+        assert!(text.contains("--version"));
+    }
+
+    #[test]
+    fn help_text_contains_port_option() {
+        let text = help_text(Brand::Upstream);
+        assert!(text.contains("--port"));
+    }
+
+    #[test]
+    fn help_text_contains_config_option() {
+        let text = help_text(Brand::Upstream);
+        assert!(text.contains("--config"));
+    }
+
+    #[test]
+    fn help_text_is_not_empty() {
+        let text = help_text(Brand::Upstream);
+        assert!(!text.is_empty());
+    }
 }
