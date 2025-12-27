@@ -37,10 +37,10 @@ use std::time::Instant;
 use checksums::strong::{Md4, Md5, Md5Seed, Xxh3, Xxh64};
 use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
+use protocol::codec::{NDX_FLIST_EOF, NdxCodec, create_ndx_codec};
 use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
-use protocol::ndx::{NDX_FLIST_EOF, NdxCodec, create_ndx_codec};
 use protocol::wire::{DeltaOp, SignatureBlock, write_token_stream};
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 

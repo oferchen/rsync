@@ -1,4 +1,4 @@
-//! crates/protocol/src/ndx.rs
+//! crates/protocol/src/codec/ndx.rs
 //!
 //! NDX (file-list index) encoding and decoding for the rsync protocol.
 //!
