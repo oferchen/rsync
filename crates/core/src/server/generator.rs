@@ -48,6 +48,7 @@ use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
+use super::receiver::SumHead;
 use super::shared::ChecksumFactory;
 
 /// Context for the generator role during a transfer.
@@ -568,89 +569,30 @@ impl GeneratorContext {
 
             let ndx = ndx as usize;
 
-            // Read item flags (iflags) for protocol >= 29
-            // Upstream rsync.c:read_ndx_and_attrs() line ~227:
-            //   iflags = read_shortint(f_in);
-            // This is sent as 2 bytes little-endian.
-            //
-            // Common iflags values:
-            // - ITEM_TRANSFER (0x8000) = file needs to be transferred
-            // - ITEM_REPORT_* = various reporting flags
-            //
-            // For the sender, we mainly care about ITEM_TRANSFER to know if
-            // we need to send file data.
-            let iflags = if self.protocol.as_u8() >= 29 {
-                let mut iflags_bytes = [0u8; 2];
-                reader.read_exact(&mut iflags_bytes)?;
+            // Read item flags using ItemFlags helper
+            let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
+            if self.protocol.as_u8() >= 29 {
                 self.total_bytes_read += 2;
-                u16::from_le_bytes(iflags_bytes)
-            } else {
-                // For older protocols, assume ITEM_TRANSFER
-                0x8000u16
-            };
+            }
 
-            // ITEM_BASIS_TYPE_FOLLOWS (0x0800) - if set, read fnamecmp_type byte
-            // ITEM_XNAME_FOLLOWS (0x0001) - if set, read extended name vstring
-            // For now, we don't support these advanced features
-            if iflags & 0x0800 != 0 {
-                // Read and discard fnamecmp_type byte
-                let mut _ftype = [0u8; 1];
-                reader.read_exact(&mut _ftype)?;
+            // Read and discard optional trailing fields (basis type, xname)
+            let (_fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
+            if iflags.has_basis_type() {
                 self.total_bytes_read += 1;
             }
-            if iflags & 0x0001 != 0 {
-                // Read and discard extended name (vstring format: varint length + bytes)
-                let xlen = protocol::read_varint(reader)? as usize;
-                self.total_bytes_read += 4; // Approximate varint size
-                if xlen > 0 {
-                    let actual_len = xlen.min(4096);
-                    let mut xname = vec![0u8; actual_len];
-                    reader.read_exact(&mut xname)?;
-                    self.total_bytes_read += actual_len as u64;
-                }
+            if let Some(ref xname_data) = xname {
+                self.total_bytes_read += 4 + xname_data.len() as u64; // varint + data
             }
 
             // Check if file should be transferred
-            const ITEM_TRANSFER: u16 = 0x8000;
-            if iflags & ITEM_TRANSFER == 0 {
+            if !iflags.needs_transfer() {
                 // File doesn't need transfer (e.g., unchanged or directory)
                 continue;
             }
 
-            // Read sum_head (checksum summary) from receiver's generator
-            // Upstream sender.c:~325 calls receive_sums() after reading ndx+iflags
-            // The receiver's generator sends this to tell us how to create deltas.
-            //
-            // sum_head format (upstream io.c:write_sum_head):
-            // - count (4 bytes): number of checksum blocks (0 = whole file transfer)
-            // - blength (4 bytes): block length
-            // - s2length (4 bytes, protocol >= 27): strong sum length
-            // - remainder (4 bytes, protocol >= 27): last block size
-            //
-            // When count=0, the receiver has no basis file and expects a whole-file transfer.
-            let mut sum_head = [0u8; 16];
-            if self.protocol.as_u8() >= 27 {
-                // Protocol 27+: 16 bytes (count, blength, s2length, remainder)
-                reader.read_exact(&mut sum_head)?;
-                self.total_bytes_read += 16;
-            } else {
-                // Older protocols: 8 bytes (count, blength)
-                reader.read_exact(&mut sum_head[..8])?;
-                self.total_bytes_read += 8;
-            }
-            let sum_count = i32::from_le_bytes(sum_head[0..4].try_into().unwrap());
-            let sum_blength = i32::from_le_bytes(sum_head[4..8].try_into().unwrap());
-            let sum_s2length = if self.protocol.as_u8() >= 27 {
-                i32::from_le_bytes(sum_head[8..12].try_into().unwrap())
-            } else {
-                // Older protocols use fixed 16-byte MD4 strong sum
-                16
-            };
-            let sum_remainder = if self.protocol.as_u8() >= 27 {
-                i32::from_le_bytes(sum_head[12..16].try_into().unwrap())
-            } else {
-                0
-            };
+            // Read sum_head using SumHead helper
+            let sum_head = SumHead::read(&mut *reader)?;
+            self.total_bytes_read += 16; // SumHead is always 16 bytes
 
             // Validate file index
             if ndx >= self.file_list.len() {
@@ -667,42 +609,16 @@ impl GeneratorContext {
             let _file_entry = &self.file_list[ndx];
             let source_path = &self.full_paths[ndx];
 
-            // Read signature blocks from receiver
-            //
-            // Upstream sender.c:receive_sums() reads checksum blocks after sum_head.
-            // When count=0 (no basis file), there are no blocks to read.
-            // When count>0, read rolling_sum (4 bytes LE) + strong_sum (s2length bytes) per block.
-            let block_length = sum_blength as u32;
-            let block_count = sum_count as u32;
-            let strong_sum_length = sum_s2length as u8;
+            // Read signature blocks using read_signature_blocks helper
+            let sig_blocks = read_signature_blocks(&mut *reader, &sum_head)?;
 
-            let sig_blocks: Vec<SignatureBlock> = if sum_count > 0 {
-                // Receiver has basis file, read checksum blocks
-                let mut blocks = Vec::with_capacity(sum_count as usize);
-                for i in 0..sum_count {
-                    // Read rolling checksum (4 bytes LE)
-                    let mut rolling_sum_bytes = [0u8; 4];
-                    reader.read_exact(&mut rolling_sum_bytes)?;
-                    self.total_bytes_read += 4;
-                    let rolling_sum = u32::from_le_bytes(rolling_sum_bytes);
+            // Track bytes read for signature blocks: (4 + s2length) per block
+            let bytes_per_block = 4 + sum_head.s2length as u64;
+            self.total_bytes_read += sum_head.count as u64 * bytes_per_block;
 
-                    // Read strong checksum (s2length bytes)
-                    let mut strong_sum = vec![0u8; sum_s2length as usize];
-                    reader.read_exact(&mut strong_sum)?;
-                    self.total_bytes_read += sum_s2length as u64;
-
-                    blocks.push(SignatureBlock {
-                        index: i as u32,
-                        rolling_sum,
-                        strong_sum,
-                    });
-                }
-                blocks
-            } else {
-                // No basis file (count=0), whole-file transfer - no blocks to read
-                Vec::new()
-            };
-            let has_basis = block_count > 0;
+            let block_length = sum_head.blength;
+            let strong_sum_length = sum_head.s2length as u8;
+            let has_basis = !sum_head.is_empty();
 
             // Skip non-regular files (directories, symlinks, etc.)
             // Directories don't have file data to transfer - their metadata
@@ -756,7 +672,7 @@ impl GeneratorContext {
             // The receiver expects to get back the same iflags it sent us
             if self.protocol.as_u8() >= 29 {
                 // write_shortint sends 2 bytes little-endian
-                writer.write_all(&iflags.to_le_bytes())?;
+                writer.write_all(&iflags.raw().to_le_bytes())?;
             }
 
             // Step 4b: Send sum_head (signature summary) to receiver
@@ -764,14 +680,7 @@ impl GeneratorContext {
             // Upstream sender.c:412 - write_sum_head(f_xfer, s)
             // The sender forwards the SAME sum_head it received from the receiver.
             // The receiver expects to get back the values it sent us.
-            //
-            // Reference: io.c:write_sum_head() writes count, blength, s2length, remainder
-            writer.write_all(&sum_count.to_le_bytes())?;
-            writer.write_all(&sum_blength.to_le_bytes())?;
-            if self.protocol.as_u8() >= 27 {
-                writer.write_all(&sum_s2length.to_le_bytes())?;
-                writer.write_all(&sum_remainder.to_le_bytes())?;
-            }
+            sum_head.write(&mut *writer)?;
 
             // Step 4c: Convert engine delta to wire format and send
             // Using upstream token format: write_int(len) + data for literals,
@@ -1012,6 +921,185 @@ pub struct GeneratorStats {
     pub flist_buildtime_ms: u64,
     /// File list transfer time in milliseconds.
     pub flist_xfertime_ms: u64,
+}
+
+// ============================================================================
+// ItemFlags - Encapsulates item flags parsing from receiver
+// ============================================================================
+
+/// Item flags received from the receiver indicating transfer requirements.
+///
+/// The generator reads these flags to determine how to handle each file request.
+/// Protocol versions >= 29 include these flags with each file index.
+///
+/// # Upstream Reference
+///
+/// - `rsync.h:100-115` - Item flag definitions
+/// - `rsync.c:227` - `read_ndx_and_attrs()` reads iflags
+/// - `sender.c:324` - Sender processes these flags
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ItemFlags {
+    /// Raw 16-bit flags value.
+    raw: u16,
+}
+
+impl ItemFlags {
+    /// Item needs data transfer (file content differs).
+    pub const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
+    /// Item is being reported (itemized output).
+    pub const ITEM_REPORT_ATIME: u16 = 1 << 14; // 0x4000
+    /// Item is being reported for checksum change.
+    pub const ITEM_REPORT_CHECKSUM: u16 = 1 << 13; // 0x2000
+    /// Alternate basis file name follows.
+    pub const ITEM_XNAME_FOLLOWS: u16 = 1 << 12; // 0x1000
+    /// Basis file type follows.
+    pub const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11; // 0x0800
+    /// Item reports size change.
+    pub const ITEM_REPORT_SIZE: u16 = 1 << 10; // 0x0400
+    /// Item reports time change.
+    pub const ITEM_REPORT_TIME: u16 = 1 << 9; // 0x0200
+    /// Item reports perms change.
+    pub const ITEM_REPORT_PERMS: u16 = 1 << 8; // 0x0100
+    /// Item reports owner change.
+    pub const ITEM_REPORT_OWNER: u16 = 1 << 7; // 0x0080
+    /// Item reports group change.
+    pub const ITEM_REPORT_GROUP: u16 = 1 << 6; // 0x0040
+    /// Item reports ACL change.
+    pub const ITEM_REPORT_ACL: u16 = 1 << 5; // 0x0020
+    /// Item reports xattr change.
+    pub const ITEM_REPORT_XATTR: u16 = 1 << 4; // 0x0010
+    /// Item is a directory.
+    pub const ITEM_IS_NEW: u16 = 1 << 3; // 0x0008
+    /// Item's basis matched fuzzy file.
+    pub const ITEM_LOCAL_CHANGE: u16 = 1 << 2; // 0x0004
+    /// Transfer type follows (hardlink, etc).
+    pub const ITEM_TRANSFER_TYPE: u16 = 1 << 1; // 0x0002
+    /// Extended name follows (symlink target, etc).
+    pub const ITEM_REPORT_LINKS: u16 = 1 << 0; // 0x0001
+
+    /// Creates ItemFlags from raw 16-bit value.
+    #[must_use]
+    pub const fn from_raw(raw: u16) -> Self {
+        Self { raw }
+    }
+
+    /// Returns the raw 16-bit flags value.
+    #[must_use]
+    pub const fn raw(&self) -> u16 {
+        self.raw
+    }
+
+    /// Returns true if the item needs data transfer.
+    #[must_use]
+    pub const fn needs_transfer(&self) -> bool {
+        self.raw & Self::ITEM_TRANSFER != 0
+    }
+
+    /// Returns true if basis file type follows.
+    #[must_use]
+    pub const fn has_basis_type(&self) -> bool {
+        self.raw & Self::ITEM_BASIS_TYPE_FOLLOWS != 0
+    }
+
+    /// Returns true if extended name follows.
+    #[must_use]
+    pub const fn has_xname(&self) -> bool {
+        self.raw & Self::ITEM_XNAME_FOLLOWS != 0
+    }
+
+    /// Reads item flags from the wire.
+    ///
+    /// For protocol >= 29, reads 2 bytes little-endian.
+    /// For older protocols, returns ITEM_TRANSFER as default.
+    pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
+        if protocol_version >= 29 {
+            let mut buf = [0u8; 2];
+            reader.read_exact(&mut buf)?;
+            Ok(Self::from_raw(u16::from_le_bytes(buf)))
+        } else {
+            // Older protocols assume transfer is needed
+            Ok(Self::from_raw(Self::ITEM_TRANSFER))
+        }
+    }
+
+    /// Reads optional trailing fields based on flags.
+    ///
+    /// Returns (fnamecmp_type, xname) where each is present only if indicated by flags.
+    pub fn read_trailing<R: Read>(
+        &self,
+        reader: &mut R,
+    ) -> io::Result<(Option<u8>, Option<Vec<u8>>)> {
+        // Read basis file type if ITEM_BASIS_TYPE_FOLLOWS
+        let fnamecmp_type = if self.has_basis_type() {
+            let mut byte = [0u8; 1];
+            reader.read_exact(&mut byte)?;
+            Some(byte[0])
+        } else {
+            None
+        };
+
+        // Read extended name if ITEM_XNAME_FOLLOWS
+        let xname = if self.has_xname() {
+            // vstring format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
+            let xlen = protocol::read_varint(reader)? as usize;
+            if xlen > 0 {
+                let actual_len = xlen.min(4096); // Sanity limit
+                let mut xname_buf = vec![0u8; actual_len];
+                reader.read_exact(&mut xname_buf)?;
+                Some(xname_buf)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok((fnamecmp_type, xname))
+    }
+}
+
+// ============================================================================
+// Signature Block Reading - Encapsulates reading checksum blocks from receiver
+// ============================================================================
+
+/// Reads signature blocks from the receiver.
+///
+/// After reading sum_head, this reads the rolling and strong checksums for each block.
+/// When sum_head.count is 0, returns an empty Vec (whole-file transfer).
+///
+/// # Upstream Reference
+///
+/// - `sender.c:120` - `receive_sums()` reads signature blocks
+/// - `match.c:395` - Block format: rolling_sum (4 bytes) + strong_sum (s2length bytes)
+pub fn read_signature_blocks<R: Read>(
+    reader: &mut R,
+    sum_head: &SumHead,
+) -> io::Result<Vec<SignatureBlock>> {
+    if sum_head.is_empty() {
+        // No basis file (count=0), whole-file transfer - no blocks to read
+        return Ok(Vec::new());
+    }
+
+    let mut blocks = Vec::with_capacity(sum_head.count as usize);
+
+    for i in 0..sum_head.count {
+        // Read rolling checksum (4 bytes LE)
+        let mut rolling_bytes = [0u8; 4];
+        reader.read_exact(&mut rolling_bytes)?;
+        let rolling_sum = u32::from_le_bytes(rolling_bytes);
+
+        // Read strong checksum (s2length bytes)
+        let mut strong_sum = vec![0u8; sum_head.s2length as usize];
+        reader.read_exact(&mut strong_sum)?;
+
+        blocks.push(SignatureBlock {
+            index: i,
+            rolling_sum,
+            strong_sum,
+        });
+    }
+
+    Ok(blocks)
 }
 
 // Helper functions for delta generation
@@ -1732,5 +1820,248 @@ mod tests {
             }
             _ => panic!("expected literal token"),
         }
+    }
+
+    // ========================================================================
+    // ItemFlags Tests
+    // ========================================================================
+
+    #[test]
+    fn item_flags_from_raw() {
+        let flags = ItemFlags::from_raw(0x8000);
+        assert_eq!(flags.raw(), 0x8000);
+        assert!(flags.needs_transfer());
+        assert!(!flags.has_basis_type());
+        assert!(!flags.has_xname());
+    }
+
+    #[test]
+    fn item_flags_needs_transfer() {
+        // Test ITEM_TRANSFER flag (0x8000)
+        assert!(ItemFlags::from_raw(0x8000).needs_transfer());
+        assert!(ItemFlags::from_raw(0x8001).needs_transfer());
+        assert!(ItemFlags::from_raw(0xFFFF).needs_transfer());
+        assert!(!ItemFlags::from_raw(0x0000).needs_transfer());
+        assert!(!ItemFlags::from_raw(0x7FFF).needs_transfer());
+    }
+
+    #[test]
+    fn item_flags_has_basis_type() {
+        // Test ITEM_BASIS_TYPE_FOLLOWS flag (0x0800)
+        assert!(ItemFlags::from_raw(0x0800).has_basis_type());
+        assert!(ItemFlags::from_raw(0x8800).has_basis_type());
+        assert!(!ItemFlags::from_raw(0x0000).has_basis_type());
+        assert!(!ItemFlags::from_raw(0x8000).has_basis_type());
+    }
+
+    #[test]
+    fn item_flags_has_xname() {
+        // Test ITEM_XNAME_FOLLOWS flag (0x1000)
+        assert!(ItemFlags::from_raw(0x1000).has_xname());
+        assert!(ItemFlags::from_raw(0x9000).has_xname());
+        assert!(!ItemFlags::from_raw(0x0000).has_xname());
+        assert!(!ItemFlags::from_raw(0x8000).has_xname());
+    }
+
+    #[test]
+    fn item_flags_read_protocol_29_plus() {
+        // Protocol 29+ reads 2 bytes little-endian
+        let data = [0x00, 0x80]; // 0x8000 = ITEM_TRANSFER
+        let mut cursor = Cursor::new(&data[..]);
+
+        let flags = ItemFlags::read(&mut cursor, 29).unwrap();
+        assert_eq!(flags.raw(), 0x8000);
+        assert!(flags.needs_transfer());
+    }
+
+    #[test]
+    fn item_flags_read_protocol_28() {
+        // Protocol 28 and older defaults to ITEM_TRANSFER without reading
+        let data: [u8; 0] = [];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let flags = ItemFlags::read(&mut cursor, 28).unwrap();
+        assert_eq!(flags.raw(), ItemFlags::ITEM_TRANSFER);
+        assert!(flags.needs_transfer());
+    }
+
+    #[test]
+    fn item_flags_read_trailing_no_fields() {
+        // No trailing fields when neither flag is set
+        let data: [u8; 0] = [];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let flags = ItemFlags::from_raw(0x8000); // Just ITEM_TRANSFER
+        let (ftype, xname) = flags.read_trailing(&mut cursor).unwrap();
+
+        assert!(ftype.is_none());
+        assert!(xname.is_none());
+    }
+
+    #[test]
+    fn item_flags_read_trailing_basis_type() {
+        // ITEM_BASIS_TYPE_FOLLOWS reads 1 byte
+        let data = [0x42]; // basis type = 0x42
+        let mut cursor = Cursor::new(&data[..]);
+
+        let flags = ItemFlags::from_raw(0x0800); // ITEM_BASIS_TYPE_FOLLOWS
+        let (ftype, xname) = flags.read_trailing(&mut cursor).unwrap();
+
+        assert_eq!(ftype, Some(0x42));
+        assert!(xname.is_none());
+    }
+
+    #[test]
+    fn item_flags_combined_flags() {
+        // Test multiple flags combined
+        let flags = ItemFlags::from_raw(0x9800); // TRANSFER + XNAME + BASIS_TYPE
+        assert!(flags.needs_transfer());
+        assert!(flags.has_basis_type());
+        assert!(flags.has_xname());
+    }
+
+    #[test]
+    fn item_flags_constants() {
+        // Verify constant values match upstream rsync
+        assert_eq!(ItemFlags::ITEM_TRANSFER, 0x8000);
+        assert_eq!(ItemFlags::ITEM_REPORT_ATIME, 0x4000);
+        assert_eq!(ItemFlags::ITEM_REPORT_CHECKSUM, 0x2000);
+        assert_eq!(ItemFlags::ITEM_XNAME_FOLLOWS, 0x1000);
+        assert_eq!(ItemFlags::ITEM_BASIS_TYPE_FOLLOWS, 0x0800);
+        assert_eq!(ItemFlags::ITEM_REPORT_SIZE, 0x0400);
+        assert_eq!(ItemFlags::ITEM_REPORT_TIME, 0x0200);
+        assert_eq!(ItemFlags::ITEM_REPORT_PERMS, 0x0100);
+        assert_eq!(ItemFlags::ITEM_REPORT_OWNER, 0x0080);
+        assert_eq!(ItemFlags::ITEM_REPORT_GROUP, 0x0040);
+    }
+
+    // ========================================================================
+    // read_signature_blocks Tests
+    // ========================================================================
+
+    #[test]
+    fn read_signature_blocks_empty() {
+        // count=0 means whole-file transfer, no blocks to read
+        let data: [u8; 0] = [];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let sum_head = SumHead::empty();
+        let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
+
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn read_signature_blocks_single_block() {
+        // Single block: rolling (4 bytes) + strong (16 bytes)
+        let mut data = Vec::new();
+        // Rolling sum = 0x12345678 (little-endian)
+        data.extend_from_slice(&0x12345678u32.to_le_bytes());
+        // Strong sum = 16 bytes
+        data.extend_from_slice(&[0xAA; 16]);
+
+        let mut cursor = Cursor::new(&data[..]);
+
+        let sum_head = SumHead::new(1, 1024, 16, 0);
+        let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(blocks[0].rolling_sum, 0x12345678);
+        assert_eq!(blocks[0].strong_sum, vec![0xAA; 16]);
+    }
+
+    #[test]
+    fn read_signature_blocks_multiple_blocks() {
+        // Three blocks
+        let mut data = Vec::new();
+
+        // Block 0
+        data.extend_from_slice(&0x11111111u32.to_le_bytes());
+        data.extend_from_slice(&[0x01; 16]);
+
+        // Block 1
+        data.extend_from_slice(&0x22222222u32.to_le_bytes());
+        data.extend_from_slice(&[0x02; 16]);
+
+        // Block 2
+        data.extend_from_slice(&0x33333333u32.to_le_bytes());
+        data.extend_from_slice(&[0x03; 16]);
+
+        let mut cursor = Cursor::new(&data[..]);
+
+        let sum_head = SumHead::new(3, 1024, 16, 512);
+        let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
+
+        assert_eq!(blocks.len(), 3);
+
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(blocks[0].rolling_sum, 0x11111111);
+        assert_eq!(blocks[0].strong_sum, vec![0x01; 16]);
+
+        assert_eq!(blocks[1].index, 1);
+        assert_eq!(blocks[1].rolling_sum, 0x22222222);
+        assert_eq!(blocks[1].strong_sum, vec![0x02; 16]);
+
+        assert_eq!(blocks[2].index, 2);
+        assert_eq!(blocks[2].rolling_sum, 0x33333333);
+        assert_eq!(blocks[2].strong_sum, vec![0x03; 16]);
+    }
+
+    #[test]
+    fn read_signature_blocks_short_strong_sum() {
+        // Test with shorter strong sum (e.g., 8 bytes for XXH64)
+        let mut data = Vec::new();
+        data.extend_from_slice(&0xDEADBEEFu32.to_le_bytes());
+        data.extend_from_slice(&[0xFF; 8]); // 8-byte strong sum
+
+        let mut cursor = Cursor::new(&data[..]);
+
+        let sum_head = SumHead::new(1, 2048, 8, 0);
+        let blocks = read_signature_blocks(&mut cursor, &sum_head).unwrap();
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].rolling_sum, 0xDEADBEEF);
+        assert_eq!(blocks[0].strong_sum.len(), 8);
+        assert_eq!(blocks[0].strong_sum, vec![0xFF; 8]);
+    }
+
+    #[test]
+    fn read_signature_blocks_truncated_data() {
+        // Test error handling when data is truncated
+        let data = [0x12, 0x34, 0x56]; // Only 3 bytes, need 4 for rolling sum
+
+        let mut cursor = Cursor::new(&data[..]);
+
+        let sum_head = SumHead::new(1, 1024, 16, 0);
+        let result = read_signature_blocks(&mut cursor, &sum_head);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sum_head_round_trip() {
+        // Test that SumHead read/write are inverses
+        let original = SumHead::new(42, 4096, 16, 1024);
+
+        let mut wire = Vec::new();
+        original.write(&mut wire).unwrap();
+
+        assert_eq!(wire.len(), 16); // 4 * 4 bytes
+
+        let mut cursor = Cursor::new(&wire[..]);
+        let parsed = SumHead::read(&mut cursor).unwrap();
+
+        assert_eq!(parsed.count, 42);
+        assert_eq!(parsed.blength, 4096);
+        assert_eq!(parsed.s2length, 16);
+        assert_eq!(parsed.remainder, 1024);
+    }
+
+    #[test]
+    fn sum_head_is_empty() {
+        assert!(SumHead::empty().is_empty());
+        assert!(SumHead::new(0, 0, 0, 0).is_empty());
+        assert!(!SumHead::new(1, 1024, 16, 0).is_empty());
     }
 }
