@@ -627,168 +627,40 @@ impl ReceiverContext {
             writer.flush()?;
 
             // Step 1 & 2: Generate signature if basis file exists
-            // If exact file not found and fuzzy matching is enabled, try to find
-            // a similar file to use as basis for delta transfer.
-            // We track the basis path for block copying during delta application.
-            let (signature_opt, basis_path_opt): (Option<FileSignature>, Option<PathBuf>) = 'sig: {
-                // Try to open the exact file first
-                let (basis_file, basis_size, basis_path) = match fs::File::open(&file_path) {
-                    Ok(f) => {
-                        let size = match f.metadata() {
-                            Ok(meta) => meta.len(),
-                            Err(_) => break 'sig (None, None),
-                        };
-                        (f, size, file_path.clone())
-                    }
-                    Err(_) => {
-                        // Exact file not found - try fuzzy matching if enabled
-                        if !self.config.flags.fuzzy {
-                            break 'sig (None, None);
-                        }
+            // Uses find_basis_file() helper to encapsulate exact match and fuzzy logic.
+            let basis_result = find_basis_file(
+                &file_path,
+                &dest_dir,
+                relative_path,
+                file_entry.size(),
+                self.config.flags.fuzzy,
+                self.protocol,
+                checksum_length,
+                checksum_algorithm,
+            );
+            let signature_opt = basis_result.signature;
+            let basis_path_opt = basis_result.basis_path;
 
-                        // Use FuzzyMatcher to find a similar file in dest_dir
-                        let fuzzy_matcher = FuzzyMatcher::new();
-                        let target_name = match relative_path.file_name() {
-                            Some(name) => name,
-                            None => break 'sig (None, None),
-                        };
-                        let target_size = file_entry.size();
-
-                        let fuzzy_match = match fuzzy_matcher.find_fuzzy_basis(
-                            target_name,
-                            &dest_dir,
-                            target_size,
-                        ) {
-                            Some(m) => m,
-                            None => break 'sig (None, None),
-                        };
-
-                        // Open the fuzzy-matched file as basis
-                        let fuzzy_path = fuzzy_match.path.clone();
-                        let fuzzy_file = match fs::File::open(&fuzzy_path) {
-                            Ok(f) => f,
-                            Err(_) => break 'sig (None, None),
-                        };
-                        let fuzzy_size = match fuzzy_file.metadata() {
-                            Ok(meta) => meta.len(),
-                            Err(_) => break 'sig (None, None),
-                        };
-                        (fuzzy_file, fuzzy_size, fuzzy_path)
-                    }
-                };
-
-                let params = SignatureLayoutParams::new(
-                    basis_size,
-                    None, // Use default block size heuristic
-                    self.protocol,
-                    checksum_length,
-                );
-
-                let layout = match calculate_signature_layout(params) {
-                    Ok(layout) => layout,
-                    Err(_) => break 'sig (None, None),
-                };
-
-                match generate_file_signature(basis_file, layout, checksum_algorithm) {
-                    Ok(sig) => (Some(sig), Some(basis_path)),
-                    Err(_) => (None, None),
-                }
+            // Step 3: Send sum_head (signature header) using SumHead struct
+            // Upstream write_sum_head() sends: count, blength, s2length, remainder
+            let sum_head = match signature_opt {
+                Some(ref signature) => SumHead::from_signature(signature),
+                None => SumHead::empty(),
             };
+            sum_head.write(&mut *writer)?;
 
-            // Step 3: Send sum_head (signature header) matching upstream wire format
-            // upstream write_sum_head() sends: count, blength, s2length (proto>=27), remainder
-            // All as 32-bit little-endian integers (write_int)
+            // Write signature blocks if we have a basis file
             if let Some(ref signature) = signature_opt {
-                let sig_layout = signature.layout();
-                let count = sig_layout.block_count() as u32;
-                let blength = sig_layout.block_length().get();
-                let s2length = sig_layout.strong_sum_length().get() as u32;
-                let remainder = sig_layout.remainder();
-
-                // Write sum_head: count, blength, s2length, remainder (all int32 LE)
-                writer.write_all(&(count as i32).to_le_bytes())?;
-                writer.write_all(&(blength as i32).to_le_bytes())?;
-                writer.write_all(&(s2length as i32).to_le_bytes())?;
-                writer.write_all(&(remainder as i32).to_le_bytes())?;
-
-                // Write each block: rolling_sum (int32 LE) + strong_sum (s2length bytes)
-                for block in signature.blocks() {
-                    writer.write_all(&(block.rolling().value() as i32).to_le_bytes())?;
-                    let strong_bytes = block.strong();
-                    // Truncate or pad to s2length
-                    let mut sum_buf = vec![0u8; s2length as usize];
-                    let copy_len = std::cmp::min(strong_bytes.len(), s2length as usize);
-                    sum_buf[..copy_len].copy_from_slice(&strong_bytes[..copy_len]);
-                    writer.write_all(&sum_buf)?;
-                }
-            } else {
-                // No basis, request whole file: send sum_head with count=0
-                // count=0, blength=0, s2length=0, remainder=0
-                writer.write_all(&0i32.to_le_bytes())?; // count
-                writer.write_all(&0i32.to_le_bytes())?; // blength
-                writer.write_all(&0i32.to_le_bytes())?; // s2length
-                writer.write_all(&0i32.to_le_bytes())?; // remainder
+                write_signature_blocks(&mut *writer, signature, sum_head.s2length)?;
             }
             writer.flush()?;
 
-            // Step 4: Read ndx_and_attrs from sender
-            // The sender echoes back: ndx (delta encoded), iflags (shortint for proto>=29)
-            // Then possibly: fnamecmp_type, xname depending on flags
-            // See upstream write_ndx_and_attrs() in sender.c:180
+            // Step 4: Read sender attributes using SenderAttrs helper
+            // The sender echoes back: ndx, iflags, and optional fields
+            let _sender_attrs = SenderAttrs::read(reader, self.protocol.as_u8())?;
 
-            // Read echoed NDX from sender (delta encoded)
-            let mut ndx_byte = [0u8; 1];
-            let n = reader.read(&mut ndx_byte)?;
-            if n != 1 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "failed to read NDX byte",
-                ));
-            }
-
-            // For protocol >= 29, read iflags (shortint = 2 bytes LE)
-            let iflags = if self.protocol.as_u8() >= 29 {
-                let mut iflags_buf = [0u8; 2];
-                reader.read_exact(&mut iflags_buf)?;
-                u16::from_le_bytes(iflags_buf)
-            } else {
-                0x8000 // ITEM_TRANSFER | ITEM_MISSING_DATA for older protocols
-            };
-
-            // Read optional fields based on iflags
-            const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11; // 0x0800
-            const ITEM_XNAME_FOLLOWS: u16 = 1 << 12; // 0x1000
-
-            if iflags & ITEM_BASIS_TYPE_FOLLOWS != 0 {
-                // Skip fnamecmp_type byte
-                let mut fnamecmp_type = [0u8; 1];
-                reader.read_exact(&mut fnamecmp_type)?;
-            }
-
-            if iflags & ITEM_XNAME_FOLLOWS != 0 {
-                // Read vstring (xname): upstream io.c:1944-1960 read_vstring()
-                // Format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
-                // Then read that many bytes of string data
-                let mut len_byte = [0u8; 1];
-                reader.read_exact(&mut len_byte)?;
-                let xname_len = if len_byte[0] & 0x80 != 0 {
-                    let mut second_byte = [0u8; 1];
-                    reader.read_exact(&mut second_byte)?;
-                    ((len_byte[0] & 0x7F) as usize) * 256 + second_byte[0] as usize
-                } else {
-                    len_byte[0] as usize
-                };
-                // Skip the xname string bytes
-                if xname_len > 0 {
-                    let mut xname_buf = vec![0u8; xname_len];
-                    reader.read_exact(&mut xname_buf)?;
-                }
-            }
-
-            // Read sum_head echoed by sender (16 bytes: count, blength, s2length, remainder)
-            // We read but don't use these values since we already know the signature layout
-            let mut sum_head_buf = [0u8; 16];
-            reader.read_exact(&mut sum_head_buf)?;
+            // Read sum_head echoed by sender (we don't use it, but must consume it)
+            let _echoed_sum_head = SumHead::read(reader)?;
 
             // Step 5: Apply delta to reconstruct file
             let temp_path = file_path.with_extension("oc-rsync.tmp");
@@ -1066,6 +938,370 @@ pub struct TransferStats {
     pub bytes_received: u64,
     /// Metadata errors encountered (path, error message).
     pub metadata_errors: Vec<(PathBuf, String)>,
+}
+
+// ============================================================================
+// Signature Header (SumHead) - Encapsulates rsync's sum_head structure
+// ============================================================================
+
+/// Signature header for delta transfer.
+///
+/// Represents the `sum_head` structure from upstream rsync's rsync.h.
+/// Contains metadata about the signature blocks that follow.
+///
+/// # Wire Format
+///
+/// All fields are transmitted as 32-bit little-endian integers:
+/// - `count`: Number of signature blocks
+/// - `blength`: Block length in bytes
+/// - `s2length`: Strong sum (checksum) length in bytes
+/// - `remainder`: Size of the final partial block (0 if file is block-aligned)
+///
+/// # Upstream Reference
+///
+/// - `rsync.h:200` - `struct sum_struct` definition
+/// - `match.c:380` - `write_sum_head()` sends the header
+/// - `sender.c:120` - `read_sum_head()` receives the header
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SumHead {
+    /// Number of signature blocks.
+    pub count: u32,
+    /// Block length in bytes.
+    pub blength: u32,
+    /// Strong sum (checksum) length in bytes.
+    pub s2length: u32,
+    /// Size of the final partial block (0 if block-aligned).
+    pub remainder: u32,
+}
+
+impl SumHead {
+    /// Creates a new `SumHead` with the specified parameters.
+    #[must_use]
+    pub const fn new(count: u32, blength: u32, s2length: u32, remainder: u32) -> Self {
+        Self {
+            count,
+            blength,
+            s2length,
+            remainder,
+        }
+    }
+
+    /// Creates an empty `SumHead` (no basis file, requests whole-file transfer).
+    ///
+    /// When count=0, the sender knows to transmit the entire file as literal data.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            count: 0,
+            blength: 0,
+            s2length: 0,
+            remainder: 0,
+        }
+    }
+
+    /// Creates a `SumHead` from a file signature.
+    #[must_use]
+    pub fn from_signature(signature: &FileSignature) -> Self {
+        let layout = signature.layout();
+        Self {
+            count: layout.block_count() as u32,
+            blength: layout.block_length().get(),
+            s2length: layout.strong_sum_length().get() as u32,
+            remainder: layout.remainder(),
+        }
+    }
+
+    /// Returns true if this represents a whole-file transfer (no basis).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Writes the sum_head to the wire in rsync format.
+    ///
+    /// All four fields are written as 32-bit little-endian integers.
+    pub fn write<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
+        writer.write_all(&(self.count as i32).to_le_bytes())?;
+        writer.write_all(&(self.blength as i32).to_le_bytes())?;
+        writer.write_all(&(self.s2length as i32).to_le_bytes())?;
+        writer.write_all(&(self.remainder as i32).to_le_bytes())?;
+        Ok(())
+    }
+
+    /// Reads a sum_head from the wire in rsync format.
+    pub fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let mut buf = [0u8; 16];
+        reader.read_exact(&mut buf)?;
+        Ok(Self {
+            count: i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as u32,
+            blength: i32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as u32,
+            s2length: i32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]) as u32,
+            remainder: i32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]) as u32,
+        })
+    }
+}
+
+// ============================================================================
+// Sender Attributes - Encapsulates attributes echoed back by the sender
+// ============================================================================
+
+/// Attributes echoed back by the sender after receiving a file request.
+///
+/// After the receiver sends NDX + iflags + sum_head, the sender echoes back
+/// its own NDX + iflags, potentially with additional fields based on flags.
+///
+/// # Upstream Reference
+///
+/// - `sender.c:180` - `write_ndx_and_attrs()` sends these
+/// - `rsync.c:383` - `read_ndx_and_attrs()` reads them
+#[derive(Debug, Clone, Default)]
+pub struct SenderAttrs {
+    /// Item flags indicating transfer mode.
+    pub iflags: u16,
+    /// Optional basis file type (if `ITEM_BASIS_TYPE_FOLLOWS` set).
+    pub fnamecmp_type: Option<u8>,
+    /// Optional alternate basis name (if `ITEM_XNAME_FOLLOWS` set).
+    pub xname: Option<Vec<u8>>,
+}
+
+impl SenderAttrs {
+    /// Item flag indicating file data will be transferred.
+    pub const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
+    /// Item flag indicating basis type follows.
+    pub const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11; // 0x0800
+    /// Item flag indicating alternate name follows.
+    pub const ITEM_XNAME_FOLLOWS: u16 = 1 << 12; // 0x1000
+
+    /// Reads sender attributes from the wire.
+    ///
+    /// For protocol >= 29, reads iflags and optional trailing fields.
+    /// For older protocols, returns default ITEM_TRANSFER flags.
+    pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
+        // Read initial NDX byte (we already know the NDX, just consume it)
+        let mut ndx_byte = [0u8; 1];
+        let n = reader.read(&mut ndx_byte)?;
+        if n != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "failed to read NDX byte from sender",
+            ));
+        }
+
+        // For protocol >= 29, read iflags (shortint = 2 bytes LE)
+        let iflags = if protocol_version >= 29 {
+            let mut iflags_buf = [0u8; 2];
+            reader.read_exact(&mut iflags_buf)?;
+            u16::from_le_bytes(iflags_buf)
+        } else {
+            Self::ITEM_TRANSFER // Default for older protocols
+        };
+
+        // Read optional fields based on iflags
+        let fnamecmp_type = if iflags & Self::ITEM_BASIS_TYPE_FOLLOWS != 0 {
+            let mut byte = [0u8; 1];
+            reader.read_exact(&mut byte)?;
+            Some(byte[0])
+        } else {
+            None
+        };
+
+        let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
+            // Read vstring: upstream io.c:1944-1960 read_vstring()
+            // Format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
+            let mut len_byte = [0u8; 1];
+            reader.read_exact(&mut len_byte)?;
+            let xname_len = if len_byte[0] & 0x80 != 0 {
+                let mut second_byte = [0u8; 1];
+                reader.read_exact(&mut second_byte)?;
+                ((len_byte[0] & 0x7F) as usize) * 256 + second_byte[0] as usize
+            } else {
+                len_byte[0] as usize
+            };
+            if xname_len > 0 {
+                let mut xname_buf = vec![0u8; xname_len];
+                reader.read_exact(&mut xname_buf)?;
+                Some(xname_buf)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            iflags,
+            fnamecmp_type,
+            xname,
+        })
+    }
+}
+
+// ============================================================================
+// Basis File Finder - Encapsulates exact match and fuzzy matching logic
+// ============================================================================
+
+/// Result of searching for a basis file.
+#[derive(Debug)]
+pub struct BasisFileResult {
+    /// The generated signature (None if no basis found).
+    pub signature: Option<FileSignature>,
+    /// Path to the basis file used (None if no basis found).
+    pub basis_path: Option<PathBuf>,
+}
+
+impl BasisFileResult {
+    /// Returns true if no basis file was found.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.signature.is_none()
+    }
+}
+
+/// Finds a basis file for delta transfer.
+///
+/// First attempts to open the exact file path. If not found and fuzzy matching
+/// is enabled, searches for a similar file to use as basis.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1450` - Basis file selection in `recv_generator()`
+/// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
+#[allow(clippy::too_many_arguments)]
+pub fn find_basis_file(
+    file_path: &std::path::Path,
+    dest_dir: &std::path::Path,
+    relative_path: &std::path::Path,
+    target_size: u64,
+    fuzzy_enabled: bool,
+    protocol: ProtocolVersion,
+    checksum_length: NonZeroU8,
+    checksum_algorithm: engine::signature::SignatureAlgorithm,
+) -> BasisFileResult {
+    // Try to open the exact file first
+    let (basis_file, basis_size, basis_path) = match fs::File::open(file_path) {
+        Ok(f) => {
+            let size = match f.metadata() {
+                Ok(meta) => meta.len(),
+                Err(_) => {
+                    return BasisFileResult {
+                        signature: None,
+                        basis_path: None,
+                    };
+                }
+            };
+            (f, size, file_path.to_path_buf())
+        }
+        Err(_) => {
+            // Exact file not found - try fuzzy matching if enabled
+            if !fuzzy_enabled {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
+                };
+            }
+
+            // Use FuzzyMatcher to find a similar file in dest_dir
+            let fuzzy_matcher = FuzzyMatcher::new();
+            let target_name = match relative_path.file_name() {
+                Some(name) => name,
+                None => {
+                    return BasisFileResult {
+                        signature: None,
+                        basis_path: None,
+                    };
+                }
+            };
+
+            let fuzzy_match =
+                match fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size) {
+                    Some(m) => m,
+                    None => {
+                        return BasisFileResult {
+                            signature: None,
+                            basis_path: None,
+                        };
+                    }
+                };
+
+            // Open the fuzzy-matched file as basis
+            let fuzzy_path = fuzzy_match.path.clone();
+            let fuzzy_file = match fs::File::open(&fuzzy_path) {
+                Ok(f) => f,
+                Err(_) => {
+                    return BasisFileResult {
+                        signature: None,
+                        basis_path: None,
+                    };
+                }
+            };
+            let fuzzy_size = match fuzzy_file.metadata() {
+                Ok(meta) => meta.len(),
+                Err(_) => {
+                    return BasisFileResult {
+                        signature: None,
+                        basis_path: None,
+                    };
+                }
+            };
+            (fuzzy_file, fuzzy_size, fuzzy_path)
+        }
+    };
+
+    // Calculate signature layout
+    let params = SignatureLayoutParams::new(
+        basis_size,
+        None, // Use default block size heuristic
+        protocol,
+        checksum_length,
+    );
+
+    let layout = match calculate_signature_layout(params) {
+        Ok(layout) => layout,
+        Err(_) => {
+            return BasisFileResult {
+                signature: None,
+                basis_path: None,
+            };
+        }
+    };
+
+    // Generate signature
+    match generate_file_signature(basis_file, layout, checksum_algorithm) {
+        Ok(sig) => BasisFileResult {
+            signature: Some(sig),
+            basis_path: Some(basis_path),
+        },
+        Err(_) => BasisFileResult {
+            signature: None,
+            basis_path: None,
+        },
+    }
+}
+
+/// Writes signature blocks to the wire.
+///
+/// After writing sum_head, this sends each block's rolling sum and strong sum.
+///
+/// # Upstream Reference
+///
+/// - `match.c:395` - Signature block transmission
+pub fn write_signature_blocks<W: Write + ?Sized>(
+    writer: &mut W,
+    signature: &FileSignature,
+    s2length: u32,
+) -> io::Result<()> {
+    for block in signature.blocks() {
+        // Write rolling_sum as int32 LE
+        writer.write_all(&(block.rolling().value() as i32).to_le_bytes())?;
+
+        // Write strong_sum, truncated or padded to s2length
+        let strong_bytes = block.strong();
+        let mut sum_buf = vec![0u8; s2length as usize];
+        let copy_len = std::cmp::min(strong_bytes.len(), s2length as usize);
+        sum_buf[..copy_len].copy_from_slice(&strong_bytes[..copy_len]);
+        writer.write_all(&sum_buf)?;
+    }
+    Ok(())
 }
 
 // Helper functions for delta transfer
@@ -1596,5 +1832,230 @@ mod tests {
 
         sparse.accumulate(50);
         assert_eq!(sparse.pending_zeros, 150);
+    }
+
+    // ============================================================================
+    // SumHead tests
+    // ============================================================================
+
+    #[test]
+    fn sum_head_new_creates_with_correct_values() {
+        let sum_head = SumHead::new(100, 1024, 16, 512);
+        assert_eq!(sum_head.count, 100);
+        assert_eq!(sum_head.blength, 1024);
+        assert_eq!(sum_head.s2length, 16);
+        assert_eq!(sum_head.remainder, 512);
+    }
+
+    #[test]
+    fn sum_head_empty_creates_zero_values() {
+        let sum_head = SumHead::empty();
+        assert_eq!(sum_head.count, 0);
+        assert_eq!(sum_head.blength, 0);
+        assert_eq!(sum_head.s2length, 0);
+        assert_eq!(sum_head.remainder, 0);
+        assert!(sum_head.is_empty());
+    }
+
+    #[test]
+    fn sum_head_default_is_empty() {
+        let sum_head = SumHead::default();
+        assert!(sum_head.is_empty());
+        assert_eq!(sum_head, SumHead::empty());
+    }
+
+    #[test]
+    fn sum_head_is_empty_false_for_nonzero_count() {
+        let sum_head = SumHead::new(1, 1024, 16, 0);
+        assert!(!sum_head.is_empty());
+    }
+
+    #[test]
+    fn sum_head_write_produces_correct_wire_format() {
+        let sum_head = SumHead::new(10, 700, 16, 100);
+        let mut output = Vec::new();
+        sum_head.write(&mut output).unwrap();
+
+        assert_eq!(output.len(), 16);
+        // All values as 32-bit little-endian
+        assert_eq!(
+            i32::from_le_bytes([output[0], output[1], output[2], output[3]]),
+            10
+        );
+        assert_eq!(
+            i32::from_le_bytes([output[4], output[5], output[6], output[7]]),
+            700
+        );
+        assert_eq!(
+            i32::from_le_bytes([output[8], output[9], output[10], output[11]]),
+            16
+        );
+        assert_eq!(
+            i32::from_le_bytes([output[12], output[13], output[14], output[15]]),
+            100
+        );
+    }
+
+    #[test]
+    fn sum_head_read_parses_wire_format() {
+        // Prepare wire data: count=5, blength=512, s2length=16, remainder=128
+        let mut data = Vec::new();
+        data.extend_from_slice(&5i32.to_le_bytes());
+        data.extend_from_slice(&512i32.to_le_bytes());
+        data.extend_from_slice(&16i32.to_le_bytes());
+        data.extend_from_slice(&128i32.to_le_bytes());
+
+        let sum_head = SumHead::read(&mut Cursor::new(data)).unwrap();
+
+        assert_eq!(sum_head.count, 5);
+        assert_eq!(sum_head.blength, 512);
+        assert_eq!(sum_head.s2length, 16);
+        assert_eq!(sum_head.remainder, 128);
+    }
+
+    #[test]
+    fn sum_head_round_trip() {
+        let original = SumHead::new(100, 1024, 20, 256);
+
+        let mut buf = Vec::new();
+        original.write(&mut buf).unwrap();
+
+        let decoded = SumHead::read(&mut Cursor::new(buf)).unwrap();
+        assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn sum_head_read_insufficient_data() {
+        // Only 8 bytes instead of 16
+        let data = vec![0u8; 8];
+        let result = SumHead::read(&mut Cursor::new(data));
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    // ============================================================================
+    // SenderAttrs tests
+    // ============================================================================
+
+    #[test]
+    fn sender_attrs_read_protocol_28_returns_default_iflags() {
+        // Protocol 28 just reads the NDX byte, no iflags
+        let data = vec![0x05u8]; // NDX byte only
+        let attrs = SenderAttrs::read(&mut Cursor::new(data), 28).unwrap();
+
+        assert_eq!(attrs.iflags, SenderAttrs::ITEM_TRANSFER);
+        assert!(attrs.fnamecmp_type.is_none());
+        assert!(attrs.xname.is_none());
+    }
+
+    #[test]
+    fn sender_attrs_read_protocol_29_parses_iflags() {
+        // NDX byte + iflags (0x8000 = ITEM_TRANSFER)
+        let mut data = vec![0x05u8]; // NDX byte
+        data.extend_from_slice(&0x8000u16.to_le_bytes()); // iflags
+
+        let attrs = SenderAttrs::read(&mut Cursor::new(data), 29).unwrap();
+
+        assert_eq!(attrs.iflags, 0x8000);
+        assert!(attrs.fnamecmp_type.is_none());
+        assert!(attrs.xname.is_none());
+    }
+
+    #[test]
+    fn sender_attrs_read_with_basis_type() {
+        // NDX byte + iflags (0x8800 = ITEM_TRANSFER | ITEM_BASIS_TYPE_FOLLOWS) + fnamecmp_type
+        let mut data = vec![0x05u8]; // NDX byte
+        data.extend_from_slice(&0x8800u16.to_le_bytes()); // iflags with BASIS_TYPE_FOLLOWS
+        data.push(0x02); // fnamecmp_type
+
+        let attrs = SenderAttrs::read(&mut Cursor::new(data), 29).unwrap();
+
+        assert_eq!(attrs.iflags, 0x8800);
+        assert_eq!(attrs.fnamecmp_type, Some(0x02));
+        assert!(attrs.xname.is_none());
+    }
+
+    #[test]
+    fn sender_attrs_read_with_short_xname() {
+        // NDX byte + iflags (0x9000 = ITEM_TRANSFER | ITEM_XNAME_FOLLOWS) + xname
+        let mut data = vec![0x05u8]; // NDX byte
+        data.extend_from_slice(&0x9000u16.to_le_bytes()); // iflags with XNAME_FOLLOWS
+        data.push(0x04); // xname length (short form)
+        data.extend_from_slice(b"test"); // xname content
+
+        let attrs = SenderAttrs::read(&mut Cursor::new(data), 29).unwrap();
+
+        assert_eq!(attrs.iflags, 0x9000);
+        assert!(attrs.fnamecmp_type.is_none());
+        assert_eq!(attrs.xname, Some(b"test".to_vec()));
+    }
+
+    #[test]
+    fn sender_attrs_read_with_long_xname() {
+        // NDX + iflags + xname with extended length (> 127 bytes requires 2-byte length)
+        let mut data = vec![0x05u8]; // NDX byte
+        data.extend_from_slice(&0x9000u16.to_le_bytes()); // iflags with XNAME_FOLLOWS
+        // Length 300 = 0x80 | (300 / 256) = 0x81, then 300 % 256 = 44
+        data.push(0x81); // High byte: 0x80 flag + 1
+        data.push(0x2C); // Low byte: 44 (1*256 + 44 = 300)
+        data.extend(vec![b'x'; 300]); // xname content (300 'x' characters)
+
+        let attrs = SenderAttrs::read(&mut Cursor::new(data), 29).unwrap();
+
+        assert_eq!(attrs.iflags, 0x9000);
+        assert!(attrs.fnamecmp_type.is_none());
+        assert_eq!(attrs.xname.as_ref().unwrap().len(), 300);
+    }
+
+    #[test]
+    fn sender_attrs_read_empty_returns_eof_error() {
+        let data: Vec<u8> = vec![];
+        let result = SenderAttrs::read(&mut Cursor::new(data), 29);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn sender_attrs_constants_match_upstream() {
+        // Verify our constants match upstream rsync.h values
+        assert_eq!(SenderAttrs::ITEM_TRANSFER, 0x8000);
+        assert_eq!(SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS, 0x0800);
+        assert_eq!(SenderAttrs::ITEM_XNAME_FOLLOWS, 0x1000);
+    }
+
+    // ============================================================================
+    // BasisFileResult tests
+    // ============================================================================
+
+    #[test]
+    fn basis_file_result_is_empty_when_no_signature() {
+        let result = BasisFileResult {
+            signature: None,
+            basis_path: None,
+        };
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn basis_file_result_is_not_empty_when_has_signature() {
+        use engine::delta::SignatureLayout;
+        use engine::signature::FileSignature;
+        use std::num::NonZeroU32;
+
+        // Create a minimal signature
+        let layout = SignatureLayout::from_raw_parts(
+            NonZeroU32::new(512).unwrap(),
+            0,
+            0,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let signature = FileSignature::from_raw_parts(layout, vec![], 0);
+
+        let result = BasisFileResult {
+            signature: Some(signature),
+            basis_path: Some(PathBuf::from("/tmp/basis")),
+        };
+        assert!(!result.is_empty());
     }
 }
