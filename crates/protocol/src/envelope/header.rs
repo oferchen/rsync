@@ -128,3 +128,115 @@ impl TryFrom<&[u8; HEADER_LEN]> for MessageHeader {
         Self::decode(bytes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_valid_header() {
+        let header = MessageHeader::new(MessageCode::Info, 100).unwrap();
+        assert_eq!(header.code(), MessageCode::Info);
+        assert_eq!(header.payload_len(), 100);
+    }
+
+    #[test]
+    fn new_rejects_oversized_payload() {
+        let result = MessageHeader::new(MessageCode::Info, MAX_PAYLOAD_LENGTH + 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn new_accepts_max_payload() {
+        let result = MessageHeader::new(MessageCode::Info, MAX_PAYLOAD_LENGTH);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn new_accepts_zero_payload() {
+        let header = MessageHeader::new(MessageCode::Error, 0).unwrap();
+        assert_eq!(header.payload_len(), 0);
+    }
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        let original = MessageHeader::new(MessageCode::Warning, 12345).unwrap();
+        let bytes = original.encode();
+        let decoded = MessageHeader::decode(&bytes).unwrap();
+        assert_eq!(decoded.code(), original.code());
+        assert_eq!(decoded.payload_len(), original.payload_len());
+    }
+
+    #[test]
+    fn decode_rejects_truncated_input() {
+        let result = MessageHeader::decode(&[0x00, 0x01, 0x02]);
+        assert!(matches!(result, Err(EnvelopeError::TruncatedHeader { .. })));
+    }
+
+    #[test]
+    fn from_raw_rejects_invalid_tag() {
+        // A tag less than MPLEX_BASE (7) is invalid
+        let raw = 0x00_12_34_56_u32;
+        let result = MessageHeader::from_raw(raw);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encode_into_slice_success() {
+        let header = MessageHeader::new(MessageCode::Info, 10).unwrap();
+        let mut buffer = [0u8; 8];
+        let result = header.encode_into_slice(&mut buffer);
+        assert!(result.is_ok());
+        assert_eq!(&buffer[..4], &header.encode());
+    }
+
+    #[test]
+    fn encode_into_slice_rejects_small_buffer() {
+        let header = MessageHeader::new(MessageCode::Info, 10).unwrap();
+        let mut buffer = [0u8; 2];
+        let result = header.encode_into_slice(&mut buffer);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encode_raw_and_from_raw_roundtrip() {
+        let original = MessageHeader::new(MessageCode::Stats, 999).unwrap();
+        let raw = original.encode_raw();
+        let decoded = MessageHeader::from_raw(raw).unwrap();
+        assert_eq!(decoded.code(), original.code());
+        assert_eq!(decoded.payload_len(), original.payload_len());
+    }
+
+    #[test]
+    fn payload_len_usize_matches() {
+        let header = MessageHeader::new(MessageCode::Info, 1000).unwrap();
+        assert_eq!(header.payload_len_usize(), 1000);
+    }
+
+    #[test]
+    fn try_from_array_works() {
+        let header = MessageHeader::new(MessageCode::Info, 50).unwrap();
+        let bytes = header.encode();
+        let decoded: MessageHeader = bytes.try_into().unwrap();
+        assert_eq!(decoded.code(), MessageCode::Info);
+        assert_eq!(decoded.payload_len(), 50);
+    }
+
+    #[test]
+    fn try_from_array_ref_works() {
+        let header = MessageHeader::new(MessageCode::Error, 25).unwrap();
+        let bytes = header.encode();
+        let decoded: MessageHeader = (&bytes).try_into().unwrap();
+        assert_eq!(decoded.code(), MessageCode::Error);
+    }
+
+    #[test]
+    fn all_message_codes_encode_decode() {
+        for code in MessageCode::ALL {
+            let header = MessageHeader::new(code, 100).unwrap();
+            let bytes = header.encode();
+            let decoded = MessageHeader::decode(&bytes).unwrap();
+            assert_eq!(decoded.code(), code);
+        }
+    }
+}
