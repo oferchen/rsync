@@ -497,7 +497,10 @@ mod tests {
 
     #[test]
     fn format_progress_elapsed_hours() {
-        assert_eq!(format_progress_elapsed(Duration::from_secs(3661)), "1:01:01");
+        assert_eq!(
+            format_progress_elapsed(Duration::from_secs(3661)),
+            "1:01:01"
+        );
     }
 
     #[test]
@@ -515,7 +518,10 @@ mod tests {
     #[test]
     fn format_stat_categories_some_nonzero() {
         let categories: &[(&str, u64)] = &[("files", 5), ("dirs", 0), ("symlinks", 3)];
-        assert_eq!(format_stat_categories(categories), " (files: 5, symlinks: 3)");
+        assert_eq!(
+            format_stat_categories(categories),
+            " (files: 5, symlinks: 3)"
+        );
     }
 
     #[test]
@@ -592,11 +598,17 @@ mod tests {
 
     #[test]
     fn describe_event_kind_metadata_reused() {
-        assert_eq!(describe_event_kind(&ClientEventKind::MetadataReused), "metadata reused");
+        assert_eq!(
+            describe_event_kind(&ClientEventKind::MetadataReused),
+            "metadata reused"
+        );
     }
 
     #[test]
     fn describe_event_kind_deleted() {
-        assert_eq!(describe_event_kind(&ClientEventKind::EntryDeleted), "deleted");
+        assert_eq!(
+            describe_event_kind(&ClientEventKind::EntryDeleted),
+            "deleted"
+        );
     }
 }

@@ -513,8 +513,8 @@ mod tests {
 
     #[test]
     fn owned_greeting_from_parts_valid() {
-        let owned = LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4 md5".into()))
-            .unwrap();
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(30, Some(5), Some("md4 md5".into())).unwrap();
         assert_eq!(owned.advertised_protocol(), 30);
         assert_eq!(owned.subprotocol(), 5);
         assert!(owned.has_subprotocol());
@@ -523,8 +523,8 @@ mod tests {
 
     #[test]
     fn owned_greeting_from_parts_trims_digest_list() {
-        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("  md4 md5  ".into()))
-            .unwrap();
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("  md4 md5  ".into())).unwrap();
         assert_eq!(owned.digest_list(), Some("md4 md5"));
     }
 
@@ -550,7 +550,8 @@ mod tests {
 
     #[test]
     fn owned_greeting_supports_digest() {
-        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
         assert!(owned.supports_digest("md4"));
         assert!(owned.supports_digest("MD5"));
         assert!(!owned.supports_digest("sha256"));
@@ -558,7 +559,8 @@ mod tests {
 
     #[test]
     fn owned_greeting_digest_tokens() {
-        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4\tmd5".into())).unwrap();
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4\tmd5".into())).unwrap();
         let tokens: Vec<_> = owned.digest_tokens().collect();
         assert_eq!(tokens, vec!["md4", "md5"]);
     }
@@ -584,7 +586,8 @@ mod tests {
 
     #[test]
     fn owned_greeting_into_digest_list() {
-        let owned = LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
+        let owned =
+            LegacyDaemonGreetingOwned::from_parts(29, None, Some("md4 md5".into())).unwrap();
         let digest = owned.into_digest_list();
         assert_eq!(digest, Some("md4 md5".into()));
     }

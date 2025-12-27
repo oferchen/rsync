@@ -199,10 +199,7 @@ mod tests {
 
         #[test]
         fn from_rate_and_burst_without_burst() {
-            let limit = BandwidthLimit::from_rate_and_burst(
-                NonZeroU64::new(2048).unwrap(),
-                None,
-            );
+            let limit = BandwidthLimit::from_rate_and_burst(NonZeroU64::new(2048).unwrap(), None);
             assert_eq!(limit.bytes_per_second().get(), 2048);
             assert!(limit.burst_bytes().is_none());
             assert!(!limit.burst_specified());
@@ -221,10 +218,8 @@ mod tests {
 
         #[test]
         fn from_components_with_rate() {
-            let components = bandwidth::BandwidthLimitComponents::new(
-                Some(NonZeroU64::new(512).unwrap()),
-                None,
-            );
+            let components =
+                bandwidth::BandwidthLimitComponents::new(Some(NonZeroU64::new(512).unwrap()), None);
             let limit = BandwidthLimit::from_components(components);
             assert!(limit.is_some());
             assert_eq!(limit.unwrap().bytes_per_second().get(), 512);
@@ -271,7 +266,7 @@ mod tests {
         #[test]
         fn clone_and_copy() {
             let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(500).unwrap());
-            let cloned = limit.clone();
+            let cloned = limit;
             let copied = limit;
             assert_eq!(limit, cloned);
             assert_eq!(limit, copied);
@@ -280,7 +275,7 @@ mod tests {
         #[test]
         fn debug_format() {
             let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1000).unwrap());
-            let debug = format!("{:?}", limit);
+            let debug = format!("{limit:?}");
             assert!(debug.contains("BandwidthLimit"));
             assert!(debug.contains("1000"));
         }
@@ -306,13 +301,13 @@ mod tests {
         #[test]
         fn to_limiter() {
             let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());
-            let _limiter = limit.to_limiter();  // Just ensure no panic
+            let _limiter = limit.to_limiter(); // Just ensure no panic
         }
 
         #[test]
         fn into_limiter() {
             let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());
-            let _limiter = limit.into_limiter();  // Just ensure no panic
+            let _limiter = limit.into_limiter(); // Just ensure no panic
         }
 
         #[test]
@@ -332,7 +327,10 @@ mod tests {
 
         #[test]
         fn fallback_unlimited_argument() {
-            assert_eq!(BandwidthLimit::fallback_unlimited_argument(), OsString::from("0"));
+            assert_eq!(
+                BandwidthLimit::fallback_unlimited_argument(),
+                OsString::from("0")
+            );
         }
 
         #[test]

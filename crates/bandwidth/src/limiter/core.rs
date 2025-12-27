@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn bandwidth_limiter_debug() {
         let limiter = BandwidthLimiter::new(nz(10000));
-        let debug = format!("{:?}", limiter);
+        let debug = format!("{limiter:?}");
         assert!(debug.contains("BandwidthLimiter"));
         assert!(debug.contains("10000"));
     }

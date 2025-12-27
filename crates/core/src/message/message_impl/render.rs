@@ -192,14 +192,14 @@ mod tests {
     #[test]
     fn display_trait_works() {
         let msg = Message::info("display test");
-        let output = format!("{}", msg);
+        let output = format!("{msg}");
         assert!(output.contains("display test"));
     }
 
     #[test]
     fn display_does_not_include_newline() {
         let msg = Message::info("test");
-        let output = format!("{}", msg);
+        let output = format!("{msg}");
         assert!(!output.ends_with('\n'));
     }
 

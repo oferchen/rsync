@@ -51,7 +51,7 @@ mod tests {
         #[test]
         fn clone_and_copy() {
             let kind = ReferenceDirectoryKind::Compare;
-            let cloned = kind.clone();
+            let cloned = kind;
             let copied = kind;
             assert_eq!(kind, cloned);
             assert_eq!(kind, copied);
@@ -66,12 +66,21 @@ mod tests {
 
         #[test]
         fn equality() {
-            assert_eq!(ReferenceDirectoryKind::Compare, ReferenceDirectoryKind::Compare);
+            assert_eq!(
+                ReferenceDirectoryKind::Compare,
+                ReferenceDirectoryKind::Compare
+            );
             assert_eq!(ReferenceDirectoryKind::Copy, ReferenceDirectoryKind::Copy);
             assert_eq!(ReferenceDirectoryKind::Link, ReferenceDirectoryKind::Link);
-            assert_ne!(ReferenceDirectoryKind::Compare, ReferenceDirectoryKind::Copy);
+            assert_ne!(
+                ReferenceDirectoryKind::Compare,
+                ReferenceDirectoryKind::Copy
+            );
             assert_ne!(ReferenceDirectoryKind::Copy, ReferenceDirectoryKind::Link);
-            assert_ne!(ReferenceDirectoryKind::Compare, ReferenceDirectoryKind::Link);
+            assert_ne!(
+                ReferenceDirectoryKind::Compare,
+                ReferenceDirectoryKind::Link
+            );
         }
     }
 
@@ -106,7 +115,7 @@ mod tests {
             let cloned = dir.clone();
             assert_eq!(dir, cloned);
 
-            let debug = format!("{:?}", dir);
+            let debug = format!("{dir:?}");
             assert!(debug.contains("ReferenceDirectory"));
             assert!(debug.contains("Compare"));
             assert!(debug.contains("/test"));
@@ -120,8 +129,8 @@ mod tests {
             let dir4 = ReferenceDirectory::new(ReferenceDirectoryKind::Compare, "/other");
 
             assert_eq!(dir1, dir2);
-            assert_ne!(dir1, dir3);  // Different kind
-            assert_ne!(dir1, dir4);  // Different path
+            assert_ne!(dir1, dir3); // Different kind
+            assert_ne!(dir1, dir4); // Different path
         }
     }
 }

@@ -72,7 +72,7 @@ mod tests {
             let message = rsync_error!(10, "socket error").with_role(Role::Daemon);
             let error = DaemonError::new(10, message);
 
-            let _ = error.message();  // Just verify accessor works
+            let _ = error.message(); // Just verify accessor works
         }
 
         #[test]
@@ -88,7 +88,7 @@ mod tests {
         fn debug_format() {
             let message = rsync_error!(2, "debug test").with_role(Role::Daemon);
             let error = DaemonError::new(2, message);
-            let debug = format!("{:?}", error);
+            let debug = format!("{error:?}");
 
             assert!(debug.contains("DaemonError"));
             assert!(debug.contains("exit_code"));
@@ -98,7 +98,7 @@ mod tests {
         fn display_format() {
             let message = rsync_error!(3, "display message").with_role(Role::Daemon);
             let error = DaemonError::new(3, message);
-            let display = format!("{}", error);
+            let display = format!("{error}");
 
             assert!(display.contains("display message"));
         }

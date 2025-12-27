@@ -281,13 +281,12 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let source_path = temp.path().join("source.txt");
         let dest_path = temp.path().join("dest.txt");
-        fs::write(&source_path, b"matching prefix and additional content")
-            .expect("write source");
+        fs::write(&source_path, b"matching prefix and additional content").expect("write source");
         fs::write(&dest_path, b"matching prefix").expect("write dest");
         let mut reader = fs::File::open(&source_path).expect("open source");
 
-        let result = verify_append_prefix(&mut reader, &source_path, &dest_path, 15)
-            .expect("verify");
+        let result =
+            verify_append_prefix(&mut reader, &source_path, &dest_path, 15).expect("verify");
         assert!(result);
     }
 
@@ -300,8 +299,8 @@ mod tests {
         fs::write(&dest_path, b"different prefix").expect("write dest");
         let mut reader = fs::File::open(&source_path).expect("open source");
 
-        let result = verify_append_prefix(&mut reader, &source_path, &dest_path, 16)
-            .expect("verify");
+        let result =
+            verify_append_prefix(&mut reader, &source_path, &dest_path, 16).expect("verify");
         assert!(!result);
     }
 
@@ -317,8 +316,8 @@ mod tests {
         fs::write(&dest_path, &content[..5000]).expect("write dest");
         let mut reader = fs::File::open(&source_path).expect("open source");
 
-        let result = verify_append_prefix(&mut reader, &source_path, &dest_path, 5000)
-            .expect("verify");
+        let result =
+            verify_append_prefix(&mut reader, &source_path, &dest_path, 5000).expect("verify");
         assert!(result);
     }
 }

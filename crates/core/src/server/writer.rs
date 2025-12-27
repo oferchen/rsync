@@ -364,9 +364,7 @@ mod tests {
         assert!(!plain_writer.is_multiplexed());
 
         let buf2 = Vec::new();
-        let mux_writer = ServerWriter::new_plain(buf2)
-            .activate_multiplex()
-            .unwrap();
+        let mux_writer = ServerWriter::new_plain(buf2).activate_multiplex().unwrap();
         assert!(mux_writer.is_multiplexed());
     }
 
@@ -474,9 +472,7 @@ mod tests {
     fn activate_compression_on_multiplex_succeeds() {
         use std::num::NonZeroU8;
         let buf = Vec::new();
-        let writer = ServerWriter::new_plain(buf)
-            .activate_multiplex()
-            .unwrap();
+        let writer = ServerWriter::new_plain(buf).activate_multiplex().unwrap();
         let level = CompressionLevel::precise(NonZeroU8::new(6).unwrap());
         let result = writer.activate_compression(CompressionAlgorithm::Zlib, level);
         assert!(result.is_ok());

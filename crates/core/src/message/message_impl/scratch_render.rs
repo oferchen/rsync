@@ -126,7 +126,8 @@ mod tests {
         let msg = Message::info("test message");
         let mut scratch = MessageScratch::new();
         let mut output = String::new();
-        msg.render_to_with_scratch(&mut scratch, &mut output).unwrap();
+        msg.render_to_with_scratch(&mut scratch, &mut output)
+            .unwrap();
         assert!(output.contains("test message"));
     }
 
@@ -135,7 +136,8 @@ mod tests {
         let msg = Message::info("test");
         let mut scratch = MessageScratch::new();
         let mut output = String::new();
-        msg.render_to_with_scratch(&mut scratch, &mut output).unwrap();
+        msg.render_to_with_scratch(&mut scratch, &mut output)
+            .unwrap();
         assert!(!output.ends_with('\n'));
     }
 
@@ -144,7 +146,8 @@ mod tests {
         let msg = Message::info("test");
         let mut scratch = MessageScratch::new();
         let mut output = String::new();
-        msg.render_line_to_with_scratch(&mut scratch, &mut output).unwrap();
+        msg.render_line_to_with_scratch(&mut scratch, &mut output)
+            .unwrap();
         assert!(output.ends_with('\n'));
     }
 
@@ -178,7 +181,8 @@ mod tests {
         let msg = Message::info("writer test");
         let mut scratch = MessageScratch::new();
         let mut buffer = Vec::new();
-        msg.render_to_writer_with_scratch(&mut scratch, &mut buffer).unwrap();
+        msg.render_to_writer_with_scratch(&mut scratch, &mut buffer)
+            .unwrap();
         assert!(!buffer.is_empty());
     }
 
@@ -187,7 +191,8 @@ mod tests {
         let msg = Message::info("line test");
         let mut scratch = MessageScratch::new();
         let mut buffer = Vec::new();
-        msg.render_line_to_writer_with_scratch(&mut scratch, &mut buffer).unwrap();
+        msg.render_line_to_writer_with_scratch(&mut scratch, &mut buffer)
+            .unwrap();
         assert!(buffer.ends_with(b"\n"));
     }
 
@@ -197,7 +202,8 @@ mod tests {
         let mut scratch = MessageScratch::new();
         let mut buffer = b"prefix:".to_vec();
         let prefix_len = buffer.len();
-        msg.append_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        msg.append_to_vec_with_scratch(&mut scratch, &mut buffer)
+            .unwrap();
         assert!(buffer.len() > prefix_len);
     }
 
@@ -206,7 +212,8 @@ mod tests {
         let msg = Message::info("test");
         let mut scratch = MessageScratch::new();
         let mut buffer = b"prefix:".to_vec();
-        msg.append_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        msg.append_to_vec_with_scratch(&mut scratch, &mut buffer)
+            .unwrap();
         assert_eq!(&buffer[..7], b"prefix:");
     }
 
@@ -215,7 +222,8 @@ mod tests {
         let msg = Message::info("line");
         let mut scratch = MessageScratch::new();
         let mut buffer = Vec::new();
-        msg.append_line_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        msg.append_line_to_vec_with_scratch(&mut scratch, &mut buffer)
+            .unwrap();
         assert!(buffer.ends_with(b"\n"));
     }
 
@@ -237,7 +245,9 @@ mod tests {
         let msg = Message::info("test");
         let mut scratch = MessageScratch::new();
         let mut buffer = Vec::new();
-        let appended = msg.append_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        let appended = msg
+            .append_to_vec_with_scratch(&mut scratch, &mut buffer)
+            .unwrap();
         assert_eq!(appended, buffer.len());
     }
 
@@ -246,7 +256,9 @@ mod tests {
         let msg = Message::info("test");
         let mut scratch = MessageScratch::new();
         let mut buffer = Vec::new();
-        let appended = msg.append_line_to_vec_with_scratch(&mut scratch, &mut buffer).unwrap();
+        let appended = msg
+            .append_line_to_vec_with_scratch(&mut scratch, &mut buffer)
+            .unwrap();
         assert_eq!(appended, buffer.len());
         assert!(buffer.ends_with(b"\n"));
     }

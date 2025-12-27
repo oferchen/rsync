@@ -109,9 +109,18 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn hard_link_key_eq() {
-        let key1 = HardLinkKey { device: 1, inode: 100 };
-        let key2 = HardLinkKey { device: 1, inode: 100 };
-        let key3 = HardLinkKey { device: 2, inode: 100 };
+        let key1 = HardLinkKey {
+            device: 1,
+            inode: 100,
+        };
+        let key2 = HardLinkKey {
+            device: 1,
+            inode: 100,
+        };
+        let key3 = HardLinkKey {
+            device: 2,
+            inode: 100,
+        };
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
     }
@@ -120,8 +129,14 @@ mod tests {
     #[test]
     fn hard_link_key_hash() {
         use std::collections::HashSet;
-        let key1 = HardLinkKey { device: 1, inode: 100 };
-        let key2 = HardLinkKey { device: 1, inode: 100 };
+        let key1 = HardLinkKey {
+            device: 1,
+            inode: 100,
+        };
+        let key2 = HardLinkKey {
+            device: 1,
+            inode: 100,
+        };
         let mut set = HashSet::new();
         set.insert(key1);
         assert!(set.contains(&key2));
@@ -130,15 +145,21 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn hard_link_key_debug() {
-        let key = HardLinkKey { device: 1, inode: 100 };
-        let debug = format!("{:?}", key);
+        let key = HardLinkKey {
+            device: 1,
+            inode: 100,
+        };
+        let debug = format!("{key:?}");
         assert!(debug.contains("HardLinkKey"));
     }
 
     #[cfg(unix)]
     #[test]
     fn hard_link_key_clone() {
-        let key = HardLinkKey { device: 1, inode: 100 };
+        let key = HardLinkKey {
+            device: 1,
+            inode: 100,
+        };
         let cloned = key;
         assert_eq!(key, cloned);
     }

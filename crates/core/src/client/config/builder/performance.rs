@@ -158,16 +158,15 @@ mod tests {
 
     #[test]
     fn compress_false_clears_flag() {
-        let config = builder()
-            .compress(true)
-            .compress(false)
-            .build();
+        let config = builder().compress(true).compress(false).build();
         assert!(!config.compress());
     }
 
     #[test]
     fn compression_level_sets_value() {
-        let config = builder().compression_level(Some(CompressionLevel::Default)).build();
+        let config = builder()
+            .compression_level(Some(CompressionLevel::Default))
+            .build();
         assert!(config.compress());
     }
 
@@ -182,7 +181,9 @@ mod tests {
 
     #[test]
     fn compression_algorithm_sets_value() {
-        let config = builder().compression_algorithm(CompressionAlgorithm::Zstd).build();
+        let config = builder()
+            .compression_algorithm(CompressionAlgorithm::Zstd)
+            .build();
         assert_eq!(config.compression_algorithm(), CompressionAlgorithm::Zstd);
     }
 
@@ -195,7 +196,9 @@ mod tests {
 
     #[test]
     fn compression_setting_disabled() {
-        let config = builder().compression_setting(CompressionSetting::disabled()).build();
+        let config = builder()
+            .compression_setting(CompressionSetting::disabled())
+            .build();
         assert!(!config.compress());
     }
 
@@ -207,10 +210,7 @@ mod tests {
 
     #[test]
     fn open_noatime_false_clears_flag() {
-        let config = builder()
-            .open_noatime(true)
-            .open_noatime(false)
-            .build();
+        let config = builder().open_noatime(true).open_noatime(false).build();
         assert!(!config.open_noatime());
     }
 
@@ -266,10 +266,7 @@ mod tests {
 
     #[test]
     fn sparse_false_clears_flag() {
-        let config = builder()
-            .sparse(true)
-            .sparse(false)
-            .build();
+        let config = builder().sparse(true).sparse(false).build();
         assert!(!config.sparse());
     }
 
@@ -281,10 +278,7 @@ mod tests {
 
     #[test]
     fn fuzzy_false_clears_flag() {
-        let config = builder()
-            .fuzzy(true)
-            .fuzzy(false)
-            .build();
+        let config = builder().fuzzy(true).fuzzy(false).build();
         assert!(!config.fuzzy());
     }
 
@@ -296,10 +290,7 @@ mod tests {
 
     #[test]
     fn qsort_false_clears_flag() {
-        let config = builder()
-            .qsort(true)
-            .qsort(false)
-            .build();
+        let config = builder().qsort(true).qsort(false).build();
         assert!(!config.qsort());
     }
 

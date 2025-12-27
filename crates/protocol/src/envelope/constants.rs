@@ -19,6 +19,7 @@ pub const MPLEX_BASE: u8 = 7;
 pub(crate) const PAYLOAD_MASK: u32 = 0x00FF_FFFF;
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 

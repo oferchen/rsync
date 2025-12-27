@@ -319,7 +319,10 @@ mod tests {
         let meta = version_metadata();
         let mut output = String::new();
         meta.write_standard_banner(&mut output).unwrap();
-        assert!(output.contains(&format!("protocol version {}", meta.protocol_version().as_u8())));
+        assert!(output.contains(&format!(
+            "protocol version {}",
+            meta.protocol_version().as_u8()
+        )));
     }
 
     #[test]
@@ -376,7 +379,7 @@ mod tests {
     #[test]
     fn version_metadata_is_clone() {
         let meta = version_metadata();
-        let cloned = meta.clone();
+        let cloned = meta;
         assert_eq!(meta, cloned);
     }
 
@@ -390,7 +393,7 @@ mod tests {
     #[test]
     fn version_metadata_debug_includes_struct_name() {
         let meta = version_metadata();
-        let debug = format!("{:?}", meta);
+        let debug = format!("{meta:?}");
         assert!(debug.contains("VersionMetadata"));
     }
 

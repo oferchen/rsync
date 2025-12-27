@@ -1047,16 +1047,15 @@ mod tests {
         let mut entry = FileEntry::new_file("entry-dest.txt".into(), 4, 0o644);
         entry.set_mtime(1_700_000_000, 123_456_789);
 
-        apply_metadata_from_file_entry(
-            &dest,
-            &entry,
-            MetadataOptions::new().preserve_times(true),
-        )
-        .expect("apply from entry");
+        apply_metadata_from_file_entry(&dest, &entry, MetadataOptions::new().preserve_times(true))
+            .expect("apply from entry");
 
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
-        assert_eq!(dest_mtime, FileTime::from_unix_time(1_700_000_000, 123_456_789));
+        assert_eq!(
+            dest_mtime,
+            FileTime::from_unix_time(1_700_000_000, 123_456_789)
+        );
     }
 
     #[test]
@@ -1069,12 +1068,8 @@ mod tests {
 
         let entry = FileEntry::new_file("entry-notime.txt".into(), 4, 0o644);
 
-        apply_metadata_from_file_entry(
-            &dest,
-            &entry,
-            MetadataOptions::new().preserve_times(false),
-        )
-        .expect("apply from entry");
+        apply_metadata_from_file_entry(&dest, &entry, MetadataOptions::new().preserve_times(false))
+            .expect("apply from entry");
 
         // Should succeed without modifying times
         assert!(fs::metadata(&dest).is_ok());

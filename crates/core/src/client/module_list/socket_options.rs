@@ -594,7 +594,11 @@ mod tests {
         let result = lookup_socket_option("IPTOS_LOWDELAY");
         assert!(result.is_some());
         match result.unwrap() {
-            SocketOptionKind::On { level, option, value } => {
+            SocketOptionKind::On {
+                level,
+                option,
+                value,
+            } => {
                 assert_eq!(level, libc::IPPROTO_IP);
                 assert_eq!(option, libc::IP_TOS);
                 assert_eq!(value, IPTOS_LOWDELAY);
@@ -609,7 +613,11 @@ mod tests {
         let result = lookup_socket_option("IPTOS_THROUGHPUT");
         assert!(result.is_some());
         match result.unwrap() {
-            SocketOptionKind::On { level, option, value } => {
+            SocketOptionKind::On {
+                level,
+                option,
+                value,
+            } => {
                 assert_eq!(level, libc::IPPROTO_IP);
                 assert_eq!(option, libc::IP_TOS);
                 assert_eq!(value, IPTOS_THROUGHPUT);

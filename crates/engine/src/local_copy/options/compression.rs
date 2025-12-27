@@ -146,14 +146,20 @@ mod tests {
     #[test]
     fn with_compression_level_sets_override() {
         let opts = LocalCopyOptions::new().with_compression_level(CompressionLevel::Fast);
-        assert_eq!(opts.compression_level_override(), Some(CompressionLevel::Fast));
+        assert_eq!(
+            opts.compression_level_override(),
+            Some(CompressionLevel::Fast)
+        );
     }
 
     #[test]
     fn with_compression_level_override_sets_level() {
-        let opts = LocalCopyOptions::new()
-            .with_compression_level_override(Some(CompressionLevel::Best));
-        assert_eq!(opts.compression_level_override(), Some(CompressionLevel::Best));
+        let opts =
+            LocalCopyOptions::new().with_compression_level_override(Some(CompressionLevel::Best));
+        assert_eq!(
+            opts.compression_level_override(),
+            Some(CompressionLevel::Best)
+        );
     }
 
     #[test]
@@ -166,15 +172,13 @@ mod tests {
 
     #[test]
     fn with_compression_algorithm_sets_algorithm() {
-        let opts = LocalCopyOptions::new()
-            .with_compression_algorithm(CompressionAlgorithm::Zstd);
+        let opts = LocalCopyOptions::new().with_compression_algorithm(CompressionAlgorithm::Zstd);
         assert_eq!(opts.compression_algorithm(), CompressionAlgorithm::Zstd);
     }
 
     #[test]
     fn with_default_compression_level_sets_level() {
-        let opts = LocalCopyOptions::new()
-            .with_default_compression_level(CompressionLevel::Best);
+        let opts = LocalCopyOptions::new().with_default_compression_level(CompressionLevel::Best);
         assert_eq!(opts.compression_level(), CompressionLevel::Best);
     }
 
@@ -188,8 +192,7 @@ mod tests {
 
     #[test]
     fn compression_level_returns_default_when_no_override() {
-        let opts = LocalCopyOptions::new()
-            .with_default_compression_level(CompressionLevel::Fast);
+        let opts = LocalCopyOptions::new().with_default_compression_level(CompressionLevel::Fast);
         assert_eq!(opts.compression_level(), CompressionLevel::Fast);
     }
 

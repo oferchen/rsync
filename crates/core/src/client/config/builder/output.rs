@@ -70,10 +70,7 @@ mod tests {
 
     #[test]
     fn progress_false_clears_flag() {
-        let config = builder()
-            .progress(true)
-            .progress(false)
-            .build();
+        let config = builder().progress(true).progress(false).build();
         assert!(!config.progress());
     }
 
@@ -85,10 +82,7 @@ mod tests {
 
     #[test]
     fn stats_false_clears_flag() {
-        let config = builder()
-            .stats(true)
-            .stats(false)
-            .build();
+        let config = builder().stats(true).stats(false).build();
         assert!(!config.stats());
     }
 
@@ -100,10 +94,7 @@ mod tests {
 
     #[test]
     fn human_readable_false_clears_flag() {
-        let config = builder()
-            .human_readable(true)
-            .human_readable(false)
-            .build();
+        let config = builder().human_readable(true).human_readable(false).build();
         assert!(!config.human_readable());
     }
 
