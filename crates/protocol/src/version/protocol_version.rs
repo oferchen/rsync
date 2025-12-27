@@ -149,6 +149,127 @@ impl ProtocolVersion {
         self.as_u8() < Self::BINARY_NEGOTIATION_INTRODUCED.as_u8()
     }
 
+    // ========================================================================
+    // Feature flag methods
+    // ========================================================================
+    // These methods provide semantic names for protocol version checks,
+    // eliminating the need for scattered magic number comparisons like
+    // `protocol.as_u8() >= 29`. They mirror the ProtocolCodec trait methods.
+
+    /// Returns `true` if this protocol version uses variable-length integer encoding.
+    ///
+    /// - Protocol < 30: Uses fixed-size integers (4-byte, longint)
+    /// - Protocol >= 30: Uses varint/varlong encoding
+    ///
+    /// This is the primary encoding boundary in the rsync protocol.
+    #[must_use]
+    pub const fn uses_varint_encoding(self) -> bool {
+        self.as_u8() >= 30
+    }
+
+    /// Returns `true` if this protocol version uses legacy fixed-size encoding.
+    ///
+    /// Inverse of [`uses_varint_encoding`](Self::uses_varint_encoding).
+    #[must_use]
+    pub const fn uses_fixed_encoding(self) -> bool {
+        self.as_u8() < 30
+    }
+
+    /// Returns `true` if this protocol version supports sender/receiver side modifiers (`s`, `r`).
+    ///
+    /// - Protocol < 29: Returns `false`
+    /// - Protocol >= 29: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1567-1571` - Sender/receiver modifier support gated by protocol >= 29
+    #[must_use]
+    pub const fn supports_sender_receiver_modifiers(self) -> bool {
+        self.as_u8() >= 29
+    }
+
+    /// Returns `true` if this protocol version supports the perishable modifier (`p`).
+    ///
+    /// - Protocol < 30: Returns `false`
+    /// - Protocol >= 30: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1350` - `protocol_version >= 30 ? FILTRULE_PERISHABLE : 0`
+    #[must_use]
+    pub const fn supports_perishable_modifier(self) -> bool {
+        self.as_u8() >= 30
+    }
+
+    /// Returns `true` if this protocol version uses old-style prefixes (protocol < 29).
+    ///
+    /// Old prefixes have restricted modifier support and different parsing rules.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1675` - `xflags = protocol_version >= 29 ? 0 : XFLG_OLD_PREFIXES`
+    #[must_use]
+    pub const fn uses_old_prefixes(self) -> bool {
+        self.as_u8() < 29
+    }
+
+    /// Returns `true` if this protocol version supports file list timing statistics.
+    ///
+    /// - Protocol < 29: Returns `false` (no flist_buildtime/flist_xfertime)
+    /// - Protocol >= 29: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `main.c` - handle_stats() sends flist times only for protocol >= 29
+    #[must_use]
+    pub const fn supports_flist_times(self) -> bool {
+        self.as_u8() >= 29
+    }
+
+    /// Returns `true` if this protocol version supports extended file flags.
+    ///
+    /// - Protocol < 28: Returns `false`
+    /// - Protocol >= 28: Returns `true`
+    ///
+    /// Extended flags allow for more file attributes to be transmitted.
+    #[must_use]
+    pub const fn supports_extended_flags(self) -> bool {
+        self.as_u8() >= 28
+    }
+
+    /// Returns `true` if this protocol version uses varint-encoded file list flags.
+    ///
+    /// - Protocol < 30: Uses 1-2 byte fixed flags
+    /// - Protocol >= 30: Uses varint-encoded flags with COMPAT_VARINT_FLIST_FLAGS
+    #[must_use]
+    pub const fn uses_varint_flist_flags(self) -> bool {
+        self.as_u8() >= 30
+    }
+
+    /// Returns `true` if this protocol version supports the safe file list mode.
+    ///
+    /// - Protocol < 30: Returns `false`
+    /// - Protocol >= 30: Returns `true` (COMPAT_SAFE_FLIST may be negotiated)
+    ///
+    /// Note: Use [`safe_file_list_always_enabled`](Self::safe_file_list_always_enabled)
+    /// to check if safe file list is mandatory (protocol >= 31).
+    #[must_use]
+    pub const fn uses_safe_file_list(self) -> bool {
+        self.as_u8() >= 30
+    }
+
+    /// Returns `true` if safe file list mode is always enabled (protocol >= 31).
+    ///
+    /// - Protocol < 31: Returns `false` (requires COMPAT_SAFE_FLIST negotiation)
+    /// - Protocol >= 31: Returns `true` (always enabled)
+    ///
+    /// Protocol 31+ unconditionally uses safe file list mode regardless of
+    /// compatibility flags.
+    #[must_use]
+    pub const fn safe_file_list_always_enabled(self) -> bool {
+        self.as_u8() >= 31
+    }
+
     /// Returns the numeric protocol identifiers supported by this implementation in newest-to-oldest order.
     #[must_use]
     pub const fn supported_protocol_numbers() -> &'static [u8] {
@@ -627,6 +748,126 @@ mod tests {
     fn uses_legacy_ascii_negotiation_for_29_and_below() {
         assert!(ProtocolVersion::V28.uses_legacy_ascii_negotiation());
         assert!(ProtocolVersion::V29.uses_legacy_ascii_negotiation());
+    }
+
+    // ------------------------------------------------------------------------
+    // Feature flag method tests
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn uses_varint_encoding_boundary_at_30() {
+        assert!(!ProtocolVersion::V28.uses_varint_encoding());
+        assert!(!ProtocolVersion::V29.uses_varint_encoding());
+        assert!(ProtocolVersion::V30.uses_varint_encoding());
+        assert!(ProtocolVersion::V31.uses_varint_encoding());
+        assert!(ProtocolVersion::V32.uses_varint_encoding());
+    }
+
+    #[test]
+    fn uses_fixed_encoding_is_inverse_of_varint() {
+        for version in ProtocolVersion::supported_versions() {
+            assert_eq!(
+                version.uses_fixed_encoding(),
+                !version.uses_varint_encoding(),
+                "uses_fixed_encoding should be inverse of uses_varint_encoding for {version}"
+            );
+        }
+    }
+
+    #[test]
+    fn supports_sender_receiver_modifiers_boundary_at_29() {
+        assert!(!ProtocolVersion::V28.supports_sender_receiver_modifiers());
+        assert!(ProtocolVersion::V29.supports_sender_receiver_modifiers());
+        assert!(ProtocolVersion::V30.supports_sender_receiver_modifiers());
+        assert!(ProtocolVersion::V31.supports_sender_receiver_modifiers());
+        assert!(ProtocolVersion::V32.supports_sender_receiver_modifiers());
+    }
+
+    #[test]
+    fn supports_perishable_modifier_boundary_at_30() {
+        assert!(!ProtocolVersion::V28.supports_perishable_modifier());
+        assert!(!ProtocolVersion::V29.supports_perishable_modifier());
+        assert!(ProtocolVersion::V30.supports_perishable_modifier());
+        assert!(ProtocolVersion::V31.supports_perishable_modifier());
+        assert!(ProtocolVersion::V32.supports_perishable_modifier());
+    }
+
+    #[test]
+    fn uses_old_prefixes_boundary_at_29() {
+        assert!(ProtocolVersion::V28.uses_old_prefixes());
+        assert!(!ProtocolVersion::V29.uses_old_prefixes());
+        assert!(!ProtocolVersion::V30.uses_old_prefixes());
+        assert!(!ProtocolVersion::V31.uses_old_prefixes());
+        assert!(!ProtocolVersion::V32.uses_old_prefixes());
+    }
+
+    #[test]
+    fn supports_flist_times_boundary_at_29() {
+        assert!(!ProtocolVersion::V28.supports_flist_times());
+        assert!(ProtocolVersion::V29.supports_flist_times());
+        assert!(ProtocolVersion::V30.supports_flist_times());
+        assert!(ProtocolVersion::V31.supports_flist_times());
+        assert!(ProtocolVersion::V32.supports_flist_times());
+    }
+
+    #[test]
+    fn supports_extended_flags_for_all_supported_versions() {
+        // All supported versions (28+) support extended flags
+        for version in ProtocolVersion::supported_versions() {
+            assert!(
+                version.supports_extended_flags(),
+                "version {version} should support extended flags"
+            );
+        }
+    }
+
+    #[test]
+    fn uses_varint_flist_flags_boundary_at_30() {
+        assert!(!ProtocolVersion::V28.uses_varint_flist_flags());
+        assert!(!ProtocolVersion::V29.uses_varint_flist_flags());
+        assert!(ProtocolVersion::V30.uses_varint_flist_flags());
+        assert!(ProtocolVersion::V31.uses_varint_flist_flags());
+        assert!(ProtocolVersion::V32.uses_varint_flist_flags());
+    }
+
+    #[test]
+    fn uses_safe_file_list_boundary_at_30() {
+        assert!(!ProtocolVersion::V28.uses_safe_file_list());
+        assert!(!ProtocolVersion::V29.uses_safe_file_list());
+        assert!(ProtocolVersion::V30.uses_safe_file_list());
+        assert!(ProtocolVersion::V31.uses_safe_file_list());
+        assert!(ProtocolVersion::V32.uses_safe_file_list());
+    }
+
+    #[test]
+    fn safe_file_list_always_enabled_boundary_at_31() {
+        assert!(!ProtocolVersion::V28.safe_file_list_always_enabled());
+        assert!(!ProtocolVersion::V29.safe_file_list_always_enabled());
+        assert!(!ProtocolVersion::V30.safe_file_list_always_enabled());
+        assert!(ProtocolVersion::V31.safe_file_list_always_enabled());
+        assert!(ProtocolVersion::V32.safe_file_list_always_enabled());
+    }
+
+    #[test]
+    fn feature_flags_consistent_with_binary_negotiation() {
+        // All versions using binary negotiation (>= 30) should have:
+        // - varint encoding
+        // - varint flist flags
+        // - safe file list
+        // - perishable modifier support
+        for version in ProtocolVersion::supported_versions() {
+            if version.uses_binary_negotiation() {
+                assert!(version.uses_varint_encoding());
+                assert!(version.uses_varint_flist_flags());
+                assert!(version.uses_safe_file_list());
+                assert!(version.supports_perishable_modifier());
+            } else {
+                assert!(version.uses_fixed_encoding());
+                assert!(!version.uses_varint_flist_flags());
+                assert!(!version.uses_safe_file_list());
+                assert!(!version.supports_perishable_modifier());
+            }
+        }
     }
 
     #[test]
