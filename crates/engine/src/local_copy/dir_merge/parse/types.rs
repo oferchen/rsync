@@ -37,21 +37,21 @@ mod tests {
     #[test]
     fn filter_parse_error_new_from_str() {
         let err = FilterParseError::new("test error");
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("test error"));
     }
 
     #[test]
     fn filter_parse_error_new_from_string() {
         let err = FilterParseError::new(String::from("error message"));
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("error message"));
     }
 
     #[test]
     fn filter_parse_error_debug() {
         let err = FilterParseError::new("debug test");
-        let debug = format!("{:?}", err);
+        let debug = format!("{err:?}");
         assert!(debug.contains("FilterParseError"));
     }
 
@@ -59,7 +59,7 @@ mod tests {
     fn parsed_filter_directive_rule_debug() {
         // Just verify the enum can be created and debugged
         let directive = ParsedFilterDirective::Clear;
-        let debug = format!("{:?}", directive);
+        let debug = format!("{directive:?}");
         assert!(debug.contains("Clear"));
     }
 
@@ -69,7 +69,7 @@ mod tests {
             path: PathBuf::from("/test"),
             options: None,
         };
-        let debug = format!("{:?}", directive);
+        let debug = format!("{directive:?}");
         assert!(debug.contains("Merge"));
     }
 }

@@ -137,7 +137,10 @@ mod tests {
 
     #[test]
     fn legacy_daemon_config_dir_matches_constant() {
-        assert_eq!(legacy_daemon_config_dir(), Path::new(LEGACY_DAEMON_CONFIG_DIR));
+        assert_eq!(
+            legacy_daemon_config_dir(),
+            Path::new(LEGACY_DAEMON_CONFIG_DIR)
+        );
     }
 
     #[test]
@@ -148,7 +151,10 @@ mod tests {
 
     #[test]
     fn legacy_daemon_config_path_matches_constant() {
-        assert_eq!(legacy_daemon_config_path(), Path::new(LEGACY_DAEMON_CONFIG_PATH));
+        assert_eq!(
+            legacy_daemon_config_path(),
+            Path::new(LEGACY_DAEMON_CONFIG_PATH)
+        );
     }
 
     #[test]
@@ -159,6 +165,9 @@ mod tests {
 
     #[test]
     fn legacy_daemon_secrets_path_matches_constant() {
-        assert_eq!(legacy_daemon_secrets_path(), Path::new(LEGACY_DAEMON_SECRETS_PATH));
+        assert_eq!(
+            legacy_daemon_secrets_path(),
+            Path::new(LEGACY_DAEMON_SECRETS_PATH)
+        );
     }
 }

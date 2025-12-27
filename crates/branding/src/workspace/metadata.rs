@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn metadata_debug_format_works() {
         let m = metadata();
-        let debug = format!("{:?}", m);
+        let debug = format!("{m:?}");
         assert!(debug.contains("Metadata"));
     }
 

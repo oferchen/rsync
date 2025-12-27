@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let err = EngineError::InvalidConfig("test".to_string());
-        let debug = format!("{:?}", err);
+        let debug = format!("{err:?}");
 
         assert!(debug.contains("InvalidConfig"));
     }
@@ -79,7 +79,8 @@ mod tests {
     fn engine_result_ok() {
         let result: EngineResult<i32> = Ok(42);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
+        let Ok(value) = result else { panic!("expected Ok") };
+        assert_eq!(value, 42);
     }
 
     #[test]

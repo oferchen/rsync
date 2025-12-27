@@ -330,7 +330,7 @@ mod tests {
         #[test]
         fn info_flag_clone_and_copy() {
             let flag = InfoFlag::Backup;
-            let cloned = flag.clone();
+            let cloned = flag;
             let copied = flag;
             assert_eq!(flag, cloned);
             assert_eq!(flag, copied);
@@ -366,7 +366,7 @@ mod tests {
         #[test]
         fn debug_flag_clone_and_copy() {
             let flag = DebugFlag::Acl;
-            let cloned = flag.clone();
+            let cloned = flag;
             let copied = flag;
             assert_eq!(flag, cloned);
             assert_eq!(flag, copied);
@@ -430,20 +430,21 @@ mod tests {
 
         #[test]
         fn get_returns_correct_level_for_each_flag() {
-            let mut levels = InfoLevels::default();
-            levels.backup = 1;
-            levels.copy = 2;
-            levels.del = 3;
-            levels.flist = 4;
-            levels.misc = 5;
-            levels.mount = 6;
-            levels.name = 7;
-            levels.nonreg = 8;
-            levels.progress = 9;
-            levels.remove = 10;
-            levels.skip = 11;
-            levels.stats = 12;
-            levels.symsafe = 13;
+            let levels = InfoLevels {
+                backup: 1,
+                copy: 2,
+                del: 3,
+                flist: 4,
+                misc: 5,
+                mount: 6,
+                name: 7,
+                nonreg: 8,
+                progress: 9,
+                remove: 10,
+                skip: 11,
+                stats: 12,
+                symsafe: 13,
+            };
 
             assert_eq!(levels.get(InfoFlag::Backup), 1);
             assert_eq!(levels.get(InfoFlag::Copy), 2);
@@ -526,9 +527,11 @@ mod tests {
 
         #[test]
         fn info_levels_clone() {
-            let mut levels = InfoLevels::default();
-            levels.backup = 3;
-            levels.copy = 7;
+            let levels = InfoLevels {
+                backup: 3,
+                copy: 7,
+                ..Default::default()
+            };
 
             let cloned = levels.clone();
             assert_eq!(cloned.backup, 3);
@@ -538,7 +541,7 @@ mod tests {
         #[test]
         fn info_levels_debug_format() {
             let levels = InfoLevels::default();
-            let debug_str = format!("{:?}", levels);
+            let debug_str = format!("{levels:?}");
             assert!(debug_str.contains("InfoLevels"));
             assert!(debug_str.contains("backup"));
             assert!(debug_str.contains("copy"));
@@ -579,31 +582,32 @@ mod tests {
 
         #[test]
         fn get_returns_correct_level_for_each_flag() {
-            let mut levels = DebugLevels::default();
-            levels.acl = 1;
-            levels.backup = 2;
-            levels.bind = 3;
-            levels.chdir = 4;
-            levels.connect = 5;
-            levels.cmd = 6;
-            levels.del = 7;
-            levels.deltasum = 8;
-            levels.dup = 9;
-            levels.exit = 10;
-            levels.filter = 11;
-            levels.flist = 12;
-            levels.fuzzy = 13;
-            levels.genr = 14;
-            levels.hash = 15;
-            levels.hlink = 16;
-            levels.iconv = 17;
-            levels.io = 18;
-            levels.nstr = 19;
-            levels.own = 20;
-            levels.proto = 21;
-            levels.recv = 22;
-            levels.send = 23;
-            levels.time = 24;
+            let levels = DebugLevels {
+                acl: 1,
+                backup: 2,
+                bind: 3,
+                chdir: 4,
+                connect: 5,
+                cmd: 6,
+                del: 7,
+                deltasum: 8,
+                dup: 9,
+                exit: 10,
+                filter: 11,
+                flist: 12,
+                fuzzy: 13,
+                genr: 14,
+                hash: 15,
+                hlink: 16,
+                iconv: 17,
+                io: 18,
+                nstr: 19,
+                own: 20,
+                proto: 21,
+                recv: 22,
+                send: 23,
+                time: 24,
+            };
 
             assert_eq!(levels.get(DebugFlag::Acl), 1);
             assert_eq!(levels.get(DebugFlag::Backup), 2);
@@ -741,9 +745,11 @@ mod tests {
 
         #[test]
         fn debug_levels_clone() {
-            let mut levels = DebugLevels::default();
-            levels.acl = 3;
-            levels.bind = 7;
+            let levels = DebugLevels {
+                acl: 3,
+                bind: 7,
+                ..Default::default()
+            };
 
             let cloned = levels.clone();
             assert_eq!(cloned.acl, 3);
@@ -753,7 +759,7 @@ mod tests {
         #[test]
         fn debug_levels_debug_format() {
             let levels = DebugLevels::default();
-            let debug_str = format!("{:?}", levels);
+            let debug_str = format!("{levels:?}");
             assert!(debug_str.contains("DebugLevels"));
             assert!(debug_str.contains("acl"));
             assert!(debug_str.contains("bind"));

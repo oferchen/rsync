@@ -7,7 +7,7 @@
 //!
 //! # Modules
 //!
-//! - [`checksum`] - Checksum factory for creating signature algorithms
+//! - [`ChecksumFactory`] - Factory for creating signature algorithms from negotiated parameters
 
 pub mod checksum;
 

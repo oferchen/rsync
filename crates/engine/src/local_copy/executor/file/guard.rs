@@ -224,7 +224,8 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let dest = temp.path().join("final.txt");
 
-        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
 
         // Temp file should exist and be writable
         file.write_all(b"test content").expect("write");
@@ -241,7 +242,8 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let dest = temp.path().join("final.txt");
 
-        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
         file.write_all(b"content").expect("write");
         drop(file);
 
@@ -281,7 +283,8 @@ mod tests {
 
         let staging;
         {
-            let (guard, _file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+            let (guard, _file) =
+                DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
             staging = guard.staging_path().to_path_buf();
             // Guard is dropped here without commit
         }
@@ -342,7 +345,8 @@ mod tests {
         // Create existing file
         fs::write(&dest, b"old content").expect("write existing");
 
-        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
+        let (guard, mut file) =
+            DestinationWriteGuard::new(&dest, false, None, None).expect("guard");
         file.write_all(b"new content").expect("write");
         drop(file);
 

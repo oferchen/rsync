@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let tokens = DigestListTokens::new(Some("md5"));
-        let debug = format!("{:?}", tokens);
+        let debug = format!("{tokens:?}");
         assert!(debug.contains("DigestListTokens"));
     }
 }

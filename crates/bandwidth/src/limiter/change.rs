@@ -201,7 +201,10 @@ mod tests {
     #[test]
     fn limiter_change_combine_all_empty_returns_unchanged() {
         let changes: Vec<LimiterChange> = vec![];
-        assert_eq!(LimiterChange::combine_all(changes), LimiterChange::Unchanged);
+        assert_eq!(
+            LimiterChange::combine_all(changes),
+            LimiterChange::Unchanged
+        );
     }
 
     #[test]
@@ -301,15 +304,16 @@ mod tests {
 
     #[test]
     fn limiter_change_partial_ord_returns_some() {
-        assert!(LimiterChange::Updated.partial_cmp(&LimiterChange::Enabled).is_some());
+        assert!(
+            LimiterChange::Updated
+                .partial_cmp(&LimiterChange::Enabled)
+                .is_some()
+        );
     }
 
     #[test]
     fn limiter_change_from_iterator() {
-        let changes = vec![
-            LimiterChange::Unchanged,
-            LimiterChange::Updated,
-        ];
+        let changes = vec![LimiterChange::Unchanged, LimiterChange::Updated];
         let result: LimiterChange = changes.into_iter().collect();
         assert_eq!(result, LimiterChange::Updated);
     }

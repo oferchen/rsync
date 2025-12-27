@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn display_matches_name() {
         for code in MessageCode::ALL {
-            assert_eq!(format!("{}", code), code.name());
+            assert_eq!(format!("{code}"), code.name());
         }
     }
 
@@ -443,7 +443,7 @@ mod tests {
     #[test]
     fn parse_message_code_error_display() {
         let err = ParseMessageCodeError::new("BAD_CODE");
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("BAD_CODE"));
     }
 }

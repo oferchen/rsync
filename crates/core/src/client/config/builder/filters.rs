@@ -42,9 +42,7 @@ mod tests {
 
     #[test]
     fn debug_flags_sets_values() {
-        let config = builder()
-            .debug_flags(["FILTER", "SEND"])
-            .build();
+        let config = builder().debug_flags(["FILTER", "SEND"]).build();
         assert_eq!(config.debug_flags().len(), 2);
     }
 
@@ -109,9 +107,7 @@ mod tests {
 
     #[test]
     fn add_filter_rule_clear() {
-        let config = builder()
-            .add_filter_rule(FilterRuleSpec::clear())
-            .build();
+        let config = builder().add_filter_rule(FilterRuleSpec::clear()).build();
         assert_eq!(config.filter_rules()[0].kind(), FilterRuleKind::Clear);
     }
 
