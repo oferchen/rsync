@@ -176,7 +176,10 @@ mod tests {
 
     #[test]
     fn split_short_merge_modifiers_whitespace_start() {
-        assert_eq!(split_short_merge_modifiers(" pattern", false), ("", "pattern"));
+        assert_eq!(
+            split_short_merge_modifiers(" pattern", false),
+            ("", "pattern")
+        );
     }
 
     #[test]

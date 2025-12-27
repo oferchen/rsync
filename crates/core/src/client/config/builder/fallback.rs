@@ -32,10 +32,7 @@ mod tests {
 
     #[test]
     fn force_fallback_false_clears_flag() {
-        let config = builder()
-            .force_fallback(true)
-            .force_fallback(false)
-            .build();
+        let config = builder().force_fallback(true).force_fallback(false).build();
         assert!(!config.force_fallback());
     }
 

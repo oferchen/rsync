@@ -101,7 +101,7 @@ mod tests {
     fn debug_format() {
         let flags = empty_flags();
         let iter = KnownCompatibilityFlagsIter::new(flags);
-        let debug = format!("{:?}", iter);
+        let debug = format!("{iter:?}");
         assert!(debug.contains("KnownCompatibilityFlagsIter"));
     }
 

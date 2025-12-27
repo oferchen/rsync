@@ -122,12 +122,18 @@ mod tests {
     // Tests for Display trait
     #[test]
     fn display_optional() {
-        assert_eq!(format!("{}", SecludedArgsMode::Optional), "optional secluded-args");
+        assert_eq!(
+            format!("{}", SecludedArgsMode::Optional),
+            "optional secluded-args"
+        );
     }
 
     #[test]
     fn display_default() {
-        assert_eq!(format!("{}", SecludedArgsMode::Default), "default secluded-args");
+        assert_eq!(
+            format!("{}", SecludedArgsMode::Default),
+            "default secluded-args"
+        );
     }
 
     // Tests for FromStr trait
@@ -159,7 +165,7 @@ mod tests {
     #[test]
     fn mode_is_clone() {
         let mode = SecludedArgsMode::Optional;
-        let cloned = mode.clone();
+        let cloned = mode;
         assert_eq!(mode, cloned);
     }
 
@@ -185,14 +191,14 @@ mod tests {
     #[test]
     fn error_display() {
         let err = "invalid".parse::<SecludedArgsMode>().unwrap_err();
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("unrecognised"));
     }
 
     #[test]
     fn error_is_clone() {
         let err = "invalid".parse::<SecludedArgsMode>().unwrap_err();
-        let cloned = err.clone();
+        let cloned = err;
         assert_eq!(err, cloned);
     }
 

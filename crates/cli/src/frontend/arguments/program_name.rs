@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn program_name_debug() {
         let name = ProgramName::Rsync;
-        let debug = format!("{:?}", name);
+        let debug = format!("{name:?}");
         assert!(debug.contains("Rsync"));
     }
 

@@ -499,7 +499,10 @@ mod tests {
             args.remote_shell = Some(OsString::from("ssh -i ~/.ssh/id_rsa"));
 
             let cloned = args.clone();
-            assert_eq!(cloned.remote_shell, Some(OsString::from("ssh -i ~/.ssh/id_rsa")));
+            assert_eq!(
+                cloned.remote_shell,
+                Some(OsString::from("ssh -i ~/.ssh/id_rsa"))
+            );
         }
 
         #[test]

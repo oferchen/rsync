@@ -1,7 +1,8 @@
 pub(super) use super::{
     BandwidthLimiter, LimiterChange, MAX_SLEEP_DURATION, MINIMUM_SLEEP_MICROS,
     RecordedSleepSession, apply_effective_limit, duration_from_microseconds,
-    recorded_sleep_session, recorded_sleeps, sleep_for,
+    recorded_sleep_session, sleep_for,
+    test_support::recorded_sleeps,
 };
 
 mod apply_effective_limit_cases;

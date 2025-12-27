@@ -450,7 +450,7 @@ mod tests {
         #[test]
         fn clone_and_copy() {
             let timeout = TransferTimeout::Seconds(NonZeroU64::new(10).unwrap());
-            let cloned = timeout.clone();
+            let cloned = timeout;
             let copied = timeout;
             assert_eq!(timeout, cloned);
             assert_eq!(timeout, copied);
@@ -459,13 +459,13 @@ mod tests {
         #[test]
         fn debug_format() {
             let timeout = TransferTimeout::Default;
-            assert_eq!(format!("{:?}", timeout), "Default");
+            assert_eq!(format!("{timeout:?}"), "Default");
 
             let timeout = TransferTimeout::Disabled;
-            assert_eq!(format!("{:?}", timeout), "Disabled");
+            assert_eq!(format!("{timeout:?}"), "Disabled");
 
             let timeout = TransferTimeout::Seconds(NonZeroU64::new(5).unwrap());
-            assert!(format!("{:?}", timeout).contains("Seconds"));
+            assert!(format!("{timeout:?}").contains("Seconds"));
         }
     }
 
@@ -474,22 +474,34 @@ mod tests {
 
         #[test]
         fn parse_level_0() {
-            assert_eq!(HumanReadableMode::parse("0").unwrap(), HumanReadableMode::Disabled);
+            assert_eq!(
+                HumanReadableMode::parse("0").unwrap(),
+                HumanReadableMode::Disabled
+            );
         }
 
         #[test]
         fn parse_level_1() {
-            assert_eq!(HumanReadableMode::parse("1").unwrap(), HumanReadableMode::Enabled);
+            assert_eq!(
+                HumanReadableMode::parse("1").unwrap(),
+                HumanReadableMode::Enabled
+            );
         }
 
         #[test]
         fn parse_level_2() {
-            assert_eq!(HumanReadableMode::parse("2").unwrap(), HumanReadableMode::Combined);
+            assert_eq!(
+                HumanReadableMode::parse("2").unwrap(),
+                HumanReadableMode::Combined
+            );
         }
 
         #[test]
         fn parse_with_whitespace() {
-            assert_eq!(HumanReadableMode::parse("  1  ").unwrap(), HumanReadableMode::Enabled);
+            assert_eq!(
+                HumanReadableMode::parse("  1  ").unwrap(),
+                HumanReadableMode::Enabled
+            );
         }
 
         #[test]
@@ -501,13 +513,19 @@ mod tests {
         #[test]
         fn parse_invalid_returns_error() {
             let result = HumanReadableMode::parse("3");
-            assert!(matches!(result, Err(HumanReadableModeParseError::Invalid { .. })));
+            assert!(matches!(
+                result,
+                Err(HumanReadableModeParseError::Invalid { .. })
+            ));
         }
 
         #[test]
         fn from_str_works() {
             use std::str::FromStr;
-            assert_eq!(HumanReadableMode::from_str("1").unwrap(), HumanReadableMode::Enabled);
+            assert_eq!(
+                HumanReadableMode::from_str("1").unwrap(),
+                HumanReadableMode::Enabled
+            );
         }
 
         #[test]
@@ -557,7 +575,9 @@ mod tests {
             let empty_err = HumanReadableModeParseError::Empty;
             assert!(empty_err.to_string().contains("must not be empty"));
 
-            let invalid_err = HumanReadableModeParseError::Invalid { value: "3".to_string() };
+            let invalid_err = HumanReadableModeParseError::Invalid {
+                value: "3".to_string(),
+            };
             assert!(invalid_err.to_string().contains("invalid"));
         }
     }
@@ -591,7 +611,7 @@ mod tests {
         #[test]
         fn clone_and_copy() {
             let alg = StrongChecksumAlgorithm::Md5;
-            let cloned = alg.clone();
+            let cloned = alg;
             let copied = alg;
             assert_eq!(alg, cloned);
             assert_eq!(alg, copied);
@@ -677,7 +697,7 @@ mod tests {
         #[test]
         fn file_signature_algorithm() {
             let choice = StrongChecksumChoice::parse("md5").unwrap();
-            let _ = choice.file_signature_algorithm();  // Just ensure no panic
+            let _ = choice.file_signature_algorithm(); // Just ensure no panic
         }
     }
 
@@ -692,7 +712,7 @@ mod tests {
         #[test]
         fn clone_and_copy() {
             let mode = AddressMode::Ipv4;
-            let cloned = mode.clone();
+            let cloned = mode;
             let copied = mode;
             assert_eq!(mode, cloned);
             assert_eq!(mode, copied);
@@ -814,7 +834,7 @@ mod tests {
         #[test]
         fn clone_and_copy() {
             let mode = DeleteMode::Before;
-            let cloned = mode.clone();
+            let cloned = mode;
             let copied = mode;
             assert_eq!(mode, cloned);
             assert_eq!(mode, copied);

@@ -232,7 +232,7 @@ mod tests {
         let mut scratch = MessageScratch::new();
         let msg = Message::info("hello");
         let segments = msg.as_segments(&mut scratch, false);
-        assert!(segments.len() > 0);
+        assert!(!segments.is_empty());
     }
 
     #[test]
@@ -329,7 +329,7 @@ mod tests {
         let mut scratch = MessageScratch::new();
         let msg = Message::info("test");
         let segments = msg.as_segments(&mut scratch, false);
-        let debug = format!("{:?}", segments);
+        let debug = format!("{segments:?}");
         assert!(debug.contains("MessageSegments"));
     }
 }

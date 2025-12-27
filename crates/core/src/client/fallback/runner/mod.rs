@@ -184,7 +184,11 @@ mod tests {
         assert!(result.is_err());
         let error = result.unwrap_err();
         assert_eq!(error.exit_code(), 1);
-        assert!(error.to_string().contains("fallback to external rsync binaries is disabled"));
+        assert!(
+            error
+                .to_string()
+                .contains("fallback to external rsync binaries is disabled")
+        );
     }
 
     #[test]

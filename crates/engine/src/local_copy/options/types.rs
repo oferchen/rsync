@@ -293,10 +293,16 @@ mod tests {
 
     #[test]
     fn reference_directory_kind_eq() {
-        assert_eq!(ReferenceDirectoryKind::Compare, ReferenceDirectoryKind::Compare);
+        assert_eq!(
+            ReferenceDirectoryKind::Compare,
+            ReferenceDirectoryKind::Compare
+        );
         assert_eq!(ReferenceDirectoryKind::Copy, ReferenceDirectoryKind::Copy);
         assert_eq!(ReferenceDirectoryKind::Link, ReferenceDirectoryKind::Link);
-        assert_ne!(ReferenceDirectoryKind::Compare, ReferenceDirectoryKind::Link);
+        assert_ne!(
+            ReferenceDirectoryKind::Compare,
+            ReferenceDirectoryKind::Link
+        );
     }
 
     #[test]

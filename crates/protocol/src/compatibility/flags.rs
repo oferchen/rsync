@@ -592,7 +592,7 @@ mod tests {
     #[test]
     fn debug_format() {
         let flags = CompatibilityFlags::from_bits(0x05);
-        let debug = format!("{:?}", flags);
+        let debug = format!("{flags:?}");
         assert!(debug.contains("CompatibilityFlags"));
         assert!(debug.contains("0x5"));
     }
@@ -600,20 +600,20 @@ mod tests {
     #[test]
     fn display_empty() {
         let flags = CompatibilityFlags::EMPTY;
-        assert_eq!(format!("{}", flags), "CF_NONE");
+        assert_eq!(format!("{flags}"), "CF_NONE");
     }
 
     #[test]
     fn display_single() {
         let flags = CompatibilityFlags::INC_RECURSE;
-        let display = format!("{}", flags);
+        let display = format!("{flags}");
         assert_eq!(display, "CF_INC_RECURSE");
     }
 
     #[test]
     fn display_multiple() {
         let flags = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::SYMLINK_TIMES;
-        let display = format!("{}", flags);
+        let display = format!("{flags}");
         assert!(display.contains("CF_INC_RECURSE"));
         assert!(display.contains("CF_SYMLINK_TIMES"));
         assert!(display.contains(" | "));
@@ -622,7 +622,7 @@ mod tests {
     #[test]
     fn display_with_unknown() {
         let flags = CompatibilityFlags::from_bits(0x8000_0001);
-        let display = format!("{}", flags);
+        let display = format!("{flags}");
         assert!(display.contains("CF_INC_RECURSE"));
         assert!(display.contains("unknown"));
     }

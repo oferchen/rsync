@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn error_display_contains_values() {
         let err = CopyToSliceError::new(100, 50);
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("100"));
         assert!(display.contains("50"));
     }

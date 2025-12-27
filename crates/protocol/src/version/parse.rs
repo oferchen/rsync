@@ -101,13 +101,18 @@ mod tests {
 
     #[test]
     fn error_kind_unsupported_range() {
-        let err = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(99));
-        assert_eq!(err.kind(), ParseProtocolVersionErrorKind::UnsupportedRange(99));
+        let err =
+            ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(99));
+        assert_eq!(
+            err.kind(),
+            ParseProtocolVersionErrorKind::UnsupportedRange(99)
+        );
     }
 
     #[test]
     fn unsupported_value_returns_some() {
-        let err = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(42));
+        let err =
+            ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(42));
         assert_eq!(err.unsupported_value(), Some(42));
     }
 
@@ -138,35 +143,36 @@ mod tests {
     #[test]
     fn display_empty() {
         let err = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Empty);
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("empty"));
     }
 
     #[test]
     fn display_invalid_digit() {
         let err = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::InvalidDigit);
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("unsigned integer"));
     }
 
     #[test]
     fn display_negative() {
         let err = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Negative);
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("negative"));
     }
 
     #[test]
     fn display_overflow() {
         let err = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::Overflow);
-        let display = format!("{}", err);
+        let display = format!("{err}");
         assert!(display.contains("u8::MAX"));
     }
 
     #[test]
     fn display_unsupported_range() {
-        let err = ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(99));
-        let display = format!("{}", err);
+        let err =
+            ParseProtocolVersionError::new(ParseProtocolVersionErrorKind::UnsupportedRange(99));
+        let display = format!("{err}");
         assert!(display.contains("99"));
         assert!(display.contains("supported range"));
     }

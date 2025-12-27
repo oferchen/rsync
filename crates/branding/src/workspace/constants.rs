@@ -187,6 +187,7 @@ pub const fn source_url() -> &'static str {
 }
 
 #[cfg(test)]
+#[allow(clippy::const_is_empty)]
 mod tests {
     use super::*;
 

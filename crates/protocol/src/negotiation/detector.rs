@@ -341,6 +341,7 @@ impl Default for NegotiationPrologueDetector {
 }
 
 #[cfg(test)]
+#[allow(unused_must_use)]
 mod tests {
     use super::*;
 
@@ -375,7 +376,10 @@ mod tests {
         assert!(detector.is_legacy());
         assert!(!detector.is_binary());
         assert!(!detector.legacy_prefix_complete());
-        assert!(result == NegotiationPrologue::LegacyAscii || result == NegotiationPrologue::NeedMoreData);
+        assert!(
+            result == NegotiationPrologue::LegacyAscii
+                || result == NegotiationPrologue::NeedMoreData
+        );
     }
 
     #[test]
@@ -463,7 +467,9 @@ mod tests {
         detector.observe(b"@RSY");
 
         let mut buffer = [0u8; LEGACY_DAEMON_PREFIX_LEN];
-        let copied = detector.copy_buffered_prefix_into_array(&mut buffer).unwrap();
+        let copied = detector
+            .copy_buffered_prefix_into_array(&mut buffer)
+            .unwrap();
         assert_eq!(copied, 4);
     }
 

@@ -163,7 +163,9 @@ mod tests {
 
     #[test]
     fn delete_after_false_disables_if_timing_is_after() {
-        let opts = LocalCopyOptions::new().delete_after(true).delete_after(false);
+        let opts = LocalCopyOptions::new()
+            .delete_after(true)
+            .delete_after(false);
         assert!(!opts.delete_extraneous());
         assert!(opts.delete_timing().is_none());
     }
@@ -178,7 +180,9 @@ mod tests {
 
     #[test]
     fn delete_before_false_disables_if_timing_is_before() {
-        let opts = LocalCopyOptions::new().delete_before(true).delete_before(false);
+        let opts = LocalCopyOptions::new()
+            .delete_before(true)
+            .delete_before(false);
         assert!(!opts.delete_extraneous());
     }
 
@@ -192,7 +196,9 @@ mod tests {
 
     #[test]
     fn delete_delay_false_disables_if_timing_is_delay() {
-        let opts = LocalCopyOptions::new().delete_delay(true).delete_delay(false);
+        let opts = LocalCopyOptions::new()
+            .delete_delay(true)
+            .delete_delay(false);
         assert!(!opts.delete_extraneous());
     }
 
@@ -219,7 +225,9 @@ mod tests {
 
     #[test]
     fn delete_excluded_false_disables() {
-        let opts = LocalCopyOptions::new().delete_excluded(true).delete_excluded(false);
+        let opts = LocalCopyOptions::new()
+            .delete_excluded(true)
+            .delete_excluded(false);
         assert!(!opts.delete_excluded_enabled());
     }
 
@@ -231,7 +239,9 @@ mod tests {
 
     #[test]
     fn max_deletions_none_clears_limit() {
-        let opts = LocalCopyOptions::new().max_deletions(Some(100)).max_deletions(None);
+        let opts = LocalCopyOptions::new()
+            .max_deletions(Some(100))
+            .max_deletions(None);
         assert!(opts.max_deletion_limit().is_none());
     }
 
