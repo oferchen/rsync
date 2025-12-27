@@ -1050,7 +1050,10 @@ mod tests {
     // AsyncIoError tests
     #[test]
     fn test_async_io_error_io() {
-        let error = AsyncIoError::io("/path/to/file", io::Error::new(io::ErrorKind::NotFound, "not found"));
+        let error = AsyncIoError::io(
+            "/path/to/file",
+            io::Error::new(io::ErrorKind::NotFound, "not found"),
+        );
         let display = format!("{error}");
         assert!(display.contains("/path/to/file"));
     }
@@ -1164,7 +1167,9 @@ mod tests {
         let path = temp.path().join("test.txt");
         std::fs::write(&path, b"Hello").unwrap();
 
-        let reader = AsyncFileReader::open_with_buffer_size(&path, 1024).await.unwrap();
+        let reader = AsyncFileReader::open_with_buffer_size(&path, 1024)
+            .await
+            .unwrap();
         assert_eq!(reader.size(), 5);
     }
 
@@ -1210,7 +1215,9 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("output.txt");
 
-        let mut writer = AsyncFileWriter::create_with_buffer_size(&path, 8192).await.unwrap();
+        let mut writer = AsyncFileWriter::create_with_buffer_size(&path, 8192)
+            .await
+            .unwrap();
         writer.write_all(b"test").await.unwrap();
         writer.flush().await.unwrap();
         assert_eq!(writer.bytes_written(), 4);

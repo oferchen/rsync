@@ -330,8 +330,8 @@ mod tests {
     use std::io::{self, Cursor};
 
     fn create_test_handshake() -> LegacyDaemonHandshake<Cursor<Vec<u8>>> {
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto = ProtocolVersion::from_supported(31).unwrap();
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
@@ -440,8 +440,8 @@ mod tests {
 
     #[test]
     fn from_components_reconstructs_handshake() {
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto = ProtocolVersion::from_supported(31).unwrap();
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
@@ -492,7 +492,7 @@ mod tests {
     fn try_map_stream_inner_fails_preserves_handshake() {
         let hs = create_test_handshake();
         let result = hs.try_map_stream_inner(|cursor| -> Result<Cursor<Vec<u8>>, _> {
-            Err((io::Error::new(io::ErrorKind::Other, "test error"), cursor))
+            Err((io::Error::other("test error"), cursor))
         });
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -532,8 +532,8 @@ mod tests {
     #[test]
     fn local_protocol_was_capped_true_when_reduced() {
         // Create handshake where server advertises 31 but we negotiate 29
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto = ProtocolVersion::from_supported(29).unwrap();
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
