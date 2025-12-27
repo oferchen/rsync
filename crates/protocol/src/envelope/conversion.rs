@@ -52,3 +52,71 @@ impl TryFrom<MessageCode> for LogCode {
             .ok_or(LogCodeConversionError::NoLogEquivalent(value))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_code_returns_some_for_no_message_equivalent() {
+        let err = LogCodeConversionError::NoMessageEquivalent(LogCode::Error);
+        assert_eq!(err.log_code(), Some(LogCode::Error));
+    }
+
+    #[test]
+    fn log_code_returns_none_for_no_log_equivalent() {
+        let err = LogCodeConversionError::NoLogEquivalent(MessageCode::Data);
+        assert_eq!(err.log_code(), None);
+    }
+
+    #[test]
+    fn message_code_returns_some_for_no_log_equivalent() {
+        let err = LogCodeConversionError::NoLogEquivalent(MessageCode::Data);
+        assert_eq!(err.message_code(), Some(MessageCode::Data));
+    }
+
+    #[test]
+    fn message_code_returns_none_for_no_message_equivalent() {
+        let err = LogCodeConversionError::NoMessageEquivalent(LogCode::Error);
+        assert_eq!(err.message_code(), None);
+    }
+
+    #[test]
+    fn error_clone() {
+        let err = LogCodeConversionError::NoMessageEquivalent(LogCode::Warning);
+        let cloned = err;
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn error_debug() {
+        let err = LogCodeConversionError::NoMessageEquivalent(LogCode::Error);
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("NoMessageEquivalent"));
+    }
+
+    #[test]
+    fn error_display() {
+        let err = LogCodeConversionError::NoMessageEquivalent(LogCode::Error);
+        let display = format!("{}", err);
+        assert!(display.contains("no multiplexed message"));
+    }
+
+    #[test]
+    fn try_from_log_code_error_succeeds() {
+        let result = MessageCode::try_from(LogCode::Error);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_message_code_data_fails() {
+        let result = LogCode::try_from(MessageCode::Data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_from_message_code_error_succeeds() {
+        let result = LogCode::try_from(MessageCode::Error);
+        assert!(result.is_ok());
+    }
+}
