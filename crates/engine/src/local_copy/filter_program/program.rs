@@ -289,3 +289,89 @@ impl XattrRule {
         self.matcher.is_match(name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_program_is_empty() {
+        let program = FilterProgram::new(std::iter::empty()).unwrap();
+        assert!(program.is_empty());
+    }
+
+    #[test]
+    fn program_with_rule_is_not_empty() {
+        let rule = FilterRule::exclude("*.txt");
+        let program = FilterProgram::new([FilterProgramEntry::Rule(rule)]).unwrap();
+        assert!(!program.is_empty());
+    }
+
+    #[test]
+    fn program_with_dir_merge_is_not_empty() {
+        let rule = DirMergeRule::new(".rsync-filter".to_string(), Default::default());
+        let program = FilterProgram::new([FilterProgramEntry::DirMerge(rule)]).unwrap();
+        assert!(!program.is_empty());
+    }
+
+    #[test]
+    fn clear_entry_clears_rules() {
+        let entries = [
+            FilterProgramEntry::Rule(FilterRule::exclude("*.txt")),
+            FilterProgramEntry::Clear,
+        ];
+        let program = FilterProgram::new(entries).unwrap();
+        assert!(program.is_empty());
+    }
+
+    #[test]
+    fn dir_merge_rules_accessor() {
+        let rule1 = DirMergeRule::new(".rsync-filter".to_string(), Default::default());
+        let rule2 = DirMergeRule::new(".gitignore".to_string(), Default::default());
+        let entries = [
+            FilterProgramEntry::DirMerge(rule1),
+            FilterProgramEntry::DirMerge(rule2),
+        ];
+        let program = FilterProgram::new(entries).unwrap();
+        assert_eq!(program.dir_merge_rules().len(), 2);
+    }
+
+    #[test]
+    fn filter_program_error_pattern_accessor() {
+        let error = FilterProgramError::new(
+            "bad[pattern".to_string(),
+            globset::GlobBuilder::new("bad[pattern")
+                .build()
+                .unwrap_err(),
+        );
+        assert_eq!(error.pattern(), "bad[pattern");
+    }
+
+    #[test]
+    fn evaluate_returns_default_for_empty_program() {
+        let program = FilterProgram::new(std::iter::empty()).unwrap();
+        let path = Path::new("test.txt");
+        let outcome = program.evaluate(path, false, &[], None, FilterContext::Transfer);
+        // Default outcome allows transfer
+        assert!(outcome.allows_transfer());
+    }
+
+    #[test]
+    fn should_exclude_directory_returns_false_when_no_rules() {
+        let program = FilterProgram::new(std::iter::empty()).unwrap();
+        let result = program.should_exclude_directory(Path::new("/tmp"));
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn exit_code_constants_are_distinct() {
+        let codes = [
+            INVALID_OPERAND_EXIT_CODE,
+            MISSING_OPERANDS_EXIT_CODE,
+            TIMEOUT_EXIT_CODE,
+            MAX_DELETE_EXIT_CODE,
+        ];
+        let unique: std::collections::HashSet<_> = codes.iter().collect();
+        assert_eq!(codes.len(), unique.len());
+    }
+}

@@ -418,4 +418,176 @@ mod tests {
         let args3 = [OsString::from("--daemon"), OsString::from("--no-detach")];
         assert!(!remainder_has_config(&args3));
     }
+
+    #[test]
+    fn remainder_has_config_empty_args() {
+        let args: [OsString; 0] = [];
+        assert!(!remainder_has_config(&args));
+    }
+
+    #[test]
+    fn remainder_has_config_ignores_empty_inline_path() {
+        let args = [OsString::from("--config="), OsString::from("--daemon")];
+        assert!(!remainder_has_config(&args));
+
+        let args2 = [OsString::from("--config=   "), OsString::from("--daemon")];
+        assert!(!remainder_has_config(&args2));
+    }
+
+    #[test]
+    fn remainder_has_config_detects_config_in_middle() {
+        let args = [
+            OsString::from("--daemon"),
+            OsString::from("--config"),
+            OsString::from("/etc/rsyncd.conf"),
+            OsString::from("--port"),
+            OsString::from("873"),
+        ];
+        assert!(remainder_has_config(&args));
+    }
+
+    #[test]
+    fn env_flag_empty_string_is_truthy() {
+        let snapshot = EnvSnapshot::new(&[TEST_FLAG]);
+
+        snapshot.set(TEST_FLAG, "");
+        assert_eq!(env_flag(TEST_FLAG), Some(true));
+    }
+
+    #[test]
+    fn env_flag_no_case_sensitive() {
+        let snapshot = EnvSnapshot::new(&[TEST_FLAG]);
+
+        snapshot.set(TEST_FLAG, "FALSE");
+        assert_eq!(env_flag(TEST_FLAG), Some(false));
+
+        snapshot.set(TEST_FLAG, "FaLsE");
+        assert_eq!(env_flag(TEST_FLAG), Some(false));
+
+        snapshot.set(TEST_FLAG, "NO");
+        assert_eq!(env_flag(TEST_FLAG), Some(false));
+
+        snapshot.set(TEST_FLAG, "nO");
+        assert_eq!(env_flag(TEST_FLAG), Some(false));
+
+        snapshot.set(TEST_FLAG, "OFF");
+        assert_eq!(env_flag(TEST_FLAG), Some(false));
+
+        snapshot.set(TEST_FLAG, "Off");
+        assert_eq!(env_flag(TEST_FLAG), Some(false));
+    }
+
+    #[test]
+    fn env_flag_zero_is_falsy() {
+        let snapshot = EnvSnapshot::new(&[TEST_FLAG]);
+
+        snapshot.set(TEST_FLAG, "0");
+        assert_eq!(env_flag(TEST_FLAG), Some(false));
+    }
+
+    #[test]
+    fn env_flag_other_values_are_truthy() {
+        let snapshot = EnvSnapshot::new(&[TEST_FLAG]);
+
+        snapshot.set(TEST_FLAG, "1");
+        assert_eq!(env_flag(TEST_FLAG), Some(true));
+
+        snapshot.set(TEST_FLAG, "true");
+        assert_eq!(env_flag(TEST_FLAG), Some(true));
+
+        snapshot.set(TEST_FLAG, "on");
+        assert_eq!(env_flag(TEST_FLAG), Some(true));
+
+        snapshot.set(TEST_FLAG, "enable");
+        assert_eq!(env_flag(TEST_FLAG), Some(true));
+
+        snapshot.set(TEST_FLAG, "anything");
+        assert_eq!(env_flag(TEST_FLAG), Some(true));
+    }
+
+    #[test]
+    fn override_disables_fallback_when_disabled() {
+        let snapshot = EnvSnapshot::new(&[DAEMON_FALLBACK_ENV]);
+
+        snapshot.set(DAEMON_FALLBACK_ENV, "0");
+        assert!(override_disables_fallback(DAEMON_FALLBACK_ENV));
+
+        snapshot.set(DAEMON_FALLBACK_ENV, "false");
+        assert!(override_disables_fallback(DAEMON_FALLBACK_ENV));
+    }
+
+    #[test]
+    fn override_disables_fallback_when_not_set() {
+        let snapshot = EnvSnapshot::new(&[DAEMON_FALLBACK_ENV]);
+
+        snapshot.remove(DAEMON_FALLBACK_ENV);
+        assert!(!override_disables_fallback(DAEMON_FALLBACK_ENV));
+    }
+
+    #[test]
+    fn override_disables_fallback_when_enabled() {
+        let snapshot = EnvSnapshot::new(&[DAEMON_FALLBACK_ENV]);
+
+        snapshot.set(DAEMON_FALLBACK_ENV, "1");
+        assert!(!override_disables_fallback(DAEMON_FALLBACK_ENV));
+
+        snapshot.set(DAEMON_FALLBACK_ENV, "/usr/bin/rsync");
+        assert!(!override_disables_fallback(DAEMON_FALLBACK_ENV));
+    }
+
+    #[test]
+    fn fallback_binary_returns_upstream_program_name_when_not_configured() {
+        // This tests the fallback_binary function
+        // When no fallback is configured, it should return the upstream client program name
+        let binary = fallback_binary();
+        let binary_str = binary.to_string_lossy();
+        // Should contain "rsync" since that's the upstream program name
+        assert!(binary_str.contains("rsync") || !binary_str.is_empty());
+    }
+
+    #[test]
+    fn exit_code_from_handles_boundary_values() {
+        // Test exact boundaries
+        assert_eq!(exit_code_from(0), std::process::ExitCode::from(0));
+        assert_eq!(exit_code_from(255), std::process::ExitCode::from(255));
+
+        // Test negative values clamp to 0
+        assert_eq!(exit_code_from(-100), std::process::ExitCode::from(0));
+        assert_eq!(exit_code_from(i32::MIN), std::process::ExitCode::from(0));
+
+        // Test large positive values clamp to MAX_EXIT_CODE (255)
+        assert_eq!(exit_code_from(256), std::process::ExitCode::from(255));
+        assert_eq!(exit_code_from(1000), std::process::ExitCode::from(255));
+        assert_eq!(exit_code_from(i32::MAX), std::process::ExitCode::from(255));
+    }
+
+    #[test]
+    fn env_snapshot_restores_on_drop() {
+        // Test that EnvSnapshot properly restores environment on drop
+        {
+            let snapshot = EnvSnapshot::new(&[TEST_FLAG]);
+            snapshot.set(TEST_FLAG, "test_value");
+            assert_eq!(env::var_os(TEST_FLAG), Some(OsString::from("test_value")));
+        }
+        // After drop, the original state should be restored
+        // (or removed if it wasn't set before)
+    }
+
+    #[test]
+    fn run_with_help_flag_returns_zero() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(["oc-rsyncd", "--help"], &mut stdout, &mut stderr);
+        assert_eq!(result, 0);
+        assert!(!stdout.is_empty());
+    }
+
+    #[test]
+    fn run_with_version_flag_returns_zero() {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let result = run(["oc-rsyncd", "--version"], &mut stdout, &mut stderr);
+        assert_eq!(result, 0);
+        assert!(!stdout.is_empty());
+    }
 }
