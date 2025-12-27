@@ -664,4 +664,255 @@ mod tests {
         assert_eq!(stats.bytes_received, 300);
         assert_eq!(stats.bytes_sent, 150);
     }
+
+    // Additional tests
+    #[test]
+    fn connection_pool_new_is_empty() {
+        let pool = ConnectionPool::new();
+        assert_eq!(pool.count(), 0);
+        assert_eq!(pool.active_count(), 0);
+    }
+
+    #[test]
+    fn connection_pool_with_capacity() {
+        let pool = ConnectionPool::with_capacity(100);
+        assert_eq!(pool.count(), 0);
+    }
+
+    #[test]
+    fn connection_pool_default() {
+        let pool = ConnectionPool::default();
+        assert_eq!(pool.count(), 0);
+    }
+
+    #[test]
+    fn connection_pool_debug() {
+        let pool = ConnectionPool::new();
+        let debug = format!("{pool:?}");
+        assert!(debug.contains("ConnectionPool"));
+    }
+
+    #[test]
+    fn connection_id_as_u64() {
+        let pool = ConnectionPool::new();
+        let id = pool.register(test_addr(100, 1234));
+        assert!(id.as_u64() > 0);
+    }
+
+    #[test]
+    fn connection_id_display() {
+        let pool = ConnectionPool::new();
+        let id = pool.register(test_addr(100, 1234));
+        let display = format!("{id}");
+        assert!(!display.is_empty());
+    }
+
+    #[test]
+    fn connection_id_hash() {
+        use std::collections::HashSet;
+        let pool = ConnectionPool::new();
+        let id1 = pool.register(test_addr(100, 1234));
+        let id2 = pool.register(test_addr(101, 1235));
+        let mut set = HashSet::new();
+        set.insert(id1);
+        set.insert(id2);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn connection_info_duration() {
+        let pool = ConnectionPool::new();
+        let id = pool.register(test_addr(100, 1234));
+        let info = pool.get(&id).unwrap();
+        // Duration should be very small since we just created it
+        assert!(info.duration().as_secs() < 10);
+    }
+
+    #[test]
+    fn connection_info_clone() {
+        let pool = ConnectionPool::new();
+        let id = pool.register(test_addr(100, 1234));
+        let info = pool.get(&id).unwrap();
+        let cloned = info.clone();
+        assert_eq!(info.id, cloned.id);
+        assert_eq!(info.peer_addr, cloned.peer_addr);
+    }
+
+    #[test]
+    fn connection_info_debug() {
+        let pool = ConnectionPool::new();
+        let id = pool.register(test_addr(100, 1234));
+        let info = pool.get(&id).unwrap();
+        let debug = format!("{info:?}");
+        assert!(debug.contains("ConnectionInfo"));
+    }
+
+    #[test]
+    fn ip_stats_default() {
+        let stats = IpStats::default();
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.total_connections, 0);
+        assert_eq!(stats.bytes_received, 0);
+        assert_eq!(stats.bytes_sent, 0);
+    }
+
+    #[test]
+    fn ip_stats_clone() {
+        let stats = IpStats::default();
+        let cloned = stats.clone();
+        assert_eq!(stats.active_connections, cloned.active_connections);
+    }
+
+    #[test]
+    fn ip_stats_debug() {
+        let stats = IpStats::default();
+        let debug = format!("{stats:?}");
+        assert!(debug.contains("IpStats"));
+    }
+
+    #[test]
+    fn aggregate_stats_default() {
+        let stats = AggregateStats::default();
+        assert_eq!(stats.total_connections, 0);
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.unique_ips, 0);
+        assert_eq!(stats.total_bytes_received, 0);
+        assert_eq!(stats.total_bytes_sent, 0);
+    }
+
+    #[test]
+    fn aggregate_stats_clone() {
+        let stats = AggregateStats::default();
+        let cloned = stats.clone();
+        assert_eq!(stats.total_connections, cloned.total_connections);
+    }
+
+    #[test]
+    fn aggregate_stats_debug() {
+        let stats = AggregateStats::default();
+        let debug = format!("{stats:?}");
+        assert!(debug.contains("AggregateStats"));
+    }
+
+    #[test]
+    fn get_nonexistent_connection() {
+        let pool = ConnectionPool::new();
+        let fake_id = ConnectionId(999);
+        assert!(pool.get(&fake_id).is_none());
+    }
+
+    #[test]
+    fn unregister_nonexistent_connection() {
+        let pool = ConnectionPool::new();
+        let fake_id = ConnectionId(999);
+        assert!(pool.unregister(&fake_id).is_none());
+    }
+
+    #[test]
+    fn set_module_nonexistent_connection() {
+        let pool = ConnectionPool::new();
+        let fake_id = ConnectionId(999);
+        assert!(!pool.set_module(&fake_id, "test".to_string()));
+    }
+
+    #[test]
+    fn set_active_nonexistent_connection() {
+        let pool = ConnectionPool::new();
+        let fake_id = ConnectionId(999);
+        assert!(!pool.set_active(&fake_id, false));
+    }
+
+    #[test]
+    fn add_bytes_nonexistent_connection() {
+        let pool = ConnectionPool::new();
+        let fake_id = ConnectionId(999);
+        assert!(!pool.add_bytes(&fake_id, 100, 50));
+    }
+
+    #[test]
+    fn connections_from_ip_unknown_ip() {
+        let pool = ConnectionPool::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 10, 10, 10));
+        assert_eq!(pool.connections_from_ip(&ip), 0);
+    }
+
+    #[test]
+    fn get_ip_stats_unknown_ip() {
+        let pool = ConnectionPool::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 10, 10, 10));
+        assert!(pool.get_ip_stats(&ip).is_none());
+    }
+
+    #[test]
+    fn active_connections_list() {
+        let pool = ConnectionPool::new();
+        let id1 = pool.register(test_addr(100, 1234));
+        let id2 = pool.register(test_addr(101, 1235));
+        pool.set_active(&id2, false);
+
+        let active = pool.active_connections();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, id1);
+    }
+
+    #[test]
+    fn all_connections_list() {
+        let pool = ConnectionPool::new();
+        let _id1 = pool.register(test_addr(100, 1234));
+        let id2 = pool.register(test_addr(101, 1235));
+        pool.set_active(&id2, false);
+
+        let all = pool.all_connections();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn connections_from_addr() {
+        let pool = ConnectionPool::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+        pool.register(SocketAddr::new(ip, 1234));
+        pool.register(SocketAddr::new(ip, 1235));
+        pool.register(test_addr(101, 1236)); // Different IP
+
+        let from_ip = pool.connections_from_addr(&ip);
+        assert_eq!(from_ip.len(), 2);
+    }
+
+    #[test]
+    fn prune_stale_ip_stats() {
+        let pool = ConnectionPool::new();
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100));
+        let id = pool.register(SocketAddr::new(ip, 1234));
+        pool.unregister(&id);
+
+        // IP stats should exist with 0 active connections
+        assert!(pool.get_ip_stats(&ip).is_some());
+
+        let pruned = pool.prune_stale_ip_stats();
+        assert_eq!(pruned, 1);
+
+        // IP stats should be gone
+        assert!(pool.get_ip_stats(&ip).is_none());
+    }
+
+    #[test]
+    fn unique_ip_count() {
+        let pool = ConnectionPool::new();
+        pool.register(test_addr(100, 1234));
+        pool.register(test_addr(100, 1235)); // Same IP
+        pool.register(test_addr(101, 1236)); // Different IP
+
+        assert_eq!(pool.unique_ip_count(), 2);
+    }
+
+    #[test]
+    fn active_count() {
+        let pool = ConnectionPool::new();
+        let _id1 = pool.register(test_addr(100, 1234));
+        let id2 = pool.register(test_addr(101, 1235));
+        pool.set_active(&id2, false);
+
+        assert_eq!(pool.active_count(), 1);
+        assert_eq!(pool.count(), 2);
+    }
 }
