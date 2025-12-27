@@ -136,7 +136,11 @@ pub struct ExtractorOptions {
 
 impl MessageScenario {
     /// Execute this scenario and extract messages.
-    pub fn execute(&self, rsync_binary: &Path, options: &ExtractorOptions) -> TaskResult<Vec<Message>> {
+    pub fn execute(
+        &self,
+        rsync_binary: &Path,
+        options: &ExtractorOptions,
+    ) -> TaskResult<Vec<Message>> {
         let temp_dir = tempfile::tempdir().map_err(|e| {
             TaskError::Io(std::io::Error::new(
                 e.kind(),
