@@ -967,4 +967,339 @@ mod tests {
 
         assert!((progress.bytes_per_second() - 500.0).abs() < f64::EPSILON);
     }
+
+    // Additional CopyProgress tests
+    #[test]
+    fn test_copy_progress_percentage_zero_total() {
+        let progress = CopyProgress {
+            bytes_copied: 0,
+            total_bytes: 0,
+            elapsed: Duration::from_secs(1),
+            source: PathBuf::from("src"),
+            destination: PathBuf::from("dst"),
+        };
+
+        assert!((progress.percentage() - 100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_copy_progress_bytes_per_second_zero_elapsed() {
+        let progress = CopyProgress {
+            bytes_copied: 1000,
+            total_bytes: 2000,
+            elapsed: Duration::from_secs(0),
+            source: PathBuf::from("src"),
+            destination: PathBuf::from("dst"),
+        };
+
+        assert!((progress.bytes_per_second() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_copy_progress_clone() {
+        let progress = CopyProgress {
+            bytes_copied: 100,
+            total_bytes: 200,
+            elapsed: Duration::from_secs(1),
+            source: PathBuf::from("src"),
+            destination: PathBuf::from("dst"),
+        };
+        let cloned = progress.clone();
+        assert_eq!(cloned.bytes_copied, progress.bytes_copied);
+        assert_eq!(cloned.total_bytes, progress.total_bytes);
+    }
+
+    #[test]
+    fn test_copy_progress_debug() {
+        let progress = CopyProgress {
+            bytes_copied: 100,
+            total_bytes: 200,
+            elapsed: Duration::from_secs(1),
+            source: PathBuf::from("src"),
+            destination: PathBuf::from("dst"),
+        };
+        let debug = format!("{progress:?}");
+        assert!(debug.contains("CopyProgress"));
+    }
+
+    // CopyResult tests
+    #[test]
+    fn test_copy_result_clone() {
+        let result = CopyResult {
+            bytes_copied: 100,
+            elapsed: Duration::from_secs(1),
+            source: PathBuf::from("src"),
+            destination: PathBuf::from("dst"),
+        };
+        let cloned = result.clone();
+        assert_eq!(cloned.bytes_copied, result.bytes_copied);
+    }
+
+    #[test]
+    fn test_copy_result_debug() {
+        let result = CopyResult {
+            bytes_copied: 100,
+            elapsed: Duration::from_secs(1),
+            source: PathBuf::from("src"),
+            destination: PathBuf::from("dst"),
+        };
+        let debug = format!("{result:?}");
+        assert!(debug.contains("CopyResult"));
+    }
+
+    // AsyncIoError tests
+    #[test]
+    fn test_async_io_error_io() {
+        let error = AsyncIoError::io("/path/to/file", io::Error::new(io::ErrorKind::NotFound, "not found"));
+        let display = format!("{error}");
+        assert!(display.contains("/path/to/file"));
+    }
+
+    #[test]
+    fn test_async_io_error_cancelled() {
+        let error = AsyncIoError::Cancelled;
+        let display = format!("{error}");
+        assert!(display.contains("cancelled"));
+    }
+
+    #[test]
+    fn test_async_io_error_not_found() {
+        let error = AsyncIoError::NotFound(PathBuf::from("/missing/file"));
+        let display = format!("{error}");
+        assert!(display.contains("/missing/file"));
+    }
+
+    // AsyncFileCopier builder tests
+    #[test]
+    fn test_async_file_copier_default() {
+        let copier = AsyncFileCopier::default();
+        assert_eq!(copier.buffer_size, DEFAULT_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn test_async_file_copier_builder_chain() {
+        let copier = AsyncFileCopier::new()
+            .with_buffer_size(8192)
+            .preserve_permissions(false)
+            .preserve_timestamps(false)
+            .sparse_detection(true)
+            .fsync(true);
+        assert_eq!(copier.buffer_size, 8192);
+        assert!(!copier.preserve_permissions);
+        assert!(!copier.preserve_timestamps);
+        assert!(copier.sparse_detection);
+        assert!(copier.fsync);
+    }
+
+    #[test]
+    fn test_async_file_copier_buffer_size_min() {
+        let copier = AsyncFileCopier::new().with_buffer_size(1);
+        // Buffer size should be at least 4096
+        assert_eq!(copier.buffer_size, 4096);
+    }
+
+    #[test]
+    fn test_async_file_copier_clone() {
+        let copier = AsyncFileCopier::new().with_buffer_size(8192);
+        let cloned = copier.clone();
+        assert_eq!(copier.buffer_size, cloned.buffer_size);
+    }
+
+    #[test]
+    fn test_async_file_copier_debug() {
+        let copier = AsyncFileCopier::new();
+        let debug = format!("{copier:?}");
+        assert!(debug.contains("AsyncFileCopier"));
+    }
+
+    // AsyncBatchCopier tests
+    #[test]
+    fn test_async_batch_copier_default() {
+        let copier = AsyncBatchCopier::default();
+        assert_eq!(copier.max_concurrent, DEFAULT_MAX_CONCURRENT);
+    }
+
+    #[test]
+    fn test_async_batch_copier_max_concurrent() {
+        let copier = AsyncBatchCopier::new().max_concurrent(8);
+        assert_eq!(copier.max_concurrent, 8);
+    }
+
+    #[test]
+    fn test_async_batch_copier_max_concurrent_min() {
+        let copier = AsyncBatchCopier::new().max_concurrent(0);
+        // Should be at least 1
+        assert_eq!(copier.max_concurrent, 1);
+    }
+
+    #[test]
+    fn test_async_batch_copier_with_copier() {
+        let file_copier = AsyncFileCopier::new().with_buffer_size(16384);
+        let batch = AsyncBatchCopier::new().with_copier(file_copier);
+        assert_eq!(batch.copier.buffer_size, 16384);
+    }
+
+    #[test]
+    fn test_async_batch_copier_debug() {
+        let copier = AsyncBatchCopier::new();
+        let debug = format!("{copier:?}");
+        assert!(debug.contains("AsyncBatchCopier"));
+    }
+
+    // AsyncFileReader tests
+    #[tokio::test]
+    async fn test_async_file_reader_remaining() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.txt");
+        std::fs::write(&path, b"Hello, World!").unwrap();
+
+        let reader = AsyncFileReader::open(&path).await.unwrap();
+        assert_eq!(reader.remaining(), 13);
+        assert_eq!(reader.path(), path.as_path());
+    }
+
+    #[tokio::test]
+    async fn test_async_file_reader_with_buffer_size() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.txt");
+        std::fs::write(&path, b"Hello").unwrap();
+
+        let reader = AsyncFileReader::open_with_buffer_size(&path, 1024).await.unwrap();
+        assert_eq!(reader.size(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_async_file_reader_seek() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.txt");
+        std::fs::write(&path, b"Hello, World!").unwrap();
+
+        let mut reader = AsyncFileReader::open(&path).await.unwrap();
+        let pos = reader.seek(SeekFrom::Start(7)).await.unwrap();
+        assert_eq!(pos, 7);
+        assert_eq!(reader.position(), 7);
+    }
+
+    #[tokio::test]
+    async fn test_async_file_reader_read() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("test.txt");
+        std::fs::write(&path, b"Hello").unwrap();
+
+        let mut reader = AsyncFileReader::open(&path).await.unwrap();
+        let mut buf = [0u8; 3];
+        let n = reader.read(&mut buf).await.unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(&buf, b"Hel");
+        assert_eq!(reader.position(), 3);
+    }
+
+    // AsyncFileWriter tests
+    #[tokio::test]
+    async fn test_async_file_writer_path() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("output.txt");
+
+        let writer = AsyncFileWriter::create(&path).await.unwrap();
+        assert_eq!(writer.path(), path.as_path());
+        assert_eq!(writer.bytes_written(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_async_file_writer_with_buffer_size() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("output.txt");
+
+        let mut writer = AsyncFileWriter::create_with_buffer_size(&path, 8192).await.unwrap();
+        writer.write_all(b"test").await.unwrap();
+        writer.flush().await.unwrap();
+        assert_eq!(writer.bytes_written(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_async_file_writer_write() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("output.txt");
+
+        let mut writer = AsyncFileWriter::create(&path).await.unwrap();
+        let n = writer.write(b"Hello").await.unwrap();
+        assert_eq!(n, 5);
+        writer.flush().await.unwrap();
+        assert_eq!(writer.bytes_written(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_async_file_writer_sync_all() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("output.txt");
+
+        let mut writer = AsyncFileWriter::create(&path).await.unwrap();
+        writer.write_all(b"Hello").await.unwrap();
+        writer.sync_all().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Hello");
+    }
+
+    #[tokio::test]
+    async fn test_async_file_writer_seek() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("output.txt");
+
+        let mut writer = AsyncFileWriter::create(&path).await.unwrap();
+        writer.write_all(b"Hello, World!").await.unwrap();
+        let pos = writer.seek(SeekFrom::Start(7)).await.unwrap();
+        assert_eq!(pos, 7);
+        writer.write_all(b"Rust!!").await.unwrap();
+        writer.flush().await.unwrap();
+        // "World!" is 6 chars, "Rust!!" is 6 chars, so file length stays the same
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Hello, Rust!!");
+    }
+
+    // ChecksumAlgorithm tests
+    #[test]
+    fn test_checksum_algorithm_eq() {
+        assert_eq!(ChecksumAlgorithm::Md5, ChecksumAlgorithm::Md5);
+        assert_eq!(ChecksumAlgorithm::Xxh64, ChecksumAlgorithm::Xxh64);
+        assert_ne!(ChecksumAlgorithm::Md5, ChecksumAlgorithm::Xxh64);
+    }
+
+    #[test]
+    fn test_checksum_algorithm_clone() {
+        let algo = ChecksumAlgorithm::Md5;
+        let cloned = algo;
+        assert_eq!(algo, cloned);
+    }
+
+    #[test]
+    fn test_checksum_algorithm_debug() {
+        let algo = ChecksumAlgorithm::Md5;
+        let debug = format!("{algo:?}");
+        assert!(debug.contains("Md5"));
+    }
+
+    // is_all_zeros additional tests
+    #[test]
+    fn test_is_all_zeros_large_buffer() {
+        assert!(is_all_zeros(&vec![0u8; 4096]));
+    }
+
+    #[test]
+    fn test_is_all_zeros_last_byte_nonzero() {
+        let mut buf = vec![0u8; 100];
+        buf[99] = 1;
+        assert!(!is_all_zeros(&buf));
+    }
+
+    #[test]
+    fn test_is_all_zeros_first_byte_nonzero() {
+        let mut buf = vec![0u8; 100];
+        buf[0] = 1;
+        assert!(!is_all_zeros(&buf));
+    }
+
+    #[test]
+    fn test_is_all_zeros_middle_byte_nonzero() {
+        let mut buf = vec![0u8; 100];
+        buf[50] = 255;
+        assert!(!is_all_zeros(&buf));
+    }
 }

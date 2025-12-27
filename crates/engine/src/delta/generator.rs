@@ -202,4 +202,179 @@ mod tests {
         apply_delta(&mut basis_cursor, &mut output, &index, &script).expect("apply");
         assert_eq!(output, input);
     }
+
+    // DeltaGenerator constructor tests
+    #[test]
+    fn delta_generator_new_uses_default_buffer_len() {
+        let generator = DeltaGenerator::new();
+        assert_eq!(generator.buffer_len, DEFAULT_BUFFER_LEN);
+    }
+
+    #[test]
+    fn delta_generator_default_matches_new() {
+        let new = DeltaGenerator::new();
+        let default = DeltaGenerator::default();
+        assert_eq!(new.buffer_len, default.buffer_len);
+    }
+
+    #[test]
+    fn delta_generator_with_buffer_len_sets_custom_length() {
+        let generator = DeltaGenerator::new().with_buffer_len(4096);
+        assert_eq!(generator.buffer_len, 4096);
+    }
+
+    #[test]
+    fn delta_generator_with_buffer_len_zero_becomes_one() {
+        let generator = DeltaGenerator::new().with_buffer_len(0);
+        assert_eq!(generator.buffer_len, 1);
+    }
+
+    #[test]
+    fn delta_generator_with_buffer_len_chain() {
+        let generator = DeltaGenerator::new()
+            .with_buffer_len(1024)
+            .with_buffer_len(2048);
+        assert_eq!(generator.buffer_len, 2048);
+    }
+
+    #[test]
+    fn delta_generator_clone() {
+        let generator = DeltaGenerator::new().with_buffer_len(512);
+        let cloned = generator.clone();
+        assert_eq!(generator.buffer_len, cloned.buffer_len);
+    }
+
+    #[test]
+    fn delta_generator_debug() {
+        let generator = DeltaGenerator::new();
+        let debug = format!("{generator:?}");
+        assert!(debug.contains("DeltaGenerator"));
+        assert!(debug.contains("buffer_len"));
+    }
+
+    // Empty input tests
+    #[test]
+    fn generate_delta_empty_input_produces_empty_script() {
+        let basis = vec![0u8; 2048];
+        let index = build_index(&basis);
+        let input: &[u8] = &[];
+
+        let script = generate_delta(input, &index).expect("script");
+        assert!(script.tokens().is_empty());
+        assert_eq!(script.total_bytes(), 0);
+        assert_eq!(script.literal_bytes(), 0);
+    }
+
+    #[test]
+    fn generate_delta_single_byte_produces_literal() {
+        let basis = vec![0u8; 2048];
+        let index = build_index(&basis);
+        let input = [42u8];
+
+        let script = generate_delta(&input[..], &index).expect("script");
+        assert_eq!(script.tokens().len(), 1);
+        assert!(matches!(script.tokens()[0], DeltaToken::Literal(ref bytes) if bytes == &[42]));
+        assert_eq!(script.literal_bytes(), 1);
+    }
+
+    #[test]
+    fn generate_delta_all_literal_counts_correctly() {
+        let basis = vec![0u8; 2048];
+        let index = build_index(&basis);
+        let input = b"unique data that won't match any blocks";
+
+        let script = generate_delta(&input[..], &index).expect("script");
+        assert_eq!(script.literal_bytes(), input.len() as u64);
+        assert_eq!(script.total_bytes(), input.len() as u64);
+    }
+
+    // Buffer length effects
+    #[test]
+    fn generate_delta_with_small_buffer_produces_same_result() {
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let input = b"test input data";
+
+        let default_gen = DeltaGenerator::new();
+        let small_gen = DeltaGenerator::new().with_buffer_len(64);
+
+        let script1 = default_gen.generate(&input[..], &index).expect("script1");
+        let script2 = small_gen.generate(&input[..], &index).expect("script2");
+
+        assert_eq!(script1.literal_bytes(), script2.literal_bytes());
+        assert_eq!(script1.total_bytes(), script2.total_bytes());
+    }
+
+    #[test]
+    fn generate_delta_with_large_buffer_produces_same_result() {
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let input = b"test input data";
+
+        let default_gen = DeltaGenerator::new();
+        let large_gen = DeltaGenerator::new().with_buffer_len(1024 * 1024);
+
+        let script1 = default_gen.generate(&input[..], &index).expect("script1");
+        let script2 = large_gen.generate(&input[..], &index).expect("script2");
+
+        assert_eq!(script1.literal_bytes(), script2.literal_bytes());
+        assert_eq!(script1.total_bytes(), script2.total_bytes());
+    }
+
+    // Copy token tests
+    #[test]
+    fn generate_delta_copy_only_has_zero_literal_bytes() {
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let block_len = index.block_length();
+        // Use exact block boundaries
+        let input = basis[..block_len].to_vec();
+
+        let script = generate_delta(&input[..], &index).expect("script");
+        // Should be all copy, no literals
+        assert_eq!(script.literal_bytes(), 0);
+    }
+
+    #[test]
+    fn generate_delta_mixed_literal_and_copy() {
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        let block_len = index.block_length();
+
+        let mut input = vec![1u8, 2u8, 3u8]; // 3 literal bytes
+        input.extend_from_slice(&basis[..block_len]); // matching block
+        input.extend_from_slice(b"end"); // 3 more literal bytes
+
+        let script = generate_delta(&input[..], &index).expect("script");
+        assert!(script.tokens().len() >= 2);
+        assert_eq!(script.literal_bytes(), 6);
+    }
+
+    // Convenience function test
+    #[test]
+    fn generate_delta_convenience_function_works() {
+        let basis = vec![0u8; 2048];
+        let index = build_index(&basis);
+        let input = b"hello";
+
+        let script = generate_delta(&input[..], &index).expect("script");
+        assert!(script.total_bytes() > 0);
+    }
+
+    #[test]
+    fn delta_script_round_trip_identical_data() {
+        let basis: Vec<u8> = (0..10_000).map(|b| (b % 251) as u8).collect();
+        let index = build_index(&basis);
+        // Use the same data as basis
+        let input = basis.clone();
+
+        let script = generate_delta(&input[..], &index).expect("script");
+        // Should be mostly or all copy tokens
+        assert!(script.literal_bytes() < script.total_bytes());
+
+        let mut basis_cursor = Cursor::new(basis);
+        let mut output = Vec::new();
+        apply_delta(&mut basis_cursor, &mut output, &index, &script).expect("apply");
+        assert_eq!(output, input);
+    }
 }

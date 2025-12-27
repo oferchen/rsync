@@ -272,4 +272,174 @@ mod tests {
         let error = apply_delta(&mut basis, &mut output, &index, &script).expect_err("overflow");
         assert_eq!(error.kind(), ErrorKind::InvalidInput);
     }
+
+    // DeltaToken tests
+    #[test]
+    fn delta_token_literal_byte_len() {
+        let token = DeltaToken::Literal(vec![1, 2, 3, 4, 5]);
+        assert_eq!(token.byte_len(), 5);
+    }
+
+    #[test]
+    fn delta_token_copy_byte_len() {
+        let token = DeltaToken::Copy { index: 0, len: 100 };
+        assert_eq!(token.byte_len(), 100);
+    }
+
+    #[test]
+    fn delta_token_is_literal_true_for_literal() {
+        let token = DeltaToken::Literal(vec![1, 2, 3]);
+        assert!(token.is_literal());
+    }
+
+    #[test]
+    fn delta_token_is_literal_false_for_copy() {
+        let token = DeltaToken::Copy { index: 0, len: 100 };
+        assert!(!token.is_literal());
+    }
+
+    #[test]
+    fn delta_token_empty_literal_byte_len_is_zero() {
+        let token = DeltaToken::Literal(vec![]);
+        assert_eq!(token.byte_len(), 0);
+    }
+
+    #[test]
+    fn delta_token_clone() {
+        let token = DeltaToken::Literal(vec![1, 2, 3]);
+        let cloned = token.clone();
+        assert_eq!(token, cloned);
+    }
+
+    #[test]
+    fn delta_token_debug() {
+        let token = DeltaToken::Literal(vec![1, 2, 3]);
+        let debug = format!("{token:?}");
+        assert!(debug.contains("Literal"));
+    }
+
+    #[test]
+    fn delta_token_eq() {
+        let a = DeltaToken::Literal(vec![1, 2, 3]);
+        let b = DeltaToken::Literal(vec![1, 2, 3]);
+        let c = DeltaToken::Literal(vec![4, 5, 6]);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // DeltaScript tests
+    #[test]
+    fn delta_script_new_and_accessors() {
+        let tokens = vec![
+            DeltaToken::Literal(vec![1, 2, 3]),
+            DeltaToken::Copy { index: 0, len: 10 },
+        ];
+        let script = DeltaScript::new(tokens.clone(), 13, 3);
+
+        assert_eq!(script.tokens().len(), 2);
+        assert_eq!(script.total_bytes(), 13);
+        assert_eq!(script.literal_bytes(), 3);
+        assert_eq!(script.copy_bytes(), 10);
+    }
+
+    #[test]
+    fn delta_script_is_empty_true_for_empty() {
+        let script = DeltaScript::new(vec![], 0, 0);
+        assert!(script.is_empty());
+    }
+
+    #[test]
+    fn delta_script_is_empty_false_for_non_empty() {
+        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1])], 1, 1);
+        assert!(!script.is_empty());
+    }
+
+    #[test]
+    fn delta_script_into_tokens() {
+        let tokens = vec![DeltaToken::Literal(vec![1, 2, 3])];
+        let script = DeltaScript::new(tokens.clone(), 3, 3);
+        let result = script.into_tokens();
+        assert_eq!(result, tokens);
+    }
+
+    #[test]
+    fn delta_script_copy_bytes_all_literal() {
+        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1, 2, 3])], 3, 3);
+        assert_eq!(script.copy_bytes(), 0);
+    }
+
+    #[test]
+    fn delta_script_copy_bytes_all_copy() {
+        let script = DeltaScript::new(vec![DeltaToken::Copy { index: 0, len: 100 }], 100, 0);
+        assert_eq!(script.copy_bytes(), 100);
+    }
+
+    #[test]
+    fn delta_script_clone() {
+        let script = DeltaScript::new(vec![DeltaToken::Literal(vec![1])], 1, 1);
+        let cloned = script.clone();
+        assert_eq!(script, cloned);
+    }
+
+    #[test]
+    fn delta_script_debug() {
+        let script = DeltaScript::new(vec![], 0, 0);
+        let debug = format!("{script:?}");
+        assert!(debug.contains("DeltaScript"));
+    }
+
+    #[test]
+    fn apply_delta_empty_script() {
+        let index_data = vec![0u8; 1024];
+        let params = SignatureLayoutParams::new(
+            index_data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(index_data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let script = DeltaScript::new(vec![], 0, 0);
+
+        let mut basis = Cursor::new(index_data);
+        let mut output = Vec::new();
+        apply_delta(&mut basis, &mut output, &index, &script).expect("apply");
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn apply_delta_multiple_literals() {
+        let index_data = vec![0u8; 1024];
+        let params = SignatureLayoutParams::new(
+            index_data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature =
+            generate_file_signature(index_data.as_slice(), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        let script = DeltaScript::new(
+            vec![
+                DeltaToken::Literal(b"hello ".to_vec()),
+                DeltaToken::Literal(b"world".to_vec()),
+            ],
+            11,
+            11,
+        );
+
+        let mut basis = Cursor::new(index_data);
+        let mut output = Vec::new();
+        apply_delta(&mut basis, &mut output, &index, &script).expect("apply");
+        assert_eq!(output, b"hello world");
+    }
 }
