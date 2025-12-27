@@ -730,3 +730,444 @@ fn resolve_config_relative_path(config_path: &Path, value: &str) -> PathBuf {
         candidate.to_path_buf()
     }
 }
+
+#[cfg(test)]
+mod config_parsing_tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::{NamedTempFile, TempDir};
+
+    fn write_config(content: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().expect("create temp file");
+        file.write_all(content.as_bytes()).expect("write config");
+        file.flush().expect("flush");
+        file
+    }
+
+    // --- resolve_config_relative_path tests ---
+
+    #[test]
+    fn resolve_config_relative_path_absolute() {
+        let result = resolve_config_relative_path(Path::new("/etc/rsyncd.conf"), "/var/run/rsync.pid");
+        assert_eq!(result, PathBuf::from("/var/run/rsync.pid"));
+    }
+
+    #[test]
+    fn resolve_config_relative_path_relative() {
+        let result = resolve_config_relative_path(Path::new("/etc/rsyncd.conf"), "rsync.pid");
+        assert_eq!(result, PathBuf::from("/etc/rsync.pid"));
+    }
+
+    #[test]
+    fn resolve_config_relative_path_nested() {
+        let result = resolve_config_relative_path(Path::new("/etc/rsync/main.conf"), "sub/file.txt");
+        assert_eq!(result, PathBuf::from("/etc/rsync/sub/file.txt"));
+    }
+
+    #[test]
+    fn resolve_config_relative_path_no_parent() {
+        let result = resolve_config_relative_path(Path::new("config.conf"), "relative.txt");
+        assert_eq!(result, PathBuf::from("relative.txt"));
+    }
+
+    // --- parse_config_modules basic tests ---
+
+    #[test]
+    fn parse_empty_config() {
+        let file = write_config("");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules.is_empty());
+        assert!(result.motd_lines.is_empty());
+        assert!(result.pid_file.is_none());
+    }
+
+    #[test]
+    fn parse_comments_and_blanks() {
+        let file = write_config("# Comment line\n\n; Another comment\n   \n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules.is_empty());
+    }
+
+    #[test]
+    fn parse_single_module() {
+        let dir = TempDir::new().expect("create temp dir");
+        let module_path = dir.path().join("data");
+        fs::create_dir(&module_path).expect("create module dir");
+
+        let config = format!(
+            "[mymodule]\npath = {}\ncomment = Test module\n",
+            module_path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "mymodule");
+        assert_eq!(result.modules[0].path, module_path);
+        assert_eq!(result.modules[0].comment, Some("Test module".to_string()));
+    }
+
+    #[test]
+    fn parse_multiple_modules() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path1 = dir.path().join("data1");
+        let path2 = dir.path().join("data2");
+        fs::create_dir(&path1).expect("create dir 1");
+        fs::create_dir(&path2).expect("create dir 2");
+
+        let config = format!(
+            "[mod1]\npath = {}\n\n[mod2]\npath = {}\n",
+            path1.display(),
+            path2.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 2);
+        assert_eq!(result.modules[0].name, "mod1");
+        assert_eq!(result.modules[1].name, "mod2");
+    }
+
+    // --- Module header error tests ---
+
+    #[test]
+    fn parse_unterminated_module_header() {
+        let file = write_config("[unclosed\npath = /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn parse_empty_module_name() {
+        let file = write_config("[]\npath = /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("non-empty"));
+    }
+
+    #[test]
+    fn parse_module_name_with_slash() {
+        let file = write_config("[bad/name]\npath = /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("path separator"));
+    }
+
+    #[test]
+    fn parse_trailing_chars_after_header() {
+        let file = write_config("[module] extra\npath = /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("unexpected characters"));
+    }
+
+    #[test]
+    fn parse_trailing_comment_after_header() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[module] # comment\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+    }
+
+    // --- Directive parsing tests ---
+
+    #[test]
+    fn parse_missing_equals() {
+        let file = write_config("[module]\npath /tmp\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("key = value"));
+    }
+
+    #[test]
+    fn parse_directive_outside_module() {
+        let file = write_config("unknown = value\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("outside module"));
+    }
+
+    // --- Global directive tests ---
+
+    #[test]
+    fn parse_global_pid_file() {
+        let file = write_config("pid file = /var/run/rsync.pid\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.pid_file.is_some());
+        let (path, _) = result.pid_file.unwrap();
+        assert!(path.ends_with("rsync.pid"));
+    }
+
+    #[test]
+    fn parse_global_reverse_lookup_true() {
+        let file = write_config("reverse lookup = yes\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.reverse_lookup, Some((true, ConfigDirectiveOrigin { path: file.path().canonicalize().unwrap(), line: 1 })));
+    }
+
+    #[test]
+    fn parse_global_reverse_lookup_false() {
+        let file = write_config("reverse lookup = no\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (value, _) = result.reverse_lookup.unwrap();
+        assert!(!value);
+    }
+
+    #[test]
+    fn parse_global_lock_file() {
+        let file = write_config("lock file = /var/lock/rsync.lock\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.lock_file.is_some());
+    }
+
+    #[test]
+    fn parse_global_bwlimit() {
+        let file = write_config("bwlimit = 1000\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.global_bandwidth_limit.is_some());
+    }
+
+    #[test]
+    fn parse_global_incoming_chmod() {
+        let file = write_config("incoming chmod = u+rwx,g+rx\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (value, _) = result.global_incoming_chmod.unwrap();
+        assert_eq!(value, "u+rwx,g+rx");
+    }
+
+    #[test]
+    fn parse_global_outgoing_chmod() {
+        let file = write_config("outgoing chmod = a+r\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let (value, _) = result.global_outgoing_chmod.unwrap();
+        assert_eq!(value, "a+r");
+    }
+
+    // --- MOTD tests ---
+
+    #[test]
+    fn parse_inline_motd() {
+        let file = write_config("motd = Welcome to rsync\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.motd_lines, vec!["Welcome to rsync"]);
+    }
+
+    #[test]
+    fn parse_motd_file() {
+        let motd_file = write_config("Line 1\nLine 2\nLine 3\n");
+        let config = format!("motd file = {}\n", motd_file.path().display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.motd_lines.len(), 3);
+        assert_eq!(result.motd_lines[0], "Line 1");
+    }
+
+    // --- Module directive tests ---
+
+    #[test]
+    fn parse_module_read_only() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nread only = no\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].read_only);
+    }
+
+    #[test]
+    fn parse_module_write_only() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nwrite only = yes\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].write_only);
+    }
+
+    #[test]
+    fn parse_module_use_chroot() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nuse chroot = false\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].use_chroot);
+    }
+
+    #[test]
+    fn parse_module_numeric_ids() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nnumeric ids = true\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].numeric_ids);
+    }
+
+    #[test]
+    fn parse_module_list() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nlist = no\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].listable);
+    }
+
+    #[test]
+    fn parse_module_uid_gid() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nuid = 1000\ngid = 1000\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].uid, Some(1000));
+        assert_eq!(result.modules[0].gid, Some(1000));
+    }
+
+    #[test]
+    fn parse_module_timeout() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\ntimeout = 300\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].timeout.unwrap().get(), 300);
+    }
+
+    #[test]
+    fn parse_module_max_connections() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nmax connections = 10\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].max_connections.unwrap().get(), 10);
+    }
+
+    // --- Include directive tests ---
+
+    #[test]
+    fn parse_include_directive() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let included = format!("[included_mod]\npath = {}\n", path.display());
+        let include_file = write_config(&included);
+
+        let main_config = format!("include = {}\n", include_file.path().display());
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "included_mod");
+    }
+
+    #[test]
+    fn parse_recursive_include_detected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let config_path = dir.path().join("config.conf");
+
+        // Write config that includes itself
+        let content = format!("include = {}\n", config_path.display());
+        fs::write(&config_path, &content).expect("write config");
+
+        let err = parse_config_modules(&config_path).expect_err("should fail");
+        assert!(err.to_string().contains("recursive include"));
+    }
+
+    // --- Empty value error tests ---
+
+    #[test]
+    fn parse_empty_path_errors() {
+        let file = write_config("[mod]\npath = \n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn parse_empty_pid_file_errors() {
+        let file = write_config("pid file = \n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn parse_empty_include_errors() {
+        let file = write_config("include = \n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn parse_empty_bwlimit_errors() {
+        let file = write_config("bwlimit = \n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    // --- Duplicate directive tests ---
+
+    #[test]
+    fn parse_duplicate_pid_file_errors() {
+        let file = write_config("pid file = /var/run/a.pid\npid file = /var/run/b.pid\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn parse_duplicate_reverse_lookup_errors() {
+        let file = write_config("reverse lookup = yes\nreverse lookup = no\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("duplicate"));
+    }
+
+    // --- Invalid boolean tests ---
+
+    #[test]
+    fn parse_invalid_boolean_errors() {
+        let file = write_config("[mod]\npath = /tmp\nread only = maybe\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        assert!(err.to_string().contains("invalid boolean"));
+    }
+
+    // --- Case insensitivity tests ---
+
+    #[test]
+    fn parse_keys_case_insensitive() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\nPATH = {}\nREAD ONLY = NO\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert!(!result.modules[0].read_only);
+    }
+
+    // --- Config file not found ---
+
+    #[test]
+    fn parse_nonexistent_config() {
+        let err = parse_config_modules(Path::new("/nonexistent/config.conf"))
+            .expect_err("should fail");
+        assert!(err.to_string().contains("failed to"));
+    }
+}
