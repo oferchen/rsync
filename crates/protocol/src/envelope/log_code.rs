@@ -186,3 +186,122 @@ impl ParseLogCodeError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn as_u8_returns_correct_values() {
+        assert_eq!(LogCode::None.as_u8(), 0);
+        assert_eq!(LogCode::ErrorXfer.as_u8(), 1);
+        assert_eq!(LogCode::Info.as_u8(), 2);
+        assert_eq!(LogCode::Error.as_u8(), 3);
+        assert_eq!(LogCode::Warning.as_u8(), 4);
+        assert_eq!(LogCode::ErrorSocket.as_u8(), 5);
+        assert_eq!(LogCode::Log.as_u8(), 6);
+        assert_eq!(LogCode::Client.as_u8(), 7);
+        assert_eq!(LogCode::ErrorUtf8.as_u8(), 8);
+    }
+
+    #[test]
+    fn from_u8_roundtrips_all() {
+        for code in LogCode::ALL {
+            let value = code.as_u8();
+            assert_eq!(LogCode::from_u8(value), Some(code));
+        }
+    }
+
+    #[test]
+    fn from_u8_returns_none_for_unknown() {
+        assert!(LogCode::from_u8(9).is_none());
+        assert!(LogCode::from_u8(100).is_none());
+        assert!(LogCode::from_u8(255).is_none());
+    }
+
+    #[test]
+    fn all_contains_9_codes() {
+        assert_eq!(LogCode::ALL.len(), 9);
+        assert_eq!(LogCode::all().len(), 9);
+    }
+
+    #[test]
+    fn name_returns_f_prefix() {
+        assert_eq!(LogCode::None.name(), "FNONE");
+        assert_eq!(LogCode::ErrorXfer.name(), "FERROR_XFER");
+        assert_eq!(LogCode::Info.name(), "FINFO");
+        assert_eq!(LogCode::Error.name(), "FERROR");
+        assert_eq!(LogCode::Warning.name(), "FWARNING");
+        assert_eq!(LogCode::ErrorSocket.name(), "FERROR_SOCKET");
+        assert_eq!(LogCode::Log.name(), "FLOG");
+        assert_eq!(LogCode::Client.name(), "FCLIENT");
+        assert_eq!(LogCode::ErrorUtf8.name(), "FERROR_UTF8");
+    }
+
+    #[test]
+    fn display_matches_name() {
+        for code in LogCode::ALL {
+            assert_eq!(format!("{}", code), code.name());
+        }
+    }
+
+    #[test]
+    fn from_str_parses_all_names() {
+        for code in LogCode::ALL {
+            let parsed: LogCode = code.name().parse().unwrap();
+            assert_eq!(parsed, code);
+        }
+    }
+
+    #[test]
+    fn from_str_rejects_unknown() {
+        let result: Result<LogCode, _> = "FUNKNOWN".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_from_u8_success() {
+        let code: Result<LogCode, _> = 2_u8.try_into();
+        assert_eq!(code.unwrap(), LogCode::Info);
+    }
+
+    #[test]
+    fn try_from_u8_error() {
+        let result: Result<LogCode, _> = 99_u8.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn into_u8_works() {
+        let value: u8 = LogCode::Warning.into();
+        assert_eq!(value, 4);
+    }
+
+    #[test]
+    fn parse_error_new_value() {
+        let err = ParseLogCodeError::new(42);
+        assert_eq!(err.invalid_value(), Some(42));
+        assert!(err.invalid_name().is_none());
+    }
+
+    #[test]
+    fn parse_error_new_name() {
+        let err = ParseLogCodeError::new_name("BAD");
+        assert!(err.invalid_value().is_none());
+        assert_eq!(err.invalid_name(), Some("BAD"));
+    }
+
+    #[test]
+    fn parse_error_display_value() {
+        let err = ParseLogCodeError::new(99);
+        let display = format!("{}", err);
+        assert!(display.contains("99"));
+    }
+
+    #[test]
+    fn parse_error_display_name() {
+        let err = ParseLogCodeError::new_name("INVALID");
+        let display = format!("{}", err);
+        assert!(display.contains("INVALID"));
+    }
+}
