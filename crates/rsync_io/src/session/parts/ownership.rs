@@ -268,8 +268,8 @@ mod tests {
     fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
     }
@@ -312,29 +312,27 @@ mod tests {
     #[test]
     fn map_stream_inner_transforms_binary_variant() {
         let parts = create_binary_parts();
-        let mapped: SessionHandshakeParts<String> = parts.map_stream_inner(|cursor| {
-            format!("wrapped:{}", cursor.position())
-        });
+        let mapped: SessionHandshakeParts<String> =
+            parts.map_stream_inner(|cursor| format!("wrapped:{}", cursor.position()));
         assert!(mapped.is_binary());
     }
 
     #[test]
     fn map_stream_inner_transforms_legacy_variant() {
         let parts = create_legacy_parts();
-        let mapped: SessionHandshakeParts<String> = parts.map_stream_inner(|cursor| {
-            format!("wrapped:{}", cursor.position())
-        });
+        let mapped: SessionHandshakeParts<String> =
+            parts.map_stream_inner(|cursor| format!("wrapped:{}", cursor.position()));
         assert!(mapped.is_legacy());
     }
 
     #[test]
     fn map_stream_inner_preserves_decision() {
         let binary = create_binary_parts();
-        let mapped = binary.map_stream_inner(|c| Box::new(c));
+        let mapped = binary.map_stream_inner(Box::new);
         assert!(mapped.is_binary());
 
         let legacy = create_legacy_parts();
-        let mapped = legacy.map_stream_inner(|c| Box::new(c));
+        let mapped = legacy.map_stream_inner(Box::new);
         assert!(mapped.is_legacy());
     }
 
@@ -359,9 +357,7 @@ mod tests {
     #[test]
     fn try_map_stream_inner_failure_preserves_binary() {
         let parts = create_binary_parts();
-        let result = parts.try_map_stream_inner(|cursor| {
-            Err::<(), _>(("error", cursor))
-        });
+        let result = parts.try_map_stream_inner(|cursor| Err::<(), _>(("error", cursor)));
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.error(), &"error");
@@ -371,9 +367,7 @@ mod tests {
     #[test]
     fn try_map_stream_inner_failure_preserves_legacy() {
         let parts = create_legacy_parts();
-        let result = parts.try_map_stream_inner(|cursor| {
-            Err::<(), _>(("error", cursor))
-        });
+        let result = parts.try_map_stream_inner(|cursor| Err::<(), _>(("error", cursor)));
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.into_original().is_legacy());
@@ -476,7 +470,7 @@ mod tests {
         let proto30 = ProtocolVersion::from_supported(30).unwrap();
         // remote_protocol (30) < raw (31) indicates clamping
         let parts = SessionHandshakeParts::from_binary_components(
-            999, // Raw unsupported value
+            999,     // Raw unsupported value
             proto30, // Clamped to 30
             proto31,
             proto30,
@@ -543,7 +537,7 @@ mod tests {
         let parts = create_binary_parts();
         let inner: Cursor<Vec<u8>> = parts.into_inner();
         // The position may have advanced during sniffing
-        assert!(inner.get_ref().len() > 0);
+        assert!(!inner.get_ref().is_empty());
     }
 
     #[test]
@@ -551,6 +545,6 @@ mod tests {
         let parts = create_legacy_parts();
         let inner: Cursor<Vec<u8>> = parts.into_inner();
         // The position may have advanced during sniffing
-        assert!(inner.get_ref().len() > 0);
+        assert!(!inner.get_ref().is_empty());
     }
 }

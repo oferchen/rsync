@@ -207,9 +207,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
@@ -226,9 +225,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
@@ -245,9 +243,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
@@ -265,9 +262,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
         let cloned = index.clone();
@@ -286,9 +282,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
@@ -306,9 +301,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
@@ -328,9 +322,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
@@ -350,9 +343,8 @@ mod tests {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
         let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
             .expect("index");
 
@@ -363,6 +355,10 @@ mod tests {
         for _ in 0..index.block_length() - 1 {
             window.push_back(b'a');
         }
-        assert!(index.find_match_window(digest, &window, &mut scratch).is_none());
+        assert!(
+            index
+                .find_match_window(digest, &window, &mut scratch)
+                .is_none()
+        );
     }
 }

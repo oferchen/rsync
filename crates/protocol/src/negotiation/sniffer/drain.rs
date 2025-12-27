@@ -562,7 +562,9 @@ mod tests {
     fn take_sniffed_prefix_into_writer_writes_prefix() {
         let mut sniffer = create_legacy_sniffer();
         let mut writer = Cursor::new(Vec::new());
-        let len = sniffer.take_sniffed_prefix_into_writer(&mut writer).unwrap();
+        let len = sniffer
+            .take_sniffed_prefix_into_writer(&mut writer)
+            .unwrap();
         assert_eq!(len, 8);
         assert_eq!(writer.get_ref(), b"@RSYNCD:");
     }
@@ -571,7 +573,9 @@ mod tests {
     fn take_sniffed_prefix_into_writer_returns_zero_when_undecided() {
         let mut sniffer = create_undecided_sniffer();
         let mut writer = Cursor::new(Vec::new());
-        let len = sniffer.take_sniffed_prefix_into_writer(&mut writer).unwrap();
+        let len = sniffer
+            .take_sniffed_prefix_into_writer(&mut writer)
+            .unwrap();
         assert_eq!(len, 0);
         assert!(writer.get_ref().is_empty());
     }
@@ -707,8 +711,9 @@ mod tests {
         let mut sniffer = create_sniffer_with_remainder();
         let mut prefix = Vec::new();
         let mut remainder = Vec::new();
-        let (prefix_len, remainder_len) =
-            sniffer.take_buffered_split_into(&mut prefix, &mut remainder).unwrap();
+        let (prefix_len, remainder_len) = sniffer
+            .take_buffered_split_into(&mut prefix, &mut remainder)
+            .unwrap();
         assert_eq!(prefix_len, 8);
         assert_eq!(&prefix, b"@RSYNCD:");
         assert!(remainder_len > 0);
@@ -720,8 +725,9 @@ mod tests {
         let mut sniffer = create_undecided_sniffer();
         let mut prefix = Vec::new();
         let mut remainder = Vec::new();
-        let (prefix_len, remainder_len) =
-            sniffer.take_buffered_split_into(&mut prefix, &mut remainder).unwrap();
+        let (prefix_len, remainder_len) = sniffer
+            .take_buffered_split_into(&mut prefix, &mut remainder)
+            .unwrap();
         assert_eq!(prefix_len, 0);
         assert_eq!(remainder_len, 0);
     }
@@ -731,8 +737,9 @@ mod tests {
         let mut sniffer = create_legacy_sniffer();
         let mut prefix = Vec::new();
         let mut remainder = Vec::new();
-        let (prefix_len, remainder_len) =
-            sniffer.take_buffered_split_into(&mut prefix, &mut remainder).unwrap();
+        let (prefix_len, remainder_len) = sniffer
+            .take_buffered_split_into(&mut prefix, &mut remainder)
+            .unwrap();
         assert_eq!(prefix_len, 8);
         assert_eq!(remainder_len, 0);
         assert!(remainder.is_empty());
@@ -786,7 +793,9 @@ mod tests {
     fn take_buffered_remainder_into_slice_copies_remainder() {
         let mut sniffer = create_sniffer_with_remainder();
         let mut buf = [0u8; 32];
-        let len = sniffer.take_buffered_remainder_into_slice(&mut buf).unwrap();
+        let len = sniffer
+            .take_buffered_remainder_into_slice(&mut buf)
+            .unwrap();
         assert!(len > 0);
         assert!(buf.starts_with(b" 31.0"));
     }
@@ -803,7 +812,9 @@ mod tests {
     fn take_buffered_remainder_into_slice_returns_zero_when_no_remainder() {
         let mut sniffer = create_legacy_sniffer();
         let mut buf = [0u8; 32];
-        let len = sniffer.take_buffered_remainder_into_slice(&mut buf).unwrap();
+        let len = sniffer
+            .take_buffered_remainder_into_slice(&mut buf)
+            .unwrap();
         assert_eq!(len, 0);
     }
 
@@ -814,7 +825,9 @@ mod tests {
         let mut sniffer = create_sniffer_with_remainder();
         let mut buf = [0u8; 32];
         let mut slices = [IoSliceMut::new(&mut buf)];
-        let len = sniffer.take_buffered_remainder_into_vectored(&mut slices).unwrap();
+        let len = sniffer
+            .take_buffered_remainder_into_vectored(&mut slices)
+            .unwrap();
         assert!(len > 0);
     }
 
@@ -823,7 +836,9 @@ mod tests {
         let mut sniffer = create_legacy_sniffer();
         let mut buf = [0u8; 32];
         let mut slices = [IoSliceMut::new(&mut buf)];
-        let len = sniffer.take_buffered_remainder_into_vectored(&mut slices).unwrap();
+        let len = sniffer
+            .take_buffered_remainder_into_vectored(&mut slices)
+            .unwrap();
         assert_eq!(len, 0);
     }
 
@@ -833,7 +848,9 @@ mod tests {
     fn take_buffered_remainder_into_array_copies_remainder() {
         let mut sniffer = create_sniffer_with_remainder();
         let mut buf = [0u8; 32];
-        let len = sniffer.take_buffered_remainder_into_array(&mut buf).unwrap();
+        let len = sniffer
+            .take_buffered_remainder_into_array(&mut buf)
+            .unwrap();
         assert!(len > 0);
     }
 
@@ -843,7 +860,9 @@ mod tests {
     fn take_buffered_remainder_into_writer_writes_remainder() {
         let mut sniffer = create_sniffer_with_remainder();
         let mut writer = Cursor::new(Vec::new());
-        let len = sniffer.take_buffered_remainder_into_writer(&mut writer).unwrap();
+        let len = sniffer
+            .take_buffered_remainder_into_writer(&mut writer)
+            .unwrap();
         assert!(len > 0);
         assert!(writer.get_ref().starts_with(b" 31.0"));
     }
@@ -852,7 +871,9 @@ mod tests {
     fn take_buffered_remainder_into_writer_returns_zero_when_no_remainder() {
         let mut sniffer = create_legacy_sniffer();
         let mut writer = Cursor::new(Vec::new());
-        let len = sniffer.take_buffered_remainder_into_writer(&mut writer).unwrap();
+        let len = sniffer
+            .take_buffered_remainder_into_writer(&mut writer)
+            .unwrap();
         assert_eq!(len, 0);
     }
 

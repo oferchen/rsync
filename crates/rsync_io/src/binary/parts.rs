@@ -454,7 +454,13 @@ mod tests {
             .expect("sniff succeeds");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let remote_adv = RemoteProtocolAdvertisement::from_raw(31, proto31);
-        BinaryHandshakeParts::from_components(remote_adv, proto31, proto31, CompatibilityFlags::EMPTY, stream.into_parts())
+        BinaryHandshakeParts::from_components(
+            remote_adv,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        )
     }
 
     // ==== Protocol accessors ====
@@ -486,7 +492,10 @@ mod tests {
     #[test]
     fn remote_compatibility_flags_empty() {
         let parts = create_test_parts();
-        assert_eq!(parts.remote_compatibility_flags(), CompatibilityFlags::EMPTY);
+        assert_eq!(
+            parts.remote_compatibility_flags(),
+            CompatibilityFlags::EMPTY
+        );
     }
 
     // ==== Protocol clamping ====
@@ -512,7 +521,13 @@ mod tests {
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         let proto29 = ProtocolVersion::from_supported(29).unwrap();
         let remote_adv = RemoteProtocolAdvertisement::from_raw(31, proto31);
-        let parts = BinaryHandshakeParts::from_components(remote_adv, proto29, proto29, CompatibilityFlags::EMPTY, stream.into_parts());
+        let parts = BinaryHandshakeParts::from_components(
+            remote_adv,
+            proto29,
+            proto29,
+            CompatibilityFlags::EMPTY,
+            stream.into_parts(),
+        );
         assert!(parts.local_protocol_was_capped());
     }
 
@@ -550,7 +565,8 @@ mod tests {
     #[test]
     fn into_components_returns_all_parts() {
         let parts = create_test_parts();
-        let (remote_adv, remote_proto, local_adv, negotiated, flags, stream) = parts.into_components();
+        let (remote_adv, remote_proto, local_adv, negotiated, flags, stream) =
+            parts.into_components();
         assert_eq!(remote_adv, 31);
         assert_eq!(remote_proto.as_u8(), 31);
         assert_eq!(local_adv.as_u8(), 31);
@@ -594,7 +610,8 @@ mod tests {
     #[test]
     fn try_map_stream_inner_succeeds() {
         let parts = create_test_parts();
-        let result = parts.try_map_stream_inner(|cursor| -> Result<_, (io::Error, _)> { Ok(cursor) });
+        let result =
+            parts.try_map_stream_inner(|cursor| -> Result<_, (io::Error, _)> { Ok(cursor) });
         assert!(result.is_ok());
         let mapped = result.unwrap();
         assert_eq!(mapped.negotiated_protocol().as_u8(), 31);
@@ -604,7 +621,7 @@ mod tests {
     fn try_map_stream_inner_fails_preserves_parts() {
         let parts = create_test_parts();
         let result = parts.try_map_stream_inner(|cursor| -> Result<Cursor<Vec<u8>>, _> {
-            Err((io::Error::new(io::ErrorKind::Other, "test error"), cursor))
+            Err((io::Error::other("test error"), cursor))
         });
         assert!(result.is_err());
         let err = result.unwrap_err();

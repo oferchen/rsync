@@ -133,8 +133,8 @@ mod tests {
     fn create_legacy_parts() -> SessionHandshakeParts<Cursor<Vec<u8>>> {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
-        let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), None)
-            .expect("valid greeting");
+        let greeting =
+            LegacyDaemonGreetingOwned::from_parts(31, Some(0), None).expect("valid greeting");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();
         SessionHandshakeParts::from_legacy_components(greeting, proto31, stream.into_parts())
     }
