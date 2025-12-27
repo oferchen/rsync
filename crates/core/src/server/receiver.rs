@@ -419,6 +419,140 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Determines if filter list should be read from sender.
+    ///
+    /// For a daemon receiver, the filter list is only read when:
+    /// - `prune_empty_dirs` is enabled, OR
+    /// - `delete_mode` is enabled
+    ///
+    /// In client mode, skip reading because the client already sent filters to the daemon.
+    #[must_use]
+    fn should_read_filter_list(&self) -> bool {
+        let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
+        !self.config.client_mode && receiver_wants_list
+    }
+
+    /// Creates directories from the file list.
+    ///
+    /// Iterates through the file list and creates all directories first.
+    /// Returns a list of metadata errors encountered (path, error message).
+    fn create_directories(
+        &self,
+        dest_dir: &std::path::Path,
+        metadata_opts: MetadataOptions,
+    ) -> io::Result<Vec<(PathBuf, String)>> {
+        let mut metadata_errors = Vec::new();
+
+        for file_entry in &self.file_list {
+            if file_entry.is_dir() {
+                let relative_path = file_entry.path();
+                let dir_path = if relative_path.as_os_str() == "." {
+                    dest_dir.to_path_buf()
+                } else {
+                    dest_dir.join(relative_path)
+                };
+                if !dir_path.exists() {
+                    fs::create_dir_all(&dir_path)?;
+                }
+                if let Err(meta_err) =
+                    apply_metadata_from_file_entry(&dir_path, file_entry, metadata_opts.clone())
+                {
+                    metadata_errors.push((dir_path.to_path_buf(), meta_err.to_string()));
+                }
+            }
+        }
+
+        Ok(metadata_errors)
+    }
+
+    /// Exchanges NDX_DONE messages for phase transitions.
+    ///
+    /// After sending all file requests, exchanges NDX_DONEs with the sender
+    /// for multi-phase protocol (protocol >= 29 has 2 phases).
+    fn exchange_phase_done<R: Read, W: Write + ?Sized>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_write_codec: &mut protocol::codec::NdxCodecEnum,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+    ) -> io::Result<()> {
+        let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
+        let mut phase: i32 = 0;
+
+        loop {
+            // Send NDX_DONE to signal end of current phase
+            ndx_write_codec.write_ndx_done(&mut *writer)?;
+            writer.flush()?;
+
+            phase += 1;
+
+            if phase > max_phase {
+                break;
+            }
+
+            // Read echoed NDX_DONE from sender
+            let ndx = ndx_read_codec.read_ndx(reader)?;
+            if ndx != -1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "expected NDX_DONE (-1) from sender during phase transition, got {ndx}"
+                    ),
+                ));
+            }
+        }
+
+        // Read final NDX_DONE from sender
+        let final_ndx = ndx_read_codec.read_ndx(reader)?;
+        if final_ndx != -1 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected final NDX_DONE (-1) from sender, got {final_ndx}"),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Handles the goodbye handshake at end of transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:875-907` - `read_final_goodbye()`
+    fn handle_goodbye<R: Read, W: Write + ?Sized>(
+        &self,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_write_codec: &mut protocol::codec::NdxCodecEnum,
+        ndx_read_codec: &mut protocol::codec::NdxCodecEnum,
+    ) -> io::Result<()> {
+        if self.protocol.as_u8() < 24 {
+            return Ok(());
+        }
+
+        // Send goodbye NDX_DONE
+        ndx_write_codec.write_ndx_done(&mut *writer)?;
+        writer.flush()?;
+
+        // For protocol >= 31, sender echoes NDX_DONE and expects another
+        if self.protocol.as_u8() >= 31 {
+            // Read echoed NDX_DONE from sender
+            let goodbye_echo = ndx_read_codec.read_ndx(reader)?;
+            if goodbye_echo != -1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo}"),
+                ));
+            }
+
+            // Send final goodbye NDX_DONE
+            ndx_write_codec.write_ndx_done(&mut *writer)?;
+            writer.flush()?;
+        }
+
+        Ok(())
+    }
+
     /// Runs the receiver role to completion.
     ///
     /// This orchestrates the full receive operation:
@@ -491,30 +625,8 @@ impl ReceiverContext {
             })?;
         }
 
-        // Read filter list from sender (multiplexed for protocol >= 30)
-        // This mirrors upstream recv_filter_list() at exclude.c:1672-1687.
-        //
-        // CRITICAL: The filter list is ONLY read when `receiver_wants_list` is true.
-        // From upstream exclude.c:1680:
-        //   if (!local_server && (am_sender || receiver_wants_list)) {
-        //       while ((len = read_int(f_in)) != 0) { ... }
-        //   }
-        //
-        // Where receiver_wants_list = prune_empty_dirs || (delete_mode && ...)
-        //
-        // For a daemon receiver (am_sender=0), the filter list is only read when:
-        // - prune_empty_dirs is enabled, OR
-        // - delete_mode is enabled
-        //
-        // If neither flag is set, NO filter list is sent by the client and we
-        // must NOT try to read one, or we'll block waiting for data that never comes.
-        //
-        // In client mode (daemon client), skip reading filter list because:
-        // - The client already sent filter list to the daemon
-        // - The daemon (as generator) already consumed it
-        // - There's no filter list coming back on this stream
-        let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
-        if !self.config.client_mode && receiver_wants_list {
+        // Read filter list from sender if appropriate
+        if self.should_read_filter_list() {
             let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
             })?;
@@ -533,7 +645,6 @@ impl ReceiverContext {
         // Transfer loop: for each file, generate signature, receive delta, apply
         let mut files_transferred = 0;
         let mut bytes_received = 0u64;
-        let mut metadata_errors = Vec::new();
 
         // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
         let checksum_factory = ChecksumFactory::from_negotiation(
@@ -563,25 +674,7 @@ impl ReceiverContext {
             .unwrap_or_else(|| PathBuf::from("."));
 
         // First pass: create directories from file list
-        // Directories don't go through delta transfer
-        for file_entry in &self.file_list {
-            if file_entry.is_dir() {
-                let relative_path = file_entry.path();
-                let dir_path = if relative_path.as_os_str() == "." {
-                    dest_dir.clone()
-                } else {
-                    dest_dir.join(relative_path)
-                };
-                if !dir_path.exists() {
-                    fs::create_dir_all(&dir_path)?;
-                }
-                if let Err(meta_err) =
-                    apply_metadata_from_file_entry(&dir_path, file_entry, metadata_opts.clone())
-                {
-                    metadata_errors.push((dir_path.to_path_buf(), meta_err.to_string()));
-                }
-            }
-        }
+        let mut metadata_errors = self.create_directories(&dest_dir, metadata_opts.clone())?;
 
         // Transfer loop: iterate through file list and request each file from sender
         // The receiver (generator side) drives the transfer by sending file indices
@@ -826,97 +919,14 @@ impl ReceiverContext {
             files_transferred += 1;
         }
 
-        // Phase handling: after sending all file requests, we need to exchange NDX_DONEs
-        // with the sender for multi-phase protocol (protocol >= 29 has 2 phases).
-        //
-        // Upstream sender.c lines 236-258 and receiver.c lines 554-588:
-        // - Phase 1: Normal file transfer (just completed above)
-        // - Phase 2: Redo phase for files that failed verification
-        // - After each phase, both sides exchange NDX_DONE
-        //
-        // Flow for each phase transition:
-        // 1. We (receiver/generator) send NDX_DONE (no more files for this phase)
-        // 2. Sender receives NDX_DONE, increments phase, echoes NDX_DONE
-        // 3. We receive echoed NDX_DONE, increment phase
-        // 4. If phase <= max_phase: send NDX_DONE for next phase, repeat
-        // 5. If phase > max_phase: exit loop
-        //
-        // Sender also sends final NDX_DONE after loop (sender.c line 462)
-        let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
-        let mut phase: i32 = 0;
-
         // Create separate NDX codec for reading (needs its own state for delta decoding)
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
-        loop {
-            // Send NDX_DONE to signal end of current phase
-            ndx_write_codec.write_ndx_done(&mut *writer)?;
-            writer.flush()?;
+        // Exchange phase transitions with sender
+        self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
-            phase += 1;
-
-            if phase > max_phase {
-                // All phases complete, exit
-                break;
-            }
-
-            // Read echoed NDX_DONE from sender
-            // Upstream sender.c line 256: write_ndx(f_out, NDX_DONE)
-            let ndx = ndx_read_codec.read_ndx(reader)?;
-            if ndx != -1 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "expected NDX_DONE (-1) from sender during phase transition, got {ndx}"
-                    ),
-                ));
-            }
-
-            // Continue to next phase (redo phase - no files to redo for now)
-        }
-
-        // Read final NDX_DONE from sender (sender.c line 462: write_ndx after loop)
-        let final_ndx = ndx_read_codec.read_ndx(reader)?;
-        if final_ndx != -1 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("expected final NDX_DONE (-1) from sender, got {final_ndx}"),
-            ));
-        }
-
-        // Goodbye exchange: After send_files() returns, sender calls read_final_goodbye()
-        // which reads more NDX_DONEs from us.
-        //
-        // Upstream main.c read_final_goodbye() (lines 875-907):
-        // - For protocol < 29: read_int() and expect NDX_DONE
-        // - For protocol >= 29: read_ndx_and_attrs() and expect NDX_DONE
-        // - For protocol >= 31: if NDX_DONE, echo NDX_DONE back, then read another NDX_DONE
-        //
-        // This comes from the generator side in do_recv() (main.c lines 1117-1121):
-        // if (protocol_version >= 24) { write_ndx(f_out, NDX_DONE); }
-        if self.protocol.as_u8() >= 24 {
-            // Send goodbye NDX_DONE that sender reads in read_final_goodbye()
-            ndx_write_codec.write_ndx_done(&mut *writer)?;
-            writer.flush()?;
-
-            // For protocol >= 31, sender echoes NDX_DONE and expects another
-            if self.protocol.as_u8() >= 31 {
-                // Read echoed NDX_DONE from sender
-                let goodbye_echo = ndx_read_codec.read_ndx(reader)?;
-                if goodbye_echo != -1 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "expected goodbye NDX_DONE echo (-1) from sender, got {goodbye_echo}"
-                        ),
-                    ));
-                }
-
-                // Send final goodbye NDX_DONE
-                ndx_write_codec.write_ndx_done(&mut *writer)?;
-                writer.flush()?;
-            }
-        }
+        // Handle goodbye handshake
+        self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
         Ok(TransferStats {
             files_listed: file_count,
