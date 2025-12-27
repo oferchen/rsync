@@ -39,3 +39,29 @@ impl LocalCopyOptions {
         self.batch_writer.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_writer_none_by_default() {
+        let options = LocalCopyOptions::new();
+        assert!(options.get_batch_writer().is_none());
+    }
+
+    #[test]
+    fn batch_writer_sets_value() {
+        // We can't easily create a BatchWriter without actual file paths,
+        // so just test the None case
+        let options = LocalCopyOptions::new().batch_writer(None);
+        assert!(options.get_batch_writer().is_none());
+    }
+
+    #[test]
+    fn get_batch_writer_returns_none() {
+        let options = LocalCopyOptions::new();
+        let writer = options.get_batch_writer();
+        assert!(writer.is_none());
+    }
+}

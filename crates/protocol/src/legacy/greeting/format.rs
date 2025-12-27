@@ -54,3 +54,61 @@ pub fn format_legacy_daemon_greeting(version: ProtocolVersion) -> String {
     write_legacy_daemon_greeting(&mut banner, version).expect("writing to a String cannot fail");
     banner
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_protocol_32() {
+        let greeting = format_legacy_daemon_greeting(ProtocolVersion::V32);
+        assert!(greeting.starts_with(LEGACY_DAEMON_PREFIX));
+        assert!(greeting.contains("32.0"));
+        assert!(greeting.ends_with('\n'));
+    }
+
+    #[test]
+    fn format_protocol_31() {
+        let greeting = format_legacy_daemon_greeting(ProtocolVersion::V31);
+        assert!(greeting.contains("31.0"));
+    }
+
+    #[test]
+    fn format_protocol_30() {
+        let greeting = format_legacy_daemon_greeting(ProtocolVersion::V30);
+        assert!(greeting.contains("30.0"));
+    }
+
+    #[test]
+    fn format_protocol_29() {
+        let greeting = format_legacy_daemon_greeting(ProtocolVersion::V29);
+        assert!(greeting.contains("29.0"));
+    }
+
+    #[test]
+    fn greeting_starts_with_prefix() {
+        let greeting = format_legacy_daemon_greeting(ProtocolVersion::V32);
+        assert!(greeting.starts_with("@RSYNCD:"));
+    }
+
+    #[test]
+    fn greeting_ends_with_newline() {
+        let greeting = format_legacy_daemon_greeting(ProtocolVersion::V32);
+        assert!(greeting.ends_with('\n'));
+    }
+
+    #[test]
+    fn write_to_string_works() {
+        let mut output = String::new();
+        let result = write_legacy_daemon_greeting(&mut output, ProtocolVersion::V32);
+        assert!(result.is_ok());
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn greeting_contains_version_and_minor() {
+        let greeting = format_legacy_daemon_greeting(ProtocolVersion::V32);
+        // Format is "@RSYNCD: 32.0\n"
+        assert!(greeting.contains(".0"));
+    }
+}
