@@ -151,3 +151,167 @@ pub(crate) struct OutFormatContext {
     pub(super) module_name: Option<String>,
     pub(super) module_path: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn out_format_new_empty() {
+        let format = OutFormat::new(vec![]);
+        assert!(format.is_empty());
+    }
+
+    #[test]
+    fn out_format_new_with_tokens() {
+        let tokens = vec![OutFormatToken::Literal("hello".to_string())];
+        let format = OutFormat::new(tokens);
+        assert!(!format.is_empty());
+    }
+
+    #[test]
+    fn out_format_tokens_iterator() {
+        let tokens = vec![
+            OutFormatToken::Literal("a".to_string()),
+            OutFormatToken::Literal("b".to_string()),
+        ];
+        let format = OutFormat::new(tokens);
+        let count = format.tokens().count();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn placeholder_format_new_defaults() {
+        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None);
+        assert_eq!(format.width(), None);
+        assert_eq!(format.align(), PlaceholderAlignment::Right);
+        assert_eq!(format.humanize(), HumanizeMode::None);
+    }
+
+    #[test]
+    fn placeholder_format_with_width() {
+        let format = PlaceholderFormat::new(Some(20), PlaceholderAlignment::Left, HumanizeMode::Separator);
+        assert_eq!(format.width(), Some(20));
+        assert_eq!(format.align(), PlaceholderAlignment::Left);
+        assert_eq!(format.humanize(), HumanizeMode::Separator);
+    }
+
+    #[test]
+    fn placeholder_format_decimal_units() {
+        let format = PlaceholderFormat::new(Some(10), PlaceholderAlignment::Right, HumanizeMode::DecimalUnits);
+        assert_eq!(format.humanize(), HumanizeMode::DecimalUnits);
+    }
+
+    #[test]
+    fn placeholder_format_binary_units() {
+        let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
+        assert_eq!(format.humanize(), HumanizeMode::BinaryUnits);
+    }
+
+    #[test]
+    fn placeholder_alignment_default() {
+        let align: PlaceholderAlignment = Default::default();
+        assert_eq!(align, PlaceholderAlignment::Right);
+    }
+
+    #[test]
+    fn humanize_mode_default() {
+        let mode: HumanizeMode = Default::default();
+        assert_eq!(mode, HumanizeMode::None);
+    }
+
+    #[test]
+    fn placeholder_token_new() {
+        let token = PlaceholderToken::new(
+            OutFormatPlaceholder::FileName,
+            PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None),
+        );
+        // Verify it can be accessed
+        let _ = token.kind;
+        let _ = token.format;
+    }
+
+    #[test]
+    fn out_format_token_literal() {
+        let token = OutFormatToken::Literal("test".to_string());
+        if let OutFormatToken::Literal(s) = token {
+            assert_eq!(s, "test");
+        } else {
+            panic!("Expected Literal variant");
+        }
+    }
+
+    #[test]
+    fn out_format_token_placeholder() {
+        let inner = PlaceholderToken::new(
+            OutFormatPlaceholder::FileLength,
+            PlaceholderFormat::new(Some(15), PlaceholderAlignment::Left, HumanizeMode::Separator),
+        );
+        let token = OutFormatToken::Placeholder(inner);
+        if let OutFormatToken::Placeholder(p) = token {
+            assert_eq!(p.format.width(), Some(15));
+        } else {
+            panic!("Expected Placeholder variant");
+        }
+    }
+
+    #[test]
+    fn out_format_context_default() {
+        let ctx: OutFormatContext = Default::default();
+        assert!(ctx.remote_host.is_none());
+        assert!(ctx.remote_address.is_none());
+        assert!(ctx.module_name.is_none());
+        assert!(ctx.module_path.is_none());
+    }
+
+    #[test]
+    fn out_format_context_with_values() {
+        let ctx = OutFormatContext {
+            remote_host: Some("server.example.com".to_string()),
+            remote_address: Some("192.168.1.1".to_string()),
+            module_name: Some("backup".to_string()),
+            module_path: Some("/var/backup".to_string()),
+        };
+        assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
+        assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));
+        assert_eq!(ctx.module_name.as_deref(), Some("backup"));
+        assert_eq!(ctx.module_path.as_deref(), Some("/var/backup"));
+    }
+
+    #[test]
+    fn out_format_clone() {
+        let format = OutFormat::new(vec![OutFormatToken::Literal("x".to_string())]);
+        let cloned = format.clone();
+        assert!(!cloned.is_empty());
+    }
+
+    #[test]
+    fn placeholder_format_clone() {
+        let format = PlaceholderFormat::new(Some(5), PlaceholderAlignment::Left, HumanizeMode::Separator);
+        let cloned = format;
+        assert_eq!(cloned.width(), Some(5));
+    }
+
+    #[test]
+    fn placeholder_alignment_eq() {
+        assert_eq!(PlaceholderAlignment::Left, PlaceholderAlignment::Left);
+        assert_eq!(PlaceholderAlignment::Right, PlaceholderAlignment::Right);
+        assert_ne!(PlaceholderAlignment::Left, PlaceholderAlignment::Right);
+    }
+
+    #[test]
+    fn humanize_mode_eq() {
+        assert_eq!(HumanizeMode::None, HumanizeMode::None);
+        assert_eq!(HumanizeMode::Separator, HumanizeMode::Separator);
+        assert_eq!(HumanizeMode::DecimalUnits, HumanizeMode::DecimalUnits);
+        assert_eq!(HumanizeMode::BinaryUnits, HumanizeMode::BinaryUnits);
+        assert_ne!(HumanizeMode::None, HumanizeMode::Separator);
+    }
+
+    #[test]
+    fn max_placeholder_width_constant() {
+        // Verify the constant is accessible and reasonable
+        assert!(MAX_PLACEHOLDER_WIDTH > 0);
+        assert!(MAX_PLACEHOLDER_WIDTH >= 4096);
+    }
+}
