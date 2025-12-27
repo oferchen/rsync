@@ -269,3 +269,124 @@ pub(crate) fn parse_filter_directive_line(
         "unsupported filter directive '{trimmed}'"
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_keyword_modifiers_no_modifiers() {
+        let (name, mods) = split_keyword_modifiers("include");
+        assert_eq!(name, "include");
+        assert_eq!(mods, "");
+    }
+
+    #[test]
+    fn split_keyword_modifiers_with_modifiers() {
+        let (name, mods) = split_keyword_modifiers("include,/s");
+        assert_eq!(name, "include");
+        assert_eq!(mods, "/s");
+    }
+
+    #[test]
+    fn parse_filter_directive_line_empty() {
+        let result = parse_filter_directive_line("").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_filter_directive_line_comment() {
+        let result = parse_filter_directive_line("# this is a comment").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_filter_directive_line_whitespace() {
+        let result = parse_filter_directive_line("   ").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_filter_directive_line_clear_exclamation() {
+        let result = parse_filter_directive_line("!").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Clear)));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_clear_keyword() {
+        let result = parse_filter_directive_line("clear").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Clear)));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_include_short() {
+        let result = parse_filter_directive_line("+ *.txt").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_exclude_short() {
+        let result = parse_filter_directive_line("- *.bak").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_include_keyword() {
+        let result = parse_filter_directive_line("include *.txt").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_exclude_keyword() {
+        let result = parse_filter_directive_line("exclude *.bak").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_protect() {
+        let result = parse_filter_directive_line("protect /important").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_risk() {
+        let result = parse_filter_directive_line("risk /temp").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_show() {
+        let result = parse_filter_directive_line("show *.log").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_hide() {
+        let result = parse_filter_directive_line("hide *.secret").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::Rule(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_exclude_if_present() {
+        let result = parse_filter_directive_line("exclude-if-present .nobackup").unwrap();
+        assert!(matches!(result, Some(ParsedFilterDirective::ExcludeIfPresent(_))));
+    }
+
+    #[test]
+    fn parse_filter_directive_line_unsupported() {
+        let result = parse_filter_directive_line("unknown directive");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_filter_directive_line_plus_missing_pattern() {
+        let result = parse_filter_directive_line("+ ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_filter_directive_line_minus_missing_pattern() {
+        let result = parse_filter_directive_line("- ");
+        assert!(result.is_err());
+    }
+}
