@@ -1,4 +1,4 @@
-//! crates/protocol/src/codec.rs
+//! crates/protocol/src/codec/protocol.rs
 //!
 //! Protocol version-aware encoding/decoding using the Strategy pattern.
 //!
@@ -159,6 +159,63 @@ pub trait ProtocolCodec: Send + Sync {
     /// Reads a statistic value.
     fn read_stat<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<i64> {
         self.read_file_size(reader)
+    }
+
+    // ========================================================================
+    // Filter rule modifier support (protocol-dependent)
+    // ========================================================================
+
+    /// Returns `true` if this protocol supports sender/receiver side modifiers (`s`, `r`).
+    ///
+    /// - Protocol < 29: Returns `false`
+    /// - Protocol >= 29: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1530` - `legal_len = for_xfer && protocol_version < 29 ? 1 : MAX_RULE_PREFIX-1`
+    /// `exclude.c:1567-1571` - Sender/receiver modifier support gated by protocol >= 29
+    fn supports_sender_receiver_modifiers(&self) -> bool {
+        self.protocol_version() >= 29
+    }
+
+    /// Returns `true` if this protocol supports the perishable modifier (`p`).
+    ///
+    /// - Protocol < 30: Returns `false`
+    /// - Protocol >= 30: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1350` - `protocol_version >= 30 ? FILTRULE_PERISHABLE : 0`
+    /// `exclude.c:1574` - Perishable modifier gated by protocol >= 30
+    fn supports_perishable_modifier(&self) -> bool {
+        self.protocol_version() >= 30
+    }
+
+    /// Returns `true` if this protocol uses old-style prefixes (protocol < 29).
+    ///
+    /// Old prefixes have restricted modifier support and different parsing rules.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1675` - `xflags = protocol_version >= 29 ? 0 : XFLG_OLD_PREFIXES`
+    fn uses_old_prefixes(&self) -> bool {
+        self.protocol_version() < 29
+    }
+
+    // ========================================================================
+    // Statistics encoding support (protocol-dependent)
+    // ========================================================================
+
+    /// Returns `true` if this protocol supports file list timing statistics.
+    ///
+    /// - Protocol < 29: Returns `false` (no flist_buildtime/flist_xfertime)
+    /// - Protocol >= 29: Returns `true`
+    ///
+    /// # Upstream Reference
+    ///
+    /// `main.c` - handle_stats() sends flist times only for protocol >= 29
+    fn supports_flist_times(&self) -> bool {
+        self.protocol_version() >= 29
     }
 }
 
@@ -659,6 +716,221 @@ mod tests {
                     "Round-trip failed for mtime={mtime} protocol={version}"
                 );
             }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Filter modifier support tests
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn protocol_28_does_not_support_sender_receiver_modifiers() {
+        let codec = create_protocol_codec(28);
+        assert!(!codec.supports_sender_receiver_modifiers());
+    }
+
+    #[test]
+    fn protocol_29_supports_sender_receiver_modifiers() {
+        let codec = create_protocol_codec(29);
+        assert!(codec.supports_sender_receiver_modifiers());
+    }
+
+    #[test]
+    fn protocol_30_supports_sender_receiver_modifiers() {
+        let codec = create_protocol_codec(30);
+        assert!(codec.supports_sender_receiver_modifiers());
+    }
+
+    #[test]
+    fn protocol_32_supports_sender_receiver_modifiers() {
+        let codec = create_protocol_codec(32);
+        assert!(codec.supports_sender_receiver_modifiers());
+    }
+
+    #[test]
+    fn protocol_28_does_not_support_perishable() {
+        let codec = create_protocol_codec(28);
+        assert!(!codec.supports_perishable_modifier());
+    }
+
+    #[test]
+    fn protocol_29_does_not_support_perishable() {
+        let codec = create_protocol_codec(29);
+        assert!(!codec.supports_perishable_modifier());
+    }
+
+    #[test]
+    fn protocol_30_supports_perishable() {
+        let codec = create_protocol_codec(30);
+        assert!(codec.supports_perishable_modifier());
+    }
+
+    #[test]
+    fn protocol_31_supports_perishable() {
+        let codec = create_protocol_codec(31);
+        assert!(codec.supports_perishable_modifier());
+    }
+
+    #[test]
+    fn protocol_32_supports_perishable() {
+        let codec = create_protocol_codec(32);
+        assert!(codec.supports_perishable_modifier());
+    }
+
+    #[test]
+    fn protocol_28_uses_old_prefixes() {
+        let codec = create_protocol_codec(28);
+        assert!(codec.uses_old_prefixes());
+    }
+
+    #[test]
+    fn protocol_29_does_not_use_old_prefixes() {
+        let codec = create_protocol_codec(29);
+        assert!(!codec.uses_old_prefixes());
+    }
+
+    #[test]
+    fn protocol_30_does_not_use_old_prefixes() {
+        let codec = create_protocol_codec(30);
+        assert!(!codec.uses_old_prefixes());
+    }
+
+    #[test]
+    fn protocol_32_does_not_use_old_prefixes() {
+        let codec = create_protocol_codec(32);
+        assert!(!codec.uses_old_prefixes());
+    }
+
+    #[test]
+    fn filter_modifier_support_boundary_at_29() {
+        // Protocol 28: no s/r, no p, old prefixes
+        let codec_28 = create_protocol_codec(28);
+        assert!(!codec_28.supports_sender_receiver_modifiers());
+        assert!(!codec_28.supports_perishable_modifier());
+        assert!(codec_28.uses_old_prefixes());
+
+        // Protocol 29: has s/r, no p, no old prefixes
+        let codec_29 = create_protocol_codec(29);
+        assert!(codec_29.supports_sender_receiver_modifiers());
+        assert!(!codec_29.supports_perishable_modifier());
+        assert!(!codec_29.uses_old_prefixes());
+    }
+
+    #[test]
+    fn filter_modifier_support_boundary_at_30() {
+        // Protocol 29: has s/r, no p
+        let codec_29 = create_protocol_codec(29);
+        assert!(codec_29.supports_sender_receiver_modifiers());
+        assert!(!codec_29.supports_perishable_modifier());
+
+        // Protocol 30: has s/r and p
+        let codec_30 = create_protocol_codec(30);
+        assert!(codec_30.supports_sender_receiver_modifiers());
+        assert!(codec_30.supports_perishable_modifier());
+    }
+
+    // ------------------------------------------------------------------------
+    // Statistics encoding support tests
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn protocol_28_does_not_support_flist_times() {
+        let codec = create_protocol_codec(28);
+        assert!(!codec.supports_flist_times());
+    }
+
+    #[test]
+    fn protocol_29_supports_flist_times() {
+        let codec = create_protocol_codec(29);
+        assert!(codec.supports_flist_times());
+    }
+
+    #[test]
+    fn protocol_30_supports_flist_times() {
+        let codec = create_protocol_codec(30);
+        assert!(codec.supports_flist_times());
+    }
+
+    #[test]
+    fn protocol_32_supports_flist_times() {
+        let codec = create_protocol_codec(32);
+        assert!(codec.supports_flist_times());
+    }
+
+    #[test]
+    fn flist_times_support_boundary_at_29() {
+        // Protocol 28: no flist times
+        let codec_28 = create_protocol_codec(28);
+        assert!(!codec_28.supports_flist_times());
+
+        // Protocol 29: has flist times
+        let codec_29 = create_protocol_codec(29);
+        assert!(codec_29.supports_flist_times());
+    }
+
+    #[test]
+    fn write_stat_uses_file_size_encoding() {
+        // Verify write_stat and write_file_size produce identical output
+        let codec = create_protocol_codec(29);
+        let mut stat_buf = Vec::new();
+        let mut size_buf = Vec::new();
+
+        codec.write_stat(&mut stat_buf, 12345).unwrap();
+        codec.write_file_size(&mut size_buf, 12345).unwrap();
+
+        assert_eq!(stat_buf, size_buf);
+    }
+
+    #[test]
+    fn read_stat_uses_file_size_encoding() {
+        // Verify read_stat and read_file_size produce identical results
+        let codec = create_protocol_codec(30);
+        let mut buf = Vec::new();
+        codec.write_stat(&mut buf, 999999).unwrap();
+
+        let mut cursor1 = Cursor::new(&buf);
+        let mut cursor2 = Cursor::new(&buf);
+
+        let stat_value = codec.read_stat(&mut cursor1).unwrap();
+        let size_value = codec.read_file_size(&mut cursor2).unwrap();
+
+        assert_eq!(stat_value, size_value);
+        assert_eq!(stat_value, 999999);
+    }
+
+    #[test]
+    fn stat_round_trip_legacy() {
+        let codec = create_protocol_codec(29);
+        let test_values = [0i64, 1, 1000, 65535, 0x7FFF_FFFF, 0x1_0000_0000];
+
+        for &value in &test_values {
+            let mut buf = Vec::new();
+            codec.write_stat(&mut buf, value).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let read_value = codec.read_stat(&mut cursor).unwrap();
+            assert_eq!(
+                read_value, value,
+                "Stat round-trip failed for value={value} (legacy)"
+            );
+        }
+    }
+
+    #[test]
+    fn stat_round_trip_modern() {
+        let codec = create_protocol_codec(32);
+        let test_values = [0i64, 1, 1000, 65535, 0x7FFF_FFFF, 0x1_0000_0000];
+
+        for &value in &test_values {
+            let mut buf = Vec::new();
+            codec.write_stat(&mut buf, value).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let read_value = codec.read_stat(&mut cursor).unwrap();
+            assert_eq!(
+                read_value, value,
+                "Stat round-trip failed for value={value} (modern)"
+            );
         }
     }
 }

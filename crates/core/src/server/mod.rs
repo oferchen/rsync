@@ -92,6 +92,8 @@ pub mod receiver;
 pub mod role;
 /// Server-side protocol setup utilities.
 pub mod setup;
+/// Shared abstractions used by generator and receiver roles.
+pub mod shared;
 /// RAII guard for temporary file cleanup.
 pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
@@ -103,6 +105,7 @@ pub use self::generator::{GeneratorContext, GeneratorStats};
 pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_handshake};
 pub use self::receiver::{ReceiverContext, TransferStats};
 pub use self::role::ServerRole;
+pub use self::shared::ChecksumFactory;
 
 #[cfg(test)]
 mod tests;

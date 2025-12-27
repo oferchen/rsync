@@ -232,8 +232,8 @@ impl ChecksumVerifier {
         }
     }
 }
+use protocol::codec::{NdxCodec, create_ndx_codec};
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
-use protocol::ndx::{NdxCodec, create_ndx_codec};
 use protocol::wire::DeltaOp;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
