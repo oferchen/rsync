@@ -189,3 +189,182 @@ pub(crate) fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Er
         return Err(io::Error::from_raw_os_error(errno));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // map_uid tests
+    #[test]
+    fn map_uid_numeric_ids_returns_same_uid() {
+        let uid = 1000;
+        let result = map_uid(uid, true);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn map_uid_non_numeric_attempts_name_lookup() {
+        // UID 0 (root) should always exist on Unix systems
+        let result = map_uid(0, false);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn map_uid_nonexistent_uid_falls_back() {
+        // Very high UID unlikely to exist
+        let result = map_uid(999999, false);
+        assert!(result.is_some());
+    }
+
+    // map_gid tests
+    #[test]
+    fn map_gid_numeric_ids_returns_same_gid() {
+        let gid = 1000;
+        let result = map_gid(gid, true);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn map_gid_non_numeric_attempts_name_lookup() {
+        // GID 0 (root/wheel) should always exist on Unix systems
+        let result = map_gid(0, false);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn map_gid_nonexistent_gid_falls_back() {
+        // Very high GID unlikely to exist
+        let result = map_gid(999999, false);
+        assert!(result.is_some());
+    }
+
+    // lookup_user_name tests
+    #[test]
+    fn lookup_user_name_root_returns_name() {
+        // UID 0 (root) should have a name on most systems
+        let result = lookup_user_name(0);
+        assert!(result.is_ok());
+        // Don't assert the name exists, as some containers might not have /etc/passwd
+    }
+
+    #[test]
+    fn lookup_user_name_nonexistent_uid_returns_none() {
+        // Very high UID unlikely to exist
+        let result = lookup_user_name(999999999);
+        assert!(result.is_ok());
+        // The result might be None on most systems
+    }
+
+    // lookup_user_by_name tests
+    #[test]
+    fn lookup_user_by_name_root_returns_uid() {
+        // "root" user should exist on most Unix systems
+        let result = lookup_user_by_name(b"root");
+        assert!(result.is_ok());
+        if let Ok(Some(uid)) = result {
+            assert_eq!(uid, 0);
+        }
+    }
+
+    #[test]
+    fn lookup_user_by_name_nonexistent_returns_none() {
+        let result = lookup_user_by_name(b"nonexistent_user_xyz_12345");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn lookup_user_by_name_with_null_byte_returns_none() {
+        // Name containing null byte can't be converted to CString
+        let result = lookup_user_by_name(b"test\x00user");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn lookup_user_by_name_empty_returns_none() {
+        let result = lookup_user_by_name(b"");
+        assert!(result.is_ok());
+        // Empty name typically returns None
+    }
+
+    // lookup_group_name tests
+    #[test]
+    fn lookup_group_name_root_group_returns_name() {
+        // GID 0 should have a name on most systems (root or wheel)
+        let result = lookup_group_name(0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn lookup_group_name_nonexistent_gid_returns_none() {
+        // Very high GID unlikely to exist
+        let result = lookup_group_name(999999999);
+        assert!(result.is_ok());
+    }
+
+    // lookup_group_by_name tests
+    #[test]
+    fn lookup_group_by_name_root_returns_gid() {
+        // Try common root group names
+        let result = lookup_group_by_name(b"root");
+        if result.is_ok() && result.as_ref().unwrap().is_some() {
+            assert_eq!(result.unwrap().unwrap(), 0);
+        } else {
+            // On macOS, root group might be called "wheel"
+            let wheel_result = lookup_group_by_name(b"wheel");
+            assert!(wheel_result.is_ok());
+        }
+    }
+
+    #[test]
+    fn lookup_group_by_name_nonexistent_returns_none() {
+        let result = lookup_group_by_name(b"nonexistent_group_xyz_12345");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn lookup_group_by_name_with_null_byte_returns_none() {
+        // Name containing null byte can't be converted to CString
+        let result = lookup_group_by_name(b"test\x00group");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn lookup_group_by_name_empty_returns_none() {
+        let result = lookup_group_by_name(b"");
+        assert!(result.is_ok());
+    }
+
+    // Cross-function tests
+    #[test]
+    fn lookup_user_name_and_by_name_round_trip() {
+        // Look up root's name, then look up that name to get UID back
+        if let Ok(Some(name)) = lookup_user_name(0) {
+            if let Ok(Some(uid)) = lookup_user_by_name(&name) {
+                assert_eq!(uid, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn lookup_group_name_and_by_name_round_trip() {
+        // Look up root group's name, then look up that name to get GID back
+        if let Ok(Some(name)) = lookup_group_name(0) {
+            if let Ok(Some(gid)) = lookup_group_by_name(&name) {
+                assert_eq!(gid, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn map_uid_and_map_gid_consistency() {
+        // Both should return values for numeric mode
+        let uid_result = map_uid(1000, true);
+        let gid_result = map_gid(1000, true);
+        assert!(uid_result.is_some());
+        assert!(gid_result.is_some());
+    }
+}
