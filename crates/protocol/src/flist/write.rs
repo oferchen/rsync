@@ -16,6 +16,7 @@ use super::flags::{
     XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_SAME_GID, XMIT_SAME_MODE,
     XMIT_SAME_NAME, XMIT_SAME_TIME, XMIT_SAME_UID, XMIT_TOP_DIR,
 };
+use super::state::FileListCompressionState;
 
 /// State maintained while writing a file list.
 ///
@@ -30,21 +31,11 @@ pub struct FileListWriter {
     codec: ProtocolCodecEnum,
     /// Compatibility flags for this session.
     compat_flags: Option<CompatibilityFlags>,
-    /// Previous entry's path (for name compression).
-    prev_name: Vec<u8>,
-    /// Previous entry's mode.
-    prev_mode: u32,
-    /// Previous entry's mtime.
-    prev_mtime: i64,
-    /// Previous entry's UID (for ownership preservation).
-    prev_uid: u32,
-    /// Previous entry's GID (for ownership preservation).
-    prev_gid: u32,
+    /// Compression state for cross-entry field sharing.
+    state: FileListCompressionState,
     /// Whether to preserve (and thus write) UID values to the wire.
-    /// Corresponds to `-o` / `--owner` flag.
     preserve_uid: bool,
     /// Whether to preserve (and thus write) GID values to the wire.
-    /// Corresponds to `-g` / `--group` flag.
     preserve_gid: bool,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
@@ -58,11 +49,7 @@ impl FileListWriter {
             protocol,
             codec: create_protocol_codec(protocol.as_u8()),
             compat_flags: None,
-            prev_name: Vec::new(),
-            prev_mode: 0,
-            prev_mtime: 0,
-            prev_uid: 0,
-            prev_gid: 0,
+            state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
             iconv: None,
@@ -76,11 +63,7 @@ impl FileListWriter {
             protocol,
             codec: create_protocol_codec(protocol.as_u8()),
             compat_flags: Some(compat_flags),
-            prev_name: Vec::new(),
-            prev_mode: 0,
-            prev_mtime: 0,
-            prev_uid: 0,
-            prev_gid: 0,
+            state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
             iconv: None,
@@ -88,10 +71,6 @@ impl FileListWriter {
     }
 
     /// Sets whether UID values should be written to the wire.
-    ///
-    /// When `preserve_uid` is true, the writer will emit UID values for each
-    /// entry, with compression via the `XMIT_SAME_UID` flag when UIDs match.
-    /// This must match the `-o` / `--owner` flag.
     #[must_use]
     pub fn with_preserve_uid(mut self, preserve: bool) -> Self {
         self.preserve_uid = preserve;
@@ -99,10 +78,6 @@ impl FileListWriter {
     }
 
     /// Sets whether GID values should be written to the wire.
-    ///
-    /// When `preserve_gid` is true, the writer will emit GID values for each
-    /// entry, with compression via the `XMIT_SAME_GID` flag when GIDs match.
-    /// This must match the `-g` / `--group` flag.
     #[must_use]
     pub fn with_preserve_gid(mut self, preserve: bool) -> Self {
         self.preserve_gid = preserve;
@@ -110,92 +85,59 @@ impl FileListWriter {
     }
 
     /// Sets the filename encoding converter for iconv support.
-    ///
-    /// When set, filenames are converted from the local encoding to the remote
-    /// encoding before being written to the wire.
     #[must_use]
     pub fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
         self
     }
 
-    /// Writes a file entry to the stream.
-    ///
-    /// This mirrors upstream rsync's `send_file_entry()` from flist.c.
-    /// For protocol 32, flags are written as varint (VARINT_FLIST_FLAGS is set).
-    pub fn write_entry<W: Write + ?Sized>(
-        &mut self,
-        writer: &mut W,
-        entry: &FileEntry,
-    ) -> io::Result<()> {
-        // Write entry bytes directly to the writer
-        self.write_entry_to_buffer(writer, entry)
+    /// Returns whether varint flag encoding is enabled.
+    #[inline]
+    fn use_varint_flags(&self) -> bool {
+        self.compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS))
     }
 
-    /// Internal: write entry bytes to a writer.
-    fn write_entry_to_buffer<W: Write + ?Sized>(
-        &mut self,
-        writer: &mut W,
-        entry: &FileEntry,
-    ) -> io::Result<()> {
-        let raw_name = entry.name().as_bytes();
+    /// Returns whether safe file list mode is enabled.
+    #[inline]
+    fn use_safe_file_list(&self) -> bool {
+        self.compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::SAFE_FILE_LIST))
+            || self.protocol.safe_file_list_always_enabled()
+    }
 
-        // Apply iconv conversion if configured (local -> remote encoding)
-        let name: std::borrow::Cow<'_, [u8]> = if let Some(ref converter) = self.iconv {
-            match converter.local_to_remote(raw_name) {
-                Ok(converted) => converted,
-                Err(e) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("filename encoding conversion failed: {e}"),
-                    ));
-                }
-            }
-        } else {
-            std::borrow::Cow::Borrowed(raw_name)
-        };
-
-        // Calculate name compression (upstream flist.c:532-534)
-        let same_len = common_prefix_len(&self.prev_name, &name);
-        let suffix_len = name.len() - same_len;
-
-        // Build xflags (upstream flist.c:406-540)
+    /// Calculates xflags for an entry based on comparison with previous entry.
+    fn calculate_xflags(&self, entry: &FileEntry, same_len: usize, suffix_len: usize) -> u32 {
         let mut xflags: u32 = 0;
 
-        // File type initialization
+        // Directory with top_dir flag
         if entry.is_dir() && entry.flags().top_dir() {
             xflags |= XMIT_TOP_DIR as u32;
         }
 
-        // Mode comparison (upstream flist.c:438-440)
-        if entry.mode() == self.prev_mode {
+        // Mode comparison
+        if entry.mode() == self.state.prev_mode {
             xflags |= XMIT_SAME_MODE as u32;
-        } else {
-            self.prev_mode = entry.mode();
         }
 
-        // Time comparison (upstream flist.c:494-496)
-        if entry.mtime() == self.prev_mtime {
+        // Time comparison
+        if entry.mtime() == self.state.prev_mtime {
             xflags |= XMIT_SAME_TIME as u32;
-        } else {
-            self.prev_mtime = entry.mtime();
         }
 
-        // UID comparison (upstream flist.c:463-467)
-        // Get the entry's UID, defaulting to 0 if not set
+        // UID comparison
         let entry_uid = entry.uid().unwrap_or(0);
-        if self.preserve_uid && entry_uid == self.prev_uid {
+        if self.preserve_uid && entry_uid == self.state.prev_uid {
             xflags |= XMIT_SAME_UID as u32;
         }
 
-        // GID comparison (upstream flist.c:473-476)
-        // Get the entry's GID, defaulting to 0 if not set
+        // GID comparison
         let entry_gid = entry.gid().unwrap_or(0);
-        if self.preserve_gid && entry_gid == self.prev_gid {
+        if self.preserve_gid && entry_gid == self.state.prev_gid {
             xflags |= XMIT_SAME_GID as u32;
         }
 
-        // Name compression (upstream flist.c:532-537)
+        // Name compression
         if same_len > 0 {
             xflags |= XMIT_SAME_NAME as u32;
         }
@@ -204,207 +146,193 @@ impl FileListWriter {
             xflags |= XMIT_LONG_NAME as u32;
         }
 
-        // Check if varint encoding is enabled via VARINT_FLIST_FLAGS compat flag
-        // IMPORTANT: Use compat flag, NOT protocol version alone!
-        //
-        // The server only sets VARINT_FLIST_FLAGS if the client advertises 'v' capability.
-        // A client could connect with protocol 30+ but WITHOUT 'v', in which case
-        // single-byte flags must be used. This is critical for daemon client interop.
-        //
-        // Upstream flist.c:send_file_entry() uses xfer_flags_as_varint which is set
-        // based on the negotiated compat flags (compat.c:775).
-        let use_varint_flags = self
-            .compat_flags
-            .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS));
+        xflags
+    }
 
-        // Write xflags (upstream flist.c:549-559)
-        if use_varint_flags {
-            // Protocol 30+ with varint: avoid xflags=0 which looks like end marker
-            //
-            // Upstream flist.c:551-552:
-            //   if (!xflags && !S_ISDIR(mode))
-            //       xflags = XMIT_LONG_NAME; /* Avoid a 0 value */
-            //
-            // IMPORTANT: Although upstream only adds this for non-directories,
-            // we MUST add it for ALL entries to avoid xflags=0 looking like
-            // the file list end marker (varint 0 = 0x00).
-            //
-            // Upstream relies on directories having XMIT_TOP_DIR or other flags
-            // set, but our file list walker may produce directories without any
-            // "same-as-previous" flags, resulting in xflags=0.
-            //
-            // XMIT_LONG_NAME (0x40) is safe for directories - it just means
-            // the name length is encoded as varint instead of single byte.
-            if xflags == 0 {
-                xflags = XMIT_LONG_NAME as u32;
-            }
-            write_varint(writer, xflags as i32)?;
-        } else if self.protocol.as_u8() >= 28 {
-            // Protocol 28-29: upstream flist.c:551-558
-            // If xflags is 0 and not a directory, add XMIT_TOP_DIR
+    /// Writes flags to the wire in the appropriate format.
+    fn write_flags<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        xflags: u32,
+        is_dir: bool,
+    ) -> io::Result<()> {
+        if self.use_varint_flags() {
+            // Varint mode: avoid xflags=0 which looks like end marker
+            let flags_to_write = if xflags == 0 {
+                XMIT_LONG_NAME as u32
+            } else {
+                xflags
+            };
+            write_varint(writer, flags_to_write as i32)?;
+        } else if self.protocol.supports_extended_flags() {
+            // Protocol 28-29: two-byte encoding if needed
             let mut xflags_to_write = xflags;
-            if xflags_to_write == 0 && !entry.is_dir() {
+            if xflags_to_write == 0 && !is_dir {
                 xflags_to_write |= XMIT_TOP_DIR as u32;
             }
 
-            // If high byte is set OR xflags is still 0, use 2-byte encoding
             if (xflags_to_write & 0xFF00) != 0 || xflags_to_write == 0 {
                 xflags_to_write |= XMIT_EXTENDED_FLAGS as u32;
-                // File list flags use 2 separate bytes: [primary, extended]
-                // NOT shortint encoding. Primary flags in low byte, extended in high byte.
-                // Little-endian write matches this: [low, high] = [primary, extended]
                 writer.write_all(&(xflags_to_write as u16).to_le_bytes())?;
             } else {
-                // 1 byte encoding
                 writer.write_all(&[xflags_to_write as u8])?;
             }
         } else {
-            // Protocol < 28: simple byte encoding
-            // Avoid xflags=0 which looks like end marker (upstream flist.c:551-552)
-            if xflags == 0 && !entry.is_dir() {
-                xflags = XMIT_LONG_NAME as u32;
-            }
-            writer.write_all(&[xflags as u8])?;
+            // Protocol < 28: single byte
+            let flags_to_write = if xflags == 0 && !is_dir {
+                XMIT_LONG_NAME as u32
+            } else {
+                xflags
+            };
+            writer.write_all(&[flags_to_write as u8])?;
         }
+        Ok(())
+    }
 
-        // Write name compression info (upstream flist.c:560-569)
+    /// Writes name compression info and suffix.
+    fn write_name<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        name: &[u8],
+        same_len: usize,
+        suffix_len: usize,
+        xflags: u32,
+    ) -> io::Result<()> {
+        // Write same_len if XMIT_SAME_NAME is set
         if xflags & (XMIT_SAME_NAME as u32) != 0 {
             writer.write_all(&[same_len as u8])?;
         }
 
-        // Write suffix length (upstream flist.c:566-569 -> io.h:write_varint30)
-        // Uses codec for protocol-aware encoding:
-        // - Protocol >= 30: varint (variable length)
-        // - Protocol < 30: 4-byte fixed integer
-        // Without XMIT_LONG_NAME: write_byte (1 byte)
+        // Write suffix length
         if xflags & (XMIT_LONG_NAME as u32) != 0 {
             self.codec.write_long_name_len(writer, suffix_len)?;
         } else {
             writer.write_all(&[suffix_len as u8])?;
         }
 
-        // Write suffix bytes (upstream flist.c:570)
-        writer.write_all(&name[same_len..])?;
+        // Write suffix bytes
+        writer.write_all(&name[same_len..])
+    }
 
-        // Write file length (upstream flist.c:580)
-        //
-        // Upstream: write_varlong30(f, F_LENGTH(file), 3);
-        // VARINT_FLIST_FLAGS does NOT change this - it only affects xflags
-        // and end-of-list marker encoding, not file_length or mtime.
-        //
-        // The codec's write_file_size handles protocol-specific encoding:
-        // - Protocol < 30: 4-byte or 8-byte integer (longint)
-        // - Protocol >= 30: varlong30 with 3 bytes minimum
+    /// Writes metadata fields (size, mtime, mode, uid, gid).
+    fn write_metadata<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+        xflags: u32,
+    ) -> io::Result<()> {
+        // Write file size
         self.codec.write_file_size(writer, entry.size() as i64)?;
 
-        // Write mtime if different (upstream flist.c:581-585)
-        //
-        // Upstream for protocol >= 30: write_varlong(f, modtime, 4);
-        // VARINT_FLIST_FLAGS does NOT change mtime encoding.
-        //
-        // The codec's write_mtime handles protocol-specific encoding:
-        // - Protocol < 30: 4-byte unsigned integer (read_uint)
-        // - Protocol >= 30: varlong with 4 bytes minimum
+        // Write mtime if different
         if xflags & (XMIT_SAME_TIME as u32) == 0 {
             self.codec.write_mtime(writer, entry.mtime())?;
         }
 
-        // Write mode if different (upstream flist.c:593-594)
+        // Write mode if different
         if xflags & (XMIT_SAME_MODE as u32) == 0 {
-            // Upstream uses write_int(f, to_wire_mode(mode))
-            // to_wire_mode() is usually a no-op on Unix, just converts mode to i32
             let wire_mode = entry.mode() as i32;
             writer.write_all(&wire_mode.to_le_bytes())?;
         }
 
-        // Write UID if preserve_uid is set and XMIT_SAME_UID is NOT set
-        // Upstream flist.c:597-608
+        // Write UID if preserving and different
+        let entry_uid = entry.uid().unwrap_or(0);
         if self.preserve_uid && (xflags & (XMIT_SAME_UID as u32)) == 0 {
-            if self.protocol.as_u8() < 30 {
-                // Protocol < 30: write_int (4 bytes LE)
+            if self.protocol.uses_fixed_encoding() {
                 writer.write_all(&(entry_uid as i32).to_le_bytes())?;
             } else {
-                // Protocol >= 30: write_varint
                 write_varint(writer, entry_uid as i32)?;
-                // Note: XMIT_USER_NAME_FOLLOWS is not currently supported
             }
-            self.prev_uid = entry_uid;
+            self.state.update_uid(entry_uid);
         }
 
-        // Write GID if preserve_gid is set and XMIT_SAME_GID is NOT set
-        // Upstream flist.c:609-620
+        // Write GID if preserving and different
+        let entry_gid = entry.gid().unwrap_or(0);
         if self.preserve_gid && (xflags & (XMIT_SAME_GID as u32)) == 0 {
-            if self.protocol.as_u8() < 30 {
-                // Protocol < 30: write_int (4 bytes LE)
+            if self.protocol.uses_fixed_encoding() {
                 writer.write_all(&(entry_gid as i32).to_le_bytes())?;
             } else {
-                // Protocol >= 30: write_varint
                 write_varint(writer, entry_gid as i32)?;
-                // Note: XMIT_GROUP_NAME_FOLLOWS is not currently supported
             }
-            self.prev_gid = entry_gid;
+            self.state.update_gid(entry_gid);
         }
 
-        // Update previous name (upstream flist.c:677)
-        self.prev_name = name.to_vec();
+        Ok(())
+    }
+
+    /// Applies iconv encoding conversion to a filename.
+    fn apply_encoding_conversion<'a>(
+        &self,
+        name: &'a [u8],
+    ) -> io::Result<std::borrow::Cow<'a, [u8]>> {
+        if let Some(ref converter) = self.iconv {
+            match converter.local_to_remote(name) {
+                Ok(converted) => Ok(converted),
+                Err(e) => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("filename encoding conversion failed: {e}"),
+                )),
+            }
+        } else {
+            Ok(std::borrow::Cow::Borrowed(name))
+        }
+    }
+
+    /// Writes a file entry to the stream.
+    pub fn write_entry<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> io::Result<()> {
+        // Step 1: Apply encoding conversion
+        let raw_name = entry.name().as_bytes();
+        let name = self.apply_encoding_conversion(raw_name)?;
+
+        // Step 2: Calculate name compression
+        let same_len = self.state.calculate_name_prefix_len(&name);
+        let suffix_len = name.len() - same_len;
+
+        // Step 3: Calculate xflags
+        let xflags = self.calculate_xflags(entry, same_len, suffix_len);
+
+        // Step 4: Write flags
+        self.write_flags(writer, xflags, entry.is_dir())?;
+
+        // Step 5: Write name
+        self.write_name(writer, &name, same_len, suffix_len, xflags)?;
+
+        // Step 6: Write metadata
+        self.write_metadata(writer, entry, xflags)?;
+
+        // Step 7: Update state
+        self.state.update(
+            &name,
+            entry.mode(),
+            entry.mtime(),
+            entry.uid().unwrap_or(0),
+            entry.gid().unwrap_or(0),
+        );
 
         Ok(())
     }
 
     /// Writes the end-of-list marker.
-    ///
-    /// When `io_error` is provided and the `SAFE_FILE_LIST` flag is enabled,
-    /// writes an error marker followed by the error code (mirroring upstream
-    /// rsync's `write_end_of_flist(f, send_io_error_list)` from flist.c).
-    /// Otherwise writes a simple zero byte marker.
-    ///
-    /// The SAFE_FILE_LIST flag is automatically enabled for protocol 31+ or
-    /// when explicitly negotiated via compat flags (upstream compat.c:775).
     pub fn write_end<W: Write + ?Sized>(
         &self,
         writer: &mut W,
         io_error: Option<i32>,
     ) -> io::Result<()> {
-        // Check if varint flist flags mode is enabled (xfer_flags_as_varint in upstream)
-        // This is set when VARINT_FLIST_FLAGS compat flag is negotiated
-        let xfer_flags_as_varint = if let Some(flags) = self.compat_flags {
-            flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
-        } else {
-            false
-        };
-
-        // Check if safe file list mode is enabled (compat.c:775):
-        // use_safe_inc_flist = (compat_flags & CF_SAFE_FLIST) || protocol_version >= 31
-        let use_safe_inc_flist = if let Some(flags) = self.compat_flags {
-            flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
-        } else {
-            false
-        } || self.protocol.as_u8() >= 31;
-
-        // Upstream write_end_of_flist() logic (flist.c):
-        // if (xfer_flags_as_varint) {
-        //     write_varint(f, 0);
-        //     write_varint(f, send_io_error ? io_error : 0);
-        // } else if (send_io_error) {
-        //     write_shortint(f, XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST);
-        //     write_varint(f, io_error);
-        // } else
-        //     write_byte(f, 0);
-
-        if xfer_flags_as_varint {
-            // Protocol 30+ with VARINT_FLIST_FLAGS: always write two varints
-            write_varint(writer, 0)?; // End marker
-            write_varint(writer, io_error.unwrap_or(0))?; // Error code (0 = success)
+        if self.use_varint_flags() {
+            // Varint mode: zero flags + error code
+            write_varint(writer, 0)?;
+            write_varint(writer, io_error.unwrap_or(0))?;
             return Ok(());
         }
 
         if let Some(error) = io_error
-            && use_safe_inc_flist
+            && self.use_safe_file_list()
         {
-            // Send error marker with code (upstream flist.c:send_end_of_flist)
-            // Uses write_shortint for the marker (2 bytes little-endian), then varint for error
-            // write_shortint(f, XMIT_EXTENDED_FLAGS|XMIT_IO_ERROR_ENDLIST);
-            // write_varint(f, io_error);
+            // Error marker + code
             let marker_lo = XMIT_EXTENDED_FLAGS;
             let marker_hi = XMIT_IO_ERROR_ENDLIST;
             writer.write_all(&[marker_lo, marker_hi])?;
@@ -412,25 +340,12 @@ impl FileListWriter {
             return Ok(());
         }
 
-        // Normal end of list marker (legacy mode)
+        // Normal end marker
         writer.write_all(&[0u8])
     }
 }
 
-/// Calculates the length of the common prefix between two byte slices.
-fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
-    a.iter()
-        .zip(b.iter())
-        .take_while(|(x, y)| x == y)
-        .count()
-        .min(255) // Maximum same_len is 255 (single byte)
-}
-
 /// Writes a single file entry to a writer.
-///
-/// This is a convenience function for writing individual entries without
-/// maintaining writer state. For writing multiple entries with compression,
-/// use [`FileListWriter`].
 pub fn write_file_entry<W: Write>(
     writer: &mut W,
     entry: &FileEntry,
@@ -449,26 +364,6 @@ mod tests {
     }
 
     #[test]
-    fn common_prefix_len_empty() {
-        assert_eq!(common_prefix_len(b"", b""), 0);
-        assert_eq!(common_prefix_len(b"abc", b""), 0);
-        assert_eq!(common_prefix_len(b"", b"abc"), 0);
-    }
-
-    #[test]
-    fn common_prefix_len_partial() {
-        assert_eq!(common_prefix_len(b"abc", b"abd"), 2);
-        assert_eq!(common_prefix_len(b"dir/file1", b"dir/file2"), 8);
-        assert_eq!(common_prefix_len(b"abc", b"xyz"), 0);
-    }
-
-    #[test]
-    fn common_prefix_len_full() {
-        assert_eq!(common_prefix_len(b"abc", b"abc"), 3);
-        assert_eq!(common_prefix_len(b"abc", b"abcdef"), 3);
-    }
-
-    #[test]
     fn write_end_marker() {
         let mut buf = Vec::new();
         let writer = FileListWriter::new(test_protocol());
@@ -484,16 +379,8 @@ mod tests {
 
         writer.write_entry(&mut buf, &entry).unwrap();
 
-        // Should have:
-        // - flags byte (non-zero)
-        // - extended flags byte (protocol 28+)
-        // - suffix length byte
-        // - name bytes
-        // - size varint
-        // - mtime varint
-        // - mode varint
         assert!(!buf.is_empty());
-        assert_ne!(buf[0], 0); // Non-zero flags
+        assert_ne!(buf[0], 0);
     }
 
     #[test]
@@ -510,8 +397,6 @@ mod tests {
         writer.write_entry(&mut buf, &entry2).unwrap();
         let second_len = buf.len() - first_len;
 
-        // Second entry should be shorter due to name compression
-        // (shares "dir/file" prefix)
         assert!(second_len < first_len, "second entry should be compressed");
     }
 
@@ -530,7 +415,6 @@ mod tests {
         writer.write_entry(&mut buf, &entry).unwrap();
         writer.write_end(&mut buf, None).unwrap();
 
-        // Now read it back
         let mut cursor = Cursor::new(&buf[..]);
         let mut reader = FileListReader::new(protocol);
 
@@ -548,24 +432,11 @@ mod tests {
         let mut buf = Vec::new();
         writer.write_end(&mut buf, Some(23)).unwrap();
 
-        // Should have written error marker + error code, not simple 0 byte
-        assert_ne!(buf, vec![0u8], "should not write simple end marker");
-        assert!(buf.len() > 1, "should have error marker and error code");
+        assert_ne!(buf, vec![0u8]);
+        assert!(buf.len() > 1);
+        assert_eq!(buf[0], XMIT_EXTENDED_FLAGS);
+        assert_eq!(buf[1], XMIT_IO_ERROR_ENDLIST);
 
-        // Verify error marker format (non-varint mode):
-        // First byte: XMIT_EXTENDED_FLAGS (0x04)
-        // Second byte: XMIT_IO_ERROR_ENDLIST (0x10)
-        // Then varint error code
-        assert_eq!(
-            buf[0], XMIT_EXTENDED_FLAGS,
-            "first byte should be XMIT_EXTENDED_FLAGS"
-        );
-        assert_eq!(
-            buf[1], XMIT_IO_ERROR_ENDLIST,
-            "second byte should be XMIT_IO_ERROR_ENDLIST"
-        );
-
-        // Third varint should be the error code
         use crate::varint::decode_varint;
         let cursor = &buf[2..];
         let (error_code, _) = decode_varint(cursor).unwrap();
@@ -574,36 +445,109 @@ mod tests {
 
     #[test]
     fn write_end_without_safe_file_list_writes_normal_marker_even_with_error() {
-        // Use protocol 30 to avoid automatic safe mode (protocol >= 31)
         let protocol = ProtocolVersion::try_from(30u8).unwrap();
         let writer = FileListWriter::new(protocol);
 
         let mut buf = Vec::new();
         writer.write_end(&mut buf, Some(23)).unwrap();
 
-        // Without SAFE_FILE_LIST, should write normal end marker even with error
         assert_eq!(buf, vec![0u8]);
     }
 
     #[test]
     fn write_end_with_protocol_31_enables_safe_mode_automatically() {
         let protocol = ProtocolVersion::try_from(31u8).unwrap();
-        let writer = FileListWriter::new(protocol); // No explicit compat flags
+        let writer = FileListWriter::new(protocol);
 
         let mut buf = Vec::new();
         writer.write_end(&mut buf, Some(42)).unwrap();
 
-        // Protocol 31+ automatically enables safe mode (uses 2-byte marker format)
         assert_ne!(buf, vec![0u8]);
         assert!(buf.len() > 1);
-
-        // Verify marker format and error code
         assert_eq!(buf[0], XMIT_EXTENDED_FLAGS);
         assert_eq!(buf[1], XMIT_IO_ERROR_ENDLIST);
 
         use crate::varint::decode_varint;
-        let cursor = &buf[2..]; // Skip 2-byte marker
+        let cursor = &buf[2..];
         let (error_code, _) = decode_varint(cursor).unwrap();
         assert_eq!(error_code, 42);
+    }
+
+    // Tests for extracted helper methods
+
+    #[test]
+    fn calculate_xflags_mode_comparison() {
+        let mut writer = FileListWriter::new(test_protocol());
+        // FileEntry::new_file includes file type bits (S_IFREG = 0o100000)
+        // so mode 0o644 becomes 0o100644
+        writer.state.update_mode(0o100644);
+
+        let entry_same = FileEntry::new_file("test".into(), 100, 0o644);
+        let entry_diff = FileEntry::new_file("test".into(), 100, 0o755);
+
+        let flags_same = writer.calculate_xflags(&entry_same, 0, 4);
+        let flags_diff = writer.calculate_xflags(&entry_diff, 0, 4);
+
+        assert!(flags_same & (XMIT_SAME_MODE as u32) != 0);
+        assert!(flags_diff & (XMIT_SAME_MODE as u32) == 0);
+    }
+
+    #[test]
+    fn calculate_xflags_time_comparison() {
+        let mut writer = FileListWriter::new(test_protocol());
+        writer.state.update_mtime(1700000000);
+
+        let mut entry_same = FileEntry::new_file("test".into(), 100, 0o644);
+        entry_same.set_mtime(1700000000, 0);
+
+        let mut entry_diff = FileEntry::new_file("test".into(), 100, 0o644);
+        entry_diff.set_mtime(1700000001, 0);
+
+        let flags_same = writer.calculate_xflags(&entry_same, 0, 4);
+        let flags_diff = writer.calculate_xflags(&entry_diff, 0, 4);
+
+        assert!(flags_same & (XMIT_SAME_TIME as u32) != 0);
+        assert!(flags_diff & (XMIT_SAME_TIME as u32) == 0);
+    }
+
+    #[test]
+    fn calculate_xflags_name_compression() {
+        let writer = FileListWriter::new(test_protocol());
+        let entry = FileEntry::new_file("test".into(), 100, 0o644);
+
+        let flags_no_prefix = writer.calculate_xflags(&entry, 0, 4);
+        let flags_with_prefix = writer.calculate_xflags(&entry, 2, 2);
+        let flags_long_name = writer.calculate_xflags(&entry, 0, 300);
+
+        assert!(flags_no_prefix & (XMIT_SAME_NAME as u32) == 0);
+        assert!(flags_with_prefix & (XMIT_SAME_NAME as u32) != 0);
+        assert!(flags_long_name & (XMIT_LONG_NAME as u32) != 0);
+    }
+
+    #[test]
+    fn use_varint_flags_checks_compat_flags() {
+        let protocol = test_protocol();
+
+        let writer_without = FileListWriter::new(protocol);
+        assert!(!writer_without.use_varint_flags());
+
+        let writer_with =
+            FileListWriter::with_compat_flags(protocol, CompatibilityFlags::VARINT_FLIST_FLAGS);
+        assert!(writer_with.use_varint_flags());
+    }
+
+    #[test]
+    fn use_safe_file_list_checks_protocol_and_flags() {
+        let writer30 = FileListWriter::new(ProtocolVersion::try_from(30u8).unwrap());
+        assert!(!writer30.use_safe_file_list());
+
+        let writer30_safe = FileListWriter::with_compat_flags(
+            ProtocolVersion::try_from(30u8).unwrap(),
+            CompatibilityFlags::SAFE_FILE_LIST,
+        );
+        assert!(writer30_safe.use_safe_file_list());
+
+        let writer31 = FileListWriter::new(ProtocolVersion::try_from(31u8).unwrap());
+        assert!(writer31.use_safe_file_list());
     }
 }
