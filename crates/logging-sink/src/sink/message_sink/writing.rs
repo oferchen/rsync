@@ -133,3 +133,159 @@ where
         self.writer.flush()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::message::MessageScratch;
+
+    fn make_sink() -> MessageSink<Vec<u8>> {
+        MessageSink::new(Vec::new())
+    }
+
+    #[test]
+    fn write_writes_message_to_buffer() {
+        let mut sink = make_sink();
+        let msg = Message::info("test message");
+        sink.write(&msg).unwrap();
+        assert!(!sink.writer().is_empty());
+    }
+
+    #[test]
+    fn write_appends_newline_in_default_mode() {
+        let mut sink = make_sink();
+        let msg = Message::info("test");
+        sink.write(&msg).unwrap();
+        assert!(sink.writer().ends_with(b"\n"));
+    }
+
+    #[test]
+    fn write_with_mode_uses_provided_mode() {
+        let mut sink = make_sink();
+        let msg = Message::info("test");
+        sink.write_with_mode(&msg, LineMode::WithoutNewline).unwrap();
+        assert!(!sink.writer().ends_with(b"\n"));
+    }
+
+    #[test]
+    fn write_with_mode_with_newline_appends_newline() {
+        let mut sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        let msg = Message::info("test");
+        sink.write_with_mode(&msg, LineMode::WithNewline).unwrap();
+        assert!(sink.writer().ends_with(b"\n"));
+    }
+
+    #[test]
+    fn write_segments_writes_to_buffer() {
+        let mut sink = make_sink();
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        sink.write_segments(&segments, false).unwrap();
+        assert!(!sink.writer().is_empty());
+    }
+
+    #[test]
+    fn write_segments_appends_newline_when_needed() {
+        let mut sink = make_sink();
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        sink.write_segments(&segments, false).unwrap();
+        assert!(sink.writer().ends_with(b"\n"));
+    }
+
+    #[test]
+    fn write_segments_no_double_newline() {
+        let mut sink = make_sink();
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, true);
+        sink.write_segments(&segments, true).unwrap();
+        // Should not have double newline
+        let buffer = sink.writer();
+        assert!(buffer.ends_with(b"\n"));
+        assert!(!buffer.ends_with(b"\n\n"));
+    }
+
+    #[test]
+    fn write_segments_with_mode_uses_provided_mode() {
+        let mut sink = make_sink();
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        sink.write_segments_with_mode(&segments, LineMode::WithoutNewline, false)
+            .unwrap();
+        assert!(!sink.writer().ends_with(b"\n"));
+    }
+
+    #[test]
+    fn write_all_writes_multiple_messages() {
+        let mut sink = make_sink();
+        let messages = vec![
+            Message::info("first"),
+            Message::info("second"),
+            Message::info("third"),
+        ];
+        sink.write_all(&messages).unwrap();
+        let output = String::from_utf8_lossy(sink.writer());
+        assert!(output.contains("first"));
+        assert!(output.contains("second"));
+        assert!(output.contains("third"));
+    }
+
+    #[test]
+    fn write_all_appends_newline_to_each() {
+        let mut sink = make_sink();
+        let messages = vec![Message::info("a"), Message::info("b")];
+        sink.write_all(&messages).unwrap();
+        let output = sink.writer();
+        // Count newlines
+        let newline_count = output.iter().filter(|&&b| b == b'\n').count();
+        assert_eq!(newline_count, 2);
+    }
+
+    #[test]
+    fn write_all_with_mode_uses_provided_mode() {
+        let mut sink = make_sink();
+        let messages = vec![Message::info("a"), Message::info("b")];
+        sink.write_all_with_mode(&messages, LineMode::WithoutNewline)
+            .unwrap();
+        let output = sink.writer();
+        // No newlines should be added
+        let newline_count = output.iter().filter(|&&b| b == b'\n').count();
+        assert_eq!(newline_count, 0);
+    }
+
+    #[test]
+    fn write_all_empty_iterator_succeeds() {
+        let mut sink = make_sink();
+        let messages: Vec<Message> = vec![];
+        let result = sink.write_all(messages);
+        assert!(result.is_ok());
+        assert!(sink.writer().is_empty());
+    }
+
+    #[test]
+    fn flush_succeeds() {
+        let mut sink = make_sink();
+        let result = sink.flush();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn write_accepts_owned_message() {
+        let mut sink = make_sink();
+        let msg = Message::info("owned");
+        sink.write(msg).unwrap();
+        assert!(!sink.writer().is_empty());
+    }
+
+    #[test]
+    fn write_accepts_borrowed_message() {
+        let mut sink = make_sink();
+        let msg = Message::info("borrowed");
+        sink.write(&msg).unwrap();
+        assert!(!sink.writer().is_empty());
+    }
+}

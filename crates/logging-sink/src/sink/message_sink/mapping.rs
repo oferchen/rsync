@@ -65,3 +65,136 @@ impl<W> MessageSink<W> {
         writer
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::line_mode::LineMode;
+    use core::branding::Brand;
+
+    fn make_sink() -> MessageSink<Vec<u8>> {
+        MessageSink::new(Vec::new())
+    }
+
+    #[test]
+    fn map_writer_transforms_writer() {
+        let sink = MessageSink::new(vec![1, 2, 3]);
+        let mapped = sink.map_writer(|v| v.into_iter().map(|x| x * 2).collect::<Vec<_>>());
+        assert_eq!(mapped.writer(), &vec![2, 4, 6]);
+    }
+
+    #[test]
+    fn map_writer_preserves_line_mode() {
+        let sink = MessageSink::with_line_mode(Vec::<u8>::new(), LineMode::WithoutNewline);
+        let mapped = sink.map_writer(|w| w);
+        assert_eq!(mapped.line_mode(), LineMode::WithoutNewline);
+    }
+
+    #[test]
+    fn map_writer_preserves_brand() {
+        let sink = MessageSink::with_brand(Vec::<u8>::new(), Brand::Oc);
+        let mapped = sink.map_writer(|w| w);
+        assert_eq!(mapped.brand(), Brand::Oc);
+    }
+
+    #[test]
+    fn map_writer_changes_writer_type() {
+        let sink = MessageSink::new(vec![1u8, 2, 3]);
+        let mapped: MessageSink<String> = sink.map_writer(|v| String::from_utf8(v).unwrap_or_default());
+        assert!(mapped.writer().contains('\u{1}'));
+    }
+
+    #[test]
+    fn try_map_writer_succeeds_on_ok() {
+        let sink = make_sink();
+        let result = sink.try_map_writer(|w| Ok::<_, (Vec<u8>, &str)>(w));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_map_writer_returns_mapped_sink_on_success() {
+        let sink = MessageSink::new(vec![1, 2, 3]);
+        let result = sink.try_map_writer(|v| {
+            Ok::<_, (Vec<u8>, &str)>(v.into_iter().map(|x| x * 2).collect::<Vec<_>>())
+        });
+        assert!(result.is_ok());
+        let mapped = result.unwrap();
+        assert_eq!(mapped.writer(), &vec![2, 4, 6]);
+    }
+
+    #[test]
+    fn try_map_writer_returns_error_on_failure() {
+        let sink = make_sink();
+        let result = sink.try_map_writer(|w| Err::<Vec<u8>, _>((w, "error")));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_map_writer_preserves_sink_on_failure() {
+        let sink = MessageSink::new(vec![1, 2, 3]);
+        let result = sink.try_map_writer(|w| Err::<Vec<u8>, _>((w, "error")));
+        let err = result.unwrap_err();
+        assert_eq!(err.sink().writer(), &vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn try_map_writer_preserves_line_mode_on_success() {
+        let sink = MessageSink::with_line_mode(Vec::new(), LineMode::WithoutNewline);
+        let result = sink.try_map_writer(|w| Ok::<_, (Vec<u8>, &str)>(w));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().line_mode(), LineMode::WithoutNewline);
+    }
+
+    #[test]
+    fn try_map_writer_preserves_brand_on_success() {
+        let sink = MessageSink::with_brand(Vec::new(), Brand::Oc);
+        let result = sink.try_map_writer(|w| Ok::<_, (Vec<u8>, &str)>(w));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().brand(), Brand::Oc);
+    }
+
+    #[test]
+    fn try_map_writer_preserves_line_mode_on_failure() {
+        let sink = MessageSink::with_line_mode(Vec::<u8>::new(), LineMode::WithoutNewline);
+        let result = sink.try_map_writer(|w| Err::<Vec<u8>, _>((w, "error")));
+        let err = result.unwrap_err();
+        assert_eq!(err.sink().line_mode(), LineMode::WithoutNewline);
+    }
+
+    #[test]
+    fn try_map_writer_error_contains_error_value() {
+        let sink = make_sink();
+        let result = sink.try_map_writer(|w| Err::<Vec<u8>, _>((w, "specific error")));
+        let err = result.unwrap_err();
+        assert_eq!(err.error(), &"specific error");
+    }
+
+    #[test]
+    fn replace_writer_swaps_writers() {
+        let mut sink = MessageSink::new(vec![1, 2, 3]);
+        let old = sink.replace_writer(vec![4, 5, 6]);
+        assert_eq!(old, vec![1, 2, 3]);
+        assert_eq!(sink.writer(), &vec![4, 5, 6]);
+    }
+
+    #[test]
+    fn replace_writer_preserves_line_mode() {
+        let mut sink = MessageSink::with_line_mode(Vec::<u8>::new(), LineMode::WithoutNewline);
+        let _ = sink.replace_writer(Vec::new());
+        assert_eq!(sink.line_mode(), LineMode::WithoutNewline);
+    }
+
+    #[test]
+    fn replace_writer_preserves_brand() {
+        let mut sink = MessageSink::with_brand(Vec::<u8>::new(), Brand::Oc);
+        let _ = sink.replace_writer(Vec::new());
+        assert_eq!(sink.brand(), Brand::Oc);
+    }
+
+    #[test]
+    fn replace_writer_returns_old_writer() {
+        let mut sink = MessageSink::new(b"old content".to_vec());
+        let old = sink.replace_writer(Vec::new());
+        assert_eq!(old, b"old content");
+    }
+}
