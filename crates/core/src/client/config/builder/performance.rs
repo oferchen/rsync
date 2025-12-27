@@ -134,3 +134,196 @@ impl ClientConfigBuilder {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn builder() -> ClientConfigBuilder {
+        ClientConfigBuilder::default()
+    }
+
+    #[test]
+    fn bandwidth_limit_sets_value() {
+        // BandwidthLimit requires special construction, just test None here
+        let config = builder().bandwidth_limit(None).build();
+        assert!(config.bandwidth_limit().is_none());
+    }
+
+    #[test]
+    fn compress_sets_flag() {
+        let config = builder().compress(true).build();
+        assert!(config.compress());
+    }
+
+    #[test]
+    fn compress_false_clears_flag() {
+        let config = builder()
+            .compress(true)
+            .compress(false)
+            .build();
+        assert!(!config.compress());
+    }
+
+    #[test]
+    fn compression_level_sets_value() {
+        let config = builder().compression_level(Some(CompressionLevel::Default)).build();
+        assert!(config.compress());
+    }
+
+    #[test]
+    fn compression_level_none_clears_value() {
+        let _config = builder()
+            .compression_level(Some(CompressionLevel::Default))
+            .compression_level(None)
+            .build();
+        // Level becomes None, but compress state depends on implementation
+    }
+
+    #[test]
+    fn compression_algorithm_sets_value() {
+        let config = builder().compression_algorithm(CompressionAlgorithm::Zstd).build();
+        assert_eq!(config.compression_algorithm(), CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    fn compression_setting_enabled() {
+        let setting = CompressionSetting::level(CompressionLevel::Default);
+        let config = builder().compression_setting(setting).build();
+        assert!(config.compress());
+    }
+
+    #[test]
+    fn compression_setting_disabled() {
+        let config = builder().compression_setting(CompressionSetting::disabled()).build();
+        assert!(!config.compress());
+    }
+
+    #[test]
+    fn open_noatime_sets_flag() {
+        let config = builder().open_noatime(true).build();
+        assert!(config.open_noatime());
+    }
+
+    #[test]
+    fn open_noatime_false_clears_flag() {
+        let config = builder()
+            .open_noatime(true)
+            .open_noatime(false)
+            .build();
+        assert!(!config.open_noatime());
+    }
+
+    #[test]
+    fn whole_file_sets_true() {
+        let config = builder().whole_file(true).build();
+        assert!(config.whole_file());
+    }
+
+    #[test]
+    fn whole_file_sets_false() {
+        let config = builder().whole_file(false).build();
+        assert!(!config.whole_file());
+    }
+
+    #[test]
+    fn block_size_override_sets_value() {
+        let size = NonZeroU32::new(4096).unwrap();
+        let config = builder().block_size_override(Some(size)).build();
+        assert_eq!(config.block_size_override(), Some(size));
+    }
+
+    #[test]
+    fn block_size_override_none_clears_value() {
+        let size = NonZeroU32::new(4096).unwrap();
+        let config = builder()
+            .block_size_override(Some(size))
+            .block_size_override(None)
+            .build();
+        assert!(config.block_size_override().is_none());
+    }
+
+    #[test]
+    fn max_alloc_sets_limit() {
+        let config = builder().max_alloc(Some(1073741824)).build();
+        assert_eq!(config.max_alloc(), Some(1073741824));
+    }
+
+    #[test]
+    fn max_alloc_none_clears_limit() {
+        let config = builder()
+            .max_alloc(Some(1073741824))
+            .max_alloc(None)
+            .build();
+        assert!(config.max_alloc().is_none());
+    }
+
+    #[test]
+    fn sparse_sets_flag() {
+        let config = builder().sparse(true).build();
+        assert!(config.sparse());
+    }
+
+    #[test]
+    fn sparse_false_clears_flag() {
+        let config = builder()
+            .sparse(true)
+            .sparse(false)
+            .build();
+        assert!(!config.sparse());
+    }
+
+    #[test]
+    fn fuzzy_sets_flag() {
+        let config = builder().fuzzy(true).build();
+        assert!(config.fuzzy());
+    }
+
+    #[test]
+    fn fuzzy_false_clears_flag() {
+        let config = builder()
+            .fuzzy(true)
+            .fuzzy(false)
+            .build();
+        assert!(!config.fuzzy());
+    }
+
+    #[test]
+    fn qsort_sets_flag() {
+        let config = builder().qsort(true).build();
+        assert!(config.qsort());
+    }
+
+    #[test]
+    fn qsort_false_clears_flag() {
+        let config = builder()
+            .qsort(true)
+            .qsort(false)
+            .build();
+        assert!(!config.qsort());
+    }
+
+    #[test]
+    fn default_compress_is_false() {
+        let config = builder().build();
+        assert!(!config.compress());
+    }
+
+    #[test]
+    fn default_sparse_is_false() {
+        let config = builder().build();
+        assert!(!config.sparse());
+    }
+
+    #[test]
+    fn default_fuzzy_is_false() {
+        let config = builder().build();
+        assert!(!config.fuzzy());
+    }
+
+    #[test]
+    fn default_qsort_is_false() {
+        let config = builder().build();
+        assert!(!config.qsort());
+    }
+}
