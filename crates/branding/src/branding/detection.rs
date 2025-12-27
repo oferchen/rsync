@@ -83,3 +83,136 @@ pub fn detect_brand(program: Option<&OsStr>) -> Brand {
 pub fn resolve_brand_profile(program: Option<&OsStr>) -> BrandProfile {
     detect_brand(program).profile()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn oc_client() -> &'static str {
+        manifest().client_program_name_for(Brand::Oc)
+    }
+
+    fn oc_daemon() -> &'static str {
+        manifest().daemon_program_name_for(Brand::Oc)
+    }
+
+    fn upstream_client() -> &'static str {
+        manifest().client_program_name_for(Brand::Upstream)
+    }
+
+    // classify_program_name tests
+    #[test]
+    fn classify_oc_client() {
+        assert_eq!(classify_program_name(oc_client()), Some(Brand::Oc));
+    }
+
+    #[test]
+    fn classify_oc_daemon() {
+        assert_eq!(classify_program_name(oc_daemon()), Some(Brand::Oc));
+    }
+
+    #[test]
+    fn classify_upstream_client() {
+        assert_eq!(
+            classify_program_name(upstream_client()),
+            Some(Brand::Upstream)
+        );
+    }
+
+    #[test]
+    fn classify_unknown_returns_none() {
+        assert_eq!(classify_program_name("unknown-program"), None);
+    }
+
+    #[test]
+    fn classify_empty_returns_none() {
+        assert_eq!(classify_program_name(""), None);
+    }
+
+    // brand_for_program_name tests
+    #[test]
+    fn brand_for_program_name_oc() {
+        assert_eq!(brand_for_program_name(oc_client()), Brand::Oc);
+    }
+
+    #[test]
+    fn brand_for_program_name_upstream() {
+        assert_eq!(brand_for_program_name(upstream_client()), Brand::Upstream);
+    }
+
+    #[test]
+    fn brand_for_program_name_unknown_uses_default() {
+        assert_eq!(brand_for_program_name("unknown"), default_brand());
+    }
+
+    // brand_for_program_path tests
+    #[test]
+    fn brand_for_path_with_extension() {
+        let path_str = format!("/usr/bin/{}.exe", oc_client());
+        let path = Path::new(&path_str);
+        assert_eq!(brand_for_program_path(path), Some(Brand::Oc));
+    }
+
+    #[test]
+    fn brand_for_path_without_extension() {
+        let path_str = format!("/usr/local/bin/{}", upstream_client());
+        let path = Path::new(&path_str);
+        assert_eq!(brand_for_program_path(path), Some(Brand::Upstream));
+    }
+
+    #[test]
+    fn brand_for_path_nested_directory() {
+        let path_str = format!("/home/user/.local/bin/{}", oc_daemon());
+        let path = Path::new(&path_str);
+        assert_eq!(brand_for_program_path(path), Some(Brand::Oc));
+    }
+
+    #[test]
+    fn brand_for_path_unknown_returns_none() {
+        assert_eq!(brand_for_program_path(Path::new("/usr/bin/unknown")), None);
+    }
+
+    // brand_for_program_os_str tests
+    #[test]
+    fn brand_for_os_str_oc() {
+        let os_str = OsStr::new(oc_client());
+        assert_eq!(brand_for_program_os_str(os_str), Some(Brand::Oc));
+    }
+
+    #[test]
+    fn brand_for_os_str_path() {
+        let path = format!("/bin/{}", upstream_client());
+        let os_str = OsStr::new(&path);
+        assert_eq!(brand_for_program_os_str(os_str), Some(Brand::Upstream));
+    }
+
+    // detect_brand tests
+    #[test]
+    fn detect_brand_from_program_arg() {
+        let program = OsString::from(oc_client());
+        let brand = detect_brand(Some(program.as_os_str()));
+        // May return Oc or be overridden by env, but should not panic
+        assert!(brand == Brand::Oc || brand == Brand::Upstream);
+    }
+
+    #[test]
+    fn detect_brand_with_none_uses_current_exe() {
+        let brand = detect_brand(None);
+        assert!(brand == Brand::Oc || brand == Brand::Upstream);
+    }
+
+    // resolve_brand_profile tests
+    #[test]
+    fn resolve_brand_profile_returns_profile() {
+        let program = OsString::from(upstream_client());
+        let profile = resolve_brand_profile(Some(program.as_os_str()));
+        assert!(!profile.client_program_name().is_empty());
+    }
+
+    #[test]
+    fn resolve_brand_profile_with_none() {
+        let profile = resolve_brand_profile(None);
+        assert!(!profile.daemon_program_name().is_empty());
+    }
+}
