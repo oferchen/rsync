@@ -415,3 +415,228 @@ impl<R> BinaryHandshake<R> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sniff_negotiation_stream;
+    use std::io::{self, Cursor};
+
+    fn create_test_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
+        // Binary negotiation is triggered by first byte != '@'
+        // Protocol 31 as BE u32: 0x00 0x00 0x00 0x1f
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        BinaryHandshake::from_components(31, proto31, proto31, proto31, CompatibilityFlags::EMPTY, stream)
+    }
+
+    // ==== Protocol accessors ====
+
+    #[test]
+    fn negotiated_protocol_returns_version() {
+        let hs = create_test_handshake();
+        assert_eq!(hs.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn remote_protocol_returns_clamped_version() {
+        let hs = create_test_handshake();
+        assert_eq!(hs.remote_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn remote_advertised_protocol_returns_raw() {
+        let hs = create_test_handshake();
+        assert_eq!(hs.remote_advertised_protocol(), 31);
+    }
+
+    #[test]
+    fn local_advertised_protocol_returns_version() {
+        let hs = create_test_handshake();
+        assert_eq!(hs.local_advertised_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn remote_compatibility_flags_empty() {
+        let hs = create_test_handshake();
+        assert_eq!(hs.remote_compatibility_flags(), CompatibilityFlags::EMPTY);
+    }
+
+    // ==== Protocol clamping ====
+
+    #[test]
+    fn remote_protocol_was_clamped_false_when_supported() {
+        let hs = create_test_handshake();
+        assert!(!hs.remote_protocol_was_clamped());
+    }
+
+    #[test]
+    fn remote_advertisement_returns_classification() {
+        let hs = create_test_handshake();
+        let adv = hs.remote_advertisement();
+        assert!(!adv.was_clamped());
+        assert_eq!(adv.negotiated().as_u8(), 31);
+    }
+
+    #[test]
+    fn local_protocol_was_capped_true_when_reduced() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let proto29 = ProtocolVersion::from_supported(29).unwrap();
+        let hs = BinaryHandshake::from_components(31, proto31, proto29, proto29, CompatibilityFlags::EMPTY, stream);
+        assert!(hs.local_protocol_was_capped());
+    }
+
+    #[test]
+    fn local_protocol_was_capped_false_when_not_reduced() {
+        let hs = create_test_handshake();
+        assert!(!hs.local_protocol_was_capped());
+    }
+
+    // ==== Stream accessors ====
+
+    #[test]
+    fn stream_returns_shared_reference() {
+        let hs = create_test_handshake();
+        let stream = hs.stream();
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn stream_mut_returns_mutable_reference() {
+        let mut hs = create_test_handshake();
+        let stream = hs.stream_mut();
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn into_stream_returns_owned_stream() {
+        let hs = create_test_handshake();
+        let stream = hs.into_stream();
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+    }
+
+    // ==== Decomposition ====
+
+    #[test]
+    fn into_components_returns_all_parts() {
+        let hs = create_test_handshake();
+        let (remote_adv, remote_proto, local_adv, negotiated, flags, stream) = hs.into_components();
+        assert_eq!(remote_adv, 31);
+        assert_eq!(remote_proto.as_u8(), 31);
+        assert_eq!(local_adv.as_u8(), 31);
+        assert_eq!(negotiated.as_u8(), 31);
+        assert_eq!(flags, CompatibilityFlags::EMPTY);
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn into_parts_returns_handshake_parts() {
+        let hs = create_test_handshake();
+        let parts = hs.into_parts();
+        assert_eq!(parts.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn into_stream_parts_returns_components() {
+        let hs = create_test_handshake();
+        let (remote_adv, remote_proto, local_adv, negotiated, flags, parts) = hs.into_stream_parts();
+        assert_eq!(remote_adv, 31);
+        assert_eq!(remote_proto.as_u8(), 31);
+        assert_eq!(local_adv.as_u8(), 31);
+        assert_eq!(negotiated.as_u8(), 31);
+        assert_eq!(flags, CompatibilityFlags::EMPTY);
+        assert_eq!(parts.decision(), NegotiationPrologue::Binary);
+    }
+
+    // ==== Reconstruction ====
+
+    #[test]
+    fn from_components_reconstructs_handshake() {
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        let hs = BinaryHandshake::from_components(31, proto31, proto31, proto31, CompatibilityFlags::EMPTY, stream);
+        assert_eq!(hs.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn from_parts_reconstructs_handshake() {
+        let hs = create_test_handshake();
+        let parts = hs.into_parts();
+        let reconstructed = BinaryHandshake::from_parts(parts);
+        assert_eq!(reconstructed.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn from_stream_parts_reconstructs_handshake() {
+        let hs = create_test_handshake();
+        let (remote_adv, remote_proto, local_adv, negotiated, flags, parts) = hs.into_stream_parts();
+        let reconstructed = BinaryHandshake::from_stream_parts(remote_adv, remote_proto, local_adv, negotiated, flags, parts);
+        assert_eq!(reconstructed.negotiated_protocol().as_u8(), 31);
+    }
+
+    // ==== Mapping ====
+
+    #[test]
+    fn map_stream_inner_transforms_transport() {
+        let hs = create_test_handshake();
+        let mapped = hs.map_stream_inner(|cursor| {
+            let pos = cursor.position();
+            let mut new_cursor = Cursor::new(cursor.into_inner());
+            new_cursor.set_position(pos);
+            new_cursor
+        });
+        assert_eq!(mapped.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn try_map_stream_inner_succeeds() {
+        let hs = create_test_handshake();
+        let result = hs.try_map_stream_inner(|cursor| -> Result<_, (io::Error, _)> { Ok(cursor) });
+        assert!(result.is_ok());
+        let mapped = result.unwrap();
+        assert_eq!(mapped.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn try_map_stream_inner_fails_preserves_handshake() {
+        let hs = create_test_handshake();
+        let result = hs.try_map_stream_inner(|cursor| -> Result<Cursor<Vec<u8>>, _> {
+            Err((io::Error::new(io::ErrorKind::Other, "test error"), cursor))
+        });
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.error().kind(), io::ErrorKind::Other);
+        let recovered = err.into_original();
+        assert_eq!(recovered.negotiated_protocol().as_u8(), 31);
+    }
+
+    // ==== Rehydrate sniffer ====
+
+    #[test]
+    fn rehydrate_sniffer_succeeds() {
+        let hs = create_test_handshake();
+        let mut sniffer = NegotiationPrologueSniffer::new();
+        let result = hs.rehydrate_sniffer(&mut sniffer);
+        assert!(result.is_ok());
+    }
+
+    // ==== Clone and Debug ====
+
+    #[test]
+    fn clone_produces_independent_copy() {
+        let hs = create_test_handshake();
+        let cloned = hs.clone();
+        assert_eq!(hs.negotiated_protocol(), cloned.negotiated_protocol());
+    }
+
+    #[test]
+    fn debug_format_contains_type_name() {
+        let hs = create_test_handshake();
+        let debug = format!("{hs:?}");
+        assert!(debug.contains("BinaryHandshake"));
+    }
+}
