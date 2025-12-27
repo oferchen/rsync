@@ -6,10 +6,22 @@ pub mod scenarios;
 
 use crate::commands::interop::args::ExitCodesOptions;
 use crate::error::TaskResult;
+use runner::RunnerOptions;
 use std::path::Path;
 
 /// Execute exit code validation.
 pub fn execute(workspace: &Path, options: ExitCodesOptions) -> TaskResult<()> {
+    // Create log directory if specified
+    if let Some(ref log_dir) = options.log_dir {
+        std::fs::create_dir_all(log_dir).map_err(|e| {
+            crate::error::TaskError::Io(std::io::Error::new(
+                e.kind(),
+                format!("Failed to create log directory '{}': {}", log_dir, e),
+            ))
+        })?;
+        eprintln!("[interop] Logs will be saved to: {}", log_dir);
+    }
+
     if options.regenerate {
         eprintln!("[interop] Regenerating exit code golden files...");
         regenerate_goldens(workspace, options)?;
@@ -68,8 +80,14 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
             binary.version
         );
 
+        let runner_opts = RunnerOptions {
+            verbose: options.verbose,
+            show_output: options.show_output,
+            log_dir: options.log_dir.clone(),
+            version: Some(binary.version.clone()),
+        };
         let results =
-            runner::run_scenarios(&runnable_scenarios, binary.binary_path(), options.verbose)?;
+            runner::run_scenarios(&runnable_scenarios, binary.binary_path(), &runner_opts)?;
 
         // Generate and save golden file
         let golden = golden::generate_golden(binary.version.clone(), &results);
@@ -152,8 +170,14 @@ fn validate_oc_rsync(
         let golden = golden::load_golden(workspace, version)?;
 
         // Run scenarios with oc-rsync
+        let runner_opts = RunnerOptions {
+            verbose: options.verbose,
+            show_output: options.show_output,
+            log_dir: options.log_dir.clone(),
+            version: Some(version.to_string()),
+        };
         let results =
-            runner::run_scenarios(runnable_scenarios, oc_binary.binary_path(), options.verbose)?;
+            runner::run_scenarios(runnable_scenarios, oc_binary.binary_path(), &runner_opts)?;
 
         // Validate results against golden
         let errors = golden::validate_against_golden(&results, &golden);
@@ -230,8 +254,14 @@ fn validate_upstream(
         let golden = golden::load_golden(workspace, &binary.version)?;
 
         // Run scenarios
+        let runner_opts = RunnerOptions {
+            verbose: options.verbose,
+            show_output: options.show_output,
+            log_dir: options.log_dir.clone(),
+            version: Some(binary.version.clone()),
+        };
         let results =
-            runner::run_scenarios(runnable_scenarios, binary.binary_path(), options.verbose)?;
+            runner::run_scenarios(runnable_scenarios, binary.binary_path(), &runner_opts)?;
 
         // Validate results
         let errors = golden::validate_against_golden(&results, &golden);
