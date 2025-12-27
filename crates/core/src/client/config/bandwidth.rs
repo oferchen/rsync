@@ -181,3 +181,172 @@ impl From<&BandwidthLimit> for bandwidth::BandwidthLimitComponents {
         limit.components()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod bandwidth_limit_tests {
+        use super::*;
+
+        #[test]
+        fn from_bytes_per_second() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());
+            assert_eq!(limit.bytes_per_second().get(), 1024);
+            assert!(limit.burst_bytes().is_none());
+            assert!(!limit.burst_specified());
+        }
+
+        #[test]
+        fn from_rate_and_burst_without_burst() {
+            let limit = BandwidthLimit::from_rate_and_burst(
+                NonZeroU64::new(2048).unwrap(),
+                None,
+            );
+            assert_eq!(limit.bytes_per_second().get(), 2048);
+            assert!(limit.burst_bytes().is_none());
+            assert!(!limit.burst_specified());
+        }
+
+        #[test]
+        fn from_rate_and_burst_with_burst() {
+            let limit = BandwidthLimit::from_rate_and_burst(
+                NonZeroU64::new(1024).unwrap(),
+                Some(NonZeroU64::new(4096).unwrap()),
+            );
+            assert_eq!(limit.bytes_per_second().get(), 1024);
+            assert_eq!(limit.burst_bytes().unwrap().get(), 4096);
+            assert!(limit.burst_specified());
+        }
+
+        #[test]
+        fn from_components_with_rate() {
+            let components = bandwidth::BandwidthLimitComponents::new(
+                Some(NonZeroU64::new(512).unwrap()),
+                None,
+            );
+            let limit = BandwidthLimit::from_components(components);
+            assert!(limit.is_some());
+            assert_eq!(limit.unwrap().bytes_per_second().get(), 512);
+        }
+
+        #[test]
+        fn from_components_without_rate() {
+            let components = bandwidth::BandwidthLimitComponents::new(None, None);
+            let limit = BandwidthLimit::from_components(components);
+            assert!(limit.is_none());
+        }
+
+        #[test]
+        fn parse_simple_value() {
+            // Default unit is kilobytes, so 1024 = 1024 * 1024 bytes
+            let result = BandwidthLimit::parse("1024").unwrap();
+            assert!(result.is_some());
+            let limit = result.unwrap();
+            assert_eq!(limit.bytes_per_second().get(), 1024 * 1024);
+        }
+
+        #[test]
+        fn parse_with_suffix_k() {
+            let result = BandwidthLimit::parse("100k").unwrap();
+            assert!(result.is_some());
+            let limit = result.unwrap();
+            assert_eq!(limit.bytes_per_second().get(), 100 * 1024);
+        }
+
+        #[test]
+        fn parse_with_suffix_m() {
+            let result = BandwidthLimit::parse("1m").unwrap();
+            assert!(result.is_some());
+            let limit = result.unwrap();
+            assert_eq!(limit.bytes_per_second().get(), 1024 * 1024);
+        }
+
+        #[test]
+        fn parse_zero_returns_none() {
+            let result = BandwidthLimit::parse("0").unwrap();
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn clone_and_copy() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(500).unwrap());
+            let cloned = limit.clone();
+            let copied = limit;
+            assert_eq!(limit, cloned);
+            assert_eq!(limit, copied);
+        }
+
+        #[test]
+        fn debug_format() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1000).unwrap());
+            let debug = format!("{:?}", limit);
+            assert!(debug.contains("BandwidthLimit"));
+            assert!(debug.contains("1000"));
+        }
+
+        #[test]
+        fn components() {
+            let limit = BandwidthLimit::from_rate_and_burst(
+                NonZeroU64::new(1024).unwrap(),
+                Some(NonZeroU64::new(2048).unwrap()),
+            );
+            let components = limit.components();
+            assert_eq!(components.rate().unwrap().get(), 1024);
+            assert_eq!(components.burst().unwrap().get(), 2048);
+        }
+
+        #[test]
+        fn into_components() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(256).unwrap());
+            let components = limit.into_components();
+            assert_eq!(components.rate().unwrap().get(), 256);
+        }
+
+        #[test]
+        fn to_limiter() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());
+            let _limiter = limit.to_limiter();  // Just ensure no panic
+        }
+
+        #[test]
+        fn into_limiter() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());
+            let _limiter = limit.into_limiter();  // Just ensure no panic
+        }
+
+        #[test]
+        fn fallback_argument_simple() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(1024).unwrap());
+            assert_eq!(limit.fallback_argument(), OsString::from("1024"));
+        }
+
+        #[test]
+        fn fallback_argument_with_burst() {
+            let limit = BandwidthLimit::from_rate_and_burst(
+                NonZeroU64::new(1024).unwrap(),
+                Some(NonZeroU64::new(2048).unwrap()),
+            );
+            assert_eq!(limit.fallback_argument(), OsString::from("1024:2048"));
+        }
+
+        #[test]
+        fn fallback_unlimited_argument() {
+            assert_eq!(BandwidthLimit::fallback_unlimited_argument(), OsString::from("0"));
+        }
+
+        #[test]
+        fn from_bandwidth_limit_impl() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(100).unwrap());
+            let components: bandwidth::BandwidthLimitComponents = limit.into();
+            assert_eq!(components.rate().unwrap().get(), 100);
+        }
+
+        #[test]
+        fn from_bandwidth_limit_ref_impl() {
+            let limit = BandwidthLimit::from_bytes_per_second(NonZeroU64::new(200).unwrap());
+            let components: bandwidth::BandwidthLimitComponents = (&limit).into();
+            assert_eq!(components.rate().unwrap().get(), 200);
+        }
+    }
+}

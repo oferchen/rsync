@@ -15,3 +15,33 @@ impl ClientConfigBuilder {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn builder() -> ClientConfigBuilder {
+        ClientConfigBuilder::default()
+    }
+
+    #[test]
+    fn force_fallback_sets_flag() {
+        let config = builder().force_fallback(true).build();
+        assert!(config.force_fallback());
+    }
+
+    #[test]
+    fn force_fallback_false_clears_flag() {
+        let config = builder()
+            .force_fallback(true)
+            .force_fallback(false)
+            .build();
+        assert!(!config.force_fallback());
+    }
+
+    #[test]
+    fn default_force_fallback_is_false() {
+        let config = builder().build();
+        assert!(!config.force_fallback());
+    }
+}

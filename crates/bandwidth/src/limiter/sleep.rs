@@ -88,3 +88,93 @@ pub(crate) fn sleep_for(duration: Duration) {
         append_recorded_sleeps(chunks);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limiter_sleep_new_stores_values() {
+        let requested = Duration::from_millis(100);
+        let actual = Duration::from_millis(95);
+        let sleep = LimiterSleep::new(requested, actual);
+        assert_eq!(sleep.requested(), requested);
+        assert_eq!(sleep.actual(), actual);
+    }
+
+    #[test]
+    fn limiter_sleep_default_is_zero() {
+        let sleep = LimiterSleep::default();
+        assert_eq!(sleep.requested(), Duration::ZERO);
+        assert_eq!(sleep.actual(), Duration::ZERO);
+    }
+
+    #[test]
+    fn limiter_sleep_is_noop_when_both_zero() {
+        let sleep = LimiterSleep::new(Duration::ZERO, Duration::ZERO);
+        assert!(sleep.is_noop());
+    }
+
+    #[test]
+    fn limiter_sleep_not_noop_when_requested_nonzero() {
+        let sleep = LimiterSleep::new(Duration::from_millis(100), Duration::ZERO);
+        assert!(!sleep.is_noop());
+    }
+
+    #[test]
+    fn limiter_sleep_not_noop_when_actual_nonzero() {
+        let sleep = LimiterSleep::new(Duration::ZERO, Duration::from_millis(100));
+        assert!(!sleep.is_noop());
+    }
+
+    #[test]
+    fn limiter_sleep_clone_equals_original() {
+        let sleep = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        assert_eq!(sleep.clone(), sleep);
+    }
+
+    #[test]
+    fn limiter_sleep_debug() {
+        let sleep = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        let debug = format!("{:?}", sleep);
+        assert!(debug.contains("LimiterSleep"));
+    }
+
+    #[test]
+    fn duration_from_microseconds_zero_returns_zero() {
+        assert_eq!(duration_from_microseconds(0), Duration::ZERO);
+    }
+
+    #[test]
+    fn duration_from_microseconds_converts_correctly() {
+        assert_eq!(duration_from_microseconds(1_000_000), Duration::from_secs(1));
+        assert_eq!(duration_from_microseconds(500_000), Duration::from_millis(500));
+        assert_eq!(duration_from_microseconds(1_500_000), Duration::from_millis(1500));
+    }
+
+    #[test]
+    fn duration_from_microseconds_handles_large_values() {
+        // Very large values should return Duration::MAX
+        let result = duration_from_microseconds(MAX_REPRESENTABLE_MICROSECONDS + 1);
+        assert_eq!(result, Duration::MAX);
+    }
+
+    #[test]
+    fn duration_from_microseconds_max_representable() {
+        // MAX_REPRESENTABLE_MICROSECONDS should not overflow
+        let result = duration_from_microseconds(MAX_REPRESENTABLE_MICROSECONDS);
+        assert!(result < Duration::MAX);
+    }
+
+    #[test]
+    fn sleep_for_zero_duration_is_noop() {
+        // Should not block or panic
+        sleep_for(Duration::ZERO);
+    }
+
+    #[test]
+    fn sleep_for_small_duration_records() {
+        // This tests that the function runs without error
+        sleep_for(Duration::from_micros(100));
+    }
+}

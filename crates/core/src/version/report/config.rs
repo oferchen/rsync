@@ -344,3 +344,301 @@ impl Default for VersionInfoConfigBuilder {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for VersionInfoConfig::new
+    #[test]
+    fn new_creates_default_config() {
+        let config = VersionInfoConfig::new();
+        assert!(!config.supports_socketpairs);
+        assert!(config.supports_ipv6);
+        assert!(config.supports_atimes);
+        assert!(config.supports_batchfiles);
+        assert!(config.supports_inplace);
+        assert!(config.supports_append);
+        assert!(config.supports_prealloc);
+        assert!(config.supports_stop_at);
+        assert!(!config.supports_crtimes);
+        assert!(!config.supports_simd_roll);
+        assert!(!config.supports_asm_roll);
+        assert!(!config.supports_openssl_crypto);
+        assert!(!config.supports_asm_md5);
+    }
+
+    #[test]
+    fn new_secluded_args_mode_is_optional() {
+        let config = VersionInfoConfig::new();
+        assert_eq!(config.secluded_args_mode, SecludedArgsMode::Optional);
+    }
+
+    // Tests for Default trait
+    #[test]
+    fn default_equals_new() {
+        let default_config = VersionInfoConfig::default();
+        let new_config = VersionInfoConfig::new();
+        assert_eq!(default_config, new_config);
+    }
+
+    // Tests for builder
+    #[test]
+    fn builder_creates_same_as_new() {
+        let builder_config = VersionInfoConfig::builder().build();
+        let new_config = VersionInfoConfig::new();
+        assert_eq!(builder_config, new_config);
+    }
+
+    #[test]
+    fn builder_default_equals_new() {
+        let default_builder = VersionInfoConfigBuilder::default();
+        let new_builder = VersionInfoConfigBuilder::new();
+        assert_eq!(default_builder, new_builder);
+    }
+
+    // Tests for builder setters
+    #[test]
+    fn builder_supports_socketpairs() {
+        let config = VersionInfoConfig::builder()
+            .supports_socketpairs(true)
+            .build();
+        assert!(config.supports_socketpairs);
+    }
+
+    #[test]
+    fn builder_supports_symlinks() {
+        let config = VersionInfoConfig::builder()
+            .supports_symlinks(true)
+            .build();
+        assert!(config.supports_symlinks);
+    }
+
+    #[test]
+    fn builder_supports_symtimes() {
+        let config = VersionInfoConfig::builder()
+            .supports_symtimes(true)
+            .build();
+        assert!(config.supports_symtimes);
+    }
+
+    #[test]
+    fn builder_supports_hardlinks() {
+        let config = VersionInfoConfig::builder()
+            .supports_hardlinks(true)
+            .build();
+        assert!(config.supports_hardlinks);
+    }
+
+    #[test]
+    fn builder_supports_hardlink_specials() {
+        let config = VersionInfoConfig::builder()
+            .supports_hardlink_specials(true)
+            .build();
+        assert!(config.supports_hardlink_specials);
+    }
+
+    #[test]
+    fn builder_supports_hardlink_symlinks() {
+        let config = VersionInfoConfig::builder()
+            .supports_hardlink_symlinks(true)
+            .build();
+        assert!(config.supports_hardlink_symlinks);
+    }
+
+    #[test]
+    fn builder_supports_ipv6_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_ipv6(false)
+            .build();
+        assert!(!config.supports_ipv6);
+    }
+
+    #[test]
+    fn builder_supports_atimes_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_atimes(false)
+            .build();
+        assert!(!config.supports_atimes);
+    }
+
+    #[test]
+    fn builder_supports_batchfiles_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_batchfiles(false)
+            .build();
+        assert!(!config.supports_batchfiles);
+    }
+
+    #[test]
+    fn builder_supports_inplace_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_inplace(false)
+            .build();
+        assert!(!config.supports_inplace);
+    }
+
+    #[test]
+    fn builder_supports_append_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_append(false)
+            .build();
+        assert!(!config.supports_append);
+    }
+
+    #[test]
+    fn builder_supports_prealloc_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_prealloc(false)
+            .build();
+        assert!(!config.supports_prealloc);
+    }
+
+    #[test]
+    fn builder_supports_stop_at_false() {
+        let config = VersionInfoConfig::builder()
+            .supports_stop_at(false)
+            .build();
+        assert!(!config.supports_stop_at);
+    }
+
+    #[test]
+    fn builder_supports_crtimes() {
+        let config = VersionInfoConfig::builder()
+            .supports_crtimes(true)
+            .build();
+        assert!(config.supports_crtimes);
+    }
+
+    #[test]
+    fn builder_supports_simd_roll() {
+        let config = VersionInfoConfig::builder()
+            .supports_simd_roll(true)
+            .build();
+        assert!(config.supports_simd_roll);
+    }
+
+    #[test]
+    fn builder_supports_asm_roll() {
+        let config = VersionInfoConfig::builder()
+            .supports_asm_roll(true)
+            .build();
+        assert!(config.supports_asm_roll);
+    }
+
+    #[test]
+    fn builder_supports_openssl_crypto() {
+        let config = VersionInfoConfig::builder()
+            .supports_openssl_crypto(true)
+            .build();
+        assert!(config.supports_openssl_crypto);
+    }
+
+    #[test]
+    fn builder_supports_asm_md5() {
+        let config = VersionInfoConfig::builder()
+            .supports_asm_md5(true)
+            .build();
+        assert!(config.supports_asm_md5);
+    }
+
+    #[test]
+    fn builder_secluded_args_mode() {
+        let config = VersionInfoConfig::builder()
+            .secluded_args_mode(SecludedArgsMode::Default)
+            .build();
+        assert_eq!(config.secluded_args_mode, SecludedArgsMode::Default);
+    }
+
+    // Tests for to_builder
+    #[test]
+    fn to_builder_preserves_values() {
+        let original = VersionInfoConfig::builder()
+            .supports_socketpairs(true)
+            .supports_simd_roll(true)
+            .build();
+        let rebuilt = original.to_builder().build();
+        assert_eq!(original, rebuilt);
+    }
+
+    #[test]
+    fn to_builder_allows_modification() {
+        let original = VersionInfoConfig::new();
+        let modified = original.to_builder()
+            .supports_crtimes(true)
+            .build();
+        assert!(!original.supports_crtimes);
+        assert!(modified.supports_crtimes);
+    }
+
+    // Tests for from_config
+    #[test]
+    fn from_config_preserves_values() {
+        let config = VersionInfoConfig::builder()
+            .supports_openssl_crypto(true)
+            .build();
+        let builder = VersionInfoConfigBuilder::from_config(config);
+        assert_eq!(builder.build(), config);
+    }
+
+    // Tests for builder chaining
+    #[test]
+    fn builder_chaining_works() {
+        let config = VersionInfoConfig::builder()
+            .supports_socketpairs(true)
+            .supports_ipv6(false)
+            .supports_simd_roll(true)
+            .supports_asm_md5(true)
+            .build();
+        assert!(config.supports_socketpairs);
+        assert!(!config.supports_ipv6);
+        assert!(config.supports_simd_roll);
+        assert!(config.supports_asm_md5);
+    }
+
+    // Tests for trait implementations
+    #[test]
+    fn config_is_clone() {
+        let config = VersionInfoConfig::new();
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
+
+    #[test]
+    fn config_is_copy() {
+        let config = VersionInfoConfig::new();
+        let copied = config;
+        assert_eq!(config, copied);
+    }
+
+    #[test]
+    fn config_debug_is_not_empty() {
+        let config = VersionInfoConfig::new();
+        let debug = format!("{:?}", config);
+        assert!(!debug.is_empty());
+        assert!(debug.contains("VersionInfoConfig"));
+    }
+
+    #[test]
+    fn builder_is_clone() {
+        let builder = VersionInfoConfigBuilder::new();
+        let cloned = builder.clone();
+        assert_eq!(builder, cloned);
+    }
+
+    #[test]
+    fn builder_is_copy() {
+        let builder = VersionInfoConfigBuilder::new();
+        let copied = builder;
+        assert_eq!(builder, copied);
+    }
+
+    // Tests for with_runtime_capabilities
+    #[test]
+    fn with_runtime_capabilities_returns_config() {
+        let config = VersionInfoConfig::with_runtime_capabilities();
+        // Basic sanity checks - runtime values vary
+        assert!(config.supports_ipv6);
+        assert!(config.supports_atimes);
+    }
+}

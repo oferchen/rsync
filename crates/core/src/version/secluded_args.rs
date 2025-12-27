@@ -74,3 +74,158 @@ impl FromStr for SecludedArgsMode {
         Self::from_label(input).ok_or(ParseSecludedArgsModeError { _private: () })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for SecludedArgsMode::label
+    #[test]
+    fn optional_label() {
+        assert_eq!(SecludedArgsMode::Optional.label(), "optional secluded-args");
+    }
+
+    #[test]
+    fn default_label() {
+        assert_eq!(SecludedArgsMode::Default.label(), "default secluded-args");
+    }
+
+    // Tests for SecludedArgsMode::from_label
+    #[test]
+    fn from_label_optional() {
+        let result = SecludedArgsMode::from_label("optional secluded-args");
+        assert_eq!(result, Some(SecludedArgsMode::Optional));
+    }
+
+    #[test]
+    fn from_label_default() {
+        let result = SecludedArgsMode::from_label("default secluded-args");
+        assert_eq!(result, Some(SecludedArgsMode::Default));
+    }
+
+    #[test]
+    fn from_label_invalid() {
+        assert_eq!(SecludedArgsMode::from_label("invalid"), None);
+    }
+
+    #[test]
+    fn from_label_empty() {
+        assert_eq!(SecludedArgsMode::from_label(""), None);
+    }
+
+    #[test]
+    fn from_label_partial() {
+        assert_eq!(SecludedArgsMode::from_label("optional"), None);
+        assert_eq!(SecludedArgsMode::from_label("default"), None);
+    }
+
+    // Tests for Display trait
+    #[test]
+    fn display_optional() {
+        assert_eq!(format!("{}", SecludedArgsMode::Optional), "optional secluded-args");
+    }
+
+    #[test]
+    fn display_default() {
+        assert_eq!(format!("{}", SecludedArgsMode::Default), "default secluded-args");
+    }
+
+    // Tests for FromStr trait
+    #[test]
+    fn parse_optional() {
+        let result: Result<SecludedArgsMode, _> = "optional secluded-args".parse();
+        assert_eq!(result.unwrap(), SecludedArgsMode::Optional);
+    }
+
+    #[test]
+    fn parse_default() {
+        let result: Result<SecludedArgsMode, _> = "default secluded-args".parse();
+        assert_eq!(result.unwrap(), SecludedArgsMode::Default);
+    }
+
+    #[test]
+    fn parse_invalid_fails() {
+        let result: Result<SecludedArgsMode, _> = "invalid".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_empty_fails() {
+        let result: Result<SecludedArgsMode, _> = "".parse();
+        assert!(result.is_err());
+    }
+
+    // Tests for trait implementations
+    #[test]
+    fn mode_is_clone() {
+        let mode = SecludedArgsMode::Optional;
+        let cloned = mode.clone();
+        assert_eq!(mode, cloned);
+    }
+
+    #[test]
+    fn mode_is_copy() {
+        let mode = SecludedArgsMode::Optional;
+        let copied = mode;
+        assert_eq!(mode, copied);
+    }
+
+    #[test]
+    fn mode_debug_contains_variant() {
+        let debug = format!("{:?}", SecludedArgsMode::Optional);
+        assert!(debug.contains("Optional"));
+    }
+
+    #[test]
+    fn modes_are_not_equal() {
+        assert_ne!(SecludedArgsMode::Optional, SecludedArgsMode::Default);
+    }
+
+    // Tests for ParseSecludedArgsModeError
+    #[test]
+    fn error_display() {
+        let err = "invalid".parse::<SecludedArgsMode>().unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("unrecognised"));
+    }
+
+    #[test]
+    fn error_is_clone() {
+        let err = "invalid".parse::<SecludedArgsMode>().unwrap_err();
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
+    }
+
+    #[test]
+    fn error_is_copy() {
+        let err = "invalid".parse::<SecludedArgsMode>().unwrap_err();
+        let copied = err;
+        assert_eq!(err, copied);
+    }
+
+    // Tests for roundtrip
+    #[test]
+    fn label_roundtrip_optional() {
+        let mode = SecludedArgsMode::Optional;
+        let label = mode.label();
+        let parsed = SecludedArgsMode::from_label(label);
+        assert_eq!(parsed, Some(mode));
+    }
+
+    #[test]
+    fn label_roundtrip_default() {
+        let mode = SecludedArgsMode::Default;
+        let label = mode.label();
+        let parsed = SecludedArgsMode::from_label(label);
+        assert_eq!(parsed, Some(mode));
+    }
+
+    #[test]
+    fn from_str_roundtrip() {
+        for mode in [SecludedArgsMode::Optional, SecludedArgsMode::Default] {
+            let label = mode.to_string();
+            let parsed: SecludedArgsMode = label.parse().unwrap();
+            assert_eq!(parsed, mode);
+        }
+    }
+}

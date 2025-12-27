@@ -9,7 +9,15 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .help("Set connection timeout in seconds (0 disables the limit).")
                 .num_args(1)
                 .action(ArgAction::Set)
-                .value_parser(OsStringValueParser::new()),
+                .value_parser(OsStringValueParser::new())
+                .overrides_with("no-contimeout"),
+        )
+        .arg(
+            Arg::new("no-contimeout")
+                .long("no-contimeout")
+                .help("Disable connection timeout.")
+                .action(ArgAction::SetTrue)
+                .overrides_with("contimeout"),
         )
         .arg(
             Arg::new("protocol")
@@ -54,6 +62,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
         .arg(
             Arg::new("no-compress")
                 .long("no-compress")
+                .visible_alias("no-z")
                 .help("Disable compression.")
                 .action(ArgAction::SetTrue)
                 .overrides_with("compress"),

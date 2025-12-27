@@ -157,3 +157,152 @@ impl LocalCopyOptions {
         self.collect_events
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sparse_enables() {
+        let opts = LocalCopyOptions::new().sparse(true);
+        assert!(opts.sparse_enabled());
+    }
+
+    #[test]
+    fn sparse_disables() {
+        let opts = LocalCopyOptions::new().sparse(true).sparse(false);
+        assert!(!opts.sparse_enabled());
+    }
+
+    #[test]
+    fn partial_enables() {
+        let opts = LocalCopyOptions::new().partial(true);
+        assert!(opts.partial_enabled());
+    }
+
+    #[test]
+    fn partial_disables() {
+        let opts = LocalCopyOptions::new().partial(true).partial(false);
+        assert!(!opts.partial_enabled());
+    }
+
+    #[test]
+    fn with_temp_directory_sets_path() {
+        let opts = LocalCopyOptions::new().with_temp_directory(Some("/tmp/staging"));
+        assert_eq!(opts.temp_directory_path(), Some(Path::new("/tmp/staging")));
+    }
+
+    #[test]
+    fn with_temp_directory_none_clears() {
+        let opts = LocalCopyOptions::new()
+            .with_temp_directory(Some("/tmp/staging"))
+            .with_temp_directory::<PathBuf>(None);
+        assert!(opts.temp_directory_path().is_none());
+    }
+
+    #[test]
+    fn delay_updates_enables_and_sets_partial() {
+        let opts = LocalCopyOptions::new().delay_updates(true);
+        assert!(opts.delay_updates_enabled());
+        assert!(opts.partial_enabled());
+    }
+
+    #[test]
+    fn fsync_enables() {
+        let opts = LocalCopyOptions::new().fsync(true);
+        assert!(opts.fsync_enabled());
+    }
+
+    #[test]
+    fn fsync_disables() {
+        let opts = LocalCopyOptions::new().fsync(true).fsync(false);
+        assert!(!opts.fsync_enabled());
+    }
+
+    #[test]
+    fn with_partial_directory_sets_path_and_enables_partial() {
+        let opts = LocalCopyOptions::new().with_partial_directory(Some("/tmp/partial"));
+        assert_eq!(opts.partial_directory_path(), Some(Path::new("/tmp/partial")));
+        assert!(opts.partial_enabled());
+    }
+
+    #[test]
+    fn with_partial_directory_none_clears() {
+        let opts = LocalCopyOptions::new()
+            .with_partial_directory(Some("/tmp/partial"))
+            .with_partial_directory::<PathBuf>(None);
+        assert!(opts.partial_directory_path().is_none());
+    }
+
+    #[test]
+    fn inplace_enables() {
+        let opts = LocalCopyOptions::new().inplace(true);
+        assert!(opts.inplace_enabled());
+    }
+
+    #[test]
+    fn inplace_disables() {
+        let opts = LocalCopyOptions::new().inplace(true).inplace(false);
+        assert!(!opts.inplace_enabled());
+    }
+
+    #[test]
+    fn append_enables() {
+        let opts = LocalCopyOptions::new().append(true);
+        assert!(opts.append_enabled());
+    }
+
+    #[test]
+    fn append_false_clears_verify() {
+        let opts = LocalCopyOptions::new()
+            .append_verify(true)
+            .append(false);
+        assert!(!opts.append_enabled());
+        assert!(!opts.append_verify_enabled());
+    }
+
+    #[test]
+    fn append_verify_enables_both() {
+        let opts = LocalCopyOptions::new().append_verify(true);
+        assert!(opts.append_enabled());
+        assert!(opts.append_verify_enabled());
+    }
+
+    #[test]
+    fn append_verify_false_clears_verify_only() {
+        let opts = LocalCopyOptions::new()
+            .append_verify(true)
+            .append_verify(false);
+        assert!(opts.append_enabled()); // append remains on
+        assert!(!opts.append_verify_enabled());
+    }
+
+    #[test]
+    fn collect_events_enables() {
+        let opts = LocalCopyOptions::new().collect_events(true);
+        assert!(opts.events_enabled());
+    }
+
+    #[test]
+    fn collect_events_disables() {
+        let opts = LocalCopyOptions::new()
+            .collect_events(true)
+            .collect_events(false);
+        assert!(!opts.events_enabled());
+    }
+
+    #[test]
+    fn defaults_have_no_staging_options() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.sparse_enabled());
+        assert!(!opts.partial_enabled());
+        assert!(opts.partial_directory_path().is_none());
+        assert!(opts.temp_directory_path().is_none());
+        assert!(!opts.delay_updates_enabled());
+        assert!(!opts.fsync_enabled());
+        assert!(!opts.inplace_enabled());
+        assert!(!opts.append_enabled());
+        assert!(!opts.append_verify_enabled());
+        assert!(!opts.events_enabled());
+    }
+}

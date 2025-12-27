@@ -447,12 +447,23 @@ fn build_wire_format_rules(
             FilterRuleKind::Risk => RuleType::Risk,
             FilterRuleKind::DirMerge => RuleType::DirMerge,
             FilterRuleKind::ExcludeIfPresent => {
-                // ExcludeIfPresent is a client-side-only rule type
-                // Skip it for now; will be handled in future phases
-                eprintln!(
-                    "[client] Skipping unsupported ExcludeIfPresent rule: {}",
-                    spec.pattern()
-                );
+                // ExcludeIfPresent is transmitted as Exclude with 'e' flag
+                // (FILTRULE_EXCLUDE_SELF in upstream rsync)
+                wire_rules.push(FilterRuleWireFormat {
+                    rule_type: RuleType::Exclude,
+                    pattern: spec.pattern().to_string(),
+                    anchored: spec.pattern().starts_with('/'),
+                    directory_only: spec.pattern().ends_with('/'),
+                    no_inherit: false,
+                    cvs_exclude: false,
+                    word_split: false,
+                    exclude_from_merge: true, // 'e' flag = EXCLUDE_SELF
+                    xattr_only: spec.is_xattr_only(),
+                    sender_side: spec.applies_to_sender(),
+                    receiver_side: spec.applies_to_receiver(),
+                    perishable: spec.is_perishable(),
+                    negate: false,
+                });
                 continue;
             }
         };
@@ -650,21 +661,28 @@ mod tests {
     }
 
     #[test]
-    fn skips_exclude_if_present_rules() {
+    fn transmits_exclude_if_present_rules() {
         let specs = vec![
             FilterRuleSpec::exclude("*.log"),
             FilterRuleSpec::exclude_if_present(".git"),
             FilterRuleSpec::include("*.txt"),
         ];
 
-        let rules = build_wire_format_rules(&specs).expect("should skip ExcludeIfPresent");
+        let rules = build_wire_format_rules(&specs).expect("should transmit ExcludeIfPresent");
 
-        // ExcludeIfPresent should be skipped, so we should only have 2 rules
-        assert_eq!(rules.len(), 2);
+        // ExcludeIfPresent is now transmitted as Exclude with 'e' flag
+        assert_eq!(rules.len(), 3);
         assert_eq!(rules[0].rule_type, RuleType::Exclude);
         assert_eq!(rules[0].pattern, "*.log");
-        assert_eq!(rules[1].rule_type, RuleType::Include);
-        assert_eq!(rules[1].pattern, "*.txt");
+        assert!(!rules[0].exclude_from_merge);
+
+        // ExcludeIfPresent becomes Exclude with exclude_from_merge (EXCLUDE_SELF)
+        assert_eq!(rules[1].rule_type, RuleType::Exclude);
+        assert_eq!(rules[1].pattern, ".git");
+        assert!(rules[1].exclude_from_merge);
+
+        assert_eq!(rules[2].rule_type, RuleType::Include);
+        assert_eq!(rules[2].pattern, "*.txt");
     }
 
     #[test]
