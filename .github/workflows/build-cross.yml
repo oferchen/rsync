@@ -414,8 +414,9 @@ jobs:
           git config user.name "oc-rsync-bot"
           git config user.email "actions@github.com"
 
+          # Fetch master and create branch from FETCH_HEAD (origin/master may not exist in shallow tag checkout)
           git fetch origin master --depth=1
-          git checkout -B "${BRANCH}" origin/master
+          git checkout -B "${BRANCH}" FETCH_HEAD
 
           git add "${FORMULA_PATH}"
 
