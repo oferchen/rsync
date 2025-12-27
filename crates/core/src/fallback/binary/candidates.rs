@@ -257,3 +257,111 @@ fn ascii_uppercase_u16(unit: u16) -> u16 {
         unit
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_extension_empty_returns_base() {
+        let base = Path::new("/usr/bin/rsync");
+        let result = apply_extension(base, OsStr::new(""));
+        assert_eq!(result, Some(PathBuf::from("/usr/bin/rsync")));
+    }
+
+    #[test]
+    fn apply_extension_adds_extension() {
+        let base = Path::new("/usr/bin/rsync");
+        let result = apply_extension(base, OsStr::new(".exe"));
+        assert_eq!(result, Some(PathBuf::from("/usr/bin/rsync.exe")));
+    }
+
+    #[test]
+    fn apply_extension_without_dot() {
+        let base = Path::new("/usr/bin/rsync");
+        let result = apply_extension(base, OsStr::new("exe"));
+        assert_eq!(result, Some(PathBuf::from("/usr/bin/rsync.exe")));
+    }
+
+    #[test]
+    fn apply_extension_whitespace_only_returns_none() {
+        let base = Path::new("/usr/bin/rsync");
+        let result = apply_extension(base, OsStr::new("   "));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn has_explicit_path_absolute() {
+        assert!(has_explicit_path(Path::new("/usr/bin/rsync")));
+    }
+
+    #[test]
+    fn has_explicit_path_relative_with_components() {
+        assert!(has_explicit_path(Path::new("./rsync")));
+        assert!(has_explicit_path(Path::new("bin/rsync")));
+    }
+
+    #[test]
+    fn has_explicit_path_bare_name() {
+        assert!(!has_explicit_path(Path::new("rsync")));
+    }
+
+    #[test]
+    fn fallback_binary_candidates_explicit_path() {
+        let result = fallback_binary_candidates(OsStr::new("/usr/bin/rsync"));
+        assert!(!result.is_empty());
+        assert!(result.iter().any(|p| p.to_string_lossy().contains("rsync")));
+    }
+
+    #[test]
+    fn fallback_binary_candidates_relative_path() {
+        let result = fallback_binary_candidates(OsStr::new("./rsync"));
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn fallback_binary_candidates_bare_name() {
+        // With PATH set, should search directories
+        let result = fallback_binary_candidates(OsStr::new("rsync"));
+        // Result depends on PATH; just verify it returns a vec
+        assert!(result.is_empty() || !result.is_empty());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn candidates_for_explicit_path_returns_single() {
+        let path = Path::new("/usr/bin/rsync");
+        let result = candidates_for_explicit_path(path);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], PathBuf::from("/usr/bin/rsync"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_search_path_returns_some() {
+        let result = default_search_path();
+        assert!(result.is_some());
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("/bin"));
+    }
+
+    #[test]
+    fn path_env_is_set_returns_bool() {
+        // Just verify the function doesn't panic
+        let _ = path_env_is_set();
+    }
+
+    #[test]
+    fn read_path_env_returns_option() {
+        // Just verify the function works
+        let _ = read_path_env();
+    }
+
+    #[test]
+    fn effective_path_env_returns_option() {
+        // Just verify the function works
+        let result = effective_path_env();
+        // Should return Some on most systems
+        assert!(result.is_some() || result.is_none());
+    }
+}

@@ -54,3 +54,78 @@ pub const LEGACY_DAEMON_SECRETS_PATH: &str = workspace::metadata().legacy_daemon
 
 /// Canonical source repository URL advertised by version banners and documentation.
 pub const SOURCE_URL: &str = workspace::metadata().source_url();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn brand_override_env_is_non_empty() {
+        assert!(!BRAND_OVERRIDE_ENV.is_empty());
+    }
+
+    #[test]
+    fn brand_override_env_var_matches_const() {
+        assert_eq!(brand_override_env_var(), BRAND_OVERRIDE_ENV);
+    }
+
+    #[test]
+    fn upstream_client_program_name_is_rsync() {
+        assert_eq!(UPSTREAM_CLIENT_PROGRAM_NAME, "rsync");
+    }
+
+    #[test]
+    fn upstream_daemon_program_name_is_rsync() {
+        assert_eq!(UPSTREAM_DAEMON_PROGRAM_NAME, "rsync");
+    }
+
+    #[test]
+    fn oc_client_program_name_is_non_empty() {
+        assert!(!OC_CLIENT_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn oc_daemon_program_name_is_non_empty() {
+        assert!(!OC_DAEMON_PROGRAM_NAME.is_empty());
+    }
+
+    #[test]
+    fn oc_daemon_config_dir_is_non_empty() {
+        assert!(!OC_DAEMON_CONFIG_DIR.is_empty());
+    }
+
+    #[test]
+    fn oc_daemon_config_path_is_non_empty() {
+        assert!(!OC_DAEMON_CONFIG_PATH.is_empty());
+    }
+
+    #[test]
+    fn oc_daemon_secrets_path_is_non_empty() {
+        assert!(!OC_DAEMON_SECRETS_PATH.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_config_path_is_non_empty() {
+        assert!(!LEGACY_DAEMON_CONFIG_PATH.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_config_dir_is_non_empty() {
+        assert!(!LEGACY_DAEMON_CONFIG_DIR.is_empty());
+    }
+
+    #[test]
+    fn legacy_daemon_secrets_path_is_non_empty() {
+        assert!(!LEGACY_DAEMON_SECRETS_PATH.is_empty());
+    }
+
+    #[test]
+    fn source_url_is_non_empty() {
+        assert!(!SOURCE_URL.is_empty());
+    }
+
+    #[test]
+    fn source_url_starts_with_https() {
+        assert!(SOURCE_URL.starts_with("https://"));
+    }
+}
