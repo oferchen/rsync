@@ -45,3 +45,79 @@ impl<'a> Iterator for DigestListTokens<'a> {
 }
 
 impl<'a> FusedIterator for DigestListTokens<'a> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_with_none_creates_empty_iterator() {
+        let tokens = DigestListTokens::new(None);
+        assert_eq!(tokens.count(), 0);
+    }
+
+    #[test]
+    fn new_with_empty_string_yields_nothing() {
+        let tokens = DigestListTokens::new(Some(""));
+        assert_eq!(tokens.count(), 0);
+    }
+
+    #[test]
+    fn new_with_single_token_yields_one() {
+        let tokens = DigestListTokens::new(Some("md5"));
+        let items: Vec<_> = tokens.collect();
+        assert_eq!(items, vec!["md5"]);
+    }
+
+    #[test]
+    fn new_with_multiple_tokens_yields_all() {
+        let tokens = DigestListTokens::new(Some("sha512 sha256 sha1 md5"));
+        let items: Vec<_> = tokens.collect();
+        assert_eq!(items, vec!["sha512", "sha256", "sha1", "md5"]);
+    }
+
+    #[test]
+    fn extra_whitespace_is_ignored() {
+        let tokens = DigestListTokens::new(Some("  sha512   sha256  "));
+        let items: Vec<_> = tokens.collect();
+        assert_eq!(items, vec!["sha512", "sha256"]);
+    }
+
+    #[test]
+    fn size_hint_returns_lower_bound() {
+        let tokens = DigestListTokens::new(Some("sha512 sha256"));
+        let (lower, upper) = tokens.size_hint();
+        assert!(lower <= 2);
+        assert!(upper.is_some());
+    }
+
+    #[test]
+    fn size_hint_empty_is_zero() {
+        let tokens = DigestListTokens::new(None);
+        let (lower, upper) = tokens.size_hint();
+        assert_eq!(lower, 0);
+        assert_eq!(upper, Some(0));
+    }
+
+    #[test]
+    fn fused_iterator_stays_exhausted() {
+        let mut tokens = DigestListTokens::new(Some("md5"));
+        assert_eq!(tokens.next(), Some("md5"));
+        assert!(tokens.next().is_none());
+        assert!(tokens.next().is_none());
+    }
+
+    #[test]
+    fn clone_works() {
+        let tokens = DigestListTokens::new(Some("sha256 sha1"));
+        let cloned = tokens.clone();
+        assert_eq!(cloned.count(), 2);
+    }
+
+    #[test]
+    fn debug_format() {
+        let tokens = DigestListTokens::new(Some("md5"));
+        let debug = format!("{:?}", tokens);
+        assert!(debug.contains("DigestListTokens"));
+    }
+}
