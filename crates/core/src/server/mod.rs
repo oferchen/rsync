@@ -103,7 +103,7 @@ pub use self::config::ServerConfig;
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
 pub use self::generator::{GeneratorContext, GeneratorStats};
 pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_handshake};
-pub use self::receiver::{ReceiverContext, TransferStats};
+pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::ChecksumFactory;
 
