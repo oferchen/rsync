@@ -213,3 +213,123 @@ impl<'a> IntoIterator for MessageSegments<'a> {
         self.segments.into_iter().take(self.count)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::message::{Message, MessageScratch};
+
+    #[test]
+    fn as_slices_returns_populated_segments() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test message");
+        let segments = msg.as_segments(&mut scratch, false);
+        let slices = segments.as_slices();
+        assert!(!slices.is_empty());
+    }
+
+    #[test]
+    fn len_returns_total_bytes() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("hello");
+        let segments = msg.as_segments(&mut scratch, false);
+        assert!(segments.len() > 0);
+    }
+
+    #[test]
+    fn segment_count_matches_slices_len() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        assert_eq!(segments.segment_count(), segments.as_slices().len());
+    }
+
+    #[test]
+    fn iter_yields_same_count_as_segment_count() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        assert_eq!(segments.iter().count(), segments.segment_count());
+    }
+
+    #[test]
+    fn iter_bytes_yields_byte_slices() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let bytes: Vec<&[u8]> = segments.iter_bytes().collect();
+        assert_eq!(bytes.len(), segments.segment_count());
+    }
+
+    #[test]
+    fn iter_bytes_total_matches_len() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let total: usize = segments.iter_bytes().map(|b| b.len()).sum();
+        assert_eq!(total, segments.len());
+    }
+
+    #[test]
+    fn is_empty_false_for_message() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        assert!(!segments.is_empty());
+    }
+
+    #[test]
+    fn iter_mut_allows_iteration() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let mut segments = msg.as_segments(&mut scratch, false);
+        let count = segments.iter_mut().count();
+        assert_eq!(count, segments.segment_count());
+    }
+
+    #[test]
+    fn as_ref_returns_same_as_slices() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let via_as_ref: &[std::io::IoSlice<'_>] = segments.as_ref();
+        assert_eq!(via_as_ref.len(), segments.as_slices().len());
+    }
+
+    #[test]
+    fn into_iter_ref_works() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let count = (&segments).into_iter().count();
+        assert_eq!(count, segments.segment_count());
+    }
+
+    #[test]
+    fn into_iter_owned_works() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let expected_count = segments.segment_count();
+        let count = segments.into_iter().count();
+        assert_eq!(count, expected_count);
+    }
+
+    #[test]
+    fn clone_produces_identical_segments() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let cloned = segments.clone();
+        assert_eq!(cloned.len(), segments.len());
+        assert_eq!(cloned.segment_count(), segments.segment_count());
+    }
+
+    #[test]
+    fn debug_format_works() {
+        let mut scratch = MessageScratch::new();
+        let msg = Message::info("test");
+        let segments = msg.as_segments(&mut scratch, false);
+        let debug = format!("{:?}", segments);
+        assert!(debug.contains("MessageSegments"));
+    }
+}
