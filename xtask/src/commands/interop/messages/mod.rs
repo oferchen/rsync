@@ -236,6 +236,7 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
                         .map(|m| normalizer::NormalizedMessage {
                             text: m.text.clone(),
                             role: m.role.clone(),
+                            optional: m.optional,
                         })
                         .collect();
 
