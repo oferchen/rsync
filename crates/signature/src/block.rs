@@ -29,30 +29,35 @@ impl SignatureBlock {
     }
 
     /// Returns the zero-based index of the block within the signature.
+    #[inline]
     #[must_use]
     pub const fn index(&self) -> u64 {
         self.index
     }
 
     /// Returns the rolling checksum digest associated with the block.
+    #[inline]
     #[must_use]
     pub const fn rolling(&self) -> RollingDigest {
         self.rolling
     }
 
     /// Returns the strong checksum bytes for the block.
+    #[inline]
     #[must_use]
     pub fn strong(&self) -> &[u8] {
         &self.strong
     }
 
     /// Returns the number of bytes that contributed to the rolling checksum.
+    #[inline]
     #[must_use]
     pub const fn len(&self) -> usize {
         self.rolling.len()
     }
 
     /// Reports whether the block corresponds to an empty range.
+    #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
