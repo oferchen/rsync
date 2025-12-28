@@ -70,20 +70,16 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
     ensure_absolute(&branding.legacy_daemon_config, "legacy_daemon_config")?;
     ensure_absolute(&branding.legacy_daemon_secrets, "legacy_daemon_secrets")?;
 
-    if !branding
-        .rust_version
-        .starts_with(&branding.upstream_version)
-    {
-        return Err(TaskError::Validation(format!(
-            "rust_version '{}' must include upstream_version '{}' prefix",
-            branding.rust_version, branding.upstream_version
+    // Validate version strings are non-empty (detailed format validation
+    // happens in the branding crate's build.rs)
+    if branding.rust_version.trim().is_empty() {
+        return Err(TaskError::Validation(String::from(
+            "rust_version must not be empty",
         )));
     }
-
-    if !branding.rust_version.ends_with("-rust") {
-        return Err(TaskError::Validation(format!(
-            "rust_version '{}' must end with '-rust' suffix",
-            branding.rust_version
+    if branding.upstream_version.trim().is_empty() {
+        return Err(TaskError::Validation(String::from(
+            "upstream_version must not be empty",
         )));
     }
 
@@ -349,22 +345,23 @@ mod tests {
     }
 
     #[test]
-    fn validate_branding_requires_rust_version_prefix_and_suffix() {
+    fn validate_branding_rejects_empty_versions() {
         let mut branding = sample_branding();
-        branding.rust_version = String::from("4.0.0-rust");
-        let prefix_error = validate_branding(&branding).unwrap_err();
+        branding.rust_version = String::new();
+        let rust_version_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
-            prefix_error,
+            rust_version_error,
             TaskError::Validation(message)
-                if message.contains("must include upstream_version")
+                if message.contains("rust_version must not be empty")
         ));
 
         let mut branding = sample_branding();
-        branding.rust_version = String::from("3.4.1-custom");
-        let suffix_error = validate_branding(&branding).unwrap_err();
+        branding.upstream_version = String::from("   ");
+        let upstream_error = validate_branding(&branding).unwrap_err();
         assert!(matches!(
-            suffix_error,
-            TaskError::Validation(message) if message.contains("must end with")
+            upstream_error,
+            TaskError::Validation(message)
+                if message.contains("upstream_version must not be empty")
         ));
     }
 
