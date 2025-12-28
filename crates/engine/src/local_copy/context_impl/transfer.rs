@@ -67,7 +67,7 @@ impl<'a> CopyContext<'a> {
                     marker_ephemeral_stack.pop();
                     return Err(LocalCopyError::io(
                         "inspect filter file",
-                        candidate.clone(),
+                        candidate,
                         error,
                     ));
                 }

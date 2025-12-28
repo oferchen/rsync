@@ -27,7 +27,7 @@ fn runtime_options_branded_secrets_env_overrides_legacy_env() {
     let delegate = &options.delegate_arguments;
     let expected_tail = [
         OsString::from("--secrets-file"),
-        branded_path.clone().into_os_string(),
+        branded_path.into_os_string(),
     ];
     assert!(delegate.ends_with(&expected_tail));
     assert!(

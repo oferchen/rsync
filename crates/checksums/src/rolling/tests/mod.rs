@@ -28,7 +28,7 @@ pub(super) fn chunked_sequences() -> impl Strategy<Value = Vec<Vec<u8>>> {
 
 pub(super) fn roll_many_sequences() -> impl Strategy<Value = (Vec<u8>, Vec<(u8, u8)>)> {
     prop::collection::vec(any::<u8>(), 1..=64).prop_flat_map(|seed| {
-        let seed_clone = seed.clone();
+        let seed_clone = seed;
         prop::collection::vec((any::<u8>(), any::<u8>()), 0..=32)
             .prop_map(move |pairs| (seed_clone.clone(), pairs))
     })

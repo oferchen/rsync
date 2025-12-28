@@ -429,9 +429,9 @@ mod tests {
         let capabilities = vec!["cap1".to_string()];
         let entries = vec![ModuleListEntry::from_line("test")];
         let list = ModuleList::new(
-            motd.clone(),
-            warnings.clone(),
-            capabilities.clone(),
+            motd,
+            warnings,
+            capabilities,
             entries,
         );
         assert_eq!(list.motd_lines(), &["Welcome"]);

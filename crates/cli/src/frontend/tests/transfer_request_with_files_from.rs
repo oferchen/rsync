@@ -25,7 +25,7 @@ fn transfer_request_with_files_from_uses_source_directory_for_relative_entries()
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from(format!("--files-from={}", list_path.display())),
-        source_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
         dest_dir.clone().into_os_string(),
     ]);
 

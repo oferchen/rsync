@@ -35,7 +35,7 @@ fn run_client_copies_with_delete_and_filters() {
     touch(&dest_root.join("remove.tmp"), b"old temporary");
     touch(&dest_root.join("protected.txt"), b"protected");
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()
@@ -108,11 +108,11 @@ fn progress_observer_reports_transfers() {
     touch(&source_root.join("first.bin"), b"1234567890");
     touch(&source_root.join("nested/second.bin"), b"abcdefghij");
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()
-        .transfer_args([source_arg, dest_root.clone().into_os_string()])
+        .transfer_args([source_arg, dest_root.into_os_string()])
         .mkpath(true)
         .progress(true)
         .stats(true)

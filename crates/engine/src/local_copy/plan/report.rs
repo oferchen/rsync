@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn clone_works() {
         let report = LocalCopyReport::default();
-        let cloned = report.clone();
+        let cloned = report;
         assert!(cloned.records().is_empty());
     }
 

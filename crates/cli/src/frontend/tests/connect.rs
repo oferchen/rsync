@@ -15,7 +15,7 @@ fn connect_program_requires_remote_operands() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--connect-program=/usr/bin/nc %H %P"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ]);
 

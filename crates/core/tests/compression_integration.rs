@@ -48,7 +48,7 @@ fn test_compression_disabled_by_default() {
     let data = create_compressible_data(10240); // 10KB of compressible data
     touch(&source_root.join("data.txt"), &data);
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()
@@ -77,7 +77,7 @@ fn test_compression_enabled_copies_correctly() {
     let data = create_compressible_data(10240); // 10KB of compressible data
     touch(&source_root.join("data.txt"), &data);
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()
@@ -107,7 +107,7 @@ fn test_compression_preserves_binary_data() {
     let data = create_incompressible_data(8192); // 8KB of incompressible data
     touch(&source_root.join("binary.dat"), &data);
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()
@@ -140,7 +140,7 @@ fn test_compression_with_multiple_files() {
     touch(&source_root.join("data.bin"), &incompressible);
     touch(&source_root.join("nested/log.txt"), &compressible);
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()
@@ -181,7 +181,7 @@ fn test_skip_compress_default_patterns() {
     touch(&source_root.join("video.mp4"), &data);
     touch(&source_root.join("text.txt"), &data);
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()
@@ -212,7 +212,7 @@ fn test_large_file_with_compression() {
     let data = create_compressible_data(102400);
     touch(&source_root.join("large.txt"), &data);
 
-    let mut source_arg = source_root.clone().into_os_string();
+    let mut source_arg = source_root.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let config = ClientConfig::builder()

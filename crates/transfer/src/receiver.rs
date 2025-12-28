@@ -1038,7 +1038,7 @@ pub fn find_basis_file(
                 };
 
             // Open the fuzzy-matched file as basis
-            let fuzzy_path = fuzzy_match.path.clone();
+            let fuzzy_path = fuzzy_match.path;
             let fuzzy_file = match fs::File::open(&fuzzy_path) {
                 Ok(f) => f,
                 Err(_) => {

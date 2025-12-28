@@ -6,7 +6,7 @@ fn default_secrets_path_prefers_primary_candidate() {
     fs::write(&primary, "alice:password\n").expect("write primary");
     fs::write(&fallback, "bob:password\n").expect("write fallback");
 
-    let result = with_test_secrets_candidates(vec![primary.clone(), fallback.clone()], || {
+    let result = with_test_secrets_candidates(vec![primary.clone(), fallback], || {
         default_secrets_path_if_present(Brand::Oc)
     });
 

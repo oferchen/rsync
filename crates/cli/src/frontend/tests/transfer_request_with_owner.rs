@@ -15,7 +15,7 @@ fn transfer_request_with_owner_group_preserves_flags() {
         OsString::from(RSYNC),
         OsString::from("--owner"),
         OsString::from("--group"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

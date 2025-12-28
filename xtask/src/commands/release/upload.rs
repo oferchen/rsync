@@ -581,7 +581,7 @@ mod tests {
         }
 
         let mut env = EnvGuard::new();
-        env.set(COMMAND_ENV, script_path.clone().into_os_string());
+        env.set(COMMAND_ENV, script_path.into_os_string());
         env.set(TAG_ENV, OsString::from("v3.4.1-rust"));
         env.set(REPOSITORY_ENV, OsString::from("example/rsync"));
         env.set(

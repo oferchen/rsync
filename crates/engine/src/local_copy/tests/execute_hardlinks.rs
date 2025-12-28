@@ -77,14 +77,14 @@ fn execute_with_link_dest_uses_reference_inode() {
     fs::create_dir_all(&dest_dir).expect("create destination dir");
 
     let operands = vec![
-        source_file.clone().into_os_string(),
+        source_file.into_os_string(),
         dest_dir.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let options = LocalCopyOptions::default()
         .times(true)
-        .extend_link_dests([baseline_dir.clone()]);
+        .extend_link_dests([baseline_dir]);
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");

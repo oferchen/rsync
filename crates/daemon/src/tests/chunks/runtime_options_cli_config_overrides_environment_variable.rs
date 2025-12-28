@@ -36,7 +36,7 @@ fn runtime_options_cli_config_overrides_environment_variable() {
         options.delegate_arguments,
         vec![
             OsString::from("--config"),
-            cli_config.clone().into_os_string(),
+            cli_config.into_os_string(),
         ]
     );
 }

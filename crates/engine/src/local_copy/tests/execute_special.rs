@@ -98,9 +98,9 @@ fn execute_copies_fifo_within_directory() {
     fs::set_permissions(&source_fifo, PermissionsExt::from_mode(0o620))
         .expect("set fifo permissions");
 
-    let source_fifo_path = source_fifo.clone();
+    let source_fifo_path = source_fifo;
     let dest_root = temp.path().join("dest");
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -148,7 +148,7 @@ fn execute_preserves_fifo_hard_links() {
 
     let dest_root = temp.path().join("dest");
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -210,7 +210,7 @@ fn execute_without_specials_records_skip_event() {
 
     let destination = temp.path().join("dest.pipe");
     let operands = vec![
-        source_fifo.clone().into_os_string(),
+        source_fifo.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -277,7 +277,7 @@ fn execute_with_one_file_system_skips_mount_points() {
 
     let destination = temp.path().join("dest");
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -323,7 +323,7 @@ fn execute_without_one_file_system_crosses_mount_points() {
 
     let destination = temp.path().join("dest");
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

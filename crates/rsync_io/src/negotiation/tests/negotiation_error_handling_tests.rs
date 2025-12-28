@@ -307,7 +307,7 @@ fn parts_rehydrate_sniffer_preserves_partial_legacy_state() {
         decision,
         buffered.len(),
         0,
-        buffered.clone(),
+        buffered,
     );
     assert!(stream.sniffed_prefix_remaining() > 0);
     let prefix_len = stream.sniffed_prefix_len();

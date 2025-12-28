@@ -14,7 +14,7 @@ fn transfer_request_with_itemize_changes_renders_itemized_output() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--itemize-changes"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest_dir.clone().into_os_string(),
     ]);
 
@@ -46,7 +46,7 @@ fn transfer_request_with_no_itemize_changes_suppresses_itemized_output() {
         OsString::from(RSYNC),
         OsString::from("--itemize-changes"),
         OsString::from("--no-itemize-changes"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest_dir.clone().into_os_string(),
     ]);
 

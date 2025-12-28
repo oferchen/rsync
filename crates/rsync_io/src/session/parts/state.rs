@@ -421,14 +421,14 @@ mod tests {
     #[test]
     fn session_handshake_parts_clone_binary() {
         let parts = create_binary_parts();
-        let cloned = parts.clone();
+        let cloned = parts;
         assert!(matches!(cloned, SessionHandshakeParts::Binary(_)));
     }
 
     #[test]
     fn session_handshake_parts_clone_legacy() {
         let parts = create_legacy_parts();
-        let cloned = parts.clone();
+        let cloned = parts;
         assert!(matches!(cloned, SessionHandshakeParts::Legacy(_)));
     }
 

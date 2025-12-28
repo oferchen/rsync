@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn clone_works() {
         let builder = FileListBuilder::new("/path");
-        let cloned = builder.clone();
+        let cloned = builder;
         let _ = format!("{cloned:?}");
     }
 

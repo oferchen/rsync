@@ -141,7 +141,7 @@ pub(crate) fn copy_symlink(
     if context.existing_only_enabled() && destination_metadata.is_none() {
         if let Some(relative_path) = record_path.as_ref() {
             let metadata_snapshot =
-                LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+                LocalCopyMetadata::from_metadata(metadata, Some(target));
             context.record(LocalCopyRecord::new(
                 relative_path.clone(),
                 LocalCopyAction::SkippedMissingDestination,
@@ -255,7 +255,7 @@ pub(crate) fn copy_symlink(
             context.summary_mut().record_hard_link();
             if let Some(path) = &record_path {
                 let metadata_snapshot =
-                    LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+                    LocalCopyMetadata::from_metadata(metadata, Some(target));
                 let total_bytes = Some(metadata_snapshot.len());
                 context.record(LocalCopyRecord::new(
                     path.clone(),
@@ -310,7 +310,7 @@ pub(crate) fn copy_symlink(
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
             let metadata_snapshot =
-                LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+                LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 path.clone(),
@@ -336,7 +336,7 @@ pub(crate) fn copy_symlink(
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
             let metadata_snapshot =
-                LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+                LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());
             context.record(LocalCopyRecord::new(
                 path.clone(),
@@ -386,7 +386,7 @@ pub(crate) fn copy_symlink(
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target.clone()));
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
         let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             path.clone(),

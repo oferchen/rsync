@@ -290,7 +290,7 @@ fn deferred_updates_flush_commits_pending_files() {
         LocalCopyExecution::Apply,
         options,
         None,
-        destination_root.clone(),
+        destination_root,
     );
 
     let (guard, mut file) =
@@ -307,7 +307,7 @@ fn deferred_updates_flush_commits_pending_files() {
         metadata.clone(),
         metadata_options,
         LocalCopyExecution::Apply,
-        source.clone(),
+        source,
         Some(std::path::PathBuf::from("file.txt")),
         final_path,
         metadata.file_type(),

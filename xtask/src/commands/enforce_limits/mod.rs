@@ -491,7 +491,7 @@ warn_lines = 1
             EnforceLimitsOptions {
                 max_lines: None,
                 warn_lines: None,
-                config_path: Some(config_path.clone()),
+                config_path: Some(config_path),
             },
         )
         .unwrap_err();

@@ -308,7 +308,7 @@ fn negotiate_session_parts_from_stream_handles_binary_transport() {
     assert_eq!(parts.negotiated_protocol(), remote_version);
     assert_eq!(parts.remote_protocol(), remote_version);
 
-    let transport = parts.clone().into_handshake().into_inner();
+    let transport = parts.into_handshake().into_inner();
     assert_eq!(
         transport.writes(),
         &binary_handshake_bytes(ProtocolVersion::NEWEST)
@@ -397,14 +397,14 @@ fn try_from_parts_rejects_mismatched_variant() {
     let parts =
         negotiate_session_parts(transport, ProtocolVersion::NEWEST).expect("binary parts succeed");
 
-    let err = LegacyDaemonHandshakeParts::try_from(parts.clone()).unwrap_err();
+    let err = LegacyDaemonHandshakeParts::try_from(parts).unwrap_err();
     assert_eq!(err.decision(), NegotiationPrologue::Binary);
 
     let legacy_transport = MemoryTransport::new(b"@RSYNCD: 31.0\n");
     let legacy_parts = negotiate_session_parts(legacy_transport, ProtocolVersion::NEWEST)
         .expect("legacy parts succeed");
 
-    let err = BinaryHandshakeParts::try_from(legacy_parts.clone()).unwrap_err();
+    let err = BinaryHandshakeParts::try_from(legacy_parts).unwrap_err();
     assert_eq!(err.decision(), NegotiationPrologue::LegacyAscii);
 }
 

@@ -55,7 +55,7 @@ impl DestinationWriteGuard {
             {
                 return Err(LocalCopyError::io(
                     "remove existing partial file",
-                    temp_path.clone(),
+                    temp_path,
                     error,
                 ));
             }
@@ -98,7 +98,7 @@ impl DestinationWriteGuard {
                         continue;
                     }
                     Err(error) => {
-                        return Err(LocalCopyError::io("copy file", temp_path.clone(), error));
+                        return Err(LocalCopyError::io("copy file", temp_path, error));
                     }
                 }
             }

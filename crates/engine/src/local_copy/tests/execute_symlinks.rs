@@ -257,7 +257,7 @@ fn execute_preserves_symlink_hard_links() {
 
     let dest_root = temp.path().join("dest");
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

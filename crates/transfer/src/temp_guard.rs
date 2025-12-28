@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn path_returns_correct_path() {
         let temp_path = PathBuf::from("/tmp/test.tmp");
-        let guard = TempFileGuard::new(temp_path.clone());
+        let guard = TempFileGuard::new(temp_path);
         assert_eq!(guard.path(), Path::new("/tmp/test.tmp"));
     }
 
@@ -212,7 +212,7 @@ mod tests {
 
         // Guard should not panic even if file doesn't exist
         {
-            let _guard = TempFileGuard::new(temp_path.clone());
+            let _guard = TempFileGuard::new(temp_path);
             // File never created - drop should not panic
         }
     }
