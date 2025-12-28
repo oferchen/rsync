@@ -25,7 +25,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::run_with;
-    use core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME};
+    use core::version::{LEGACY_PROGRAM_NAME, PROGRAM_NAME, RUST_VERSION};
     use std::ffi::OsString;
     use std::process::ExitCode;
 
@@ -126,7 +126,7 @@ mod tests {
             "diagnostic should use the branded syntax-or-usage error wording"
         );
         assert!(
-            stderr_text.contains("[client=3.4.1-rust]"),
+            stderr_text.contains(&format!("[client={RUST_VERSION}]")),
             "diagnostic should include the branded role trailer"
         );
     }
@@ -153,7 +153,7 @@ mod tests {
             "legacy branded binary should render diagnostics using the upstream prefix"
         );
         assert!(
-            stderr_text.contains("[client=3.4.1-rust]"),
+            stderr_text.contains(&format!("[client={RUST_VERSION}]")),
             "diagnostic should include the branded role trailer"
         );
 
