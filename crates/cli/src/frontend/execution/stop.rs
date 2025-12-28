@@ -340,3 +340,351 @@ fn offset_datetime_to_system_time(datetime: OffsetDateTime) -> Result<SystemTime
     base.checked_add(Duration::from_nanos(u64::from(nanos)))
         .ok_or(StopAtError::InvalidFormat)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    // ==================== parse_stop_after_argument tests ====================
+
+    #[test]
+    fn stop_after_valid_minutes() {
+        let result = parse_stop_after_argument(&OsString::from("10"));
+        assert!(result.is_ok());
+        let deadline = result.unwrap();
+        let duration = deadline.duration_since(SystemTime::now()).unwrap();
+        // Should be approximately 10 minutes (600 seconds), allow small drift
+        assert!(duration.as_secs() >= 598 && duration.as_secs() <= 602);
+    }
+
+    #[test]
+    fn stop_after_with_plus_prefix() {
+        let result = parse_stop_after_argument(&OsString::from("+15"));
+        assert!(result.is_ok());
+        let deadline = result.unwrap();
+        let duration = deadline.duration_since(SystemTime::now()).unwrap();
+        assert!(duration.as_secs() >= 898 && duration.as_secs() <= 902);
+    }
+
+    #[test]
+    fn stop_after_rejects_zero() {
+        let result = parse_stop_after_argument(&OsString::from("0"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_empty() {
+        let result = parse_stop_after_argument(&OsString::from(""));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_whitespace_only() {
+        let result = parse_stop_after_argument(&OsString::from("   "));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_non_numeric() {
+        let result = parse_stop_after_argument(&OsString::from("abc"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_negative() {
+        let result = parse_stop_after_argument(&OsString::from("-10"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_decimal() {
+        let result = parse_stop_after_argument(&OsString::from("10.5"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_after_rejects_mixed() {
+        let result = parse_stop_after_argument(&OsString::from("10abc"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_after_handles_whitespace_padding() {
+        let result = parse_stop_after_argument(&OsString::from("  5  "));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn stop_after_single_minute() {
+        let result = parse_stop_after_argument(&OsString::from("1"));
+        assert!(result.is_ok());
+        let deadline = result.unwrap();
+        let duration = deadline.duration_since(SystemTime::now()).unwrap();
+        assert!(duration.as_secs() >= 58 && duration.as_secs() <= 62);
+    }
+
+    #[test]
+    fn stop_after_large_value() {
+        let result = parse_stop_after_argument(&OsString::from("1440")); // 24 hours
+        assert!(result.is_ok());
+        let deadline = result.unwrap();
+        let duration = deadline.duration_since(SystemTime::now()).unwrap();
+        // 24 hours = 86400 seconds
+        assert!(duration.as_secs() >= 86398 && duration.as_secs() <= 86402);
+    }
+
+    // ==================== parse_stop_at_argument tests ====================
+
+    #[test]
+    fn stop_at_rejects_empty() {
+        let result = parse_stop_at_argument(&OsString::from(""));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_at_rejects_whitespace_only() {
+        let result = parse_stop_at_argument(&OsString::from("   "));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_at_rejects_invalid_format() {
+        let result = parse_stop_at_argument(&OsString::from("invalid"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_at_rejects_invalid_hour() {
+        let result = parse_stop_at_argument(&OsString::from("25:00"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_at_rejects_invalid_minute() {
+        let result = parse_stop_at_argument(&OsString::from("12:60"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_at_rejects_invalid_month() {
+        let result = parse_stop_at_argument(&OsString::from("2025-13-01"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn stop_at_rejects_invalid_day() {
+        let result = parse_stop_at_argument(&OsString::from("2025-01-32"));
+        assert!(result.is_err());
+    }
+
+    // ==================== parse_stop_at_internal tests ====================
+
+    #[test]
+    fn stop_at_internal_empty_input() {
+        let result = parse_stop_at_internal("");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_only_t_prefix() {
+        let result = parse_stop_at_internal("T");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_only_colon_prefix() {
+        let result = parse_stop_at_internal(":");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_non_digit_start() {
+        let result = parse_stop_at_internal("abc");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_negative_hour() {
+        // Hours must be 0-23
+        let result = parse_stop_at_internal("T-1:00");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_hour_24() {
+        let result = parse_stop_at_internal("T24:00");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_minute_60() {
+        let result = parse_stop_at_internal("T12:60");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_month_0() {
+        let result = parse_stop_at_internal("2030-00-15");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_month_13() {
+        let result = parse_stop_at_internal("2030-13-15");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_day_0() {
+        let result = parse_stop_at_internal("2030-06-00");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_day_32() {
+        let result = parse_stop_at_internal("2030-06-32");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    #[test]
+    fn stop_at_internal_feb_30() {
+        let result = parse_stop_at_internal("2030-02-30");
+        assert!(matches!(result, Err(StopAtError::InvalidFormat)));
+    }
+
+    // ==================== StopAtError and BuildError tests ====================
+
+    #[test]
+    fn stop_at_error_debug() {
+        let error = StopAtError::InvalidFormat;
+        let debug = format!("{error:?}");
+        assert!(debug.contains("InvalidFormat"));
+    }
+
+    #[test]
+    fn stop_at_error_local_offset_debug() {
+        let error = StopAtError::LocalOffset;
+        let debug = format!("{error:?}");
+        assert!(debug.contains("LocalOffset"));
+    }
+
+    #[test]
+    fn stop_at_error_not_in_future_debug() {
+        let error = StopAtError::NotInFuture;
+        let debug = format!("{error:?}");
+        assert!(debug.contains("NotInFuture"));
+    }
+
+    #[test]
+    fn build_error_debug() {
+        let error = BuildError::InvalidDate;
+        let debug = format!("{error:?}");
+        assert!(debug.contains("InvalidDate"));
+    }
+
+    #[test]
+    fn build_error_local_offset_debug() {
+        let error = BuildError::LocalOffset;
+        let debug = format!("{error:?}");
+        assert!(debug.contains("LocalOffset"));
+    }
+
+    #[test]
+    fn build_error_converts_to_stop_at_error_invalid() {
+        let build_error = BuildError::InvalidDate;
+        let stop_error: StopAtError = build_error.into();
+        assert!(matches!(stop_error, StopAtError::InvalidFormat));
+    }
+
+    #[test]
+    fn build_error_converts_to_stop_at_error_offset() {
+        let build_error = BuildError::LocalOffset;
+        let stop_error: StopAtError = build_error.into();
+        assert!(matches!(stop_error, StopAtError::LocalOffset));
+    }
+
+    // ==================== offset_datetime_to_system_time tests ====================
+
+    #[test]
+    fn offset_datetime_converts_epoch() {
+        let epoch = OffsetDateTime::UNIX_EPOCH;
+        let result = offset_datetime_to_system_time(epoch);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), SystemTime::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn offset_datetime_converts_future() {
+        // Create a datetime in 2030
+        let date = Date::from_calendar_date(2030, Month::June, 15).unwrap();
+        let time = Time::from_hms(12, 30, 0).unwrap();
+        let datetime = PrimitiveDateTime::new(date, time).assume_utc();
+        let result = offset_datetime_to_system_time(datetime);
+        assert!(result.is_ok());
+        // Verify it's after now
+        assert!(result.unwrap() > SystemTime::now());
+    }
+
+    // ==================== Helper function tests ====================
+
+    #[test]
+    fn invalid_stop_after_message_contains_value() {
+        let msg = invalid_stop_after("bad_value");
+        let text = msg.to_string();
+        assert!(text.contains("bad_value"));
+        assert!(text.contains("--stop-after"));
+    }
+
+    #[test]
+    fn invalid_stop_at_message_contains_value() {
+        let msg = invalid_stop_at("bad_format");
+        let text = msg.to_string();
+        assert!(text.contains("bad_format"));
+        assert!(text.contains("--stop-at"));
+    }
+
+    #[test]
+    fn stop_at_not_future_message_contains_value() {
+        let msg = stop_at_not_future("past_time");
+        let text = msg.to_string();
+        assert!(text.contains("past_time"));
+        assert!(text.contains("not in the future"));
+    }
+
+    // ==================== Date separator tests ====================
+
+    #[test]
+    fn stop_at_internal_dash_separator() {
+        // Far future date should always be valid
+        let result = parse_stop_at_internal("2099-12-31T23:59");
+        // May fail due to local offset issues in test env, but format should be ok
+        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
+            || matches!(result, Err(StopAtError::LocalOffset)));
+    }
+
+    #[test]
+    fn stop_at_internal_slash_separator() {
+        let result = parse_stop_at_internal("2099/12/31T23:59");
+        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
+            || matches!(result, Err(StopAtError::LocalOffset)));
+    }
+
+    #[test]
+    fn stop_at_internal_lowercase_t() {
+        let result = parse_stop_at_internal("2099-12-31t23:59");
+        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
+            || matches!(result, Err(StopAtError::LocalOffset)));
+    }
+
+    // ==================== Two-digit year tests ====================
+
+    #[test]
+    fn stop_at_internal_two_digit_year_future() {
+        // 99 should be interpreted as 2099 (or later century in the future)
+        let result = parse_stop_at_internal("99-12-31");
+        // Should not be InvalidFormat - either succeeds or LocalOffset
+        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
+            || matches!(result, Err(StopAtError::LocalOffset)));
+    }
+}
