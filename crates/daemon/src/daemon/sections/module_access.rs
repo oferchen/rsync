@@ -381,8 +381,7 @@ fn perform_module_authentication(
     let username = segments.next().unwrap_or_default();
     let digest = segments
         .next()
-        .map(|segment| segment.trim_start_matches(|ch: char| ch.is_ascii_whitespace()))
-        .unwrap_or("");
+        .map_or("", |segment| segment.trim_start_matches(|ch: char| ch.is_ascii_whitespace()));
 
     if username.is_empty() || digest.is_empty() {
         deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
@@ -1112,8 +1111,7 @@ fn log_message(log: &SharedLogSink, message: &Message) {
 
 /// Formats a host for logging, using the IP address as fallback.
 fn format_host(host: Option<&str>, fallback: IpAddr) -> String {
-    host.map(str::to_string)
-        .unwrap_or_else(|| fallback.to_string())
+    host.map_or_else(|| fallback.to_string(), str::to_string)
 }
 
 /// Returns a sanitised view of a module identifier suitable for diagnostics.
