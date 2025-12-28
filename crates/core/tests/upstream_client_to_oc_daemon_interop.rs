@@ -130,8 +130,7 @@ pid file = {}
         // Verify daemon is still running (didn't crash on startup)
         if let Some(status) = child.try_wait()? {
             let stderr = child.stderr.take();
-            let mut error_msg =
-                format!("oc-rsync daemon exited immediately with status: {status}");
+            let mut error_msg = format!("oc-rsync daemon exited immediately with status: {status}");
             if let Some(mut stderr) = stderr {
                 let mut buf = String::new();
                 if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {

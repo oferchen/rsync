@@ -89,8 +89,8 @@ impl ChecksumFactory {
             ChecksumAlgorithm::MD4
         };
 
-        let use_proper_seed_order = compat_flags
-            .is_some_and(|flags| flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX));
+        let use_proper_seed_order =
+            compat_flags.is_some_and(|flags| flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX));
 
         Self {
             algorithm,

@@ -24,10 +24,7 @@ fn apply_merge_directive_resolves_relative_paths() {
         .expect("merge succeeds");
 
     assert!(visited.is_empty());
-    let patterns: Vec<_> = rules
-        .iter()
-        .map(|rule| rule.pattern().to_owned())
-        .collect();
+    let patterns: Vec<_> = rules.iter().map(|rule| rule.pattern().to_owned()).collect();
     assert_eq!(patterns, vec!["outer", "child", "grand"]);
 }
 
@@ -51,9 +48,6 @@ fn apply_merge_directive_respects_forced_include() {
         .expect("merge succeeds");
 
     assert!(visited.is_empty());
-    let patterns: Vec<_> = rules
-        .iter()
-        .map(|rule| rule.pattern().to_owned())
-        .collect();
+    let patterns: Vec<_> = rules.iter().map(|rule| rule.pattern().to_owned()).collect();
     assert_eq!(patterns, vec!["beta"]);
 }

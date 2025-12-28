@@ -103,27 +103,29 @@ pub fn apply_effective_limit(
     let mut change = LimiterChange::Unchanged;
 
     if limit_specified {
-        if let Some(limit) = limit { if let Some(existing) = limiter {
-            let target_limit = existing.limit_bytes().min(limit);
-            let current_burst = existing.burst_bytes();
-            let target_burst = if burst_specified {
-                burst
+        if let Some(limit) = limit {
+            if let Some(existing) = limiter {
+                let target_limit = existing.limit_bytes().min(limit);
+                let current_burst = existing.burst_bytes();
+                let target_burst = if burst_specified {
+                    burst
+                } else {
+                    current_burst
+                };
+
+                let limit_changed = target_limit != existing.limit_bytes();
+                let burst_changed = target_burst != current_burst;
+
+                if limit_changed || burst_changed {
+                    existing.update_configuration(target_limit, target_burst);
+                    change = change.combine(LimiterChange::Updated);
+                }
             } else {
-                current_burst
-            };
-
-            let limit_changed = target_limit != existing.limit_bytes();
-            let burst_changed = target_burst != current_burst;
-
-            if limit_changed || burst_changed {
-                existing.update_configuration(target_limit, target_burst);
-                change = change.combine(LimiterChange::Updated);
+                let effective_burst = if burst_specified { burst } else { None };
+                *limiter = Some(BandwidthLimiter::with_burst(limit, effective_burst));
+                change = change.combine(LimiterChange::Enabled);
             }
         } else {
-            let effective_burst = if burst_specified { burst } else { None };
-            *limiter = Some(BandwidthLimiter::with_burst(limit, effective_burst));
-            change = change.combine(LimiterChange::Enabled);
-        } } else {
             let previous = limiter.take();
             if previous.is_some() {
                 return LimiterChange::Disabled;

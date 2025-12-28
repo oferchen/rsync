@@ -34,7 +34,8 @@ impl DeltaSignatureIndex {
         let strong_length = usize::from(signature.layout().strong_sum_length().get());
         let blocks: Vec<SignatureBlock> = signature.blocks().to_vec();
 
-        let mut lookup: HashMap<(u16, u16, usize), Vec<usize>> = HashMap::with_capacity(blocks.len());
+        let mut lookup: HashMap<(u16, u16, usize), Vec<usize>> =
+            HashMap::with_capacity(blocks.len());
         let mut has_full_blocks = false;
 
         for (index, block) in blocks.iter().enumerate() {

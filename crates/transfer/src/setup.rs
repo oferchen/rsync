@@ -698,11 +698,11 @@ mod tests {
             protocol,
             &mut stdout,
             &mut stdin,
-            false,                           // skip_compat_exchange
+            false,                          // skip_compat_exchange
             Some(&["-efxCIvu".to_owned()]), // client_args with 'v' capability
-            true,                            // is_server
-            true,                            // is_daemon_mode (server advertises, client reads)
-            false,                           // do_compression
+            true,                           // is_server
+            true,                           // is_daemon_mode (server advertises, client reads)
+            false,                          // do_compression
         )
         .expect("server setup should succeed");
 

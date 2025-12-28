@@ -367,5 +367,4 @@ mod tests {
         assert_eq!(buf, [3, 4, 5]);
         assert_eq!(mux.pos, 5);
     }
-
 }

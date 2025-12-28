@@ -37,8 +37,7 @@ fn apply_merge_directive_parses_whitespace_risk_and_exclude_if_present() {
     .expect("write merge rules");
 
     let options = DirMergeOptions::default().use_whitespace();
-    let directive =
-        MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
+    let directive = MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
 
     let mut rules = Vec::new();
     let mut visited = HashSet::new();
@@ -68,8 +67,7 @@ fn apply_merge_directive_parses_whitespace_per_dir_alias() {
     std::fs::write(&merge_file, "per-dir .rsync-filter\n").expect("write merge rules");
 
     let options = DirMergeOptions::default().use_whitespace();
-    let directive =
-        MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
+    let directive = MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
 
     let mut rules = Vec::new();
     let mut visited = HashSet::new();

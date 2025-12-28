@@ -178,7 +178,10 @@ mod tests {
         let parts: Vec<&str> = RUST_VERSION.split('.').collect();
         assert_eq!(parts.len(), 3, "RUST_VERSION should have three components");
         for part in parts {
-            assert!(part.parse::<u32>().is_ok(), "each component should be numeric");
+            assert!(
+                part.parse::<u32>().is_ok(),
+                "each component should be numeric"
+            );
         }
     }
 
@@ -186,9 +189,16 @@ mod tests {
     fn upstream_version_is_valid_semver() {
         // UPSTREAM_BASE_VERSION should be a valid semantic version (x.y.z)
         let parts: Vec<&str> = UPSTREAM_BASE_VERSION.split('.').collect();
-        assert_eq!(parts.len(), 3, "UPSTREAM_BASE_VERSION should have three components");
+        assert_eq!(
+            parts.len(),
+            3,
+            "UPSTREAM_BASE_VERSION should have three components"
+        );
         for part in parts {
-            assert!(part.parse::<u32>().is_ok(), "each component should be numeric");
+            assert!(
+                part.parse::<u32>().is_ok(),
+                "each component should be numeric"
+            );
         }
     }
 

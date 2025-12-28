@@ -267,19 +267,12 @@ mod tests {
             seed_config: Md5Seed::none(),
         };
 
-        let sequential = crate::generate_file_signature(
-            Cursor::new(data.clone()),
-            sig_layout,
-            algorithm,
-        )
-        .expect("sequential signature");
+        let sequential =
+            crate::generate_file_signature(Cursor::new(data.clone()), sig_layout, algorithm)
+                .expect("sequential signature");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            sig_layout,
-            algorithm,
-        )
-        .expect("parallel signature");
+        let parallel = generate_file_signature_parallel(Cursor::new(data), sig_layout, algorithm)
+            .expect("parallel signature");
 
         assert_eq!(sequential.blocks().len(), parallel.blocks().len());
         assert_eq!(sequential.total_bytes(), parallel.total_bytes());
@@ -331,10 +324,7 @@ mod tests {
         );
 
         let error = result.expect_err("xxh64 cannot provide 16-byte digests");
-        assert!(matches!(
-            error,
-            SignatureError::DigestLengthMismatch { .. }
-        ));
+        assert!(matches!(error, SignatureError::DigestLengthMismatch { .. }));
     }
 
     #[test]
@@ -423,6 +413,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn parallel_threshold_constant_is_reasonable() {
         // Threshold should be at least a few blocks worth
         assert!(PARALLEL_THRESHOLD_BYTES >= 64 * 1024);

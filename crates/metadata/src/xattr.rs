@@ -70,8 +70,7 @@ pub fn sync_xattrs(
 
     for name in &source_attrs {
         retained.insert(name.clone());
-        let allow = filter
-            .is_none_or(|predicate| predicate(&name.to_string_lossy()));
+        let allow = filter.is_none_or(|predicate| predicate(&name.to_string_lossy()));
 
         if !allow {
             continue;
@@ -90,8 +89,7 @@ pub fn sync_xattrs(
             continue;
         }
 
-        let allow = filter
-            .is_none_or(|predicate| predicate(&name.to_string_lossy()));
+        let allow = filter.is_none_or(|predicate| predicate(&name.to_string_lossy()));
 
         if allow {
             remove_attribute(destination, name, follow_symlinks)?;

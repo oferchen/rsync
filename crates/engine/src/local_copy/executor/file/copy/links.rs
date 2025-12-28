@@ -287,12 +287,8 @@ pub(super) fn process_links(
                 if degrade_to_copy {
                     copy_source_override = Some(path);
                 } else if copy_source_override.is_none() {
-                    apply_file_metadata_with_options(
-                        destination,
-                        metadata,
-                        &metadata_options,
-                    )
-                    .map_err(map_metadata_error)?;
+                    apply_file_metadata_with_options(destination, metadata, &metadata_options)
+                        .map_err(map_metadata_error)?;
                     #[cfg(all(unix, feature = "xattr"))]
                     sync_xattrs_if_requested(
                         preserve_xattrs,
