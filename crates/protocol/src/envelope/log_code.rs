@@ -115,7 +115,7 @@ impl TryFrom<u8> for LogCode {
     type Error = ParseLogCodeError;
 
     fn try_from(value: u8) -> Result<Self, ParseLogCodeError> {
-        Self::from_u8(value).ok_or(ParseLogCodeError::new(value))
+        Self::from_u8(value).ok_or_else(|| ParseLogCodeError::new(value))
     }
 }
 
