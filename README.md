@@ -80,7 +80,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 
 - **Upstream baseline:** tracking `rsync` **3.4.1** (protocol 32).
 - **oc-rsync release:** **0.5.0**.
-- **Stability:** alpha/early-beta; most day-to-day flows are implemented, with ongoing work on edge cases, performance, and polish.
+- **Stability:** beta; core transfer functionality is complete with full protocol interoperability. Ongoing work focuses on edge cases, performance optimization, and production hardening.
 
 ### Implementation Status
 
@@ -107,7 +107,7 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ **Error handling** - RAII cleanup, error categorization, ENOSPC detection
 
 **Test Coverage**:
-- 3,564 tests passing (100% pass rate)
+- 8,300+ tests passing (100% pass rate)
 - Comprehensive integration tests for delta transfer
 - Error scenario tests (cleanup, categorization, edge cases)
 - Protocol version interoperability validated (protocols 28-32)
@@ -124,17 +124,14 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 For detailed implementation documentation:
 ```bash
 # Generate and browse the documentation
-cargo doc --no-deps --open
-
-# Or view online (once published)
-# https://docs.rs/core/latest/core/server/delta_transfer/
+cargo doc --workspace --no-deps --open
 ```
 
 **Key documentation modules**:
-- [`core::server::delta_transfer`](https://docs.rs/core/latest/core/server/delta_transfer/) - Comprehensive delta transfer implementation guide
-- [`core::server`](https://docs.rs/core/latest/core/server/) - Server module with implementation status
-- [`core::server::receiver`](https://docs.rs/core/latest/core/server/receiver/) - Receiver role implementation
-- [`core::server::generator`](https://docs.rs/core/latest/core/server/generator/) - Generator role implementation
+- `transfer` - Server-side transfer implementation (generator, receiver, delta transfer)
+- `protocol` - Wire protocol, negotiation, file list encoding
+- `checksums` - Rolling and strong checksum implementations
+- `daemon` - Rsync daemon mode and module configuration
 
 ---
 
@@ -259,19 +256,21 @@ The daemon mode is intended to interoperate with upstream `rsync` clients and da
 High-level workspace structure:
 
 ```text
-bin/oc-rsync/           # Client + daemon entry (binary crate)
+src/bin/oc-rsync.rs     # Client + daemon entry point
 crates/cli/             # CLI: flags, help, UX parity
 crates/core/            # Core types, error model, shared utilities
 crates/protocol/        # Protocol v32: negotiation, tags, framing, IO
+crates/transfer/        # Server-side transfer: generator, receiver, delta
 crates/engine/          # File list & data pump pipelines
 crates/daemon/          # Rsync-like daemon behaviors
 crates/filters/         # Include/exclude pattern engine
 crates/checksums/       # Rolling & strong checksum implementations
 crates/bandwidth/       # Throttling/pacing primitives
+crates/flist/           # File list construction and serialization
+crates/metadata/        # File metadata handling (permissions, xattr, ACL)
 docs/                   # Design notes, internal docs
 tools/                  # Dev utilities (e.g., enforce_limits.sh)
 xtask/                  # Developer tasks: docs validation, packaging helpers
-AGENTS.md               # Internal agent roles & conventions
 ```
 
 ---
