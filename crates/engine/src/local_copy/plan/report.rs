@@ -11,6 +11,8 @@ pub struct LocalCopyReport {
 }
 
 impl LocalCopyReport {
+    // Allow large_types_passed_by_value: constructor intentionally takes ownership
+    #[allow(clippy::large_types_passed_by_value)]
     pub(in crate::local_copy) const fn new(
         summary: LocalCopySummary,
         records: Vec<LocalCopyRecord>,
