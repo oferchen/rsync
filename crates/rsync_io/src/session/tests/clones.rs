@@ -84,7 +84,7 @@ fn session_handshake_into_conversion_matches_method_for_binary() {
         via_method.remote_advertised_protocol()
     );
 
-    let reconstructed: SessionHandshake<_> = via_into.clone().into();
+    let reconstructed: SessionHandshake<_> = via_into.into();
     assert_eq!(reconstructed.decision(), NegotiationPrologue::Binary);
     assert_eq!(reconstructed.negotiated_protocol(), remote_version);
     assert_eq!(reconstructed.remote_protocol(), remote_version);
@@ -215,7 +215,7 @@ fn session_handshake_into_conversion_matches_method_for_legacy() {
         via_method.remote_advertised_protocol()
     );
 
-    let reconstructed: SessionHandshake<_> = via_into.clone().into();
+    let reconstructed: SessionHandshake<_> = via_into.into();
     assert_eq!(reconstructed.decision(), NegotiationPrologue::LegacyAscii);
     assert_eq!(reconstructed.negotiated_protocol(), negotiated);
     assert!(reconstructed.server_greeting().is_some());
@@ -400,7 +400,7 @@ fn session_handshake_parts_from_binary_components_round_trips() {
         remote_flags,
         stream_parts,
     ) = parts
-        .clone()
+        
         .into_binary()
         .expect("binary components available");
 
@@ -419,7 +419,7 @@ fn session_handshake_parts_from_binary_components_round_trips() {
     assert_eq!(rebuilt.negotiated_protocol(), negotiated);
 
     let transport = rebuilt
-        .clone()
+        
         .into_handshake()
         .into_binary()
         .expect("binary handshake reconstructed")
@@ -440,7 +440,7 @@ fn session_handshake_parts_from_legacy_components_round_trips() {
     let parts = negotiate_session_parts(transport, ProtocolVersion::NEWEST)
         .expect("legacy negotiation succeeds");
     let (greeting, negotiated, stream_parts) = parts
-        .clone()
+        
         .into_legacy()
         .expect("legacy components available");
     let expected_protocol = negotiated;

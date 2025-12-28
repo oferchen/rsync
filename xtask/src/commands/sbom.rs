@@ -155,7 +155,7 @@ fn build_bom(branding: &WorkspaceBranding, metadata: &Metadata) -> TaskResult<Bo
         spec_version: String::from("1.5"),
         version: 1,
         metadata: MetadataSection {
-            component: root_component.clone(),
+            component: root_component,
             tools: vec![Tool {
                 vendor: Some(branding.client_bin.clone()),
                 name: String::from("xtask sbom"),

@@ -26,7 +26,7 @@ fn password_file_requires_daemon_operands() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from(format!("--password-file={}", password_path.display())),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

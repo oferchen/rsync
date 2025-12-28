@@ -102,7 +102,7 @@ impl FileListWalker {
                 }
                 Ok(_) => {}
                 Err(error) => {
-                    return Err(FileListError::metadata(full_path.clone(), error));
+                    return Err(FileListError::metadata(full_path, error));
                 }
             }
         }
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn absolutize_converts_relative_path_to_absolute() {
         let path = PathBuf::from("relative/path");
-        let result = absolutize(path.clone());
+        let result = absolutize(path);
         assert!(result.is_ok());
         let abs = result.unwrap();
         assert!(abs.is_absolute());

@@ -70,7 +70,7 @@ fn execute_file_replaces_directory_when_force_enabled() {
     fs::create_dir_all(&destination).expect("create conflicting directory");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -163,7 +163,7 @@ fn execute_copies_file_with_xattrs() {
     xattr::set(&source, "user.demo", b"value").expect("set xattr");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -193,7 +193,7 @@ fn execute_respects_xattr_filter_rules() {
     xattr::set(&source, "user.skip", b"skip").expect("set skip");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -234,7 +234,7 @@ fn execute_copies_file_with_acls() {
     set_acl_from_text(&source, acl_text, acl_sys::ACL_TYPE_ACCESS);
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -300,7 +300,7 @@ fn execute_copies_directory_tree() {
 
     let dest_root = temp.path().join("dest");
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

@@ -13,7 +13,7 @@ fn protocol_option_requires_daemon_operands() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--protocol=30"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

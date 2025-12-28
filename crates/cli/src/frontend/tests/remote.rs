@@ -134,7 +134,7 @@ fn remote_option_requires_remote_operands() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--remote-option=--log-file=/tmp/rsync.log"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ]);
 

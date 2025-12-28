@@ -169,7 +169,7 @@ mod tests {
     fn merge_directive_with_options() {
         let directive = MergeDirective::new(OsString::from("filter"), None);
         let new_options = DirMergeOptions::default().inherit(true);
-        let updated = directive.with_options(new_options.clone());
+        let updated = directive.with_options(new_options);
         assert!(updated.options().inherit_rules());
     }
 

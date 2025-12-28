@@ -22,7 +22,7 @@ fn runtime_options_loads_config_from_branded_environment_variable() {
         &options.delegate_arguments,
         &[
             OsString::from("--config"),
-            config_path.clone().into_os_string(),
+            config_path.into_os_string(),
         ]
     );
 }

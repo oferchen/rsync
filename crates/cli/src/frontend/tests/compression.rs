@@ -16,7 +16,7 @@ fn skip_compress_env_variable_enables_list() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-z"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -40,8 +40,8 @@ fn skip_compress_invalid_env_reports_error() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        source.clone().into_os_string(),
-        destination.clone().into_os_string(),
+        source.into_os_string(),
+        destination.into_os_string(),
     ]);
 
     assert_eq!(code, 1);
@@ -104,8 +104,8 @@ fn force_no_compress_invalid_env_reports_error() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(OC_RSYNC),
-        source.clone().into_os_string(),
-        destination.clone().into_os_string(),
+        source.into_os_string(),
+        destination.into_os_string(),
     ]);
 
     assert_eq!(code, 1);
@@ -128,7 +128,7 @@ fn compress_flag_is_accepted_for_local_copies() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-z"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -154,7 +154,7 @@ fn compress_level_flag_is_accepted_for_local_copies() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--compress-level=6"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -181,7 +181,7 @@ fn compress_level_zero_disables_local_compression() {
         OsString::from(RSYNC),
         OsString::from("--compress-level=0"),
         OsString::from("-z"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

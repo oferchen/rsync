@@ -12,7 +12,7 @@ fn transfer_request_copies_file() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

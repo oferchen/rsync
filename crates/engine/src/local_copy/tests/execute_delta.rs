@@ -29,7 +29,7 @@ fn execute_delta_copy_reuses_existing_blocks() {
     set_file_mtime(&source_path, FileTime::from_unix_time(2, 0)).expect("set source mtime");
 
     let operands = vec![
-        source_path.clone().into_os_string(),
+        source_path.into_os_string(),
         dest_path.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -57,7 +57,7 @@ fn execute_with_report_dry_run_records_file_event() {
     let destination = temp.path().join("dest.txt");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -85,7 +85,7 @@ fn execute_with_report_dry_run_records_directory_event() {
     let destination = temp.path().join("target");
 
     let operands = vec![
-        source_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
         destination.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -109,7 +109,7 @@ fn execute_with_report_dry_run_skips_records_for_filtered_small_files() {
     let destination = temp.path().join("dest.txt");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

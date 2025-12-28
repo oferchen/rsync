@@ -16,8 +16,8 @@ fn backup_creation_uses_default_suffix() {
     fs::write(&existing, b"original").expect("write dest");
 
     let operands = vec![
-        source.clone().into_os_string(),
-        dest.clone().into_os_string(),
+        source.into_os_string(),
+        dest.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().backup(true);
@@ -51,8 +51,8 @@ fn backup_creation_respects_custom_suffix() {
     fs::write(&existing, b"baseline").expect("write dest");
 
     let operands = vec![
-        source.clone().into_os_string(),
-        dest.clone().into_os_string(),
+        source.into_os_string(),
+        dest.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().with_backup_suffix(Some(".bak"));
@@ -88,7 +88,7 @@ fn backup_creation_uses_relative_backup_directory() {
     fs::write(&existing, b"old contents").expect("write dest");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -128,8 +128,8 @@ fn backup_creation_uses_absolute_backup_directory() {
     fs::write(&existing, b"retained").expect("write dest");
 
     let operands = vec![
-        source.clone().into_os_string(),
-        dest.clone().into_os_string(),
+        source.into_os_string(),
+        dest.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default()
