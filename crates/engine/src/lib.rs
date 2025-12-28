@@ -76,12 +76,43 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_io;
 
-pub mod batch;
 pub mod delta;
 pub mod error;
-pub mod fuzzy;
 pub mod local_copy;
-pub mod signature;
+
+// Re-export batch types from the batch crate for backward compatibility.
+// The batch crate is the source of truth for these types.
+#[doc(hidden)]
+pub mod batch {
+    //! Re-exports from the [`batch`] crate for backward compatibility.
+    pub use batch::{
+        BatchConfig, BatchError, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchResult,
+        BatchWriter, DeltaOp, FileEntry,
+    };
+
+    /// Script generation for batch replay.
+    pub mod script {
+        pub use batch::script::{generate_script, generate_script_with_args};
+    }
+}
+
+// Re-export fuzzy matching types from the matching crate for backward compatibility.
+// The matching crate is the source of truth for these types.
+#[doc(hidden)]
+pub mod fuzzy {
+    //! Re-exports from the [`matching`] crate for backward compatibility.
+    pub use matching::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
+}
+
+// Re-export signature types from the dedicated signature crate for backward compatibility.
+// The signature crate is the source of truth for these types.
+#[doc(hidden)]
+pub mod signature {
+    //! Re-exports from the [`signature`] crate for backward compatibility.
+    pub use signature::{
+        FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
+    };
+}
 
 pub use batch::{BatchConfig, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchWriter};
 pub use delta::{
