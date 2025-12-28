@@ -57,6 +57,7 @@ impl TempFileGuard {
     /// let guard = TempFileGuard::new(PathBuf::from("/tmp/file.tmp"));
     /// // Temp file will be deleted when guard goes out of scope
     /// ```
+    #[inline]
     pub const fn new(path: PathBuf) -> Self {
         Self {
             path,
@@ -85,6 +86,7 @@ impl TempFileGuard {
     ///     Ok(())
     /// }
     /// ```
+    #[inline]
     pub const fn keep(&mut self) {
         self.keep_on_drop = true;
     }
@@ -100,6 +102,7 @@ impl TempFileGuard {
     /// let guard = TempFileGuard::new(PathBuf::from("/tmp/file.tmp"));
     /// assert_eq!(guard.path(), std::path::Path::new("/tmp/file.tmp"));
     /// ```
+    #[inline]
     pub fn path(&self) -> &Path {
         &self.path
     }

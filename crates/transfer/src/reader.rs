@@ -31,6 +31,7 @@ pub enum ServerReader<R: Read> {
 #[allow(dead_code)]
 impl<R: Read> ServerReader<R> {
     /// Creates a new plain-mode reader
+    #[inline]
     pub const fn new_plain(reader: R) -> Self {
         Self::Plain(reader)
     }
@@ -81,6 +82,7 @@ impl<R: Read> ServerReader<R> {
     }
 
     /// Returns true if multiplex mode is active
+    #[inline]
     #[allow(dead_code)]
     pub const fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_) | Self::Compressed(_))
