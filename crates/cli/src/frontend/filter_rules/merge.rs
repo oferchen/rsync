@@ -114,8 +114,8 @@ fn parse_merge_contents(
 
             if let Some(kind) = options.enforced_kind() {
                 let mut rule = match kind {
-                    DirMergeEnforcedKind::Include => FilterRuleSpec::include(token.to_string()),
-                    DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(token.to_string()),
+                    DirMergeEnforcedKind::Include => FilterRuleSpec::include(token.to_owned()),
+                    DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(token.to_owned()),
                 };
                 rule.apply_dir_merge_overrides(options);
                 destination.push(rule);
@@ -137,7 +137,7 @@ fn parse_merge_contents(
                 };
                 format!("{token} {arg}")
             } else {
-                token.to_string()
+                token.to_owned()
             };
 
             process_merge_directive(&directive, options, base_dir, display, destination, visited)?;
@@ -172,8 +172,8 @@ fn parse_merge_contents(
 
         if let Some(kind) = options.enforced_kind() {
             let mut rule = match kind {
-                DirMergeEnforcedKind::Include => FilterRuleSpec::include(trimmed.to_string()),
-                DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(trimmed.to_string()),
+                DirMergeEnforcedKind::Include => FilterRuleSpec::include(trimmed.to_owned()),
+                DirMergeEnforcedKind::Exclude => FilterRuleSpec::exclude(trimmed.to_owned()),
             };
             rule.apply_dir_merge_overrides(options);
             destination.push(rule);

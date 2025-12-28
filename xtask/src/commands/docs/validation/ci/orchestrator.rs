@@ -175,7 +175,7 @@ fn collect_job_names(contents: &str) -> Vec<String> {
 
         let name = trimmed.trim_end_matches(':');
         if !name.is_empty() {
-            names.push(name.to_string());
+            names.push(name.to_owned());
         }
     }
 

@@ -111,9 +111,9 @@ mod tests {
     #[test]
     fn test_info_event_renders_to_stdout() {
         let events = vec![DiagnosticEvent::Info {
-            flag: "progress".to_string(),
+            flag: "progress".to_owned(),
             level: 1,
-            message: "transferred 1024 bytes".to_string(),
+            message: "transferred 1024 bytes".to_owned(),
         }];
 
         let mut stdout = Vec::new();
@@ -131,9 +131,9 @@ mod tests {
     #[test]
     fn test_debug_event_renders_to_stderr_with_flag() {
         let events = vec![DiagnosticEvent::Debug {
-            flag: "filter".to_string(),
+            flag: "filter".to_owned(),
             level: 1,
-            message: "excluding file foo.txt".to_string(),
+            message: "excluding file foo.txt".to_owned(),
         }];
 
         let mut stdout = Vec::new();
@@ -152,14 +152,14 @@ mod tests {
     fn test_msgs2stderr_routes_all_to_stderr() {
         let events = vec![
             DiagnosticEvent::Info {
-                flag: "progress".to_string(),
+                flag: "progress".to_owned(),
                 level: 1,
-                message: "info message".to_string(),
+                message: "info message".to_owned(),
             },
             DiagnosticEvent::Debug {
-                flag: "filter".to_string(),
+                flag: "filter".to_owned(),
                 level: 1,
-                message: "debug message".to_string(),
+                message: "debug message".to_owned(),
             },
         ];
 
@@ -178,19 +178,19 @@ mod tests {
     fn test_multiple_events_rendered_in_order() {
         let events = vec![
             DiagnosticEvent::Info {
-                flag: "progress".to_string(),
+                flag: "progress".to_owned(),
                 level: 1,
-                message: "first".to_string(),
+                message: "first".to_owned(),
             },
             DiagnosticEvent::Debug {
-                flag: "io".to_string(),
+                flag: "io".to_owned(),
                 level: 2,
-                message: "second".to_string(),
+                message: "second".to_owned(),
             },
             DiagnosticEvent::Info {
-                flag: "stats".to_string(),
+                flag: "stats".to_owned(),
                 level: 1,
-                message: "third".to_string(),
+                message: "third".to_owned(),
             },
         ];
 

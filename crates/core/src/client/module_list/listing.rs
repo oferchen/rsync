@@ -85,15 +85,15 @@ impl ModuleListEntry {
     fn from_line(line: &str) -> Self {
         match line.split_once('\t') {
             Some((name, comment)) => Self {
-                name: name.to_string(),
+                name: name.to_owned(),
                 comment: if comment.is_empty() {
                     None
                 } else {
-                    Some(comment.to_string())
+                    Some(comment.to_owned())
                 },
             },
             None => Self {
-                name: line.to_string(),
+                name: line.to_owned(),
                 comment: None,
             },
         }
@@ -224,7 +224,7 @@ pub fn run_module_list_with_password_and_options(
         }
 
         if let Some(payload) = parse_legacy_warning_message(&line) {
-            warnings.push(payload.to_string());
+            warnings.push(payload.to_owned());
             continue;
         }
 
@@ -245,7 +245,7 @@ pub fn run_module_list_with_password_and_options(
                 }
                 Ok(LegacyDaemonMessage::Exit) => break,
                 Ok(LegacyDaemonMessage::Capabilities { flags }) => {
-                    capabilities.push(flags.to_string());
+                    capabilities.push(flags.to_owned());
                     continue;
                 }
                 Ok(LegacyDaemonMessage::AuthRequired { module }) => {
@@ -317,7 +317,7 @@ pub fn run_module_list_with_password_and_options(
                     }
 
                     if !acknowledged {
-                        pre_ack_messages.push(payload.to_string());
+                        pre_ack_messages.push(payload.to_owned());
                         continue;
                     }
 
@@ -424,9 +424,9 @@ mod tests {
 
     #[test]
     fn module_list_new_and_accessors() {
-        let motd = vec!["Welcome".to_string()];
-        let warnings = vec!["Warning1".to_string()];
-        let capabilities = vec!["cap1".to_string()];
+        let motd = vec!["Welcome".to_owned()];
+        let warnings = vec!["Warning1".to_owned()];
+        let capabilities = vec!["cap1".to_owned()];
         let entries = vec![ModuleListEntry::from_line("test")];
         let list = ModuleList::new(
             motd,

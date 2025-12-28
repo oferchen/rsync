@@ -68,7 +68,7 @@ fn regenerate_goldens(workspace: &Path, options: ExitCodesOptions) -> TaskResult
             )));
         } else {
             return Err(crate::error::TaskError::ToolMissing(
-                "No upstream rsync binaries found".to_string(),
+                "No upstream rsync binaries found".to_owned(),
             ));
         }
     }
@@ -174,7 +174,7 @@ fn validate_oc_rsync(
             verbose: options.verbose,
             show_output: options.show_output,
             log_dir: options.log_dir.clone(),
-            version: Some(version.to_string()),
+            version: Some(version.to_owned()),
         };
         let results =
             runner::run_scenarios(runnable_scenarios, oc_binary.binary_path(), &runner_opts)?;
@@ -203,7 +203,7 @@ fn validate_oc_rsync(
 
     if validation_failed {
         Err(crate::error::TaskError::Validation(
-            "oc-rsync exit code validation failed - does not match upstream behavior".to_string(),
+            "oc-rsync exit code validation failed - does not match upstream behavior".to_owned(),
         ))
     } else {
         eprintln!("\n[interop] oc-rsync validation complete - matches upstream behavior!");
@@ -279,7 +279,7 @@ fn validate_upstream(
 
     if validation_failed {
         Err(crate::error::TaskError::Validation(
-            "Exit code validation failed".to_string(),
+            "Exit code validation failed".to_owned(),
         ))
     } else {
         eprintln!("\n[interop] Exit code validation complete - all tests passed!");

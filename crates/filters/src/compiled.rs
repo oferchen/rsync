@@ -119,7 +119,7 @@ fn compile_patterns(
             .literal_separator(true)
             .backslash_escape(true)
             .build()
-            .map_err(|error| FilterError::new(original.to_string(), error))?;
+            .map_err(|error| FilterError::new(original.to_owned(), error))?;
         matchers.push(glob.compile_matcher());
     }
     Ok(matchers)
@@ -228,7 +228,7 @@ mod tests {
     fn compiled_rule_new_simple_exclude() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.bak".to_string(),
+            pattern: "*.bak".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -245,7 +245,7 @@ mod tests {
     fn compiled_rule_new_include() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "*.rs".to_string(),
+            pattern: "*.rs".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -259,7 +259,7 @@ mod tests {
     fn compiled_rule_matches_simple() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.bak".to_string(),
+            pattern: "*.bak".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -275,7 +275,7 @@ mod tests {
     fn compiled_rule_matches_anchored() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "/build".to_string(),
+            pattern: "/build".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -291,7 +291,7 @@ mod tests {
     fn compiled_rule_matches_directory_only() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "node_modules/".to_string(),
+            pattern: "node_modules/".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -308,7 +308,7 @@ mod tests {
     fn compiled_rule_matches_descendant() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "build/".to_string(),
+            pattern: "build/".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -326,7 +326,7 @@ mod tests {
     fn compiled_rule_clear_sides_sender() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_string(),
+            pattern: "*.tmp".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -343,7 +343,7 @@ mod tests {
     fn compiled_rule_clear_sides_receiver() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_string(),
+            pattern: "*.tmp".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -360,7 +360,7 @@ mod tests {
     fn compiled_rule_clear_sides_both() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_string(),
+            pattern: "*.tmp".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -384,7 +384,7 @@ mod tests {
     fn apply_clear_rule_no_change() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_string(),
+            pattern: "*.tmp".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -399,7 +399,7 @@ mod tests {
     fn apply_clear_rule_removes_inactive() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_string(),
+            pattern: "*.tmp".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: false,
             perishable: false,
@@ -415,7 +415,7 @@ mod tests {
     fn compiled_rule_protect_action() {
         let rule = FilterRule {
             action: FilterAction::Protect,
-            pattern: "important.dat".to_string(),
+            pattern: "important.dat".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -430,7 +430,7 @@ mod tests {
     fn compiled_rule_risk_action() {
         let rule = FilterRule {
             action: FilterAction::Risk,
-            pattern: "temp.dat".to_string(),
+            pattern: "temp.dat".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -444,7 +444,7 @@ mod tests {
     fn compiled_rule_include_matches() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "*.txt".to_string(),
+            pattern: "*.txt".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -459,7 +459,7 @@ mod tests {
     fn compiled_rule_perishable() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.log".to_string(),
+            pattern: "*.log".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: true,
@@ -473,7 +473,7 @@ mod tests {
     fn compiled_rule_complex_glob() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "**/*.o".to_string(),
+            pattern: "**/*.o".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,

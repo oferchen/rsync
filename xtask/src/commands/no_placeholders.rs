@@ -103,7 +103,7 @@ fn scan_rust_file_for_placeholders(path: &Path) -> TaskResult<Vec<PlaceholderFin
         if contains_placeholder(line) {
             findings.push(PlaceholderFinding {
                 line: line_number,
-                snippet: line.to_string(),
+                snippet: line.to_owned(),
             });
         }
     }

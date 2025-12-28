@@ -174,7 +174,7 @@ pub(crate) fn daemon_protocol_error(text: &str) -> ClientError {
 #[cold]
 pub(crate) fn daemon_authentication_required_error(reason: &str) -> ClientError {
     let detail = if reason.is_empty() {
-        "daemon requires authentication for module listing".to_string()
+        "daemon requires authentication for module listing".to_owned()
     } else {
         format!("daemon requires authentication for module listing: {reason}")
     };
@@ -188,7 +188,7 @@ pub(crate) fn daemon_authentication_failed_error(reason: Option<&str>) -> Client
         Some(text) if !text.is_empty() => {
             format!("daemon rejected provided credentials: {text}")
         }
-        _ => "daemon rejected provided credentials".to_string(),
+        _ => "daemon rejected provided credentials".to_owned(),
     };
 
     daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
@@ -197,7 +197,7 @@ pub(crate) fn daemon_authentication_failed_error(reason: Option<&str>) -> Client
 #[cold]
 pub(crate) fn daemon_access_denied_error(reason: &str) -> ClientError {
     let detail = if reason.is_empty() {
-        "daemon denied access to module listing".to_string()
+        "daemon denied access to module listing".to_owned()
     } else {
         format!("daemon denied access to module listing: {reason}")
     };
@@ -209,7 +209,7 @@ pub(crate) fn daemon_access_denied_error(reason: &str) -> ClientError {
 pub(crate) fn daemon_listing_unavailable_error(reason: &str) -> ClientError {
     let trimmed = reason.trim();
     let detail = if trimmed.is_empty() {
-        "daemon refused module listing".to_string()
+        "daemon refused module listing".to_owned()
     } else {
         format!("daemon refused module listing: {trimmed}")
     };

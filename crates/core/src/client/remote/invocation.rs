@@ -256,7 +256,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
 /// This is a simplified parser focused on extracting host/user for validation.
 /// Full operand parsing happens in the SSH transport layer.
 fn parse_remote_operand(operand: &str) -> Result<RemoteOperandParsed, ClientError> {
-    let operand_str = operand.to_string();
+    let operand_str = operand.to_owned();
 
     // Split on first colon to separate host part from path
     let colon_pos = operand.rfind(':').ok_or_else(|| {
@@ -279,7 +279,7 @@ fn parse_remote_operand(operand: &str) -> Result<RemoteOperandParsed, ClientErro
 
     // For now, we don't parse port from host (would need more complex parsing for IPv6)
     // Port parsing can be added later if needed
-    let host = host_with_port.to_string();
+    let host = host_with_port.to_owned();
     let port = None;
 
     Ok(RemoteOperandParsed {
@@ -526,7 +526,7 @@ mod tests {
         assert_eq!(result.1, vec!["local.txt"]);
         assert_eq!(
             result.2,
-            RemoteOperands::Single("user@host:/remote.txt".to_string())
+            RemoteOperands::Single("user@host:/remote.txt".to_owned())
         );
     }
 
@@ -541,7 +541,7 @@ mod tests {
         assert_eq!(result.1, vec!["local.txt"]);
         assert_eq!(
             result.2,
-            RemoteOperands::Single("user@host:/remote.txt".to_string())
+            RemoteOperands::Single("user@host:/remote.txt".to_owned())
         );
     }
 
@@ -554,7 +554,7 @@ mod tests {
 
         assert_eq!(result.0, RemoteRole::Sender);
         assert_eq!(result.1, vec!["file1.txt", "file2.txt"]);
-        assert_eq!(result.2, RemoteOperands::Single("host:/dest/".to_string()));
+        assert_eq!(result.2, RemoteOperands::Single("host:/dest/".to_owned()));
     }
 
     #[test]
@@ -597,7 +597,7 @@ mod tests {
         assert_eq!(result.1, vec!["dest/"]);
         assert_eq!(
             result.2,
-            RemoteOperands::Multiple(vec!["host:/file1".to_string(), "host:/file2".to_string()])
+            RemoteOperands::Multiple(vec!["host:/file1".to_owned(), "host:/file2".to_owned()])
         );
     }
 

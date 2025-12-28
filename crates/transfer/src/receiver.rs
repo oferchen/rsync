@@ -1190,7 +1190,7 @@ mod tests {
         ServerConfig {
             role: ServerRole::Receiver,
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
-            flag_string: "-logDtpre.".to_string(),
+            flag_string: "-logDtpre.".to_owned(),
             flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
             compression_level: None,
@@ -1461,11 +1461,11 @@ mod tests {
         // Simulate collecting metadata errors
         stats.metadata_errors.push((
             PathBuf::from("/tmp/file1.txt"),
-            "Permission denied".to_string(),
+            "Permission denied".to_owned(),
         ));
         stats.metadata_errors.push((
             PathBuf::from("/tmp/file2.txt"),
-            "Operation not permitted".to_string(),
+            "Operation not permitted".to_owned(),
         ));
 
         assert_eq!(stats.metadata_errors.len(), 2);

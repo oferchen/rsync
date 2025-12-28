@@ -250,7 +250,7 @@ fn parse_proxy_host_port(input: &str) -> Result<(String, u16), ClientError> {
 
 fn decode_proxy_component(input: &str, field: &str) -> Result<String, ClientError> {
     if !input.contains('%') {
-        return Ok(input.to_string());
+        return Ok(input.to_owned());
     }
 
     let mut decoded = Vec::with_capacity(input.len());
@@ -627,21 +627,21 @@ mod tests {
 
     #[test]
     fn proxy_credentials_authorization_value_basic_auth() {
-        let creds = ProxyCredentials::new("user".to_string(), "pass".to_string());
+        let creds = ProxyCredentials::new("user".to_owned(), "pass".to_owned());
         // user:pass base64 encoded should be "dXNlcjpwYXNz"
         assert_eq!(creds.authorization_value(), "dXNlcjpwYXNz");
     }
 
     #[test]
     fn proxy_credentials_authorization_value_empty_password() {
-        let creds = ProxyCredentials::new("user".to_string(), "".to_string());
+        let creds = ProxyCredentials::new("user".to_owned(), "".to_owned());
         // user: base64 encoded should be "dXNlcjo="
         assert_eq!(creds.authorization_value(), "dXNlcjo=");
     }
 
     #[test]
     fn proxy_credentials_authorization_value_special_chars() {
-        let creds = ProxyCredentials::new("user@domain".to_string(), "p@ss:word".to_string());
+        let creds = ProxyCredentials::new("user@domain".to_owned(), "p@ss:word".to_owned());
         let decoded = STANDARD.decode(creds.authorization_value()).unwrap();
         assert_eq!(decoded, b"user@domain:p@ss:word");
     }
