@@ -26,7 +26,7 @@ pub enum LocalCopyFileKind {
 }
 
 impl LocalCopyFileKind {
-    pub(super) fn from_file_type(file_type: &fs::FileType) -> Self {
+    pub(super) fn from_file_type(file_type: fs::FileType) -> Self {
         if file_type.is_dir() {
             return Self::Directory;
         }
@@ -82,7 +82,7 @@ impl LocalCopyMetadata {
         symlink_target: Option<PathBuf>,
     ) -> Self {
         let file_type = metadata.file_type();
-        let kind = LocalCopyFileKind::from_file_type(&file_type);
+        let kind = LocalCopyFileKind::from_file_type(file_type);
         let len = metadata.len();
         let modified = metadata.modified().ok();
 

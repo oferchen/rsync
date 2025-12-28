@@ -53,8 +53,8 @@ pub(crate) struct DirectoryPlan<'a> {
 fn decide_entry_action(
     context: &CopyContext,
     relative_path: &Path,
-    entry_type: &fs::FileType,
-    effective_type: &fs::FileType,
+    entry_type: fs::FileType,
+    effective_type: fs::FileType,
     keep_name: &mut bool,
 ) -> Result<EntryAction, LocalCopyError> {
     if !context.allows(relative_path, effective_type.is_dir()) {
@@ -164,8 +164,8 @@ pub(crate) fn plan_directory_entries<'a>(
         let mut action = decide_entry_action(
             context,
             relative_path.as_path(),
-            &entry_type,
-            &effective_type,
+            entry_type,
+            effective_type,
             &mut keep_name,
         )?;
 
@@ -185,7 +185,7 @@ pub(crate) fn plan_directory_entries<'a>(
                                 } else if target_type.is_file() {
                                     action = EntryAction::CopyFile;
                                     metadata_override = Some(target_metadata);
-                                } else if is_fifo(&target_type) {
+                                } else if is_fifo(target_type) {
                                     if context.specials_enabled() {
                                         action = EntryAction::CopyFifo;
                                         metadata_override = Some(target_metadata);
@@ -194,7 +194,7 @@ pub(crate) fn plan_directory_entries<'a>(
                                         action = EntryAction::SkipNonRegular;
                                         metadata_override = None;
                                     }
-                                } else if is_device(&target_type) {
+                                } else if is_device(target_type) {
                                     if context.copy_devices_as_files_enabled() {
                                         action = EntryAction::CopyDeviceAsFile;
                                         metadata_override = Some(target_metadata);
