@@ -284,7 +284,7 @@ mod tests {
     fn plan_debug_format() {
         let operands = vec![OsString::from("src"), OsString::from("dst")];
         let plan = LocalCopyPlan::from_operands(&operands).unwrap();
-        let debug = format!("{:?}", plan);
+        let debug = format!("{plan:?}");
         assert!(debug.contains("LocalCopyPlan"));
     }
 }

@@ -275,7 +275,7 @@ mod tests {
     fn unsupported_option_to_message_contains_option() {
         let unsupported = UnsupportedOption::new(OsString::from("--unknown-opt"));
         let message = unsupported.to_message();
-        let text = format!("{}", message);
+        let text = format!("{message}");
         assert!(text.contains("--unknown-opt"));
     }
 
