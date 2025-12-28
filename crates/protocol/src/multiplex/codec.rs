@@ -66,7 +66,7 @@ impl MultiplexCodec {
     /// The maximum payload length is set to [`MAX_PAYLOAD_LENGTH`] (16MB),
     /// matching upstream rsync's limit.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             max_payload_len: MAX_PAYLOAD_LENGTH,
         }
@@ -79,9 +79,15 @@ impl MultiplexCodec {
     /// [`MAX_PAYLOAD_LENGTH`] since the wire format cannot represent
     /// larger values.
     #[must_use]
-    pub fn with_max_payload_len(max_payload_len: u32) -> Self {
+    pub const fn with_max_payload_len(max_payload_len: u32) -> Self {
+        // Use if-else instead of min() for const context
+        let clamped = if max_payload_len < MAX_PAYLOAD_LENGTH {
+            max_payload_len
+        } else {
+            MAX_PAYLOAD_LENGTH
+        };
         Self {
-            max_payload_len: max_payload_len.min(MAX_PAYLOAD_LENGTH),
+            max_payload_len: clamped,
         }
     }
 
