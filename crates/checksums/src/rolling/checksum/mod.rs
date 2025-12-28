@@ -344,9 +344,8 @@ impl RollingChecksum {
         }
 
         let count = outgoing.len();
-        let (count_i128, count_u32) = match (i128::try_from(count), u32::try_from(count)) {
-            (Ok(ci), Ok(cu)) => (ci, cu),
-            _ => return self.roll_many_scalar(outgoing, incoming),
+        let (Ok(count_i128), Ok(count_u32)) = (i128::try_from(count), u32::try_from(count)) else {
+            return self.roll_many_scalar(outgoing, incoming);
         };
 
         let mut sum_outgoing = 0i128;
