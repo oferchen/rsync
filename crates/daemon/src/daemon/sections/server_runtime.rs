@@ -494,7 +494,7 @@ fn serve_connections(options: RuntimeOptions) -> Result<(), DaemonError> {
 
         let mut acceptor_handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(listeners.len());
 
-        for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().cloned()) {
+        for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().copied()) {
             let tx = tx.clone();
             let shutdown = Arc::clone(&shutdown);
 
