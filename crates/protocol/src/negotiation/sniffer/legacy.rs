@@ -105,7 +105,7 @@ struct LegacyBufferReserveError {
 }
 
 impl LegacyBufferReserveError {
-    fn new(inner: TryReserveError) -> Self {
+    const fn new(inner: TryReserveError) -> Self {
         Self { inner }
     }
 }

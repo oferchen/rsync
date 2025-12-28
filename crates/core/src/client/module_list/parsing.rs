@@ -114,7 +114,7 @@ pub(crate) fn decode_percent_component(
     String::from_utf8(decoded).map_err(|_| invalid_utf8())
 }
 
-pub(crate) fn hex_value(byte: u8) -> Option<u8> {
+pub(crate) const fn hex_value(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(byte - b'a' + 10),

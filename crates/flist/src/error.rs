@@ -12,33 +12,33 @@ pub struct FileListError {
 }
 
 impl FileListError {
-    pub(crate) fn new(kind: FileListErrorKind) -> Self {
+    pub(crate) const fn new(kind: FileListErrorKind) -> Self {
         Self { kind }
     }
 
-    pub(crate) fn root_metadata(path: PathBuf, source: io::Error) -> Self {
+    pub(crate) const fn root_metadata(path: PathBuf, source: io::Error) -> Self {
         Self::new(FileListErrorKind::RootMetadata { path, source })
     }
 
-    pub(crate) fn read_dir(path: PathBuf, source: io::Error) -> Self {
+    pub(crate) const fn read_dir(path: PathBuf, source: io::Error) -> Self {
         Self::new(FileListErrorKind::ReadDir { path, source })
     }
 
-    pub(crate) fn read_dir_entry(path: PathBuf, source: io::Error) -> Self {
+    pub(crate) const fn read_dir_entry(path: PathBuf, source: io::Error) -> Self {
         Self::new(FileListErrorKind::ReadDirEntry { path, source })
     }
 
-    pub(crate) fn metadata(path: PathBuf, source: io::Error) -> Self {
+    pub(crate) const fn metadata(path: PathBuf, source: io::Error) -> Self {
         Self::new(FileListErrorKind::Metadata { path, source })
     }
 
-    pub(crate) fn canonicalize(path: PathBuf, source: io::Error) -> Self {
+    pub(crate) const fn canonicalize(path: PathBuf, source: io::Error) -> Self {
         Self::new(FileListErrorKind::Canonicalize { path, source })
     }
 
     /// Returns the specific failure that terminated traversal.
     #[must_use]
-    pub fn kind(&self) -> &FileListErrorKind {
+    pub const fn kind(&self) -> &FileListErrorKind {
         &self.kind
     }
 

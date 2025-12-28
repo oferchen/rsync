@@ -87,7 +87,7 @@ impl CompiledRule {
         false
     }
 
-    pub(crate) fn clear_sides(&mut self, sender: bool, receiver: bool) -> bool {
+    pub(crate) const fn clear_sides(&mut self, sender: bool, receiver: bool) -> bool {
         if sender {
             self.applies_to_sender = false;
         }

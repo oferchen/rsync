@@ -193,11 +193,11 @@ impl<'a> CopyContext<'a> {
         Ok(false)
     }
 
-    pub(super) fn summary_mut(&mut self) -> &mut LocalCopySummary {
+    pub(super) const fn summary_mut(&mut self) -> &mut LocalCopySummary {
         &mut self.summary
     }
 
-    pub(super) fn summary(&self) -> &LocalCopySummary {
+    pub(super) const fn summary(&self) -> &LocalCopySummary {
         &self.summary
     }
 

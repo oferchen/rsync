@@ -21,7 +21,7 @@ impl ClientConfigBuilder {
     #[must_use]
     #[doc(alias = "--blocking-io")]
     #[doc(alias = "--no-blocking-io")]
-    pub fn blocking_io(mut self, blocking: Option<bool>) -> Self {
+    pub const fn blocking_io(mut self, blocking: Option<bool>) -> Self {
         self.blocking_io = blocking;
         self
     }
@@ -46,7 +46,7 @@ impl ClientConfigBuilder {
     #[must_use]
     #[doc(alias = "--stop-after")]
     #[doc(alias = "--stop-at")]
-    pub fn stop_at(mut self, deadline: Option<SystemTime>) -> Self {
+    pub const fn stop_at(mut self, deadline: Option<SystemTime>) -> Self {
         self.stop_deadline = deadline;
         self
     }

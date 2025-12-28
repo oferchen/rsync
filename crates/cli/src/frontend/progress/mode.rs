@@ -36,7 +36,7 @@ pub enum NameOutputLevel {
 }
 
 impl ProgressSetting {
-    pub(crate) fn resolved(self) -> Option<ProgressMode> {
+    pub(crate) const fn resolved(self) -> Option<ProgressMode> {
         match self {
             Self::PerFile => Some(ProgressMode::PerFile),
             Self::Overall => Some(ProgressMode::Overall),

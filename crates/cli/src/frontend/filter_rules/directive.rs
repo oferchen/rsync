@@ -36,7 +36,7 @@ impl MergeDirective {
         Self { source, options }
     }
 
-    pub(crate) fn with_options(mut self, options: DirMergeOptions) -> Self {
+    pub(crate) const fn with_options(mut self, options: DirMergeOptions) -> Self {
         self.options = options;
         self
     }
@@ -45,7 +45,7 @@ impl MergeDirective {
         self.source.as_os_str()
     }
 
-    pub(crate) fn options(&self) -> &DirMergeOptions {
+    pub(crate) const fn options(&self) -> &DirMergeOptions {
         &self.options
     }
 }

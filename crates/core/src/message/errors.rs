@@ -12,7 +12,7 @@ struct MessageBufferReserveError {
 
 impl MessageBufferReserveError {
     #[inline]
-    fn new(inner: TryReserveError) -> Self {
+    const fn new(inner: TryReserveError) -> Self {
         Self { inner }
     }
 }

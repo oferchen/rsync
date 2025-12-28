@@ -11,7 +11,7 @@ pub(crate) struct LegacyLineReserveError {
 }
 
 impl LegacyLineReserveError {
-    pub(crate) fn new(inner: TryReserveError) -> Self {
+    pub(crate) const fn new(inner: TryReserveError) -> Self {
         Self { inner }
     }
 }

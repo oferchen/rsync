@@ -37,7 +37,7 @@ impl LimiterSleep {
     }
 }
 
-pub(crate) fn duration_from_microseconds(us: u128) -> Duration {
+pub(crate) const fn duration_from_microseconds(us: u128) -> Duration {
     if us == 0 {
         return Duration::ZERO;
     }

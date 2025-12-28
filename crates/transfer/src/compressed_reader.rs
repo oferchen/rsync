@@ -85,7 +85,7 @@ impl<R: Read> CompressedReader<R> {
     /// Returns the number of compressed bytes read so far.
     #[must_use]
     #[allow(dead_code)] // Used in production code once compression is integrated
-    pub fn bytes_read(&self) -> u64 {
+    pub const fn bytes_read(&self) -> u64 {
         match &self.decoder {
             DecoderVariant::Zlib(decoder) => decoder.bytes_read(),
             #[cfg(feature = "lz4")]

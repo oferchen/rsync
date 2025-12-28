@@ -8,7 +8,7 @@ use time::OffsetDateTime;
 use super::mode::NameOutputLevel;
 use crate::LIST_TIMESTAMP_FORMAT;
 
-pub(crate) fn list_only_event(kind: &ClientEventKind) -> bool {
+pub(crate) const fn list_only_event(kind: &ClientEventKind) -> bool {
     matches!(
         kind,
         ClientEventKind::DataCopied
@@ -98,7 +98,7 @@ pub(crate) fn format_list_size(size: u64, human_readable: HumanReadableMode) -> 
 }
 
 /// Returns whether the provided event kind should be reflected in progress output.
-pub(crate) fn is_progress_event(kind: &ClientEventKind) -> bool {
+pub(crate) const fn is_progress_event(kind: &ClientEventKind) -> bool {
     kind.is_progress()
 }
 
@@ -345,7 +345,7 @@ pub(crate) fn format_stat_categories(categories: &[(&str, u64)]) -> String {
     }
 }
 
-pub(crate) fn event_matches_name_level(event: &ClientEvent, level: NameOutputLevel) -> bool {
+pub(crate) const fn event_matches_name_level(event: &ClientEvent, level: NameOutputLevel) -> bool {
     match level {
         NameOutputLevel::Disabled => false,
         NameOutputLevel::UpdatedOnly => matches!(
@@ -373,7 +373,7 @@ pub(crate) fn event_matches_name_level(event: &ClientEvent, level: NameOutputLev
 }
 
 /// Maps an event kind to a human-readable description.
-pub(crate) fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
+pub(crate) const fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
     match kind {
         ClientEventKind::DataCopied => "copied",
         ClientEventKind::MetadataReused => "metadata reused",

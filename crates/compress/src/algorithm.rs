@@ -38,7 +38,7 @@ impl CompressionAlgorithm {
 
     /// Returns the set of algorithms available in the current build.
     #[must_use]
-    pub fn available() -> &'static [CompressionAlgorithm] {
+    pub const fn available() -> &'static [CompressionAlgorithm] {
         #[cfg(all(feature = "zstd", feature = "lz4"))]
         {
             const ALGORITHMS: &[CompressionAlgorithm] = &[

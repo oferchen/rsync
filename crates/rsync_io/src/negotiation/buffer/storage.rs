@@ -91,15 +91,15 @@ impl NegotiationBuffer {
         self.sniffed_prefix_len
     }
 
-    pub(crate) fn buffered_len(&self) -> usize {
+    pub(crate) const fn buffered_len(&self) -> usize {
         self.buffered.len()
     }
 
-    pub(crate) fn buffered_consumed(&self) -> usize {
+    pub(crate) const fn buffered_consumed(&self) -> usize {
         self.buffered_pos
     }
 
-    pub(crate) fn buffered_remaining(&self) -> usize {
+    pub(crate) const fn buffered_remaining(&self) -> usize {
         self.buffered.len().saturating_sub(self.buffered_pos)
     }
 
@@ -108,11 +108,11 @@ impl NegotiationBuffer {
         self.sniffed_prefix_len.saturating_sub(consumed_prefix)
     }
 
-    pub(crate) fn legacy_prefix_complete(&self) -> bool {
+    pub(crate) const fn legacy_prefix_complete(&self) -> bool {
         self.sniffed_prefix_len >= LEGACY_DAEMON_PREFIX_LEN
     }
 
-    pub(crate) fn has_remaining(&self) -> bool {
+    pub(crate) const fn has_remaining(&self) -> bool {
         self.buffered_pos < self.buffered.len()
     }
 
@@ -347,7 +347,7 @@ impl NegotiationBuffer {
         copied
     }
 
-    pub(crate) fn consume(&mut self, amt: usize) -> usize {
+    pub(crate) const fn consume(&mut self, amt: usize) -> usize {
         if !self.has_remaining() {
             return amt;
         }

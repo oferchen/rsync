@@ -99,7 +99,7 @@ impl RollingChecksum {
     }
 
     /// Resets the checksum back to its initial state.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.s1 = 0;
         self.s2 = 0;
         self.len = 0;
@@ -436,12 +436,12 @@ impl RollingChecksum {
     /// assert_eq!(checksum.value(), restored.value());
     /// ```
     #[must_use]
-    pub fn digest(&self) -> RollingDigest {
+    pub const fn digest(&self) -> RollingDigest {
         RollingDigest::new(self.s1 as u16, self.s2 as u16, self.len)
     }
 
     #[cfg(test)]
-    pub(crate) fn force_state(&mut self, s1: u32, s2: u32, len: usize) {
+    pub(crate) const fn force_state(&mut self, s1: u32, s2: u32, len: usize) {
         self.s1 = s1;
         self.s2 = s2;
         self.len = len;
@@ -509,7 +509,7 @@ fn accumulate_chunk_arch(
 }
 
 #[inline]
-fn mask_result((s1, s2, len): (u32, u32, usize)) -> (u32, u32, usize) {
+const fn mask_result((s1, s2, len): (u32, u32, usize)) -> (u32, u32, usize) {
     (s1 & 0xffff, s2 & 0xffff, len)
 }
 

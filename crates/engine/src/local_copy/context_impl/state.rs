@@ -78,15 +78,15 @@ impl<'a> CopyContext<'a> {
         Ok(())
     }
 
-    pub(super) fn mode(&self) -> LocalCopyExecution {
+    pub(super) const fn mode(&self) -> LocalCopyExecution {
         self.mode
     }
 
-    pub(super) fn options(&self) -> &LocalCopyOptions {
+    pub(super) const fn options(&self) -> &LocalCopyOptions {
         &self.options
     }
 
-    pub(super) fn one_file_system_enabled(&self) -> bool {
+    pub(super) const fn one_file_system_enabled(&self) -> bool {
         self.options.one_file_system_enabled()
     }
 
@@ -104,7 +104,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    pub(super) fn delay_updates_enabled(&self) -> bool {
+    pub(super) const fn delay_updates_enabled(&self) -> bool {
         self.options.delay_updates_enabled()
     }
 
@@ -443,15 +443,15 @@ impl<'a> CopyContext<'a> {
         )
     }
 
-    pub(super) fn delete_timing(&self) -> Option<DeleteTiming> {
+    pub(super) const fn delete_timing(&self) -> Option<DeleteTiming> {
         self.options.delete_timing()
     }
 
-    pub(super) fn min_file_size_limit(&self) -> Option<u64> {
+    pub(super) const fn min_file_size_limit(&self) -> Option<u64> {
         self.options.min_file_size_limit()
     }
 
-    pub(super) fn max_file_size_limit(&self) -> Option<u64> {
+    pub(super) const fn max_file_size_limit(&self) -> Option<u64> {
         self.options.max_file_size_limit()
     }
 }

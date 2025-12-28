@@ -4,7 +4,7 @@ use rsync_io::{
 };
 use std::io::Cursor;
 
-fn assert_type_visible<T>() {}
+const fn assert_type_visible<T>() {}
 
 #[test]
 fn session_handshake_parts_is_publicly_visible() {

@@ -211,7 +211,7 @@ impl LocalCopySummary {
         self.file_list_size
     }
 
-    pub(in crate::local_copy) fn record_file_list_entry(&mut self, entry_size: usize) {
+    pub(in crate::local_copy) const fn record_file_list_entry(&mut self, entry_size: usize) {
         self.file_list_size = self.file_list_size.saturating_add(entry_size as u64);
     }
 
@@ -285,87 +285,87 @@ impl LocalCopySummary {
         }
     }
 
-    pub(in crate::local_copy) fn record_regular_file_total(&mut self) {
+    pub(in crate::local_copy) const fn record_regular_file_total(&mut self) {
         self.regular_files_total = self.regular_files_total.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_regular_file_matched(&mut self) {
+    pub(in crate::local_copy) const fn record_regular_file_matched(&mut self) {
         self.regular_files_matched = self.regular_files_matched.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_regular_file_ignored_existing(&mut self) {
+    pub(in crate::local_copy) const fn record_regular_file_ignored_existing(&mut self) {
         self.regular_files_ignored_existing = self.regular_files_ignored_existing.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_regular_file_skipped_missing(&mut self) {
+    pub(in crate::local_copy) const fn record_regular_file_skipped_missing(&mut self) {
         self.regular_files_skipped_missing = self.regular_files_skipped_missing.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_regular_file_skipped_newer(&mut self) {
+    pub(in crate::local_copy) const fn record_regular_file_skipped_newer(&mut self) {
         self.regular_files_skipped_newer = self.regular_files_skipped_newer.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_total_bytes(&mut self, bytes: u64) {
+    pub(in crate::local_copy) const fn record_total_bytes(&mut self, bytes: u64) {
         self.total_source_bytes = self.total_source_bytes.saturating_add(bytes);
     }
 
-    pub(in crate::local_copy) fn record_elapsed(&mut self, elapsed: Duration) {
+    pub(in crate::local_copy) const fn record_elapsed(&mut self, elapsed: Duration) {
         self.total_elapsed = self.total_elapsed.saturating_add(elapsed);
     }
 
-    pub(in crate::local_copy) fn record_bandwidth_sleep(&mut self, duration: Duration) {
+    pub(in crate::local_copy) const fn record_bandwidth_sleep(&mut self, duration: Duration) {
         self.bandwidth_sleep = self.bandwidth_sleep.saturating_add(duration);
     }
 
-    pub(in crate::local_copy) fn record_file_list_generation(&mut self, elapsed: Duration) {
+    pub(in crate::local_copy) const fn record_file_list_generation(&mut self, elapsed: Duration) {
         self.file_list_generation = self.file_list_generation.saturating_add(elapsed);
     }
 
-    pub(in crate::local_copy) fn record_file_list_transfer(&mut self, elapsed: Duration) {
+    pub(in crate::local_copy) const fn record_file_list_transfer(&mut self, elapsed: Duration) {
         self.file_list_transfer = self.file_list_transfer.saturating_add(elapsed);
     }
 
-    pub(in crate::local_copy) fn record_directory(&mut self) {
+    pub(in crate::local_copy) const fn record_directory(&mut self) {
         self.directories_created = self.directories_created.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_directory_total(&mut self) {
+    pub(in crate::local_copy) const fn record_directory_total(&mut self) {
         self.directories_total = self.directories_total.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_symlink(&mut self) {
+    pub(in crate::local_copy) const fn record_symlink(&mut self) {
         self.symlinks_copied = self.symlinks_copied.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_symlink_total(&mut self) {
+    pub(in crate::local_copy) const fn record_symlink_total(&mut self) {
         self.symlinks_total = self.symlinks_total.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_hard_link(&mut self) {
+    pub(in crate::local_copy) const fn record_hard_link(&mut self) {
         self.hard_links_created = self.hard_links_created.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_device(&mut self) {
+    pub(in crate::local_copy) const fn record_device(&mut self) {
         self.devices_created = self.devices_created.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_device_total(&mut self) {
+    pub(in crate::local_copy) const fn record_device_total(&mut self) {
         self.devices_total = self.devices_total.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_fifo(&mut self) {
+    pub(in crate::local_copy) const fn record_fifo(&mut self) {
         self.fifos_created = self.fifos_created.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_fifo_total(&mut self) {
+    pub(in crate::local_copy) const fn record_fifo_total(&mut self) {
         self.fifos_total = self.fifos_total.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_deletion(&mut self) {
+    pub(in crate::local_copy) const fn record_deletion(&mut self) {
         self.items_deleted = self.items_deleted.saturating_add(1);
     }
 
-    pub(in crate::local_copy) fn record_source_removed(&mut self) {
+    pub(in crate::local_copy) const fn record_source_removed(&mut self) {
         self.sources_removed = self.sources_removed.saturating_add(1);
     }
 }

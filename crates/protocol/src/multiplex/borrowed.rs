@@ -30,14 +30,14 @@ impl<'a> BorrowedMessageFrame<'a> {
     /// Returns the payload bytes carried by the frame.
     #[must_use]
     #[inline]
-    pub fn payload(&self) -> &'a [u8] {
+    pub const fn payload(&self) -> &'a [u8] {
         self.payload
     }
 
     /// Returns the payload length in bytes.
     #[must_use]
     #[inline]
-    pub fn payload_len(&self) -> usize {
+    pub const fn payload_len(&self) -> usize {
         self.payload.len()
     }
 
@@ -133,7 +133,7 @@ impl<'a> BorrowedMessageFrames<'a> {
 
     /// Returns the slice remaining after the iterator has finished decoding frames.
     #[must_use]
-    pub fn remainder(&self) -> &'a [u8] {
+    pub const fn remainder(&self) -> &'a [u8] {
         self.remaining
     }
 }

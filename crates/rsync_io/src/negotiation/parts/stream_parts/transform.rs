@@ -12,7 +12,7 @@ impl<R> Parts<R> {
 
     /// Returns the inner reader mutably.
     #[must_use]
-    pub fn inner_mut(&mut self) -> &mut R {
+    pub const fn inner_mut(&mut self) -> &mut R {
         &mut self.inner
     }
 

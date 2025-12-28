@@ -72,7 +72,7 @@ impl ModuleListRequest {
         Ok(Some(Self::new(target.address, target.username)))
     }
 
-    fn new(address: DaemonAddress, username: Option<String>) -> Self {
+    const fn new(address: DaemonAddress, username: Option<String>) -> Self {
         Self {
             address,
             username,
@@ -82,7 +82,7 @@ impl ModuleListRequest {
 
     #[cfg(test)]
     #[allow(dead_code)]
-    pub(crate) fn from_components(
+    pub(crate) const fn from_components(
         address: DaemonAddress,
         username: Option<String>,
         protocol: ProtocolVersion,
@@ -96,7 +96,7 @@ impl ModuleListRequest {
 
     /// Returns the parsed daemon address.
     #[must_use]
-    pub fn address(&self) -> &DaemonAddress {
+    pub const fn address(&self) -> &DaemonAddress {
         &self.address
     }
 
