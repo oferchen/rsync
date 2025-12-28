@@ -149,3 +149,178 @@ fn build_client_greeting(
     greeting.push('\n');
     greeting.into_bytes()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::parse_legacy_daemon_greeting_owned;
+
+    fn parse_greeting(line: &str) -> LegacyDaemonGreetingOwned {
+        parse_legacy_daemon_greeting_owned(line).expect("valid greeting")
+    }
+
+    // ==== build_client_greeting basic tests ====
+
+    #[test]
+    fn build_greeting_includes_prefix() {
+        let server = parse_greeting("@RSYNCD: 31.0");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        assert!(greeting.starts_with(b"@RSYNCD:"));
+    }
+
+    #[test]
+    fn build_greeting_ends_with_newline() {
+        let server = parse_greeting("@RSYNCD: 31.0");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        assert!(greeting.ends_with(b"\n"));
+    }
+
+    #[test]
+    fn build_greeting_includes_protocol_version() {
+        let server = parse_greeting("@RSYNCD: 31.0");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        assert!(greeting_str.contains("31."));
+    }
+
+    // ==== Protocol version matching ====
+
+    #[test]
+    fn build_greeting_preserves_subprotocol_when_matching() {
+        let server = parse_greeting("@RSYNCD: 31.9");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        // When negotiated == server protocol, we preserve subprotocol
+        assert!(greeting_str.contains("31.9"), "got: {greeting_str}");
+    }
+
+    #[test]
+    fn build_greeting_uses_zero_subprotocol_when_downgraded() {
+        let server = parse_greeting("@RSYNCD: 31.5");
+        let protocol = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        // When negotiated < server protocol, subprotocol is 0
+        assert!(greeting_str.contains("30.0"), "got: {greeting_str}");
+    }
+
+    #[test]
+    fn build_greeting_zero_subprotocol_when_server_has_none() {
+        let server = parse_greeting("@RSYNCD: 29.0");
+        let protocol = ProtocolVersion::from_supported(29).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        assert!(greeting_str.contains("29.0"), "got: {greeting_str}");
+    }
+
+    // ==== Digest list handling ====
+
+    #[test]
+    fn build_greeting_includes_digest_list_when_present() {
+        let server = parse_greeting("@RSYNCD: 31.0 md4 md5 xxh3");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        assert!(greeting_str.contains("md4 md5 xxh3"), "got: {greeting_str}");
+    }
+
+    #[test]
+    fn build_greeting_omits_digest_list_when_absent() {
+        let server = parse_greeting("@RSYNCD: 30.0");
+        let protocol = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        // Should only have "@RSYNCD: 30.0\n"
+        assert_eq!(greeting_str.trim(), "@RSYNCD: 30.0");
+    }
+
+    #[test]
+    fn build_greeting_with_single_digest() {
+        let server = parse_greeting("@RSYNCD: 31.0 xxh3");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        assert!(greeting_str.contains(" xxh3"), "got: {greeting_str}");
+    }
+
+    // ==== Protocol version edge cases ====
+
+    #[test]
+    fn build_greeting_with_protocol_28() {
+        let server = parse_greeting("@RSYNCD: 28.0");
+        let protocol = ProtocolVersion::from_supported(28).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        assert!(greeting_str.contains("28.0"), "got: {greeting_str}");
+    }
+
+    #[test]
+    fn build_greeting_with_highest_subprotocol() {
+        let server = parse_greeting("@RSYNCD: 31.99");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        assert!(greeting_str.contains("31.99"), "got: {greeting_str}");
+    }
+
+    // ==== Format validation ====
+
+    #[test]
+    fn build_greeting_format_is_valid_ascii() {
+        let server = parse_greeting("@RSYNCD: 31.0 md5");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        assert!(greeting.iter().all(|&b| b.is_ascii()));
+    }
+
+    #[test]
+    fn build_greeting_has_space_after_prefix() {
+        let server = parse_greeting("@RSYNCD: 30.0");
+        let protocol = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        // Should have "@RSYNCD: 30.0" with space after colon
+        assert!(greeting_str.starts_with("@RSYNCD: "));
+    }
+
+    #[test]
+    fn build_greeting_has_dot_between_major_minor() {
+        let server = parse_greeting("@RSYNCD: 31.5");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        let greeting_str = String::from_utf8_lossy(&greeting);
+        // Should contain "31.5" (dot separating major.minor)
+        assert!(greeting_str.contains('.'));
+    }
+
+    // ==== Complete greeting tests ====
+
+    #[test]
+    fn build_greeting_complete_without_digests() {
+        let server = parse_greeting("@RSYNCD: 30.0");
+        let protocol = ProtocolVersion::from_supported(30).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        assert_eq!(greeting, b"@RSYNCD: 30.0\n");
+    }
+
+    #[test]
+    fn build_greeting_complete_with_digests() {
+        let server = parse_greeting("@RSYNCD: 31.0 md5 xxh3");
+        let protocol = ProtocolVersion::from_supported(31).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        assert_eq!(greeting, b"@RSYNCD: 31.0 md5 xxh3\n");
+    }
+
+    #[test]
+    fn build_greeting_downgraded_with_digests() {
+        let server = parse_greeting("@RSYNCD: 31.5 md4 md5");
+        let protocol = ProtocolVersion::from_supported(29).unwrap();
+        let greeting = build_client_greeting(&server, protocol);
+        // Downgraded to 29.0, but digests still included
+        assert_eq!(greeting, b"@RSYNCD: 29.0 md4 md5\n");
+    }
+}
