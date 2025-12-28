@@ -81,10 +81,102 @@ fn parse_client_info(client_args: &[String]) -> String {
     String::new()
 }
 
+/// Capability mapping entry for table-driven flag parsing.
+///
+/// Each entry maps a client capability character to a compatibility flag,
+/// with optional platform-specific and conditional requirements.
+struct CapabilityMapping {
+    /// Character advertised by client in -e option
+    char: char,
+    /// Corresponding compatibility flag
+    flag: CompatibilityFlags,
+    /// Platform-specific requirement (None = all platforms)
+    #[cfg(unix)]
+    platform_ok: bool,
+    #[cfg(not(unix))]
+    platform_ok: bool,
+    /// Whether this capability requires allow_inc_recurse to be true
+    requires_inc_recurse: bool,
+}
+
+/// Table-driven capability to flag mappings.
+///
+/// This mirrors upstream compat.c:712-734 in a maintainable format.
+/// Order matches upstream rsync for documentation consistency.
+const CAPABILITY_MAPPINGS: &[CapabilityMapping] = &[
+    // INC_RECURSE: 'i' - requires allow_inc_recurse
+    CapabilityMapping {
+        char: 'i',
+        flag: CompatibilityFlags::INC_RECURSE,
+        platform_ok: true,
+        requires_inc_recurse: true,
+    },
+    // SYMLINK_TIMES: 'L' - Unix only (CAN_SET_SYMLINK_TIMES)
+    CapabilityMapping {
+        char: 'L',
+        flag: CompatibilityFlags::SYMLINK_TIMES,
+        #[cfg(unix)]
+        platform_ok: true,
+        #[cfg(not(unix))]
+        platform_ok: false,
+        requires_inc_recurse: false,
+    },
+    // SYMLINK_ICONV: 's'
+    CapabilityMapping {
+        char: 's',
+        flag: CompatibilityFlags::SYMLINK_ICONV,
+        platform_ok: true,
+        requires_inc_recurse: false,
+    },
+    // SAFE_FILE_LIST: 'f'
+    CapabilityMapping {
+        char: 'f',
+        flag: CompatibilityFlags::SAFE_FILE_LIST,
+        platform_ok: true,
+        requires_inc_recurse: false,
+    },
+    // AVOID_XATTR_OPTIMIZATION: 'x' - disables xattr hardlink optimization
+    CapabilityMapping {
+        char: 'x',
+        flag: CompatibilityFlags::AVOID_XATTR_OPTIMIZATION,
+        platform_ok: true,
+        requires_inc_recurse: false,
+    },
+    // CHECKSUM_SEED_FIX: 'C' - proper seed ordering for MD5
+    CapabilityMapping {
+        char: 'C',
+        flag: CompatibilityFlags::CHECKSUM_SEED_FIX,
+        platform_ok: true,
+        requires_inc_recurse: false,
+    },
+    // INPLACE_PARTIAL_DIR: 'I' - --inplace behavior for partial dir
+    CapabilityMapping {
+        char: 'I',
+        flag: CompatibilityFlags::INPLACE_PARTIAL_DIR,
+        platform_ok: true,
+        requires_inc_recurse: false,
+    },
+    // VARINT_FLIST_FLAGS: 'v'
+    CapabilityMapping {
+        char: 'v',
+        flag: CompatibilityFlags::VARINT_FLIST_FLAGS,
+        platform_ok: true,
+        requires_inc_recurse: false,
+    },
+    // ID0_NAMES: 'u' - include uid/gid 0 names
+    CapabilityMapping {
+        char: 'u',
+        flag: CompatibilityFlags::ID0_NAMES,
+        platform_ok: true,
+        requires_inc_recurse: false,
+    },
+];
+
 /// Builds compatibility flags based on client capabilities.
 ///
-/// This mirrors upstream compat.c:712-732 which checks the client_info string
-/// to determine which flags to enable.
+/// Uses table-driven approach for maintainability. This mirrors upstream
+/// compat.c:712-734 which checks the client_info string to determine
+/// which flags to enable.
 ///
 /// # Arguments
 /// * `client_info` - Capability string from client's `-e` option (e.g., "fxCIvu")
@@ -98,58 +190,21 @@ fn build_compat_flags_from_client_info(
 ) -> CompatibilityFlags {
     let mut flags = CompatibilityFlags::from_bits(0);
 
-    // INC_RECURSE: enabled if we allow it AND client supports 'i'
-    if allow_inc_recurse && client_info.contains('i') {
-        flags |= CompatibilityFlags::INC_RECURSE;
-    }
+    for mapping in CAPABILITY_MAPPINGS {
+        // Skip if platform doesn't support this capability
+        if !mapping.platform_ok {
+            continue;
+        }
 
-    // SYMLINK_TIMES: client advertises 'L' AND server platform supports it
-    // (mirrors upstream CAN_SET_SYMLINK_TIMES check at compat.c:713-714)
-    #[cfg(unix)]
-    if client_info.contains('L') {
-        flags |= CompatibilityFlags::SYMLINK_TIMES;
-    }
+        // Skip if requires inc_recurse but not allowed
+        if mapping.requires_inc_recurse && !allow_inc_recurse {
+            continue;
+        }
 
-    // SYMLINK_ICONV: client advertises 's'
-    if client_info.contains('s') {
-        flags |= CompatibilityFlags::SYMLINK_ICONV;
-    }
-
-    // SAFE_FILE_LIST: client advertises 'f'
-    if client_info.contains('f') {
-        flags |= CompatibilityFlags::SAFE_FILE_LIST;
-    }
-
-    // AVOID_XATTR_OPTIMIZATION: client advertises 'x'
-    // Disables xattr hardlink optimization (mirrors upstream compat.c:730)
-    // When enabled, xattr data is transmitted even for hardlinked files
-    if client_info.contains('x') {
-        flags |= CompatibilityFlags::AVOID_XATTR_OPTIMIZATION;
-    }
-
-    // CHECKSUM_SEED_FIX: client advertises 'C'
-    // Ensures proper seed ordering for MD5 checksums (fully implemented)
-    if client_info.contains('C') {
-        flags |= CompatibilityFlags::CHECKSUM_SEED_FIX;
-    }
-
-    // INPLACE_PARTIAL_DIR: client advertises 'I'
-    // Enables --inplace behavior when basis file is in partial directory
-    // (mirrors upstream compat.c:732, receiver.c:797, sender.c:331)
-    if client_info.contains('I') {
-        flags |= CompatibilityFlags::INPLACE_PARTIAL_DIR;
-    }
-
-    // VARINT_FLIST_FLAGS: client advertises 'v'
-    if client_info.contains('v') {
-        flags |= CompatibilityFlags::VARINT_FLIST_FLAGS;
-    }
-
-    // ID0_NAMES: client advertises 'u'
-    // Controls whether uid/gid 0 names are included in the uid/gid list
-    // (mirrors upstream compat.c:734, uidlist.c:400-408)
-    if client_info.contains('u') {
-        flags |= CompatibilityFlags::ID0_NAMES;
+        // Enable flag if client advertises the capability
+        if client_info.contains(mapping.char) {
+            flags |= mapping.flag;
+        }
     }
 
     flags
