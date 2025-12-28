@@ -164,30 +164,35 @@ impl RollingDigest {
     }
 
     /// Returns the packed 32-bit representation of the digest.
+    #[inline]
     #[must_use]
     pub const fn value(self) -> u32 {
         ((self.s2 as u32) << 16) | (self.s1 as u32)
     }
 
     /// Length of the data that contributed to the digest.
+    #[inline]
     #[must_use]
     pub const fn len(self) -> usize {
         self.len
     }
 
     /// Returns whether the digest was computed from zero bytes.
+    #[inline]
     #[must_use]
     pub const fn is_empty(self) -> bool {
         self.len == 0
     }
 
     /// First 16-bit component of the rolling checksum (`s1`).
+    #[inline]
     #[must_use]
     pub const fn sum1(self) -> u16 {
         self.s1
     }
 
     /// Second 16-bit component of the rolling checksum (`s2`).
+    #[inline]
     #[must_use]
     pub const fn sum2(self) -> u16 {
         self.s2
