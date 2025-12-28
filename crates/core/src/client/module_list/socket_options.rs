@@ -119,7 +119,7 @@ impl ParsedSocketOption {
     fn apply(&self, stream: &TcpStream) -> io::Result<()> {
         match self.kind {
             SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
-                let value = self.explicit_value.unwrap_or(libc::c_int::from(1));
+                let value = self.explicit_value.unwrap_or(1);
                 set_socket_option_int(stream, level, option, value)
             }
             SocketOptionKind::On {
@@ -138,7 +138,7 @@ impl ParsedSocketOption {
     fn apply(&self, stream: &TcpStream) -> io::Result<()> {
         match self.kind {
             SocketOptionKind::Bool { level, option } | SocketOptionKind::Int { level, option } => {
-                let value = self.explicit_value.unwrap_or(libc::c_int::from(1));
+                let value = self.explicit_value.unwrap_or(1);
                 set_socket_option_int(stream, level, option, value)
             }
         }
@@ -188,8 +188,7 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Resul
                     });
                 }
                 SocketOptionKind::Bool { .. } | SocketOptionKind::Int { .. } => {
-                    let parsed_value = value_str
-                        .map_or(libc::c_int::from(1), parse_socket_option_value);
+                    let parsed_value = value_str.map_or(1, parse_socket_option_value);
                     parsed.push(ParsedSocketOption {
                         kind,
                         explicit_value: Some(parsed_value),
