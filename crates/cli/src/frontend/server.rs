@@ -290,10 +290,7 @@ mod tests {
 
     #[test]
     fn daemon_mode_arguments_oc_rsync_program() {
-        let args: Vec<OsString> = vec![
-            OsString::from("oc-rsync"),
-            OsString::from("--daemon"),
-        ];
+        let args: Vec<OsString> = vec![OsString::from("oc-rsync"), OsString::from("--daemon")];
         let result = daemon_mode_arguments(&args);
         assert!(result.is_some());
         // The first argument should be the daemon program name
@@ -328,10 +325,7 @@ mod tests {
 
     #[test]
     fn server_mode_requested_server_first_arg() {
-        let args: Vec<OsString> = vec![
-            OsString::from("rsync"),
-            OsString::from("--server"),
-        ];
+        let args: Vec<OsString> = vec![OsString::from("rsync"), OsString::from("--server")];
         assert!(server_mode_requested(&args));
     }
 

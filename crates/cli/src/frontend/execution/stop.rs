@@ -659,22 +659,28 @@ mod tests {
         // Far future date should always be valid
         let result = parse_stop_at_internal("2099-12-31T23:59");
         // May fail due to local offset issues in test env, but format should be ok
-        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
-            || matches!(result, Err(StopAtError::LocalOffset)));
+        assert!(
+            !matches!(result, Err(StopAtError::InvalidFormat))
+                || matches!(result, Err(StopAtError::LocalOffset))
+        );
     }
 
     #[test]
     fn stop_at_internal_slash_separator() {
         let result = parse_stop_at_internal("2099/12/31T23:59");
-        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
-            || matches!(result, Err(StopAtError::LocalOffset)));
+        assert!(
+            !matches!(result, Err(StopAtError::InvalidFormat))
+                || matches!(result, Err(StopAtError::LocalOffset))
+        );
     }
 
     #[test]
     fn stop_at_internal_lowercase_t() {
         let result = parse_stop_at_internal("2099-12-31t23:59");
-        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
-            || matches!(result, Err(StopAtError::LocalOffset)));
+        assert!(
+            !matches!(result, Err(StopAtError::InvalidFormat))
+                || matches!(result, Err(StopAtError::LocalOffset))
+        );
     }
 
     // ==================== Two-digit year tests ====================
@@ -684,7 +690,9 @@ mod tests {
         // 99 should be interpreted as 2099 (or later century in the future)
         let result = parse_stop_at_internal("99-12-31");
         // Should not be InvalidFormat - either succeeds or LocalOffset
-        assert!(!matches!(result, Err(StopAtError::InvalidFormat))
-            || matches!(result, Err(StopAtError::LocalOffset)));
+        assert!(
+            !matches!(result, Err(StopAtError::InvalidFormat))
+                || matches!(result, Err(StopAtError::LocalOffset))
+        );
     }
 }
