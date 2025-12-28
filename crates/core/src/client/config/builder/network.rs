@@ -146,7 +146,7 @@ mod tests {
     fn bind_address_sets_value() {
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)), 0);
         let addr = BindAddress::new(OsString::from("192.168.1.1"), socket);
-        let config = builder().bind_address(Some(addr.clone())).build();
+        let config = builder().bind_address(Some(addr)).build();
         assert!(config.bind_address().is_some());
     }
 

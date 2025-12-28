@@ -33,7 +33,7 @@ fn runtime_options_branded_config_env_overrides_legacy_env() {
         &options.delegate_arguments,
         &[
             OsString::from("--config"),
-            branded_config.clone().into_os_string(),
+            branded_config.into_os_string(),
         ]
     );
 }

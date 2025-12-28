@@ -38,7 +38,7 @@ fn apply_merge_directive_parses_whitespace_risk_and_exclude_if_present() {
 
     let options = DirMergeOptions::default().use_whitespace();
     let directive =
-        MergeDirective::new(merge_file.clone().into_os_string(), None).with_options(options);
+        MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
 
     let mut rules = Vec::new();
     let mut visited = HashSet::new();
@@ -69,7 +69,7 @@ fn apply_merge_directive_parses_whitespace_per_dir_alias() {
 
     let options = DirMergeOptions::default().use_whitespace();
     let directive =
-        MergeDirective::new(merge_file.clone().into_os_string(), None).with_options(options);
+        MergeDirective::new(merge_file.into_os_string(), None).with_options(options);
 
     let mut rules = Vec::new();
     let mut visited = HashSet::new();

@@ -14,7 +14,7 @@ fn delete_respects_exclude_filters() {
     fs::write(target_root.join("extra.txt"), b"extra").expect("write extra");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -52,7 +52,7 @@ fn delete_excluded_removes_excluded_entries() {
     fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -88,7 +88,7 @@ fn delete_excluded_removes_matching_source_files() {
     fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

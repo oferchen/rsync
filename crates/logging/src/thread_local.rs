@@ -156,7 +156,7 @@ mod tests {
             level: 1,
             message: "test".to_string(),
         };
-        let cloned = info_event.clone();
+        let cloned = info_event;
         match cloned {
             DiagnosticEvent::Info {
                 flag,
@@ -175,7 +175,7 @@ mod tests {
             level: 2,
             message: "debug".to_string(),
         };
-        let cloned = debug_event.clone();
+        let cloned = debug_event;
         match cloned {
             DiagnosticEvent::Debug {
                 flag,

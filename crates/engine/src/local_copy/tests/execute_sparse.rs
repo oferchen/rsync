@@ -187,7 +187,7 @@ fn execute_delta_with_sparse_counts_zero_literal_data() {
     set_file_mtime(&source_path, FileTime::from_unix_time(2, 0)).expect("set source mtime");
 
     let operands = vec![
-        source_path.clone().into_os_string(),
+        source_path.into_os_string(),
         dest_path.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

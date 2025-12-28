@@ -254,7 +254,7 @@ fn execute_preserves_ownership_when_requested() {
     .expect("assign ownership");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

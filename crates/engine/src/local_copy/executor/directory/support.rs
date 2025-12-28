@@ -203,7 +203,7 @@ mod tests {
         let metadata = std::fs::metadata(&path).expect("metadata");
         let entry = DirectoryEntry {
             file_name: OsString::from("test.txt"),
-            path: path.clone(),
+            path,
             metadata,
         };
 

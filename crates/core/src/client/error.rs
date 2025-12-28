@@ -246,7 +246,7 @@ mod tests {
         #[test]
         fn new_and_accessors() {
             let message = rsync_error!(5, "test error").with_role(Role::Client);
-            let error = ClientError::new(5, message.clone());
+            let error = ClientError::new(5, message);
 
             assert_eq!(error.exit_code(), 5);
             // Verify message is accessible

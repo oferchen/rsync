@@ -23,7 +23,7 @@ fn transfer_request_with_cvs_exclude_skips_default_patterns() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--cvs-exclude"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -57,7 +57,7 @@ fn transfer_request_with_cvs_exclude_respects_cvsignore_files() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--cvs-exclude"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -89,7 +89,7 @@ fn transfer_request_with_cvs_exclude_respects_cvsignore_env() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--cvs-exclude"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 

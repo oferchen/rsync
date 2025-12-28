@@ -21,7 +21,7 @@ fn transfer_request_with_delete_excluded_prunes_filtered_entries() {
         OsString::from("--delete-excluded"),
         OsString::from("--exclude=*.log"),
         OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 

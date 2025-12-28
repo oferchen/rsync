@@ -21,7 +21,7 @@ fn transfer_request_with_perms_preserves_mode() {
         OsString::from(RSYNC),
         OsString::from("--perms"),
         OsString::from("--times"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

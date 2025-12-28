@@ -74,7 +74,7 @@ fn environment_secrets_override() -> Option<(OsString, &'static str)> {
             return Some((path, BRANDED_SECRETS_ENV));
         }
 
-        if let Some(path) = env.legacy.clone() {
+        if let Some(path) = env.legacy {
             return Some((path, LEGACY_SECRETS_ENV));
         }
     }

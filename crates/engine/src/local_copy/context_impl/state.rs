@@ -308,7 +308,7 @@ impl<'a> CopyContext<'a> {
                 {
                     return Err(LocalCopyError::io(
                         "remove existing backup",
-                        backup_path.clone(),
+                        backup_path,
                         remove_error,
                     ));
                 }
@@ -322,7 +322,7 @@ impl<'a> CopyContext<'a> {
             Err(error) => {
                 return Err(LocalCopyError::io(
                     "create backup",
-                    backup_path.clone(),
+                    backup_path,
                     error,
                 ));
             }

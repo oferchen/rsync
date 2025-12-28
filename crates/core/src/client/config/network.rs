@@ -48,7 +48,7 @@ mod tests {
     fn raw_returns_original_string() {
         let raw = OsString::from("10.0.0.1");
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 0);
-        let bind = BindAddress::new(raw.clone(), socket);
+        let bind = BindAddress::new(raw, socket);
         assert_eq!(bind.raw(), "10.0.0.1");
     }
 

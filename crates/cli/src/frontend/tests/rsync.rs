@@ -13,7 +13,7 @@ fn rsync_path_requires_remote_operands() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--rsync-path=/opt/custom/rsync"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ]);
 
@@ -37,7 +37,7 @@ fn rsync_path_rejected_for_batch_without_remote_operands() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--rsync-path=/opt/custom/rsync"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ]);
 

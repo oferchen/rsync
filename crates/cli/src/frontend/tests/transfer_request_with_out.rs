@@ -14,7 +14,7 @@ fn transfer_request_with_out_format_renders_entries() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--out-format=%f %b"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest_dir.clone().into_os_string(),
     ]);
 

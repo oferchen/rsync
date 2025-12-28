@@ -8,7 +8,7 @@ fn decode_from_slice_round_trips_and_exposes_remainder() {
     let first = encode_frame(MessageCode::Info, b"hello");
     let second = encode_frame(MessageCode::Error, b"world");
 
-    let mut concatenated = first.clone();
+    let mut concatenated = first;
     concatenated.extend_from_slice(&second);
 
     let (frame, remainder) =
@@ -46,7 +46,7 @@ fn message_frame_try_from_slice_round_trips_single_frame() {
 #[test]
 fn message_frame_try_from_slice_rejects_trailing_bytes() {
     let frame = encode_frame(MessageCode::Stats, &[0x01, 0x02, 0x03, 0x04]);
-    let mut bytes = frame.clone();
+    let mut bytes = frame;
     bytes.extend_from_slice(&[0xFF, 0xEE]);
 
     let err = MessageFrame::try_from(bytes.as_slice()).unwrap_err();
