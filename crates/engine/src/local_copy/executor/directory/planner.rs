@@ -127,7 +127,7 @@ pub(crate) fn plan_directory_entries<'a>(
         context.enforce_timeout()?;
         context.register_progress();
 
-        let file_name = entry.file_name.clone();
+        let file_name = &entry.file_name;
         let entry_metadata = &entry.metadata;
         let entry_type = entry_metadata.file_type();
         let mut metadata_override = None;
