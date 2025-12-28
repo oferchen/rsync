@@ -128,78 +128,91 @@ impl FileFlags {
     }
 
     /// Returns true if extended flags are present.
+    #[inline]
     #[must_use]
     pub const fn has_extended(&self) -> bool {
         self.primary & XMIT_EXTENDED_FLAGS != 0
     }
 
     /// Returns true if the entry shares the UID with the previous entry.
+    #[inline]
     #[must_use]
     pub const fn same_uid(&self) -> bool {
         self.primary & XMIT_SAME_UID != 0
     }
 
     /// Returns true if the entry shares the GID with the previous entry.
+    #[inline]
     #[must_use]
     pub const fn same_gid(&self) -> bool {
         self.primary & XMIT_SAME_GID != 0
     }
 
     /// Returns true if the entry shares part of its name with the previous entry.
+    #[inline]
     #[must_use]
     pub const fn same_name(&self) -> bool {
         self.primary & XMIT_SAME_NAME != 0
     }
 
     /// Returns true if the name length is encoded as a 32-bit integer.
+    #[inline]
     #[must_use]
     pub const fn long_name(&self) -> bool {
         self.primary & XMIT_LONG_NAME != 0
     }
 
     /// Returns true if the entry shares the mtime with the previous entry.
+    #[inline]
     #[must_use]
     pub const fn same_time(&self) -> bool {
         self.primary & XMIT_SAME_TIME != 0
     }
 
     /// Returns true if the entry shares the mode with the previous entry.
+    #[inline]
     #[must_use]
     pub const fn same_mode(&self) -> bool {
         self.primary & XMIT_SAME_MODE != 0
     }
 
     /// Returns true if this is a top-level directory.
+    #[inline]
     #[must_use]
     pub const fn top_dir(&self) -> bool {
         self.primary & XMIT_TOP_DIR != 0
     }
 
     /// Returns true if the entry has hardlink information.
+    #[inline]
     #[must_use]
     pub const fn hlinked(&self) -> bool {
         self.extended & XMIT_HLINKED != 0
     }
 
     /// Returns true if the entry shares rdev major with the previous entry (device).
+    #[inline]
     #[must_use]
     pub const fn same_high_rdev(&self) -> bool {
         self.extended & XMIT_SAME_RDEV_MAJOR != 0
     }
 
     /// Returns true if the entry shares rdev major with previous.
+    #[inline]
     #[must_use]
     pub const fn same_rdev_major(&self) -> bool {
         self.extended & XMIT_SAME_RDEV_MAJOR != 0
     }
 
     /// Returns true if mtime includes nanoseconds.
+    #[inline]
     #[must_use]
     pub const fn mod_nsec(&self) -> bool {
         self.extended & XMIT_MOD_NSEC != 0
     }
 
     /// Returns true if this entry marks the end of the list or an I/O error.
+    #[inline]
     #[must_use]
     pub const fn io_error_endlist(&self) -> bool {
         self.extended & XMIT_IO_ERROR_ENDLIST != 0
