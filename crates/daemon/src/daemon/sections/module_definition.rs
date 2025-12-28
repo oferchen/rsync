@@ -532,3 +532,572 @@ impl ModuleDefinitionBuilder {
     }
 }
 
+#[cfg(test)]
+mod module_definition_builder_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn test_config_path() -> PathBuf {
+        PathBuf::from("/test/rsyncd.conf")
+    }
+
+    // ==================== new() tests ====================
+
+    #[test]
+    fn builder_new_sets_name_and_line() {
+        let builder = ModuleDefinitionBuilder::new("testmod".to_string(), 42);
+        assert_eq!(builder.name, "testmod");
+        assert_eq!(builder.declaration_line, 42);
+    }
+
+    #[test]
+    fn builder_new_starts_with_all_none() {
+        let builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        assert!(builder.path.is_none());
+        assert!(builder.comment.is_none());
+        assert!(builder.hosts_allow.is_none());
+        assert!(builder.hosts_deny.is_none());
+        assert!(builder.auth_users.is_none());
+        assert!(builder.secrets_file.is_none());
+        assert!(builder.bandwidth_limit.is_none());
+        assert!(builder.refuse_options.is_none());
+        assert!(builder.read_only.is_none());
+        assert!(builder.write_only.is_none());
+        assert!(builder.numeric_ids.is_none());
+        assert!(builder.uid.is_none());
+        assert!(builder.gid.is_none());
+        assert!(builder.timeout.is_none());
+        assert!(builder.listable.is_none());
+        assert!(builder.use_chroot.is_none());
+        assert!(builder.max_connections.is_none());
+        assert!(builder.incoming_chmod.is_none());
+        assert!(builder.outgoing_chmod.is_none());
+    }
+
+    // ==================== set_path tests ====================
+
+    #[test]
+    fn set_path_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let result = builder.set_path(PathBuf::from("/data"), &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert_eq!(builder.path, Some(PathBuf::from("/data")));
+    }
+
+    #[test]
+    fn set_path_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 5).unwrap();
+        let result = builder.set_path(PathBuf::from("/other"), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== set_comment tests ====================
+
+    #[test]
+    fn set_comment_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let result = builder.set_comment(Some("A test module".to_string()), &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert_eq!(builder.comment, Some("A test module".to_string()));
+    }
+
+    #[test]
+    fn set_comment_allows_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let result = builder.set_comment(None, &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert!(builder.comment.is_none());
+    }
+
+    #[test]
+    fn set_comment_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_comment(Some("first".to_string()), &test_config_path(), 5).unwrap();
+        let result = builder.set_comment(Some("second".to_string()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== set_hosts_allow tests ====================
+
+    #[test]
+    fn set_hosts_allow_stores_patterns() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let patterns = vec![HostPattern::Any];
+        let result = builder.set_hosts_allow(patterns.clone(), &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert_eq!(builder.hosts_allow, Some(patterns));
+    }
+
+    #[test]
+    fn set_hosts_allow_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_hosts_allow(vec![HostPattern::Any], &test_config_path(), 5).unwrap();
+        let result = builder.set_hosts_allow(vec![], &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== set_hosts_deny tests ====================
+
+    #[test]
+    fn set_hosts_deny_stores_patterns() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let patterns = vec![HostPattern::Any];
+        let result = builder.set_hosts_deny(patterns.clone(), &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert_eq!(builder.hosts_deny, Some(patterns));
+    }
+
+    #[test]
+    fn set_hosts_deny_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_hosts_deny(vec![HostPattern::Any], &test_config_path(), 5).unwrap();
+        let result = builder.set_hosts_deny(vec![], &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== set_auth_users tests ====================
+
+    #[test]
+    fn set_auth_users_stores_users() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let users = vec!["alice".to_string(), "bob".to_string()];
+        let result = builder.set_auth_users(users.clone(), &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert_eq!(builder.auth_users, Some(users));
+    }
+
+    #[test]
+    fn set_auth_users_rejects_empty() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let result = builder.set_auth_users(vec![], &test_config_path(), 5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_auth_users_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_auth_users(vec!["alice".to_string()], &test_config_path(), 5).unwrap();
+        let result = builder.set_auth_users(vec!["bob".to_string()], &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== set_bandwidth_limit tests ====================
+
+    #[test]
+    fn set_bandwidth_limit_stores_values() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let limit = NonZeroU64::new(1000);
+        let burst = NonZeroU64::new(2000);
+        let result = builder.set_bandwidth_limit(limit, burst, true, &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert_eq!(builder.bandwidth_limit, limit);
+        assert_eq!(builder.bandwidth_burst, burst);
+        assert!(builder.bandwidth_burst_specified);
+        assert!(builder.bandwidth_limit_specified);
+        assert!(builder.bandwidth_limit_set);
+    }
+
+    #[test]
+    fn set_bandwidth_limit_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_bandwidth_limit(None, None, false, &test_config_path(), 5).unwrap();
+        let result = builder.set_bandwidth_limit(NonZeroU64::new(100), None, false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== set_refuse_options tests ====================
+
+    #[test]
+    fn set_refuse_options_stores_options() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let options = vec!["delete".to_string(), "hardlinks".to_string()];
+        let result = builder.set_refuse_options(options.clone(), &test_config_path(), 5);
+        assert!(result.is_ok());
+        assert_eq!(builder.refuse_options, Some(options));
+    }
+
+    #[test]
+    fn set_refuse_options_rejects_empty() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let result = builder.set_refuse_options(vec![], &test_config_path(), 5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_refuse_options_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_refuse_options(vec!["delete".to_string()], &test_config_path(), 5).unwrap();
+        let result = builder.set_refuse_options(vec!["hardlinks".to_string()], &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== Boolean setter tests ====================
+
+    #[test]
+    fn set_read_only_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_read_only(false, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.read_only, Some(false));
+    }
+
+    #[test]
+    fn set_read_only_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_read_only(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_read_only(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_write_only_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_write_only(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.write_only, Some(true));
+    }
+
+    #[test]
+    fn set_write_only_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_write_only(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_write_only(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_numeric_ids_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_numeric_ids(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.numeric_ids, Some(true));
+    }
+
+    #[test]
+    fn set_numeric_ids_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_numeric_ids(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_numeric_ids(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_listable_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_listable(false, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.listable, Some(false));
+    }
+
+    #[test]
+    fn set_listable_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_listable(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_listable(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_use_chroot_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_use_chroot(false, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.use_chroot, Some(false));
+    }
+
+    #[test]
+    fn set_use_chroot_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_use_chroot(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_use_chroot(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== Numeric setter tests ====================
+
+    #[test]
+    fn set_uid_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_uid(1000, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.uid, Some(1000));
+    }
+
+    #[test]
+    fn set_uid_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_uid(1000, &test_config_path(), 5).unwrap();
+        let result = builder.set_uid(2000, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_gid_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_gid(100, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.gid, Some(100));
+    }
+
+    #[test]
+    fn set_gid_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_gid(100, &test_config_path(), 5).unwrap();
+        let result = builder.set_gid(200, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_timeout_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let timeout = NonZeroU64::new(60);
+        builder.set_timeout(timeout, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.timeout, Some(timeout));
+    }
+
+    #[test]
+    fn set_timeout_allows_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_timeout(None, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.timeout, Some(None));
+    }
+
+    #[test]
+    fn set_timeout_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_timeout(NonZeroU64::new(60), &test_config_path(), 5).unwrap();
+        let result = builder.set_timeout(NonZeroU64::new(120), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_max_connections_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        let max = NonZeroU32::new(10);
+        builder.set_max_connections(max, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.max_connections, Some(max));
+    }
+
+    #[test]
+    fn set_max_connections_allows_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_max_connections(None, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.max_connections, Some(None));
+    }
+
+    #[test]
+    fn set_max_connections_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_max_connections(NonZeroU32::new(10), &test_config_path(), 5).unwrap();
+        let result = builder.set_max_connections(NonZeroU32::new(20), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== chmod setter tests ====================
+
+    #[test]
+    fn set_incoming_chmod_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_incoming_chmod(Some("Dg+s,ug+w".to_string()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.incoming_chmod, Some(Some("Dg+s,ug+w".to_string())));
+    }
+
+    #[test]
+    fn set_incoming_chmod_allows_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_incoming_chmod(None, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.incoming_chmod, Some(None));
+    }
+
+    #[test]
+    fn set_incoming_chmod_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_incoming_chmod(Some("a+r".to_string()), &test_config_path(), 5).unwrap();
+        let result = builder.set_incoming_chmod(Some("a+w".to_string()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_outgoing_chmod_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_outgoing_chmod(Some("Fo-w,+X".to_string()), &test_config_path(), 5).unwrap();
+        assert_eq!(builder.outgoing_chmod, Some(Some("Fo-w,+X".to_string())));
+    }
+
+    #[test]
+    fn set_outgoing_chmod_allows_none() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_outgoing_chmod(None, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.outgoing_chmod, Some(None));
+    }
+
+    #[test]
+    fn set_outgoing_chmod_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_string(), 1);
+        builder.set_outgoing_chmod(Some("a+r".to_string()), &test_config_path(), 5).unwrap();
+        let result = builder.set_outgoing_chmod(Some("a+w".to_string()), &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
+    // ==================== finish() tests ====================
+
+    #[test]
+    fn finish_succeeds_with_minimal_config() {
+        let mut builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_ok());
+        let def = result.unwrap();
+        assert_eq!(def.name, "testmod");
+        assert_eq!(def.path, PathBuf::from("/data"));
+        assert!(def.read_only); // default
+        assert!(!def.write_only); // default
+        assert!(def.listable); // default
+        assert!(def.use_chroot); // default
+    }
+
+    #[test]
+    fn finish_fails_without_path() {
+        let builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn finish_requires_absolute_path_with_chroot() {
+        let mut builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        builder.set_path(PathBuf::from("relative/path"), &test_config_path(), 2).unwrap();
+        // use_chroot defaults to true
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn finish_allows_relative_path_without_chroot() {
+        let mut builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        builder.set_path(PathBuf::from("relative/path"), &test_config_path(), 2).unwrap();
+        builder.set_use_chroot(false, &test_config_path(), 3).unwrap();
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn finish_applies_default_secrets_for_auth_users() {
+        let mut builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_auth_users(vec!["alice".to_string()], &test_config_path(), 3).unwrap();
+        let default_secrets = PathBuf::from("/etc/secrets");
+        let result = builder.finish(&test_config_path(), Some(&default_secrets), None, None);
+        assert!(result.is_ok());
+        let def = result.unwrap();
+        assert_eq!(def.secrets_file, Some(PathBuf::from("/etc/secrets")));
+    }
+
+    #[test]
+    fn finish_fails_auth_users_without_secrets() {
+        let mut builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_auth_users(vec!["alice".to_string()], &test_config_path(), 3).unwrap();
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn finish_applies_default_chmod_values() {
+        let mut builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        let result = builder.finish(
+            &test_config_path(),
+            None,
+            Some("Dg+s"),
+            Some("Fo-w"),
+        );
+        assert!(result.is_ok());
+        let def = result.unwrap();
+        assert_eq!(def.incoming_chmod.as_deref(), Some("Dg+s"));
+        assert_eq!(def.outgoing_chmod.as_deref(), Some("Fo-w"));
+    }
+
+    #[test]
+    fn finish_preserves_explicit_chmod_over_defaults() {
+        let mut builder = ModuleDefinitionBuilder::new("testmod".to_string(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+        builder.set_incoming_chmod(Some("a+r".to_string()), &test_config_path(), 3).unwrap();
+        builder.set_outgoing_chmod(Some("a+x".to_string()), &test_config_path(), 4).unwrap();
+        let result = builder.finish(
+            &test_config_path(),
+            None,
+            Some("default-in"),
+            Some("default-out"),
+        );
+        assert!(result.is_ok());
+        let def = result.unwrap();
+        assert_eq!(def.incoming_chmod.as_deref(), Some("a+r"));
+        assert_eq!(def.outgoing_chmod.as_deref(), Some("a+x"));
+    }
+
+    #[test]
+    fn finish_transfers_all_set_values() {
+        let mut builder = ModuleDefinitionBuilder::new("fullmod".to_string(), 1);
+        builder.set_path(PathBuf::from("/full/path"), &test_config_path(), 2).unwrap();
+        builder.set_comment(Some("Full test".to_string()), &test_config_path(), 3).unwrap();
+        builder.set_read_only(false, &test_config_path(), 4).unwrap();
+        builder.set_write_only(true, &test_config_path(), 5).unwrap();
+        builder.set_numeric_ids(true, &test_config_path(), 6).unwrap();
+        builder.set_listable(false, &test_config_path(), 7).unwrap();
+        builder.set_uid(1000, &test_config_path(), 8).unwrap();
+        builder.set_gid(100, &test_config_path(), 9).unwrap();
+        builder.set_timeout(NonZeroU64::new(300), &test_config_path(), 10).unwrap();
+        builder.set_max_connections(NonZeroU32::new(5), &test_config_path(), 11).unwrap();
+        builder.set_bandwidth_limit(
+            NonZeroU64::new(1000),
+            NonZeroU64::new(2000),
+            true,
+            &test_config_path(),
+            12,
+        ).unwrap();
+
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_ok());
+        let def = result.unwrap();
+
+        assert_eq!(def.name, "fullmod");
+        assert_eq!(def.path, PathBuf::from("/full/path"));
+        assert_eq!(def.comment.as_deref(), Some("Full test"));
+        assert!(!def.read_only);
+        assert!(def.write_only);
+        assert!(def.numeric_ids);
+        assert!(!def.listable);
+        assert_eq!(def.uid, Some(1000));
+        assert_eq!(def.gid, Some(100));
+        assert_eq!(def.timeout, NonZeroU64::new(300));
+        assert_eq!(def.max_connections, NonZeroU32::new(5));
+        assert_eq!(def.bandwidth_limit, NonZeroU64::new(1000));
+        assert_eq!(def.bandwidth_burst, NonZeroU64::new(2000));
+        assert!(def.bandwidth_burst_specified);
+        assert!(def.bandwidth_limit_specified);
+        assert!(def.bandwidth_limit_configured);
+    }
+
+    #[test]
+    fn finish_uses_default_values_for_unset_fields() {
+        let mut builder = ModuleDefinitionBuilder::new("defaults".to_string(), 1);
+        builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
+
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_ok());
+        let def = result.unwrap();
+
+        // Verify defaults
+        assert!(def.read_only); // default true
+        assert!(!def.write_only); // default false
+        assert!(!def.numeric_ids); // default false
+        assert!(def.listable); // default true
+        assert!(def.use_chroot); // default true
+        assert!(def.hosts_allow.is_empty());
+        assert!(def.hosts_deny.is_empty());
+        assert!(def.auth_users.is_empty());
+        assert!(def.refuse_options.is_empty());
+        assert!(def.uid.is_none());
+        assert!(def.gid.is_none());
+        assert!(def.timeout.is_none());
+        assert!(def.max_connections.is_none());
+        assert!(def.bandwidth_limit.is_none());
+        assert!(!def.bandwidth_limit_specified);
+        assert!(!def.bandwidth_limit_configured);
+    }
+}
