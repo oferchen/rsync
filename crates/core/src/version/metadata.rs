@@ -60,7 +60,7 @@ impl VersionMetadata {
         self.upstream_version
     }
 
-    /// Returns the Rust-flavoured version string (`3.4.1-rust`).
+    /// Returns the oc-rsync release version string (e.g., `0.5.0`).
     #[must_use]
     pub const fn rust_version(&self) -> &'static str {
         self.rust_version

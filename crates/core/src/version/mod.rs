@@ -4,16 +4,15 @@
 //!
 //! `core::version` centralises the workspace version constants and
 //! feature-detection helpers that drive the `--version` output of the Rust
-//! `rsync` binaries. The module mirrors upstream rsync 3.4.1 by exposing the
-//! canonical base version while appending the `-rust` suffix that brands this
-//! implementation.
+//! `rsync` binaries. The module exposes both the oc-rsync release version
+//! and the upstream rsync compatibility version.
 //!
 //! # Design
 //!
 //! The module publishes lightweight enums and helper functions:
 //!
-//! - [`RUST_VERSION`](crate::version::RUST_VERSION) holds the `3.4.1-rust`
-//!   identifier rendered by user-visible banners.
+//! - [`RUST_VERSION`](crate::version::RUST_VERSION) holds the oc-rsync release
+//!   version (e.g., `0.5.0`) rendered by user-visible banners.
 //! - [`compiled_features`](crate::version::compiled_features) inspects Cargo
 //!   feature flags and returns the set of optional capabilities enabled at build
 //!   time.
@@ -35,8 +34,10 @@
 //!
 //! # Invariants
 //!
-//! - [`RUST_VERSION`](crate::version::RUST_VERSION) always embeds the upstream
-//!   base release so diagnostics and CLI output remain aligned with rsync 3.4.1.
+//! - [`RUST_VERSION`](crate::version::RUST_VERSION) contains the oc-rsync
+//!   semantic version for release identification.
+//! - [`UPSTREAM_BASE_VERSION`](crate::version::UPSTREAM_BASE_VERSION) contains
+//!   the upstream rsync version this implementation is compatible with.
 //! - [`compiled_features`](crate::version::compiled_features) never invents
 //!   capabilities: it only reports flags that were explicitly enabled when
 //!   compiling `core`.

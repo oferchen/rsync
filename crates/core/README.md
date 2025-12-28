@@ -15,7 +15,7 @@ at the Rust implementation.
   consistent.
 - [`branding`](src/branding.rs) centralises branded program names alongside the
   default configuration and secrets paths installed by the packaging tooling.
-- [`version`](src/version/mod.rs) holds the canonical `3.4.1-rust` identifier and the
+- [`version`](src/version/mod.rs) holds the oc-rsync release version and the
   compiled feature set consumed by the CLI when rendering `--version` output.
 - [`client`](src/client.rs) defines configuration builders and entry points used
   by the CLI wrapper. Today the facade orchestrates the local copy pipeline and
@@ -30,7 +30,7 @@ at the Rust implementation.
 
 - [`client::run_client`](src/client.rs) reports the delta-transfer engine gap
   using the same wording that the CLI emits when delegation occurs.
-- Message trailers always include the `3.4.1-rust` version string and reference
+- Message trailers always include the oc-rsync version string and reference
   the caller's role (sender, receiver, generator, server, or daemon).
 - Source locations are normalised to repo-relative POSIX-style paths, keeping
   diagnostics stable across platforms.
@@ -61,7 +61,7 @@ let rendered = Message::error(23, "delta-transfer failure")
     .to_string();
 
 assert!(rendered.contains("rsync error: delta-transfer failure (code 23)"));
-assert!(rendered.contains("[sender=3.4.1-rust]"));
+assert!(rendered.contains("[sender="));  // includes version trailer
 ```
 
 ## See also
