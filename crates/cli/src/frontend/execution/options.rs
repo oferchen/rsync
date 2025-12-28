@@ -54,11 +54,14 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersio
                     )
                 }
             };
+            use std::fmt::Write;
+
             let mut full_detail = detail;
             if !full_detail.is_empty() {
                 full_detail.push_str("; ");
             }
-            full_detail.push_str(&format!("supported protocols are {supported}"));
+            // write! to String is infallible
+            let _ = write!(full_detail, "supported protocols are {supported}");
 
             Err(rsync_error!(
                 exit_code,

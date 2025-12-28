@@ -261,21 +261,26 @@ struct SizeLimitsResult {
     modify_window_setting: Option<u64>,
 }
 
+/// Input parameters for size/limit parsing, grouped to reduce argument count.
+struct SizeLimitsInputs<'a> {
+    bwlimit: &'a Option<BandwidthArgument>,
+    max_delete: &'a Option<OsString>,
+    min_size: &'a Option<OsString>,
+    max_size: &'a Option<OsString>,
+    block_size: &'a Option<OsString>,
+    max_alloc: &'a Option<OsString>,
+    modify_window: &'a Option<OsString>,
+}
+
 /// Parses bandwidth and size limit arguments.
 fn parse_size_limits<Err>(
     stderr: &mut MessageSink<Err>,
-    bwlimit: &Option<BandwidthArgument>,
-    max_delete: &Option<OsString>,
-    min_size: &Option<OsString>,
-    max_size: &Option<OsString>,
-    block_size: &Option<OsString>,
-    max_alloc: &Option<OsString>,
-    modify_window: &Option<OsString>,
+    inputs: SizeLimitsInputs<'_>,
 ) -> Result<SizeLimitsResult, i32>
 where
     Err: Write,
 {
-    let bandwidth_limit = match bwlimit.as_ref() {
+    let bandwidth_limit = match inputs.bwlimit.as_ref() {
         Some(BandwidthArgument::Limit(value)) => match parse_bandwidth_limit(value.as_os_str()) {
             Ok(limit) => limit,
             Err(message) => return Err(fail_with_message(message, stderr)),
@@ -283,7 +288,7 @@ where
         Some(BandwidthArgument::Disabled) | None => None,
     };
 
-    let max_delete_limit = match max_delete {
+    let max_delete_limit = match inputs.max_delete {
         Some(value) => match parse_max_delete_argument(value.as_os_str()) {
             Ok(limit) => Some(limit),
             Err(message) => return Err(fail_with_message(message, stderr)),
@@ -291,7 +296,7 @@ where
         None => None,
     };
 
-    let min_size_limit = match min_size.as_ref() {
+    let min_size_limit = match inputs.min_size.as_ref() {
         Some(value) => match parse_size_limit_argument(value.as_os_str(), "--min-size") {
             Ok(limit) => Some(limit),
             Err(message) => return Err(fail_with_message(message, stderr)),
@@ -299,7 +304,7 @@ where
         None => None,
     };
 
-    let max_size_limit = match max_size.as_ref() {
+    let max_size_limit = match inputs.max_size.as_ref() {
         Some(value) => match parse_size_limit_argument(value.as_os_str(), "--max-size") {
             Ok(limit) => Some(limit),
             Err(message) => return Err(fail_with_message(message, stderr)),
@@ -307,7 +312,7 @@ where
         None => None,
     };
 
-    let block_size_override = match block_size.as_ref() {
+    let block_size_override = match inputs.block_size.as_ref() {
         Some(value) => match parse_block_size_argument(value.as_os_str()) {
             Ok(size) => Some(size),
             Err(message) => return Err(fail_with_message(message, stderr)),
@@ -315,7 +320,7 @@ where
         None => None,
     };
 
-    let max_alloc_limit = match max_alloc.as_ref() {
+    let max_alloc_limit = match inputs.max_alloc.as_ref() {
         Some(value) => match parse_size_limit_argument(value.as_os_str(), "--max-alloc") {
             Ok(limit) => Some(limit),
             Err(message) => return Err(fail_with_message(message, stderr)),
@@ -323,7 +328,7 @@ where
         None => None,
     };
 
-    let modify_window_setting = match modify_window.as_ref() {
+    let modify_window_setting = match inputs.modify_window.as_ref() {
         Some(value) => match parse_modify_window_argument(value.as_os_str()) {
             Ok(window) => Some(window),
             Err(message) => return Err(fail_with_message(message, stderr)),
@@ -600,13 +605,15 @@ where
     // Parse size and bandwidth limits
     let limits = match parse_size_limits(
         stderr,
-        inputs.bwlimit,
-        inputs.max_delete,
-        inputs.min_size,
-        inputs.max_size,
-        inputs.block_size,
-        inputs.max_alloc,
-        inputs.modify_window,
+        SizeLimitsInputs {
+            bwlimit: inputs.bwlimit,
+            max_delete: inputs.max_delete,
+            min_size: inputs.min_size,
+            max_size: inputs.max_size,
+            block_size: inputs.block_size,
+            max_alloc: inputs.max_alloc,
+            modify_window: inputs.modify_window,
+        },
     ) {
         Ok(limits) => limits,
         Err(code) => return SettingsOutcome::Exit(code),
