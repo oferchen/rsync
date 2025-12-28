@@ -284,20 +284,20 @@ impl FileEntry {
 
     /// Returns true if this entry is a directory.
     #[must_use]
-    pub fn is_dir(&self) -> bool {
-        self.file_type().is_dir()
+    pub const fn is_dir(&self) -> bool {
+        self.mode & 0o170000 == 0o040000 // S_IFDIR
     }
 
     /// Returns true if this entry is a regular file.
     #[must_use]
-    pub fn is_file(&self) -> bool {
-        self.file_type().is_regular()
+    pub const fn is_file(&self) -> bool {
+        self.mode & 0o170000 == 0o100000 // S_IFREG
     }
 
     /// Returns true if this entry is a symbolic link.
     #[must_use]
-    pub fn is_symlink(&self) -> bool {
-        self.file_type().is_symlink()
+    pub const fn is_symlink(&self) -> bool {
+        self.mode & 0o170000 == 0o120000 // S_IFLNK
     }
 
     /// Sets the modification time.
