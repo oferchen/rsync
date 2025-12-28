@@ -193,8 +193,8 @@ mod tests {
             bytes.extend_from_slice(&tail);
             bytes.extend_from_slice(&newline);
 
-            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
-            let expected = parse_legacy_daemon_message(&text);
+            let text = std::str::from_utf8(&bytes).expect("payload is printable ASCII");
+            let expected = parse_legacy_daemon_message(text);
             let actual = parse_legacy_daemon_message_bytes(&bytes);
 
             prop_assert_eq!(actual, expected);
@@ -209,8 +209,8 @@ mod tests {
             bytes.extend_from_slice(&tail);
             bytes.extend_from_slice(&newline);
 
-            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
-            let expected = parse_legacy_error_message(&text).map(str::to_owned);
+            let text = std::str::from_utf8(&bytes).expect("payload is printable ASCII");
+            let expected = parse_legacy_error_message(text).map(str::to_owned);
             let actual = parse_legacy_error_message_bytes(&bytes)
                 .expect("ASCII payloads should parse successfully")
                 .map(str::to_owned);
@@ -227,8 +227,8 @@ mod tests {
             bytes.extend_from_slice(&tail);
             bytes.extend_from_slice(&newline);
 
-            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
-            let expected = parse_legacy_warning_message(&text).map(str::to_owned);
+            let text = std::str::from_utf8(&bytes).expect("payload is printable ASCII");
+            let expected = parse_legacy_warning_message(text).map(str::to_owned);
             let actual = parse_legacy_warning_message_bytes(&bytes)
                 .expect("ASCII payloads should parse successfully")
                 .map(str::to_owned);
@@ -366,8 +366,8 @@ mod tests {
             bytes.extend_from_slice(&tail);
             bytes.extend_from_slice(&newline);
 
-            let text = String::from_utf8(bytes.clone()).expect("payload is printable ASCII");
-            let expected = parse_legacy_daemon_greeting(&text);
+            let text = std::str::from_utf8(&bytes).expect("payload is printable ASCII");
+            let expected = parse_legacy_daemon_greeting(text);
             let actual = parse_legacy_daemon_greeting_bytes(&bytes);
 
             prop_assert_eq!(actual, expected);

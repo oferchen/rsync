@@ -267,7 +267,7 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
 
     // Parse modifier flags
     let mut pattern_start = 1;
-    for (i, c) in chars.clone().enumerate() {
+    for (i, c) in chars.enumerate() {
         match c {
             '/' if i == 0 => {
                 rule.anchored = true;
