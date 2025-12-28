@@ -352,7 +352,7 @@ pub(crate) fn copy_sources(
                         } else {
                             record_skipped_symlink(context, source_path, &metadata, record_path);
                         }
-                    } else if is_fifo(&effective_type) {
+                    } else if is_fifo(effective_type) {
                         if !context.specials_enabled() {
                             context.record_skipped_non_regular(record_path);
                             continue;
@@ -372,7 +372,7 @@ pub(crate) fn copy_sources(
                             &metadata_options,
                             record_path,
                         )?;
-                    } else if is_device(&effective_type) {
+                    } else if is_device(effective_type) {
                         if context.copy_devices_as_files_enabled() {
                             let target =
                                 if destination_behaves_like_directory && !prefer_root_destination {
