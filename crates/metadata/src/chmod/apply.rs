@@ -238,3 +238,188 @@ fn copy_from(source: Dest, dest: Dest, before: u32) -> u32 {
 
     shifted & dest.permission_mask()
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dest_permission_masks() {
+        assert_eq!(Dest::User.permission_mask(), 0o700);
+        assert_eq!(Dest::Group.permission_mask(), 0o070);
+        assert_eq!(Dest::Other.permission_mask(), 0o007);
+    }
+
+    #[test]
+    fn dest_shifts() {
+        assert_eq!(Dest::User.shift(), 6);
+        assert_eq!(Dest::Group.shift(), 3);
+        assert_eq!(Dest::Other.shift(), 0);
+    }
+
+    #[test]
+    fn dest_read_masks() {
+        assert_eq!(Dest::User.read_mask(), 0o400);
+        assert_eq!(Dest::Group.read_mask(), 0o040);
+        assert_eq!(Dest::Other.read_mask(), 0o004);
+    }
+
+    #[test]
+    fn dest_write_masks() {
+        assert_eq!(Dest::User.write_mask(), 0o200);
+        assert_eq!(Dest::Group.write_mask(), 0o020);
+        assert_eq!(Dest::Other.write_mask(), 0o002);
+    }
+
+    #[test]
+    fn dest_exec_masks() {
+        assert_eq!(Dest::User.exec_mask(), 0o100);
+        assert_eq!(Dest::Group.exec_mask(), 0o010);
+        assert_eq!(Dest::Other.exec_mask(), 0o001);
+    }
+
+    #[test]
+    fn copy_from_user_to_group() {
+        let mode = 0o750;
+        let result = copy_from(Dest::User, Dest::Group, mode);
+        assert_eq!(result, 0o070);
+    }
+
+    #[test]
+    fn copy_from_user_to_other() {
+        let mode = 0o700;
+        let result = copy_from(Dest::User, Dest::Other, mode);
+        assert_eq!(result, 0o007);
+    }
+
+    #[test]
+    fn copy_from_group_to_user() {
+        let mode = 0o070;
+        let result = copy_from(Dest::Group, Dest::User, mode);
+        assert_eq!(result, 0o700);
+    }
+
+    #[test]
+    fn copy_from_same_dest() {
+        let mode = 0o750;
+        let result = copy_from(Dest::User, Dest::User, mode);
+        assert_eq!(result, 0o700);
+    }
+
+    #[test]
+    fn update_special_bit_add_setuid() {
+        let result = update_special_bit(0o755, Operation::Add, true, 0o4000);
+        assert_eq!(result, 0o4755);
+    }
+
+    #[test]
+    fn update_special_bit_add_no_request() {
+        let result = update_special_bit(0o755, Operation::Add, false, 0o4000);
+        assert_eq!(result, 0o755);
+    }
+
+    #[test]
+    fn update_special_bit_remove() {
+        let result = update_special_bit(0o4755, Operation::Remove, true, 0o4000);
+        assert_eq!(result, 0o755);
+    }
+
+    #[test]
+    fn update_special_bit_assign_true() {
+        let result = update_special_bit(0o755, Operation::Assign, true, 0o2000);
+        assert_eq!(result, 0o2755);
+    }
+
+    #[test]
+    fn update_special_bit_assign_false() {
+        let result = update_special_bit(0o2755, Operation::Assign, false, 0o2000);
+        assert_eq!(result, 0o755);
+    }
+
+    #[test]
+    fn permission_bits_read_only() {
+        let spec = PermSpec {
+            read: true,
+            write: false,
+            exec: false,
+            exec_if_conditional: false,
+            setuid: false,
+            setgid: false,
+            sticky: false,
+            copy_user: false,
+            copy_group: false,
+            copy_other: false,
+        };
+        assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o400);
+        assert_eq!(permission_bits(&spec, Dest::Group, false, 0), 0o040);
+        assert_eq!(permission_bits(&spec, Dest::Other, false, 0), 0o004);
+    }
+
+    #[test]
+    fn permission_bits_rwx() {
+        let spec = PermSpec {
+            read: true,
+            write: true,
+            exec: true,
+            exec_if_conditional: false,
+            setuid: false,
+            setgid: false,
+            sticky: false,
+            copy_user: false,
+            copy_group: false,
+            copy_other: false,
+        };
+        assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o700);
+    }
+
+    #[test]
+    fn permission_bits_exec_conditional_on_dir() {
+        let spec = PermSpec {
+            read: false,
+            write: false,
+            exec: false,
+            exec_if_conditional: true,
+            setuid: false,
+            setgid: false,
+            sticky: false,
+            copy_user: false,
+            copy_group: false,
+            copy_other: false,
+        };
+        assert_eq!(permission_bits(&spec, Dest::User, true, 0), 0o100);
+    }
+
+    #[test]
+    fn permission_bits_exec_conditional_on_executable_file() {
+        let spec = PermSpec {
+            read: false,
+            write: false,
+            exec: false,
+            exec_if_conditional: true,
+            setuid: false,
+            setgid: false,
+            sticky: false,
+            copy_user: false,
+            copy_group: false,
+            copy_other: false,
+        };
+        assert_eq!(permission_bits(&spec, Dest::User, false, 0o111), 0o100);
+    }
+
+    #[test]
+    fn permission_bits_exec_conditional_on_nonexecutable_file() {
+        let spec = PermSpec {
+            read: false,
+            write: false,
+            exec: false,
+            exec_if_conditional: true,
+            setuid: false,
+            setgid: false,
+            sticky: false,
+            copy_user: false,
+            copy_group: false,
+            copy_other: false,
+        };
+        assert_eq!(permission_bits(&spec, Dest::User, false, 0o644), 0);
+    }
+}
