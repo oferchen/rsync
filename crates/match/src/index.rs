@@ -76,6 +76,7 @@ impl DeltaSignatureIndex {
     }
 
     /// Returns the [`SignatureBlock`] for the provided index.
+    #[inline]
     #[must_use]
     pub fn block(&self, index: usize) -> &SignatureBlock {
         &self.blocks[index]

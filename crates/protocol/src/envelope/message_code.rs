@@ -174,6 +174,7 @@ impl MessageCode {
     }
 
     /// Reports whether this message carries human-readable logging output.
+    #[inline]
     #[must_use]
     pub const fn is_logging(self) -> bool {
         self.log_code().is_some()
@@ -181,6 +182,7 @@ impl MessageCode {
 
     /// Returns the log code associated with this message code when the payload
     /// represents logging output.
+    #[inline]
     #[must_use]
     pub const fn log_code(self) -> Option<LogCode> {
         match self {
@@ -198,6 +200,7 @@ impl MessageCode {
 
     /// Returns the multiplexed message code associated with a log code when a
     /// one-to-one mapping exists.
+    #[inline]
     #[must_use]
     pub const fn from_log_code(log: LogCode) -> Option<Self> {
         match log {
