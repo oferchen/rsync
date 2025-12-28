@@ -222,10 +222,7 @@ mod tests {
         match directive {
             ParsedFilterDirective::Merge { options, .. } => {
                 let opts = options.unwrap();
-                assert_eq!(
-                    opts.enforced_kind(),
-                    Some(DirMergeEnforcedKind::Exclude)
-                );
+                assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
             }
             _ => panic!("expected Merge directive"),
         }
@@ -239,10 +236,7 @@ mod tests {
         match directive {
             ParsedFilterDirective::Merge { options, .. } => {
                 let opts = options.unwrap();
-                assert_eq!(
-                    opts.enforced_kind(),
-                    Some(DirMergeEnforcedKind::Include)
-                );
+                assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Include));
             }
             _ => panic!("expected Merge directive"),
         }
@@ -281,10 +275,7 @@ mod tests {
             ParsedFilterDirective::Merge { path, options } => {
                 assert_eq!(path, PathBuf::from(".cvsignore"));
                 let opts = options.unwrap();
-                assert_eq!(
-                    opts.enforced_kind(),
-                    Some(DirMergeEnforcedKind::Exclude)
-                );
+                assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
             }
             _ => panic!("expected Merge directive"),
         }

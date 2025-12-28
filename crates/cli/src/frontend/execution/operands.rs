@@ -175,10 +175,7 @@ mod tests {
 
     #[test]
     fn extract_operands_no_options() {
-        let args = vec![
-            OsString::from("source/"),
-            OsString::from("dest/"),
-        ];
+        let args = vec![OsString::from("source/"), OsString::from("dest/")];
         let result = extract_operands(args);
         assert!(result.is_ok());
         let operands = result.unwrap();
@@ -189,10 +186,7 @@ mod tests {
 
     #[test]
     fn extract_operands_with_unknown_option() {
-        let args = vec![
-            OsString::from("-x"),
-            OsString::from("source/"),
-        ];
+        let args = vec![OsString::from("-x"), OsString::from("source/")];
         let result = extract_operands(args);
         assert!(result.is_err());
     }
@@ -215,10 +209,7 @@ mod tests {
 
     #[test]
     fn extract_operands_double_dash_stripped() {
-        let args = vec![
-            OsString::from("--"),
-            OsString::from("file"),
-        ];
+        let args = vec![OsString::from("--"), OsString::from("file")];
         let result = extract_operands(args);
         assert!(result.is_ok());
         let operands = result.unwrap();
@@ -238,10 +229,7 @@ mod tests {
     #[test]
     fn extract_operands_single_dash_allowed() {
         // Single dash (stdin/stdout) is not an option
-        let args = vec![
-            OsString::from("-"),
-            OsString::from("dest/"),
-        ];
+        let args = vec![OsString::from("-"), OsString::from("dest/")];
         let result = extract_operands(args);
         assert!(result.is_ok());
         let operands = result.unwrap();
@@ -251,20 +239,14 @@ mod tests {
 
     #[test]
     fn extract_operands_long_option_rejected() {
-        let args = vec![
-            OsString::from("--unknown"),
-            OsString::from("dest/"),
-        ];
+        let args = vec![OsString::from("--unknown"), OsString::from("dest/")];
         let result = extract_operands(args);
         assert!(result.is_err());
     }
 
     #[test]
     fn extract_operands_option_with_value_rejected() {
-        let args = vec![
-            OsString::from("--port=8873"),
-            OsString::from("dest/"),
-        ];
+        let args = vec![OsString::from("--port=8873"), OsString::from("dest/")];
         let result = extract_operands(args);
         assert!(result.is_err());
     }
