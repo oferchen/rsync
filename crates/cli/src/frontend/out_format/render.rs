@@ -81,9 +81,7 @@ fn render_placeholder_value(
         OutFormatPlaceholder::FullPath => Some(render_path(event, false)),
         OutFormatPlaceholder::ItemizedChanges => Some(format_itemized_changes(event)),
         OutFormatPlaceholder::FileLength => {
-            let length = event
-                .metadata()
-                .map_or(0, ClientEntryMetadata::length);
+            let length = event.metadata().map_or(0, ClientEntryMetadata::length);
             Some(format_numeric_value(length as i64, &spec.format))
         }
         OutFormatPlaceholder::BytesTransferred => Some(format_numeric_value(
@@ -116,12 +114,14 @@ fn render_placeholder_value(
         OutFormatPlaceholder::OwnerUid => Some(
             event
                 .metadata()
-                .and_then(ClientEntryMetadata::uid).map_or_else(|| "0".to_owned(), |value| value.to_string()),
+                .and_then(ClientEntryMetadata::uid)
+                .map_or_else(|| "0".to_owned(), |value| value.to_string()),
         ),
         OutFormatPlaceholder::OwnerGid => Some(
             event
                 .metadata()
-                .and_then(ClientEntryMetadata::gid).map_or_else(|| "0".to_owned(), |value| value.to_string()),
+                .and_then(ClientEntryMetadata::gid)
+                .map_or_else(|| "0".to_owned(), |value| value.to_string()),
         ),
         OutFormatPlaceholder::ProcessId => Some(std::process::id().to_string()),
         OutFormatPlaceholder::RemoteHost => Some(remote_placeholder_value(
@@ -148,9 +148,10 @@ fn render_path(event: &ClientEvent, ensure_trailing_slash: bool) -> String {
     let mut rendered = event.relative_path().to_string_lossy().into_owned();
     if ensure_trailing_slash
         && !rendered.ends_with('/')
-        && event
-            .metadata()
-            .map(ClientEntryMetadata::kind).map_or_else(|| matches!(event.kind(), ClientEventKind::DirectoryCreated), ClientEntryKind::is_directory)
+        && event.metadata().map(ClientEntryMetadata::kind).map_or_else(
+            || matches!(event.kind(), ClientEventKind::DirectoryCreated),
+            ClientEntryKind::is_directory,
+        )
     {
         rendered.push('/');
     }
@@ -262,7 +263,11 @@ fn format_out_format_mtime(metadata: Option<&ClientEntryMetadata>) -> String {
             OffsetDateTime::from(time)
                 .format(LIST_TIMESTAMP_FORMAT)
                 .ok()
-        }).map_or_else(|| "1970/01/01-00:00:00".to_owned(), |formatted| formatted.replace(' ', "-"))
+        })
+        .map_or_else(
+            || "1970/01/01-00:00:00".to_owned(),
+            |formatted| formatted.replace(' ', "-"),
+        )
 }
 
 fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> String {
@@ -279,12 +284,14 @@ fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> Stri
 
 fn format_owner_name(metadata: Option<&ClientEntryMetadata>) -> String {
     metadata
-        .and_then(ClientEntryMetadata::uid).map_or_else(|| "0".to_owned(), resolve_user_name)
+        .and_then(ClientEntryMetadata::uid)
+        .map_or_else(|| "0".to_owned(), resolve_user_name)
 }
 
 fn format_group_name(metadata: Option<&ClientEntryMetadata>) -> String {
     metadata
-        .and_then(ClientEntryMetadata::gid).map_or_else(|| "0".to_owned(), resolve_group_name)
+        .and_then(ClientEntryMetadata::gid)
+        .map_or_else(|| "0".to_owned(), resolve_group_name)
 }
 
 fn resolve_user_name(uid: u32) -> String {
@@ -297,7 +304,10 @@ fn resolve_group_name(gid: u32) -> String {
 
 fn format_current_timestamp() -> String {
     let now = OffsetDateTime::from(SystemTime::now());
-    now.format(LIST_TIMESTAMP_FORMAT).map_or_else(|_| "1970/01/01-00:00:00".to_owned(), |text| text.replace(' ', "-"))
+    now.format(LIST_TIMESTAMP_FORMAT).map_or_else(
+        |_| "1970/01/01-00:00:00".to_owned(),
+        |text| text.replace(' ', "-"),
+    )
 }
 
 fn format_itemized_changes(event: &ClientEvent) -> String {
@@ -501,22 +511,13 @@ mod tests {
 
     #[test]
     fn format_with_units_decimal_mega() {
-        assert_eq!(
-            format_with_units(1_000_000, 1000),
-            Some("1.00M".to_owned())
-        );
-        assert_eq!(
-            format_with_units(2_500_000, 1000),
-            Some("2.50M".to_owned())
-        );
+        assert_eq!(format_with_units(1_000_000, 1000), Some("1.00M".to_owned()));
+        assert_eq!(format_with_units(2_500_000, 1000), Some("2.50M".to_owned()));
     }
 
     #[test]
     fn format_with_units_binary_mega() {
-        assert_eq!(
-            format_with_units(1_048_576, 1024),
-            Some("1.00M".to_owned())
-        );
+        assert_eq!(format_with_units(1_048_576, 1024), Some("1.00M".to_owned()));
     }
 
     #[test]
@@ -551,10 +552,7 @@ mod tests {
     #[test]
     fn apply_placeholder_format_no_width() {
         let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(
-            apply_placeholder_format("test".to_owned(), &format),
-            "test"
-        );
+        assert_eq!(apply_placeholder_format("test".to_owned(), &format), "test");
     }
 
     #[test]
@@ -581,20 +579,14 @@ mod tests {
     fn apply_placeholder_format_exact_width() {
         let format =
             PlaceholderFormat::new(Some(4), PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(
-            apply_placeholder_format("test".to_owned(), &format),
-            "test"
-        );
+        assert_eq!(apply_placeholder_format("test".to_owned(), &format), "test");
     }
 
     #[test]
     fn apply_placeholder_format_exceed_width() {
         let format =
             PlaceholderFormat::new(Some(2), PlaceholderAlignment::Right, HumanizeMode::None);
-        assert_eq!(
-            apply_placeholder_format("test".to_owned(), &format),
-            "test"
-        );
+        assert_eq!(apply_placeholder_format("test".to_owned(), &format), "test");
     }
 
     #[test]

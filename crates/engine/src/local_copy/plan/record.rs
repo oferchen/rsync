@@ -95,7 +95,10 @@ impl LocalCopyRecord {
 
     /// Associates a change-set with the record.
     #[must_use]
-    pub(in crate::local_copy) const fn with_change_set(mut self, change_set: LocalCopyChangeSet) -> Self {
+    pub(in crate::local_copy) const fn with_change_set(
+        mut self,
+        change_set: LocalCopyChangeSet,
+    ) -> Self {
         self.change_set = change_set;
         self
     }

@@ -12,10 +12,7 @@ fn load_filter_file_patterns_skips_comments_and_trims_crlf() {
     let patterns =
         load_filter_file_patterns(path.as_path()).expect("load filter patterns succeeds");
 
-    assert_eq!(
-        patterns,
-        vec![" include ".to_owned(), "pattern".to_owned()]
-    );
+    assert_eq!(patterns, vec![" include ".to_owned(), "pattern".to_owned()]);
 }
 
 #[test]
