@@ -34,199 +34,13 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
-use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use protocol::filters::read_filter_list;
-
-/// State tracker for sparse file writing.
-///
-/// Tracks pending runs of zeros that should become holes in the output file
-/// rather than being written as data. Mirrors upstream rsync's write_sparse()
-/// behavior in fileio.c.
-#[derive(Default)]
-struct SparseWriteState {
-    /// Number of pending zero bytes to skip (becomes a hole).
-    pending_zeros: u64,
-}
-
-impl SparseWriteState {
-    /// Adds additional zero bytes to the pending run.
-    fn accumulate(&mut self, additional: usize) {
-        self.pending_zeros = self.pending_zeros.saturating_add(additional as u64);
-    }
-
-    /// Flushes pending zeros by seeking forward, creating a hole.
-    fn flush<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<()> {
-        if self.pending_zeros == 0 {
-            return Ok(());
-        }
-
-        // Seek forward past the zeros to create a hole
-        let mut remaining = self.pending_zeros;
-        while remaining > 0 {
-            let step = remaining.min(i64::MAX as u64);
-            writer.seek(SeekFrom::Current(step as i64))?;
-            remaining -= step;
-        }
-
-        self.pending_zeros = 0;
-        Ok(())
-    }
-
-    /// Writes data with sparse optimization.
-    ///
-    /// Zero runs are tracked and become holes; non-zero data is written normally.
-    fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
-        if data.is_empty() {
-            return Ok(0);
-        }
-
-        let mut offset = 0;
-        const CHUNK_SIZE: usize = 1024;
-
-        while offset < data.len() {
-            let segment_end = (offset + CHUNK_SIZE).min(data.len());
-            let segment = &data[offset..segment_end];
-
-            // Count leading zeros
-            let leading = segment.iter().take_while(|&&b| b == 0).count();
-            self.accumulate(leading);
-
-            if leading == segment.len() {
-                offset = segment_end;
-                continue;
-            }
-
-            // Count trailing zeros
-            let data_part = &segment[leading..];
-            let trailing = data_part.iter().rev().take_while(|&&b| b == 0).count();
-            let data_start = offset + leading;
-            let data_end = segment_end - trailing;
-
-            if data_end > data_start {
-                // Flush pending zeros (creates hole)
-                self.flush(writer)?;
-                // Write non-zero data
-                writer.write_all(&data[data_start..data_end])?;
-            }
-
-            // Trailing zeros become pending for next iteration
-            self.pending_zeros = trailing as u64;
-            offset = segment_end;
-        }
-
-        Ok(data.len())
-    }
-
-    /// Finalizes sparse writing and returns final position.
-    ///
-    /// If there are pending zeros at the end, we need to either:
-    /// - Write a single zero byte at the last position (creating the hole), or
-    /// - Just seek and let truncation handle it
-    fn finish<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<u64> {
-        if self.pending_zeros > 0 {
-            // Seek to final position minus 1
-            let final_offset = self.pending_zeros.saturating_sub(1);
-            if final_offset > 0 {
-                let mut remaining = final_offset;
-                while remaining > 0 {
-                    let step = remaining.min(i64::MAX as u64);
-                    writer.seek(SeekFrom::Current(step as i64))?;
-                    remaining -= step;
-                }
-            }
-            // Write a single zero byte to extend the file to the correct size
-            if self.pending_zeros > 0 {
-                writer.write_all(&[0])?;
-            }
-            self.pending_zeros = 0;
-        }
-
-        writer.stream_position()
-    }
-}
-
-/// Checksum verifier for delta transfer integrity verification.
-///
-/// This enum wraps the different strong checksum hashers to allow
-/// runtime selection based on negotiated protocol parameters.
-/// Mirrors upstream rsync's file checksum verification in receiver.c.
-enum ChecksumVerifier {
-    /// MD4 checksum (legacy, protocol < 30).
-    Md4(Md4),
-    /// MD5 checksum (protocol 30+).
-    Md5(Md5),
-    /// SHA1 checksum.
-    Sha1(Sha1),
-    /// XXH64 checksum.
-    Xxh64(Xxh64),
-    /// XXH3 (64-bit) checksum.
-    Xxh3(Xxh3),
-    /// XXH3 (128-bit) checksum.
-    Xxh3_128(Xxh3_128),
-}
-
-impl ChecksumVerifier {
-    /// Creates a new checksum verifier based on the negotiated algorithm.
-    fn new(
-        negotiated: Option<&NegotiationResult>,
-        protocol: ProtocolVersion,
-        _seed: i32,
-        _compat_flags: Option<&CompatibilityFlags>,
-    ) -> Self {
-        if let Some(neg) = negotiated {
-            match neg.checksum {
-                ChecksumAlgorithm::None | ChecksumAlgorithm::MD4 => {
-                    ChecksumVerifier::Md4(Md4::new())
-                }
-                ChecksumAlgorithm::MD5 => {
-                    // Upstream checksum.c sum_init() for MD5: just md5_begin()
-                    // The seed is NOT used for file transfer checksums.
-                    // (Seed is only used for block checksums in get_checksum2)
-                    ChecksumVerifier::Md5(Md5::new())
-                }
-                ChecksumAlgorithm::SHA1 => ChecksumVerifier::Sha1(Sha1::new()),
-                // Upstream sum_init() uses 0 for XXH seeds, not checksum_seed
-                ChecksumAlgorithm::XXH64 => ChecksumVerifier::Xxh64(Xxh64::with_seed(0)),
-                ChecksumAlgorithm::XXH3 => ChecksumVerifier::Xxh3(Xxh3::with_seed(0)),
-                ChecksumAlgorithm::XXH128 => ChecksumVerifier::Xxh3_128(Xxh3_128::with_seed(0)),
-            }
-        } else if protocol.as_u8() >= 30 {
-            // Protocol 30+ default: MD5 (no seed for file transfer checksums)
-            ChecksumVerifier::Md5(Md5::new())
-        } else {
-            // Protocol < 30: MD4
-            ChecksumVerifier::Md4(Md4::new())
-        }
-    }
-
-    /// Updates the hasher with data.
-    fn update(&mut self, data: &[u8]) {
-        match self {
-            ChecksumVerifier::Md4(h) => h.update(data),
-            ChecksumVerifier::Md5(h) => h.update(data),
-            ChecksumVerifier::Sha1(h) => h.update(data),
-            ChecksumVerifier::Xxh64(h) => h.update(data),
-            ChecksumVerifier::Xxh3(h) => h.update(data),
-            ChecksumVerifier::Xxh3_128(h) => h.update(data),
-        }
-    }
-
-    /// Finalizes the hasher and returns the digest as bytes.
-    fn finalize(self) -> Vec<u8> {
-        match self {
-            ChecksumVerifier::Md4(h) => h.finalize().as_ref().to_vec(),
-            ChecksumVerifier::Md5(h) => h.finalize().as_ref().to_vec(),
-            ChecksumVerifier::Sha1(h) => h.finalize().as_ref().to_vec(),
-            ChecksumVerifier::Xxh64(h) => h.finalize().as_ref().to_vec(),
-            ChecksumVerifier::Xxh3(h) => h.finalize().as_ref().to_vec(),
-            ChecksumVerifier::Xxh3_128(h) => h.finalize().as_ref().to_vec(),
-        }
-    }
-}
 use protocol::codec::{NdxCodec, create_ndx_codec};
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
 use protocol::wire::DeltaOp;
-use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
+use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
+
+use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 
 use engine::delta::{DeltaScript, DeltaToken, SignatureLayoutParams, calculate_signature_layout};
 use engine::fuzzy::FuzzyMatcher;
@@ -789,18 +603,8 @@ impl ReceiverContext {
                     // End of file delta tokens
                     // Read file checksum from sender - upstream receiver.c:408
                     // The sender sends xfer_sum_len bytes after all delta tokens.
-                    // Length depends on negotiated checksum algorithm:
-                    // - MD4/MD5/XXH128: 16 bytes
-                    // - SHA1: 20 bytes
-                    // - XXH64/XXH3: 8 bytes
-                    let checksum_len = match &self.negotiated_algorithms {
-                        Some(negotiated) => match negotiated.checksum {
-                            ChecksumAlgorithm::SHA1 => 20,
-                            ChecksumAlgorithm::XXH64 | ChecksumAlgorithm::XXH3 => 8,
-                            _ => 16, // MD4, MD5, XXH128, None
-                        },
-                        None => 16, // Default to 16 for legacy protocols
-                    };
+                    // Use digest_len() from ChecksumVerifier to get the correct length.
+                    let checksum_len = checksum_verifier.digest_len();
                     let mut file_checksum = vec![0u8; checksum_len];
                     reader.read_exact(&mut file_checksum)?;
 
@@ -1380,6 +1184,7 @@ mod tests {
     use super::super::flags::ParsedServerFlags;
     use super::super::role::ServerRole;
     use super::*;
+    use protocol::ChecksumAlgorithm;
     use std::ffi::OsString;
     use std::io::Cursor;
 
@@ -1838,10 +1643,10 @@ mod tests {
         let mut sparse = SparseWriteState::default();
 
         sparse.accumulate(100);
-        assert_eq!(sparse.pending_zeros, 100);
+        assert_eq!(sparse.pending(), 100);
 
         sparse.accumulate(50);
-        assert_eq!(sparse.pending_zeros, 150);
+        assert_eq!(sparse.pending(), 150);
     }
 
     // ============================================================================
