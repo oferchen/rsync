@@ -41,9 +41,7 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     if options.build_rpm {
         let profile_label = options
             .profile
-            .as_deref()
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_else(|| String::from("debug"));
+            .as_deref().map_or_else(|| String::from("debug"), |value| value.to_string_lossy().into_owned());
 
         let msg = format!("Building RPM package with cargo rpm build (profile={profile_label})");
         println!("{msg}");
@@ -397,9 +395,7 @@ fn ensure_legacy_launchers(
     }
 
     let profile_dir = profile
-        .as_ref()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("debug"));
+        .as_ref().map_or_else(|| String::from("debug"), |value| value.to_string_lossy().into_owned());
     base.push(&profile_dir);
 
     let extension = if target.map_or(cfg!(windows), |triple| triple.contains("windows")) {

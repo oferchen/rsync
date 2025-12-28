@@ -55,9 +55,7 @@ pub(crate) fn apply_merge_directive(
         let resolved_for_base = canonical_path.as_ref().unwrap_or(&resolved_path);
         Some(
             resolved_for_base
-                .parent()
-                .map(|parent| parent.to_path_buf())
-                .unwrap_or_else(|| base_dir.to_path_buf()),
+                .parent().map_or_else(|| base_dir.to_path_buf(), |parent| parent.to_path_buf()),
         )
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
