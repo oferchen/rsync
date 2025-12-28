@@ -2,7 +2,7 @@
 
 **Generated**: 2025-12-26
 **Source of Truth**: `target/interop/upstream-src/rsync-3.4.1/`
-**OC-RSYNC Version**: 3.4.1-rust
+**OC-RSYNC Version**: 0.5.0
 
 This document provides a comprehensive comparison between oc-rsync and upstream rsync 3.4.1, treating the upstream C source code as the authoritative reference.
 
@@ -463,7 +463,7 @@ struct name_num_item valid_compressions_items[] = {
 |--------|----------|----------|--------|
 | Binary name | `rsync` | `oc-rsync` | Branding |
 | Default config | `/etc/rsyncd.conf` | `/etc/oc-rsyncd/oc-rsyncd.conf` | Avoid conflict |
-| Error trailer | `at <path>` | `at <path> [role=3.4.1-rust]` | Debugging aid |
+| Error trailer | `at <path>` | `at <path> [role=0.5.0]` | Debugging aid |
 
 ### 7.2 Implementation Improvements
 

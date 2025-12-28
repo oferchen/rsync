@@ -55,7 +55,6 @@ pub const SUBPROTOCOL_VERSION: u8 = 0;
 pub const UPSTREAM_BASE_VERSION: &str = workspace::UPSTREAM_VERSION;
 
 /// Full version string rendered by user-visible banners.
-#[doc(alias = "3.4.1-rust")]
 pub const RUST_VERSION: &str = workspace::RUST_VERSION;
 
 /// Highest protocol version supported by this build.

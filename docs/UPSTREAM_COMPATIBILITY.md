@@ -127,7 +127,7 @@ Exit codes match upstream rsync (see `crates/core/src/message/strings.rs` lines 
 Error messages follow upstream format with Rust source location suffix:
 
 ```
-rsync: error message text (code N) at path/to/file.rs:123 [role=3.4.1-rust]
+rsync: error message text (code N) at path/to/file.rs:123 [role=0.5.0]
 ```
 
 Roles match upstream: `[sender]`, `[receiver]`, `[generator]`, `[server]`, `[client]`, `[daemon]`
