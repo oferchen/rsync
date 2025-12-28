@@ -128,22 +128,19 @@ pid file = {}
         thread::sleep(Duration::from_millis(500));
 
         // Verify daemon is still running (didn't crash on startup)
-        match child.try_wait()? {
-            Some(status) => {
-                let stderr = child.stderr.take();
-                let mut error_msg =
-                    format!("oc-rsync daemon exited immediately with status: {status}");
-                if let Some(mut stderr) = stderr {
-                    let mut buf = String::new();
-                    if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                        error_msg.push_str(&format!("\nStderr: {buf}"));
-                    }
+        if let Some(status) = child.try_wait()? {
+            let stderr = child.stderr.take();
+            let mut error_msg =
+                format!("oc-rsync daemon exited immediately with status: {status}");
+            if let Some(mut stderr) = stderr {
+                let mut buf = String::new();
+                if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
+                    error_msg.push_str(&format!("\nStderr: {buf}"));
                 }
-                return Err(std::io::Error::other(error_msg));
             }
-            None => {
-                // Still running - daemon started successfully
-            }
+            return Err(std::io::Error::other(error_msg));
+        } else {
+            // Still running - daemon started successfully
         }
 
         Ok(Self {
