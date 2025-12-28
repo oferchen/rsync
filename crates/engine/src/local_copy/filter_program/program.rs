@@ -266,7 +266,7 @@ struct XattrRule {
 impl XattrRule {
     fn new(rule: &FilterRule) -> Result<Self, FilterProgramError> {
         debug_assert!(rule.is_xattr_only());
-        let pattern = rule.pattern().to_string();
+        let pattern = rule.pattern().to_owned();
         let glob = GlobBuilder::new(&pattern)
             .literal_separator(true)
             .backslash_escape(true)
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn program_with_dir_merge_is_not_empty() {
-        let rule = DirMergeRule::new(".rsync-filter".to_string(), Default::default());
+        let rule = DirMergeRule::new(".rsync-filter".to_owned(), Default::default());
         let program = FilterProgram::new([FilterProgramEntry::DirMerge(rule)]).unwrap();
         assert!(!program.is_empty());
     }
@@ -326,8 +326,8 @@ mod tests {
 
     #[test]
     fn dir_merge_rules_accessor() {
-        let rule1 = DirMergeRule::new(".rsync-filter".to_string(), Default::default());
-        let rule2 = DirMergeRule::new(".gitignore".to_string(), Default::default());
+        let rule1 = DirMergeRule::new(".rsync-filter".to_owned(), Default::default());
+        let rule2 = DirMergeRule::new(".gitignore".to_owned(), Default::default());
         let entries = [
             FilterProgramEntry::DirMerge(rule1),
             FilterProgramEntry::DirMerge(rule2),
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn filter_program_error_pattern_accessor() {
         let error = FilterProgramError::new(
-            "bad[pattern".to_string(),
+            "bad[pattern".to_owned(),
             globset::GlobBuilder::new("bad[pattern")
                 .build()
                 .unwrap_err(),

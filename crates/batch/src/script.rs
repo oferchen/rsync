@@ -128,7 +128,7 @@ fn shell_quote(s: &str) -> String {
     if s.chars().all(|c| {
         c.is_alphanumeric() || c == '-' || c == '_' || c == '/' || c == '.' || c == ':' || c == '='
     }) {
-        return s.to_string();
+        return s.to_owned();
     }
 
     // Need quoting - use single quotes and escape any single quotes
@@ -192,18 +192,18 @@ mod tests {
     #[test]
     fn test_find_destination() {
         let args = vec![
-            "rsync".to_string(),
-            "-av".to_string(),
-            "source/".to_string(),
-            "dest/".to_string(),
+            "rsync".to_owned(),
+            "-av".to_owned(),
+            "source/".to_owned(),
+            "dest/".to_owned(),
         ];
         assert_eq!(find_destination(&args), Some("dest/"));
 
         let args2 = vec![
-            "rsync".to_string(),
-            "--write-batch=batch".to_string(),
-            "-av".to_string(),
-            "src".to_string(),
+            "rsync".to_owned(),
+            "--write-batch=batch".to_owned(),
+            "-av".to_owned(),
+            "src".to_owned(),
         ];
         assert_eq!(find_destination(&args2), Some("src"));
     }
@@ -244,11 +244,11 @@ mod tests {
         );
 
         let args = vec![
-            "oc-rsync".to_string(),
-            "-av".to_string(),
-            "--write-batch=test.batch".to_string(),
-            "source/".to_string(),
-            "dest/".to_string(),
+            "oc-rsync".to_owned(),
+            "-av".to_owned(),
+            "--write-batch=test.batch".to_owned(),
+            "source/".to_owned(),
+            "dest/".to_owned(),
         ];
 
         let filter_rules = "- *.tmp\n+ */\n+ *.txt\n- *\n";

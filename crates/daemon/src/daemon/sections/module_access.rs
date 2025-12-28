@@ -298,7 +298,7 @@ fn respond_with_module_list(
 ) -> io::Result<()> {
     for line in motd_lines {
         let payload = if line.is_empty() {
-            "MOTD".to_string()
+            "MOTD".to_owned()
         } else {
             format!("MOTD {line}")
         };
@@ -1502,11 +1502,11 @@ mod module_access_tests {
     #[test]
     fn determine_server_role_returns_generator_with_sender_flag() {
         let args = vec![
-            "--server".to_string(),
-            "--sender".to_string(),
-            "-vvre.iLsfxCIvu".to_string(),
-            ".".to_string(),
-            "testmod/".to_string(),
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "-vvre.iLsfxCIvu".to_owned(),
+            ".".to_owned(),
+            "testmod/".to_owned(),
         ];
         assert_eq!(determine_server_role(&args), ServerRole::Generator);
     }
@@ -1514,10 +1514,10 @@ mod module_access_tests {
     #[test]
     fn determine_server_role_returns_receiver_without_sender_flag() {
         let args = vec![
-            "--server".to_string(),
-            "-vvre.iLsfxCIvu".to_string(),
-            ".".to_string(),
-            "testmod/".to_string(),
+            "--server".to_owned(),
+            "-vvre.iLsfxCIvu".to_owned(),
+            ".".to_owned(),
+            "testmod/".to_owned(),
         ];
         assert_eq!(determine_server_role(&args), ServerRole::Receiver);
     }
@@ -1532,9 +1532,9 @@ mod module_access_tests {
     fn determine_server_role_ignores_sender_in_middle_of_other_arg() {
         // The "--sender" must be an exact match, not a substring
         let args = vec![
-            "--server".to_string(),
-            "--not-a-sender".to_string(),
-            ".".to_string(),
+            "--server".to_owned(),
+            "--not-a-sender".to_owned(),
+            ".".to_owned(),
         ];
         assert_eq!(determine_server_role(&args), ServerRole::Receiver);
     }
@@ -1544,11 +1544,11 @@ mod module_access_tests {
     #[test]
     fn extract_flag_string_finds_short_flags() {
         let args = vec![
-            "--server".to_string(),
-            "--sender".to_string(),
-            "-vvre.iLsfxCIvu".to_string(),
-            ".".to_string(),
-            "testmod/".to_string(),
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "-vvre.iLsfxCIvu".to_owned(),
+            ".".to_owned(),
+            "testmod/".to_owned(),
         ];
         assert_eq!(extract_flag_string(&args), "-vvre.iLsfxCIvu");
     }
@@ -1556,10 +1556,10 @@ mod module_access_tests {
     #[test]
     fn extract_flag_string_returns_empty_when_no_short_flags() {
         let args = vec![
-            "--server".to_string(),
-            "--sender".to_string(),
-            ".".to_string(),
-            "testmod/".to_string(),
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            ".".to_owned(),
+            "testmod/".to_owned(),
         ];
         assert_eq!(extract_flag_string(&args), "");
     }
@@ -1567,9 +1567,9 @@ mod module_access_tests {
     #[test]
     fn extract_flag_string_returns_first_short_flag_group() {
         let args = vec![
-            "--server".to_string(),
-            "-abc".to_string(),
-            "-xyz".to_string(),
+            "--server".to_owned(),
+            "-abc".to_owned(),
+            "-xyz".to_owned(),
         ];
         // Should return first match
         assert_eq!(extract_flag_string(&args), "-abc");
@@ -1584,8 +1584,8 @@ mod module_access_tests {
     #[test]
     fn extract_flag_string_ignores_double_dash_flags() {
         let args = vec![
-            "--server".to_string(),
-            "--verbose".to_string(),
+            "--server".to_owned(),
+            "--verbose".to_owned(),
         ];
         assert_eq!(extract_flag_string(&args), "");
     }

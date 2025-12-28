@@ -26,7 +26,7 @@ fn apply_merge_directive_resolves_relative_paths() {
     assert!(visited.is_empty());
     let patterns: Vec<_> = rules
         .iter()
-        .map(|rule| rule.pattern().to_string())
+        .map(|rule| rule.pattern().to_owned())
         .collect();
     assert_eq!(patterns, vec!["outer", "child", "grand"]);
 }
@@ -39,7 +39,7 @@ fn apply_merge_directive_respects_forced_include() {
     let path = temp.path().join("filters.rules");
     std::fs::write(&path, b"alpha\n!\nbeta\n").expect("write filters");
 
-    let mut rules = vec![FilterRuleSpec::exclude("existing".to_string())];
+    let mut rules = vec![FilterRuleSpec::exclude("existing".to_owned())];
     let mut visited = HashSet::new();
     let directive = MergeDirective::new(path.into_os_string(), Some(FilterRuleKind::Include))
         .with_options(
@@ -53,7 +53,7 @@ fn apply_merge_directive_respects_forced_include() {
     assert!(visited.is_empty());
     let patterns: Vec<_> = rules
         .iter()
-        .map(|rule| rule.pattern().to_string())
+        .map(|rule| rule.pattern().to_owned())
         .collect();
     assert_eq!(patterns, vec!["beta"]);
 }

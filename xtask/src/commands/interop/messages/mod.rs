@@ -78,7 +78,7 @@ fn regenerate_goldens(workspace: &Path, options: MessagesOptions) -> TaskResult<
             )));
         } else {
             return Err(crate::error::TaskError::ToolMissing(
-                "No upstream rsync binaries found".to_string(),
+                "No upstream rsync binaries found".to_owned(),
             ));
         }
     }
@@ -285,7 +285,7 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
 
     if validation_failed {
         Err(crate::error::TaskError::Validation(
-            "Message validation failed".to_string(),
+            "Message validation failed".to_owned(),
         ))
     } else {
         eprintln!("\n[interop] Message validation complete - all tests passed!");

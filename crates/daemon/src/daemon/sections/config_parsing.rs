@@ -106,7 +106,7 @@ fn parse_config_modules_inner(
                     )?);
                 }
 
-                current = Some(ModuleDefinitionBuilder::new(name.to_string(), line_number));
+                current = Some(ModuleDefinitionBuilder::new(name.to_owned(), line_number));
                 continue;
             }
 
@@ -132,7 +132,7 @@ fn parse_config_modules_inner(
                         let comment = if value.is_empty() {
                             None
                         } else {
-                            Some(value.to_string())
+                            Some(value.to_owned())
                         };
                         builder.set_comment(comment, path, line_number)?;
                     }
@@ -282,7 +282,7 @@ fn parse_config_modules_inner(
                             ));
                         }
                         builder.set_incoming_chmod(
-                            Some(value.to_string()),
+                            Some(value.to_owned()),
                             path,
                             line_number,
                         )?;
@@ -296,7 +296,7 @@ fn parse_config_modules_inner(
                             ));
                         }
                         builder.set_outgoing_chmod(
-                            Some(value.to_string()),
+                            Some(value.to_owned()),
                             path,
                             line_number,
                         )?;
@@ -458,11 +458,11 @@ fn parse_config_modules_inner(
                     })?;
 
                     for raw_line in contents.lines() {
-                        motd_lines.push(raw_line.trim_end_matches('\r').to_string());
+                        motd_lines.push(raw_line.trim_end_matches('\r').to_owned());
                     }
                 }
                 "motd" => {
-                    motd_lines.push(value.trim_end_matches(['\r', '\n']).to_string());
+                    motd_lines.push(value.trim_end_matches(['\r', '\n']).to_owned());
                 }
                 "pid file" => {
                     let trimmed = value.trim();
@@ -613,7 +613,7 @@ fn parse_config_modules_inner(
                             ));
                         }
                     } else {
-                        global_incoming_chmod = Some((value.to_string(), origin));
+                        global_incoming_chmod = Some((value.to_owned(), origin));
                     }
                 }
                 "outgoing chmod" | "outgoing-chmod" => {
@@ -642,7 +642,7 @@ fn parse_config_modules_inner(
                             ));
                         }
                     } else {
-                        global_outgoing_chmod = Some((value.to_string(), origin));
+                        global_outgoing_chmod = Some((value.to_owned(), origin));
                     }
                 }
                 "lock file" => {
@@ -804,7 +804,7 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
         assert_eq!(result.modules[0].name, "mymodule");
         assert_eq!(result.modules[0].path, module_path);
-        assert_eq!(result.modules[0].comment, Some("Test module".to_string()));
+        assert_eq!(result.modules[0].comment, Some("Test module".to_owned()));
     }
 
     #[test]

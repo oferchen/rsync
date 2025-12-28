@@ -86,7 +86,7 @@ impl HumanReadableMode {
             "1" => Ok(Self::Enabled),
             "2" => Ok(Self::Combined),
             other => Err(HumanReadableModeParseError::Invalid {
-                value: other.to_string(),
+                value: other.to_owned(),
             }),
         }
     }
@@ -263,7 +263,7 @@ impl StrongChecksumChoice {
         let transfer = self.transfer.canonical_name();
         let file = self.file.canonical_name();
         if self.transfer == self.file {
-            transfer.to_string()
+            transfer.to_owned()
         } else {
             format!("{transfer},{file}")
         }
@@ -576,7 +576,7 @@ mod tests {
             assert!(empty_err.to_string().contains("must not be empty"));
 
             let invalid_err = HumanReadableModeParseError::Invalid {
-                value: "3".to_string(),
+                value: "3".to_owned(),
             };
             assert!(invalid_err.to_string().contains("invalid"));
         }

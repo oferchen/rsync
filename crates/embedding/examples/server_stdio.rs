@@ -14,7 +14,7 @@ fn main() {
     // This example uses typical server flag string for a receiver
     let config = match ServerConfig::from_flag_string_and_args(
         ServerRole::Receiver,
-        "-logDtpre.iLsfxC".to_string(),
+        "-logDtpre.iLsfxC".to_owned(),
         vec![".".into()],
     ) {
         Ok(config) => config,

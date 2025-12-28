@@ -175,7 +175,7 @@ pub(super) fn parse_short_merge_directive(text: &str) -> Option<Result<FilterDir
     };
 
     if allow_extended {
-        let rule = FilterRuleSpec::dir_merge(pattern.to_string(), options);
+        let rule = FilterRuleSpec::dir_merge(pattern.to_owned(), options);
         return Some(Ok(FilterDirective::Rule(rule)));
     }
 

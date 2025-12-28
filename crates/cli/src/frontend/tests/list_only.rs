@@ -65,7 +65,7 @@ fn list_only_formats_directory_without_trailing_slash() {
     let mut directory_line = None;
     for line in rendered.lines() {
         if line.ends_with("src") {
-            directory_line = Some(line.to_string());
+            directory_line = Some(line.to_owned());
             break;
         }
     }
@@ -210,9 +210,9 @@ fn list_only_formats_special_permission_bits_like_rsync() {
     let mut plain_line = None;
     for line in rendered.lines() {
         if line.ends_with("exec-special") {
-            exec_line = Some(line.to_string());
+            exec_line = Some(line.to_owned());
         } else if line.ends_with("plain-special") {
-            plain_line = Some(line.to_string());
+            plain_line = Some(line.to_owned());
         }
     }
 

@@ -158,7 +158,7 @@ pub fn categorize_io_error(
         PermissionDenied => {
             DeltaTransferError::Recoverable(DeltaRecoverableError::PermissionDenied {
                 path: path.to_path_buf(),
-                operation: operation.to_string(),
+                operation: operation.to_owned(),
             })
         }
 
@@ -277,7 +277,7 @@ mod tests {
     fn display_permission_denied_error() {
         let err = DeltaRecoverableError::PermissionDenied {
             path: PathBuf::from("/tmp/test.txt"),
-            operation: "open".to_string(),
+            operation: "open".to_owned(),
         };
 
         let s = format!("{err}");

@@ -16,7 +16,7 @@ fn assembles_minimal_command_with_batch_mode() {
     assert_eq!(program, OsString::from("ssh"));
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_string(), "example.com".to_string()]
+        vec!["-oBatchMode=yes".to_owned(), "example.com".to_owned()]
     );
 }
 
@@ -36,14 +36,14 @@ fn assembles_command_with_user_port_and_remote_args() {
     assert_eq!(
         rendered,
         vec![
-            "-oBatchMode=yes".to_string(),
-            "-p".to_string(),
-            "2222".to_string(),
-            "-vvv".to_string(),
-            "backup@rsync.example.com".to_string(),
-            "rsync".to_string(),
-            "--server".to_string(),
-            ".".to_string(),
+            "-oBatchMode=yes".to_owned(),
+            "-p".to_owned(),
+            "2222".to_owned(),
+            "-vvv".to_owned(),
+            "backup@rsync.example.com".to_owned(),
+            "rsync".to_owned(),
+            "--server".to_owned(),
+            ".".to_owned(),
         ]
     );
 }
@@ -54,7 +54,7 @@ fn disables_batch_mode_when_requested() {
     command.set_batch_mode(false);
 
     let (_, args) = command.command_parts_for_testing();
-    assert_eq!(args_to_strings(&args), vec!["example.com".to_string()]);
+    assert_eq!(args_to_strings(&args), vec!["example.com".to_owned()]);
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn wraps_ipv6_hosts_in_brackets() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_string(), "[2001:db8::1]".to_string()]
+        vec!["-oBatchMode=yes".to_owned(), "[2001:db8::1]".to_owned()]
     );
 }
 
@@ -78,8 +78,8 @@ fn wraps_ipv6_hosts_with_usernames() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_string(),
-            "backup@[2001:db8::1]".to_string()
+            "-oBatchMode=yes".to_owned(),
+            "backup@[2001:db8::1]".to_owned()
         ]
     );
 }
@@ -94,8 +94,8 @@ fn preserves_explicit_bracketed_ipv6_literals() {
     assert_eq!(
         args_to_strings(&args),
         vec![
-            "-oBatchMode=yes".to_string(),
-            "backup@[2001:db8::1]".to_string()
+            "-oBatchMode=yes".to_owned(),
+            "backup@[2001:db8::1]".to_owned()
         ]
     );
 }
@@ -109,7 +109,7 @@ fn command_parts_skip_target_when_host_and_user_missing() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_string(), "rsync".to_string()]
+        vec!["-oBatchMode=yes".to_owned(), "rsync".to_owned()]
     );
 }
 
@@ -123,7 +123,7 @@ fn target_override_supersedes_computed_target() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_string(), "custom-target".to_string()]
+        vec!["-oBatchMode=yes".to_owned(), "custom-target".to_owned()]
     );
 }
 
@@ -137,7 +137,7 @@ fn empty_target_override_suppresses_target_argument() {
 
     assert_eq!(
         args_to_strings(&args),
-        vec!["-oBatchMode=yes".to_string(), "rsync".to_string()]
+        vec!["-oBatchMode=yes".to_owned(), "rsync".to_owned()]
     );
 }
 

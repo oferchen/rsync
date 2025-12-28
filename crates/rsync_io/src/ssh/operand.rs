@@ -132,9 +132,9 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
 
     Ok(RemoteOperand {
         user: user.map(String::from),
-        host: host.to_string(),
+        host: host.to_owned(),
         port: None, // Port is extracted from -e option, not the operand
-        path: path.to_string(),
+        path: path.to_owned(),
     })
 }
 
@@ -383,10 +383,10 @@ mod tests {
     #[test]
     fn remote_operand_display() {
         let operand = RemoteOperand::new(
-            Some("user".to_string()),
-            "example.com".to_string(),
+            Some("user".to_owned()),
+            "example.com".to_owned(),
             Some(2222),
-            "/path".to_string(),
+            "/path".to_owned(),
         );
 
         assert_eq!(operand.user(), Some("user"));

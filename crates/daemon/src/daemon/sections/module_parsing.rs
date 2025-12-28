@@ -79,7 +79,7 @@ fn parse_max_sessions(value: &OsString) -> Result<NonZeroUsize, DaemonError> {
         .parse()
         .map_err(|_| config_error(format!("invalid value for --max-sessions: '{text}'")))?;
     NonZeroUsize::new(parsed)
-        .ok_or_else(|| config_error("--max-sessions must be greater than zero".to_string()))
+        .ok_or_else(|| config_error("--max-sessions must be greater than zero".to_owned()))
 }
 
 fn parse_module_definition(
@@ -96,13 +96,13 @@ fn parse_module_definition(
     })?;
 
     let name = name_part.trim();
-    ensure_valid_module_name(name).map_err(|msg| config_error(msg.to_string()))?;
+    ensure_valid_module_name(name).map_err(|msg| config_error(msg.to_owned()))?;
 
     let (path_part, comment_part, options_part) = split_module_path_comment_and_options(remainder);
 
     let path_text = path_part.trim();
     if path_text.is_empty() {
-        return Err(config_error("module path must be non-empty".to_string()));
+        return Err(config_error("module path must be non-empty".to_owned()));
     }
 
     let path_text = unescape_module_component(path_text);
@@ -111,7 +111,7 @@ fn parse_module_definition(
         .filter(|value| !value.is_empty());
 
     let mut module = ModuleDefinition {
-        name: name.to_string(),
+        name: name.to_owned(),
         path: PathBuf::from(&path_text),
         comment,
         hosts_allow: Vec::new(),
@@ -166,7 +166,7 @@ fn parse_module_definition(
             module.secrets_file = Some(path.to_path_buf());
         } else {
             return Err(config_error(
-                "module specified 'auth users' but did not supply a secrets file".to_string(),
+                "module specified 'auth users' but did not supply a secrets file".to_owned(),
             ));
         }
     }
@@ -246,7 +246,7 @@ fn split_inline_options(text: &str) -> Vec<String> {
         match ch {
             '\\' => escape = true,
             ';' => {
-                parts.push(current.trim().to_string());
+                parts.push(current.trim().to_owned());
                 current.clear();
             }
             _ => current.push(ch),
@@ -254,7 +254,7 @@ fn split_inline_options(text: &str) -> Vec<String> {
     }
 
     if !current.is_empty() {
-        parts.push(current.trim().to_string());
+        parts.push(current.trim().to_owned());
     }
 
     parts.into_iter().filter(|part| !part.is_empty()).collect()
@@ -323,7 +323,7 @@ fn apply_inline_module_options(
                 })?;
                 if users.is_empty() {
                     return Err(config_error(
-                        "'auth users' option must list at least one user".to_string(),
+                        "'auth users' option must list at least one user".to_owned(),
                     ));
                 }
                 module.auth_users = users;
@@ -331,7 +331,7 @@ fn apply_inline_module_options(
             "secrets file" | "secrets-file" => {
                 if value.is_empty() {
                     return Err(config_error(
-                        "'secrets file' option must not be empty".to_string(),
+                        "'secrets file' option must not be empty".to_owned(),
                     ));
                 }
                 module.secrets_file = Some(PathBuf::from(unescape_module_component(value)));
@@ -339,7 +339,7 @@ fn apply_inline_module_options(
             "bwlimit" => {
                 if value.is_empty() {
                     return Err(config_error(
-                        "'bwlimit' option must not be empty".to_string(),
+                        "'bwlimit' option must not be empty".to_owned(),
                     ));
                 }
                 let components = parse_runtime_bwlimit(&OsString::from(value))?;
@@ -379,18 +379,18 @@ fn apply_inline_module_options(
             "incoming chmod" | "incoming-chmod" => {
                 if value.is_empty() {
                     return Err(config_error(
-                        "'incoming chmod' option must not be empty".to_string(),
+                        "'incoming chmod' option must not be empty".to_owned(),
                     ));
                 }
-                module.incoming_chmod = Some(value.to_string());
+                module.incoming_chmod = Some(value.to_owned());
             }
             "outgoing chmod" | "outgoing-chmod" => {
                 if value.is_empty() {
                     return Err(config_error(
-                        "'outgoing chmod' option must not be empty".to_string(),
+                        "'outgoing chmod' option must not be empty".to_owned(),
                     ));
                 }
-                module.outgoing_chmod = Some(value.to_string());
+                module.outgoing_chmod = Some(value.to_owned());
             }
             _ => {
                 return Err(config_error(format!(

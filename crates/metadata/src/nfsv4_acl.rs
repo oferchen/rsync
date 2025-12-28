@@ -240,8 +240,7 @@ impl Nfs4Acl {
             }
 
             let who = std::str::from_utf8(&data[offset..offset + who_len])
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-8 in ACE"))?
-                .to_string();
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-8 in ACE"))?.to_owned();
             offset += who_len;
 
             // Align to 4 bytes
@@ -413,13 +412,13 @@ mod tests {
                     ace_type: AceType::Allow,
                     flags: AceFlags::from_raw(0),
                     mask: AccessMask::from_raw(AccessMask::READ_DATA | AccessMask::EXECUTE),
-                    who: "OWNER@".to_string(),
+                    who: "OWNER@".to_owned(),
                 },
                 Nfs4Ace {
                     ace_type: AceType::Deny,
                     flags: AceFlags::from_raw(AceFlags::IDENTIFIER_GROUP),
                     mask: AccessMask::from_raw(AccessMask::WRITE_DATA),
-                    who: "GROUP@".to_string(),
+                    who: "GROUP@".to_owned(),
                 },
             ],
         };
@@ -459,7 +458,7 @@ mod tests {
                 ace_type: AceType::Allow,
                 flags: AceFlags::default(),
                 mask: AccessMask::from_raw(AccessMask::READ_DATA),
-                who: "user".to_string(), // 4 bytes, no padding needed
+                who: "user".to_owned(), // 4 bytes, no padding needed
             }],
         };
 
@@ -473,7 +472,7 @@ mod tests {
                 ace_type: AceType::Allow,
                 flags: AceFlags::default(),
                 mask: AccessMask::from_raw(AccessMask::READ_DATA),
-                who: "u".to_string(), // 1 byte, needs 3 bytes padding
+                who: "u".to_owned(), // 1 byte, needs 3 bytes padding
             }],
         };
 

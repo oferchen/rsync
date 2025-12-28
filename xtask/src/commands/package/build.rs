@@ -380,7 +380,7 @@ fn features_to_string(value: &OsStr, var: &str) -> TaskResult<String> {
         )));
     }
 
-    Ok(trimmed.to_string())
+    Ok(trimmed.to_owned())
 }
 
 fn ensure_legacy_launchers(
@@ -633,9 +633,9 @@ mod build_command_tests {
             .iter()
             .map(|value| value.to_string_lossy().into())
             .collect();
-        assert!(args.contains(&"--no-default-features".to_string()));
-        assert!(args.contains(&"--features".to_string()));
-        assert!(args.contains(&"zstd lz4 iconv".to_string()));
+        assert!(args.contains(&"--no-default-features".to_owned()));
+        assert!(args.contains(&"--features".to_owned()));
+        assert!(args.contains(&"zstd lz4 iconv".to_owned()));
     }
 
     #[test]

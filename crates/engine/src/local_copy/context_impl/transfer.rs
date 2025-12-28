@@ -122,7 +122,7 @@ impl<'a> CopyContext<'a> {
                 }
                 if !markers.is_empty() {
                     let count = markers.len();
-                    marker_layers[index].extend(markers.into_iter());
+                    marker_layers[index].extend(markers);
                     marker_counts.push((index, count));
                 }
             } else {

@@ -39,7 +39,7 @@ pub(super) fn parse_filter_shorthand(
         return Some(Err(message));
     }
 
-    Some(Ok(FilterDirective::Rule(builder(pattern.to_string()))))
+    Some(Ok(FilterDirective::Rule(builder(pattern.to_owned()))))
 }
 
 #[cfg(test)]

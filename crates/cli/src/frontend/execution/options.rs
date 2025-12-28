@@ -30,19 +30,19 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersio
             let (exit_code, detail) = match error.kind() {
                 ParseProtocolVersionErrorKind::Empty => (
                     FEATURE_UNAVAILABLE_EXIT_CODE,
-                    "protocol value must not be empty".to_string(),
+                    "protocol value must not be empty".to_owned(),
                 ),
                 ParseProtocolVersionErrorKind::InvalidDigit => (
                     FEATURE_UNAVAILABLE_EXIT_CODE,
-                    "protocol version must be an unsigned integer".to_string(),
+                    "protocol version must be an unsigned integer".to_owned(),
                 ),
                 ParseProtocolVersionErrorKind::Negative => (
                     FEATURE_UNAVAILABLE_EXIT_CODE,
-                    "protocol version cannot be negative".to_string(),
+                    "protocol version cannot be negative".to_owned(),
                 ),
                 ParseProtocolVersionErrorKind::Overflow => (
                     FEATURE_UNAVAILABLE_EXIT_CODE,
-                    "protocol version value exceeds 255".to_string(),
+                    "protocol version value exceeds 255".to_owned(),
                 ),
                 ParseProtocolVersionErrorKind::UnsupportedRange(value) => {
                     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
@@ -224,13 +224,13 @@ pub(crate) fn resolve_iconv_setting(
             Err(error) => {
                 let detail = match error {
                     IconvParseError::EmptySpecification => {
-                        "--iconv value must not be empty".to_string()
+                        "--iconv value must not be empty".to_owned()
                     }
                     IconvParseError::MissingLocalCharset => {
-                        "--iconv specification is missing the local charset".to_string()
+                        "--iconv specification is missing the local charset".to_owned()
                     }
                     IconvParseError::MissingRemoteCharset => {
-                        "--iconv specification is missing the remote charset".to_string()
+                        "--iconv specification is missing the remote charset".to_owned()
                     }
                 };
                 Err(rsync_error!(1, detail).with_role(Role::Client))
@@ -930,7 +930,7 @@ mod tests {
         assert_eq!(
             result,
             IconvSetting::Explicit {
-                local: "UTF-8".to_string(),
+                local: "UTF-8".to_owned(),
                 remote: None,
             }
         );
@@ -942,8 +942,8 @@ mod tests {
         assert_eq!(
             result,
             IconvSetting::Explicit {
-                local: "UTF-8".to_string(),
-                remote: Some("ISO-8859-1".to_string()),
+                local: "UTF-8".to_owned(),
+                remote: Some("ISO-8859-1".to_owned()),
             }
         );
     }

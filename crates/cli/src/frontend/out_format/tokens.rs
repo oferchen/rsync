@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn out_format_new_with_tokens() {
-        let tokens = vec![OutFormatToken::Literal("hello".to_string())];
+        let tokens = vec![OutFormatToken::Literal("hello".to_owned())];
         let format = OutFormat::new(tokens);
         assert!(!format.is_empty());
     }
@@ -173,8 +173,8 @@ mod tests {
     #[test]
     fn out_format_tokens_iterator() {
         let tokens = vec![
-            OutFormatToken::Literal("a".to_string()),
-            OutFormatToken::Literal("b".to_string()),
+            OutFormatToken::Literal("a".to_owned()),
+            OutFormatToken::Literal("b".to_owned()),
         ];
         let format = OutFormat::new(tokens);
         let count = format.tokens().count();
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn out_format_token_literal() {
-        let token = OutFormatToken::Literal("test".to_string());
+        let token = OutFormatToken::Literal("test".to_owned());
         if let OutFormatToken::Literal(s) = token {
             assert_eq!(s, "test");
         } else {
@@ -281,10 +281,10 @@ mod tests {
     #[test]
     fn out_format_context_with_values() {
         let ctx = OutFormatContext {
-            remote_host: Some("server.example.com".to_string()),
-            remote_address: Some("192.168.1.1".to_string()),
-            module_name: Some("backup".to_string()),
-            module_path: Some("/var/backup".to_string()),
+            remote_host: Some("server.example.com".to_owned()),
+            remote_address: Some("192.168.1.1".to_owned()),
+            module_name: Some("backup".to_owned()),
+            module_path: Some("/var/backup".to_owned()),
         };
         assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
         assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn out_format_clone() {
-        let format = OutFormat::new(vec![OutFormatToken::Literal("x".to_string())]);
+        let format = OutFormat::new(vec![OutFormatToken::Literal("x".to_owned())]);
         let cloned = format;
         assert!(!cloned.is_empty());
     }

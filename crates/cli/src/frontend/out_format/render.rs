@@ -96,7 +96,7 @@ fn render_placeholder_value(
             };
             Some(format_numeric_value(checksum_bytes as i64, &spec.format))
         }
-        OutFormatPlaceholder::Operation => Some(describe_event_kind(event.kind()).to_string()),
+        OutFormatPlaceholder::Operation => Some(describe_event_kind(event.kind()).to_owned()),
         OutFormatPlaceholder::ModifyTime => Some(format_out_format_mtime(event.metadata())),
         OutFormatPlaceholder::PermissionString => {
             Some(format_out_format_permissions(event.metadata()))
@@ -115,12 +115,12 @@ fn render_placeholder_value(
         OutFormatPlaceholder::OwnerUid => Some(
             event
                 .metadata()
-                .and_then(ClientEntryMetadata::uid).map_or_else(|| "0".to_string(), |value| value.to_string()),
+                .and_then(ClientEntryMetadata::uid).map_or_else(|| "0".to_owned(), |value| value.to_string()),
         ),
         OutFormatPlaceholder::OwnerGid => Some(
             event
                 .metadata()
-                .and_then(ClientEntryMetadata::gid).map_or_else(|| "0".to_string(), |value| value.to_string()),
+                .and_then(ClientEntryMetadata::gid).map_or_else(|| "0".to_owned(), |value| value.to_string()),
         ),
         OutFormatPlaceholder::ProcessId => Some(std::process::id().to_string()),
         OutFormatPlaceholder::RemoteHost => Some(remote_placeholder_value(
@@ -206,7 +206,7 @@ fn format_with_separator(value: i64) -> String {
     };
 
     if magnitude == 0 {
-        return "0".to_string();
+        return "0".to_owned();
     }
 
     let mut groups = Vec::new();
@@ -260,7 +260,7 @@ fn format_out_format_mtime(metadata: Option<&ClientEntryMetadata>) -> String {
             OffsetDateTime::from(time)
                 .format(LIST_TIMESTAMP_FORMAT)
                 .ok()
-        }).map_or_else(|| "1970/01/01-00:00:00".to_string(), |formatted| formatted.replace(' ', "-"))
+        }).map_or_else(|| "1970/01/01-00:00:00".to_owned(), |formatted| formatted.replace(' ', "-"))
 }
 
 fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> String {
@@ -272,17 +272,17 @@ fn format_out_format_permissions(metadata: Option<&ClientEntryMetadata>) -> Stri
             }
             perms
         })
-        .unwrap_or_else(|| "---------".to_string())
+        .unwrap_or_else(|| "---------".to_owned())
 }
 
 fn format_owner_name(metadata: Option<&ClientEntryMetadata>) -> String {
     metadata
-        .and_then(ClientEntryMetadata::uid).map_or_else(|| "0".to_string(), resolve_user_name)
+        .and_then(ClientEntryMetadata::uid).map_or_else(|| "0".to_owned(), resolve_user_name)
 }
 
 fn format_group_name(metadata: Option<&ClientEntryMetadata>) -> String {
     metadata
-        .and_then(ClientEntryMetadata::gid).map_or_else(|| "0".to_string(), resolve_group_name)
+        .and_then(ClientEntryMetadata::gid).map_or_else(|| "0".to_owned(), resolve_group_name)
 }
 
 fn resolve_user_name(uid: u32) -> String {
@@ -295,14 +295,14 @@ fn resolve_group_name(gid: u32) -> String {
 
 fn format_current_timestamp() -> String {
     let now = OffsetDateTime::from(SystemTime::now());
-    now.format(LIST_TIMESTAMP_FORMAT).map_or_else(|_| "1970/01/01-00:00:00".to_string(), |text| text.replace(' ', "-"))
+    now.format(LIST_TIMESTAMP_FORMAT).map_or_else(|_| "1970/01/01-00:00:00".to_owned(), |text| text.replace(' ', "-"))
 }
 
 fn format_itemized_changes(event: &ClientEvent) -> String {
     use ClientEventKind::*;
 
     if matches!(event.kind(), ClientEventKind::EntryDeleted) {
-        return "*deleting".to_string();
+        return "*deleting".to_owned();
     }
 
     let mut fields = ['.'; 11];
@@ -399,19 +399,19 @@ fn format_full_checksum(event: &ClientEvent) -> String {
         event.kind(),
         ClientEventKind::DataCopied | ClientEventKind::MetadataReused | ClientEventKind::HardLink,
     ) {
-        return EMPTY_CHECKSUM.to_string();
+        return EMPTY_CHECKSUM.to_owned();
     }
 
     if let Some(metadata) = event.metadata()
         && metadata.kind() != ClientEntryKind::File
     {
-        return EMPTY_CHECKSUM.to_string();
+        return EMPTY_CHECKSUM.to_owned();
     }
 
     let path = event.destination_path();
     let mut file = match File::open(&path) {
         Ok(file) => file,
-        Err(_) => return EMPTY_CHECKSUM.to_string(),
+        Err(_) => return EMPTY_CHECKSUM.to_owned(),
     };
 
     let mut hasher = Md5::new();
@@ -421,7 +421,7 @@ fn format_full_checksum(event: &ClientEvent) -> String {
             Ok(0) => break,
             Ok(read) => hasher.update(&buffer[..read]),
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(_) => return EMPTY_CHECKSUM.to_string(),
+            Err(_) => return EMPTY_CHECKSUM.to_owned(),
         }
     }
 
@@ -482,29 +482,29 @@ mod tests {
 
     #[test]
     fn format_with_units_decimal_kilo() {
-        assert_eq!(format_with_units(1000, 1000), Some("1.00K".to_string()));
-        assert_eq!(format_with_units(1500, 1000), Some("1.50K".to_string()));
+        assert_eq!(format_with_units(1000, 1000), Some("1.00K".to_owned()));
+        assert_eq!(format_with_units(1500, 1000), Some("1.50K".to_owned()));
         assert_eq!(
             format_with_units(999_999, 1000),
-            Some("1000.00K".to_string())
+            Some("1000.00K".to_owned())
         );
     }
 
     #[test]
     fn format_with_units_binary_kilo() {
-        assert_eq!(format_with_units(1024, 1024), Some("1.00K".to_string()));
-        assert_eq!(format_with_units(1536, 1024), Some("1.50K".to_string()));
+        assert_eq!(format_with_units(1024, 1024), Some("1.00K".to_owned()));
+        assert_eq!(format_with_units(1536, 1024), Some("1.50K".to_owned()));
     }
 
     #[test]
     fn format_with_units_decimal_mega() {
         assert_eq!(
             format_with_units(1_000_000, 1000),
-            Some("1.00M".to_string())
+            Some("1.00M".to_owned())
         );
         assert_eq!(
             format_with_units(2_500_000, 1000),
-            Some("2.50M".to_string())
+            Some("2.50M".to_owned())
         );
     }
 
@@ -512,7 +512,7 @@ mod tests {
     fn format_with_units_binary_mega() {
         assert_eq!(
             format_with_units(1_048_576, 1024),
-            Some("1.00M".to_string())
+            Some("1.00M".to_owned())
         );
     }
 
@@ -520,11 +520,11 @@ mod tests {
     fn format_with_units_giga() {
         assert_eq!(
             format_with_units(1_000_000_000, 1000),
-            Some("1.00G".to_string())
+            Some("1.00G".to_owned())
         );
         assert_eq!(
             format_with_units(1_073_741_824, 1024),
-            Some("1.00G".to_string())
+            Some("1.00G".to_owned())
         );
     }
 
@@ -532,16 +532,16 @@ mod tests {
     fn format_with_units_tera() {
         assert_eq!(
             format_with_units(1_000_000_000_000, 1000),
-            Some("1.00T".to_string())
+            Some("1.00T".to_owned())
         );
     }
 
     #[test]
     fn format_with_units_negative() {
-        assert_eq!(format_with_units(-1000, 1000), Some("-1.00K".to_string()));
+        assert_eq!(format_with_units(-1000, 1000), Some("-1.00K".to_owned()));
         assert_eq!(
             format_with_units(-1_000_000, 1000),
-            Some("-1.00M".to_string())
+            Some("-1.00M".to_owned())
         );
     }
 
@@ -549,7 +549,7 @@ mod tests {
     fn apply_placeholder_format_no_width() {
         let format = PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::None);
         assert_eq!(
-            apply_placeholder_format("test".to_string(), &format),
+            apply_placeholder_format("test".to_owned(), &format),
             "test"
         );
     }
@@ -559,7 +559,7 @@ mod tests {
         let format =
             PlaceholderFormat::new(Some(10), PlaceholderAlignment::Right, HumanizeMode::None);
         assert_eq!(
-            apply_placeholder_format("test".to_string(), &format),
+            apply_placeholder_format("test".to_owned(), &format),
             "      test"
         );
     }
@@ -569,7 +569,7 @@ mod tests {
         let format =
             PlaceholderFormat::new(Some(10), PlaceholderAlignment::Left, HumanizeMode::None);
         assert_eq!(
-            apply_placeholder_format("test".to_string(), &format),
+            apply_placeholder_format("test".to_owned(), &format),
             "test      "
         );
     }
@@ -579,7 +579,7 @@ mod tests {
         let format =
             PlaceholderFormat::new(Some(4), PlaceholderAlignment::Right, HumanizeMode::None);
         assert_eq!(
-            apply_placeholder_format("test".to_string(), &format),
+            apply_placeholder_format("test".to_owned(), &format),
             "test"
         );
     }
@@ -589,7 +589,7 @@ mod tests {
         let format =
             PlaceholderFormat::new(Some(2), PlaceholderAlignment::Right, HumanizeMode::None);
         assert_eq!(
-            apply_placeholder_format("test".to_string(), &format),
+            apply_placeholder_format("test".to_owned(), &format),
             "test"
         );
     }
@@ -602,7 +602,7 @@ mod tests {
             PlaceholderAlignment::Right,
             HumanizeMode::None,
         );
-        let result = apply_placeholder_format("x".to_string(), &format);
+        let result = apply_placeholder_format("x".to_owned(), &format);
         assert_eq!(result.len(), MAX_PLACEHOLDER_WIDTH);
     }
 

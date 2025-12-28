@@ -39,7 +39,7 @@ impl GoldenMessages {
         self.messages.push(StoredMessage {
             text: msg.text.clone(),
             role: msg.role.clone(),
-            scenario: scenario.to_string(),
+            scenario: scenario.to_owned(),
         });
     }
 

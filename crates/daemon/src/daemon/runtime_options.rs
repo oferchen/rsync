@@ -289,10 +289,10 @@ impl RuntimeOptions {
             if !family.matches(addr) {
                 return Err(match family {
                     AddressFamily::Ipv4 => config_error(
-                        "cannot bind an IPv6 address when --ipv4 is specified".to_string(),
+                        "cannot bind an IPv6 address when --ipv4 is specified".to_owned(),
                     ),
                     AddressFamily::Ipv6 => config_error(
-                        "cannot bind an IPv4 address when --ipv6 is specified".to_string(),
+                        "cannot bind an IPv4 address when --ipv6 is specified".to_owned(),
                     ),
                 });
             }
@@ -311,14 +311,14 @@ impl RuntimeOptions {
                 let text = if self.bind_address_overridden {
                     match existing {
                         AddressFamily::Ipv4 => {
-                            "cannot use --ipv6 with an IPv4 bind address".to_string()
+                            "cannot use --ipv6 with an IPv4 bind address".to_owned()
                         }
                         AddressFamily::Ipv6 => {
-                            "cannot use --ipv4 with an IPv6 bind address".to_string()
+                            "cannot use --ipv4 with an IPv6 bind address".to_owned()
                         }
                     }
                 } else {
-                    "cannot combine --ipv4 with --ipv6".to_string()
+                    "cannot combine --ipv4 with --ipv6".to_owned()
                 };
                 return Err(config_error(text));
             }
@@ -331,7 +331,7 @@ impl RuntimeOptions {
                 if matches!(self.bind_address, IpAddr::V6(_)) {
                     if self.bind_address_overridden {
                         return Err(config_error(
-                            "cannot use --ipv4 with an IPv6 bind address".to_string(),
+                            "cannot use --ipv4 with an IPv6 bind address".to_owned(),
                         ));
                     }
                     self.bind_address = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
@@ -343,7 +343,7 @@ impl RuntimeOptions {
                 if matches!(self.bind_address, IpAddr::V4(_)) {
                     if self.bind_address_overridden {
                         return Err(config_error(
-                            "cannot use --ipv6 with an IPv4 bind address".to_string(),
+                            "cannot use --ipv6 with an IPv4 bind address".to_owned(),
                         ));
                     }
                     self.bind_address = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
@@ -622,7 +622,7 @@ impl RuntimeOptions {
             fs::read_to_string(&path).map_err(|error| config_io_error("read", &path, error))?;
 
         for raw_line in contents.lines() {
-            let line = raw_line.trim_end_matches('\r').to_string();
+            let line = raw_line.trim_end_matches('\r').to_owned();
             self.motd_lines.push(line);
         }
 
@@ -632,8 +632,7 @@ impl RuntimeOptions {
     fn push_motd_line(&mut self, value: OsString) {
         let line = value
             .to_string_lossy()
-            .trim_matches(['\r', '\n'])
-            .to_string();
+            .trim_matches(['\r', '\n']).to_owned();
         self.motd_lines.push(line);
     }
 }

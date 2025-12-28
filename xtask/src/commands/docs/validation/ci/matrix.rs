@@ -233,7 +233,7 @@ fn collect_matrix_platform_names(section: &str) -> Vec<String> {
         }
 
         if let Some(rest) = trimmed.strip_prefix("- name:") {
-            names.push(rest.trim().to_string());
+            names.push(rest.trim().to_owned());
         }
     }
 

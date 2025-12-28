@@ -92,7 +92,7 @@ pub fn run_ssh_transfer(
 
             (
                 args,
-                operand.host().to_string(),
+                operand.host().to_owned(),
                 operand.user().map(String::from),
                 operand.port(),
             )
@@ -109,7 +109,7 @@ pub fn run_ssh_transfer(
                 let operand = parse_ssh_operand(operand_str.as_ref()).map_err(|e| {
                     invalid_argument_error(&format!("invalid remote operand: {e}"), 1)
                 })?;
-                paths.push(operand.path().to_string());
+                paths.push(operand.path().to_owned());
             }
 
             // Build invocation with all paths
@@ -119,7 +119,7 @@ pub fn run_ssh_transfer(
 
             (
                 args,
-                first_operand.host().to_string(),
+                first_operand.host().to_owned(),
                 first_operand.user().map(String::from),
                 first_operand.port(),
             )
@@ -451,7 +451,7 @@ fn build_wire_format_rules(
                 // (FILTRULE_EXCLUDE_SELF in upstream rsync)
                 wire_rules.push(FilterRuleWireFormat {
                     rule_type: RuleType::Exclude,
-                    pattern: spec.pattern().to_string(),
+                    pattern: spec.pattern().to_owned(),
                     anchored: spec.pattern().starts_with('/'),
                     directory_only: spec.pattern().ends_with('/'),
                     no_inherit: false,
@@ -471,7 +471,7 @@ fn build_wire_format_rules(
         // Build wire format rule
         let mut wire_rule = FilterRuleWireFormat {
             rule_type,
-            pattern: spec.pattern().to_string(),
+            pattern: spec.pattern().to_owned(),
             anchored: spec.pattern().starts_with('/'),
             directory_only: spec.pattern().ends_with('/'),
             no_inherit: false, // Set based on pattern modifiers if needed
@@ -507,7 +507,7 @@ mod tests {
     fn builds_receiver_server_config() {
         let config = ClientConfig::builder().recursive(true).times(true).build();
 
-        let result = build_server_config_for_receiver(&config, &["dest/".to_string()]);
+        let result = build_server_config_for_receiver(&config, &["dest/".to_owned()]);
         assert!(result.is_ok());
 
         let server_config = result.unwrap();
@@ -522,7 +522,7 @@ mod tests {
 
         let result = build_server_config_for_generator(
             &config,
-            &["file1.txt".to_string(), "file2.txt".to_string()],
+            &["file1.txt".to_owned(), "file2.txt".to_owned()],
         );
         assert!(result.is_ok());
 

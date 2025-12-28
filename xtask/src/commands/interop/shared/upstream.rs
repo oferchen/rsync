@@ -17,7 +17,7 @@ pub fn detect_upstream_binaries(workspace: &Path) -> TaskResult<Vec<UpstreamBina
 
         if binary_path.exists() {
             binaries.push(UpstreamBinary {
-                version: (*version).to_string(),
+                version: (*version).to_owned(),
                 path: binary_path,
             });
         }

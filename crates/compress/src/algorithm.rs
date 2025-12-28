@@ -301,7 +301,7 @@ impl FromStr for CompressionAlgorithm {
             "lz4" => Ok(CompressionAlgorithm::Lz4),
             #[cfg(feature = "zstd")]
             "zstd" => Ok(CompressionAlgorithm::Zstd),
-            other => Err(CompressionAlgorithmParseError::new(other.to_string())),
+            other => Err(CompressionAlgorithmParseError::new(other.to_owned())),
         }
     }
 }

@@ -115,7 +115,7 @@ mod tests {
     fn batch_config_sets_value() {
         let batch = engine::batch::BatchConfig::new(
             engine::batch::BatchMode::Write,
-            "testbatch".to_string(),
+            "testbatch".to_owned(),
             32,
         );
         let config = builder().batch_config(Some(batch)).build();
@@ -126,7 +126,7 @@ mod tests {
     fn batch_config_none_clears_value() {
         let batch = engine::batch::BatchConfig::new(
             engine::batch::BatchMode::Write,
-            "testbatch".to_string(),
+            "testbatch".to_owned(),
             32,
         );
         let config = builder()

@@ -41,7 +41,7 @@ impl TarballPlatform {
 
     fn directories(self, root: &str) -> Vec<String> {
         let mut directories = vec![
-            root.to_string(),
+            root.to_owned(),
             format!("{root}/bin"),
             format!("{root}/libexec"),
             format!("{root}/libexec/oc-rsync"),
@@ -415,7 +415,7 @@ fn tarball_binary_directories(
 
     if skip_build {
         for fallback in [DIST_PROFILE, "release", "debug"] {
-            push_directory(fallback.to_string());
+            push_directory(fallback.to_owned());
         }
     }
 

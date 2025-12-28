@@ -40,8 +40,7 @@ impl IconvSetting {
             .next()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or(IconvParseError::MissingLocalCharset)?
-            .to_string();
+            .ok_or(IconvParseError::MissingLocalCharset)?.to_owned();
 
         match parts.next() {
             Some(remainder) => {
@@ -51,7 +50,7 @@ impl IconvSetting {
                 }
                 Ok(Self::Explicit {
                     local,
-                    remote: Some(remote.to_string()),
+                    remote: Some(remote.to_owned()),
                 })
             }
             None => Ok(Self::Explicit {
@@ -78,7 +77,7 @@ impl IconvSetting {
     pub fn cli_value(&self) -> Option<String> {
         match self {
             Self::Unspecified | Self::Disabled => None,
-            Self::LocaleDefault => Some(".".to_string()),
+            Self::LocaleDefault => Some(".".to_owned()),
             Self::Explicit { local, remote } => {
                 if let Some(remote) = remote {
                     Some(format!("{local},{remote}"))
@@ -128,8 +127,8 @@ mod tests {
         assert_eq!(
             setting,
             IconvSetting::Explicit {
-                local: "utf8".to_string(),
-                remote: Some("iso88591".to_string()),
+                local: "utf8".to_owned(),
+                remote: Some("iso88591".to_owned()),
             }
         );
         assert_eq!(setting.cli_value().as_deref(), Some("utf8,iso88591"));
@@ -141,7 +140,7 @@ mod tests {
         assert_eq!(
             setting,
             IconvSetting::Explicit {
-                local: "utf8".to_string(),
+                local: "utf8".to_owned(),
                 remote: None,
             }
         );
@@ -154,8 +153,8 @@ mod tests {
         assert_eq!(
             setting,
             IconvSetting::Explicit {
-                local: "utf8".to_string(),
-                remote: Some("iso88591".to_string()),
+                local: "utf8".to_owned(),
+                remote: Some("iso88591".to_owned()),
             }
         );
     }

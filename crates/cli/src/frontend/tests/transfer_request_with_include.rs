@@ -18,7 +18,7 @@ fn transfer_request_with_include_from_reinstate_patterns() {
     std::fs::write(&include_file, "keep/\nkeep/**\n").expect("write include file");
 
     let mut expected_rules = Vec::new();
-    expected_rules.push(FilterRuleSpec::exclude("*".to_string()));
+    expected_rules.push(FilterRuleSpec::exclude("*".to_owned()));
     append_filter_rules_from_files(
         &mut expected_rules,
         &[include_file.as_os_str().to_os_string()],

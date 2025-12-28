@@ -7,7 +7,7 @@ use crate::local_copy::LocalCopyError;
 
 pub(crate) fn partial_destination_path(destination: &Path) -> PathBuf {
     let file_name = destination
-        .file_name().map_or_else(|| "partial".to_string(), |name| name.to_string_lossy().to_string());
+        .file_name().map_or_else(|| "partial".to_owned(), |name| name.to_string_lossy().to_string());
     let partial_name = format!(".rsync-partial-{file_name}");
     destination.with_file_name(partial_name)
 }
@@ -37,7 +37,7 @@ pub(crate) fn temporary_destination_path(
     temp_dir: Option<&Path>,
 ) -> PathBuf {
     let file_name = destination
-        .file_name().map_or_else(|| "temp".to_string(), |name| name.to_string_lossy().to_string());
+        .file_name().map_or_else(|| "temp".to_owned(), |name| name.to_string_lossy().to_string());
     let temp_name = format!(".rsync-tmp-{file_name}-{}-{}", process::id(), unique);
     match temp_dir {
         Some(dir) => dir.join(temp_name),

@@ -45,7 +45,7 @@ pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option
 
 pub(crate) fn legacy_daemon_error_payload(line: &str) -> Option<String> {
     if let Some(payload) = parse_legacy_error_message(line) {
-        return Some(payload.to_string());
+        return Some(payload.to_owned());
     }
 
     let trimmed = line.trim_matches(['\r', '\n']).trim_start();
@@ -64,7 +64,7 @@ pub(crate) fn legacy_daemon_error_payload(line: &str) -> Option<String> {
         .trim_start_matches(|ch: char| ch == ':' || ch.is_ascii_whitespace())
         .trim();
 
-    Some(payload.to_string())
+    Some(payload.to_owned())
 }
 
 pub(crate) fn map_daemon_handshake_error(error: io::Error, addr: &DaemonAddress) -> ClientError {
@@ -237,25 +237,25 @@ mod tests {
     #[test]
     fn legacy_daemon_error_payload_parses_at_error_prefix() {
         let result = legacy_daemon_error_payload("@ERROR: access denied");
-        assert_eq!(result, Some("access denied".to_string()));
+        assert_eq!(result, Some("access denied".to_owned()));
     }
 
     #[test]
     fn legacy_daemon_error_payload_parses_at_error_without_colon() {
         let result = legacy_daemon_error_payload("@ERROR access denied");
-        assert_eq!(result, Some("access denied".to_string()));
+        assert_eq!(result, Some("access denied".to_owned()));
     }
 
     #[test]
     fn legacy_daemon_error_payload_handles_leading_whitespace() {
         let result = legacy_daemon_error_payload("  @ERROR: some error");
-        assert_eq!(result, Some("some error".to_string()));
+        assert_eq!(result, Some("some error".to_owned()));
     }
 
     #[test]
     fn legacy_daemon_error_payload_handles_crlf() {
         let result = legacy_daemon_error_payload("@ERROR: module not found\r\n");
-        assert_eq!(result, Some("module not found".to_string()));
+        assert_eq!(result, Some("module not found".to_owned()));
     }
 
     #[test]
@@ -274,13 +274,13 @@ mod tests {
     #[test]
     fn legacy_daemon_error_payload_handles_empty_payload() {
         let result = legacy_daemon_error_payload("@ERROR:");
-        assert_eq!(result, Some("".to_string()));
+        assert_eq!(result, Some("".to_owned()));
     }
 
     #[test]
     fn legacy_daemon_error_payload_case_insensitive() {
         let result = legacy_daemon_error_payload("@error: lowercase");
-        assert_eq!(result, Some("lowercase".to_string()));
+        assert_eq!(result, Some("lowercase".to_owned()));
     }
 
     #[test]

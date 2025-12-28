@@ -108,13 +108,13 @@ mod tests {
 
     #[test]
     fn filter_set_with_include_not_empty() {
-        let set = FilterSet::from_rules(vec![FilterRule::include("*.txt".to_string())]).unwrap();
+        let set = FilterSet::from_rules(vec![FilterRule::include("*.txt".to_owned())]).unwrap();
         assert!(!set.is_empty());
     }
 
     #[test]
     fn filter_set_with_exclude_not_empty() {
-        let set = FilterSet::from_rules(vec![FilterRule::exclude("*.bak".to_string())]).unwrap();
+        let set = FilterSet::from_rules(vec![FilterRule::exclude("*.bak".to_owned())]).unwrap();
         assert!(!set.is_empty());
     }
 
@@ -132,21 +132,21 @@ mod tests {
 
     #[test]
     fn filter_set_exclude_blocks() {
-        let set = FilterSet::from_rules(vec![FilterRule::exclude("*.bak".to_string())]).unwrap();
+        let set = FilterSet::from_rules(vec![FilterRule::exclude("*.bak".to_owned())]).unwrap();
         assert!(!set.allows(Path::new("file.bak"), false));
     }
 
     #[test]
     fn filter_set_exclude_allows_non_matching() {
-        let set = FilterSet::from_rules(vec![FilterRule::exclude("*.bak".to_string())]).unwrap();
+        let set = FilterSet::from_rules(vec![FilterRule::exclude("*.bak".to_owned())]).unwrap();
         assert!(set.allows(Path::new("file.txt"), false));
     }
 
     #[test]
     fn filter_set_include_allows() {
         let rules = vec![
-            FilterRule::exclude("*".to_string()),
-            FilterRule::include("*.txt".to_string()),
+            FilterRule::exclude("*".to_owned()),
+            FilterRule::include("*.txt".to_owned()),
         ];
         let set = FilterSet::from_rules(rules).unwrap();
         assert!(set.allows(Path::new("file.txt"), false));
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn filter_set_protect_blocks_deletion() {
         let set =
-            FilterSet::from_rules(vec![FilterRule::protect("/important".to_string())]).unwrap();
+            FilterSet::from_rules(vec![FilterRule::protect("/important".to_owned())]).unwrap();
         assert!(!set.allows_deletion(Path::new("important"), false));
     }
 }
