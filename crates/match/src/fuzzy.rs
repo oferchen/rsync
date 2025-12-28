@@ -1,4 +1,4 @@
-//! crates/engine/src/fuzzy.rs
+//! crates/match/src/fuzzy.rs
 //!
 //! Fuzzy basis file matching for delta transfers.
 //!
@@ -596,7 +596,4 @@ mod tests {
             assert!(debug.contains("100"));
         }
     }
-
-    // Constants validation: These values are compile-time constants.
-    // The tests above exercise them through compute_similarity_score calls.
 }

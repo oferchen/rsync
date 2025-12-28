@@ -1,8 +1,13 @@
+//! crates/batch/src/tests.rs
+//!
 //! Integration tests for batch mode.
 
 #[cfg(test)]
 mod integration {
-    use crate::batch::*;
+    use crate::format::BatchFlags;
+    use crate::reader::BatchReader;
+    use crate::writer::BatchWriter;
+    use crate::{BatchConfig, BatchMode};
     use std::fs;
     use tempfile::TempDir;
 

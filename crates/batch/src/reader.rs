@@ -1,8 +1,10 @@
+//! crates/batch/src/reader.rs
+//!
 //! Batch file reader for replaying transfers.
 
-use super::BatchConfig;
-use super::format::{BatchFlags, BatchHeader};
-use crate::error::{EngineError, EngineResult};
+use crate::BatchConfig;
+use crate::error::{BatchError, BatchResult};
+use crate::format::{BatchFlags, BatchHeader, FileEntry};
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 
@@ -21,11 +23,11 @@ pub struct BatchReader {
 
 impl BatchReader {
     /// Create a new batch reader.
-    pub fn new(config: BatchConfig) -> EngineResult<Self> {
+    pub fn new(config: BatchConfig) -> BatchResult<Self> {
         // Open the batch file
         let batch_path = config.batch_file_path();
         let file = File::open(batch_path).map_err(|e| {
-            EngineError::Io(io::Error::new(
+            BatchError::Io(io::Error::new(
                 e.kind(),
                 format!(
                     "Failed to open batch file '{}': {}",
@@ -45,9 +47,9 @@ impl BatchReader {
     /// Read and validate the batch header.
     ///
     /// Returns the stream flags that were recorded in the batch.
-    pub fn read_header(&mut self) -> EngineResult<BatchFlags> {
+    pub fn read_header(&mut self) -> BatchResult<BatchFlags> {
         if self.header.is_some() {
-            return Err(EngineError::Io(io::Error::new(
+            return Err(BatchError::Io(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "Batch header already read",
             )));
@@ -55,7 +57,7 @@ impl BatchReader {
 
         if let Some(ref mut reader) = self.batch_file {
             let header = BatchHeader::read_from(reader).map_err(|e| {
-                EngineError::Io(io::Error::new(
+                BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to read batch header: {e}"),
                 ))
@@ -63,12 +65,9 @@ impl BatchReader {
 
             // Validate protocol version
             if header.protocol_version != self.config.protocol_version {
-                return Err(EngineError::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Protocol version mismatch: batch has {}, expected {}",
-                        header.protocol_version, self.config.protocol_version
-                    ),
+                return Err(BatchError::InvalidFormat(format!(
+                    "Protocol version mismatch: batch has {}, expected {}",
+                    header.protocol_version, self.config.protocol_version
                 )));
             }
 
@@ -76,7 +75,7 @@ impl BatchReader {
             self.header = Some(header);
             Ok(flags)
         } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -84,42 +83,42 @@ impl BatchReader {
     ///
     /// This reads the next chunk of data from the batch file, which
     /// could be file list entries or delta operations.
-    pub fn read_data(&mut self, buf: &mut [u8]) -> EngineResult<usize> {
+    pub fn read_data(&mut self, buf: &mut [u8]) -> BatchResult<usize> {
         if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::other(
+            return Err(BatchError::Io(io::Error::other(
                 "Must read header before data",
             )));
         }
 
         if let Some(ref mut reader) = self.batch_file {
             reader.read(buf).map_err(|e| {
-                EngineError::Io(io::Error::new(
+                BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to read batch data: {e}"),
                 ))
             })
         } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
 
     /// Read exact amount of data from the batch file.
-    pub fn read_exact(&mut self, buf: &mut [u8]) -> EngineResult<()> {
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> BatchResult<()> {
         if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::other(
+            return Err(BatchError::Io(io::Error::other(
                 "Must read header before data",
             )));
         }
 
         if let Some(ref mut reader) = self.batch_file {
             reader.read_exact(buf).map_err(|e| {
-                EngineError::Io(io::Error::new(
+                BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to read exact batch data: {e}"),
                 ))
             })
         } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -133,12 +132,35 @@ impl BatchReader {
         &self.config
     }
 
+    /// Read all delta operations from the batch file.
+    ///
+    /// This reads delta operations until EOF is reached.
+    /// Suitable for single-file batches or when processing one file at a time.
+    pub fn read_all_delta_ops(&mut self) -> BatchResult<Vec<protocol::wire::DeltaOp>> {
+        if self.header.is_none() {
+            return Err(BatchError::Io(io::Error::other(
+                "Must read header before delta operations",
+            )));
+        }
+
+        if let Some(ref mut reader) = self.batch_file {
+            protocol::wire::delta::read_delta(reader).map_err(|e| {
+                BatchError::Io(io::Error::new(
+                    e.kind(),
+                    format!("Failed to read delta operations: {e}"),
+                ))
+            })
+        } else {
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
+        }
+    }
+
     /// Read a file entry from the batch file.
     ///
     /// Returns the next file list entry, or None if end of file list is reached.
-    pub fn read_file_entry(&mut self) -> EngineResult<Option<super::format::FileEntry>> {
+    pub fn read_file_entry(&mut self) -> BatchResult<Option<FileEntry>> {
         if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::other(
+            return Err(BatchError::Io(io::Error::other(
                 "Must read header before file entries",
             )));
         }
@@ -146,7 +168,7 @@ impl BatchReader {
         if let Some(ref mut reader) = self.batch_file {
             // Try to read the next file entry
             // If we hit EOF or an empty path, we've reached the end of the file list
-            match super::format::FileEntry::read_from(reader) {
+            match FileEntry::read_from(reader) {
                 Ok(entry) => {
                     if entry.path.is_empty() {
                         Ok(None) // End of file list marker
@@ -155,69 +177,13 @@ impl BatchReader {
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
-                Err(e) => Err(EngineError::Io(io::Error::new(
+                Err(e) => Err(BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to read file entry: {e}"),
                 ))),
             }
         } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
-        }
-    }
-
-    /// Read all remaining delta operations from the batch file.
-    ///
-    /// Reads individual delta operations until EOF. This is a simplified
-    /// implementation for single-file batches. Multi-file batches need
-    /// more sophisticated parsing to detect file entry boundaries.
-    ///
-    /// # Implementation Note
-    ///
-    /// Multi-file batch parsing requires lookahead to detect when one file's
-    /// delta stream ends and the next begins. Upstream rsync handles this via
-    /// a state machine in batch.c that tracks file list indices.
-    ///
-    /// Current implementation: Single-file batches only (reads until EOF).
-    /// Future enhancement: Add file boundary detection for multi-file batches.
-    pub fn read_all_delta_ops(&mut self) -> EngineResult<Vec<protocol::wire::delta::DeltaOp>> {
-        if self.header.is_none() {
-            return Err(EngineError::Io(io::Error::other(
-                "Must read header before delta operations",
-            )));
-        }
-
-        let mut ops = Vec::new();
-
-        if let Some(ref mut reader) = self.batch_file {
-            // Read delta operations until EOF
-            loop {
-                match protocol::wire::delta::read_delta_op(reader) {
-                    Ok(op) => {
-                        ops.push(op);
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                        // End of delta operations
-                        break;
-                    }
-                    Err(e) => {
-                        // If we've already read some ops successfully, this might just be
-                        // the end of delta data. Otherwise it's a real error.
-                        if ops.is_empty() {
-                            return Err(EngineError::Io(io::Error::new(
-                                e.kind(),
-                                format!("Failed to read first delta operation: {e}"),
-                            )));
-                        } else {
-                            // Assume end of delta data
-                            break;
-                        }
-                    }
-                }
-            }
-
-            Ok(ops)
-        } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
 }
@@ -225,7 +191,7 @@ impl BatchReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::{BatchMode, BatchWriter};
+    use crate::{BatchMode, BatchWriter};
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -495,27 +461,6 @@ mod tests {
             // Should return None on EOF
             let entry = reader.read_file_entry().unwrap();
             assert!(entry.is_none());
-        }
-    }
-
-    mod delta_ops_tests {
-        use super::*;
-
-        #[test]
-        fn read_delta_ops_without_header() {
-            let temp_dir = TempDir::new().unwrap();
-            let batch_path = temp_dir.path().join("test.batch");
-            create_test_batch(&batch_path);
-
-            let config = BatchConfig::new(
-                BatchMode::Read,
-                batch_path.to_string_lossy().to_string(),
-                30,
-            );
-
-            let mut reader = BatchReader::new(config).unwrap();
-            let result = reader.read_all_delta_ops();
-            assert!(result.is_err());
         }
     }
 

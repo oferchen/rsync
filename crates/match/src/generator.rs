@@ -1,4 +1,6 @@
-//! crates/engine/src/delta/generator.rs
+//! crates/match/src/generator.rs
+//!
+//! Delta token generation pipeline.
 
 use std::collections::VecDeque;
 use std::io::{self, Read};
@@ -9,8 +11,8 @@ use logging::debug_log;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::delta::index::DeltaSignatureIndex;
-use crate::delta::script::{DeltaScript, DeltaToken};
+use crate::index::DeltaSignatureIndex;
+use crate::script::{DeltaScript, DeltaToken};
 
 /// Default buffer size used by [`DeltaGenerator::generate`].
 const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
@@ -150,10 +152,12 @@ pub fn generate_delta<R: Read>(reader: R, index: &DeltaSignatureIndex) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delta::script::apply_delta;
-    use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
-    use crate::signature::{SignatureAlgorithm, generate_file_signature};
+    use crate::script::apply_delta;
     use protocol::ProtocolVersion;
+    use signature::{
+        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
+        generate_file_signature,
+    };
     use std::io::Cursor;
     use std::num::NonZeroU8;
 

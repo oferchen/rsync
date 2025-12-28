@@ -1,0 +1,33 @@
+[package]
+name = "signature"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "File signature layout and generation for the Rust rsync implementation"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+protocol = { path = "../protocol" }
+thiserror = "2.0"
+tracing = { workspace = true, optional = true }
+
+[target.'cfg(not(windows))'.dependencies]
+checksums = { path = "../checksums" }
+
+[target.'cfg(windows)'.dependencies]
+checksums = { path = "../checksums", default-features = false }
+
+[features]
+default = []
+# Structured logging instrumentation for performance analysis
+tracing = ["dep:tracing"]
+
+[dev-dependencies]

@@ -1,4 +1,6 @@
-//! crates/engine/src/delta/script.rs
+//! crates/match/src/script.rs
+//!
+//! Delta script representation and application.
 
 use std::cmp::min;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -8,7 +10,7 @@ use logging::debug_log;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::delta::index::DeltaSignatureIndex;
+use crate::index::DeltaSignatureIndex;
 
 /// Token describing how to reconstruct a target file from an rsync delta stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -173,9 +175,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
-    use crate::signature::{SignatureAlgorithm, generate_file_signature};
     use protocol::ProtocolVersion;
+    use signature::{
+        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
+        generate_file_signature,
+    };
     use std::io::{Cursor, ErrorKind};
     use std::num::NonZeroU8;
 

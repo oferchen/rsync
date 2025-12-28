@@ -1,8 +1,10 @@
+//! crates/batch/src/writer.rs
+//!
 //! Batch file writer for recording transfers.
 
-use super::BatchConfig;
-use super::format::{BatchFlags, BatchHeader};
-use crate::error::{EngineError, EngineResult};
+use crate::BatchConfig;
+use crate::error::{BatchError, BatchResult};
+use crate::format::{BatchFlags, BatchHeader, FileEntry};
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
@@ -22,11 +24,11 @@ pub struct BatchWriter {
 
 impl BatchWriter {
     /// Create a new batch writer.
-    pub fn new(config: BatchConfig) -> EngineResult<Self> {
+    pub fn new(config: BatchConfig) -> BatchResult<Self> {
         // Create the batch file
         let batch_path = config.batch_file_path();
         let file = File::create(batch_path).map_err(|e| {
-            EngineError::Io(io::Error::new(
+            BatchError::Io(io::Error::new(
                 e.kind(),
                 format!(
                     "Failed to create batch file '{}': {}",
@@ -44,9 +46,9 @@ impl BatchWriter {
     }
 
     /// Write the batch header with stream flags.
-    pub fn write_header(&mut self, flags: BatchFlags) -> EngineResult<()> {
+    pub fn write_header(&mut self, flags: BatchFlags) -> BatchResult<()> {
         if self.header_written {
-            return Err(EngineError::Io(io::Error::new(
+            return Err(BatchError::Io(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "Batch header already written",
             )));
@@ -58,7 +60,7 @@ impl BatchWriter {
 
         if let Some(ref mut writer) = self.batch_file {
             header.write_to(writer).map_err(|e| {
-                EngineError::Io(io::Error::new(
+                BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to write batch header: {e}"),
                 ))
@@ -66,7 +68,7 @@ impl BatchWriter {
             self.header_written = true;
             Ok(())
         } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -75,23 +77,23 @@ impl BatchWriter {
     /// This is used to record file list and delta operations as they
     /// occur during the transfer. The data should be in the same format
     /// as it would be sent over the network.
-    pub fn write_data(&mut self, data: &[u8]) -> EngineResult<()> {
+    pub fn write_data(&mut self, data: &[u8]) -> BatchResult<()> {
         if !self.header_written {
-            return Err(EngineError::Io(io::Error::other(
+            return Err(BatchError::Io(io::Error::other(
                 "Must write header before data",
             )));
         }
 
         if let Some(ref mut writer) = self.batch_file {
             writer.write_all(data).map_err(|e| {
-                EngineError::Io(io::Error::new(
+                BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to write batch data: {e}"),
                 ))
             })?;
             Ok(())
         } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
 
@@ -102,31 +104,31 @@ impl BatchWriter {
     /// before any delta operations are recorded for that file.
     ///
     /// The header must be written before calling this method.
-    pub fn write_file_entry(&mut self, entry: &super::format::FileEntry) -> EngineResult<()> {
+    pub fn write_file_entry(&mut self, entry: &FileEntry) -> BatchResult<()> {
         if !self.header_written {
-            return Err(EngineError::Io(io::Error::other(
+            return Err(BatchError::Io(io::Error::other(
                 "Must write header before file entries",
             )));
         }
 
         if let Some(ref mut writer) = self.batch_file {
             entry.write_to(writer).map_err(|e| {
-                EngineError::Io(io::Error::new(
+                BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to write file entry: {e}"),
                 ))
             })?;
             Ok(())
         } else {
-            Err(EngineError::Io(io::Error::other("Batch file not open")))
+            Err(BatchError::Io(io::Error::other("Batch file not open")))
         }
     }
 
     /// Flush any buffered data to disk.
-    pub fn flush(&mut self) -> EngineResult<()> {
+    pub fn flush(&mut self) -> BatchResult<()> {
         if let Some(ref mut writer) = self.batch_file {
             writer.flush().map_err(|e| {
-                EngineError::Io(io::Error::new(
+                BatchError::Io(io::Error::new(
                     e.kind(),
                     format!("Failed to flush batch file: {e}"),
                 ))
@@ -139,7 +141,7 @@ impl BatchWriter {
     ///
     /// This ensures all data is written and the file is properly closed.
     /// After calling this, the writer can no longer be used.
-    pub fn finalize(mut self) -> EngineResult<()> {
+    pub fn finalize(mut self) -> BatchResult<()> {
         self.flush()?;
         if let Some(writer) = self.batch_file.take() {
             drop(writer);
@@ -163,7 +165,7 @@ impl Drop for BatchWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::BatchMode;
+    use crate::BatchMode;
     use std::fs;
     use tempfile::TempDir;
 
