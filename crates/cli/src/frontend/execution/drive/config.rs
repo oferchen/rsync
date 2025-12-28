@@ -278,15 +278,15 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         builder = builder.checksum_choice(choice);
     }
 
-    for path in inputs.compare_destinations.iter() {
+    for path in &inputs.compare_destinations {
         builder = builder.compare_destination(PathBuf::from(path));
     }
 
-    for path in inputs.copy_destinations.iter() {
+    for path in &inputs.copy_destinations {
         builder = builder.copy_destination(PathBuf::from(path));
     }
 
-    for path in inputs.link_destinations.iter() {
+    for path in &inputs.link_destinations {
         builder = builder.link_destination(PathBuf::from(path));
     }
 
