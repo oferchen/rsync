@@ -431,6 +431,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "transfer",
 ]
 
 [[package]]
@@ -2149,6 +2150,22 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "transfer"
+version = "3.4.1-rust"
+dependencies = [
+ "checksums",
+ "compress",
+ "engine",
+ "filters",
+ "logging",
+ "metadata",
+ "protocol",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]
