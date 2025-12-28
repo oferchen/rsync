@@ -253,7 +253,7 @@ impl ReceiverContext {
     fn create_directories(
         &self,
         dest_dir: &std::path::Path,
-        metadata_opts: MetadataOptions,
+        metadata_opts: &MetadataOptions,
     ) -> io::Result<Vec<(PathBuf, String)>> {
         let mut metadata_errors = Vec::new();
 
@@ -269,7 +269,7 @@ impl ReceiverContext {
                     fs::create_dir_all(&dir_path)?;
                 }
                 if let Err(meta_err) =
-                    apply_metadata_from_file_entry(&dir_path, file_entry, metadata_opts.clone())
+                    apply_metadata_from_file_entry(&dir_path, file_entry, metadata_opts)
                 {
                     metadata_errors.push((dir_path.to_path_buf(), meta_err.to_string()));
                 }
@@ -488,7 +488,7 @@ impl ReceiverContext {
             .unwrap_or_else(|| PathBuf::from("."));
 
         // First pass: create directories from file list
-        let mut metadata_errors = self.create_directories(&dest_dir, metadata_opts.clone())?;
+        let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
 
         // Transfer loop: iterate through file list and request each file from sender
         // The receiver (generator side) drives the transfer by sending file indices
@@ -712,7 +712,7 @@ impl ReceiverContext {
 
             // Step 6: Apply metadata from FileEntry (best-effort)
             if let Err(meta_err) =
-                apply_metadata_from_file_entry(&file_path, file_entry, metadata_opts.clone())
+                apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
             {
                 // Collect error for final report - metadata failure shouldn't abort transfer
                 metadata_errors.push((file_path.to_path_buf(), meta_err.to_string()));
