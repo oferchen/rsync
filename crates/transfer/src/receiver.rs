@@ -483,9 +483,7 @@ impl ReceiverContext {
         let dest_dir = self
             .config
             .args
-            .first()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
+            .first().map_or_else(|| PathBuf::from("."), PathBuf::from);
 
         // First pass: create directories from file list
         let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;

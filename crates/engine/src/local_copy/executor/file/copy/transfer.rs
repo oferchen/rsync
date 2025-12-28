@@ -271,8 +271,7 @@ pub(super) fn execute_transfer(
 
     let preallocate_target = guard
         .as_ref()
-        .map(|existing_guard| existing_guard.staging_path())
-        .unwrap_or(destination);
+        .map_or(destination, |existing_guard| existing_guard.staging_path());
     maybe_preallocate_destination(
         &mut writer,
         preallocate_target,
@@ -534,8 +533,7 @@ fn copy_special_as_regular_file(
     let hard_link_path = if delay_updates_enabled {
         guard
             .as_ref()
-            .map(|existing_guard| existing_guard.staging_path())
-            .unwrap_or(destination)
+            .map_or(destination, |existing_guard| existing_guard.staging_path())
     } else {
         destination
     };

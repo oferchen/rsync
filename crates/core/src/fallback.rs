@@ -216,8 +216,7 @@ pub fn interpret_override_value(raw: &OsStr) -> FallbackOverride {
 pub fn fallback_invocation_disabled() -> bool {
     env::var_os(DISABLE_FALLBACK_ENV)
         .as_deref()
-        .map(env_flag_truthy)
-        .unwrap_or(false)
+        .is_some_and(env_flag_truthy)
 }
 
 /// Provides a human-readable explanation when fallback execution is disabled.
