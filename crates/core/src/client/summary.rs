@@ -26,6 +26,8 @@ impl ClientSummary {
         Self { stats, events }
     }
 
+    // Allow large_types_passed_by_value: constructor intentionally takes ownership
+    #[allow(clippy::large_types_passed_by_value)]
     pub(crate) const fn from_summary(summary: LocalCopySummary) -> Self {
         Self {
             stats: summary,
