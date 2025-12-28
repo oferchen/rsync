@@ -30,6 +30,7 @@ pub enum ServerWriter<W: Write> {
 
 impl<W: Write> ServerWriter<W> {
     /// Creates a new plain-mode writer
+    #[inline]
     pub const fn new_plain(writer: W) -> Self {
         Self::Plain(writer)
     }
@@ -86,6 +87,7 @@ impl<W: Write> ServerWriter<W> {
     }
 
     /// Returns true if multiplex is active
+    #[inline]
     #[allow(dead_code)]
     pub const fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_) | Self::Compressed(_))
