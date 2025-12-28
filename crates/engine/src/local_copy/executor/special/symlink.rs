@@ -368,7 +368,7 @@ pub(crate) fn copy_symlink(
     } else {
         metadata_options.clone()
     };
-    apply_symlink_metadata_with_options(destination, metadata, symlink_options)
+    apply_symlink_metadata_with_options(destination, metadata, &symlink_options)
         .map_err(map_metadata_error)?;
 
     #[cfg(all(unix, feature = "xattr"))]

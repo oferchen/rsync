@@ -11,7 +11,8 @@ use crate::ProtocolVersion;
 /// The prefix encodes the rule type and all active modifiers as a compact ASCII string.
 /// Protocol version compatibility is enforced: v28 ignores `s`/`r`/`p` modifiers.
 pub fn build_rule_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -> String {
-    let mut prefix = String::new();
+    // Maximum prefix length: type(1) + modifiers(10) + space(1) = 12 chars
+    let mut prefix = String::with_capacity(12);
 
     // First character: rule type
     prefix.push(rule.rule_type.prefix_char());
