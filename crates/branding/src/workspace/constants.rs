@@ -49,11 +49,10 @@ pub const fn upstream_version() -> &'static str {
     UPSTREAM_VERSION
 }
 
-/// Full Rust-branded version string advertised by binaries.
-#[doc(alias = "3.4.1-rust")]
+/// Full oc-rsync release version string advertised by binaries.
 pub const RUST_VERSION: &str = crate::generated::RUST_VERSION;
 
-/// Returns the Rust-branded version string advertised by binaries.
+/// Returns the oc-rsync release version string advertised by binaries.
 ///
 /// The helper is used by banner renderers that need the branded identifier
 /// without constructing a [`Metadata`](super::Metadata) snapshot.

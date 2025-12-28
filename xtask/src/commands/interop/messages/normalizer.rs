@@ -2,7 +2,7 @@
 //!
 //! Normalizes rsync messages to allow comparison between upstream rsync and oc-rsync.
 //! The main difference is that oc-rsync adds Rust source location suffixes like:
-//! "... at crates/core/src/message.rs:123 [sender=3.4.1-rust]"
+//! "... at crates/core/src/message.rs:123 [sender=0.5.0]"
 //!
 //! We normalize these differences while preserving the essential message content.
 
@@ -42,7 +42,7 @@ fn normalize_text(text: &str) -> String {
     // 1. Strip Rust source suffix: " at path/to/file.rs:123"
     normalized = strip_rust_source_suffix(&normalized);
 
-    // 2. Strip version suffixes from role trailers: [sender=3.4.1-rust] -> [sender]
+    // 2. Strip version suffixes from role trailers: [sender=0.5.0] -> [sender]
     normalized = strip_version_from_role(&normalized);
 
     // 3. Normalize absolute paths to relative (if any)
@@ -63,7 +63,7 @@ fn strip_rust_source_suffix(text: &str) -> String {
     re.replace_all(text, "").to_string()
 }
 
-/// Strip version information from role trailers: `[sender=3.4.1-rust]` -> `[sender]`.
+/// Strip version information from role trailers: `[sender=0.5.0]` -> `[sender]`.
 fn strip_version_from_role(text: &str) -> String {
     static ROLE_VERSION_RE: OnceLock<Regex> = OnceLock::new();
     let re = ROLE_VERSION_RE.get_or_init(|| {
@@ -133,14 +133,14 @@ mod tests {
 
     #[test]
     fn test_strip_rust_source_suffix() {
-        let input = "rsync: error in file IO at crates/core/src/message.rs:123 [sender=3.4.1-rust]";
+        let input = "rsync: error in file IO at crates/core/src/message.rs:123 [sender=0.5.0]";
         let output = strip_rust_source_suffix(input);
-        assert_eq!(output, "rsync: error in file IO [sender=3.4.1-rust]");
+        assert_eq!(output, "rsync: error in file IO [sender=0.5.0]");
     }
 
     #[test]
     fn test_strip_version_from_role() {
-        let input = "rsync: error [sender=3.4.1-rust]";
+        let input = "rsync: error [sender=0.5.0]";
         let output = strip_version_from_role(input);
         assert_eq!(output, "rsync: error [sender]");
     }
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn test_normalize_message_full() {
         let msg = Message::new(
-            "rsync: error in file IO at crates/core/src/message.rs:123 [sender=3.4.1-rust]".to_owned(),
+            "rsync: error in file IO at crates/core/src/message.rs:123 [sender=0.5.0]".to_owned(),
         );
         let normalized = NormalizedMessage::from_message(&msg);
         assert_eq!(normalized.text, "rsync: error in file IO [sender]");

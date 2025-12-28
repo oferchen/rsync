@@ -84,7 +84,7 @@ rsync error: syntax or usage error (code 1) at main.c(1782) [client=3.4.1]
 
 **oc-rsync**:
 ```
-oc-rsync error: syntax or usage error: unknown option '--invalid-option': <...detailed list...> (code 1) [client=3.4.1-rust]
+oc-rsync error: syntax or usage error: unknown option '--invalid-option': <...detailed list...> (code 1) [client=0.5.0]
 ```
 
 **Differences**:
@@ -103,7 +103,7 @@ rsync error: some files/attrs were not transferred (see previous errors) (code 2
 
 **oc-rsync**:
 ```
-oc-rsync error: failed to access source '/nonexistent/file': No such file or directory (os error 2) (code 23) at crates/core/src/client/error.rs:120 [client=3.4.1-rust]
+oc-rsync error: failed to access source '/nonexistent/file': No such file or directory (os error 2) (code 23) at crates/core/src/client/error.rs:120 [client=0.5.0]
 ```
 
 **Differences**:
@@ -122,7 +122,7 @@ rsync error: syntax or usage error (code 1) at main.c(1767) [client=3.4.1]
 
 **oc-rsync**:
 ```
-oc-rsync error: syntax or usage error (code 1) at crates/cli/src/frontend/execution/drive/workflow/operands.rs:27 [client=3.4.1-rust]
+oc-rsync error: syntax or usage error (code 1) at crates/cli/src/frontend/execution/drive/workflow/operands.rs:27 [client=0.5.0]
 ```
 
 **Differences**:
@@ -138,7 +138,7 @@ oc-rsync error: syntax or usage error (code 1) at crates/cli/src/frontend/execut
 **By Design** (from CLAUDE.md):
 ```
 Error Message Suffix (C→Rust remap)
-Format: ... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]
+Format: ... (code N) at <repo-rel-path>:<line> [<role>=0.5.0]
 ```
 
 The Rust source location is an **intentional design decision** to:
@@ -149,9 +149,9 @@ The Rust source location is an **intentional design decision** to:
 ### 2. Version Suffix
 
 - Upstream: `[role=3.4.1]`
-- oc-rsync: `[role=3.4.1-rust]`
+- oc-rsync: `[role=0.5.0]`
 
-The `-rust` suffix clearly identifies the Rust implementation.
+The oc-rsync version uses its own independent version number (currently 0.5.0).
 
 ### 3. Enhanced Error Details
 

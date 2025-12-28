@@ -581,7 +581,7 @@ mod tests {
 
         let mut env = EnvGuard::new();
         env.set(COMMAND_ENV, script_path.into_os_string());
-        env.set(TAG_ENV, OsString::from("v3.4.1-rust"));
+        env.set(TAG_ENV, OsString::from("v0.5.0"));
         env.set(REPOSITORY_ENV, OsString::from("example/rsync"));
         env.set(
             "OC_RSYNC_TEST_UPLOAD_LOG",
@@ -594,7 +594,7 @@ mod tests {
         let mut expected_lines = vec![
             String::from("release"),
             String::from("upload"),
-            String::from("v3.4.1-rust"),
+            String::from("v0.5.0"),
             String::from("--repo"),
             String::from("example/rsync"),
             String::from("--clobber"),

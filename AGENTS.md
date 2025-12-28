@@ -14,7 +14,7 @@ This document defines the internal actors (“agents”), their responsibilities
   separate wrapper binaries. The daemon configuration lives under
   `/etc/oc-rsyncd/` (for example `/etc/oc-rsyncd/oc-rsyncd.conf` and
   `/etc/oc-rsyncd/oc-rsyncd.secrets`), the published version string is
-  `3.4.1-rust`, and the authoritative source repository URL is
+  `0.5.0`, and the authoritative source repository URL is
   <https://github.com/oferchen/rsync>. Any user-facing surface
   (rustdoc examples, CLI help, documentation, packaging manifests, CI logs)
   must derive these values from the shared metadata via the `xtask branding`
@@ -22,7 +22,7 @@ This document defines the internal actors (“agents”), their responsibilities
 
 - **Error Message Suffix (C→Rust remap)**
   Format:
-  `... (code N) at <repo-rel-path>:<line> [<role>=3.4.1-rust]`
+  `... (code N) at <repo-rel-path>:<line> [<role>=0.5.0]`
   Implemented in `crates/core/src/message.rs` via:
   - `role: Role` enum (`Sender`, `Receiver`, `Generator`, `Server`, `Client`,
     `Daemon`) chosen at call-site.
@@ -371,9 +371,9 @@ This section cross-references upstream rsync C source with the Rust implementati
 
 ### Version Handling
 
-Version strings follow the format `x.y.z[-rust]`:
+Version strings follow the format `x.y.z`:
 - `upstream_version`: Base rsync version (e.g., `3.4.1`)
-- `rust_version`: Branded version with suffix (e.g., `3.4.1-rust`)
+- `rust_version`: oc-rsync release version (e.g., `0.5.0`)
 - Each component (x, y, z) may have leading zeros
 - Centralized in `crates/branding/src/workspace/version.rs`
 - Validated at build time via `crates/branding/build.rs`
@@ -411,7 +411,7 @@ Re-exports in `core` provide convenient access:
 
 - **Invariants**:
   - Never access protocol or engine directly; only via `core`.
-  - `--version` reflects feature gates and prints `3.4.1-rust` with the
+  - `--version` reflects feature gates and prints `0.5.0` with the
     runtime-capabilities trailer (SIMD, enabled features, etc.).
   - Daemon mode is a **mode** of `oc-rsync`, not a separate binary.
 
@@ -1009,7 +1009,7 @@ edition = "2024"
 rust-version = "1.88"
 authors = ["..."]
 license = "GPL-3.0-or-later"
-version = "3.4.1-rust"
+version = "0.5.0"
 repository = "https://github.com/oferchen/rsync"
 ```
 
@@ -14682,7 +14682,7 @@ members = [
 
 [workspace.metadata.oc_rsync]
 branded_name = "oc-rsync"
-version = "3.4.1-rust"
+version = "0.5.0"
 config_dir = "/etc/oc-rsyncd"
 config_file = "oc-rsyncd.conf"
 secrets_file = "oc-rsyncd.secrets"
@@ -16341,8 +16341,8 @@ This section documents error message formats and common errors.
 rsync error: <description> (code <N>) at <file>:<line> [<role>=<version>]
 
 Examples:
-rsync error: some files could not be transferred (code 23) at main.c:1234 [sender=3.4.1-rust]
-rsync error: timeout in data send/receive (code 30) at io.c:1234 [sender=3.4.1-rust]
+rsync error: some files could not be transferred (code 23) at main.c:1234 [sender=0.5.0]
+rsync error: timeout in data send/receive (code 30) at io.c:1234 [sender=0.5.0]
 ```
 
 ### 32.2 Common Error Messages
