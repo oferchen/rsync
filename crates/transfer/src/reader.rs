@@ -105,8 +105,6 @@ pub(super) struct MultiplexReader<R> {
     inner: R,
     buffer: Vec<u8>,
     pos: usize,
-    read_seq: usize, // Debug: track read sequence
-    msg_seq: usize,  // Debug: track message sequence
 }
 
 #[allow(dead_code)]
@@ -116,33 +114,17 @@ impl<R: Read> MultiplexReader<R> {
             inner,
             buffer: Vec::new(),
             pos: 0,
-            read_seq: 0,
-            msg_seq: 0,
         }
     }
 }
 
-// Allow debug checkpoint code to remain - it's controlled at runtime
 #[allow(dead_code)]
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read_seq += 1;
-        let read_seq = self.read_seq;
-
         // If we have buffered data, copy it out first
         if self.pos < self.buffer.len() {
             let available = self.buffer.len() - self.pos;
             let to_copy = available.min(buf.len());
-            let _ = std::fs::write(
-                format!("/tmp/mux_BUF_READ_{read_seq:04}"),
-                format!(
-                    "from_buffer pos={} len={} copying={} bytes={:02x?}",
-                    self.pos,
-                    self.buffer.len(),
-                    to_copy,
-                    &self.buffer[self.pos..self.pos + to_copy.min(20)]
-                ),
-            );
             buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
             self.pos += to_copy;
 
@@ -160,57 +142,16 @@ impl<R: Read> Read for MultiplexReader<R> {
         loop {
             self.buffer.clear();
             self.pos = 0;
-            self.msg_seq += 1;
-            let msg_seq = self.msg_seq;
 
-            let code = match protocol::recv_msg_into(&mut self.inner, &mut self.buffer) {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = std::fs::write(
-                        format!("/tmp/mux_READ_{msg_seq:04}_ERR"),
-                        format!("{:?}: {}", e.kind(), e),
-                    );
-                    return Err(e);
-                }
-            };
-
-            // Debug: log every received message with timestamp
-            static READ_COUNTER: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
-            let global_seq = READ_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let _ = std::fs::write(
-                format!("/tmp/mux_READ_{msg_seq:04}"),
-                format!(
-                    "global_seq={} code={:?} len={} bytes={:02x?}",
-                    global_seq,
-                    code,
-                    self.buffer.len(),
-                    &self.buffer[..self.buffer.len().min(100)]
-                ),
-            );
+            let code = protocol::recv_msg_into(&mut self.inner, &mut self.buffer)?;
 
             // Dispatch based on message type
             match code {
                 protocol::MessageCode::Data => {
                     // MSG_DATA: return payload for protocol processing
                     let to_copy = self.buffer.len().min(buf.len());
-                    let _ = std::fs::write(
-                        format!("/tmp/mux_NEW_FRAME_{read_seq:04}"),
-                        format!(
-                            "new_frame msg_seq={} buf_len={} copying={} returning={:02x?}",
-                            msg_seq,
-                            buf.len(),
-                            to_copy,
-                            &self.buffer[..to_copy.min(20)]
-                        ),
-                    );
                     buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
                     self.pos = to_copy;
-                    // Verify what we're returning
-                    let _ = std::fs::write(
-                        format!("/tmp/mux_RETURN_{read_seq:04}"),
-                        format!("returning {:02x?}", &buf[..to_copy.min(20)]),
-                    );
                     return Ok(to_copy);
                 }
                 protocol::MessageCode::Info
@@ -235,11 +176,7 @@ impl<R: Read> Read for MultiplexReader<R> {
                     // Continue loop to read next message
                 }
                 _ => {
-                    // Other message types (Redo, Stats, etc.): log for debugging
-                    let _ = std::fs::write(
-                        format!("/tmp/mux_MSG_{msg_seq:04}_UNHANDLED"),
-                        format!("code={:?} len={}", code, self.buffer.len()),
-                    );
+                    // Other message types (Redo, Stats, etc.): silently skip
                     // Continue loop to read next message
                 }
             }
@@ -373,8 +310,6 @@ mod tests {
         let mux = MultiplexReader::new(Cursor::new(data));
         assert!(mux.buffer.is_empty());
         assert_eq!(mux.pos, 0);
-        assert_eq!(mux.read_seq, 0);
-        assert_eq!(mux.msg_seq, 0);
     }
 
     #[test]
@@ -431,15 +366,4 @@ mod tests {
         assert_eq!(mux.pos, 5);
     }
 
-    #[test]
-    fn multiplex_reader_read_increments_seq() {
-        let data = vec![];
-        let mut mux = MultiplexReader::new(Cursor::new(data));
-        mux.buffer = vec![1, 2, 3];
-        mux.pos = 0;
-
-        let mut buf = [0u8; 3];
-        let _ = mux.read(&mut buf);
-        assert_eq!(mux.read_seq, 1);
-    }
 }
