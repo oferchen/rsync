@@ -34,22 +34,27 @@ impl<W> CountingWriter<W> {
         Self { inner, bytes: 0 }
     }
 
+    #[inline]
     pub(crate) const fn bytes(&self) -> u64 {
         self.bytes
     }
 
+    #[inline]
     pub(crate) const fn inner_ref(&self) -> &W {
         &self.inner
     }
 
+    #[inline]
     pub(crate) const fn inner_mut(&mut self) -> &mut W {
         &mut self.inner
     }
 
+    #[inline]
     pub(crate) fn into_parts(self) -> (W, u64) {
         (self.inner, self.bytes)
     }
 
+    #[inline]
     pub(crate) const fn saturating_add_bytes(&mut self, written: usize) {
         self.bytes = self.bytes.saturating_add(written as u64);
     }
