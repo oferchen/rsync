@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -105,7 +105,7 @@ pub(crate) struct ClientProgressForwarder<'a> {
     overall_transferred: u64,
     overall_start: Instant,
     in_flight: HashMap<PathBuf, u64>,
-    destination_root: Arc<PathBuf>,
+    destination_root: Arc<Path>,
 }
 
 impl<'a> ClientProgressForwarder<'a> {
@@ -122,7 +122,7 @@ impl<'a> ClientProgressForwarder<'a> {
             .execute_with_report(LocalCopyExecution::DryRun, options)
             .map_err(map_local_copy_error)?;
 
-        let destination_root = Arc::new(preview_report.destination_root().to_path_buf());
+        let destination_root: Arc<Path> = Arc::from(preview_report.destination_root());
         let total = preview_report
             .records()
             .iter()
@@ -246,7 +246,7 @@ mod tests {
             1024,
             Some(2048),
             Duration::from_secs(1),
-            Arc::new(PathBuf::from("/dest")),
+            Arc::from(Path::new("/dest")),
         );
         ClientProgressUpdate {
             event,
