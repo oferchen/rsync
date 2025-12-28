@@ -148,7 +148,7 @@ impl Default for AsyncFileCopier {
 impl AsyncFileCopier {
     /// Creates a new async file copier with default settings.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             buffer_size: DEFAULT_BUFFER_SIZE,
             preserve_permissions: true,
@@ -368,7 +368,7 @@ impl Default for AsyncBatchCopier {
 impl AsyncBatchCopier {
     /// Creates a new batch copier with default settings.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             copier: AsyncFileCopier::new(),
             max_concurrent: DEFAULT_MAX_CONCURRENT,
