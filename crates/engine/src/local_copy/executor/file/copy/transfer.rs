@@ -421,7 +421,7 @@ pub(super) fn execute_transfer(
             let update = DeferredUpdate::new(
                 guard,
                 metadata.clone(),
-                metadata_options.clone(),
+                metadata_options,
                 mode,
                 source.to_path_buf(),
                 relative_for_removal.clone(),
@@ -441,7 +441,7 @@ pub(super) fn execute_transfer(
                 destination_path.as_path(),
                 FinalizeMetadataParams::new(
                     metadata,
-                    metadata_options.clone(),
+                    metadata_options,
                     mode,
                     source,
                     relative_for_removal.as_deref(),
@@ -607,7 +607,7 @@ fn copy_special_as_regular_file(
             let update = DeferredUpdate::new(
                 existing_guard,
                 metadata.clone(),
-                metadata_options.clone(),
+                metadata_options,
                 mode,
                 source.to_path_buf(),
                 relative_for_removal.clone(),

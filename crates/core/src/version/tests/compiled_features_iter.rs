@@ -9,7 +9,7 @@ fn compiled_features_iter_matches_collected_set() {
 #[test]
 fn compiled_features_iter_rev_matches_reverse_order() {
     let forward: Vec<_> = compiled_features_iter().collect();
-    let mut expected = forward.clone();
+    let mut expected = forward;
     expected.reverse();
 
     let backward: Vec<_> = compiled_features_iter().rev().collect();

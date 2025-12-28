@@ -8,7 +8,7 @@ fn borrowed_message_frame_decodes_without_allocating_payload() {
     let first = encode_frame(MessageCode::Data, b"abcde");
     let second = encode_frame(MessageCode::Info, b"more");
 
-    let mut concatenated = first.clone();
+    let mut concatenated = first;
     concatenated.extend_from_slice(&second);
 
     let (frame, remainder) =
@@ -43,7 +43,7 @@ fn borrowed_message_frame_matches_owned_decoding() {
 #[test]
 fn borrowed_message_frame_try_from_rejects_trailing_bytes() {
     let frame = encode_frame(MessageCode::Info, b"hello");
-    let mut bytes = frame.clone();
+    let mut bytes = frame;
     bytes.push(0xAA);
 
     let err = BorrowedMessageFrame::try_from(bytes.as_slice()).unwrap_err();

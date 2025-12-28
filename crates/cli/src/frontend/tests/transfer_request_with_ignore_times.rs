@@ -33,7 +33,7 @@ fn transfer_request_with_ignore_times_forces_copy_despite_matching_timestamps() 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--ignore-times"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

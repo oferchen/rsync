@@ -23,7 +23,7 @@ fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
         OsString::from(RSYNC),
         OsString::from("-a"),
         OsString::from("--omit-dir-times"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -69,7 +69,7 @@ fn transfer_request_with_omit_link_times_skips_symlink_timestamp() {
         OsString::from(RSYNC),
         OsString::from("-a"),
         OsString::from("--omit-link-times"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 

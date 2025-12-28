@@ -533,7 +533,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let cloned = levels.clone();
+            let cloned = levels;
             assert_eq!(cloned.backup, 3);
             assert_eq!(cloned.copy, 7);
         }
@@ -751,7 +751,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let cloned = levels.clone();
+            let cloned = levels;
             assert_eq!(cloned.acl, 3);
             assert_eq!(cloned.bind, 7);
         }

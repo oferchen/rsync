@@ -21,7 +21,7 @@ fn backup_flag_creates_default_suffix_backups() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--backup"),
-        source_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
         dest_dir.clone().into_os_string(),
     ]);
 
@@ -58,7 +58,7 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
         OsString::from(RSYNC),
         OsString::from("--backup-dir"),
         OsString::from("backups"),
-        source_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
         dest_dir.clone().into_os_string(),
     ]);
 
@@ -97,8 +97,8 @@ fn backup_suffix_flag_overrides_default_suffix() {
         OsString::from(RSYNC),
         OsString::from("--suffix"),
         OsString::from(".bak"),
-        source_dir.clone().into_os_string(),
-        dest_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
+        dest_dir.into_os_string(),
     ]);
 
     assert_eq!(code, 0);

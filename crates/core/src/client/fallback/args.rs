@@ -487,7 +487,7 @@ mod tests {
             args.verbosity = 3;
             args.archive = true;
 
-            let cloned = args.clone();
+            let cloned = args;
             assert!(cloned.dry_run);
             assert_eq!(cloned.verbosity, 3);
             assert!(cloned.archive);
@@ -498,7 +498,7 @@ mod tests {
             let mut args = default_args();
             args.remote_shell = Some(OsString::from("ssh -i ~/.ssh/id_rsa"));
 
-            let cloned = args.clone();
+            let cloned = args;
             assert_eq!(
                 cloned.remote_shell,
                 Some(OsString::from("ssh -i ~/.ssh/id_rsa"))
@@ -513,7 +513,7 @@ mod tests {
                 OsString::from("--compress"),
             ];
 
-            let cloned = args.clone();
+            let cloned = args;
             assert_eq!(cloned.remote_options.len(), 2);
         }
 
@@ -524,7 +524,7 @@ mod tests {
             args.includes = vec![OsString::from("*.rs")];
             args.filters = vec![OsString::from("- .git/")];
 
-            let cloned = args.clone();
+            let cloned = args;
             assert_eq!(cloned.excludes.len(), 1);
             assert_eq!(cloned.includes.len(), 1);
             assert_eq!(cloned.filters.len(), 1);

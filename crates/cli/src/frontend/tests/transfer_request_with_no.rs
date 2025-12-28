@@ -13,7 +13,7 @@ fn transfer_request_with_no_bwlimit_copies_file() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--no-bwlimit"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -42,7 +42,7 @@ fn transfer_request_with_no_perms_overrides_archive() {
         OsString::from(RSYNC),
         OsString::from("-a"),
         OsString::from("--no-perms"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -70,7 +70,7 @@ fn transfer_request_with_no_times_overrides_archive() {
         OsString::from(RSYNC),
         OsString::from("-a"),
         OsString::from("--no-times"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 

@@ -8,7 +8,7 @@ fn execute_with_trailing_separator_copies_contents() {
     fs::write(nested.join("file.txt"), b"contents").expect("write file");
 
     let dest_root = temp.path().join("dest");
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -31,7 +31,7 @@ fn execute_skips_directories_when_recursion_disabled_without_dirs() {
     fs::create_dir_all(&dest_root).expect("create dest root");
 
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -74,7 +74,7 @@ fn execute_creates_directories_when_dirs_enabled_without_recursion() {
     fs::create_dir_all(&dest_root).expect("create dest root");
 
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -118,7 +118,7 @@ fn execute_into_child_directory_succeeds_without_recursing() {
 
     let dest_root = source_root.join("child");
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -153,7 +153,7 @@ fn execute_with_delete_removes_extraneous_entries() {
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -184,7 +184,7 @@ fn execute_with_delete_after_removes_extraneous_entries() {
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -215,7 +215,7 @@ fn execute_with_delete_delay_removes_extraneous_entries() {
     fs::write(dest_root.join("keep.txt"), b"stale").expect("write stale");
     fs::write(dest_root.join("extra.txt"), b"extra").expect("write extra");
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -244,7 +244,7 @@ fn execute_with_delete_before_removes_conflicting_entries() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(dest_root.join("file")).expect("create conflicting directory");
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -274,7 +274,7 @@ fn execute_with_max_delete_limit_enforced() {
     fs::write(dest_root.join("extra-1.txt"), b"extra").expect("write extra 1");
     fs::write(dest_root.join("extra-2.txt"), b"extra").expect("write extra 2");
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -309,7 +309,7 @@ fn execute_with_max_delete_limit_in_dry_run_reports_error() {
     fs::create_dir_all(&dest_root).expect("create dest root");
     fs::write(dest_root.join("obsolete.txt"), b"extra").expect("write extra");
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -512,7 +512,7 @@ fn execute_directory_replaces_file_when_force_enabled() {
     fs::write(&destination, b"old").expect("write existing file");
 
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

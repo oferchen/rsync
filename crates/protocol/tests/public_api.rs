@@ -104,7 +104,7 @@ fn supported_protocol_exports_cover_range() {
     assert!(ProtocolVersion::supported_protocol_numbers_iter().eq(protocol::SUPPORTED_PROTOCOLS));
 
     let exported_range = protocol::SUPPORTED_PROTOCOL_RANGE.clone();
-    assert_eq!(ProtocolVersion::supported_range(), exported_range.clone());
+    assert_eq!(ProtocolVersion::supported_range(), exported_range);
 
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, *exported_range.start());

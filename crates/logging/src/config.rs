@@ -531,7 +531,7 @@ mod tests {
         config.info.copy = 3;
         config.debug.recv = 2;
 
-        let cloned = config.clone();
+        let cloned = config;
         assert_eq!(cloned.info.copy, 3);
         assert_eq!(cloned.debug.recv, 2);
     }

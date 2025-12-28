@@ -40,7 +40,7 @@ fn transfer_request_with_include_from_reinstate_patterns() {
     assert!(filter_set.allows(std::path::Path::new("keep/file.txt"), false));
     assert!(!filter_set.allows(std::path::Path::new("skip.tmp"), false));
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
 
     let (code, stdout, stderr) = run_with_args([

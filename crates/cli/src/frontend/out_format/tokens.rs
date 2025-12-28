@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn out_format_clone() {
         let format = OutFormat::new(vec![OutFormatToken::Literal("x".to_string())]);
-        let cloned = format.clone();
+        let cloned = format;
         assert!(!cloned.is_empty());
     }
 
