@@ -135,7 +135,7 @@ fn write_borrowed_sequential<W: IoWrite>(
 ) -> io::Result<()> {
     let view = trim_leading_empty_slices(slices);
 
-    for slice in view.iter() {
+    for slice in view {
         let bytes: &[u8] = slice.as_ref();
 
         if bytes.is_empty() {

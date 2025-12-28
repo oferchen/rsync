@@ -123,7 +123,7 @@ pub(crate) fn plan_directory_entries<'a>(
     };
     let mut planned_entries = Vec::with_capacity(entries.len());
 
-    for entry in entries.iter() {
+    for entry in entries {
         context.enforce_timeout()?;
         context.register_progress();
 

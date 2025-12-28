@@ -386,7 +386,7 @@ fn log_code_conversion_error_exposes_context() {
 
 #[test]
 fn message_code_logging_variants_round_trip_with_log_codes() {
-    for &code in MessageCode::all().iter() {
+    for &code in MessageCode::all() {
         match code.log_code() {
             Some(log) => {
                 let from_log = MessageCode::from_log_code(log)
@@ -399,7 +399,7 @@ fn message_code_logging_variants_round_trip_with_log_codes() {
         }
     }
 
-    for &log in LogCode::all().iter() {
+    for &log in LogCode::all() {
         match MessageCode::from_log_code(log) {
             Some(code) => {
                 assert_eq!(code.log_code(), Some(log));

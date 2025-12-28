@@ -68,7 +68,7 @@ pub fn sync_xattrs(
     let source_attrs = list_attributes(source, follow_symlinks)?;
     let mut retained = HashSet::with_capacity(source_attrs.len());
 
-    for name in source_attrs.iter() {
+    for name in &source_attrs {
         retained.insert(name.clone());
         let allow = filter
             .is_none_or(|predicate| predicate(&name.to_string_lossy()));
@@ -85,7 +85,7 @@ pub fn sync_xattrs(
     }
 
     let destination_attrs = list_attributes(destination, follow_symlinks)?;
-    for name in destination_attrs.iter() {
+    for name in &destination_attrs {
         if retained.contains(name) {
             continue;
         }

@@ -759,7 +759,7 @@ impl GeneratorContext {
             .with_preserve_uid(self.config.flags.owner)
             .with_preserve_gid(self.config.flags.group);
 
-        for entry in self.file_list.iter() {
+        for entry in &self.file_list {
             flist_writer.write_entry(writer, entry)?;
         }
 

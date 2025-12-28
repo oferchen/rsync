@@ -182,7 +182,7 @@ impl<'a> CopyContext<'a> {
         {
             let stack = self.dir_merge_marker_ephemeral.borrow();
             if let Some(entries) = stack.last() {
-                for (_, rules) in entries.iter() {
+                for (_, rules) in entries {
                     if directory_has_marker(rules, directory)? {
                         return Ok(true);
                     }

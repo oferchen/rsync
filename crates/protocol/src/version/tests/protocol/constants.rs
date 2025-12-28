@@ -198,7 +198,7 @@ fn offset_from_newest_matches_descending_index() {
 
 #[test]
 fn offset_conversions_round_trip_supported_versions() {
-    for &version in ProtocolVersion::supported_versions().iter() {
+    for &version in ProtocolVersion::supported_versions() {
         assert_eq!(
             ProtocolVersion::from_oldest_offset(version.offset_from_oldest()),
             Some(version),
