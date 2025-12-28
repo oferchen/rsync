@@ -92,7 +92,7 @@ rsync: error in file IO [sender]
 
 **oc-rsync:**
 ```
-rsync: error in file IO at crates/core/src/message.rs:123 [sender=3.4.1-rust]
+rsync: error in file IO at crates/core/src/message.rs:123 [sender=0.5.0]
 ```
 
 **Normalized (both):**
@@ -103,7 +103,7 @@ rsync: error in file IO [sender]
 ### Normalization Rules
 
 1. **Strip Rust source locations**: `at crates/*/src/*.rs:123` → removed
-2. **Strip version from role trailers**: `[sender=3.4.1-rust]` → `[sender]`
+2. **Strip version from role trailers**: `[sender=0.5.0]` → `[sender]`
 3. **Normalize absolute paths**: `/tmp/xyz` → `<path>`
 4. **Normalize whitespace**: Multiple spaces → single space, trim edges
 5. **Preserve role trailers**: `[sender]`, `[receiver]`, `[generator]`, etc.

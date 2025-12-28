@@ -243,4 +243,7 @@ DAEMON_INVESTIGATION_SUMMARY.md
 DAEMON_PROTOCOL_FLOW.md
 DEBUGGING_INTEROP.md
 
+# Generated logs
+tools/ci/*.log
+
 # End of https://www.toptal.com/developers/gitignore/api/rust,linux,macos,windows,rust-analyzer,visualstudiocode,jetbrains

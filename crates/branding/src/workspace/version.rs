@@ -1,19 +1,20 @@
 //! Version parsing and validation.
 //!
 //! This module provides centralized version handling for the workspace.
-//! Versions follow the format `x.y.z[-rust]` where each component is a
-//! number that may have leading zeros.
+//! Versions follow the format `x.y.z` (semantic versioning). For backwards
+//! compatibility with older releases, the parser also accepts `x.y.z-rust`
+//! format which was used in legacy branded builds.
 
 use std::fmt;
 
 use thiserror::Error;
 
-/// Semantic version number with optional Rust branding suffix.
+/// Semantic version number with optional legacy branding suffix.
 ///
-/// Versions follow the format `x.y.z[-rust]` where:
+/// Versions follow the format `x.y.z` where:
 /// - Each component (x, y, z) is a non-negative integer
 /// - Components may have leading zeros (e.g., "03.04.01" is valid)
-/// - The `-rust` suffix is optional for Rust-branded builds
+/// - The `-rust` suffix is accepted for backwards compatibility with legacy releases
 ///
 /// # Examples
 ///
