@@ -211,18 +211,21 @@ impl FileEntry {
     }
 
     /// Returns the file size in bytes.
+    #[inline]
     #[must_use]
     pub const fn size(&self) -> u64 {
         self.size
     }
 
     /// Returns the Unix mode bits (type + permissions).
+    #[inline]
     #[must_use]
     pub const fn mode(&self) -> u32 {
         self.mode
     }
 
     /// Returns the permission bits only (without type).
+    #[inline]
     #[must_use]
     pub const fn permissions(&self) -> u32 {
         self.mode & 0o7777
@@ -235,24 +238,28 @@ impl FileEntry {
     }
 
     /// Returns the modification time as seconds since Unix epoch.
+    #[inline]
     #[must_use]
     pub const fn mtime(&self) -> i64 {
         self.mtime
     }
 
     /// Returns the modification time nanoseconds.
+    #[inline]
     #[must_use]
     pub const fn mtime_nsec(&self) -> u32 {
         self.mtime_nsec
     }
 
     /// Returns the user ID if set.
+    #[inline]
     #[must_use]
     pub const fn uid(&self) -> Option<u32> {
         self.uid
     }
 
     /// Returns the group ID if set.
+    #[inline]
     #[must_use]
     pub const fn gid(&self) -> Option<u32> {
         self.gid
@@ -283,18 +290,21 @@ impl FileEntry {
     }
 
     /// Returns true if this entry is a directory.
+    #[inline]
     #[must_use]
     pub const fn is_dir(&self) -> bool {
         self.mode & 0o170000 == 0o040000 // S_IFDIR
     }
 
     /// Returns true if this entry is a regular file.
+    #[inline]
     #[must_use]
     pub const fn is_file(&self) -> bool {
         self.mode & 0o170000 == 0o100000 // S_IFREG
     }
 
     /// Returns true if this entry is a symbolic link.
+    #[inline]
     #[must_use]
     pub const fn is_symlink(&self) -> bool {
         self.mode & 0o170000 == 0o120000 // S_IFLNK
