@@ -128,7 +128,10 @@ mod tests {
         let flags = make_flags("avz");
         let values = HashSet::new();
         let result = expand_cluster("-avz", &flags, &values);
-        assert_eq!(result, Some(vec!["-a".to_string(), "-v".to_string(), "-z".to_string()]));
+        assert_eq!(
+            result,
+            Some(vec!["-a".to_string(), "-v".to_string(), "-z".to_string()])
+        );
     }
 
     #[test]
@@ -161,7 +164,10 @@ mod tests {
         let values = make_flags("M");
         // Value option at end is valid
         let result = expand_cluster("-avM", &flags, &values);
-        assert_eq!(result, Some(vec!["-a".to_string(), "-v".to_string(), "-M".to_string()]));
+        assert_eq!(
+            result,
+            Some(vec!["-a".to_string(), "-v".to_string(), "-M".to_string()])
+        );
     }
 
     #[test]
@@ -236,6 +242,9 @@ mod tests {
         let flags = make_flags("zva");
         let values = HashSet::new();
         let result = expand_cluster("-zva", &flags, &values);
-        assert_eq!(result, Some(vec!["-z".to_string(), "-v".to_string(), "-a".to_string()]));
+        assert_eq!(
+            result,
+            Some(vec!["-z".to_string(), "-v".to_string(), "-a".to_string()])
+        );
     }
 }
