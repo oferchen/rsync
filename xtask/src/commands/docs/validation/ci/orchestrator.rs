@@ -187,7 +187,10 @@ fn workflow_path(workspace: &Path) -> PathBuf {
 }
 
 fn display_path(workspace: &Path, path: &Path) -> String {
-    path.strip_prefix(workspace).map_or_else(|_| path.display().to_string(), |relative| relative.display().to_string())
+    path.strip_prefix(workspace).map_or_else(
+        |_| path.display().to_string(),
+        |relative| relative.display().to_string(),
+    )
 }
 
 #[cfg(test)]

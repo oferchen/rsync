@@ -428,12 +428,7 @@ mod tests {
         let warnings = vec!["Warning1".to_owned()];
         let capabilities = vec!["cap1".to_owned()];
         let entries = vec![ModuleListEntry::from_line("test")];
-        let list = ModuleList::new(
-            motd,
-            warnings,
-            capabilities,
-            entries,
-        );
+        let list = ModuleList::new(motd, warnings, capabilities, entries);
         assert_eq!(list.motd_lines(), &["Welcome"]);
         assert_eq!(list.warnings(), &["Warning1"]);
         assert_eq!(list.capabilities(), &["cap1"]);

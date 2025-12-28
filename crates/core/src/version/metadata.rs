@@ -292,7 +292,10 @@ mod tests {
         let parts: Vec<&str> = version.split('.').collect();
         assert_eq!(parts.len(), 3, "rust_version should have three components");
         for part in parts {
-            assert!(part.parse::<u32>().is_ok(), "each component should be numeric");
+            assert!(
+                part.parse::<u32>().is_ok(),
+                "each component should be numeric"
+            );
         }
     }
 

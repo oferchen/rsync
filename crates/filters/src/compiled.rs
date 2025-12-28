@@ -149,7 +149,11 @@ fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     if start == 0 && end == pattern.len() {
         (anchored, directory_only, Cow::Borrowed(pattern))
     } else {
-        (anchored, directory_only, Cow::Owned(pattern[start..end].to_string()))
+        (
+            anchored,
+            directory_only,
+            Cow::Owned(pattern[start..end].to_string()),
+        )
     }
 }
 

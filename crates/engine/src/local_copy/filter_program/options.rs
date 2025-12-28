@@ -153,7 +153,11 @@ impl DirMergeOptions {
 
     /// Overrides the sender/receiver applicability flags without inferring defaults.
     #[must_use]
-    pub const fn with_side_overrides(mut self, sender: Option<bool>, receiver: Option<bool>) -> Self {
+    pub const fn with_side_overrides(
+        mut self,
+        sender: Option<bool>,
+        receiver: Option<bool>,
+    ) -> Self {
         self.sender_side = match sender {
             Some(true) => SideState::Enabled,
             Some(false) => SideState::Disabled,

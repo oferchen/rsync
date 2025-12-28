@@ -541,14 +541,11 @@ where
     Err: Write,
 {
     // Parse output format template
-    let out_format_template = match parse_out_format_template(
-        stderr,
-        inputs.out_format,
-        inputs.itemize_changes,
-    ) {
-        Ok(template) => template,
-        Err(code) => return SettingsOutcome::Exit(code),
-    };
+    let out_format_template =
+        match parse_out_format_template(stderr, inputs.out_format, inputs.itemize_changes) {
+            Ok(template) => template,
+            Err(code) => return SettingsOutcome::Exit(code),
+        };
 
     // Parse info flags for display settings
     let info_result = match parse_info_settings(

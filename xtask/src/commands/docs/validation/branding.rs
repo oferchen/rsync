@@ -156,8 +156,10 @@ fn validate_cross_compile_sections(
         }
 
         if contents.contains("Windows (x86,") || contents.contains("Windows (aarch64") {
-            let display_path = path
-                .strip_prefix(workspace).map_or_else(|_| path.display().to_string(), |relative| relative.display().to_string());
+            let display_path = path.strip_prefix(workspace).map_or_else(
+                |_| path.display().to_string(),
+                |relative| relative.display().to_string(),
+            );
             failures.push(format!(
                 "{display_path}: references disabled Windows cross-compilation targets"
             ));
