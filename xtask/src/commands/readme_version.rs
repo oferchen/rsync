@@ -109,8 +109,13 @@ mod tests {
 
     #[test]
     fn validate_contains_accepts_present_version() {
+        // Supports both version schemes:
+        // - Semantic: 0.5.0
+        // - Legacy branded: 3.4.1-rust
+        validate_contains("rsync 0.5.0", "0.5.0", "rust version")
+            .expect("validation succeeds for semantic version");
         validate_contains("rsync 3.4.1-rust", "3.4.1-rust", "rust version")
-            .expect("validation succeeds");
+            .expect("validation succeeds for legacy branded version");
     }
 
     #[test]

@@ -3,7 +3,12 @@ name: Build-cross
 on:
   push:
     tags:
-      - "v*.*.*-rust"
+      # Support both version schemes:
+      # - Semantic: v0.5.0, v1.0.0, v1.2.3
+      # - Legacy branded: v3.4.1-rust, v3.4.1a-rust
+      - "v[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*-rust"
+      - "v[0-9]*.[0-9]*.[0-9]*[a-z]-rust"
   workflow_dispatch:
 
 permissions:
@@ -343,10 +348,20 @@ jobs:
           name: dist-macos
           path: dist-macos
 
+      - name: Extract branding metadata
+        id: branding
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Extract upstream_version from workspace metadata for formula description
+          UPSTREAM_VERSION="$(grep -E '^\s*upstream_version\s*=' Cargo.toml | head -1 | sed 's/.*=\s*"\([^"]*\)".*/\1/')"
+          printf 'upstream_version=%s\n' "${UPSTREAM_VERSION}" >> "${GITHUB_OUTPUT}"
+
       - name: Generate Homebrew formula
         shell: bash
         env:
           FORMULA_PATH: Formula/oc-rsync.rb
+          UPSTREAM_VERSION: ${{ steps.branding.outputs.upstream_version }}
         run: |
           set -euo pipefail
 
@@ -374,7 +389,7 @@ jobs:
 
           {
             echo "class OcRsync < Formula"
-            echo '  desc "Pure-Rust rsync 3.4.1-compatible implementation"'
+            echo "  desc \"Pure-Rust rsync ${UPSTREAM_VERSION}-compatible implementation\""
             echo '  homepage "https://github.com/oferchen/rsync"'
             echo '  license "GPL-3.0-or-later"'
             echo "  version \"${VERSION}\""
