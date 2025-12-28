@@ -3,18 +3,15 @@ use super::*;
 #[test]
 fn try_from_log_code_converts_logging_variants() {
     for &log in LogCode::all() {
-        match log {
-            LogCode::None => {
-                let err = MessageCode::try_from(log).expect_err("FNONE has no multiplexed tag");
-                assert_eq!(
-                    err,
-                    LogCodeConversionError::NoMessageEquivalent(LogCode::None)
-                );
-            }
-            _ => {
-                let message = MessageCode::try_from(log).expect("log code has multiplexed tag");
-                assert_eq!(message.log_code(), Some(log));
-            }
+        if log == LogCode::None {
+            let err = MessageCode::try_from(log).expect_err("FNONE has no multiplexed tag");
+            assert_eq!(
+                err,
+                LogCodeConversionError::NoMessageEquivalent(LogCode::None)
+            );
+        } else {
+            let message = MessageCode::try_from(log).expect("log code has multiplexed tag");
+            assert_eq!(message.log_code(), Some(log));
         }
     }
 }
@@ -22,15 +19,12 @@ fn try_from_log_code_converts_logging_variants() {
 #[test]
 fn try_from_message_code_rejects_non_logging_variants() {
     for &code in MessageCode::all() {
-        match code.log_code() {
-            Some(log) => {
-                let parsed = LogCode::try_from(code).expect("logging code maps to log code");
-                assert_eq!(parsed, log);
-            }
-            None => {
-                let err = LogCode::try_from(code).expect_err("non-logging message lacks log code");
-                assert_eq!(err, LogCodeConversionError::NoLogEquivalent(code));
-            }
+        if let Some(log) = code.log_code() {
+            let parsed = LogCode::try_from(code).expect("logging code maps to log code");
+            assert_eq!(parsed, log);
+        } else {
+            let err = LogCode::try_from(code).expect_err("non-logging message lacks log code");
+            assert_eq!(err, LogCodeConversionError::NoLogEquivalent(code));
         }
     }
 }
