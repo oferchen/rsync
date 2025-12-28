@@ -418,3 +418,181 @@ pub(crate) fn create_symlink(target: &Path, source: &Path, destination: &Path) -
         Err(_) => symlink_file(target, destination),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== symlink_target_is_safe tests ====================
+
+    #[test]
+    fn safe_simple_relative_target() {
+        // Simple relative path is safe
+        assert!(symlink_target_is_safe(
+            Path::new("file.txt"),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn safe_nested_relative_target() {
+        // Nested relative path within the tree
+        assert!(symlink_target_is_safe(
+            Path::new("subdir/file.txt"),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn safe_parent_then_sibling() {
+        // Going up one level and into sibling is safe if link is deep enough
+        assert!(symlink_target_is_safe(
+            Path::new("../sibling/file.txt"),
+            Path::new("dir/link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_absolute_path() {
+        // Absolute paths are never safe
+        assert!(!symlink_target_is_safe(
+            Path::new("/etc/passwd"),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_empty_target() {
+        // Empty target is unsafe
+        assert!(!symlink_target_is_safe(Path::new(""), Path::new("link")));
+    }
+
+    #[test]
+    fn unsafe_escapes_root() {
+        // Link at root level, target goes up - escapes
+        // "link" has depth 1, so 2 parent dirs escapes
+        assert!(!symlink_target_is_safe(
+            Path::new("../../outside"),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_escapes_with_multiple_parents() {
+        // More parent components than depth allows
+        // dir/link has depth 2, so 3 parent dirs escapes
+        assert!(!symlink_target_is_safe(
+            Path::new("../../../outside"),
+            Path::new("dir/link")
+        ));
+    }
+
+    #[test]
+    fn safe_same_level_parent() {
+        // Going up one level is safe if we're one level deep
+        assert!(symlink_target_is_safe(
+            Path::new("../file.txt"),
+            Path::new("dir/link")
+        ));
+    }
+
+    #[test]
+    fn safe_current_dir_prefix() {
+        // Current dir prefix is fine
+        assert!(symlink_target_is_safe(
+            Path::new("./file.txt"),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_parent_after_normal() {
+        // Parent after normal component is unsafe (trying to escape)
+        assert!(!symlink_target_is_safe(
+            Path::new("subdir/../.."),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_ends_with_parent() {
+        // Multiple components ending with parent is suspicious
+        assert!(!symlink_target_is_safe(
+            Path::new("subdir/.."),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn safe_deep_link_shallow_escape() {
+        // Deep link can go up multiple levels safely
+        assert!(symlink_target_is_safe(
+            Path::new("../../file.txt"),
+            Path::new("a/b/c/link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_deep_escape() {
+        // Even deep links can't escape past root
+        // link at a/b/c/link has depth 4 (includes link name)
+        // So 5 parent dirs would be needed to escape
+        assert!(!symlink_target_is_safe(
+            Path::new("../../../../../outside"),
+            Path::new("a/b/c/link")
+        ));
+    }
+
+    #[test]
+    fn safe_dot_only() {
+        // Just current directory
+        assert!(symlink_target_is_safe(Path::new("."), Path::new("link")));
+    }
+
+    #[test]
+    fn safe_complex_but_valid_path() {
+        // Complex but valid relative path
+        assert!(symlink_target_is_safe(
+            Path::new("./subdir/./nested/file.txt"),
+            Path::new("link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_root_component() {
+        // Root component in target is unsafe
+        assert!(!symlink_target_is_safe(
+            Path::new("/absolute/path"),
+            Path::new("deep/link")
+        ));
+    }
+
+    #[test]
+    fn safe_link_in_subdir_target_in_same() {
+        // Link in subdir, target in same subdir
+        assert!(symlink_target_is_safe(
+            Path::new("sibling.txt"),
+            Path::new("subdir/link")
+        ));
+    }
+
+    #[test]
+    fn safe_exactly_at_boundary() {
+        // Going up exactly as many levels as depth allows
+        // link at a/b/c/link has depth 4, so 4 parent dirs is exactly at boundary
+        assert!(symlink_target_is_safe(
+            Path::new("../../../../file.txt"),
+            Path::new("a/b/c/link")
+        ));
+    }
+
+    #[test]
+    fn unsafe_one_past_boundary() {
+        // Going up one more level than allowed
+        // link at a/b/c/link has depth 4, so 5 parent dirs escapes
+        assert!(!symlink_target_is_safe(
+            Path::new("../../../../../file.txt"),
+            Path::new("a/b/c/link")
+        ));
+    }
+}
