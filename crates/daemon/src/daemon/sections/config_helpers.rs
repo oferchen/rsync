@@ -359,7 +359,7 @@ impl HostPattern {
                 }
             }
             (Self::Hostname(pattern), _) => {
-                hostname.map(|name| pattern.matches(name)).unwrap_or(false)
+                hostname.is_some_and(|name| pattern.matches(name))
             }
             _ => false,
         }

@@ -43,9 +43,7 @@ pub(super) fn ensure_contains(
 ) {
     if !contents.contains(needle) {
         let display_path = path
-            .strip_prefix(workspace)
-            .map(|relative| relative.display().to_string())
-            .unwrap_or_else(|_| path.display().to_string());
+            .strip_prefix(workspace).map_or_else(|_| path.display().to_string(), |relative| relative.display().to_string());
         failures.push(format!(
             "{display_path}: missing {description} ('{needle}')"
         ));

@@ -164,8 +164,7 @@ impl BandwidthLimiter {
         let end = Instant::now();
         let elapsed_us = end
             .checked_duration_since(start)
-            .map(|duration| duration.as_micros().min(u128::from(u64::MAX)))
-            .unwrap_or(0);
+            .map_or(0, |duration| duration.as_micros().min(u128::from(u64::MAX)));
         if sleep_us > elapsed_us {
             self.simulated_elapsed_us = sleep_us - elapsed_us;
         }

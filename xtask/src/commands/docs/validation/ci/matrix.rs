@@ -173,9 +173,7 @@ fn workflow_path(workspace: &Path, workflow: &str) -> std::path::PathBuf {
 }
 
 fn display_path(workspace: &Path, path: &Path) -> String {
-    path.strip_prefix(workspace)
-        .map(|relative| relative.display().to_string())
-        .unwrap_or_else(|_| path.display().to_string())
+    path.strip_prefix(workspace).map_or_else(|_| path.display().to_string(), |relative| relative.display().to_string())
 }
 
 fn ensure_job_parallelism(display_path: &str, section: &str, failures: &mut Vec<String>) {

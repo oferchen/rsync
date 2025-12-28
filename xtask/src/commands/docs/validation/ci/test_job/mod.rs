@@ -10,9 +10,7 @@ pub(super) fn validate_ci_test_job(workspace: &Path, failures: &mut Vec<String>)
         .join("test-linux.yml");
     let ci_contents = read_file(&ci_path)?;
     let display_path = ci_path
-        .strip_prefix(workspace)
-        .map(|relative| relative.display().to_string())
-        .unwrap_or_else(|_| ci_path.display().to_string());
+        .strip_prefix(workspace).map_or_else(|_| ci_path.display().to_string(), |relative| relative.display().to_string());
 
     match extract_job_section(&ci_contents, "test-linux") {
         Some(section) => match find_yaml_scalar(&section, "runs-on") {

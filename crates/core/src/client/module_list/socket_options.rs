@@ -189,8 +189,7 @@ pub(crate) fn apply_socket_options(stream: &TcpStream, options: &OsStr) -> Resul
                 }
                 SocketOptionKind::Bool { .. } | SocketOptionKind::Int { .. } => {
                     let parsed_value = value_str
-                        .map(parse_socket_option_value)
-                        .unwrap_or(libc::c_int::from(1));
+                        .map_or(libc::c_int::from(1), parse_socket_option_value);
                     parsed.push(ParsedSocketOption {
                         kind,
                         explicit_value: Some(parsed_value),

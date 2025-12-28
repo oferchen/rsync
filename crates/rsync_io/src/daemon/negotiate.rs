@@ -125,8 +125,7 @@ fn build_client_greeting(
             + 16
             + server_greeting
                 .digest_list()
-                .map(|list| list.len() + 1)
-                .unwrap_or(0),
+                .map_or(0, |list| list.len() + 1),
     );
 
     greeting.push_str(LEGACY_DAEMON_PREFIX);

@@ -90,8 +90,7 @@ impl ChecksumFactory {
         };
 
         let use_proper_seed_order = compat_flags
-            .map(|flags| flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX))
-            .unwrap_or(false);
+            .is_some_and(|flags| flags.contains(CompatibilityFlags::CHECKSUM_SEED_FIX));
 
         Self {
             algorithm,
