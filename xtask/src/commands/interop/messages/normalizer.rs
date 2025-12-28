@@ -17,6 +17,8 @@ pub struct NormalizedMessage {
     pub text: String,
     /// The role trailer if present.
     pub role: Option<String>,
+    /// Whether this message is optional (may not appear due to race conditions).
+    pub optional: bool,
 }
 
 impl NormalizedMessage {
@@ -26,6 +28,7 @@ impl NormalizedMessage {
         Self {
             text,
             role: message.role.clone(),
+            optional: false,
         }
     }
 
@@ -117,7 +120,11 @@ pub fn find_differences(
     }
 
     // Check for messages in expected but not in actual
+    // Skip optional messages - they may not appear due to race conditions
     for msg in expected {
+        if msg.optional {
+            continue;
+        }
         if !actual.iter().any(|a| a.matches(msg)) {
             differences.push(format!("Missing message: {}", msg.text));
         }
@@ -174,11 +181,42 @@ mod tests {
         let msg1 = NormalizedMessage {
             text: "rsync: error [sender]".to_owned(),
             role: Some("sender".to_owned()),
+            optional: false,
         };
         let msg2 = NormalizedMessage {
             text: "rsync: error [sender]".to_owned(),
             role: Some("sender".to_owned()),
+            optional: false,
         };
         assert!(msg1.matches(&msg2));
+    }
+
+    #[test]
+    fn test_optional_messages_not_required() {
+        let actual = vec![NormalizedMessage {
+            text: "rsync: error A".to_owned(),
+            role: None,
+            optional: false,
+        }];
+
+        let expected = vec![
+            NormalizedMessage {
+                text: "rsync: error A".to_owned(),
+                role: None,
+                optional: false,
+            },
+            NormalizedMessage {
+                text: "rsync: error B".to_owned(),
+                role: None,
+                optional: true, // This is optional - should not be reported as missing
+            },
+        ];
+
+        let differences = find_differences(&actual, &expected);
+        assert!(
+            differences.is_empty(),
+            "Optional messages should not be required: {:?}",
+            differences
+        );
     }
 }

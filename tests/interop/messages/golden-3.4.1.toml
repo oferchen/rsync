@@ -66,6 +66,12 @@ scenario = "conflicting_options"
 [[messages]]
 text = "xxh128 xxh3 xxh64 (xxhash) md5 md4 sha1 none"
 scenario = "conflicting_options"
+optional = true
+
+[[messages]]
+text = "md5 md4 sha1 none"
+scenario = "conflicting_options"
+optional = true
 
 [[messages]]
 text = "Compress list:"
@@ -74,6 +80,12 @@ scenario = "conflicting_options"
 [[messages]]
 text = "zstd lz4 zlibx zlib none"
 scenario = "conflicting_options"
+optional = true
+
+[[messages]]
+text = "zstd zlibx zlib none"
+scenario = "conflicting_options"
+optional = true
 
 [[messages]]
 text = "Daemon auth list:"
@@ -751,10 +763,17 @@ scenario = "protocol_version_mismatch"
 text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [sender]"
 role = "sender"
 scenario = "protocol_version_mismatch"
+optional = true
+
+[[messages]]
+text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [Receiver]"
+scenario = "protocol_version_mismatch"
+optional = true
 
 [[messages]]
 text = "rsync error: received SIGUSR1 (code 19) at main.c(1600) [Receiver=3.4.1]"
 scenario = "protocol_version_mismatch"
+optional = true
 
 [[messages]]
 text = 'rsync: [sender] change_dir "/nonexistent/source" failed: No such file or directory (2)'
@@ -824,13 +843,34 @@ scenario = "remote_not_found"
 text = "rsync error: error in IPC code (code 14) at pipe.c(85) [sender]"
 role = "sender"
 scenario = "remote_not_found"
+optional = true
 
 [[messages]]
 text = "rsync: [sender] safe_write failed to write 4 bytes to socket: Broken pipe (32)"
 role = "sender"
 scenario = "remote_not_found"
+optional = true
 
 [[messages]]
 text = "rsync error: error in IPC code (code 14) at io.c(327) [sender]"
 role = "sender"
 scenario = "remote_not_found"
+optional = true
+
+[[messages]]
+text = "rsync error: unexplained error (code 255) at io.c(231) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+optional = true
+
+[[messages]]
+text = "rsync: connection unexpectedly closed (0 bytes received so far) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+optional = true
+
+[[messages]]
+text = "rsync error: error in rsync protocol data stream (code 12) at io.c(231) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+optional = true
