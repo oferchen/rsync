@@ -38,8 +38,8 @@ pub struct SparseWriteState {
 impl SparseWriteState {
     /// Creates a new sparse write state.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self { pending_zeros: 0 }
     }
 
     /// Adds zero bytes to the pending run.
@@ -50,7 +50,7 @@ impl SparseWriteState {
 
     /// Returns the number of pending zero bytes.
     #[must_use]
-    pub fn pending(&self) -> u64 {
+    pub const fn pending(&self) -> u64 {
         self.pending_zeros
     }
 
