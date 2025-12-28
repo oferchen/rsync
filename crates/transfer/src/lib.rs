@@ -1,7 +1,10 @@
 #![deny(unsafe_code)]
-//! crates/core/src/server/mod.rs
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+//! crates/transfer/src/lib.rs
 //!
-//! Native server orchestration utilities.
+//! Server-side transfer engine for the Rust rsync implementation.
 //!
 //! This module provides the server-side entry points for `--server` mode,
 //! handling both Receiver and Generator roles as negotiated with the client.

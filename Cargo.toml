@@ -66,6 +66,7 @@ members = [
     "crates/flist",
     "crates/rsync_io",
     "crates/signature",
+    "crates/transfer",
     "crates/windows-gnu-eh",
     "xtask",
     "crates/apple-fs",

@@ -14,8 +14,8 @@
 //!
 //! ## Implementation Locations
 //!
-//! - Generator role: [`crate::server::generator`]
-//! - Receiver role: [`crate::server::receiver`]
+//! - Generator role: [`crate::generator`]
+//! - Receiver role: [`crate::receiver`]
 //! - Metadata application: `metadata::apply_metadata_from_file_entry`
 //! - Delta engine: [`engine::delta`]
 //! - Wire protocol: [`protocol::wire`]
@@ -46,7 +46,7 @@
 //!
 //! The receiver generates rolling and strong checksums for existing basis files.
 //!
-//! **Implementation**: [`crate::server::receiver::ReceiverContext::run`]
+//! **Implementation**: [`crate::receiver::ReceiverContext::run`]
 //!
 //! ```rust,ignore
 //! # use engine::signature::{SignatureLayoutParams, calculate_signature_layout};
@@ -111,7 +111,7 @@
 //!
 //! The generator receives signatures and generates delta operations (literals vs copy references).
 //!
-//! **Implementation**: [`crate::server::generator::GeneratorContext`]
+//! **Implementation**: [`crate::generator::GeneratorContext`]
 //!
 //! ```rust,ignore
 //! # use engine::delta::{DeltaGenerator, DeltaSignatureIndex};
@@ -162,7 +162,7 @@
 //!
 //! The receiver applies delta operations to reconstruct files atomically.
 //!
-//! **Implementation**: [`crate::server::receiver::ReceiverContext::run`]
+//! **Implementation**: [`crate::receiver::ReceiverContext::run`]
 //!
 //! ```rust,ignore
 //! # use engine::delta::{apply_delta, DeltaSignatureIndex};
@@ -273,7 +273,7 @@
 //!
 //! ## Unit Tests
 //!
-//! Test helper functions in isolation. See [`crate::server::receiver`] tests for examples:
+//! Test helper functions in isolation. See [`crate::receiver`] tests for examples:
 //!
 //! ```rust
 //! # use protocol::wire::DeltaOp;

@@ -16,9 +16,10 @@ pub mod client;
 pub mod fallback;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
-/// Server orchestration helpers consumed by the CLI binary.
 /// Server orchestration helpers consumed by CLI and embedding entry points.
-pub mod server;
+///
+/// Re-exported from the [`transfer`] crate for backward compatibility.
+pub use ::transfer as server;
 /// Version constants and capability helpers used by CLI and daemon entry points.
 pub mod version;
 /// Workspace metadata derived from the repository `Cargo.toml`.
