@@ -363,7 +363,10 @@ mod tests {
         #[cfg(feature = "xxh3-simd")]
         assert!(available, "xxh3-simd feature enabled, should report true");
         #[cfg(not(feature = "xxh3-simd"))]
-        assert!(!available, "xxh3-simd feature disabled, should report false");
+        assert!(
+            !available,
+            "xxh3-simd feature disabled, should report false"
+        );
     }
 
     #[test]
@@ -433,13 +436,19 @@ mod tests {
         let mut streaming = Xxh3::new(seed);
         streaming.update(&input);
         let streamed = streaming.finalize();
-        assert_eq!(one_shot, streamed, "large input: one-shot should match streaming for XXH3-64");
+        assert_eq!(
+            one_shot, streamed,
+            "large input: one-shot should match streaming for XXH3-64"
+        );
 
         // XXH3-128
         let one_shot_128 = Xxh3_128::digest(seed, &input);
         let mut streaming_128 = Xxh3_128::new(seed);
         streaming_128.update(&input);
         let streamed_128 = streaming_128.finalize();
-        assert_eq!(one_shot_128, streamed_128, "large input: one-shot should match streaming for XXH3-128");
+        assert_eq!(
+            one_shot_128, streamed_128,
+            "large input: one-shot should match streaming for XXH3-128"
+        );
     }
 }

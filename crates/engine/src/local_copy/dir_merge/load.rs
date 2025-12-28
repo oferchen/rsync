@@ -393,5 +393,4 @@ mod tests {
 
         assert_eq!(entries.rules.len(), 1);
     }
-
 }

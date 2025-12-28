@@ -309,13 +309,20 @@ impl<'a> DeltaApplicator<'a> {
 
         let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
             let remainder = layout.remainder();
-            if remainder > 0 { remainder as usize } else { block_len as usize }
+            if remainder > 0 {
+                remainder as usize
+            } else {
+                block_len as usize
+            }
         } else {
             block_len as usize
         };
 
         let mut basis_file = File::open(basis_path).map_err(|e| {
-            io::Error::new(e.kind(), format!("failed to open basis file {basis_path:?}: {e}"))
+            io::Error::new(
+                e.kind(),
+                format!("failed to open basis file {basis_path:?}: {e}"),
+            )
         })?;
         basis_file.seek(SeekFrom::Start(offset))?;
 
@@ -461,12 +468,30 @@ mod tests {
 
     #[test]
     fn verifier_digest_lengths() {
-        assert_eq!(ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD4).digest_len(), 16);
-        assert_eq!(ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5).digest_len(), 16);
-        assert_eq!(ChecksumVerifier::for_algorithm(ChecksumAlgorithm::SHA1).digest_len(), 20);
-        assert_eq!(ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH64).digest_len(), 8);
-        assert_eq!(ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH3).digest_len(), 8);
-        assert_eq!(ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH128).digest_len(), 16);
+        assert_eq!(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD4).digest_len(),
+            16
+        );
+        assert_eq!(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5).digest_len(),
+            16
+        );
+        assert_eq!(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::SHA1).digest_len(),
+            20
+        );
+        assert_eq!(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH64).digest_len(),
+            8
+        );
+        assert_eq!(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH3).digest_len(),
+            8
+        );
+        assert_eq!(
+            ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH128).digest_len(),
+            16
+        );
     }
 
     #[test]

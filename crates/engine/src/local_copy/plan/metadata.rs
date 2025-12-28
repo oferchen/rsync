@@ -252,7 +252,10 @@ mod tests {
         assert_eq!(LocalCopyFileKind::Symlink, LocalCopyFileKind::Symlink);
         assert_eq!(LocalCopyFileKind::Fifo, LocalCopyFileKind::Fifo);
         assert_eq!(LocalCopyFileKind::CharDevice, LocalCopyFileKind::CharDevice);
-        assert_eq!(LocalCopyFileKind::BlockDevice, LocalCopyFileKind::BlockDevice);
+        assert_eq!(
+            LocalCopyFileKind::BlockDevice,
+            LocalCopyFileKind::BlockDevice
+        );
         assert_eq!(LocalCopyFileKind::Socket, LocalCopyFileKind::Socket);
         assert_eq!(LocalCopyFileKind::Other, LocalCopyFileKind::Other);
     }
@@ -263,7 +266,10 @@ mod tests {
         assert_ne!(LocalCopyFileKind::Directory, LocalCopyFileKind::Symlink);
         assert_ne!(LocalCopyFileKind::Symlink, LocalCopyFileKind::Fifo);
         assert_ne!(LocalCopyFileKind::Fifo, LocalCopyFileKind::CharDevice);
-        assert_ne!(LocalCopyFileKind::CharDevice, LocalCopyFileKind::BlockDevice);
+        assert_ne!(
+            LocalCopyFileKind::CharDevice,
+            LocalCopyFileKind::BlockDevice
+        );
         assert_ne!(LocalCopyFileKind::BlockDevice, LocalCopyFileKind::Socket);
         assert_ne!(LocalCopyFileKind::Socket, LocalCopyFileKind::Other);
     }
