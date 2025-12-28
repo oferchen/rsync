@@ -1829,6 +1829,7 @@ version = "3.4.1-rust"
 dependencies = [
  "checksums",
  "protocol",
+ "rayon",
  "thiserror 2.0.17",
  "tracing",
 ]

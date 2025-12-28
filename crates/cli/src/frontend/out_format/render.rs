@@ -2,6 +2,7 @@
 
 //! Rendering helpers for parsed `--out-format` specifications.
 
+use std::fmt::Write as FmtWrite;
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::time::SystemTime;
@@ -226,7 +227,8 @@ fn format_with_separator(value: i64) -> String {
 
     for group in groups.iter().rev() {
         rendered.push(separator);
-        rendered.push_str(&format!("{group:03}"));
+        // write! to String is infallible
+        let _ = write!(rendered, "{group:03}");
     }
 
     rendered
@@ -428,7 +430,8 @@ fn format_full_checksum(event: &ClientEvent) -> String {
     let digest = hasher.finalize();
     let mut rendered = String::with_capacity(32);
     for byte in digest {
-        rendered.push_str(&format!("{byte:02x}"));
+        // write! to String is infallible
+        let _ = write!(rendered, "{byte:02x}");
     }
     rendered
 }

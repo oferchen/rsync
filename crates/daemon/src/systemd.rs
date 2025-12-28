@@ -12,6 +12,9 @@ use std::io;
 #[cfg(feature = "sd-notify")]
 use sd_notify::NotifyState;
 
+// Allow trivially_copy_pass_by_ref: struct is ZST when sd-notify is disabled,
+// but &self is idiomatic for methods and the struct has a field when enabled.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ServiceNotifier {
     #[cfg(feature = "sd-notify")]
@@ -23,7 +26,7 @@ impl ServiceNotifier {
     /// available. When the `sd-notify` feature is disabled or `NOTIFY_SOCKET`
     /// is absent the notifier becomes a no-op.
     #[must_use]
-    pub(crate) const fn new() -> Self {
+    pub(crate) fn new() -> Self {
         #[cfg(feature = "sd-notify")]
         {
             let available = std::env::var_os("NOTIFY_SOCKET").is_some();
@@ -37,7 +40,7 @@ impl ServiceNotifier {
     }
 
     /// Reports service readiness to the init system.
-    pub(crate) const fn ready(&self, status: Option<&str>) -> io::Result<()> {
+    pub(crate) fn ready(&self, status: Option<&str>) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
             if let Some(text) = status {
@@ -55,7 +58,7 @@ impl ServiceNotifier {
     }
 
     /// Sends an updated status message.
-    pub(crate) const fn status(&self, status: &str) -> io::Result<()> {
+    pub(crate) fn status(&self, status: &str) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
             self.send_states(&[NotifyState::Status(status)])
@@ -69,7 +72,7 @@ impl ServiceNotifier {
     }
 
     /// Indicates that the daemon is shutting down.
-    pub(crate) const fn stopping(&self) -> io::Result<()> {
+    pub(crate) fn stopping(&self) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
             self.send_states(&[NotifyState::Stopping])
