@@ -67,10 +67,13 @@ impl FakeSuperStat {
     ///
     /// Format: `<mode_octal> <uid>,<gid>[ <rdev_major>,<rdev_minor>]`
     pub fn encode(&self) -> String {
+        use std::fmt::Write;
+
         let mut result = format!("{:o} {},{}", self.mode, self.uid, self.gid);
 
         if let Some((major, minor)) = self.rdev {
-            result.push_str(&format!(" {major},{minor}"));
+            // write! to String is infallible
+            let _ = write!(result, " {major},{minor}");
         }
 
         result

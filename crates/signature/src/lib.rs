@@ -48,12 +48,17 @@
 //! ```
 
 #![allow(clippy::module_name_repetitions)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod algorithm;
 mod block;
 mod file;
 mod generation;
 mod layout;
+
+#[cfg(feature = "parallel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
+pub mod parallel;
 
 pub use algorithm::SignatureAlgorithm;
 pub use block::SignatureBlock;
