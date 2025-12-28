@@ -279,6 +279,7 @@ dependencies = [
  "sha1",
  "sha2",
  "thiserror 2.0.17",
+ "xxh3",
  "xxhash-rust",
 ]
 
@@ -2523,6 +2524,12 @@ dependencies = [
  "walkdir",
  "which",
 ]
+
+[[package]]
+name = "xxh3"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a291e51a49d327a9e7edbf9db6e320fdd1aa7ae06afcddc252f3e041e5aed01"
 
 [[package]]
 name = "xxhash-rust"

@@ -11,11 +11,13 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["openssl-vendored"]
+default = ["openssl-vendored", "xxh3-simd"]
 openssl = ["dep:openssl"]
 openssl-vendored = ["openssl", "openssl/vendored"]
 # Parallel checksum computation using rayon
 parallel = ["rayon"]
+# Runtime SIMD detection for XXH3 (AVX2/NEON) - recommended for portable binaries
+xxh3-simd = ["dep:xxh3"]
 
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
@@ -24,6 +26,8 @@ digest = { version = "0.10", default-features = false, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 xxhash-rust = { version = "0.8", default-features = false, features = ["xxh64", "xxh3"] }
+# xxh3 crate provides runtime SIMD detection (AVX2 on x86_64, NEON on aarch64)
+xxh3 = { version = "0.1", optional = true }
 thiserror = "2.0"
 openssl = { version = "0.10", optional = true }
 rayon = { version = "1.10", optional = true }
