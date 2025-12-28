@@ -221,7 +221,7 @@ pub(crate) fn plan_directory_entries<'a>(
                 Err(error) => {
                     return Err(LocalCopyError::io(
                         "read symbolic link",
-                        entry.path.to_path_buf(),
+                        entry.path.clone(),
                         error,
                     ));
                 }
