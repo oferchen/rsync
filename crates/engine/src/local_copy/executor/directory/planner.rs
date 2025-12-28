@@ -283,3 +283,123 @@ pub(crate) fn apply_pre_transfer_deletions(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== EntryAction tests ====================
+
+    #[test]
+    fn entry_action_clone() {
+        let action = EntryAction::CopyFile;
+        let cloned = action;
+        assert!(matches!(cloned, EntryAction::CopyFile));
+    }
+
+    #[test]
+    fn entry_action_copy() {
+        let action = EntryAction::CopyDirectory;
+        let copied = action;
+        // Original still usable
+        assert!(matches!(action, EntryAction::CopyDirectory));
+        assert!(matches!(copied, EntryAction::CopyDirectory));
+    }
+
+    #[test]
+    fn entry_action_skip_excluded() {
+        let action = EntryAction::SkipExcluded;
+        assert!(matches!(action, EntryAction::SkipExcluded));
+    }
+
+    #[test]
+    fn entry_action_skip_non_regular() {
+        let action = EntryAction::SkipNonRegular;
+        assert!(matches!(action, EntryAction::SkipNonRegular));
+    }
+
+    #[test]
+    fn entry_action_skip_mount_point() {
+        let action = EntryAction::SkipMountPoint;
+        assert!(matches!(action, EntryAction::SkipMountPoint));
+    }
+
+    #[test]
+    fn entry_action_copy_symlink() {
+        let action = EntryAction::CopySymlink;
+        assert!(matches!(action, EntryAction::CopySymlink));
+    }
+
+    #[test]
+    fn entry_action_copy_fifo() {
+        let action = EntryAction::CopyFifo;
+        assert!(matches!(action, EntryAction::CopyFifo));
+    }
+
+    #[test]
+    fn entry_action_copy_device() {
+        let action = EntryAction::CopyDevice;
+        assert!(matches!(action, EntryAction::CopyDevice));
+    }
+
+    #[test]
+    fn entry_action_copy_device_as_file() {
+        let action = EntryAction::CopyDeviceAsFile;
+        assert!(matches!(action, EntryAction::CopyDeviceAsFile));
+    }
+
+    // ==================== DirectoryPlan field tests ====================
+
+    #[test]
+    fn directory_plan_default_values() {
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+        assert!(plan.planned_entries.is_empty());
+        assert!(plan.keep_names.is_empty());
+        assert!(!plan.deletion_enabled);
+        assert!(plan.delete_timing.is_none());
+    }
+
+    #[test]
+    fn directory_plan_deletion_enabled() {
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: vec![OsString::from("keep_me")],
+            deletion_enabled: true,
+            delete_timing: Some(DeleteTiming::Before),
+        };
+        assert!(plan.deletion_enabled);
+        assert!(matches!(plan.delete_timing, Some(DeleteTiming::Before)));
+        assert_eq!(plan.keep_names.len(), 1);
+    }
+
+    #[test]
+    fn directory_plan_delete_timing_after() {
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: Vec::new(),
+            deletion_enabled: true,
+            delete_timing: Some(DeleteTiming::After),
+        };
+        assert!(matches!(plan.delete_timing, Some(DeleteTiming::After)));
+    }
+
+    #[test]
+    fn directory_plan_multiple_keep_names() {
+        let plan = DirectoryPlan {
+            planned_entries: Vec::new(),
+            keep_names: vec![
+                OsString::from("file1.txt"),
+                OsString::from("file2.txt"),
+                OsString::from("dir"),
+            ],
+            deletion_enabled: true,
+            delete_timing: Some(DeleteTiming::During),
+        };
+        assert_eq!(plan.keep_names.len(), 3);
+    }
+}
