@@ -59,7 +59,7 @@ impl ServerConfig {
         args: Vec<OsString>,
     ) -> Result<Self, String> {
         if flag_string.trim().is_empty() && args.is_empty() {
-            return Err("missing rsync server flag string".to_string());
+            return Err("missing rsync server flag string".to_owned());
         }
 
         let flags = if flag_string.trim().is_empty() {
@@ -91,7 +91,7 @@ mod tests {
     fn from_flag_string_and_args_with_valid_flags() {
         let result = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-vr".to_string(),
+            "-vr".to_owned(),
             vec![OsString::from("/path/to/file")],
         );
         assert!(result.is_ok());
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn from_flag_string_and_args_rejects_empty_without_args() {
         let result =
-            ServerConfig::from_flag_string_and_args(ServerRole::Receiver, "".to_string(), vec![]);
+            ServerConfig::from_flag_string_and_args(ServerRole::Receiver, "".to_owned(), vec![]);
         assert!(result.is_err());
         assert!(
             result
@@ -118,7 +118,7 @@ mod tests {
         // Daemon mode uses empty flag strings with module paths
         let result = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "".to_string(),
+            "".to_owned(),
             vec![OsString::from("module/path")],
         );
         assert!(result.is_ok());
@@ -128,7 +128,7 @@ mod tests {
     fn from_flag_string_and_args_allows_whitespace_only_with_args() {
         let result = ServerConfig::from_flag_string_and_args(
             ServerRole::Receiver,
-            "   ".to_string(),
+            "   ".to_owned(),
             vec![OsString::from("path")],
         );
         assert!(result.is_ok());
@@ -138,7 +138,7 @@ mod tests {
     fn from_flag_string_and_args_sets_default_protocol() {
         let result = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         );
         let config = result.unwrap();
@@ -149,7 +149,7 @@ mod tests {
     fn from_flag_string_and_args_sets_defaults_for_optional_fields() {
         let result = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         );
         let config = result.unwrap();
@@ -162,7 +162,7 @@ mod tests {
     fn from_flag_string_and_args_with_multiple_args() {
         let result = ServerConfig::from_flag_string_and_args(
             ServerRole::Receiver,
-            "-rv".to_string(),
+            "-rv".to_owned(),
             vec![
                 OsString::from("/path/one"),
                 OsString::from("/path/two"),
@@ -177,7 +177,7 @@ mod tests {
     fn server_config_clone() {
         let config = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-vr".to_string(),
+            "-vr".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();
@@ -189,7 +189,7 @@ mod tests {
     fn server_config_debug_includes_struct_name() {
         let config = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();
@@ -201,13 +201,13 @@ mod tests {
     fn server_config_equality() {
         let config1 = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();
         let config2 = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();
@@ -218,13 +218,13 @@ mod tests {
     fn server_config_inequality_on_role() {
         let config1 = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();
         let config2 = ServerConfig::from_flag_string_and_args(
             ServerRole::Receiver,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();
@@ -235,13 +235,13 @@ mod tests {
     fn server_config_inequality_on_flags() {
         let config1 = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-r".to_string(),
+            "-r".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();
         let config2 = ServerConfig::from_flag_string_and_args(
             ServerRole::Generator,
-            "-rv".to_string(),
+            "-rv".to_owned(),
             vec![OsString::from("/path")],
         )
         .unwrap();

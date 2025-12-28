@@ -15,7 +15,7 @@ fn config_captures_fields() {
     let args = vec![OsString::from("."), OsString::from("dest")];
     let config = ServerConfig::from_flag_string_and_args(
         ServerRole::Generator,
-        "-logDtpre.iLsfxC".to_string(),
+        "-logDtpre.iLsfxC".to_owned(),
         args.clone(),
     )
     .expect("config parses");

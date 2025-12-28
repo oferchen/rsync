@@ -313,7 +313,7 @@ mod tests {
             return None;
         }
         let slice = unsafe { std::slice::from_raw_parts(text_ptr.cast::<u8>(), len as usize) };
-        let text = String::from_utf8_lossy(slice).trim().to_string();
+        let text = String::from_utf8_lossy(slice).trim().to_owned();
         unsafe {
             sys::acl_free(text_ptr.cast());
             sys::acl_free(acl);

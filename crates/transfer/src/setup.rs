@@ -481,28 +481,28 @@ mod tests {
 
     #[test]
     fn parse_client_info_extracts_capabilities_from_separate_args() {
-        let args = vec!["-e".to_string(), "fxCIvu".to_string()];
+        let args = vec!["-e".to_owned(), "fxCIvu".to_owned()];
         let info = parse_client_info(&args);
         assert_eq!(info, "fxCIvu");
     }
 
     #[test]
     fn parse_client_info_extracts_capabilities_from_combined_args() {
-        let args = vec!["-efxCIvu".to_string()];
+        let args = vec!["-efxCIvu".to_owned()];
         let info = parse_client_info(&args);
         assert_eq!(info, "fxCIvu");
     }
 
     #[test]
     fn parse_client_info_handles_version_placeholder() {
-        let args = vec!["-e.LsfxCIvu".to_string()];
+        let args = vec!["-e.LsfxCIvu".to_owned()];
         let info = parse_client_info(&args);
         assert_eq!(info, "LsfxCIvu");
     }
 
     #[test]
     fn parse_client_info_returns_empty_when_not_found() {
-        let args = vec!["--server".to_string(), "--sender".to_string()];
+        let args = vec!["--server".to_owned(), "--sender".to_owned()];
         let info = parse_client_info(&args);
         assert_eq!(info, "");
     }
@@ -699,7 +699,7 @@ mod tests {
             &mut stdout,
             &mut stdin,
             false,                           // skip_compat_exchange
-            Some(&["-efxCIvu".to_string()]), // client_args with 'v' capability
+            Some(&["-efxCIvu".to_owned()]), // client_args with 'v' capability
             true,                            // is_server
             true,                            // is_daemon_mode (server advertises, client reads)
             false,                           // do_compression
@@ -887,7 +887,7 @@ mod tests {
             &mut stdout,
             &mut stdin,
             false,
-            Some(&["-ev".to_string()]), // Only 'v' capability
+            Some(&["-ev".to_owned()]), // Only 'v' capability
             true,
             true,
             false,
@@ -912,7 +912,7 @@ mod tests {
             &mut stdout,
             &mut stdin,
             false,
-            Some(&["-e.LsfxCIvu".to_string()]), // Full capabilities
+            Some(&["-e.LsfxCIvu".to_owned()]), // Full capabilities
             true,
             true,
             false,
@@ -950,7 +950,7 @@ mod tests {
             &mut stdout,
             &mut stdin,
             false,
-            Some(&["-efxCIvu".to_string()]),
+            Some(&["-efxCIvu".to_owned()]),
             true,  // is_server
             true,  // is_daemon_mode
             false, // do_compression

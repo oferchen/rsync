@@ -402,7 +402,7 @@ mod tests {
     fn from_legacy_components_with_digest_list() {
         let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
             .expect("sniff succeeds");
-        let digests = "md5 sha1".to_string();
+        let digests = "md5 sha1".to_owned();
         let greeting = LegacyDaemonGreetingOwned::from_parts(31, Some(0), Some(digests))
             .expect("valid greeting with digests");
         let proto31 = ProtocolVersion::from_supported(31).unwrap();

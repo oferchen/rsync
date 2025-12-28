@@ -708,8 +708,8 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
             let description = match panic.downcast::<String>() {
                 Ok(message) => *message,
                 Err(payload) => match payload.downcast::<&str>() {
-                    Ok(message) => (*message).to_string(),
-                    Err(_) => "worker thread panicked".to_string(),
+                    Ok(message) => (*message).to_owned(),
+                    Err(_) => "worker thread panicked".to_owned(),
                 },
             };
             let error = io::Error::other(description);
@@ -754,14 +754,14 @@ mod server_runtime_tests {
 
     #[test]
     fn join_list_if_nonempty_joins_with_delimiter() {
-        let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        assert_eq!(join_list_if_nonempty(&items, ","), Some("a,b,c".to_string()));
+        let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+        assert_eq!(join_list_if_nonempty(&items, ","), Some("a,b,c".to_owned()));
     }
 
     #[test]
     fn join_list_if_nonempty_single_item() {
-        let items = vec!["single".to_string()];
-        assert_eq!(join_list_if_nonempty(&items, ","), Some("single".to_string()));
+        let items = vec!["single".to_owned()];
+        assert_eq!(join_list_if_nonempty(&items, ","), Some("single".to_owned()));
     }
 
     // Tests for render_auth_users
@@ -773,8 +773,8 @@ mod server_runtime_tests {
 
     #[test]
     fn render_auth_users_comma_separated() {
-        let users = vec!["alice".to_string(), "bob".to_string()];
-        assert_eq!(render_auth_users(&users), Some("alice,bob".to_string()));
+        let users = vec!["alice".to_owned(), "bob".to_owned()];
+        assert_eq!(render_auth_users(&users), Some("alice,bob".to_owned()));
     }
 
     // Tests for render_refused_options
@@ -786,8 +786,8 @@ mod server_runtime_tests {
 
     #[test]
     fn render_refused_options_space_separated() {
-        let options = vec!["delete".to_string(), "delete-after".to_string()];
-        assert_eq!(render_refused_options(&options), Some("delete delete-after".to_string()));
+        let options = vec!["delete".to_owned(), "delete-after".to_owned()];
+        assert_eq!(render_refused_options(&options), Some("delete delete-after".to_owned()));
     }
 
     // Tests for render_optional_u32
@@ -799,7 +799,7 @@ mod server_runtime_tests {
 
     #[test]
     fn render_optional_u32_returns_string() {
-        assert_eq!(render_optional_u32(Some(1000)), Some("1000".to_string()));
+        assert_eq!(render_optional_u32(Some(1000)), Some("1000".to_owned()));
     }
 
     // Tests for render_optional_timeout
@@ -812,7 +812,7 @@ mod server_runtime_tests {
     #[test]
     fn render_optional_timeout_returns_string() {
         let timeout = NonZeroU64::new(300);
-        assert_eq!(render_optional_timeout(timeout), Some("300".to_string()));
+        assert_eq!(render_optional_timeout(timeout), Some("300".to_owned()));
     }
 
     // Tests for render_chmod
@@ -824,7 +824,7 @@ mod server_runtime_tests {
 
     #[test]
     fn render_chmod_returns_string() {
-        assert_eq!(render_chmod(Some("Dg+s,ug+w,Fo-w,+X")), Some("Dg+s,ug+w,Fo-w,+X".to_string()));
+        assert_eq!(render_chmod(Some("Dg+s,ug+w,Fo-w,+X")), Some("Dg+s,ug+w,Fo-w,+X".to_owned()));
     }
 
     // Tests for format_connection_status
@@ -902,7 +902,7 @@ mod server_runtime_tests {
     #[test]
     fn render_optional_bwlimit_returns_string() {
         let limit = NonZeroU64::new(1_000_000);
-        assert_eq!(render_optional_bwlimit(limit), Some("1000000".to_string()));
+        assert_eq!(render_optional_bwlimit(limit), Some("1000000".to_owned()));
     }
 
     // Tests for host_pattern_token
@@ -934,7 +934,7 @@ mod server_runtime_tests {
     #[test]
     fn host_pattern_token_hostname_exact() {
         let pattern = HostPattern::Hostname(HostnamePattern {
-            kind: HostnamePatternKind::Exact("example.com".to_string()),
+            kind: HostnamePatternKind::Exact("example.com".to_owned()),
         });
         assert_eq!(host_pattern_token(&pattern), "example.com");
     }
@@ -942,7 +942,7 @@ mod server_runtime_tests {
     #[test]
     fn host_pattern_token_hostname_suffix() {
         let pattern = HostPattern::Hostname(HostnamePattern {
-            kind: HostnamePatternKind::Suffix("example.com".to_string()),
+            kind: HostnamePatternKind::Suffix("example.com".to_owned()),
         });
         assert_eq!(host_pattern_token(&pattern), ".example.com");
     }
@@ -950,7 +950,7 @@ mod server_runtime_tests {
     #[test]
     fn host_pattern_token_hostname_wildcard() {
         let pattern = HostPattern::Hostname(HostnamePattern {
-            kind: HostnamePatternKind::Wildcard("*.example.*".to_string()),
+            kind: HostnamePatternKind::Wildcard("*.example.*".to_owned()),
         });
         assert_eq!(host_pattern_token(&pattern), "*.example.*");
     }
@@ -965,7 +965,7 @@ mod server_runtime_tests {
     #[test]
     fn join_pattern_tokens_single() {
         let patterns = vec![HostPattern::Any];
-        assert_eq!(join_pattern_tokens(&patterns), Some("*".to_string()));
+        assert_eq!(join_pattern_tokens(&patterns), Some("*".to_owned()));
     }
 
     #[test]
@@ -977,7 +977,7 @@ mod server_runtime_tests {
                 prefix: 8,
             },
         ];
-        assert_eq!(join_pattern_tokens(&patterns), Some("* 10.0.0.0/8".to_string()));
+        assert_eq!(join_pattern_tokens(&patterns), Some("* 10.0.0.0/8".to_owned()));
     }
 
     // Tests for GeneratedFallbackConfig
@@ -990,7 +990,7 @@ mod server_runtime_tests {
 
     #[test]
     fn generated_fallback_config_creates_motd_file() {
-        let motd_lines = vec!["Welcome".to_string(), "to rsync".to_string()];
+        let motd_lines = vec!["Welcome".to_owned(), "to rsync".to_owned()];
         let result = generate_fallback_config(&[], &motd_lines).unwrap();
         assert!(result.is_some());
         let config = result.unwrap();
@@ -1001,9 +1001,9 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_creates_module_section() {
         let modules = vec![ModuleDefinition {
-            name: "test".to_string(),
+            name: "test".to_owned(),
             path: PathBuf::from("/tmp/test"),
-            comment: Some("Test module".to_string()),
+            comment: Some("Test module".to_owned()),
             read_only: true,
             write_only: false,
             listable: true,
@@ -1026,9 +1026,9 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_auth_users() {
         let modules = vec![ModuleDefinition {
-            name: "secure".to_string(),
+            name: "secure".to_owned(),
             path: PathBuf::from("/secure"),
-            auth_users: vec!["alice".to_string(), "bob".to_string()],
+            auth_users: vec!["alice".to_owned(), "bob".to_owned()],
             ..Default::default()
         }];
         let result = generate_fallback_config(&modules, &[]).unwrap();
@@ -1040,7 +1040,7 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_hosts_allow() {
         let modules = vec![ModuleDefinition {
-            name: "restricted".to_string(),
+            name: "restricted".to_owned(),
             path: PathBuf::from("/restricted"),
             hosts_allow: vec![HostPattern::Ipv4 {
                 network: Ipv4Addr::new(192, 168, 0, 0),
@@ -1057,7 +1057,7 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_bandwidth_limit() {
         let modules = vec![ModuleDefinition {
-            name: "limited".to_string(),
+            name: "limited".to_owned(),
             path: PathBuf::from("/limited"),
             bandwidth_limit: NonZeroU64::new(100000),
             ..Default::default()
@@ -1071,7 +1071,7 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_max_connections() {
         let modules = vec![ModuleDefinition {
-            name: "limited".to_string(),
+            name: "limited".to_owned(),
             path: PathBuf::from("/limited"),
             max_connections: NonZeroU32::new(10),
             ..Default::default()
@@ -1085,10 +1085,10 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_chmod_directives() {
         let modules = vec![ModuleDefinition {
-            name: "chmod".to_string(),
+            name: "chmod".to_owned(),
             path: PathBuf::from("/chmod"),
-            incoming_chmod: Some("Dg+s,ug+w".to_string()),
-            outgoing_chmod: Some("Fo-w,+X".to_string()),
+            incoming_chmod: Some("Dg+s,ug+w".to_owned()),
+            outgoing_chmod: Some("Fo-w,+X".to_owned()),
             ..Default::default()
         }];
         let result = generate_fallback_config(&modules, &[]).unwrap();
@@ -1101,7 +1101,7 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_uid_gid() {
         let modules = vec![ModuleDefinition {
-            name: "ids".to_string(),
+            name: "ids".to_owned(),
             path: PathBuf::from("/ids"),
             uid: Some(1000),
             gid: Some(1000),
@@ -1117,7 +1117,7 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_timeout() {
         let modules = vec![ModuleDefinition {
-            name: "timeout".to_string(),
+            name: "timeout".to_owned(),
             path: PathBuf::from("/timeout"),
             timeout: NonZeroU64::new(600),
             ..Default::default()
@@ -1131,9 +1131,9 @@ mod server_runtime_tests {
     #[test]
     fn generated_fallback_config_includes_refuse_options() {
         let modules = vec![ModuleDefinition {
-            name: "restricted".to_string(),
+            name: "restricted".to_owned(),
             path: PathBuf::from("/restricted"),
-            refuse_options: vec!["delete".to_string(), "delete-after".to_string()],
+            refuse_options: vec!["delete".to_owned(), "delete-after".to_owned()],
             ..Default::default()
         }];
         let result = generate_fallback_config(&modules, &[]).unwrap();

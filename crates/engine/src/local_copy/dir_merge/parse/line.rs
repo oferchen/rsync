@@ -179,7 +179,7 @@ pub(crate) fn parse_filter_directive_line(
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '+' requires a pattern"));
         }
-        let rule = FilterRule::include(pattern.to_string());
+        let rule = FilterRule::include(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
         return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
@@ -191,7 +191,7 @@ pub(crate) fn parse_filter_directive_line(
         if pattern.is_empty() {
             return Err(FilterParseError::new("filter rule '-' requires a pattern"));
         }
-        let rule = FilterRule::exclude(pattern.to_string());
+        let rule = FilterRule::exclude(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
         return Ok(Some(ParsedFilterDirective::Rule(rule)));
     }
@@ -211,7 +211,7 @@ pub(crate) fn parse_filter_directive_line(
         }
         let modifiers =
             parse_rule_modifiers(keyword_modifiers, trimmed, allow_perishable, allow_xattr)?;
-        let rule = builder(pattern.to_string());
+        let rule = builder(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
         Ok(Some(ParsedFilterDirective::Rule(rule)))
     };

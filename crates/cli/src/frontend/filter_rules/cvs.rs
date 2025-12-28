@@ -14,7 +14,7 @@ pub(crate) fn append_cvs_exclude_rules(
 ) -> Result<(), Message> {
     let mut cvs_rules: Vec<FilterRuleSpec> = CVS_EXCLUDE_PATTERNS
         .iter()
-        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_string()).with_perishable(true))
+        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_owned()).with_perishable(true))
         .collect();
 
     if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
@@ -46,7 +46,7 @@ pub(crate) fn append_cvs_exclude_rules(
         .allow_comments(false)
         .inherit(false)
         .allow_list_clearing(true);
-    cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_string(), options));
+    cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options));
 
     destination.extend(cvs_rules);
     Ok(())
@@ -75,7 +75,7 @@ where
             continue;
         }
 
-        destination.push(FilterRuleSpec::exclude(trimmed.to_string()).with_perishable(true));
+        destination.push(FilterRuleSpec::exclude(trimmed.to_owned()).with_perishable(true));
     }
 }
 
@@ -162,8 +162,8 @@ mod tests {
     #[test]
     fn remove_cvs_pattern_removes_matching_exclude() {
         let mut rules = vec![
-            FilterRuleSpec::exclude("*.o".to_string()),
-            FilterRuleSpec::exclude("*.a".to_string()),
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::exclude("*.a".to_owned()),
         ];
         remove_cvs_pattern(&mut rules, "*.o");
         assert_eq!(rules.len(), 1);
@@ -173,8 +173,8 @@ mod tests {
     #[test]
     fn remove_cvs_pattern_preserves_non_matching() {
         let mut rules = vec![
-            FilterRuleSpec::exclude("*.o".to_string()),
-            FilterRuleSpec::exclude("*.a".to_string()),
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::exclude("*.a".to_owned()),
         ];
         remove_cvs_pattern(&mut rules, "*.xyz");
         assert_eq!(rules.len(), 2);
@@ -183,8 +183,8 @@ mod tests {
     #[test]
     fn remove_cvs_pattern_preserves_include_rules() {
         let mut rules = vec![
-            FilterRuleSpec::exclude("*.o".to_string()),
-            FilterRuleSpec::include("*.o".to_string()),
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::include("*.o".to_owned()),
         ];
         remove_cvs_pattern(&mut rules, "*.o");
         assert_eq!(rules.len(), 1);
@@ -194,8 +194,8 @@ mod tests {
     #[test]
     fn remove_cvs_pattern_removes_all_matching() {
         let mut rules = vec![
-            FilterRuleSpec::exclude("*.o".to_string()),
-            FilterRuleSpec::exclude("*.o".to_string()),
+            FilterRuleSpec::exclude("*.o".to_owned()),
+            FilterRuleSpec::exclude("*.o".to_owned()),
         ];
         remove_cvs_pattern(&mut rules, "*.o");
         assert!(rules.is_empty());

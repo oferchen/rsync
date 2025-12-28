@@ -100,11 +100,11 @@ pub(crate) struct ConnectProgramConfig {
 impl ConnectProgramConfig {
     pub(crate) fn new(template: OsString, shell: Option<OsString>) -> Result<Self, String> {
         if template.is_empty() {
-            return Err("RSYNC_CONNECT_PROG must not be empty".to_string());
+            return Err("RSYNC_CONNECT_PROG must not be empty".to_owned());
         }
 
         if shell.as_ref().is_some_and(|value| value.is_empty()) {
-            return Err("RSYNC_SHELL must not be empty".to_string());
+            return Err("RSYNC_SHELL must not be empty".to_owned());
         }
 
         Ok(Self { template, shell })

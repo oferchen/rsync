@@ -220,7 +220,7 @@ fn test_handshake_with_upstream_daemon() {
         if n == 0 || line.trim() == "@RSYNCD: EXIT" {
             break;
         }
-        modules.push(line.trim().to_string());
+        modules.push(line.trim().to_owned());
     }
 
     // Should see our testmodule
@@ -855,7 +855,7 @@ fn test_module_listing_request_response() {
         }
 
         if !trimmed.is_empty() && !trimmed.starts_with("@RSYNCD:") {
-            modules.push(trimmed.to_string());
+            modules.push(trimmed.to_owned());
         }
     }
 

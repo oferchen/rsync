@@ -37,7 +37,7 @@ impl NormalizedMessage {
 
 /// Normalize message text by removing variations we expect.
 fn normalize_text(text: &str) -> String {
-    let mut normalized = text.to_string();
+    let mut normalized = text.to_owned();
 
     // 1. Strip Rust source suffix: " at path/to/file.rs:123"
     normalized = strip_rust_source_suffix(&normalized);
@@ -162,23 +162,22 @@ mod tests {
     #[test]
     fn test_normalize_message_full() {
         let msg = Message::new(
-            "rsync: error in file IO at crates/core/src/message.rs:123 [sender=3.4.1-rust]"
-                .to_string(),
+            "rsync: error in file IO at crates/core/src/message.rs:123 [sender=3.4.1-rust]".to_owned(),
         );
         let normalized = NormalizedMessage::from_message(&msg);
         assert_eq!(normalized.text, "rsync: error in file IO [sender]");
-        assert_eq!(normalized.role, Some("sender".to_string()));
+        assert_eq!(normalized.role, Some("sender".to_owned()));
     }
 
     #[test]
     fn test_message_matches() {
         let msg1 = NormalizedMessage {
-            text: "rsync: error [sender]".to_string(),
-            role: Some("sender".to_string()),
+            text: "rsync: error [sender]".to_owned(),
+            role: Some("sender".to_owned()),
         };
         let msg2 = NormalizedMessage {
-            text: "rsync: error [sender]".to_string(),
-            role: Some("sender".to_string()),
+            text: "rsync: error [sender]".to_owned(),
+            role: Some("sender".to_owned()),
         };
         assert!(msg1.matches(&msg2));
     }

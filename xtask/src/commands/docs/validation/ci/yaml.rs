@@ -12,13 +12,13 @@ pub(super) fn extract_job_section(contents: &str, job_name: &str) -> Option<Stri
             if indent == 2 && trimmed == target {
                 collecting = true;
                 job_indent = indent;
-                section_lines.push(line.to_string());
+                section_lines.push(line.to_owned());
             }
             continue;
         }
 
         if trimmed.is_empty() {
-            section_lines.push(line.to_string());
+            section_lines.push(line.to_owned());
             continue;
         }
 
@@ -26,7 +26,7 @@ pub(super) fn extract_job_section(contents: &str, job_name: &str) -> Option<Stri
             break;
         }
 
-        section_lines.push(line.to_string());
+        section_lines.push(line.to_owned());
     }
 
     if collecting {
@@ -50,7 +50,7 @@ pub(super) fn find_yaml_scalar(section: &str, key: &str) -> Option<String> {
                 return Some(String::new());
             }
             let value = value.trim_matches('"');
-            return Some(value.to_string());
+            return Some(value.to_owned());
         }
     }
 

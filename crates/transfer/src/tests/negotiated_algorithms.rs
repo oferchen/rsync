@@ -33,7 +33,7 @@ fn test_config() -> ServerConfig {
     ServerConfig {
         role: ServerRole::Receiver,
         protocol: ProtocolVersion::try_from(32u8).unwrap(),
-        flag_string: "-a".to_string(),
+        flag_string: "-a".to_owned(),
         flags: ParsedServerFlags::default(),
         args: vec![std::ffi::OsString::from(".")],
         compression_level: None,
@@ -46,7 +46,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
     ServerConfig {
         role: ServerRole::Receiver,
         protocol: ProtocolVersion::try_from(32u8).unwrap(),
-        flag_string: "-az".to_string(),
+        flag_string: "-az".to_owned(),
         flags: ParsedServerFlags::default(),
         args: vec![std::ffi::OsString::from(".")],
         compression_level: Some(level),

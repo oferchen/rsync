@@ -15,7 +15,7 @@ pub fn detect_oc_rsync_binary(workspace: &Path) -> TaskResult<OcRsyncBinary> {
         debug_path
     } else {
         return Err(TaskError::ToolMissing(
-            "oc-rsync binary not found. Run 'cargo build --release' first.".to_string(),
+            "oc-rsync binary not found. Run 'cargo build --release' first.".to_owned(),
         ));
     };
 

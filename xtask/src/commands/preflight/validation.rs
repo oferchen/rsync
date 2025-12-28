@@ -166,7 +166,7 @@ pub(crate) fn validate_package_versions(
         let Some(version) = package.get("version").and_then(JsonValue::as_str) else {
             continue;
         };
-        versions.insert(name.to_string(), version.to_string());
+        versions.insert(name.to_owned(), version.to_owned());
     }
 
     let crate_name = workspace::root_package_name(workspace)?;

@@ -74,7 +74,7 @@ mod tests {
     #[test]
     fn simple_exclude_prefix() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string());
+        let rule = FilterRuleWireFormat::exclude("test".to_owned());
 
         let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "- ");
@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn simple_include_prefix() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::include("test".to_string());
+        let rule = FilterRuleWireFormat::include("test".to_owned());
 
         let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "+ ");
@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn anchored_modifier() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string()).with_anchored(true);
+        let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_anchored(true);
 
         let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "-/ ");
@@ -101,7 +101,7 @@ mod tests {
     #[test]
     fn multiple_modifiers() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let mut rule = FilterRuleWireFormat::exclude("test".to_string());
+        let mut rule = FilterRuleWireFormat::exclude("test".to_owned());
         rule.anchored = true;
         rule.no_inherit = true;
         rule.cvs_exclude = true;
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn sender_side_v29() {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string()).with_sides(true, false);
+        let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, false);
 
         let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "-s ");
@@ -122,7 +122,7 @@ mod tests {
     #[test]
     fn receiver_side_v29() {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string()).with_sides(false, true);
+        let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(false, true);
 
         let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "-r ");
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn both_sides_v29() {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string()).with_sides(true, true);
+        let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, true);
 
         let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "-sr ");
@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn perishable_v30() {
         let protocol = ProtocolVersion::from_supported(30).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string()).with_perishable(true);
+        let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_perishable(true);
 
         let prefix = build_rule_prefix(&rule, protocol);
         assert_eq!(prefix, "-p ");
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn v28_strips_sender_receiver() {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string()).with_sides(true, true);
+        let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, true);
 
         let prefix = build_rule_prefix(&rule, protocol);
         // v28 doesn't support s/r, so they should be omitted
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn v28_strips_perishable() {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string()).with_perishable(true);
+        let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_perishable(true);
 
         let prefix = build_rule_prefix(&rule, protocol);
         // v28 doesn't support p, so it should be omitted
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn v29_supports_sender_receiver_but_not_perishable() {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
-        let rule = FilterRuleWireFormat::exclude("test".to_string())
+        let rule = FilterRuleWireFormat::exclude("test".to_owned())
             .with_sides(true, true)
             .with_perishable(true);
 
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn all_modifiers_v32() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let mut rule = FilterRuleWireFormat::exclude("test".to_string());
+        let mut rule = FilterRuleWireFormat::exclude("test".to_owned());
         rule.anchored = true;
         rule.negate = true;
         rule.cvs_exclude = true;
@@ -225,7 +225,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::Protect,
-            pattern: "important".to_string(),
+            pattern: "important".to_owned(),
             anchored: false,
             directory_only: false,
             no_inherit: false,

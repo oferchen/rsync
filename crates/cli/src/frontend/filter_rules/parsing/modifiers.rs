@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_anchor() {
-        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let rule = FilterRuleSpec::include("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: true,
             sender: None,
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_sender() {
-        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let rule = FilterRuleSpec::include("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: false,
             sender: Some(true),
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_receiver() {
-        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let rule = FilterRuleSpec::include("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: false,
             sender: None,
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_perishable() {
-        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let rule = FilterRuleSpec::include("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: false,
             sender: None,
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_xattr_only_for_include() {
-        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let rule = FilterRuleSpec::include("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: false,
             sender: None,
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_xattr_only_for_exclude() {
-        let rule = FilterRuleSpec::exclude("*.rs".to_string());
+        let rule = FilterRuleSpec::exclude("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: false,
             sender: None,
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_xattr_only_for_non_include_exclude_fails() {
-        let rule = FilterRuleSpec::protect("*.rs".to_string());
+        let rule = FilterRuleSpec::protect("*.rs".to_owned());
         let modifiers = RuleModifierState {
             anchor_root: false,
             sender: None,
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn apply_rule_modifiers_empty_state() {
-        let rule = FilterRuleSpec::include("*.rs".to_string());
+        let rule = FilterRuleSpec::include("*.rs".to_owned());
         let modifiers = RuleModifierState::default();
         let result = apply_rule_modifiers(rule.clone(), modifiers, "+").expect("apply");
         assert_eq!(result.pattern(), rule.pattern());

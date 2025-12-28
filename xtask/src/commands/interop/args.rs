@@ -229,6 +229,5 @@ EXAMPLES:
 
     # Run all validations (exit codes + messages)
     cargo xtask interop all
-"#
-    .to_string()
+"#.to_owned()
 }
