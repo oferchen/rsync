@@ -48,7 +48,9 @@ impl FileListCompressionState {
     ///
     /// Call this after processing each entry to prepare for the next one.
     pub fn update(&mut self, name: &[u8], mode: u32, mtime: i64, uid: u32, gid: u32) {
-        self.prev_name = name.to_vec();
+        // Reuse existing allocation when possible
+        self.prev_name.clear();
+        self.prev_name.extend_from_slice(name);
         self.prev_mode = mode;
         self.prev_mtime = mtime;
         self.prev_uid = uid;
@@ -57,7 +59,9 @@ impl FileListCompressionState {
 
     /// Updates only the name portion of the state.
     pub fn update_name(&mut self, name: &[u8]) {
-        self.prev_name = name.to_vec();
+        // Reuse existing allocation when possible
+        self.prev_name.clear();
+        self.prev_name.extend_from_slice(name);
     }
 
     /// Updates only the mode portion of the state.
