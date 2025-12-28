@@ -158,7 +158,7 @@ pub(crate) fn copy_fifo(
         }
 
         if existing_hard_link_target.is_none() {
-            apply_file_metadata_with_options(destination, metadata, &metadata_options)
+            apply_file_metadata_with_options(destination, metadata, metadata_options)
                 .map_err(map_metadata_error)?;
             #[cfg(all(unix, feature = "xattr"))]
             sync_xattrs_if_requested(
@@ -220,7 +220,7 @@ pub(crate) fn copy_fifo(
         destination_previously_existed,
     );
 
-    apply_file_metadata_with_options(destination, metadata, &metadata_options)
+    apply_file_metadata_with_options(destination, metadata, metadata_options)
         .map_err(map_metadata_error)?;
 
     #[cfg(all(unix, feature = "xattr"))]
