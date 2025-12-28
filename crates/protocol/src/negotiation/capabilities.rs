@@ -72,7 +72,7 @@ pub enum ChecksumAlgorithm {
 
 impl ChecksumAlgorithm {
     /// Returns the wire protocol name for this algorithm.
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::None => "none",
             Self::MD4 => "md4",
@@ -120,7 +120,7 @@ pub enum CompressionAlgorithm {
 
 impl CompressionAlgorithm {
     /// Returns the wire protocol name for this algorithm.
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::None => "none",
             Self::Zlib => "zlib",

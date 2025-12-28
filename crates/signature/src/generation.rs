@@ -46,7 +46,7 @@ pub enum SignatureError {
 }
 
 impl SignatureError {
-    fn digest_mismatch(algorithm: SignatureAlgorithm, requested: usize) -> Self {
+    const fn digest_mismatch(algorithm: SignatureAlgorithm, requested: usize) -> Self {
         let requested = NonZeroUsize::new(requested)
             .expect("strong digest length requested by layout must be non-zero");
         SignatureError::DigestLengthMismatch {

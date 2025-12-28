@@ -282,7 +282,7 @@ impl Nfs4Acl {
 
     /// Returns true if the ACL is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.aces.is_empty()
     }
 }

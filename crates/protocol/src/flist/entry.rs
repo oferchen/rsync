@@ -174,7 +174,7 @@ impl FileEntry {
 
     /// Creates a file entry from raw components (used during decoding).
     #[must_use]
-    pub(crate) fn from_raw(
+    pub(crate) const fn from_raw(
         name: PathBuf,
         size: u64,
         mode: u32,
@@ -206,7 +206,7 @@ impl FileEntry {
 
     /// Returns the relative path of the entry.
     #[must_use]
-    pub fn path(&self) -> &PathBuf {
+    pub const fn path(&self) -> &PathBuf {
         &self.name
     }
 
@@ -260,7 +260,7 @@ impl FileEntry {
 
     /// Returns the symlink target if this is a symlink.
     #[must_use]
-    pub fn link_target(&self) -> Option<&PathBuf> {
+    pub const fn link_target(&self) -> Option<&PathBuf> {
         self.link_target.as_ref()
     }
 
@@ -301,18 +301,18 @@ impl FileEntry {
     }
 
     /// Sets the modification time.
-    pub fn set_mtime(&mut self, secs: i64, nsec: u32) {
+    pub const fn set_mtime(&mut self, secs: i64, nsec: u32) {
         self.mtime = secs;
         self.mtime_nsec = nsec;
     }
 
     /// Sets the user ID.
-    pub fn set_uid(&mut self, uid: u32) {
+    pub const fn set_uid(&mut self, uid: u32) {
         self.uid = Some(uid);
     }
 
     /// Sets the group ID.
-    pub fn set_gid(&mut self, gid: u32) {
+    pub const fn set_gid(&mut self, gid: u32) {
         self.gid = Some(gid);
     }
 
@@ -322,7 +322,7 @@ impl FileEntry {
     }
 
     /// Sets the device numbers.
-    pub fn set_rdev(&mut self, major: u32, minor: u32) {
+    pub const fn set_rdev(&mut self, major: u32, minor: u32) {
         self.rdev_major = Some(major);
         self.rdev_minor = Some(minor);
     }

@@ -194,7 +194,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Reports whether the remote advertisement had to be clamped to the supported range.
     #[must_use]
-    pub fn remote_protocol_was_clamped(&self) -> bool {
+    pub const fn remote_protocol_was_clamped(&self) -> bool {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.remote_protocol_was_clamped(),
             SessionHandshakeParts::Legacy(parts) => parts.remote_protocol_was_clamped(),
@@ -208,7 +208,7 @@ impl<R> SessionHandshakeParts<R> {
     /// session to run at the requested protocol even if the peer advertised something newer.
     #[doc(alias = "--protocol")]
     #[must_use]
-    pub fn local_protocol_was_capped(&self) -> bool {
+    pub const fn local_protocol_was_capped(&self) -> bool {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.local_protocol_was_capped(),
             SessionHandshakeParts::Legacy(parts) => parts.local_protocol_was_capped(),

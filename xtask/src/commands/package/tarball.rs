@@ -20,7 +20,7 @@ pub(super) enum TarballPlatform {
 }
 
 impl TarballPlatform {
-    fn archive_tag(self) -> &'static str {
+    const fn archive_tag(self) -> &'static str {
         match self {
             TarballPlatform::Linux => "linux",
             TarballPlatform::Macos => "darwin",
@@ -28,14 +28,14 @@ impl TarballPlatform {
         }
     }
 
-    fn binary_extension(self) -> &'static str {
+    const fn binary_extension(self) -> &'static str {
         match self {
             TarballPlatform::Windows => ".exe",
             TarballPlatform::Linux | TarballPlatform::Macos => "",
         }
     }
 
-    fn includes_daemon(self) -> bool {
+    const fn includes_daemon(self) -> bool {
         !matches!(self, TarballPlatform::Windows)
     }
 
@@ -99,7 +99,7 @@ impl TarballPlatform {
         entries
     }
 
-    fn host() -> Option<Self> {
+    const fn host() -> Option<Self> {
         if cfg!(target_os = "linux") {
             Some(TarballPlatform::Linux)
         } else if cfg!(target_os = "macos") {
@@ -125,11 +125,11 @@ impl TarballSpec {
         format!("{}-{}", self.platform.archive_tag(), self.metadata_arch)
     }
 
-    pub fn binary_extension(&self) -> &'static str {
+    pub const fn binary_extension(&self) -> &'static str {
         self.platform.binary_extension()
     }
 
-    pub fn includes_daemon(&self) -> bool {
+    pub const fn includes_daemon(&self) -> bool {
         self.platform.includes_daemon()
     }
 

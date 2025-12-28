@@ -95,7 +95,7 @@ fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -
 }
 
 #[cfg(unix)]
-fn apply_special_bits(mode: u32, clause: &SymbolicClause) -> u32 {
+const fn apply_special_bits(mode: u32, clause: &SymbolicClause) -> u32 {
     let mut result = mode;
 
     if clause.who.includes_user() {
@@ -114,7 +114,7 @@ fn apply_special_bits(mode: u32, clause: &SymbolicClause) -> u32 {
 }
 
 #[cfg(unix)]
-fn update_special_bit(current: u32, op: Operation, flag_requested: bool, bit: u32) -> u32 {
+const fn update_special_bit(current: u32, op: Operation, flag_requested: bool, bit: u32) -> u32 {
     match op {
         Operation::Add => {
             if flag_requested {
@@ -150,7 +150,7 @@ enum Dest {
 
 #[cfg(unix)]
 impl Dest {
-    fn includes(self, clause: &SymbolicClause) -> bool {
+    const fn includes(self, clause: &SymbolicClause) -> bool {
         match self {
             Self::User => clause.who.includes_user(),
             Self::Group => clause.who.includes_group(),
@@ -158,7 +158,7 @@ impl Dest {
         }
     }
 
-    fn permission_mask(self) -> u32 {
+    const fn permission_mask(self) -> u32 {
         match self {
             Self::User => 0o700,
             Self::Group => 0o070,
@@ -166,7 +166,7 @@ impl Dest {
         }
     }
 
-    fn shift(self) -> u8 {
+    const fn shift(self) -> u8 {
         match self {
             Self::User => 6,
             Self::Group => 3,
@@ -174,7 +174,7 @@ impl Dest {
         }
     }
 
-    fn read_mask(self) -> u32 {
+    const fn read_mask(self) -> u32 {
         match self {
             Self::User => 0o400,
             Self::Group => 0o040,
@@ -182,7 +182,7 @@ impl Dest {
         }
     }
 
-    fn write_mask(self) -> u32 {
+    const fn write_mask(self) -> u32 {
         match self {
             Self::User => 0o200,
             Self::Group => 0o020,
@@ -190,7 +190,7 @@ impl Dest {
         }
     }
 
-    fn exec_mask(self) -> u32 {
+    const fn exec_mask(self) -> u32 {
         match self {
             Self::User => 0o100,
             Self::Group => 0o010,
@@ -200,7 +200,7 @@ impl Dest {
 }
 
 #[cfg(unix)]
-fn permission_bits(spec: &PermSpec, dest: Dest, is_dir: bool, before: u32) -> u32 {
+const fn permission_bits(spec: &PermSpec, dest: Dest, is_dir: bool, before: u32) -> u32 {
     let mut bits = 0u32;
 
     if spec.read {
@@ -223,7 +223,7 @@ fn permission_bits(spec: &PermSpec, dest: Dest, is_dir: bool, before: u32) -> u3
 }
 
 #[cfg(unix)]
-fn copy_from(source: Dest, dest: Dest, before: u32) -> u32 {
+const fn copy_from(source: Dest, dest: Dest, before: u32) -> u32 {
     let src_mask = source.permission_mask();
     let src_bits = before & src_mask;
     let shift = source.shift() as i8 - dest.shift() as i8;

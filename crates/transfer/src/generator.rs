@@ -90,7 +90,7 @@ pub struct GeneratorContext {
 
 impl GeneratorContext {
     /// Creates a new generator context from handshake result and config.
-    pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+    pub const fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
         Self {
             protocol: handshake.protocol,
             config,
@@ -152,7 +152,7 @@ impl GeneratorContext {
     /// - `if (protocol_version >= 31 || (!filesfrom_host && protocol_version >= 23))`
     /// - We don't support filesfrom, so this simplifies to >= 23
     #[must_use]
-    fn should_activate_input_multiplex(&self) -> bool {
+    const fn should_activate_input_multiplex(&self) -> bool {
         if self.config.client_mode {
             // Client mode: >= 23 (upstream main.c:1304-1305, no filesfrom)
             self.protocol.as_u8() >= 23
@@ -295,7 +295,7 @@ impl GeneratorContext {
     /// - Protocol 30+ without negotiation: MD5 (16 bytes)
     /// - Protocol < 30: MD4 (16 bytes)
     #[must_use]
-    fn get_checksum_algorithm(&self) -> ChecksumAlgorithm {
+    const fn get_checksum_algorithm(&self) -> ChecksumAlgorithm {
         if let Some(negotiated) = &self.negotiated_algorithms {
             negotiated.checksum
         } else if self.protocol.as_u8() >= 30 {

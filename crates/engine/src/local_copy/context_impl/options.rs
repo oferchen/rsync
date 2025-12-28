@@ -16,77 +16,77 @@ impl<'a> CopyContext<'a> {
             .with_group_mapping(self.options.group_mapping().cloned())
     }
 
-    pub(super) fn copy_links_enabled(&self) -> bool {
+    pub(super) const fn copy_links_enabled(&self) -> bool {
         self.options.copy_links_enabled()
     }
 
-    pub(super) fn links_enabled(&self) -> bool {
+    pub(super) const fn links_enabled(&self) -> bool {
         self.options.links_enabled()
     }
 
-    pub(super) fn copy_unsafe_links_enabled(&self) -> bool {
+    pub(super) const fn copy_unsafe_links_enabled(&self) -> bool {
         self.options.copy_unsafe_links_enabled()
     }
 
-    pub(super) fn safe_links_enabled(&self) -> bool {
+    pub(super) const fn safe_links_enabled(&self) -> bool {
         self.options.safe_links_enabled()
     }
 
-    pub(super) fn copy_dirlinks_enabled(&self) -> bool {
+    pub(super) const fn copy_dirlinks_enabled(&self) -> bool {
         self.options.copy_dirlinks_enabled()
     }
 
-    pub(super) fn keep_dirlinks_enabled(&self) -> bool {
+    pub(super) const fn keep_dirlinks_enabled(&self) -> bool {
         self.options.keep_dirlinks_enabled()
     }
 
-    pub(super) fn whole_file_enabled(&self) -> bool {
+    pub(super) const fn whole_file_enabled(&self) -> bool {
         self.options.whole_file_enabled()
     }
 
-    pub(super) fn open_noatime_enabled(&self) -> bool {
+    pub(super) const fn open_noatime_enabled(&self) -> bool {
         self.options.open_noatime_enabled()
     }
 
-    pub(super) fn sparse_enabled(&self) -> bool {
+    pub(super) const fn sparse_enabled(&self) -> bool {
         self.options.sparse_enabled()
     }
 
-    pub(super) fn append_enabled(&self) -> bool {
+    pub(super) const fn append_enabled(&self) -> bool {
         self.options.append_enabled()
     }
 
-    pub(super) fn append_verify_enabled(&self) -> bool {
+    pub(super) const fn append_verify_enabled(&self) -> bool {
         self.options.append_verify_enabled()
     }
 
-    pub(super) fn preallocate_enabled(&self) -> bool {
+    pub(super) const fn preallocate_enabled(&self) -> bool {
         self.options.preallocate_enabled()
     }
 
-    pub(super) fn fsync_enabled(&self) -> bool {
+    pub(super) const fn fsync_enabled(&self) -> bool {
         self.options.fsync_enabled()
     }
 
-    pub(super) fn devices_enabled(&self) -> bool {
+    pub(super) const fn devices_enabled(&self) -> bool {
         self.options.devices_enabled()
     }
 
-    pub(super) fn copy_devices_as_files_enabled(&self) -> bool {
+    pub(super) const fn copy_devices_as_files_enabled(&self) -> bool {
         self.options.copy_devices_as_files_enabled()
     }
 
-    pub(super) fn specials_enabled(&self) -> bool {
+    pub(super) const fn specials_enabled(&self) -> bool {
         self.options.specials_enabled()
     }
 
-    pub(super) fn force_replacements_enabled(&self) -> bool {
+    pub(super) const fn force_replacements_enabled(&self) -> bool {
         self.options.force_replacements_enabled()
     }
 
     // Filter program accessor used by xattr sync logic.
     #[cfg(all(unix, feature = "xattr"))]
-    pub(super) fn filter_program(
+    pub(super) const fn filter_program(
         &self,
     ) -> Option<&crate::local_copy::filter_program::FilterProgram> {
         self.filter_program.as_ref()
@@ -94,39 +94,39 @@ impl<'a> CopyContext<'a> {
 
     // ACL accessor – only meaningful on Unix with ACL support.
     #[cfg(all(unix, feature = "acl"))]
-    pub(super) fn acls_enabled(&self) -> bool {
+    pub(super) const fn acls_enabled(&self) -> bool {
         self.options.acls_enabled()
     }
 
-    pub(super) fn relative_paths_enabled(&self) -> bool {
+    pub(super) const fn relative_paths_enabled(&self) -> bool {
         self.options.relative_paths_enabled()
     }
 
-    pub(super) fn recursive_enabled(&self) -> bool {
+    pub(super) const fn recursive_enabled(&self) -> bool {
         self.options.recursive_enabled()
     }
 
-    pub(super) fn dirs_enabled(&self) -> bool {
+    pub(super) const fn dirs_enabled(&self) -> bool {
         self.options.dirs_enabled()
     }
 
-    pub(super) fn implied_dirs_enabled(&self) -> bool {
+    pub(super) const fn implied_dirs_enabled(&self) -> bool {
         self.options.implied_dirs_enabled()
     }
 
-    pub(super) fn mkpath_enabled(&self) -> bool {
+    pub(super) const fn mkpath_enabled(&self) -> bool {
         self.options.mkpath_enabled()
     }
 
-    pub(super) fn prune_empty_dirs_enabled(&self) -> bool {
+    pub(super) const fn prune_empty_dirs_enabled(&self) -> bool {
         self.options.prune_empty_dirs_enabled()
     }
 
-    pub(super) fn omit_dir_times_enabled(&self) -> bool {
+    pub(super) const fn omit_dir_times_enabled(&self) -> bool {
         self.options.omit_dir_times_enabled()
     }
 
-    pub(super) fn omit_link_times_enabled(&self) -> bool {
+    pub(super) const fn omit_link_times_enabled(&self) -> bool {
         self.options.omit_link_times_enabled()
     }
 
@@ -309,11 +309,11 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    pub(super) fn remove_source_files_enabled(&self) -> bool {
+    pub(super) const fn remove_source_files_enabled(&self) -> bool {
         self.options.remove_source_files_enabled()
     }
 
-    pub(super) fn compress_enabled(&self) -> bool {
+    pub(super) const fn compress_enabled(&self) -> bool {
         self.options.compress_enabled()
     }
 
@@ -321,51 +321,51 @@ impl<'a> CopyContext<'a> {
         self.compress_enabled() && !self.options.should_skip_compress(relative)
     }
 
-    pub(super) fn compression_level(&self) -> CompressionLevel {
+    pub(super) const fn compression_level(&self) -> CompressionLevel {
         self.options.compression_level()
     }
 
-    pub(super) fn compression_algorithm(&self) -> CompressionAlgorithm {
+    pub(super) const fn compression_algorithm(&self) -> CompressionAlgorithm {
         self.options.compression_algorithm()
     }
 
-    pub(super) fn block_size_override(&self) -> Option<NonZeroU32> {
+    pub(super) const fn block_size_override(&self) -> Option<NonZeroU32> {
         self.options.block_size_override()
     }
 
-    pub(super) fn checksum_enabled(&self) -> bool {
+    pub(super) const fn checksum_enabled(&self) -> bool {
         self.options.checksum_enabled()
     }
 
-    pub(super) fn size_only_enabled(&self) -> bool {
+    pub(super) const fn size_only_enabled(&self) -> bool {
         self.options.size_only_enabled()
     }
 
-    pub(super) fn ignore_times_enabled(&self) -> bool {
+    pub(super) const fn ignore_times_enabled(&self) -> bool {
         self.options.ignore_times_enabled()
     }
 
-    pub(super) fn ignore_existing_enabled(&self) -> bool {
+    pub(super) const fn ignore_existing_enabled(&self) -> bool {
         self.options.ignore_existing_enabled()
     }
 
-    pub(super) fn existing_only_enabled(&self) -> bool {
+    pub(super) const fn existing_only_enabled(&self) -> bool {
         self.options.existing_only_enabled()
     }
 
-    pub(super) fn ignore_missing_args_enabled(&self) -> bool {
+    pub(super) const fn ignore_missing_args_enabled(&self) -> bool {
         self.options.ignore_missing_args_enabled()
     }
 
-    pub(super) fn delete_missing_args_enabled(&self) -> bool {
+    pub(super) const fn delete_missing_args_enabled(&self) -> bool {
         self.options.delete_missing_args_enabled()
     }
 
-    pub(super) fn update_enabled(&self) -> bool {
+    pub(super) const fn update_enabled(&self) -> bool {
         self.options.update_enabled()
     }
 
-    pub(super) fn partial_enabled(&self) -> bool {
+    pub(super) const fn partial_enabled(&self) -> bool {
         self.options.partial_enabled()
     }
 
@@ -377,13 +377,13 @@ impl<'a> CopyContext<'a> {
         self.options.temp_directory_path()
     }
 
-    pub(super) fn inplace_enabled(&self) -> bool {
+    pub(super) const fn inplace_enabled(&self) -> bool {
         self.options.inplace_enabled()
     }
 
     #[cfg(unix)]
     #[cfg(feature = "xattr")]
-    pub(super) fn xattrs_enabled(&self) -> bool {
+    pub(super) const fn xattrs_enabled(&self) -> bool {
         self.options.preserve_xattrs()
     }
 
@@ -442,7 +442,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// Returns a reference to the batch writer if batch mode is enabled,
     /// or None if batch mode is not active.
-    pub(super) fn batch_writer(
+    pub(super) const fn batch_writer(
         &self,
     ) -> Option<&std::sync::Arc<std::sync::Mutex<crate::batch::BatchWriter>>> {
         self.options.get_batch_writer()

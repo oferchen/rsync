@@ -17,31 +17,31 @@ pub struct LocalCopyError {
 }
 
 impl LocalCopyError {
-    fn new(kind: LocalCopyErrorKind) -> Self {
+    const fn new(kind: LocalCopyErrorKind) -> Self {
         Self { kind }
     }
 
     /// Constructs an error representing missing operands.
     #[must_use]
-    pub fn missing_operands() -> Self {
+    pub const fn missing_operands() -> Self {
         Self::new(LocalCopyErrorKind::MissingSourceOperands)
     }
 
     /// Constructs an invalid-argument error.
     #[must_use]
-    pub fn invalid_argument(reason: LocalCopyArgumentError) -> Self {
+    pub const fn invalid_argument(reason: LocalCopyArgumentError) -> Self {
         Self::new(LocalCopyErrorKind::InvalidArgument(reason))
     }
 
     /// Constructs an error indicating that the deletion limit was exceeded.
     #[must_use]
-    pub fn delete_limit_exceeded(skipped: u64) -> Self {
+    pub const fn delete_limit_exceeded(skipped: u64) -> Self {
         Self::new(LocalCopyErrorKind::DeleteLimitExceeded { skipped })
     }
 
     /// Constructs an I/O error with action context.
     #[must_use]
-    pub fn io(action: &'static str, path: PathBuf, source: io::Error) -> Self {
+    pub const fn io(action: &'static str, path: PathBuf, source: io::Error) -> Self {
         Self::new(LocalCopyErrorKind::Io {
             action,
             path,
@@ -51,13 +51,13 @@ impl LocalCopyError {
 
     /// Constructs an error representing an inactivity timeout.
     #[must_use]
-    pub fn timeout(duration: Duration) -> Self {
+    pub const fn timeout(duration: Duration) -> Self {
         Self::new(LocalCopyErrorKind::Timeout { duration })
     }
 
     /// Constructs an error indicating the configured stop-at deadline was reached.
     #[must_use]
-    pub fn stop_at_reached(target: SystemTime) -> Self {
+    pub const fn stop_at_reached(target: SystemTime) -> Self {
         Self::new(LocalCopyErrorKind::StopAtReached { target })
     }
 
@@ -77,7 +77,7 @@ impl LocalCopyError {
 
     /// Provides access to the underlying error kind.
     #[must_use]
-    pub fn kind(&self) -> &LocalCopyErrorKind {
+    pub const fn kind(&self) -> &LocalCopyErrorKind {
         &self.kind
     }
 

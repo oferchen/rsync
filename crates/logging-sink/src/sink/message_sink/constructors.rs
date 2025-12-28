@@ -23,7 +23,7 @@ impl<W> MessageSink<W> {
 
     /// Creates a sink with the provided [`LineMode`] and [`Brand`].
     #[must_use]
-    pub fn with_line_mode_and_brand(writer: W, line_mode: LineMode, brand: Brand) -> Self {
+    pub const fn with_line_mode_and_brand(writer: W, line_mode: LineMode, brand: Brand) -> Self {
         Self::with_parts_and_brand(writer, MessageScratch::new(), line_mode, brand)
     }
 
@@ -35,13 +35,13 @@ impl<W> MessageSink<W> {
     /// ownership model used throughout the workspace to avoid hidden
     /// allocations.
     #[must_use]
-    pub fn with_parts(writer: W, scratch: MessageScratch, line_mode: LineMode) -> Self {
+    pub const fn with_parts(writer: W, scratch: MessageScratch, line_mode: LineMode) -> Self {
         Self::with_parts_and_brand(writer, scratch, line_mode, Brand::Upstream)
     }
 
     /// Creates a sink from explicit [`MessageScratch`], [`LineMode`], and [`Brand`].
     #[must_use]
-    pub fn with_parts_and_brand(
+    pub const fn with_parts_and_brand(
         writer: W,
         scratch: MessageScratch,
         line_mode: LineMode,

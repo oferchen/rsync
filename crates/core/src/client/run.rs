@@ -286,7 +286,7 @@ struct LocalCopyOptionsBuilder<'a> {
 }
 
 impl<'a> LocalCopyOptionsBuilder<'a> {
-    fn new(config: &'a ClientConfig, filter_program: Option<FilterProgram>) -> Self {
+    const fn new(config: &'a ClientConfig, filter_program: Option<FilterProgram>) -> Self {
         Self {
             config,
             filter_program,
@@ -310,7 +310,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         options
     }
 
-    fn apply_recursion_and_delete(
+    const fn apply_recursion_and_delete(
         &self,
         mut options: LocalCopyOptions,
         config: &ClientConfig,

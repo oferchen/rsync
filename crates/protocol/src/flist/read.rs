@@ -83,21 +83,21 @@ impl FileListReader {
 
     /// Sets whether UID values should be read from the wire.
     #[must_use]
-    pub fn with_preserve_uid(mut self, preserve: bool) -> Self {
+    pub const fn with_preserve_uid(mut self, preserve: bool) -> Self {
         self.preserve_uid = preserve;
         self
     }
 
     /// Sets whether GID values should be read from the wire.
     #[must_use]
-    pub fn with_preserve_gid(mut self, preserve: bool) -> Self {
+    pub const fn with_preserve_gid(mut self, preserve: bool) -> Self {
         self.preserve_gid = preserve;
         self
     }
 
     /// Sets the filename encoding converter for iconv support.
     #[must_use]
-    pub fn with_iconv(mut self, converter: FilenameConverter) -> Self {
+    pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
         self
     }

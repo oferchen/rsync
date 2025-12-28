@@ -56,7 +56,7 @@ impl LocalCopyOptions {
     /// Configures an optional inactivity timeout.
     #[must_use]
     #[doc(alias = "--timeout")]
-    pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+    pub const fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
         self
     }
@@ -65,7 +65,7 @@ impl LocalCopyOptions {
     #[must_use]
     #[doc(alias = "--stop-after")]
     #[doc(alias = "--stop-at")]
-    pub fn with_stop_at(mut self, deadline: Option<SystemTime>) -> Self {
+    pub const fn with_stop_at(mut self, deadline: Option<SystemTime>) -> Self {
         self.stop_at = deadline;
         self
     }

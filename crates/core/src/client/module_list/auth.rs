@@ -15,7 +15,7 @@ pub(crate) struct DaemonAuthContext {
 }
 
 impl DaemonAuthContext {
-    pub(crate) fn new(username: String, secret: Vec<u8>, digest: DaemonAuthDigest) -> Self {
+    pub(crate) const fn new(username: String, secret: Vec<u8>, digest: DaemonAuthDigest) -> Self {
         Self {
             username,
             secret: SensitiveBytes::new(secret),
@@ -27,7 +27,7 @@ impl DaemonAuthContext {
         self.secret.as_slice()
     }
 
-    pub(crate) fn digest(&self) -> DaemonAuthDigest {
+    pub(crate) const fn digest(&self) -> DaemonAuthDigest {
         self.digest
     }
 
@@ -41,7 +41,7 @@ impl DaemonAuthContext {
 pub(crate) struct SensitiveBytes(Vec<u8>);
 
 impl SensitiveBytes {
-    pub(crate) fn new(bytes: Vec<u8>) -> Self {
+    pub(crate) const fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
 

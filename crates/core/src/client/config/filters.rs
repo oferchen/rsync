@@ -64,7 +64,7 @@ impl FilterRuleSpec {
 
     /// Creates a rule that clears previously defined filter rules.
     #[must_use]
-    pub fn clear() -> Self {
+    pub const fn clear() -> Self {
         Self {
             kind: FilterRuleKind::Clear,
             pattern: String::new(),
@@ -163,7 +163,7 @@ impl FilterRuleSpec {
     }
 
     /// Applies per-directory merge options to the rule.
-    pub fn with_dir_merge_options(mut self, options: DirMergeOptions) -> Self {
+    pub const fn with_dir_merge_options(mut self, options: DirMergeOptions) -> Self {
         self.dir_merge_options = Some(options);
         self
     }
@@ -188,7 +188,7 @@ impl FilterRuleSpec {
 
     /// Returns the per-directory merge options when present.
     #[must_use]
-    pub fn dir_merge_options(&self) -> Option<&DirMergeOptions> {
+    pub const fn dir_merge_options(&self) -> Option<&DirMergeOptions> {
         self.dir_merge_options.as_ref()
     }
 

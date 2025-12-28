@@ -15,7 +15,7 @@ pub(crate) struct StopRequest {
 }
 
 impl StopRequest {
-    pub(crate) fn new_stop_after(value: OsString, deadline: SystemTime) -> Self {
+    pub(crate) const fn new_stop_after(value: OsString, deadline: SystemTime) -> Self {
         Self {
             kind: StopRequestKind::StopAfter,
             value,
@@ -23,7 +23,7 @@ impl StopRequest {
         }
     }
 
-    pub(crate) fn new_stop_at(value: OsString, deadline: SystemTime) -> Self {
+    pub(crate) const fn new_stop_at(value: OsString, deadline: SystemTime) -> Self {
         Self {
             kind: StopRequestKind::StopAt,
             value,
@@ -39,7 +39,7 @@ impl StopRequest {
 
     /// Returns the original CLI value
     #[allow(dead_code)]
-    pub(crate) fn cli_value(&self) -> &OsString {
+    pub(crate) const fn cli_value(&self) -> &OsString {
         &self.value
     }
 

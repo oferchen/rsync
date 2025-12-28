@@ -103,7 +103,7 @@ pub(crate) struct FinalizeMetadataParams<'a> {
 
 impl<'a> FinalizeMetadataParams<'a> {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(crate) const fn new(
         metadata: &'a fs::Metadata,
         metadata_options: MetadataOptions,
         mode: LocalCopyExecution,
@@ -137,18 +137,18 @@ pub(crate) struct FileCopyOutcome {
 }
 
 impl FileCopyOutcome {
-    fn new(literal_bytes: u64, compressed_bytes: Option<u64>) -> Self {
+    const fn new(literal_bytes: u64, compressed_bytes: Option<u64>) -> Self {
         Self {
             literal_bytes,
             compressed_bytes,
         }
     }
 
-    pub(crate) fn literal_bytes(self) -> u64 {
+    pub(crate) const fn literal_bytes(self) -> u64 {
         self.literal_bytes
     }
 
-    pub(crate) fn compressed_bytes(self) -> Option<u64> {
+    pub(crate) const fn compressed_bytes(self) -> Option<u64> {
         self.compressed_bytes
     }
 }
@@ -162,7 +162,7 @@ pub(crate) struct MatchedBlock<'a> {
 
 impl<'a> MatchedBlock<'a> {
     /// Creates a matched block descriptor from a [`SignatureBlock`] and its canonical length.
-    fn new(descriptor: &'a SignatureBlock, canonical_length: usize) -> Self {
+    const fn new(descriptor: &'a SignatureBlock, canonical_length: usize) -> Self {
         Self {
             descriptor,
             canonical_length,
@@ -170,12 +170,12 @@ impl<'a> MatchedBlock<'a> {
     }
 
     /// Returns the matched [`SignatureBlock`].
-    fn descriptor(&self) -> &'a SignatureBlock {
+    const fn descriptor(&self) -> &'a SignatureBlock {
         self.descriptor
     }
 
     /// Calculates the byte offset of the block within the destination file.
-    fn offset(&self) -> u64 {
+    const fn offset(&self) -> u64 {
         self.descriptor
             .index()
             .saturating_mul(self.canonical_length as u64)
@@ -206,7 +206,7 @@ pub(crate) struct DeferredUpdate {
 
 impl DeferredUpdate {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(crate) const fn new(
         guard: DestinationWriteGuard,
         metadata: fs::Metadata,
         metadata_options: MetadataOptions,
@@ -276,7 +276,7 @@ pub(crate) struct DirectoryFilterGuard {
 }
 
 impl DirectoryFilterGuard {
-    fn new(
+    const fn new(
         handles: DirectoryFilterHandles,
         indices: Vec<usize>,
         marker_counts: Vec<(usize, usize)>,
@@ -292,7 +292,7 @@ impl DirectoryFilterGuard {
         }
     }
 
-    pub(crate) fn is_excluded(&self) -> bool {
+    pub(crate) const fn is_excluded(&self) -> bool {
         self.excluded
     }
 }

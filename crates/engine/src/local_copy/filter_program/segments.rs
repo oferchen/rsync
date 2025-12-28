@@ -30,7 +30,7 @@ impl FilterSegment {
         Ok(())
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.include_exclude.is_empty() && self.protect_risk.is_empty()
     }
 
@@ -117,7 +117,7 @@ pub(crate) struct FilterOutcome {
 }
 
 impl FilterOutcome {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             transfer_allowed: true,
             protected: false,
@@ -125,31 +125,31 @@ impl FilterOutcome {
         }
     }
 
-    pub(crate) fn allows_transfer(self) -> bool {
+    pub(crate) const fn allows_transfer(self) -> bool {
         self.transfer_allowed
     }
 
-    pub(crate) fn allows_deletion(self) -> bool {
+    pub(crate) const fn allows_deletion(self) -> bool {
         self.transfer_allowed && !self.protected
     }
 
-    pub(crate) fn allows_deletion_when_excluded_removed(self) -> bool {
+    pub(crate) const fn allows_deletion_when_excluded_removed(self) -> bool {
         self.excluded_for_delete_excluded && !self.protected
     }
 
-    fn set_transfer_allowed(&mut self, allowed: bool) {
+    const fn set_transfer_allowed(&mut self, allowed: bool) {
         self.transfer_allowed = allowed;
     }
 
-    fn protect(&mut self) {
+    const fn protect(&mut self) {
         self.protected = true;
     }
 
-    fn unprotect(&mut self) {
+    const fn unprotect(&mut self) {
         self.protected = false;
     }
 
-    fn set_delete_excluded(&mut self, excluded: bool) {
+    const fn set_delete_excluded(&mut self, excluded: bool) {
         self.excluded_for_delete_excluded = excluded;
     }
 }

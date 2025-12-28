@@ -126,7 +126,7 @@ impl ParsedServerFlags {
         Ok(flags)
     }
 
-    fn parse_transfer_flag(&mut self, byte: u8) {
+    const fn parse_transfer_flag(&mut self, byte: u8) {
         match byte {
             b'l' => self.links = true,
             b'o' => self.owner = true,
@@ -163,7 +163,7 @@ impl ParsedServerFlags {
 }
 
 impl InfoFlags {
-    fn parse_info_flag(&mut self, byte: u8) {
+    const fn parse_info_flag(&mut self, byte: u8) {
         match byte {
             b'i' => self.itemize = true,
             b'L' => self.log_format = true,

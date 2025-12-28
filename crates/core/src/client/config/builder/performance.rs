@@ -5,7 +5,7 @@ impl ClientConfigBuilder {
     /// Configures the optional bandwidth limit to apply during transfers.
     #[must_use]
     #[doc(alias = "--bwlimit")]
-    pub fn bandwidth_limit(mut self, limit: Option<BandwidthLimit>) -> Self {
+    pub const fn bandwidth_limit(mut self, limit: Option<BandwidthLimit>) -> Self {
         self.bandwidth_limit = limit;
         self
     }
@@ -80,7 +80,7 @@ impl ClientConfigBuilder {
     #[doc(alias = "--whole-file")]
     #[doc(alias = "-W")]
     #[doc(alias = "--no-whole-file")]
-    pub fn whole_file(mut self, whole_file: bool) -> Self {
+    pub const fn whole_file(mut self, whole_file: bool) -> Self {
         self.whole_file = Some(whole_file);
         self
     }

@@ -149,7 +149,7 @@ fn finish_token(args: &mut Vec<OsString>, current: &mut Vec<u8>, token_started: 
     *token_started = false;
 }
 
-fn is_ascii_whitespace(byte: u8) -> bool {
+const fn is_ascii_whitespace(byte: u8) -> bool {
     matches!(
         byte,
         b' ' | b'\t' | b'\n' | b'\r' | b'\x0b' | b'\x0c' // space, tab, newline, carriage return, vertical tab, form feed

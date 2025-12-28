@@ -80,7 +80,7 @@ impl BandwidthLimiter {
     }
 
     /// Resets the limiter while keeping the current configuration.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.total_written = 0;
         self.last_instant = None;
         self.simulated_elapsed_us = 0;
@@ -180,7 +180,7 @@ impl BandwidthLimiter {
 
     #[cfg(any(test, feature = "test-support"))]
     #[allow(dead_code)]
-    pub(crate) fn accumulated_debt_for_testing(&self) -> u128 {
+    pub(crate) const fn accumulated_debt_for_testing(&self) -> u128 {
         self.total_written
     }
 }

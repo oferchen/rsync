@@ -162,7 +162,7 @@ impl BatchFlags {
     }
 
     /// Convert flags to a bitmap.
-    pub fn to_bitmap(&self, protocol_version: i32) -> i32 {
+    pub const fn to_bitmap(&self, protocol_version: i32) -> i32 {
         let mut bitmap = 0i32;
 
         if self.recurse {
@@ -351,7 +351,7 @@ pub struct FileEntry {
 
 impl FileEntry {
     /// Create a new file entry.
-    pub fn new(path: String, mode: u32, size: u64, mtime: i64) -> Self {
+    pub const fn new(path: String, mode: u32, size: u64, mtime: i64) -> Self {
         Self {
             path,
             mode,

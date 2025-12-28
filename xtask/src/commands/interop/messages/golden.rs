@@ -27,7 +27,7 @@ pub struct StoredMessage {
 
 impl GoldenMessages {
     /// Create a new golden messages database.
-    pub fn new(version: String) -> Self {
+    pub const fn new(version: String) -> Self {
         Self {
             version,
             messages: Vec::new(),
