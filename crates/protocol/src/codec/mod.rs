@@ -134,12 +134,14 @@ impl ProtocolCodecs {
 
     /// Returns the protocol version these codecs are configured for.
     #[must_use]
+    #[inline]
     pub fn protocol_version(&self) -> u8 {
         self.wire.protocol_version()
     }
 
     /// Returns `true` if these are legacy codecs (protocol < 30).
     #[must_use]
+    #[inline]
     pub fn is_legacy(&self) -> bool {
         self.wire.is_legacy()
     }
