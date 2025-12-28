@@ -172,3 +172,99 @@ impl LocalCopyMetadata {
         self.symlink_target.as_deref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== LocalCopyFileKind tests ====================
+
+    #[test]
+    fn file_kind_is_directory_returns_true_for_directory() {
+        assert!(LocalCopyFileKind::Directory.is_directory());
+    }
+
+    #[test]
+    fn file_kind_is_directory_returns_false_for_file() {
+        assert!(!LocalCopyFileKind::File.is_directory());
+    }
+
+    #[test]
+    fn file_kind_is_directory_returns_false_for_symlink() {
+        assert!(!LocalCopyFileKind::Symlink.is_directory());
+    }
+
+    #[test]
+    fn file_kind_is_directory_returns_false_for_fifo() {
+        assert!(!LocalCopyFileKind::Fifo.is_directory());
+    }
+
+    #[test]
+    fn file_kind_is_directory_returns_false_for_char_device() {
+        assert!(!LocalCopyFileKind::CharDevice.is_directory());
+    }
+
+    #[test]
+    fn file_kind_is_directory_returns_false_for_block_device() {
+        assert!(!LocalCopyFileKind::BlockDevice.is_directory());
+    }
+
+    #[test]
+    fn file_kind_is_directory_returns_false_for_socket() {
+        assert!(!LocalCopyFileKind::Socket.is_directory());
+    }
+
+    #[test]
+    fn file_kind_is_directory_returns_false_for_other() {
+        assert!(!LocalCopyFileKind::Other.is_directory());
+    }
+
+    #[test]
+    fn file_kind_clone_produces_equal_value() {
+        let kind = LocalCopyFileKind::File;
+        let cloned = kind;
+        assert_eq!(kind, cloned);
+    }
+
+    #[test]
+    fn file_kind_copy_produces_equal_value() {
+        let kind = LocalCopyFileKind::Directory;
+        let copied = kind;
+        assert_eq!(kind, copied);
+    }
+
+    #[test]
+    fn file_kind_debug_format_contains_variant_name() {
+        let file = LocalCopyFileKind::File;
+        assert!(format!("{file:?}").contains("File"));
+
+        let dir = LocalCopyFileKind::Directory;
+        assert!(format!("{dir:?}").contains("Directory"));
+
+        let symlink = LocalCopyFileKind::Symlink;
+        assert!(format!("{symlink:?}").contains("Symlink"));
+    }
+
+    #[test]
+    fn file_kind_equality_same_variant() {
+        assert_eq!(LocalCopyFileKind::File, LocalCopyFileKind::File);
+        assert_eq!(LocalCopyFileKind::Directory, LocalCopyFileKind::Directory);
+        assert_eq!(LocalCopyFileKind::Symlink, LocalCopyFileKind::Symlink);
+        assert_eq!(LocalCopyFileKind::Fifo, LocalCopyFileKind::Fifo);
+        assert_eq!(LocalCopyFileKind::CharDevice, LocalCopyFileKind::CharDevice);
+        assert_eq!(LocalCopyFileKind::BlockDevice, LocalCopyFileKind::BlockDevice);
+        assert_eq!(LocalCopyFileKind::Socket, LocalCopyFileKind::Socket);
+        assert_eq!(LocalCopyFileKind::Other, LocalCopyFileKind::Other);
+    }
+
+    #[test]
+    fn file_kind_inequality_different_variants() {
+        assert_ne!(LocalCopyFileKind::File, LocalCopyFileKind::Directory);
+        assert_ne!(LocalCopyFileKind::Directory, LocalCopyFileKind::Symlink);
+        assert_ne!(LocalCopyFileKind::Symlink, LocalCopyFileKind::Fifo);
+        assert_ne!(LocalCopyFileKind::Fifo, LocalCopyFileKind::CharDevice);
+        assert_ne!(LocalCopyFileKind::CharDevice, LocalCopyFileKind::BlockDevice);
+        assert_ne!(LocalCopyFileKind::BlockDevice, LocalCopyFileKind::Socket);
+        assert_ne!(LocalCopyFileKind::Socket, LocalCopyFileKind::Other);
+    }
+}

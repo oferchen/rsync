@@ -116,3 +116,145 @@ pub(super) fn parse_short_merge_directive_line(
         options,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== parse_merge_directive tests ====================
+
+    #[test]
+    fn parse_merge_directive_returns_none_for_non_merge() {
+        let result = parse_merge_directive("include *.txt");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_merge_directive_returns_none_for_short_text() {
+        let result = parse_merge_directive("merg");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_merge_directive_parses_simple_merge() {
+        let result = parse_merge_directive("merge .rsync-filter");
+        assert!(result.is_ok());
+        let directive = result.unwrap().unwrap();
+        match directive {
+            ParsedFilterDirective::Merge { path, options } => {
+                assert_eq!(path, PathBuf::from(".rsync-filter"));
+                assert!(options.is_none());
+            }
+            _ => panic!("expected Merge directive"),
+        }
+    }
+
+    #[test]
+    fn parse_merge_directive_case_insensitive() {
+        let result = parse_merge_directive("MERGE .rsync-filter");
+        assert!(result.is_ok());
+        let directive = result.unwrap().unwrap();
+        match directive {
+            ParsedFilterDirective::Merge { path, .. } => {
+                assert_eq!(path, PathBuf::from(".rsync-filter"));
+            }
+            _ => panic!("expected Merge directive"),
+        }
+    }
+
+    #[test]
+    fn parse_merge_directive_with_underscore() {
+        let result = parse_merge_directive("merge_.rsync-filter");
+        assert!(result.is_ok());
+        let directive = result.unwrap().unwrap();
+        match directive {
+            ParsedFilterDirective::Merge { path, .. } => {
+                assert_eq!(path, PathBuf::from(".rsync-filter"));
+            }
+            _ => panic!("expected Merge directive"),
+        }
+    }
+
+    #[test]
+    fn parse_merge_directive_error_on_stdin() {
+        let result = parse_merge_directive("merge -");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_merge_directive_error_missing_path() {
+        let result = parse_merge_directive("merge ");
+        assert!(result.is_err());
+    }
+
+    // ==================== parse_short_merge_directive_line tests ====================
+
+    #[test]
+    fn parse_short_merge_returns_none_for_empty() {
+        let result = parse_short_merge_directive_line("");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_short_merge_returns_none_for_non_merge_prefix() {
+        let result = parse_short_merge_directive_line("+ *.txt");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_short_merge_dot_prefix() {
+        let result = parse_short_merge_directive_line(". .rsync-filter");
+        assert!(result.is_ok());
+        let directive = result.unwrap().unwrap();
+        match directive {
+            ParsedFilterDirective::Merge { path, options } => {
+                assert_eq!(path, PathBuf::from(".rsync-filter"));
+                assert!(options.is_none());
+            }
+            _ => panic!("expected Merge directive"),
+        }
+    }
+
+    #[test]
+    fn parse_short_merge_colon_prefix() {
+        let result = parse_short_merge_directive_line(": .rsync-filter");
+        assert!(result.is_ok());
+        let directive = result.unwrap().unwrap();
+        match directive {
+            ParsedFilterDirective::Merge { path, options } => {
+                assert_eq!(path, PathBuf::from(".rsync-filter"));
+                assert!(options.is_some());
+            }
+            _ => panic!("expected Merge directive"),
+        }
+    }
+
+    #[test]
+    fn parse_short_merge_colon_error_missing_filename() {
+        let result = parse_short_merge_directive_line(":");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_short_merge_dot_error_missing_path() {
+        let result = parse_short_merge_directive_line(".");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_short_merge_trims_pattern() {
+        let result = parse_short_merge_directive_line(".   .rsync-filter   ");
+        assert!(result.is_ok());
+        let directive = result.unwrap().unwrap();
+        match directive {
+            ParsedFilterDirective::Merge { path, .. } => {
+                assert_eq!(path, PathBuf::from(".rsync-filter"));
+            }
+            _ => panic!("expected Merge directive"),
+        }
+    }
+}
