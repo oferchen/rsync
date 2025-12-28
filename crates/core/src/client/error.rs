@@ -55,6 +55,7 @@ impl ClientError {
     }
 }
 
+#[cold]
 pub(crate) fn missing_operands_error() -> ClientError {
     let message = rsync_error!(
         PARTIAL_TRANSFER_EXIT_CODE,
@@ -65,6 +66,7 @@ pub(crate) fn missing_operands_error() -> ClientError {
     ClientError::new(PARTIAL_TRANSFER_EXIT_CODE, message)
 }
 
+#[cold]
 #[allow(dead_code)]
 pub(crate) fn fallback_disabled_error() -> ClientError {
     let message = rsync_error!(
@@ -75,11 +77,13 @@ pub(crate) fn fallback_disabled_error() -> ClientError {
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
+#[cold]
 pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError {
     let message = rsync_error!(exit_code, "{}", text).with_role(Role::Client);
     ClientError::new(exit_code, message)
 }
 
+#[cold]
 pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
     let exit_code = error.exit_code();
     match error.into_kind() {
@@ -115,12 +119,14 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
     }
 }
 
+#[cold]
 pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> ClientError {
     let text = format!("failed to compile filter pattern '{pattern}': {error}");
     let message = rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Client);
     ClientError::new(FEATURE_UNAVAILABLE_EXIT_CODE, message)
 }
 
+#[cold]
 pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
     let path_display = path.display();
     let text = format!("failed to {action} '{path_display}': {error}");
@@ -130,6 +136,7 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
     ClientError::new(PARTIAL_TRANSFER_EXIT_CODE, message)
 }
 
+#[cold]
 pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientError {
     let path_display = path.display();
     let text = format!("failed to access destination directory '{path_display}': {error}");
@@ -139,6 +146,7 @@ pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientE
     ClientError::new(FILE_SELECTION_EXIT_CODE, message)
 }
 
+#[cold]
 pub(crate) fn socket_error(
     action: &str,
     target: impl fmt::Display,
@@ -149,11 +157,13 @@ pub(crate) fn socket_error(
     ClientError::new(SOCKET_IO_EXIT_CODE, message)
 }
 
+#[cold]
 pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientError {
     let message = rsync_error!(exit_code, "{}", text.into()).with_role(Role::Client);
     ClientError::new(exit_code, message)
 }
 
+#[cold]
 pub(crate) fn daemon_protocol_error(text: &str) -> ClientError {
     daemon_error(
         format!("unexpected response from daemon: {text}"),
@@ -161,6 +171,7 @@ pub(crate) fn daemon_protocol_error(text: &str) -> ClientError {
     )
 }
 
+#[cold]
 pub(crate) fn daemon_authentication_required_error(reason: &str) -> ClientError {
     let detail = if reason.is_empty() {
         "daemon requires authentication for module listing".to_string()
@@ -171,6 +182,7 @@ pub(crate) fn daemon_authentication_required_error(reason: &str) -> ClientError 
     daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
 }
 
+#[cold]
 pub(crate) fn daemon_authentication_failed_error(reason: Option<&str>) -> ClientError {
     let detail = match reason {
         Some(text) if !text.is_empty() => {
@@ -182,6 +194,7 @@ pub(crate) fn daemon_authentication_failed_error(reason: Option<&str>) -> Client
     daemon_error(detail, FEATURE_UNAVAILABLE_EXIT_CODE)
 }
 
+#[cold]
 pub(crate) fn daemon_access_denied_error(reason: &str) -> ClientError {
     let detail = if reason.is_empty() {
         "daemon denied access to module listing".to_string()
@@ -192,6 +205,7 @@ pub(crate) fn daemon_access_denied_error(reason: &str) -> ClientError {
     daemon_error(detail, PARTIAL_TRANSFER_EXIT_CODE)
 }
 
+#[cold]
 pub(crate) fn daemon_listing_unavailable_error(reason: &str) -> ClientError {
     let trimmed = reason.trim();
     let detail = if trimmed.is_empty() {
