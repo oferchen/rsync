@@ -34,7 +34,7 @@ pub const fn openssl_acceleration_available() -> bool {
 pub use sha1::Sha1;
 pub use sha256::Sha256;
 pub use sha512::Sha512;
-pub use xxhash::{Xxh3, Xxh3_128, Xxh64};
+pub use xxhash::{Xxh3, Xxh3_128, Xxh64, xxh3_simd_available};
 
 /// Trait implemented by strong checksum algorithms used by rsync.
 ///
