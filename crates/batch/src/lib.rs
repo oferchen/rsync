@@ -1,6 +1,8 @@
+//! crates/batch/src/lib.rs
+//!
 //! Batch mode support for offline/disconnected transfer workflows.
 //!
-//! This module implements rsync's batch mode functionality, which allows
+//! This crate implements rsync's batch mode functionality, which allows
 //! recording a transfer operation to a file and replaying it later. This
 //! is useful for scenarios where the source and destination are not
 //! simultaneously available, or for distributing the same changes to
@@ -58,6 +60,7 @@
 //! # Creates batch files but doesn't modify dest/
 //! ```
 
+mod error;
 pub mod format;
 pub mod reader;
 pub mod script;
@@ -66,9 +69,13 @@ pub mod writer;
 #[cfg(test)]
 mod tests;
 
+pub use error::{BatchError, BatchResult};
 pub use format::{BatchFlags, BatchHeader, FileEntry};
 pub use reader::BatchReader;
 pub use writer::BatchWriter;
+
+// Re-export DeltaOp from protocol for read_all_delta_ops return type
+pub use protocol::wire::DeltaOp;
 
 use std::path::Path;
 
