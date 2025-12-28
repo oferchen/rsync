@@ -40,6 +40,7 @@ pub enum SignatureAlgorithm {
 
 impl SignatureAlgorithm {
     /// Returns the full digest width produced by the algorithm in bytes.
+    #[inline]
     #[must_use]
     pub const fn digest_len(self) -> usize {
         match self {
