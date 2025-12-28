@@ -350,20 +350,20 @@ fn set_timestamp_like(
 ///     .preserve_permissions(true)
 ///     .preserve_times(true);
 ///
-/// apply_metadata_from_file_entry(dest_path, file_entry, options)?;
+/// apply_metadata_from_file_entry(dest_path, file_entry, &options)?;
 /// # Ok(())
 /// # }
 /// ```
 pub fn apply_metadata_from_file_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
-    options: MetadataOptions,
+    options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
     // Step 1: Apply ownership (if requested)
-    apply_ownership_from_entry(destination, entry, &options)?;
+    apply_ownership_from_entry(destination, entry, options)?;
 
     // Step 2: Apply permissions (if requested)
-    apply_permissions_from_entry(destination, entry, &options)?;
+    apply_permissions_from_entry(destination, entry, options)?;
 
     // Step 3: Apply timestamps (if requested)
     if options.times() {
@@ -1047,8 +1047,8 @@ mod tests {
         let mut entry = FileEntry::new_file("entry-dest.txt".into(), 4, 0o644);
         entry.set_mtime(1_700_000_000, 123_456_789);
 
-        apply_metadata_from_file_entry(&dest, &entry, MetadataOptions::new().preserve_times(true))
-            .expect("apply from entry");
+        let opts = MetadataOptions::new().preserve_times(true);
+        apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry");
 
         let dest_meta = fs::metadata(&dest).expect("dest metadata");
         let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
@@ -1068,8 +1068,8 @@ mod tests {
 
         let entry = FileEntry::new_file("entry-notime.txt".into(), 4, 0o644);
 
-        apply_metadata_from_file_entry(&dest, &entry, MetadataOptions::new().preserve_times(false))
-            .expect("apply from entry");
+        let opts = MetadataOptions::new().preserve_times(false);
+        apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry");
 
         // Should succeed without modifying times
         assert!(fs::metadata(&dest).is_ok());
@@ -1088,14 +1088,10 @@ mod tests {
 
         let entry = FileEntry::new_file("entry-perms.txt".into(), 4, 0o755);
 
-        apply_metadata_from_file_entry(
-            &dest,
-            &entry,
-            MetadataOptions::new()
-                .preserve_permissions(true)
-                .preserve_times(false),
-        )
-        .expect("apply from entry");
+        let opts = MetadataOptions::new()
+            .preserve_permissions(true)
+            .preserve_times(false);
+        apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry");
 
         let mode = current_mode(&dest) & 0o777;
         assert_eq!(mode, 0o755);
@@ -1114,14 +1110,10 @@ mod tests {
 
         let entry = FileEntry::new_file("entry-noperms.txt".into(), 4, 0o755);
 
-        apply_metadata_from_file_entry(
-            &dest,
-            &entry,
-            MetadataOptions::new()
-                .preserve_permissions(false)
-                .preserve_times(false),
-        )
-        .expect("apply from entry");
+        let opts = MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false);
+        apply_metadata_from_file_entry(&dest, &entry, &opts).expect("apply from entry");
 
         let mode = current_mode(&dest) & 0o777;
         // Should still be original mode
