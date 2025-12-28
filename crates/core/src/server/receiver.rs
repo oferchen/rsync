@@ -34,8 +34,8 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
-use protocol::filters::read_filter_list;
 use protocol::codec::{NdxCodec, create_ndx_codec};
+use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
 use protocol::wire::DeltaOp;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
