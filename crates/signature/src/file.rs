@@ -38,18 +38,21 @@ impl FileSignature {
     }
 
     /// Returns the layout used to generate the signature.
+    #[inline]
     #[must_use]
     pub const fn layout(&self) -> SignatureLayout {
         self.layout
     }
 
     /// Returns the list of block entries in the order they were generated.
+    #[inline]
     #[must_use]
     pub fn blocks(&self) -> &[SignatureBlock] {
         &self.blocks
     }
 
     /// Returns the total number of bytes consumed while generating the signature.
+    #[inline]
     #[must_use]
     pub const fn total_bytes(&self) -> u64 {
         self.total_bytes
