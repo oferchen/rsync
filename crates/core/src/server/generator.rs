@@ -600,14 +600,9 @@ impl GeneratorContext {
         let mut indices: Vec<usize> = (0..self.file_list.len()).collect();
         indices.sort_by(|&a, &b| compare_file_entries(&file_list_ref[a], &file_list_ref[b]));
 
-        // Reorder both arrays according to sorted indices
-        let sorted_entries: Vec<_> = indices.iter().map(|&i| self.file_list[i].clone()).collect();
-        let sorted_paths: Vec<_> = indices
-            .iter()
-            .map(|&i| self.full_paths[i].clone())
-            .collect();
-        self.file_list = sorted_entries;
-        self.full_paths = sorted_paths;
+        // Apply permutation in-place using cycle-following algorithm.
+        // This avoids cloning every element - O(n) swaps instead of O(n) clones.
+        apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
 
         // Record end time for flist_buildtime statistic
         self.flist_build_end = Some(Instant::now());
@@ -1290,6 +1285,51 @@ fn script_to_wire_delta(script: &DeltaScript) -> Vec<DeltaOp> {
             },
         })
         .collect()
+}
+
+/// Applies a source-based permutation to two slices in-place using cycle-following.
+///
+/// This reorders elements according to the permutation `source_indices` without
+/// cloning elements - only swaps are used. The algorithm inverts the permutation
+/// and then follows each cycle, placing elements in their final positions.
+///
+/// # Arguments
+/// * `slice_a` - First slice to reorder
+/// * `slice_b` - Second slice to reorder (must have same length)
+/// * `source_indices` - Source-based permutation where `source_indices[i]` is the
+///   index of the element that should end up at position `i`
+///
+/// # Time Complexity
+/// O(n) time and O(n) space for the inverse permutation.
+fn apply_permutation_in_place<A, B>(
+    slice_a: &mut [A],
+    slice_b: &mut [B],
+    source_indices: Vec<usize>,
+) {
+    let n = slice_a.len();
+    debug_assert_eq!(slice_b.len(), n);
+    debug_assert_eq!(source_indices.len(), n);
+
+    if n == 0 {
+        return;
+    }
+
+    // Invert the permutation: source_indices[i] = j becomes dest_perm[j] = i
+    // This converts "element at j goes to i" to "element at i goes to j"
+    let mut dest_perm = vec![0; n];
+    for (new_pos, &old_pos) in source_indices.iter().enumerate() {
+        dest_perm[old_pos] = new_pos;
+    }
+
+    // Apply destination-based permutation using cycle-following
+    for i in 0..n {
+        while dest_perm[i] != i {
+            let j = dest_perm[i];
+            slice_a.swap(i, j);
+            slice_b.swap(i, j);
+            dest_perm.swap(i, j);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2253,5 +2293,57 @@ mod tests {
 
         // Protocol >= 30 should not write io_error
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn apply_permutation_in_place_identity() {
+        let mut a = vec![1, 2, 3, 4];
+        let mut b = vec!["a", "b", "c", "d"];
+        let indices = vec![0, 1, 2, 3];
+        apply_permutation_in_place(&mut a, &mut b, indices);
+        assert_eq!(a, vec![1, 2, 3, 4]);
+        assert_eq!(b, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn apply_permutation_in_place_reverse() {
+        let mut a = vec![1, 2, 3, 4];
+        let mut b = vec!["a", "b", "c", "d"];
+        // Indices represent: position 0 gets element from 3, pos 1 from 2, etc.
+        let indices = vec![3, 2, 1, 0];
+        apply_permutation_in_place(&mut a, &mut b, indices);
+        assert_eq!(a, vec![4, 3, 2, 1]);
+        assert_eq!(b, vec!["d", "c", "b", "a"]);
+    }
+
+    #[test]
+    fn apply_permutation_in_place_cycle() {
+        let mut a = vec![1, 2, 3, 4];
+        let mut b = vec!["a", "b", "c", "d"];
+        // Cycle: 0->1->2->3->0
+        let indices = vec![3, 0, 1, 2];
+        apply_permutation_in_place(&mut a, &mut b, indices);
+        assert_eq!(a, vec![4, 1, 2, 3]);
+        assert_eq!(b, vec!["d", "a", "b", "c"]);
+    }
+
+    #[test]
+    fn apply_permutation_in_place_empty() {
+        let mut a: Vec<i32> = vec![];
+        let mut b: Vec<&str> = vec![];
+        let indices: Vec<usize> = vec![];
+        apply_permutation_in_place(&mut a, &mut b, indices);
+        assert!(a.is_empty());
+        assert!(b.is_empty());
+    }
+
+    #[test]
+    fn apply_permutation_in_place_single() {
+        let mut a = vec![42];
+        let mut b = vec!["x"];
+        let indices = vec![0];
+        apply_permutation_in_place(&mut a, &mut b, indices);
+        assert_eq!(a, vec![42]);
+        assert_eq!(b, vec!["x"]);
     }
 }
