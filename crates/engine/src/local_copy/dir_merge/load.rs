@@ -273,3 +273,125 @@ pub(crate) fn load_dir_merge_rules_recursive(
     visited.pop();
     Ok(entries)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== resolve_dir_merge_path tests ====================
+
+    #[test]
+    fn resolve_dir_merge_path_relative_pattern() {
+        let base = Path::new("/home/user/project");
+        let pattern = Path::new(".rsync-filter");
+        let result = resolve_dir_merge_path(base, pattern);
+        assert_eq!(result, PathBuf::from("/home/user/project/.rsync-filter"));
+    }
+
+    #[test]
+    fn resolve_dir_merge_path_absolute_pattern_strips_root() {
+        let base = Path::new("/base");
+        let pattern = Path::new("/subdir/filter");
+        let result = resolve_dir_merge_path(base, pattern);
+        // Absolute pattern with "/" root should be stripped and joined to base
+        assert_eq!(result, PathBuf::from("/base/subdir/filter"));
+    }
+
+    #[test]
+    fn resolve_dir_merge_path_pattern_with_subdirectory() {
+        let base = Path::new("/project");
+        let pattern = Path::new("config/.filter");
+        let result = resolve_dir_merge_path(base, pattern);
+        assert_eq!(result, PathBuf::from("/project/config/.filter"));
+    }
+
+    #[test]
+    fn resolve_dir_merge_path_empty_pattern() {
+        let base = Path::new("/home");
+        let pattern = Path::new("");
+        let result = resolve_dir_merge_path(base, pattern);
+        assert_eq!(result, PathBuf::from("/home"));
+    }
+
+    #[test]
+    fn resolve_dir_merge_path_dot_pattern() {
+        let base = Path::new("/base");
+        let pattern = Path::new(".");
+        let result = resolve_dir_merge_path(base, pattern);
+        assert_eq!(result, PathBuf::from("/base/."));
+    }
+
+    // ==================== DirMergeEntries tests ====================
+
+    #[test]
+    fn dir_merge_entries_default_is_empty() {
+        let entries = DirMergeEntries::default();
+        assert!(entries.rules.is_empty());
+        assert!(entries.exclude_if_present.is_empty());
+    }
+
+    #[test]
+    fn dir_merge_entries_push_rule() {
+        let mut entries = DirMergeEntries::default();
+        let rule = FilterRule::exclude("*.tmp".to_string());
+        entries.push_rule(rule);
+        assert_eq!(entries.rules.len(), 1);
+    }
+
+    #[test]
+    fn dir_merge_entries_push_multiple_rules() {
+        let mut entries = DirMergeEntries::default();
+        entries.push_rule(FilterRule::exclude("*.tmp".to_string()));
+        entries.push_rule(FilterRule::include("*.rs".to_string()));
+        entries.push_rule(FilterRule::exclude("target/".to_string()));
+        assert_eq!(entries.rules.len(), 3);
+    }
+
+    #[test]
+    fn dir_merge_entries_push_exclude_if_present() {
+        let mut entries = DirMergeEntries::default();
+        let rule = ExcludeIfPresentRule::new(".nobackup".to_string());
+        entries.push_exclude_if_present(rule);
+        assert_eq!(entries.exclude_if_present.len(), 1);
+    }
+
+    #[test]
+    fn dir_merge_entries_extend_merges_both_vecs() {
+        let mut entries1 = DirMergeEntries::default();
+        entries1.push_rule(FilterRule::exclude("*.tmp".to_string()));
+        entries1.push_exclude_if_present(ExcludeIfPresentRule::new(".skip".to_string()));
+
+        let mut entries2 = DirMergeEntries::default();
+        entries2.push_rule(FilterRule::include("*.rs".to_string()));
+        entries2.push_exclude_if_present(ExcludeIfPresentRule::new(".ignore".to_string()));
+
+        entries1.extend(entries2);
+
+        assert_eq!(entries1.rules.len(), 2);
+        assert_eq!(entries1.exclude_if_present.len(), 2);
+    }
+
+    #[test]
+    fn dir_merge_entries_extend_empty_into_populated() {
+        let mut entries = DirMergeEntries::default();
+        entries.push_rule(FilterRule::exclude("*.log".to_string()));
+
+        let empty = DirMergeEntries::default();
+        entries.extend(empty);
+
+        assert_eq!(entries.rules.len(), 1);
+    }
+
+    #[test]
+    fn dir_merge_entries_extend_populated_into_empty() {
+        let mut entries = DirMergeEntries::default();
+
+        let mut populated = DirMergeEntries::default();
+        populated.push_rule(FilterRule::include("*.md".to_string()));
+
+        entries.extend(populated);
+
+        assert_eq!(entries.rules.len(), 1);
+    }
+
+}
