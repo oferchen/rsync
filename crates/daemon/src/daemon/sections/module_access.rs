@@ -369,12 +369,9 @@ fn perform_module_authentication(
         stream.flush()?;
     }
 
-    let response = match read_trimmed_line(reader)? {
-        Some(line) => line,
-        None => {
-            deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
-            return Ok(AuthenticationStatus::Denied);
-        }
+    let response = if let Some(line) = read_trimmed_line(reader)? { line } else {
+        deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
+        return Ok(AuthenticationStatus::Denied);
     };
 
     let mut segments = response.splitn(2, |ch: char| ch.is_ascii_whitespace());
