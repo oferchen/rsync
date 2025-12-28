@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -33,7 +34,7 @@ impl CompiledRule {
         );
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
         let mut direct_patterns = HashSet::new();
-        direct_patterns.insert(core_pattern.clone());
+        direct_patterns.insert(core_pattern.to_string());
         if !anchored {
             direct_patterns.insert(format!("**/{core_pattern}"));
         }
@@ -124,17 +125,32 @@ fn compile_patterns(
     Ok(matchers)
 }
 
-fn normalise_pattern(pattern: &str) -> (bool, bool, String) {
+/// Normalizes a pattern by stripping leading '/' (anchored) and trailing '/' (directory-only).
+///
+/// Returns `Cow::Borrowed` when no stripping is needed (most common case),
+/// avoiding a heap allocation.
+fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let anchored = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
-    let mut core = pattern;
-    if anchored {
-        core = &core[1..];
+
+    // Fast path: no stripping needed
+    if !anchored && !directory_only {
+        return (false, false, Cow::Borrowed(pattern));
     }
-    if directory_only && !core.is_empty() {
-        core = &core[..core.len() - 1];
+
+    let start = if anchored { 1 } else { 0 };
+    let end = if directory_only && pattern.len() > start {
+        pattern.len() - 1
+    } else {
+        pattern.len()
+    };
+
+    // If we stripped nothing meaningful, return borrowed
+    if start == 0 && end == pattern.len() {
+        (anchored, directory_only, Cow::Borrowed(pattern))
+    } else {
+        (anchored, directory_only, Cow::Owned(pattern[start..end].to_string()))
     }
-    (anchored, directory_only, core.to_string())
 }
 
 #[cfg(test)]
