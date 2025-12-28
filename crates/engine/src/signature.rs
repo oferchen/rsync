@@ -169,12 +169,45 @@ impl SignatureAlgorithm {
     }
 
     /// Computes a strong digest truncated to `len` bytes.
+    ///
+    /// Pre-allocates exactly `len` bytes to avoid wasted capacity from truncation.
     pub(crate) fn compute_truncated(self, data: &[u8], len: usize) -> Vec<u8> {
-        let mut digest = self.compute_full(data);
-        if len < digest.len() {
-            digest.truncate(len);
+        let full_len = self.digest_len();
+        if len >= full_len {
+            // No truncation needed - return full digest
+            return self.compute_full(data);
         }
-        digest
+
+        // Compute digest directly into fixed-size buffer, then copy truncated portion
+        // This avoids allocating full capacity then truncating (which wastes capacity)
+        let mut result = Vec::with_capacity(len);
+        match self {
+            SignatureAlgorithm::Md4 => {
+                let digest = Md4::digest(data);
+                result.extend_from_slice(&digest.as_ref()[..len]);
+            }
+            SignatureAlgorithm::Md5 { seed_config } => {
+                let digest = Md5::digest_with_seed(seed_config, data);
+                result.extend_from_slice(&digest.as_ref()[..len]);
+            }
+            SignatureAlgorithm::Sha1 => {
+                let digest = Sha1::digest(data);
+                result.extend_from_slice(&digest.as_ref()[..len]);
+            }
+            SignatureAlgorithm::Xxh64 { seed } => {
+                let digest = Xxh64::digest(seed, data);
+                result.extend_from_slice(&digest.as_ref()[..len]);
+            }
+            SignatureAlgorithm::Xxh3 { seed } => {
+                let digest = Xxh3::digest(seed, data);
+                result.extend_from_slice(&digest.as_ref()[..len]);
+            }
+            SignatureAlgorithm::Xxh3_128 { seed } => {
+                let digest = Xxh3_128::digest(seed, data);
+                result.extend_from_slice(&digest.as_ref()[..len]);
+            }
+        }
+        result
     }
 }
 
