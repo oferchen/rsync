@@ -292,14 +292,11 @@ impl<'a> DeltaApplicator<'a> {
 
     /// Applies a block reference by copying from basis file.
     pub fn apply_block_ref(&mut self, block_idx: usize) -> io::Result<()> {
-        let (signature, basis_path) = match (&self.basis_signature, &self.basis_path) {
-            (Some(sig), Some(path)) => (sig, path),
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("block reference {block_idx} without basis file"),
-                ));
-            }
+        let (Some(signature), Some(basis_path)) = (&self.basis_signature, &self.basis_path) else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("block reference {block_idx} without basis file"),
+            ));
         };
 
         let layout = signature.layout();

@@ -19,9 +19,8 @@ pub(super) fn parse_dir_merge_directive(
         }
     }
 
-    let (label, mut remainder) = match matched {
-        Some(values) => values,
-        None => return Ok(None),
+    let Some((label, mut remainder)) = matched else {
+        return Ok(None);
     };
 
     if let Some(ch) = remainder.chars().next()
