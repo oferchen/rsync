@@ -3,10 +3,12 @@ use std::io::{self, Read};
 
 use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageHeader};
 
+#[cold]
 pub(super) fn map_envelope_error(err: EnvelopeError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, err)
 }
 
+#[cold]
 pub(super) fn map_envelope_error_for_input(err: EnvelopeError) -> io::Error {
     match err {
         EnvelopeError::OversizedPayload(_) => io::Error::new(io::ErrorKind::InvalidInput, err),
@@ -14,6 +16,7 @@ pub(super) fn map_envelope_error_for_input(err: EnvelopeError) -> io::Error {
     }
 }
 
+#[cold]
 fn invalid_len_error(len: usize) -> io::Error {
     let len = len as u128;
     let max = u128::from(MAX_PAYLOAD_LENGTH);
@@ -23,6 +26,7 @@ fn invalid_len_error(len: usize) -> io::Error {
     )
 }
 
+#[cold]
 pub(super) fn truncated_frame_error(expected: usize, actual: usize) -> io::Error {
     io::Error::new(
         io::ErrorKind::UnexpectedEof,
@@ -30,6 +34,7 @@ pub(super) fn truncated_frame_error(expected: usize, actual: usize) -> io::Error
     )
 }
 
+#[cold]
 pub(super) fn truncated_payload_error(expected: usize, actual: usize) -> io::Error {
     io::Error::new(
         io::ErrorKind::UnexpectedEof,
@@ -37,6 +42,7 @@ pub(super) fn truncated_payload_error(expected: usize, actual: usize) -> io::Err
     )
 }
 
+#[cold]
 pub(super) fn trailing_frame_data_error(trailing: usize) -> io::Error {
     let unit = if trailing == 1 { "byte" } else { "bytes" };
     io::Error::new(
@@ -113,6 +119,7 @@ pub(super) fn read_payload_into<R: Read>(
     Ok(())
 }
 
+#[cold]
 pub(super) fn map_allocation_error(err: TryReserveError) -> io::Error {
     io::Error::new(io::ErrorKind::OutOfMemory, err)
 }
