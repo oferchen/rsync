@@ -290,7 +290,7 @@ pub(super) fn process_links(
                     apply_file_metadata_with_options(
                         destination,
                         metadata,
-                        metadata_options.clone(),
+                        &metadata_options,
                     )
                     .map_err(map_metadata_error)?;
                     #[cfg(all(unix, feature = "xattr"))]

@@ -57,17 +57,17 @@ pub fn apply_file_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    apply_file_metadata_with_options(destination, metadata, MetadataOptions::default())
+    apply_file_metadata_with_options(destination, metadata, &MetadataOptions::default())
 }
 
 /// Applies file metadata using explicit [`MetadataOptions`].
 pub fn apply_file_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
-    options: MetadataOptions,
+    options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, true, &options)?;
-    apply_permissions_with_chmod(destination, metadata, &options)?;
+    set_owner_like(metadata, destination, true, options)?;
+    apply_permissions_with_chmod(destination, metadata, options)?;
     if options.times() {
         set_timestamp_like(metadata, destination, true)?;
     }
@@ -80,16 +80,16 @@ pub fn apply_symlink_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    apply_symlink_metadata_with_options(destination, metadata, MetadataOptions::default())
+    apply_symlink_metadata_with_options(destination, metadata, &MetadataOptions::default())
 }
 
 /// Applies symbolic link metadata using explicit [`MetadataOptions`].
 pub fn apply_symlink_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
-    options: MetadataOptions,
+    options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
-    set_owner_like(metadata, destination, false, &options)?;
+    set_owner_like(metadata, destination, false, options)?;
     if options.times() {
         set_timestamp_like(metadata, destination, false)?;
     }
@@ -658,7 +658,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new()
+            &MetadataOptions::new()
                 .preserve_owner(true)
                 .preserve_group(true),
         )
@@ -686,7 +686,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new().preserve_permissions(false),
+            &MetadataOptions::new().preserve_permissions(false),
         )
         .expect("apply metadata");
 
@@ -714,7 +714,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new()
+            &MetadataOptions::new()
                 .preserve_permissions(false)
                 .preserve_executability(true),
         )
@@ -741,7 +741,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new().preserve_times(false),
+            &MetadataOptions::new().preserve_times(false),
         )
         .expect("apply metadata");
 
@@ -858,7 +858,7 @@ mod tests {
         apply_symlink_metadata_with_options(
             &dest_link,
             &metadata,
-            MetadataOptions::new().preserve_times(false),
+            &MetadataOptions::new().preserve_times(false),
         )
         .expect("apply symlink metadata");
 
@@ -902,7 +902,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new()
+            &MetadataOptions::new()
                 .preserve_times(false)
                 .preserve_permissions(false)
                 .preserve_owner(false)
@@ -934,7 +934,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new()
+            &MetadataOptions::new()
                 .preserve_permissions(false)
                 .preserve_executability(true)
                 .preserve_times(false),
@@ -966,7 +966,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new()
+            &MetadataOptions::new()
                 .preserve_permissions(false)
                 .preserve_executability(true)
                 .preserve_times(false),
@@ -996,7 +996,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new()
+            &MetadataOptions::new()
                 .preserve_owner(true)
                 .with_owner_override(Some(1000))
                 .preserve_times(false),
@@ -1025,7 +1025,7 @@ mod tests {
         apply_file_metadata_with_options(
             &dest,
             &metadata,
-            MetadataOptions::new()
+            &MetadataOptions::new()
                 .preserve_group(true)
                 .with_group_override(Some(1000))
                 .preserve_times(false),
