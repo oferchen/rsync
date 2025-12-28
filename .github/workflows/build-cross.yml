@@ -433,6 +433,10 @@ jobs:
           git fetch origin master --depth=1
           git checkout -B "${BRANCH}" FETCH_HEAD
 
+          # Reset any workflow file changes to avoid permission issues
+          # (GitHub Apps cannot push workflow changes without workflows permission)
+          git checkout HEAD -- .github/workflows/ 2>/dev/null || true
+
           git add "${FORMULA_PATH}"
 
           if git diff --cached --quiet; then
