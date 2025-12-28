@@ -112,3 +112,130 @@ fn expand_cluster(
 
     Some(fragments)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== expand_cluster tests ====================
+
+    fn make_flags(chars: &str) -> HashSet<char> {
+        chars.chars().collect()
+    }
+
+    #[test]
+    fn expand_cluster_simple_flags() {
+        let flags = make_flags("avz");
+        let values = HashSet::new();
+        let result = expand_cluster("-avz", &flags, &values);
+        assert_eq!(result, Some(vec!["-a".to_string(), "-v".to_string(), "-z".to_string()]));
+    }
+
+    #[test]
+    fn expand_cluster_single_char_not_expanded() {
+        let flags = make_flags("a");
+        let values = HashSet::new();
+        // Single char options are not expanded (cluster.len() <= 1)
+        assert_eq!(expand_cluster("-a", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_not_option() {
+        let flags = make_flags("avz");
+        let values = HashSet::new();
+        // Doesn't start with -
+        assert_eq!(expand_cluster("avz", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_long_option() {
+        let flags = make_flags("avz");
+        let values = HashSet::new();
+        // Long options (--) are not expanded
+        assert_eq!(expand_cluster("--verbose", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_value_option_at_end() {
+        let flags = make_flags("av");
+        let values = make_flags("M");
+        // Value option at end is valid
+        let result = expand_cluster("-avM", &flags, &values);
+        assert_eq!(result, Some(vec!["-a".to_string(), "-v".to_string(), "-M".to_string()]));
+    }
+
+    #[test]
+    fn expand_cluster_value_option_not_at_end() {
+        let flags = make_flags("av");
+        let values = make_flags("M");
+        // Value option not at end is invalid
+        assert_eq!(expand_cluster("-aMv", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_unknown_option() {
+        let flags = make_flags("av");
+        let values = HashSet::new();
+        // Unknown option 'x' in cluster
+        assert_eq!(expand_cluster("-avx", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_two_flags() {
+        let flags = make_flags("rv");
+        let values = HashSet::new();
+        let result = expand_cluster("-rv", &flags, &values);
+        assert_eq!(result, Some(vec!["-r".to_string(), "-v".to_string()]));
+    }
+
+    #[test]
+    fn expand_cluster_all_value_options() {
+        let _flags: HashSet<char> = HashSet::new();
+        let values = make_flags("e");
+        // Single value option at end is valid (even if it's the only one)
+        let result = expand_cluster("-ee", &_flags, &values);
+        // First 'e' is a value option but not at end - returns None
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn expand_cluster_empty_after_dash() {
+        let flags = make_flags("avz");
+        let values = HashSet::new();
+        // Just "-" with nothing after is not expanded (cluster.len() <= 1)
+        assert_eq!(expand_cluster("-", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_mixed_known_unknown() {
+        let flags = make_flags("av");
+        let values = HashSet::new();
+        // 'z' is not known
+        assert_eq!(expand_cluster("-avz", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_only_value_option() {
+        let flags = HashSet::new();
+        let values = make_flags("M");
+        // Single value option requires length > 1 to trigger expansion
+        // -M has length 1 in cluster, so None
+        assert_eq!(expand_cluster("-M", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_multiple_value_options() {
+        let flags = HashSet::new();
+        let values = make_flags("Me");
+        // Two value options - second must be at end
+        assert_eq!(expand_cluster("-Me", &flags, &values), None);
+    }
+
+    #[test]
+    fn expand_cluster_preserves_order() {
+        let flags = make_flags("zva");
+        let values = HashSet::new();
+        let result = expand_cluster("-zva", &flags, &values);
+        assert_eq!(result, Some(vec!["-z".to_string(), "-v".to_string(), "-a".to_string()]));
+    }
+}
