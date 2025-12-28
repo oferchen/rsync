@@ -87,18 +87,22 @@ impl FileType {
 /// Contains all metadata needed to synchronize a filesystem object, including
 /// the relative path, size, modification time, mode, ownership, and optional
 /// device/symlink information.
+///
+/// Field order is optimized to minimize padding: 8-byte aligned fields first,
+/// then 4-byte, then smaller fields.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FileEntry {
+    // 8-byte aligned fields (24 bytes each)
     /// Relative path of the entry within the transfer.
     name: PathBuf,
+    /// Symlink target path (for symlinks).
+    link_target: Option<PathBuf>,
+
+    // 8-byte aligned fields
     /// File size in bytes (0 for directories and special files).
     size: u64,
-    /// Unix mode bits (type + permissions).
-    mode: u32,
     /// Modification time as seconds since Unix epoch.
     mtime: i64,
-    /// Modification time nanoseconds (protocol 31+).
-    mtime_nsec: u32,
     /// User ID (None if not preserving ownership).
     uid: Option<u32>,
     /// Group ID (None if not preserving ownership).
@@ -107,10 +111,16 @@ pub struct FileEntry {
     rdev_major: Option<u32>,
     /// Device minor number (for block/char devices).
     rdev_minor: Option<u32>,
-    /// Symlink target path (for symlinks).
-    link_target: Option<PathBuf>,
     /// Hardlink index (for hardlink preservation).
     hardlink_idx: Option<u32>,
+
+    // 4-byte aligned fields
+    /// Unix mode bits (type + permissions).
+    mode: u32,
+    /// Modification time nanoseconds (protocol 31+).
+    mtime_nsec: u32,
+
+    // 2-byte aligned fields
     /// Entry flags from wire format.
     flags: super::flags::FileFlags,
 }
@@ -130,16 +140,16 @@ impl FileEntry {
     ) -> Self {
         Self {
             name,
+            link_target,
             size,
-            mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime: 0,
-            mtime_nsec: 0,
             uid: None,
             gid: None,
             rdev_major: None,
             rdev_minor: None,
-            link_target,
             hardlink_idx: None,
+            mode: file_type.to_mode_bits() | (permissions & 0o7777),
+            mtime_nsec: 0,
             flags: super::flags::FileFlags::default(),
         }
     }
@@ -174,16 +184,16 @@ impl FileEntry {
     ) -> Self {
         Self {
             name,
+            link_target: None,
             size,
-            mode,
             mtime,
-            mtime_nsec,
             uid: None,
             gid: None,
             rdev_major: None,
             rdev_minor: None,
-            link_target: None,
             hardlink_idx: None,
+            mode,
+            mtime_nsec,
             flags,
         }
     }
