@@ -62,7 +62,7 @@ pub struct TryMapInnerError<T, E> {
 }
 
 impl<T, E> TryMapInnerError<T, E> {
-    pub(crate) fn new(error: E, original: T) -> Self {
+    pub(crate) const fn new(error: E, original: T) -> Self {
         Self { error, original }
     }
 
@@ -80,7 +80,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// handle keeps those transformations possible without reconstructing the entire
     /// [`TryMapInnerError`].
     #[must_use]
-    pub fn error_mut(&mut self) -> &mut E {
+    pub const fn error_mut(&mut self) -> &mut E {
         &mut self.error
     }
 
@@ -118,7 +118,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// assert!(remainder.is_empty());
     /// ```
     #[must_use]
-    pub fn as_ref(&self) -> (&E, &T) {
+    pub const fn as_ref(&self) -> (&E, &T) {
         (&self.error, &self.original)
     }
 
@@ -130,7 +130,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// matching the behaviour of upstream rsync where negotiation buffers remain usable after a
     /// failed transformation.
     #[must_use]
-    pub fn original_mut(&mut self) -> &mut T {
+    pub const fn original_mut(&mut self) -> &mut T {
         &mut self.original
     }
 
@@ -170,7 +170,7 @@ impl<T, E> TryMapInnerError<T, E> {
     /// assert_eq!(replay, b"RSYNCD: 31.0\n");
     /// ```
     #[must_use]
-    pub fn as_mut(&mut self) -> (&mut E, &mut T) {
+    pub const fn as_mut(&mut self) -> (&mut E, &mut T) {
         (&mut self.error, &mut self.original)
     }
 

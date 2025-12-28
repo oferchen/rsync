@@ -178,84 +178,84 @@ impl VersionInfoConfigBuilder {
 
     /// Enables or disables socketpair support.
     #[must_use]
-    pub fn supports_socketpairs(mut self, enabled: bool) -> Self {
+    pub const fn supports_socketpairs(mut self, enabled: bool) -> Self {
         self.config.supports_socketpairs = enabled;
         self
     }
 
     /// Enables or disables symbolic link preservation.
     #[must_use]
-    pub fn supports_symlinks(mut self, enabled: bool) -> Self {
+    pub const fn supports_symlinks(mut self, enabled: bool) -> Self {
         self.config.supports_symlinks = enabled;
         self
     }
 
     /// Enables or disables symbolic link timestamp preservation.
     #[must_use]
-    pub fn supports_symtimes(mut self, enabled: bool) -> Self {
+    pub const fn supports_symtimes(mut self, enabled: bool) -> Self {
         self.config.supports_symtimes = enabled;
         self
     }
 
     /// Enables or disables hard link preservation.
     #[must_use]
-    pub fn supports_hardlinks(mut self, enabled: bool) -> Self {
+    pub const fn supports_hardlinks(mut self, enabled: bool) -> Self {
         self.config.supports_hardlinks = enabled;
         self
     }
 
     /// Enables or disables hard link support for special files.
     #[must_use]
-    pub fn supports_hardlink_specials(mut self, enabled: bool) -> Self {
+    pub const fn supports_hardlink_specials(mut self, enabled: bool) -> Self {
         self.config.supports_hardlink_specials = enabled;
         self
     }
 
     /// Enables or disables hard link support for symbolic links.
     #[must_use]
-    pub fn supports_hardlink_symlinks(mut self, enabled: bool) -> Self {
+    pub const fn supports_hardlink_symlinks(mut self, enabled: bool) -> Self {
         self.config.supports_hardlink_symlinks = enabled;
         self
     }
 
     /// Enables or disables IPv6 transport support.
     #[must_use]
-    pub fn supports_ipv6(mut self, enabled: bool) -> Self {
+    pub const fn supports_ipv6(mut self, enabled: bool) -> Self {
         self.config.supports_ipv6 = enabled;
         self
     }
 
     /// Enables or disables access-time preservation.
     #[must_use]
-    pub fn supports_atimes(mut self, enabled: bool) -> Self {
+    pub const fn supports_atimes(mut self, enabled: bool) -> Self {
         self.config.supports_atimes = enabled;
         self
     }
 
     /// Enables or disables batch file support.
     #[must_use]
-    pub fn supports_batchfiles(mut self, enabled: bool) -> Self {
+    pub const fn supports_batchfiles(mut self, enabled: bool) -> Self {
         self.config.supports_batchfiles = enabled;
         self
     }
 
     /// Enables or disables in-place update support.
     #[must_use]
-    pub fn supports_inplace(mut self, enabled: bool) -> Self {
+    pub const fn supports_inplace(mut self, enabled: bool) -> Self {
         self.config.supports_inplace = enabled;
         self
     }
 
     /// Enables or disables append mode support.
     #[must_use]
-    pub fn supports_append(mut self, enabled: bool) -> Self {
+    pub const fn supports_append(mut self, enabled: bool) -> Self {
         self.config.supports_append = enabled;
         self
     }
 
     /// Enables or disables ACL propagation, clamped to the compiled feature set.
     #[must_use]
-    pub fn supports_acls(mut self, enabled: bool) -> Self {
+    pub const fn supports_acls(mut self, enabled: bool) -> Self {
         self.config.supports_acls = enabled && cfg!(feature = "acl");
         self
     }
@@ -263,14 +263,14 @@ impl VersionInfoConfigBuilder {
     /// Enables or disables extended attribute propagation, clamped to the
     /// compiled feature set.
     #[must_use]
-    pub fn supports_xattrs(mut self, enabled: bool) -> Self {
+    pub const fn supports_xattrs(mut self, enabled: bool) -> Self {
         self.config.supports_xattrs = enabled && cfg!(feature = "xattr");
         self
     }
 
     /// Sets the advertised secluded-argument mode.
     #[must_use]
-    pub fn secluded_args_mode(mut self, mode: SecludedArgsMode) -> Self {
+    pub const fn secluded_args_mode(mut self, mode: SecludedArgsMode) -> Self {
         self.config.secluded_args_mode = mode;
         self
     }
@@ -278,56 +278,56 @@ impl VersionInfoConfigBuilder {
     /// Enables or disables iconv charset conversion, clamped to the compiled
     /// feature set.
     #[must_use]
-    pub fn supports_iconv(mut self, enabled: bool) -> Self {
+    pub const fn supports_iconv(mut self, enabled: bool) -> Self {
         self.config.supports_iconv = enabled && cfg!(feature = "iconv");
         self
     }
 
     /// Enables or disables preallocation support.
     #[must_use]
-    pub fn supports_prealloc(mut self, enabled: bool) -> Self {
+    pub const fn supports_prealloc(mut self, enabled: bool) -> Self {
         self.config.supports_prealloc = enabled;
         self
     }
 
     /// Enables or disables `--stop-at` style cut-off support.
     #[must_use]
-    pub fn supports_stop_at(mut self, enabled: bool) -> Self {
+    pub const fn supports_stop_at(mut self, enabled: bool) -> Self {
         self.config.supports_stop_at = enabled;
         self
     }
 
     /// Enables or disables change-time preservation.
     #[must_use]
-    pub fn supports_crtimes(mut self, enabled: bool) -> Self {
+    pub const fn supports_crtimes(mut self, enabled: bool) -> Self {
         self.config.supports_crtimes = enabled;
         self
     }
 
     /// Enables or disables SIMD-accelerated rolling checksums.
     #[must_use]
-    pub fn supports_simd_roll(mut self, enabled: bool) -> Self {
+    pub const fn supports_simd_roll(mut self, enabled: bool) -> Self {
         self.config.supports_simd_roll = enabled;
         self
     }
 
     /// Enables or disables assembly-accelerated rolling checksums.
     #[must_use]
-    pub fn supports_asm_roll(mut self, enabled: bool) -> Self {
+    pub const fn supports_asm_roll(mut self, enabled: bool) -> Self {
         self.config.supports_asm_roll = enabled;
         self
     }
 
     /// Enables or disables OpenSSL-backed cryptography support.
     #[must_use]
-    pub fn supports_openssl_crypto(mut self, enabled: bool) -> Self {
+    pub const fn supports_openssl_crypto(mut self, enabled: bool) -> Self {
         self.config.supports_openssl_crypto = enabled;
         self
     }
 
     /// Enables or disables assembly-accelerated MD5.
     #[must_use]
-    pub fn supports_asm_md5(mut self, enabled: bool) -> Self {
+    pub const fn supports_asm_md5(mut self, enabled: bool) -> Self {
         self.config.supports_asm_md5 = enabled;
         self
     }

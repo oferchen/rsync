@@ -96,7 +96,7 @@ impl LocalCopyPlan {
         self.destination.path()
     }
 
-    pub(in crate::local_copy) fn destination_spec(&self) -> &DestinationSpec {
+    pub(in crate::local_copy) const fn destination_spec(&self) -> &DestinationSpec {
         &self.destination
     }
 

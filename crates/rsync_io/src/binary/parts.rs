@@ -166,7 +166,7 @@ impl<R> BinaryHandshakeParts<R> {
 
     /// Returns a mutable reference to the replaying stream parts.
     #[must_use]
-    pub fn stream_parts_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
+    pub const fn stream_parts_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
         &mut self.stream
     }
 
@@ -418,7 +418,7 @@ impl<R> BinaryHandshakeParts<R> {
         )
     }
 
-    pub(crate) fn from_components(
+    pub(crate) const fn from_components(
         remote_advertisement: RemoteProtocolAdvertisement,
         negotiated_protocol: ProtocolVersion,
         local_advertised: ProtocolVersion,

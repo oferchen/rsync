@@ -31,7 +31,7 @@ pub enum ServerReader<R: Read> {
 #[allow(dead_code)]
 impl<R: Read> ServerReader<R> {
     /// Creates a new plain-mode reader
-    pub fn new_plain(reader: R) -> Self {
+    pub const fn new_plain(reader: R) -> Self {
         Self::Plain(reader)
     }
 
@@ -82,7 +82,7 @@ impl<R: Read> ServerReader<R> {
 
     /// Returns true if multiplex mode is active
     #[allow(dead_code)]
-    pub fn is_multiplexed(&self) -> bool {
+    pub const fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_) | Self::Compressed(_))
     }
 }
@@ -109,7 +109,7 @@ pub(super) struct MultiplexReader<R> {
 
 #[allow(dead_code)]
 impl<R: Read> MultiplexReader<R> {
-    fn new(inner: R) -> Self {
+    const fn new(inner: R) -> Self {
         Self {
             inner,
             buffer: Vec::new(),

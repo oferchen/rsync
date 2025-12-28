@@ -11,7 +11,7 @@ pub struct SshConnection {
 
 impl SshConnection {
     /// Constructs a new connection from the spawned child process.
-    pub(super) fn new(
+    pub(super) const fn new(
         child: Child,
         stdin: Option<ChildStdin>,
         stdout: ChildStdout,
@@ -26,7 +26,7 @@ impl SshConnection {
     }
 
     /// Returns a mutable reference to the subprocess stderr stream, when available.
-    pub fn stderr_mut(&mut self) -> Option<&mut ChildStderr> {
+    pub const fn stderr_mut(&mut self) -> Option<&mut ChildStderr> {
         self.stderr.as_mut()
     }
 
@@ -38,7 +38,7 @@ impl SshConnection {
     /// Subsequent calls return `None`, matching the semantics of
     /// [`Option::take`].
     #[must_use]
-    pub fn take_stderr(&mut self) -> Option<ChildStderr> {
+    pub const fn take_stderr(&mut self) -> Option<ChildStderr> {
         self.stderr.take()
     }
 

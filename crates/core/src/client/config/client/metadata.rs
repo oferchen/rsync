@@ -49,21 +49,21 @@ impl ClientConfig {
     /// Returns the configured chmod modifiers, if any.
     #[must_use]
     #[doc(alias = "--chmod")]
-    pub fn chmod(&self) -> Option<&ChmodModifiers> {
+    pub const fn chmod(&self) -> Option<&ChmodModifiers> {
         self.chmod.as_ref()
     }
 
     /// Returns the configured user mapping, if any.
     #[must_use]
     #[doc(alias = "--usermap")]
-    pub fn user_mapping(&self) -> Option<&UserMapping> {
+    pub const fn user_mapping(&self) -> Option<&UserMapping> {
         self.user_mapping.as_ref()
     }
 
     /// Returns the configured group mapping, if any.
     #[must_use]
     #[doc(alias = "--groupmap")]
-    pub fn group_mapping(&self) -> Option<&GroupMapping> {
+    pub const fn group_mapping(&self) -> Option<&GroupMapping> {
         self.group_mapping.as_ref()
     }
 

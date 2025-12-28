@@ -196,7 +196,7 @@ impl FilterProgram {
 
     // XAttr filtering strategy – only compiled where supported.
     #[cfg(all(unix, feature = "xattr"))]
-    pub(crate) fn has_xattr_rules(&self) -> bool {
+    pub(crate) const fn has_xattr_rules(&self) -> bool {
         !self.xattr_rules.is_empty()
     }
 
@@ -244,7 +244,7 @@ pub struct FilterProgramError {
 }
 
 impl FilterProgramError {
-    pub(crate) fn new(pattern: String, source: globset::Error) -> Self {
+    pub(crate) const fn new(pattern: String, source: globset::Error) -> Self {
         Self { pattern, source }
     }
 

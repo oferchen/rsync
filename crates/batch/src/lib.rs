@@ -107,7 +107,7 @@ pub struct BatchConfig {
 
 impl BatchConfig {
     /// Create a new batch configuration.
-    pub fn new(mode: BatchMode, batch_path: String, protocol_version: i32) -> Self {
+    pub const fn new(mode: BatchMode, batch_path: String, protocol_version: i32) -> Self {
         Self {
             mode,
             batch_path,
@@ -122,7 +122,7 @@ impl BatchConfig {
     }
 
     /// Set the compatibility flags.
-    pub fn with_compat_flags(mut self, flags: u64) -> Self {
+    pub const fn with_compat_flags(mut self, flags: u64) -> Self {
         if self.protocol_version >= 30 {
             self.compat_flags = Some(flags);
         }
@@ -130,7 +130,7 @@ impl BatchConfig {
     }
 
     /// Set the checksum seed.
-    pub fn with_checksum_seed(mut self, seed: i32) -> Self {
+    pub const fn with_checksum_seed(mut self, seed: i32) -> Self {
         self.checksum_seed = seed;
         self
     }
@@ -146,17 +146,17 @@ impl BatchConfig {
     }
 
     /// Check if this is a write mode (Write or OnlyWrite).
-    pub fn is_write_mode(&self) -> bool {
+    pub const fn is_write_mode(&self) -> bool {
         matches!(self.mode, BatchMode::Write | BatchMode::OnlyWrite)
     }
 
     /// Check if this is read mode.
-    pub fn is_read_mode(&self) -> bool {
+    pub const fn is_read_mode(&self) -> bool {
         matches!(self.mode, BatchMode::Read)
     }
 
     /// Check if actual transfer should occur.
-    pub fn should_transfer(&self) -> bool {
+    pub const fn should_transfer(&self) -> bool {
         !matches!(self.mode, BatchMode::OnlyWrite)
     }
 }

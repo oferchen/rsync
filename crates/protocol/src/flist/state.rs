@@ -65,22 +65,22 @@ impl FileListCompressionState {
     }
 
     /// Updates only the mode portion of the state.
-    pub fn update_mode(&mut self, mode: u32) {
+    pub const fn update_mode(&mut self, mode: u32) {
         self.prev_mode = mode;
     }
 
     /// Updates only the mtime portion of the state.
-    pub fn update_mtime(&mut self, mtime: i64) {
+    pub const fn update_mtime(&mut self, mtime: i64) {
         self.prev_mtime = mtime;
     }
 
     /// Updates only the uid portion of the state.
-    pub fn update_uid(&mut self, uid: u32) {
+    pub const fn update_uid(&mut self, uid: u32) {
         self.prev_uid = uid;
     }
 
     /// Updates only the gid portion of the state.
-    pub fn update_gid(&mut self, gid: u32) {
+    pub const fn update_gid(&mut self, gid: u32) {
         self.prev_gid = gid;
     }
 

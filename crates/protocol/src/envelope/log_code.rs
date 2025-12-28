@@ -179,7 +179,7 @@ impl ParseLogCodeError {
 
     /// Returns the mnemonic name that failed to parse, when available.
     #[must_use]
-    pub fn invalid_name(&self) -> Option<&str> {
+    pub const fn invalid_name(&self) -> Option<&str> {
         match self {
             Self::InvalidValue(_) => None,
             Self::InvalidName(name) => Some(name.as_str()),

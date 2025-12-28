@@ -48,7 +48,7 @@ impl DaemonConfig {
 
     /// Reports whether any daemon-specific arguments were provided.
     #[must_use]
-    pub fn has_runtime_request(&self) -> bool {
+    pub const fn has_runtime_request(&self) -> bool {
         !self.arguments.is_empty()
     }
 }
@@ -74,7 +74,7 @@ impl Default for DaemonConfigBuilder {
 impl DaemonConfigBuilder {
     /// Selects the branding profile that should be used for this configuration.
     #[must_use]
-    pub fn brand(mut self, brand: Brand) -> Self {
+    pub const fn brand(mut self, brand: Brand) -> Self {
         self.brand = brand;
         self
     }
@@ -92,7 +92,7 @@ impl DaemonConfigBuilder {
 
     /// Skips discovery of default configuration and secrets paths.
     #[must_use]
-    pub fn disable_default_paths(mut self) -> Self {
+    pub const fn disable_default_paths(mut self) -> Self {
         self.load_default_paths = false;
         self
     }

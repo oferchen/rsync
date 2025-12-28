@@ -44,7 +44,7 @@ impl SparseWriteState {
 
     /// Adds zero bytes to the pending run.
     #[inline]
-    pub fn accumulate(&mut self, count: usize) {
+    pub const fn accumulate(&mut self, count: usize) {
         self.pending_zeros = self.pending_zeros.saturating_add(count as u64);
     }
 
@@ -200,7 +200,7 @@ impl ChecksumVerifier {
 
     /// Returns the digest length for the current algorithm.
     #[must_use]
-    pub fn digest_len(&self) -> usize {
+    pub const fn digest_len(&self) -> usize {
         match self {
             Self::Md4(_) | Self::Md5(_) | Self::Xxh128(_) => 16,
             Self::Sha1(_) => 20,

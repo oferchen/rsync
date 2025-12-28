@@ -233,7 +233,7 @@ impl NegotiationPrologueDetector {
         }
     }
 
-    fn decide(&mut self, decision: NegotiationPrologue) -> NegotiationPrologue {
+    const fn decide(&mut self, decision: NegotiationPrologue) -> NegotiationPrologue {
         self.decided = Some(decision);
         decision
     }
@@ -324,7 +324,7 @@ impl NegotiationPrologueDetector {
     /// [`NegotiationPrologueDetector::new`], mirroring upstream rsync's
     /// practice of zeroing its detection state before accepting another
     /// connection.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.buffer = [0; LEGACY_DAEMON_PREFIX_LEN];
         self.len = 0;
         self.decided = None;

@@ -22,7 +22,7 @@ struct CargoCommand<'a> {
 }
 
 impl<'a> CargoCommand<'a> {
-    fn new(workspace: &'a Path, display: &'a str, install_hint: &'a str) -> Self {
+    const fn new(workspace: &'a Path, display: &'a str, install_hint: &'a str) -> Self {
         Self {
             workspace,
             args: Vec::new(),

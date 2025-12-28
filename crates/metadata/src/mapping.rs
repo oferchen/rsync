@@ -210,13 +210,13 @@ impl NameMapping {
 
     /// Returns the number of mapping rules.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.rules.len()
     }
 
     /// Reports whether the mapping is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
 
@@ -250,7 +250,7 @@ impl UserMapping {
 
     /// Reports whether the mapping contains any rules.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
@@ -272,7 +272,7 @@ impl GroupMapping {
 
     /// Reports whether the mapping contains any rules.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }

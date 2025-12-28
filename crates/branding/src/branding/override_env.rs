@@ -51,7 +51,7 @@ fn read_brand_override_from_env() -> Option<Brand> {
     value.trim().parse::<Brand>().ok()
 }
 
-fn encode_brand_override(value: Option<Brand>) -> u8 {
+const fn encode_brand_override(value: Option<Brand>) -> u8 {
     match value {
         None => BRAND_OVERRIDE_NONE,
         Some(Brand::Upstream) => BRAND_OVERRIDE_UPSTREAM,
