@@ -206,7 +206,7 @@ impl FileListReader {
     fn read_metadata<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
-        flags: &FileFlags,
+        flags: FileFlags,
     ) -> io::Result<(i64, u32, u32)> {
         // Read mtime
         let mtime = if flags.same_time() {
@@ -286,13 +286,13 @@ impl FileListReader {
         };
 
         // Step 2: Read name with compression
-        let name = self.read_name(reader, &flags)?;
+        let name = self.read_name(reader, flags)?;
 
         // Step 3: Read file size
         let size = self.read_size(reader)?;
 
         // Step 4: Read metadata fields
-        let (mtime, _nsec, mode) = self.read_metadata(reader, &flags)?;
+        let (mtime, _nsec, mode) = self.read_metadata(reader, flags)?;
 
         // Step 5: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
@@ -308,7 +308,7 @@ impl FileListReader {
     fn read_name<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
-        flags: &FileFlags,
+        flags: FileFlags,
     ) -> io::Result<Vec<u8>> {
         // Determine shared prefix length
         let same_len = if flags.same_name() {
