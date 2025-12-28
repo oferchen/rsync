@@ -66,9 +66,8 @@ pub(super) fn parse_short_merge_directive_line(
     text: &str,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
     let mut chars = text.chars();
-    let first = match chars.next() {
-        Some(first) => first,
-        None => return Ok(None),
+    let Some(first) = chars.next() else {
+        return Ok(None);
     };
 
     let allow_extended = match first {

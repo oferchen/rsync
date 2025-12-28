@@ -120,9 +120,8 @@ impl FuzzyMatcher {
         target_name: &str,
         target_size: u64,
     ) -> Option<FuzzyMatch> {
-        let entries = match fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(_) => return None,
+        let Ok(entries) = fs::read_dir(dir) else {
+            return None;
         };
 
         let mut best_match: Option<FuzzyMatch> = None;

@@ -35,9 +35,8 @@ pub(crate) fn build_delta_signature(
         ProtocolVersion::NEWEST,
         checksum_len,
     );
-    let layout = match calculate_signature_layout(params) {
-        Ok(layout) => layout,
-        Err(_) => return Ok(None),
+    let Ok(layout) = calculate_signature_layout(params) else {
+        return Ok(None);
     };
 
     let signature = match generate_file_signature(
