@@ -25,7 +25,7 @@ pub(crate) fn read_directory_entries_sorted(
         })?;
         let entry_path = entry.path();
         let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
-            LocalCopyError::io("inspect directory entry", entry_path.to_path_buf(), error)
+            LocalCopyError::io("inspect directory entry", entry_path.clone(), error)
         })?;
         entries.push(DirectoryEntry {
             file_name: entry.file_name(),
