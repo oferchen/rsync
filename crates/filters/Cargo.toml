@@ -1,9 +1,10 @@
 [package]
 name = "filters"
 version.workspace = true
-edition = "2024"
-authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
-license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Pattern filtering helpers for the Rust rsync workspace"
 
 [package.metadata.docs.rs]
