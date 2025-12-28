@@ -167,28 +167,28 @@ impl AsyncFileCopier {
 
     /// Enables or disables permission preservation.
     #[must_use]
-    pub fn preserve_permissions(mut self, preserve: bool) -> Self {
+    pub const fn preserve_permissions(mut self, preserve: bool) -> Self {
         self.preserve_permissions = preserve;
         self
     }
 
     /// Enables or disables timestamp preservation.
     #[must_use]
-    pub fn preserve_timestamps(mut self, preserve: bool) -> Self {
+    pub const fn preserve_timestamps(mut self, preserve: bool) -> Self {
         self.preserve_timestamps = preserve;
         self
     }
 
     /// Enables or disables sparse file detection.
     #[must_use]
-    pub fn sparse_detection(mut self, enable: bool) -> Self {
+    pub const fn sparse_detection(mut self, enable: bool) -> Self {
         self.sparse_detection = enable;
         self
     }
 
     /// Enables or disables fsync after writes.
     #[must_use]
-    pub fn fsync(mut self, enable: bool) -> Self {
+    pub const fn fsync(mut self, enable: bool) -> Self {
         self.fsync = enable;
         self
     }
@@ -384,7 +384,7 @@ impl AsyncBatchCopier {
 
     /// Sets the underlying file copier configuration.
     #[must_use]
-    pub fn with_copier(mut self, copier: AsyncFileCopier) -> Self {
+    pub const fn with_copier(mut self, copier: AsyncFileCopier) -> Self {
         self.copier = copier;
         self
     }
@@ -490,19 +490,19 @@ impl AsyncFileReader {
 
     /// Returns the current read position.
     #[must_use]
-    pub fn position(&self) -> u64 {
+    pub const fn position(&self) -> u64 {
         self.position
     }
 
     /// Returns the total file size.
     #[must_use]
-    pub fn size(&self) -> u64 {
+    pub const fn size(&self) -> u64 {
         self.size
     }
 
     /// Returns the number of remaining bytes.
     #[must_use]
-    pub fn remaining(&self) -> u64 {
+    pub const fn remaining(&self) -> u64 {
         self.size.saturating_sub(self.position)
     }
 
@@ -620,7 +620,7 @@ impl AsyncFileWriter {
 
     /// Returns the total bytes written.
     #[must_use]
-    pub fn bytes_written(&self) -> u64 {
+    pub const fn bytes_written(&self) -> u64 {
         self.bytes_written
     }
 
