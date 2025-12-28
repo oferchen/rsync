@@ -19,11 +19,11 @@
 //! # Implementation Guide
 //!
 //! For comprehensive documentation on how the receiver works within the delta transfer
-//! algorithm, see the [`crate::server::delta_transfer`] module documentation.
+//! algorithm, see the [`crate::delta_transfer`] module documentation.
 //!
 //! # Related Components
 //!
-//! - [`crate::server::generator`] - The generator role that sends deltas to the receiver
+//! - [`crate::generator`] - The generator role that sends deltas to the receiver
 //! - [`engine::delta`] - Delta generation and application engine
 //! - [`engine::signature`] - Signature generation utilities
 //! - [`metadata::apply_metadata_from_file_entry`] - Metadata preservation

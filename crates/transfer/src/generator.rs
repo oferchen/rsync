@@ -19,11 +19,11 @@
 //! # Implementation Guide
 //!
 //! For comprehensive documentation on how the generator works within the delta transfer
-//! algorithm, see the [`crate::server::delta_transfer`] module documentation.
+//! algorithm, see the [`crate::delta_transfer`] module documentation.
 //!
 //! # Related Components
 //!
-//! - [`crate::server::receiver`] - The receiver role that applies deltas from the generator
+//! - [`crate::receiver`] - The receiver role that applies deltas from the generator
 //! - [`engine::delta::DeltaGenerator`] - Core delta generation engine
 //! - [`engine::delta::DeltaSignatureIndex`] - Fast block lookup for delta generation
 //! - [`engine::signature`] - Signature reconstruction from wire format
