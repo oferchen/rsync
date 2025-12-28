@@ -20,9 +20,13 @@ pub struct StoredMessage {
     /// The normalized message text.
     pub text: String,
     /// The role trailer if present.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     /// Description of the scenario that produces this message.
     pub scenario: String,
+    /// Whether this message is optional (may not appear due to race conditions).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
 }
 
 impl GoldenMessages {
@@ -40,6 +44,7 @@ impl GoldenMessages {
             text: msg.text.clone(),
             role: msg.role.clone(),
             scenario: scenario.to_owned(),
+            optional: false,
         });
     }
 
