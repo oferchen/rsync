@@ -240,7 +240,8 @@ impl Nfs4Acl {
             }
 
             let who = std::str::from_utf8(&data[offset..offset + who_len])
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-8 in ACE"))?.to_owned();
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid UTF-8 in ACE"))?
+                .to_owned();
             offset += who_len;
 
             // Align to 4 bytes

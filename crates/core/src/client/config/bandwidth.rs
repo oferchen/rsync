@@ -154,7 +154,8 @@ impl BandwidthLimit {
             value.push(':');
             value.push_str(
                 &self
-                    .burst_bytes.map_or_else(|| "0".to_owned(), |burst| burst.get().to_string()),
+                    .burst_bytes
+                    .map_or_else(|| "0".to_owned(), |burst| burst.get().to_string()),
             );
         }
 

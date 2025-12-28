@@ -38,7 +38,11 @@ pub struct NegotiatedStreamParts<R> {
 }
 
 impl<R> NegotiatedStreamParts<R> {
-    pub(crate) const fn new(decision: NegotiationPrologue, buffer: NegotiationBuffer, inner: R) -> Self {
+    pub(crate) const fn new(
+        decision: NegotiationPrologue,
+        buffer: NegotiationBuffer,
+        inner: R,
+    ) -> Self {
         Self {
             decision,
             buffer,

@@ -483,7 +483,8 @@ impl ReceiverContext {
         let dest_dir = self
             .config
             .args
-            .first().map_or_else(|| PathBuf::from("."), PathBuf::from);
+            .first()
+            .map_or_else(|| PathBuf::from("."), PathBuf::from);
 
         // First pass: create directories from file list
         let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
@@ -1019,8 +1020,7 @@ pub fn find_basis_file(
             };
         };
 
-        let Some(fuzzy_match) =
-            fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
+        let Some(fuzzy_match) = fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
         else {
             return BasisFileResult {
                 signature: None,

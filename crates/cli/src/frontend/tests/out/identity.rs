@@ -16,8 +16,14 @@ fn out_format_renders_permission_and_identity_placeholders() {
 
     let expected_uid = fs::metadata(&source).expect("source metadata").uid();
     let expected_gid = fs::metadata(&source).expect("source metadata").gid();
-    let expected_user = get_user_by_uid(expected_uid as uid_t).map_or_else(|| expected_uid.to_string(), |user| user.name().to_string_lossy().into_owned());
-    let expected_group = get_group_by_gid(expected_gid as gid_t).map_or_else(|| expected_gid.to_string(), |group| group.name().to_string_lossy().into_owned());
+    let expected_user = get_user_by_uid(expected_uid as uid_t).map_or_else(
+        || expected_uid.to_string(),
+        |user| user.name().to_string_lossy().into_owned(),
+    );
+    let expected_group = get_group_by_gid(expected_gid as gid_t).map_or_else(
+        || expected_gid.to_string(),
+        |group| group.name().to_string_lossy().into_owned(),
+    );
 
     let mut permissions = fs::metadata(&source)
         .expect("source metadata")
