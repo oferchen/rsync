@@ -195,42 +195,10 @@ where
                 return Err(0);
             }
 
-            let mut flags = Vec::new();
-
-            macro_rules! add_flag {
-                ($field:expr, $name:expr) => {
-                    if let Some(level) = $field {
-                        if level > 0 {
-                            flags.push(OsString::from(format!("{}{}", $name, level)));
-                        }
-                    }
-                };
-            }
-
-            add_flag!(settings.acl, "acl");
-            add_flag!(settings.backup, "backup");
-            add_flag!(settings.bind, "bind");
-            add_flag!(settings.chdir, "chdir");
-            add_flag!(settings.connect, "connect");
-            add_flag!(settings.cmd, "cmd");
-            add_flag!(settings.del, "del");
-            add_flag!(settings.deltasum, "deltasum");
-            add_flag!(settings.dup, "dup");
-            add_flag!(settings.exit, "exit");
-            add_flag!(settings.filter, "filter");
-            add_flag!(settings.flist, "flist");
-            add_flag!(settings.fuzzy, "fuzzy");
-            add_flag!(settings.genr, "genr");
-            add_flag!(settings.hash, "hash");
-            add_flag!(settings.hlink, "hlink");
-            add_flag!(settings.iconv, "iconv");
-            add_flag!(settings.io, "io");
-            add_flag!(settings.nstr, "nstr");
-            add_flag!(settings.own, "own");
-            add_flag!(settings.proto, "proto");
-            add_flag!(settings.recv, "recv");
-            add_flag!(settings.send, "send");
-            add_flag!(settings.time, "time");
+            let flags: Vec<OsString> = settings
+                .iter_enabled_flags()
+                .map(|(name, level)| OsString::from(format!("{name}{level}")))
+                .collect();
 
             // Apply debug flags to verbosity config
             for debug_arg in debug_args {
