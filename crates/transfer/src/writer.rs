@@ -230,20 +230,6 @@ impl<W: Write> MultiplexWriter<W> {
     /// Flushes the internal buffer by sending it as a MSG_DATA frame
     fn flush_buffer(&mut self) -> io::Result<()> {
         if !self.buffer.is_empty() {
-            // Debug: log what we're sending
-            static FLUSH_COUNT: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
-            let count = FLUSH_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let _ = std::fs::write(
-                format!("/tmp/mux_FLUSH_{count:03}"),
-                format!(
-                    "len={} first20={:02x?} last10={:02x?}",
-                    self.buffer.len(),
-                    &self.buffer[..self.buffer.len().min(20)],
-                    &self.buffer[self.buffer.len().saturating_sub(10)..]
-                ),
-            );
-
             let code = MessageCode::Data;
             protocol::send_msg(&mut self.inner, code, &self.buffer)?;
             self.buffer.clear();
@@ -279,19 +265,6 @@ impl<W: Write> MultiplexWriter<W> {
 
 impl<W: Write> Write for MultiplexWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // Debug: track all writes
-        static WRITE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let count = WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let _ = std::fs::write(
-            format!("/tmp/mux_WRITE_{count:03}"),
-            format!(
-                "len={} buf_before={} bytes={:02x?}",
-                buf.len(),
-                self.buffer.len(),
-                &buf[..buf.len().min(50)]
-            ),
-        );
-
         if buf.is_empty() {
             return Ok(0);
         }
@@ -314,10 +287,6 @@ impl<W: Write> Write for MultiplexWriter<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        let _ = std::fs::write(
-            "/tmp/mux_FLUSH_CALLED",
-            format!("buf_len={}", self.buffer.len()),
-        );
         self.flush_buffer()?;
         self.inner.flush()
     }
