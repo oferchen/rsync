@@ -1,3 +1,5 @@
+//! crates/batch/src/format.rs
+//!
 //! Batch file binary format definitions.
 //!
 //! This module defines the structures and serialization for the batch file

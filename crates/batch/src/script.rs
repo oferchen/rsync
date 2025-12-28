@@ -1,10 +1,12 @@
+//! crates/batch/src/script.rs
+//!
 //! Shell script generation for batch replay.
 //!
 //! Creates a .sh script that can be used to replay a batch file,
 //! matching upstream rsync's format.
 
-use super::BatchConfig;
-use crate::error::{EngineError, EngineResult};
+use crate::BatchConfig;
+use crate::error::{BatchError, BatchResult};
 use std::fs::File;
 use std::io::{self, Write};
 
@@ -14,11 +16,11 @@ use std::os::unix::fs::PermissionsExt;
 /// Generate a minimal shell script for replaying a batch file.
 ///
 /// Creates a simple script that uses --read-batch with the destination placeholder.
-pub fn generate_script(config: &BatchConfig) -> EngineResult<()> {
+pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
     let script_path = config.script_file_path();
     let batch_name = config.batch_file_path().to_string_lossy();
     let mut file = File::create(&script_path).map_err(|e| {
-        EngineError::Io(io::Error::new(
+        BatchError::Io(io::Error::new(
             e.kind(),
             format!("Failed to create script file '{script_path}': {e}"),
         ))
@@ -48,10 +50,10 @@ pub fn generate_script_with_args(
     config: &BatchConfig,
     original_args: &[String],
     filter_rules: Option<&str>,
-) -> EngineResult<()> {
+) -> BatchResult<()> {
     let script_path = config.script_file_path();
     let mut file = File::create(&script_path).map_err(|e| {
-        EngineError::Io(io::Error::new(
+        BatchError::Io(io::Error::new(
             e.kind(),
             format!("Failed to create script file '{script_path}': {e}"),
         ))
@@ -153,7 +155,7 @@ fn find_destination(args: &[String]) -> Option<&str> {
 
 /// Make a file executable on Unix systems.
 #[cfg(unix)]
-fn make_executable(path: &str) -> EngineResult<()> {
+fn make_executable(path: &str) -> BatchResult<()> {
     use std::fs;
     let file = fs::File::open(path)?;
     let metadata = file.metadata()?;
@@ -164,7 +166,7 @@ fn make_executable(path: &str) -> EngineResult<()> {
 }
 
 #[cfg(not(unix))]
-fn make_executable(_path: &str) -> EngineResult<()> {
+fn make_executable(_path: &str) -> BatchResult<()> {
     // No-op on non-Unix systems
     Ok(())
 }
@@ -172,7 +174,7 @@ fn make_executable(_path: &str) -> EngineResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::BatchMode;
+    use crate::BatchMode;
     use std::fs;
     use std::path::Path;
     use tempfile::TempDir;

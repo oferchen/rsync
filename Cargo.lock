@@ -124,6 +124,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "batch"
+version = "3.4.1-rust"
+dependencies = [
+ "protocol",
+ "tempfile",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "bin"
 version = "3.4.1-rust"
 dependencies = [
@@ -620,6 +629,7 @@ version = "3.4.1-rust"
 dependencies = [
  "apple-fs",
  "bandwidth",
+ "batch",
  "checksums",
  "compress",
  "filetime",
@@ -627,11 +637,13 @@ dependencies = [
  "globset",
  "libc",
  "logging",
+ "matching",
  "md5",
  "metadata",
  "protocol",
  "rayon",
  "rustix 0.38.44",
+ "signature",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -1073,6 +1085,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
+]
+
+[[package]]
+name = "matching"
+version = "3.4.1-rust"
+dependencies = [
+ "checksums",
+ "logging",
+ "protocol",
+ "signature",
+ "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]
@@ -1796,6 +1820,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7664a098b8e616bdfcc2dc0e9ac44eb231eedf41db4e9fe95d8d32ec728dedad"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "signature"
+version = "3.4.1-rust"
+dependencies = [
+ "checksums",
+ "protocol",
+ "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]

@@ -1,8 +1,12 @@
+//! crates/match/src/index.rs
+//!
+//! Signature index for fast delta block lookup.
+
 use std::collections::{HashMap, VecDeque};
 
 use checksums::RollingDigest;
 
-use crate::signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
+use signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
 /// Index over a file signature that accelerates delta matching.
 #[derive(Clone, Debug)]
@@ -121,9 +125,8 @@ impl DeltaSignatureIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delta::{SignatureLayoutParams, calculate_signature_layout};
-    use crate::signature::{SignatureAlgorithm, generate_file_signature};
     use protocol::ProtocolVersion;
+    use signature::{SignatureLayoutParams, calculate_signature_layout, generate_file_signature};
     use std::num::NonZeroU8;
 
     #[test]
@@ -196,7 +199,6 @@ mod tests {
         assert_eq!(found, 0);
     }
 
-    // Additional index tests
     #[test]
     fn delta_signature_index_block_length() {
         let data = vec![b'a'; 2048];
