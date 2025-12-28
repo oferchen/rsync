@@ -37,20 +37,17 @@ proptest! {
         let buffered = detector.buffered_prefix();
         prop_assert_eq!(buffered.len(), detector.buffered_len());
 
-        match detector.decision() {
-            Some(NegotiationPrologue::LegacyAscii) => {
-                if let Some(remaining) = detector.legacy_prefix_remaining() {
-                    prop_assert!(remaining > 0);
-                    prop_assert!(!detector.legacy_prefix_complete());
-                } else {
-                    prop_assert!(detector.legacy_prefix_complete());
-                }
-            }
-            _ => {
-                prop_assert_eq!(detector.legacy_prefix_remaining(), None);
+        if let Some(NegotiationPrologue::LegacyAscii) = detector.decision() {
+            if let Some(remaining) = detector.legacy_prefix_remaining() {
+                prop_assert!(remaining > 0);
                 prop_assert!(!detector.legacy_prefix_complete());
-                prop_assert!(buffered.is_empty());
+            } else {
+                prop_assert!(detector.legacy_prefix_complete());
             }
+        } else {
+            prop_assert_eq!(detector.legacy_prefix_remaining(), None);
+            prop_assert!(!detector.legacy_prefix_complete());
+            prop_assert!(buffered.is_empty());
         }
     }
 }

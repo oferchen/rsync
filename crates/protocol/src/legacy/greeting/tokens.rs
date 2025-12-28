@@ -28,12 +28,9 @@ impl<'a> Iterator for DigestListTokens<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let iter = self.inner.as_mut()?;
-        match iter.next() {
-            Some(token) => Some(token),
-            None => {
-                self.inner = None;
-                None
-            }
+        if let Some(token) = iter.next() { Some(token) } else {
+            self.inner = None;
+            None
         }
     }
 

@@ -990,68 +990,65 @@ pub fn find_basis_file(
     checksum_algorithm: engine::signature::SignatureAlgorithm,
 ) -> BasisFileResult {
     // Try to open the exact file first
-    let (basis_file, basis_size, basis_path) = match fs::File::open(file_path) {
-        Ok(f) => {
-            let size = match f.metadata() {
-                Ok(meta) => meta.len(),
-                Err(_) => {
-                    return BasisFileResult {
-                        signature: None,
-                        basis_path: None,
-                    };
-                }
-            };
-            (f, size, file_path.to_path_buf())
-        }
-        Err(_) => {
-            // Exact file not found - try fuzzy matching if enabled
-            if !fuzzy_enabled {
+    let (basis_file, basis_size, basis_path) = if let Ok(f) = fs::File::open(file_path) {
+        let size = match f.metadata() {
+            Ok(meta) => meta.len(),
+            Err(_) => {
                 return BasisFileResult {
                     signature: None,
                     basis_path: None,
                 };
             }
-
-            // Use FuzzyMatcher to find a similar file in dest_dir
-            let fuzzy_matcher = FuzzyMatcher::new();
-            let Some(target_name) = relative_path.file_name() else {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
+        };
+        (f, size, file_path.to_path_buf())
+    } else {
+        // Exact file not found - try fuzzy matching if enabled
+        if !fuzzy_enabled {
+            return BasisFileResult {
+                signature: None,
+                basis_path: None,
             };
-
-            let Some(fuzzy_match) =
-                fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
-            else {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
-            };
-
-            // Open the fuzzy-matched file as basis
-            let fuzzy_path = fuzzy_match.path;
-            let fuzzy_file = match fs::File::open(&fuzzy_path) {
-                Ok(f) => f,
-                Err(_) => {
-                    return BasisFileResult {
-                        signature: None,
-                        basis_path: None,
-                    };
-                }
-            };
-            let fuzzy_size = match fuzzy_file.metadata() {
-                Ok(meta) => meta.len(),
-                Err(_) => {
-                    return BasisFileResult {
-                        signature: None,
-                        basis_path: None,
-                    };
-                }
-            };
-            (fuzzy_file, fuzzy_size, fuzzy_path)
         }
+
+        // Use FuzzyMatcher to find a similar file in dest_dir
+        let fuzzy_matcher = FuzzyMatcher::new();
+        let Some(target_name) = relative_path.file_name() else {
+            return BasisFileResult {
+                signature: None,
+                basis_path: None,
+            };
+        };
+
+        let Some(fuzzy_match) =
+            fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
+        else {
+            return BasisFileResult {
+                signature: None,
+                basis_path: None,
+            };
+        };
+
+        // Open the fuzzy-matched file as basis
+        let fuzzy_path = fuzzy_match.path;
+        let fuzzy_file = match fs::File::open(&fuzzy_path) {
+            Ok(f) => f,
+            Err(_) => {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
+                };
+            }
+        };
+        let fuzzy_size = match fuzzy_file.metadata() {
+            Ok(meta) => meta.len(),
+            Err(_) => {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
+                };
+            }
+        };
+        (fuzzy_file, fuzzy_size, fuzzy_path)
     };
 
     // Calculate signature layout
