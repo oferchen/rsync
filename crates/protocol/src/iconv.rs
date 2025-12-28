@@ -127,6 +127,7 @@ impl FilenameConverter {
     ///
     /// When local and remote encodings are the same, no conversion is needed.
     #[must_use]
+    #[inline]
     pub fn is_identity(&self) -> bool {
         #[cfg(feature = "iconv")]
         {
