@@ -46,7 +46,8 @@ pub struct FuzzyMatcher {
 
 impl FuzzyMatcher {
     /// Creates a new fuzzy matcher with default settings.
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             min_score: MIN_FUZZY_SCORE,
             fuzzy_basis_dirs: Vec::new(),
