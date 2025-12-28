@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_parse_error_message_with_role() {
-        let msg = Message::new("rsync: error in file IO [sender=3.4.1-rust]".to_owned());
+        let msg = Message::new("rsync: error in file IO [sender=0.5.0]".to_owned());
         assert_eq!(msg.severity, Some(Severity::Error));
         assert_eq!(msg.role, Some("sender".to_owned()));
     }

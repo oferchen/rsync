@@ -11,9 +11,9 @@ use toml::Value;
 pub struct WorkspaceBranding {
     /// Short brand label (e.g. `"oc"`).
     pub brand: String,
-    /// Upstream rsync version identifier (`"3.4.1"`).
+    /// Upstream rsync version identifier (e.g., `"3.4.1"`).
     pub upstream_version: String,
-    /// Rust-branded version identifier (`"3.4.1-rust"`).
+    /// oc-rsync release version identifier (e.g., `"0.5.0"`).
     pub rust_version: String,
     /// Highest protocol version supported by the build.
     pub protocol: u16,
