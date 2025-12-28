@@ -173,7 +173,7 @@ fn parse_exclude_if_present(trimmed: &str) -> Option<Result<FilterDirective, Mes
     }
 
     Some(Ok(FilterDirective::Rule(
-        FilterRuleSpec::exclude_if_present(pattern_text.to_string()),
+        FilterRuleSpec::exclude_if_present(pattern_text.to_owned()),
     )))
 }
 
@@ -195,7 +195,7 @@ fn parse_short_include_rule(
         return Some(Err(message));
     }
 
-    let rule = builder(pattern.to_string());
+    let rule = builder(pattern.to_owned());
     let rule = match apply_rule_modifiers(rule, modifiers, trimmed) {
         Ok(rule) => rule,
         Err(error) => return Some(Err(error)),
@@ -243,7 +243,7 @@ fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirective, Messag
     }
 
     Some(Ok(FilterDirective::Rule(FilterRuleSpec::dir_merge(
-        path_text.to_string(),
+        path_text.to_owned(),
         options,
     ))))
 }
@@ -267,7 +267,7 @@ fn parse_keyword_rule(trimmed: &str) -> Result<FilterDirective, Message> {
 
         let modifiers =
             parse_rule_modifiers(keyword_modifiers, trimmed, allow_perishable, allow_xattr)?;
-        let rule = builder(pattern.to_string());
+        let rule = builder(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, trimmed)?;
         Ok(FilterDirective::Rule(rule))
     };

@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn invalid_config_error() {
-        let err = EngineError::InvalidConfig("missing required field".to_string());
+        let err = EngineError::InvalidConfig("missing required field".to_owned());
 
         assert!(matches!(err, EngineError::InvalidConfig(_)));
         assert!(err.to_string().contains("Invalid configuration"));
@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn unsupported_error() {
-        let err = EngineError::Unsupported("feature X".to_string());
+        let err = EngineError::Unsupported("feature X".to_owned());
 
         assert!(matches!(err, EngineError::Unsupported(_)));
         assert!(err.to_string().contains("Unsupported operation"));
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn debug_format() {
-        let err = EngineError::InvalidConfig("test".to_string());
+        let err = EngineError::InvalidConfig("test".to_owned());
         let debug = format!("{err:?}");
 
         assert!(debug.contains("InvalidConfig"));

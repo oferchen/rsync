@@ -303,7 +303,7 @@ fn parse_matcher(
     }
 
     if source.chars().any(|ch| matches!(ch, '*' | '?' | '[')) {
-        return Ok(MappingMatcher::Pattern(source.to_string()));
+        return Ok(MappingMatcher::Pattern(source.to_owned()));
     }
 
     if source.is_empty() {
@@ -313,7 +313,7 @@ fn parse_matcher(
         ));
     }
 
-    Ok(MappingMatcher::ExactName(source.to_string()))
+    Ok(MappingMatcher::ExactName(source.to_owned()))
 }
 
 fn parse_numeric_range(source: &str) -> Option<(u32, u32)> {
@@ -361,7 +361,7 @@ fn parse_target(
         });
     }
 
-    Ok(MappingTarget::Name(target.to_string()))
+    Ok(MappingTarget::Name(target.to_owned()))
 }
 
 fn wildcard_matches(pattern: &str, text: &str) -> bool {
@@ -908,7 +908,7 @@ mod tests {
     fn mapping_matcher_any() {
         let matcher = MappingMatcher::Any;
         let result = matcher
-            .matches(12345, || Ok(Some("test".to_string())))
+            .matches(12345, || Ok(Some("test".to_owned())))
             .unwrap();
         assert!(result);
     }
@@ -936,50 +936,50 @@ mod tests {
 
     #[test]
     fn mapping_matcher_exact_name_match() {
-        let matcher = MappingMatcher::ExactName("testuser".to_string());
+        let matcher = MappingMatcher::ExactName("testuser".to_owned());
         let result = matcher
-            .matches(1000, || Ok(Some("testuser".to_string())))
+            .matches(1000, || Ok(Some("testuser".to_owned())))
             .unwrap();
         assert!(result);
     }
 
     #[test]
     fn mapping_matcher_exact_name_no_match() {
-        let matcher = MappingMatcher::ExactName("testuser".to_string());
+        let matcher = MappingMatcher::ExactName("testuser".to_owned());
         let result = matcher
-            .matches(1000, || Ok(Some("otheruser".to_string())))
+            .matches(1000, || Ok(Some("otheruser".to_owned())))
             .unwrap();
         assert!(!result);
     }
 
     #[test]
     fn mapping_matcher_exact_name_no_name() {
-        let matcher = MappingMatcher::ExactName("testuser".to_string());
+        let matcher = MappingMatcher::ExactName("testuser".to_owned());
         let result = matcher.matches(1000, || Ok(None)).unwrap();
         assert!(!result);
     }
 
     #[test]
     fn mapping_matcher_pattern_match() {
-        let matcher = MappingMatcher::Pattern("test*".to_string());
+        let matcher = MappingMatcher::Pattern("test*".to_owned());
         let result = matcher
-            .matches(1000, || Ok(Some("testuser".to_string())))
+            .matches(1000, || Ok(Some("testuser".to_owned())))
             .unwrap();
         assert!(result);
     }
 
     #[test]
     fn mapping_matcher_pattern_no_match() {
-        let matcher = MappingMatcher::Pattern("test*".to_string());
+        let matcher = MappingMatcher::Pattern("test*".to_owned());
         let result = matcher
-            .matches(1000, || Ok(Some("otheruser".to_string())))
+            .matches(1000, || Ok(Some("otheruser".to_owned())))
             .unwrap();
         assert!(!result);
     }
 
     #[test]
     fn mapping_matcher_pattern_no_name() {
-        let matcher = MappingMatcher::Pattern("test*".to_string());
+        let matcher = MappingMatcher::Pattern("test*".to_owned());
         let result = matcher.matches(1000, || Ok(None)).unwrap();
         assert!(!result);
     }

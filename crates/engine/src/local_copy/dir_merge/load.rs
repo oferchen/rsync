@@ -130,14 +130,14 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
                 if let Some(kind) = enforce_kind {
                     let rule = match kind {
-                        DirMergeEnforcedKind::Include => FilterRule::include(token.to_string()),
-                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(token.to_string()),
+                        DirMergeEnforcedKind::Include => FilterRule::include(token.to_owned()),
+                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(token.to_owned()),
                     };
                     entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
                     continue;
                 }
 
-                let mut directive = token.to_string();
+                let mut directive = token.to_owned();
                 let lower = directive.to_ascii_lowercase();
                 let needs_argument = matches!(
                     lower.as_str(),
@@ -222,8 +222,8 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
                 if let Some(kind) = enforce_kind {
                     let rule = match kind {
-                        DirMergeEnforcedKind::Include => FilterRule::include(trimmed.to_string()),
-                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(trimmed.to_string()),
+                        DirMergeEnforcedKind::Include => FilterRule::include(trimmed.to_owned()),
+                        DirMergeEnforcedKind::Exclude => FilterRule::exclude(trimmed.to_owned()),
                     };
                     entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
                     continue;
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn dir_merge_entries_push_rule() {
         let mut entries = DirMergeEntries::default();
-        let rule = FilterRule::exclude("*.tmp".to_string());
+        let rule = FilterRule::exclude("*.tmp".to_owned());
         entries.push_rule(rule);
         assert_eq!(entries.rules.len(), 1);
     }
@@ -341,16 +341,16 @@ mod tests {
     #[test]
     fn dir_merge_entries_push_multiple_rules() {
         let mut entries = DirMergeEntries::default();
-        entries.push_rule(FilterRule::exclude("*.tmp".to_string()));
-        entries.push_rule(FilterRule::include("*.rs".to_string()));
-        entries.push_rule(FilterRule::exclude("target/".to_string()));
+        entries.push_rule(FilterRule::exclude("*.tmp".to_owned()));
+        entries.push_rule(FilterRule::include("*.rs".to_owned()));
+        entries.push_rule(FilterRule::exclude("target/".to_owned()));
         assert_eq!(entries.rules.len(), 3);
     }
 
     #[test]
     fn dir_merge_entries_push_exclude_if_present() {
         let mut entries = DirMergeEntries::default();
-        let rule = ExcludeIfPresentRule::new(".nobackup".to_string());
+        let rule = ExcludeIfPresentRule::new(".nobackup".to_owned());
         entries.push_exclude_if_present(rule);
         assert_eq!(entries.exclude_if_present.len(), 1);
     }
@@ -358,12 +358,12 @@ mod tests {
     #[test]
     fn dir_merge_entries_extend_merges_both_vecs() {
         let mut entries1 = DirMergeEntries::default();
-        entries1.push_rule(FilterRule::exclude("*.tmp".to_string()));
-        entries1.push_exclude_if_present(ExcludeIfPresentRule::new(".skip".to_string()));
+        entries1.push_rule(FilterRule::exclude("*.tmp".to_owned()));
+        entries1.push_exclude_if_present(ExcludeIfPresentRule::new(".skip".to_owned()));
 
         let mut entries2 = DirMergeEntries::default();
-        entries2.push_rule(FilterRule::include("*.rs".to_string()));
-        entries2.push_exclude_if_present(ExcludeIfPresentRule::new(".ignore".to_string()));
+        entries2.push_rule(FilterRule::include("*.rs".to_owned()));
+        entries2.push_exclude_if_present(ExcludeIfPresentRule::new(".ignore".to_owned()));
 
         entries1.extend(entries2);
 
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn dir_merge_entries_extend_empty_into_populated() {
         let mut entries = DirMergeEntries::default();
-        entries.push_rule(FilterRule::exclude("*.log".to_string()));
+        entries.push_rule(FilterRule::exclude("*.log".to_owned()));
 
         let empty = DirMergeEntries::default();
         entries.extend(empty);
@@ -387,7 +387,7 @@ mod tests {
         let mut entries = DirMergeEntries::default();
 
         let mut populated = DirMergeEntries::default();
-        populated.push_rule(FilterRule::include("*.md".to_string()));
+        populated.push_rule(FilterRule::include("*.md".to_owned()));
 
         entries.extend(populated);
 

@@ -173,17 +173,17 @@ mod integration {
 
     #[test]
     fn test_batch_config_modes() {
-        let config = BatchConfig::new(BatchMode::Write, "test".to_string(), 30);
+        let config = BatchConfig::new(BatchMode::Write, "test".to_owned(), 30);
         assert!(config.is_write_mode());
         assert!(!config.is_read_mode());
         assert!(config.should_transfer());
 
-        let config2 = BatchConfig::new(BatchMode::OnlyWrite, "test".to_string(), 30);
+        let config2 = BatchConfig::new(BatchMode::OnlyWrite, "test".to_owned(), 30);
         assert!(config2.is_write_mode());
         assert!(!config2.is_read_mode());
         assert!(!config2.should_transfer());
 
-        let config3 = BatchConfig::new(BatchMode::Read, "test".to_string(), 30);
+        let config3 = BatchConfig::new(BatchMode::Read, "test".to_owned(), 30);
         assert!(!config3.is_write_mode());
         assert!(config3.is_read_mode());
         assert!(config3.should_transfer());
@@ -191,10 +191,10 @@ mod integration {
 
     #[test]
     fn test_batch_script_path() {
-        let config = BatchConfig::new(BatchMode::Write, "mybatch".to_string(), 30);
+        let config = BatchConfig::new(BatchMode::Write, "mybatch".to_owned(), 30);
         assert_eq!(config.script_file_path(), "mybatch.sh");
 
-        let config2 = BatchConfig::new(BatchMode::Write, "/tmp/test.batch".to_string(), 30);
+        let config2 = BatchConfig::new(BatchMode::Write, "/tmp/test.batch".to_owned(), 30);
         assert_eq!(config2.script_file_path(), "/tmp/test.batch.sh");
     }
 

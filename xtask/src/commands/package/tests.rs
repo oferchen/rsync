@@ -293,7 +293,7 @@ fn fake_tool(name: &str) -> (tempfile::TempDir, PathBuf) {
     let file_name = if cfg!(windows) {
         format!("{name}.cmd")
     } else {
-        name.to_string()
+        name.to_owned()
     };
     let tool_path = dir.path().join(file_name);
 

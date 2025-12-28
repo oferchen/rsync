@@ -117,7 +117,7 @@ impl RsyncCommand {
 
     /// Add an argument.
     pub fn arg<S: AsRef<str>>(&mut self, arg: S) -> &mut Self {
-        self.args.push(arg.as_ref().to_string());
+        self.args.push(arg.as_ref().to_owned());
         self
     }
 

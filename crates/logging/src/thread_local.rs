@@ -113,8 +113,8 @@ mod tests {
     fn test_emit_and_drain() {
         init(VerbosityConfig::default());
 
-        emit_info(InfoFlag::Copy, 1, "test info".to_string());
-        emit_debug(DebugFlag::Recv, 2, "test debug".to_string());
+        emit_info(InfoFlag::Copy, 1, "test info".to_owned());
+        emit_debug(DebugFlag::Recv, 2, "test debug".to_owned());
 
         let events = drain_events();
         assert_eq!(events.len(), 2);
@@ -154,7 +154,7 @@ mod tests {
         let info_event = DiagnosticEvent::Info {
             flag: InfoFlag::Copy,
             level: 1,
-            message: "test".to_string(),
+            message: "test".to_owned(),
         };
         let cloned = info_event;
         match cloned {
@@ -173,7 +173,7 @@ mod tests {
         let debug_event = DiagnosticEvent::Debug {
             flag: DebugFlag::Bind,
             level: 2,
-            message: "debug".to_string(),
+            message: "debug".to_owned(),
         };
         let cloned = debug_event;
         match cloned {
@@ -195,7 +195,7 @@ mod tests {
         let info_event = DiagnosticEvent::Info {
             flag: InfoFlag::Del,
             level: 3,
-            message: "delete".to_string(),
+            message: "delete".to_owned(),
         };
         let debug = format!("{info_event:?}");
         assert!(debug.contains("Info"));
@@ -204,7 +204,7 @@ mod tests {
         let debug_event = DiagnosticEvent::Debug {
             flag: DebugFlag::Io,
             level: 4,
-            message: "io debug".to_string(),
+            message: "io debug".to_owned(),
         };
         let debug = format!("{debug_event:?}");
         assert!(debug.contains("Debug"));
@@ -262,9 +262,9 @@ mod tests {
         init(VerbosityConfig::default());
         drain_events(); // Clear any existing
 
-        emit_info(InfoFlag::Copy, 1, "first".to_string());
-        emit_info(InfoFlag::Del, 2, "second".to_string());
-        emit_debug(DebugFlag::Send, 3, "third".to_string());
+        emit_info(InfoFlag::Copy, 1, "first".to_owned());
+        emit_info(InfoFlag::Del, 2, "second".to_owned());
+        emit_debug(DebugFlag::Send, 3, "third".to_owned());
 
         let events = drain_events();
         assert_eq!(events.len(), 3);
@@ -289,7 +289,7 @@ mod tests {
         init(VerbosityConfig::default());
         drain_events(); // Clear existing
 
-        emit_info(InfoFlag::Copy, 1, "test".to_string());
+        emit_info(InfoFlag::Copy, 1, "test".to_owned());
         let first_drain = drain_events();
         assert_eq!(first_drain.len(), 1);
 

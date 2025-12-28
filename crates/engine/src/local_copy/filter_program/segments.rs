@@ -176,7 +176,7 @@ impl CompiledRule {
         let action = rule.action();
         let applies_to_sender = rule.applies_to_sender();
         let applies_to_receiver = rule.applies_to_receiver();
-        let pattern = rule.pattern().to_string();
+        let pattern = rule.pattern().to_owned();
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
 
         let mut direct_patterns = HashSet::new();
@@ -239,7 +239,7 @@ fn compile_patterns(
             .literal_separator(true)
             .backslash_escape(true)
             .build()
-            .map_err(|error| super::FilterProgramError::new(original.to_string(), error))?;
+            .map_err(|error| super::FilterProgramError::new(original.to_owned(), error))?;
         matchers.push(glob.compile_matcher());
     }
 
@@ -256,7 +256,7 @@ fn normalise_pattern(pattern: &str) -> (bool, bool, String) {
     if directory_only && !core.is_empty() {
         core = &core[..core.len() - 1];
     }
-    (anchored, directory_only, core.to_string())
+    (anchored, directory_only, core.to_owned())
 }
 
 #[cfg(test)]
@@ -337,7 +337,7 @@ mod tests {
     fn filter_segment_push_include() {
         let mut segment = FilterSegment::default();
         segment
-            .push_rule(FilterRule::include("*.txt".to_string()))
+            .push_rule(FilterRule::include("*.txt".to_owned()))
             .unwrap();
         assert!(!segment.is_empty());
     }
@@ -346,7 +346,7 @@ mod tests {
     fn filter_segment_push_exclude() {
         let mut segment = FilterSegment::default();
         segment
-            .push_rule(FilterRule::exclude("*.bak".to_string()))
+            .push_rule(FilterRule::exclude("*.bak".to_owned()))
             .unwrap();
         assert!(!segment.is_empty());
     }
@@ -355,7 +355,7 @@ mod tests {
     fn filter_segment_push_protect() {
         let mut segment = FilterSegment::default();
         segment
-            .push_rule(FilterRule::protect("important/".to_string()))
+            .push_rule(FilterRule::protect("important/".to_owned()))
             .unwrap();
         assert!(!segment.is_empty());
     }

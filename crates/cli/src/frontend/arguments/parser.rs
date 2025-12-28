@@ -366,7 +366,7 @@ where
                     Err(message) => {
                         return Err(clap::Error::raw(
                             clap::error::ErrorKind::ValueValidation,
-                            message.text().to_string(),
+                            message.text().to_owned(),
                         ));
                     }
                 }
@@ -380,7 +380,7 @@ where
             Err(message) => {
                 return Err(clap::Error::raw(
                     clap::error::ErrorKind::ValueValidation,
-                    message.text().to_string(),
+                    message.text().to_owned(),
                 ));
             }
         },

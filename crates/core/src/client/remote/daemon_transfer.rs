@@ -68,8 +68,8 @@ impl DaemonTransferRequest {
 
         // Split path into module and file path
         let mut path_parts = path_part.splitn(2, '/');
-        let module = path_parts.next().unwrap_or("").to_string();
-        let file_path = path_parts.next().unwrap_or("").to_string();
+        let module = path_parts.next().unwrap_or("").to_owned();
+        let file_path = path_parts.next().unwrap_or("").to_owned();
 
         if module.is_empty() {
             return Err(invalid_argument_error(
@@ -350,7 +350,7 @@ fn perform_daemon_handshake(
             let username = request.username.clone().unwrap_or_else(|| {
                 std::env::var("USER")
                     .or_else(|_| std::env::var("USERNAME"))
-                    .unwrap_or_else(|_| "rsync".to_string())
+                    .unwrap_or_else(|_| "rsync".to_owned())
             });
 
             // Select strongest mutually supported digest
@@ -418,12 +418,12 @@ fn send_daemon_arguments(
     let mut args = Vec::new();
 
     // First arg is always --server (tells daemon we're using server protocol)
-    args.push("--server".to_string());
+    args.push("--server".to_owned());
 
     // For pull (we receive), daemon is sender, so we send --sender
     // For push (we send), daemon is receiver, so we don't send --sender
     if is_sender {
-        args.push("--sender".to_string());
+        args.push("--sender".to_owned());
     }
 
     // Build flag string with capabilities
@@ -450,11 +450,11 @@ fn send_daemon_arguments(
     // file list in one batch. With INC_RECURSE, the daemon expects separate
     // file lists for each directory level, which we don't implement yet.
     if protocol.as_u8() >= 30 {
-        args.push("-e.LsfxCIvu".to_string());
+        args.push("-e.LsfxCIvu".to_owned());
     }
 
     // Add dummy argument (upstream requirement - represents CWD)
-    args.push(".".to_string());
+    args.push(".".to_owned());
 
     // Add module path
     let module_path = format!("{}/{}", request.module, request.path);
@@ -802,7 +802,7 @@ fn build_wire_format_rules(
                 // (FILTRULE_EXCLUDE_SELF in upstream rsync)
                 wire_rules.push(FilterRuleWireFormat {
                     rule_type: RuleType::Exclude,
-                    pattern: spec.pattern().to_string(),
+                    pattern: spec.pattern().to_owned(),
                     anchored: spec.pattern().starts_with('/'),
                     directory_only: spec.pattern().ends_with('/'),
                     no_inherit: false,
@@ -822,7 +822,7 @@ fn build_wire_format_rules(
         // Build wire format rule
         let mut wire_rule = FilterRuleWireFormat {
             rule_type,
-            pattern: spec.pattern().to_string(),
+            pattern: spec.pattern().to_owned(),
             anchored: spec.pattern().starts_with('/'),
             directory_only: spec.pattern().ends_with('/'),
             no_inherit: false,

@@ -523,36 +523,36 @@ fn compile_filter_program(rules: &[FilterRuleSpec]) -> Result<Option<FilterProgr
     for rule in rules {
         match rule.kind() {
             FilterRuleKind::Include => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::include(rule.pattern().to_string())
+                EngineFilterRule::include(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable())
                     .with_xattr_only(rule.is_xattr_only()),
             )),
             FilterRuleKind::Exclude => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::exclude(rule.pattern().to_string())
+                EngineFilterRule::exclude(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable())
                     .with_xattr_only(rule.is_xattr_only()),
             )),
             FilterRuleKind::Clear => entries.push(FilterProgramEntry::Clear),
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::protect(rule.pattern().to_string())
+                EngineFilterRule::protect(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable()),
             )),
             FilterRuleKind::Risk => entries.push(FilterProgramEntry::Rule(
-                EngineFilterRule::risk(rule.pattern().to_string())
+                EngineFilterRule::risk(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable()),
             )),
             FilterRuleKind::DirMerge => {
                 entries.push(FilterProgramEntry::DirMerge(DirMergeRule::new(
-                    rule.pattern().to_string(),
+                    rule.pattern().to_owned(),
                     rule.dir_merge_options().cloned().unwrap_or_default(),
                 )))
             }
             FilterRuleKind::ExcludeIfPresent => entries.push(FilterProgramEntry::ExcludeIfPresent(
-                ExcludeIfPresentRule::new(rule.pattern().to_string()),
+                ExcludeIfPresentRule::new(rule.pattern().to_owned()),
             )),
         }
     }

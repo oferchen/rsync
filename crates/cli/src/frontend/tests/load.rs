@@ -14,7 +14,7 @@ fn load_filter_file_patterns_skips_comments_and_trims_crlf() {
 
     assert_eq!(
         patterns,
-        vec![" include ".to_string(), "pattern".to_string()]
+        vec![" include ".to_owned(), "pattern".to_owned()]
     );
 }
 
@@ -29,7 +29,7 @@ fn load_filter_file_patterns_skip_semicolon_comments() {
     let patterns =
         load_filter_file_patterns(path.as_path()).expect("load filter patterns succeeds");
 
-    assert_eq!(patterns, vec!["keep".to_string()]);
+    assert_eq!(patterns, vec!["keep".to_owned()]);
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn load_filter_file_patterns_handles_invalid_utf8() {
     let patterns =
         load_filter_file_patterns(path.as_path()).expect("load filter patterns succeeds");
 
-    assert_eq!(patterns, vec!["\u{fffd}".to_string()]);
+    assert_eq!(patterns, vec!["\u{fffd}".to_owned()]);
 }
 
 #[test]
@@ -51,5 +51,5 @@ fn load_filter_file_patterns_reads_from_stdin() {
     super::set_filter_stdin_input(b"keep\n# comment\n\ninclude\n".to_vec());
     let patterns = super::load_filter_file_patterns(Path::new("-")).expect("load stdin patterns");
 
-    assert_eq!(patterns, vec!["keep".to_string(), "include".to_string()]);
+    assert_eq!(patterns, vec!["keep".to_owned(), "include".to_owned()]);
 }

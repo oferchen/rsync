@@ -82,7 +82,7 @@ pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskE
 
     if !status.success() {
         return Err(TaskError::CommandFailed {
-            program: "cargo doc".to_string(),
+            program: "cargo doc".to_owned(),
             status,
         });
     }
@@ -112,7 +112,7 @@ pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskE
 
     if !status.success() {
         return Err(TaskError::CommandFailed {
-            program: "tar".to_string(),
+            program: "tar".to_owned(),
             status,
         });
     }

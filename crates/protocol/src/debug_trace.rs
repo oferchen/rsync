@@ -25,8 +25,8 @@ impl TraceConfig {
     /// Create a disabled trace configuration
     pub fn disabled() -> Self {
         Self {
-            trace_dir: "/tmp/rsync-trace".to_string(),
-            prefix: "trace".to_string(),
+            trace_dir: "/tmp/rsync-trace".to_owned(),
+            prefix: "trace".to_owned(),
             enabled: false,
         }
     }
@@ -34,8 +34,8 @@ impl TraceConfig {
     /// Create an enabled trace configuration with the given prefix
     pub fn enabled(prefix: &str) -> Self {
         Self {
-            trace_dir: "/tmp/rsync-trace".to_string(),
-            prefix: prefix.to_string(),
+            trace_dir: "/tmp/rsync-trace".to_owned(),
+            prefix: prefix.to_owned(),
             enabled: true,
         }
     }
@@ -377,7 +377,7 @@ mod tests {
                 .join("rsync-trace-test")
                 .to_string_lossy()
                 .into_owned(),
-            prefix: "test_reader".to_string(),
+            prefix: "test_reader".to_owned(),
             enabled: true,
         };
         let mut reader = TracingReader::new(cursor, config);
@@ -419,7 +419,7 @@ mod tests {
                 .join("rsync-trace-test")
                 .to_string_lossy()
                 .into_owned(),
-            prefix: "test_writer".to_string(),
+            prefix: "test_writer".to_owned(),
             enabled: true,
         };
         {

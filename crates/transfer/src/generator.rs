@@ -1351,7 +1351,7 @@ mod tests {
         ServerConfig {
             role: ServerRole::Generator,
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
-            flag_string: "-logDtpre.".to_string(),
+            flag_string: "-logDtpre.".to_owned(),
             flags: ParsedServerFlags::default(),
             args: vec![OsString::from(".")],
             compression_level: None,
@@ -1472,7 +1472,7 @@ mod tests {
 
         use protocol::filters::FilterRuleWireFormat;
 
-        let wire_rules = vec![FilterRuleWireFormat::exclude("*.log".to_string())];
+        let wire_rules = vec![FilterRuleWireFormat::exclude("*.log".to_owned())];
         let result = ctx.parse_received_filters(&wire_rules);
         assert!(result.is_ok());
 
@@ -1489,9 +1489,9 @@ mod tests {
         use protocol::filters::FilterRuleWireFormat;
 
         let wire_rules = vec![
-            FilterRuleWireFormat::exclude("*.log".to_string()),
-            FilterRuleWireFormat::include("*.txt".to_string()),
-            FilterRuleWireFormat::exclude("temp/".to_string()).with_directory_only(true),
+            FilterRuleWireFormat::exclude("*.log".to_owned()),
+            FilterRuleWireFormat::include("*.txt".to_owned()),
+            FilterRuleWireFormat::exclude("temp/".to_owned()).with_directory_only(true),
         ];
 
         let result = ctx.parse_received_filters(&wire_rules);
@@ -1510,10 +1510,10 @@ mod tests {
         use protocol::filters::FilterRuleWireFormat;
 
         let wire_rules = vec![
-            FilterRuleWireFormat::exclude("*.tmp".to_string())
+            FilterRuleWireFormat::exclude("*.tmp".to_owned())
                 .with_sides(true, false)
                 .with_perishable(true),
-            FilterRuleWireFormat::include("/important".to_string()).with_anchored(true),
+            FilterRuleWireFormat::include("/important".to_owned()).with_anchored(true),
         ];
 
         let result = ctx.parse_received_filters(&wire_rules);
@@ -1529,7 +1529,7 @@ mod tests {
         use protocol::filters::{FilterRuleWireFormat, RuleType};
 
         let wire_rules = vec![
-            FilterRuleWireFormat::exclude("*.log".to_string()),
+            FilterRuleWireFormat::exclude("*.log".to_owned()),
             FilterRuleWireFormat {
                 rule_type: RuleType::Clear,
                 pattern: String::new(),
@@ -1545,7 +1545,7 @@ mod tests {
                 perishable: false,
                 negate: false,
             },
-            FilterRuleWireFormat::include("*.txt".to_string()),
+            FilterRuleWireFormat::include("*.txt".to_owned()),
         ];
 
         let result = ctx.parse_received_filters(&wire_rules);
@@ -1579,7 +1579,7 @@ mod tests {
         let mut ctx = GeneratorContext::new(&handshake, config);
 
         // Parse and set filters
-        let wire_rules = vec![FilterRuleWireFormat::exclude("*.log".to_string())];
+        let wire_rules = vec![FilterRuleWireFormat::exclude("*.log".to_owned())];
         let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
         ctx.filters = Some(filter_set);
 
@@ -1623,8 +1623,8 @@ mod tests {
 
         // Parse and set filters: exclude *, include *.txt
         let wire_rules = vec![
-            FilterRuleWireFormat::exclude("*".to_string()),
-            FilterRuleWireFormat::include("*.txt".to_string()),
+            FilterRuleWireFormat::exclude("*".to_owned()),
+            FilterRuleWireFormat::include("*.txt".to_owned()),
         ];
         let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
         ctx.filters = Some(filter_set);
@@ -1666,7 +1666,7 @@ mod tests {
 
         // Parse and set filters
         let wire_rules = vec![
-            FilterRuleWireFormat::exclude("exclude_dir/".to_string()).with_directory_only(true),
+            FilterRuleWireFormat::exclude("exclude_dir/".to_owned()).with_directory_only(true),
         ];
         let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
         ctx.filters = Some(filter_set);

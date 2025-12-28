@@ -9,8 +9,8 @@ fn resolve_iconv_setting_parses_explicit_spec() {
     assert_eq!(
         setting,
         core::client::IconvSetting::Explicit {
-            local: "utf8".to_string(),
-            remote: Some("iso88591".to_string()),
+            local: "utf8".to_owned(),
+            remote: Some("iso88591".to_owned()),
         }
     );
 }

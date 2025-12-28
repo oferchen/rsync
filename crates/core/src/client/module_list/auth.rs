@@ -133,12 +133,12 @@ pub(crate) fn load_daemon_password() -> Option<Vec<u8>> {
 
 pub(crate) fn normalize_motd_payload(payload: &str) -> String {
     if !is_motd_payload(payload) {
-        return payload.to_string();
+        return payload.to_owned();
     }
 
     let remainder = &payload[4..];
     let remainder = remainder.trim_start_matches([' ', '\t', ':']);
-    remainder.trim_start().to_string()
+    remainder.trim_start().to_owned()
 }
 
 pub(crate) fn is_motd_payload(payload: &str) -> bool {

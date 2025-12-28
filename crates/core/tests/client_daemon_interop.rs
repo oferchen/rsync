@@ -849,7 +849,7 @@ fn test_error_connection_refused() {
 
     let config = ClientConfig::builder()
         .transfer_args([
-            "rsync://127.0.0.1:1/testmodule/file.txt".to_string(),
+            "rsync://127.0.0.1:1/testmodule/file.txt".to_owned(),
             dest_root.path().to_string_lossy().to_string(),
         ])
         .build();

@@ -6,34 +6,34 @@ fn parse_filter_directive_accepts_include_and_exclude() {
     let include = parse_filter_directive(OsStr::new("+ assets/**")).expect("include rule parses");
     assert_eq!(
         include,
-        FilterDirective::Rule(FilterRuleSpec::include("assets/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::include("assets/**".to_owned()))
     );
 
     let exclude = parse_filter_directive(OsStr::new("- *.bak")).expect("exclude rule parses");
     assert_eq!(
         exclude,
-        FilterDirective::Rule(FilterRuleSpec::exclude("*.bak".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::exclude("*.bak".to_owned()))
     );
 
     let include_keyword =
         parse_filter_directive(OsStr::new("include logs/**")).expect("keyword include parses");
     assert_eq!(
         include_keyword,
-        FilterDirective::Rule(FilterRuleSpec::include("logs/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::include("logs/**".to_owned()))
     );
 
     let exclude_keyword =
         parse_filter_directive(OsStr::new("exclude *.tmp")).expect("keyword exclude parses");
     assert_eq!(
         exclude_keyword,
-        FilterDirective::Rule(FilterRuleSpec::exclude("*.tmp".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::exclude("*.tmp".to_owned()))
     );
 
     let protect_keyword =
         parse_filter_directive(OsStr::new("protect backups/**")).expect("keyword protect parses");
     assert_eq!(
         protect_keyword,
-        FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_owned()))
     );
 }
 
@@ -43,14 +43,14 @@ fn parse_filter_directive_accepts_hide_and_show_keywords() {
         parse_filter_directive(OsStr::new("show images/**")).expect("keyword show parses");
     assert_eq!(
         show_keyword,
-        FilterDirective::Rule(FilterRuleSpec::show("images/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::show("images/**".to_owned()))
     );
 
     let hide_keyword =
         parse_filter_directive(OsStr::new("hide *.swp")).expect("keyword hide parses");
     assert_eq!(
         hide_keyword,
-        FilterDirective::Rule(FilterRuleSpec::hide("*.swp".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::hide("*.swp".to_owned()))
     );
 }
 
@@ -60,14 +60,14 @@ fn parse_filter_directive_accepts_risk_keyword_and_shorthand() {
         parse_filter_directive(OsStr::new("risk backups/**")).expect("keyword risk parses");
     assert_eq!(
         risk_keyword,
-        FilterDirective::Rule(FilterRuleSpec::risk("backups/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::risk("backups/**".to_owned()))
     );
 
     let risk_shorthand =
         parse_filter_directive(OsStr::new("R logs/**")).expect("shorthand risk parses");
     assert_eq!(
         risk_shorthand,
-        FilterDirective::Rule(FilterRuleSpec::risk("logs/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::risk("logs/**".to_owned()))
     );
 }
 
@@ -77,19 +77,19 @@ fn parse_filter_directive_accepts_shorthand_hide_show_and_protect() {
         parse_filter_directive(OsStr::new("P backups/**")).expect("shorthand protect parses");
     assert_eq!(
         protect,
-        FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::protect("backups/**".to_owned()))
     );
 
     let hide = parse_filter_directive(OsStr::new("H *.tmp")).expect("shorthand hide parses");
     assert_eq!(
         hide,
-        FilterDirective::Rule(FilterRuleSpec::hide("*.tmp".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::hide("*.tmp".to_owned()))
     );
 
     let show = parse_filter_directive(OsStr::new("S public/**")).expect("shorthand show parses");
     assert_eq!(
         show,
-        FilterDirective::Rule(FilterRuleSpec::show("public/**".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::show("public/**".to_owned()))
     );
 }
 
@@ -99,14 +99,14 @@ fn parse_filter_directive_accepts_exclude_if_present() {
         .expect("exclude-if-present with whitespace parses");
     assert_eq!(
         directive,
-        FilterDirective::Rule(FilterRuleSpec::exclude_if_present("marker".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::exclude_if_present("marker".to_owned()))
     );
 
     let equals_variant = parse_filter_directive(OsStr::new("exclude-if-present=.skip"))
         .expect("exclude-if-present with equals parses");
     assert_eq!(
         equals_variant,
-        FilterDirective::Rule(FilterRuleSpec::exclude_if_present(".skip".to_string()))
+        FilterDirective::Rule(FilterRuleSpec::exclude_if_present(".skip".to_owned()))
     );
 }
 
@@ -206,7 +206,7 @@ fn parse_filter_directive_accepts_xattr_only_rules() {
     assert_eq!(
         include,
         FilterDirective::Rule(
-            FilterRuleSpec::include("user.keep".to_string()).with_xattr_only(true)
+            FilterRuleSpec::include("user.keep".to_owned()).with_xattr_only(true)
         )
     );
 
@@ -215,7 +215,7 @@ fn parse_filter_directive_accepts_xattr_only_rules() {
     assert_eq!(
         exclude,
         FilterDirective::Rule(
-            FilterRuleSpec::exclude("user.skip".to_string()).with_xattr_only(true)
+            FilterRuleSpec::exclude("user.skip".to_owned()).with_xattr_only(true)
         )
     );
 
@@ -224,7 +224,7 @@ fn parse_filter_directive_accepts_xattr_only_rules() {
     assert_eq!(
         keyword,
         FilterDirective::Rule(
-            FilterRuleSpec::include("user.keep".to_string()).with_xattr_only(true)
+            FilterRuleSpec::include("user.keep".to_owned()).with_xattr_only(true)
         )
     );
 }
@@ -311,7 +311,7 @@ fn parse_filter_directive_accepts_dir_merge_without_modifiers() {
     assert_eq!(
         directive,
         FilterDirective::Rule(FilterRuleSpec::dir_merge(
-            ".rsync-filter".to_string(),
+            ".rsync-filter".to_owned(),
             DirMergeOptions::default(),
         )),
     );
@@ -324,7 +324,7 @@ fn parse_filter_directive_accepts_per_dir_alias() {
     assert_eq!(
         directive,
         FilterDirective::Rule(FilterRuleSpec::dir_merge(
-            ".rsync-filter".to_string(),
+            ".rsync-filter".to_owned(),
             DirMergeOptions::default(),
         )),
     );
@@ -337,7 +337,7 @@ fn parse_filter_directive_accepts_dir_merge_with_remove_modifier() {
     assert_eq!(
         directive,
         FilterDirective::Rule(FilterRuleSpec::dir_merge(
-            ".rsync-filter".to_string(),
+            ".rsync-filter".to_owned(),
             DirMergeOptions::default().with_enforced_kind(Some(DirMergeEnforcedKind::Exclude)),
         ))
     );

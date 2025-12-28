@@ -217,7 +217,7 @@ mod tests {
 
         #[test]
         fn arguments_from_vec() {
-            let args = vec!["--help".to_string(), "--version".to_string()];
+            let args = vec!["--help".to_owned(), "--version".to_owned()];
             let config = DaemonConfig::builder().arguments(args).build();
 
             assert_eq!(config.arguments().len(), 2);
