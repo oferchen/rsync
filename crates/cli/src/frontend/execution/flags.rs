@@ -245,6 +245,38 @@ pub(crate) struct DebugFlagSettings {
 }
 
 impl DebugFlagSettings {
+    /// Returns an iterator over all flag (name, level) pairs that are set.
+    pub(crate) fn iter_enabled_flags(&self) -> impl Iterator<Item = (&'static str, u8)> + '_ {
+        [
+            ("acl", self.acl),
+            ("backup", self.backup),
+            ("bind", self.bind),
+            ("chdir", self.chdir),
+            ("connect", self.connect),
+            ("cmd", self.cmd),
+            ("del", self.del),
+            ("deltasum", self.deltasum),
+            ("dup", self.dup),
+            ("exit", self.exit),
+            ("filter", self.filter),
+            ("flist", self.flist),
+            ("fuzzy", self.fuzzy),
+            ("genr", self.genr),
+            ("hash", self.hash),
+            ("hlink", self.hlink),
+            ("iconv", self.iconv),
+            ("io", self.io),
+            ("nstr", self.nstr),
+            ("own", self.own),
+            ("proto", self.proto),
+            ("recv", self.recv),
+            ("send", self.send),
+            ("time", self.time),
+        ]
+        .into_iter()
+        .filter_map(|(name, level)| level.filter(|&l| l > 0).map(|l| (name, l)))
+    }
+
     const fn enable_all(&mut self) {
         self.acl = Some(1);
         self.backup = Some(1);
