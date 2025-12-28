@@ -17,9 +17,7 @@ pub(crate) fn compute_backup_path(
     } else if let Ok(stripped) = destination.strip_prefix(destination_root) {
         if stripped.as_os_str().is_empty() {
             destination
-                .file_name()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(destination))
+                .file_name().map_or_else(|| PathBuf::from(destination), PathBuf::from)
         } else {
             stripped.to_path_buf()
         }
@@ -30,9 +28,7 @@ pub(crate) fn compute_backup_path(
     };
 
     let mut backup_name = relative_path
-        .file_name()
-        .map(|name| name.to_os_string())
-        .unwrap_or_else(|| OsString::from("backup"));
+        .file_name().map_or_else(|| OsString::from("backup"), |name| name.to_os_string());
     if !suffix.is_empty() {
         backup_name.push(suffix);
     }
@@ -51,9 +47,7 @@ pub(crate) fn compute_backup_path(
         base
     } else {
         destination
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."))
+            .parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     };
 
     base.push(backup_name);

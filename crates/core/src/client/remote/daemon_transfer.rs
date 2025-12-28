@@ -236,8 +236,7 @@ fn parse_digest_list_from_greeting(greeting: &str) -> Vec<DaemonAuthDigest> {
     // Skip version number (e.g., "31.0")
     let after_version = rest
         .split_once(char::is_whitespace)
-        .map(|(_, rest)| rest)
-        .unwrap_or("");
+        .map_or("", |(_, rest)| rest);
 
     parse_daemon_digest_list(if after_version.is_empty() {
         None

@@ -293,8 +293,7 @@ fn read_metadata(path: &Path) -> TaskResult<fs::Metadata> {
 fn has_suffix(path: &Path, suffix: &str) -> bool {
     path.file_name()
         .and_then(|value| value.to_str())
-        .map(|name| name.ends_with(suffix))
-        .unwrap_or(false)
+        .is_some_and(|name| name.ends_with(suffix))
 }
 
 fn run_upload_command(

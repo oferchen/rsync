@@ -357,9 +357,7 @@ pub(super) fn build_tarball(
 
 fn tarball_profile_name(profile: &Option<OsString>) -> String {
     profile
-        .as_ref()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("debug"))
+        .as_ref().map_or_else(|| String::from("debug"), |value| value.to_string_lossy().into_owned())
 }
 
 fn resolve_binary_path(

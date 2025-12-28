@@ -26,8 +26,7 @@ impl ClientConfig {
     #[must_use]
     pub fn modify_window_duration(&self) -> Duration {
         self.modify_window
-            .map(Duration::from_secs)
-            .unwrap_or(Duration::ZERO)
+            .map_or(Duration::ZERO, Duration::from_secs)
     }
 
     /// Returns whether the sender should remove source files after transfer.
