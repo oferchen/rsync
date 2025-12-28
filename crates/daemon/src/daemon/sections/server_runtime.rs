@@ -21,7 +21,7 @@ impl GeneratedFallbackConfig {
 }
 
 /// Formats a boolean value for rsync config files ("yes" or "no").
-fn format_bool(value: bool) -> &'static str {
+const fn format_bool(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
@@ -218,7 +218,7 @@ pub(crate) fn format_connection_status(active: usize) -> String {
 /// the kernel reports peer addresses as IPv4-mapped IPv6 (e.g., `::ffff:127.0.0.1`).
 /// This function converts such addresses back to their IPv4 equivalents for consistent
 /// logging and host matching.
-fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
+const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
     match addr.ip() {
         IpAddr::V6(v6) => {
             if let Some(v4) = v6.to_ipv4_mapped() {
@@ -719,7 +719,7 @@ fn join_worker(handle: thread::JoinHandle<WorkerResult>) -> Result<(), DaemonErr
 }
 
 /// Checks if an I/O error indicates a normal connection close.
-fn is_connection_closed_error(kind: io::ErrorKind) -> bool {
+const fn is_connection_closed_error(kind: io::ErrorKind) -> bool {
     matches!(
         kind,
         io::ErrorKind::BrokenPipe

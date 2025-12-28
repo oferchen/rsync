@@ -53,13 +53,13 @@ impl SshCommand {
     }
 
     /// Specifies the TCP port used when connecting to the remote host.
-    pub fn set_port(&mut self, port: u16) -> &mut Self {
+    pub const fn set_port(&mut self, port: u16) -> &mut Self {
         self.port = Some(port);
         self
     }
 
     /// Enables or disables batch mode (default: enabled).
-    pub fn set_batch_mode(&mut self, enabled: bool) -> &mut Self {
+    pub const fn set_batch_mode(&mut self, enabled: bool) -> &mut Self {
         self.batch_mode = enabled;
         self
     }

@@ -73,7 +73,7 @@ impl ChmodModifiers {
     }
 
     /// Returns `true` when no clauses are present.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.clauses.is_empty()
     }
 }

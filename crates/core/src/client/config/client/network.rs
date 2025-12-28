@@ -19,7 +19,7 @@ impl ClientConfig {
     /// Returns the configured bind address, if any.
     #[must_use]
     #[doc(alias = "--address")]
-    pub fn bind_address(&self) -> Option<&BindAddress> {
+    pub const fn bind_address(&self) -> Option<&BindAddress> {
         self.bind_address.as_ref()
     }
 
@@ -40,7 +40,7 @@ impl ClientConfig {
 
     /// Returns the requested bandwidth limit, if any.
     #[must_use]
-    pub fn bandwidth_limit(&self) -> Option<BandwidthLimit> {
+    pub const fn bandwidth_limit(&self) -> Option<BandwidthLimit> {
         self.bandwidth_limit
     }
 

@@ -674,7 +674,7 @@ fn record_fsync_call() {
 }
 
 #[cfg(not(test))]
-fn record_fsync_call() {}
+const fn record_fsync_call() {}
 
 #[cfg(test)]
 #[allow(dead_code)]

@@ -29,7 +29,7 @@ pub struct ClientProgressUpdate {
 impl ClientProgressUpdate {
     /// Returns the event associated with this progress update.
     #[must_use]
-    pub fn event(&self) -> &ClientEvent {
+    pub const fn event(&self) -> &ClientEvent {
         &self.event
     }
 

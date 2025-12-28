@@ -15,17 +15,17 @@ pub(crate) struct ParsedChown {
 }
 
 impl ParsedChown {
-    pub(crate) fn owner(&self) -> Option<uid_t> {
+    pub(crate) const fn owner(&self) -> Option<uid_t> {
         self.owner
     }
 
-    pub(crate) fn group(&self) -> Option<gid_t> {
+    pub(crate) const fn group(&self) -> Option<gid_t> {
         self.group
     }
 
     /// Returns the original spec string
     #[allow(dead_code)]
-    pub(crate) fn spec(&self) -> &OsString {
+    pub(crate) const fn spec(&self) -> &OsString {
         &self.spec
     }
 }

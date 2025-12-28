@@ -55,31 +55,31 @@ impl ModuleDefinition {
             .any(HostPattern::requires_hostname)
     }
 
-    fn requires_authentication(&self) -> bool {
+    const fn requires_authentication(&self) -> bool {
         !self.auth_users.is_empty()
     }
 
-    pub(crate) fn max_connections(&self) -> Option<NonZeroU32> {
+    pub(crate) const fn max_connections(&self) -> Option<NonZeroU32> {
         self.max_connections
     }
 
-    pub(crate) fn bandwidth_limit(&self) -> Option<NonZeroU64> {
+    pub(crate) const fn bandwidth_limit(&self) -> Option<NonZeroU64> {
         self.bandwidth_limit
     }
 
-    pub(crate) fn bandwidth_limit_specified(&self) -> bool {
+    pub(crate) const fn bandwidth_limit_specified(&self) -> bool {
         self.bandwidth_limit_specified
     }
 
-    pub(crate) fn bandwidth_burst(&self) -> Option<NonZeroU64> {
+    pub(crate) const fn bandwidth_burst(&self) -> Option<NonZeroU64> {
         self.bandwidth_burst
     }
 
-    pub(crate) fn bandwidth_burst_specified(&self) -> bool {
+    pub(crate) const fn bandwidth_burst_specified(&self) -> bool {
         self.bandwidth_burst_specified
     }
 
-    fn bandwidth_limit_configured(&self) -> bool {
+    const fn bandwidth_limit_configured(&self) -> bool {
         self.bandwidth_limit_configured
     }
 
@@ -175,7 +175,7 @@ pub(crate) enum ModuleConnectionError {
 }
 
 impl ModuleConnectionError {
-    fn io(error: io::Error) -> Self {
+    const fn io(error: io::Error) -> Self {
         Self::Io(error)
     }
 }
@@ -187,7 +187,7 @@ impl From<io::Error> for ModuleConnectionError {
 }
 
 impl ModuleRuntime {
-    fn new(
+    const fn new(
         definition: ModuleDefinition,
         connection_limiter: Option<Arc<ConnectionLimiter>>,
     ) -> Self {
@@ -387,7 +387,7 @@ struct ModuleConnectionGuard<'a> {
 }
 
 impl<'a> ModuleConnectionGuard<'a> {
-    fn limited(module: &'a ModuleRuntime, lock_guard: Option<ConnectionLockGuard>) -> Self {
+    const fn limited(module: &'a ModuleRuntime, lock_guard: Option<ConnectionLockGuard>) -> Self {
         Self {
             module: Some(module),
             lock_guard,

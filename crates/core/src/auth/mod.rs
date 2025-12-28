@@ -142,7 +142,7 @@ pub fn compute_daemon_auth_response(
 
 /// Returns the supported digest candidates that match the supplied response length.
 #[must_use]
-pub fn digests_for_response(response: &str) -> &'static [DaemonAuthDigest] {
+pub const fn digests_for_response(response: &str) -> &'static [DaemonAuthDigest] {
     match response.len() {
         len if len == DaemonAuthDigest::Sha512.base64_len() => SHA512_ONLY,
         len if len == DaemonAuthDigest::Sha256.base64_len() => SHA256_ONLY,

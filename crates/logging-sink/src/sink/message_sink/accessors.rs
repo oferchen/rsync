@@ -12,7 +12,7 @@ impl<W> MessageSink<W> {
     /// in-memory buffers (for example, when testing message renderers) while
     /// continuing to reuse the same [`MessageSink`].
     #[must_use]
-    pub fn writer(&self) -> &W {
+    pub const fn writer(&self) -> &W {
         &self.writer
     }
 
@@ -21,7 +21,7 @@ impl<W> MessageSink<W> {
     /// This is useful when integrations need to adjust writer state before
     /// emitting additional diagnostics. The sink keeps ownership of the writer,
     /// so logging can continue after the mutation.
-    pub fn writer_mut(&mut self) -> &mut W {
+    pub const fn writer_mut(&mut self) -> &mut W {
         &mut self.writer
     }
 
@@ -32,7 +32,7 @@ impl<W> MessageSink<W> {
     }
 
     /// Updates the [`LineMode`] used for subsequent writes.
-    pub fn set_line_mode(&mut self, line_mode: LineMode) {
+    pub const fn set_line_mode(&mut self, line_mode: LineMode) {
         self.line_mode = line_mode;
     }
 
@@ -47,7 +47,7 @@ impl<W> MessageSink<W> {
     /// lint, preventing accidental one-line overrides that would immediately
     /// revert to the previous mode.
     #[must_use = "bind the guard to retain the temporary line mode override for its scope"]
-    pub fn scoped_line_mode(&mut self, line_mode: LineMode) -> LineModeGuard<'_, W> {
+    pub const fn scoped_line_mode(&mut self, line_mode: LineMode) -> LineModeGuard<'_, W> {
         let previous = self.line_mode;
         self.line_mode = line_mode;
         LineModeGuard::new(self, previous)
@@ -55,13 +55,13 @@ impl<W> MessageSink<W> {
 
     /// Borrows the underlying writer.
     #[must_use]
-    pub fn get_ref(&self) -> &W {
+    pub const fn get_ref(&self) -> &W {
         &self.writer
     }
 
     /// Mutably borrows the underlying writer.
     #[must_use]
-    pub fn get_mut(&mut self) -> &mut W {
+    pub const fn get_mut(&mut self) -> &mut W {
         &mut self.writer
     }
 
@@ -83,7 +83,7 @@ impl<W> MessageSink<W> {
     /// diagnostics. Because the buffer is reused across writes, manually
     /// initialising it can help enforce deterministic state when toggling
     /// between sinks that share a scratch instance.
-    pub fn scratch_mut(&mut self) -> &mut MessageScratch {
+    pub const fn scratch_mut(&mut self) -> &mut MessageScratch {
         &mut self.scratch
     }
 
@@ -94,7 +94,7 @@ impl<W> MessageSink<W> {
     }
 
     /// Updates the brand used to render subsequent messages.
-    pub fn set_brand(&mut self, brand: Brand) {
+    pub const fn set_brand(&mut self, brand: Brand) {
         self.brand = brand;
     }
 }

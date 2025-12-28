@@ -108,7 +108,7 @@ impl LocalCopyOptions {
     }
 
     /// Returns the skip-compress list associated with the options.
-    pub fn skip_compress(&self) -> &SkipCompressList {
+    pub const fn skip_compress(&self) -> &SkipCompressList {
         &self.skip_compress
     }
 

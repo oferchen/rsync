@@ -32,7 +32,7 @@ impl ClientConfig {
     }
 
     /// Returns the suffix list that disables compression for matching files.
-    pub fn skip_compress(&self) -> &SkipCompressList {
+    pub const fn skip_compress(&self) -> &SkipCompressList {
         &self.skip_compress
     }
 

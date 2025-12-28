@@ -42,22 +42,22 @@ impl WhoMask {
     }
 
     #[cfg_attr(not(unix), allow(dead_code))]
-    pub(crate) fn includes_user(self) -> bool {
+    pub(crate) const fn includes_user(self) -> bool {
         self.user
     }
 
     #[cfg_attr(not(unix), allow(dead_code))]
-    pub(crate) fn includes_group(self) -> bool {
+    pub(crate) const fn includes_group(self) -> bool {
         self.group
     }
 
     #[cfg_attr(not(unix), allow(dead_code))]
-    pub(crate) fn includes_other(self) -> bool {
+    pub(crate) const fn includes_other(self) -> bool {
         self.other
     }
 
     #[cfg_attr(not(unix), allow(dead_code))]
-    pub(crate) fn covers_all(self) -> bool {
+    pub(crate) const fn covers_all(self) -> bool {
         self.user && self.group && self.other
     }
 }

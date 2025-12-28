@@ -262,7 +262,7 @@ impl FromStr for NegotiationPrologue {
 ///   [`NegotiationError::MalformedLegacyGreeting`](crate::NegotiationError::MalformedLegacyGreeting).
 /// * Otherwise, the exchange uses the binary negotiation.
 #[must_use]
-pub fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
+pub const fn detect_negotiation_prologue(buffer: &[u8]) -> NegotiationPrologue {
     match buffer.first().copied() {
         Some(byte) => NegotiationPrologue::from_initial_byte(byte),
         None => NegotiationPrologue::NeedMoreData,

@@ -61,7 +61,7 @@ impl FuzzyMatcher {
     }
 
     /// Sets the minimum score threshold.
-    pub fn with_min_score(mut self, score: u32) -> Self {
+    pub const fn with_min_score(mut self, score: u32) -> Self {
         self.min_score = score;
         self
     }

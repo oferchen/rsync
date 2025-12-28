@@ -157,7 +157,7 @@ impl DestinationWriteGuard {
         self.committed = true;
     }
 
-    fn finalise_action(&self) -> &'static str {
+    const fn finalise_action(&self) -> &'static str {
         if self.preserve_on_error {
             "finalise partial file"
         } else {

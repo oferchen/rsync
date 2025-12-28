@@ -76,7 +76,7 @@ impl SkipCompressList {
     }
 
     /// Returns `true` if no suffixes are configured.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
 }

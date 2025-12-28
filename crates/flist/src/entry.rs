@@ -27,7 +27,7 @@ impl FileListEntry {
 
     /// Provides access to the [`fs::Metadata`] captured for the entry.
     #[must_use]
-    pub fn metadata(&self) -> &fs::Metadata {
+    pub const fn metadata(&self) -> &fs::Metadata {
         &self.metadata
     }
 

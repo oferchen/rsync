@@ -57,7 +57,7 @@ impl<'a> CopyContext<'a> {
         }
     }
 
-    pub(super) fn record_file_list_generation(&mut self, elapsed: Duration) {
+    pub(super) const fn record_file_list_generation(&mut self, elapsed: Duration) {
         if !elapsed.is_zero() {
             self.summary.record_file_list_generation(elapsed);
         }
@@ -71,7 +71,7 @@ impl<'a> CopyContext<'a> {
     }
 
     #[allow(dead_code)]
-    pub(super) fn record_file_list_transfer(&mut self, elapsed: Duration) {
+    pub(super) const fn record_file_list_transfer(&mut self, elapsed: Duration) {
         if !elapsed.is_zero() {
             self.summary.record_file_list_transfer(elapsed);
         }

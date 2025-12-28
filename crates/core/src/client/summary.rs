@@ -26,7 +26,7 @@ impl ClientSummary {
         Self { stats, events }
     }
 
-    pub(crate) fn from_summary(summary: LocalCopySummary) -> Self {
+    pub(crate) const fn from_summary(summary: LocalCopySummary) -> Self {
         Self {
             stats: summary,
             events: Vec::new(),
@@ -47,104 +47,104 @@ impl ClientSummary {
 
     /// Returns the number of regular files copied or updated during the transfer.
     #[must_use]
-    pub fn files_copied(&self) -> u64 {
+    pub const fn files_copied(&self) -> u64 {
         self.stats.files_copied()
     }
 
     /// Returns the number of regular files encountered in the source set.
     #[must_use]
-    pub fn regular_files_total(&self) -> u64 {
+    pub const fn regular_files_total(&self) -> u64 {
         self.stats.regular_files_total()
     }
 
     /// Returns the number of regular files that were already up-to-date.
     #[must_use]
-    pub fn regular_files_matched(&self) -> u64 {
+    pub const fn regular_files_matched(&self) -> u64 {
         self.stats.regular_files_matched()
     }
 
     /// Returns the number of regular files skipped due to `--ignore-existing`.
     #[must_use]
-    pub fn regular_files_ignored_existing(&self) -> u64 {
+    pub const fn regular_files_ignored_existing(&self) -> u64 {
         self.stats.regular_files_ignored_existing()
     }
 
     /// Returns the number of regular files skipped because the destination was absent and `--existing` was requested.
     #[must_use]
     #[doc(alias = "--existing")]
-    pub fn regular_files_skipped_missing(&self) -> u64 {
+    pub const fn regular_files_skipped_missing(&self) -> u64 {
         self.stats.regular_files_skipped_missing()
     }
 
     /// Returns the number of regular files skipped because the destination was newer.
     #[must_use]
-    pub fn regular_files_skipped_newer(&self) -> u64 {
+    pub const fn regular_files_skipped_newer(&self) -> u64 {
         self.stats.regular_files_skipped_newer()
     }
 
     /// Returns the number of directories created during the transfer.
     #[must_use]
-    pub fn directories_created(&self) -> u64 {
+    pub const fn directories_created(&self) -> u64 {
         self.stats.directories_created()
     }
 
     /// Returns the number of directories encountered in the source set.
     #[must_use]
-    pub fn directories_total(&self) -> u64 {
+    pub const fn directories_total(&self) -> u64 {
         self.stats.directories_total()
     }
 
     /// Returns the number of symbolic links copied during the transfer.
     #[must_use]
-    pub fn symlinks_copied(&self) -> u64 {
+    pub const fn symlinks_copied(&self) -> u64 {
         self.stats.symlinks_copied()
     }
 
     /// Returns the number of symbolic links encountered in the source set.
     #[must_use]
-    pub fn symlinks_total(&self) -> u64 {
+    pub const fn symlinks_total(&self) -> u64 {
         self.stats.symlinks_total()
     }
 
     /// Returns the number of hard links materialised during the transfer.
     #[must_use]
-    pub fn hard_links_created(&self) -> u64 {
+    pub const fn hard_links_created(&self) -> u64 {
         self.stats.hard_links_created()
     }
 
     /// Returns the number of device nodes created during the transfer.
     #[must_use]
-    pub fn devices_created(&self) -> u64 {
+    pub const fn devices_created(&self) -> u64 {
         self.stats.devices_created()
     }
 
     /// Returns the number of device nodes encountered in the source set.
     #[must_use]
-    pub fn devices_total(&self) -> u64 {
+    pub const fn devices_total(&self) -> u64 {
         self.stats.devices_total()
     }
 
     /// Returns the number of FIFOs created during the transfer.
     #[must_use]
-    pub fn fifos_created(&self) -> u64 {
+    pub const fn fifos_created(&self) -> u64 {
         self.stats.fifos_created()
     }
 
     /// Returns the number of FIFOs encountered in the source set.
     #[must_use]
-    pub fn fifos_total(&self) -> u64 {
+    pub const fn fifos_total(&self) -> u64 {
         self.stats.fifos_total()
     }
 
     /// Returns the number of extraneous entries removed due to `--delete`.
     #[must_use]
-    pub fn items_deleted(&self) -> u64 {
+    pub const fn items_deleted(&self) -> u64 {
         self.stats.items_deleted()
     }
 
     /// Returns the aggregate number of bytes copied.
     #[must_use]
-    pub fn bytes_copied(&self) -> u64 {
+    pub const fn bytes_copied(&self) -> u64 {
         self.stats.bytes_copied()
     }
 
@@ -152,31 +152,31 @@ impl ClientSummary {
     /// rewritten during the transfer.
     #[must_use]
     #[doc(alias = "--stats")]
-    pub fn matched_bytes(&self) -> u64 {
+    pub const fn matched_bytes(&self) -> u64 {
         self.stats.matched_bytes()
     }
 
     /// Returns the aggregate number of bytes received during the transfer.
     #[must_use]
-    pub fn bytes_received(&self) -> u64 {
+    pub const fn bytes_received(&self) -> u64 {
         self.stats.bytes_received()
     }
 
     /// Returns the aggregate number of bytes sent during the transfer.
     #[must_use]
-    pub fn bytes_sent(&self) -> u64 {
+    pub const fn bytes_sent(&self) -> u64 {
         self.stats.bytes_sent()
     }
 
     /// Returns the aggregate size of files that were rewritten or created.
     #[must_use]
-    pub fn transferred_file_size(&self) -> u64 {
+    pub const fn transferred_file_size(&self) -> u64 {
         self.stats.transferred_file_size()
     }
 
     /// Returns the number of bytes that would be sent after applying compression.
     #[must_use]
-    pub fn compressed_bytes(&self) -> Option<u64> {
+    pub const fn compressed_bytes(&self) -> Option<u64> {
         if self.stats.compression_used() {
             Some(self.stats.compressed_bytes())
         } else {
@@ -186,50 +186,50 @@ impl ClientSummary {
 
     /// Reports whether compression participated in the transfer.
     #[must_use]
-    pub fn compression_used(&self) -> bool {
+    pub const fn compression_used(&self) -> bool {
         self.stats.compression_used()
     }
 
     /// Returns the number of source entries removed due to `--remove-source-files`.
     #[must_use]
-    pub fn sources_removed(&self) -> u64 {
+    pub const fn sources_removed(&self) -> u64 {
         self.stats.sources_removed()
     }
 
     /// Returns the aggregate size of all source files considered during the transfer.
     #[must_use]
-    pub fn total_source_bytes(&self) -> u64 {
+    pub const fn total_source_bytes(&self) -> u64 {
         self.stats.total_source_bytes()
     }
 
     /// Returns the total elapsed time spent transferring file payloads.
     #[must_use]
-    pub fn total_elapsed(&self) -> Duration {
+    pub const fn total_elapsed(&self) -> Duration {
         self.stats.total_elapsed()
     }
 
     /// Returns the cumulative duration spent sleeping due to bandwidth throttling.
     #[must_use]
     #[doc(alias = "--bwlimit")]
-    pub fn bandwidth_sleep(&self) -> Duration {
+    pub const fn bandwidth_sleep(&self) -> Duration {
         self.stats.bandwidth_sleep()
     }
 
     /// Returns the number of bytes that would be transmitted for the file list.
     #[must_use]
-    pub fn file_list_size(&self) -> u64 {
+    pub const fn file_list_size(&self) -> u64 {
         self.stats.file_list_size()
     }
 
     /// Returns the duration spent generating the in-memory file list.
     #[must_use]
-    pub fn file_list_generation_time(&self) -> Duration {
+    pub const fn file_list_generation_time(&self) -> Duration {
         self.stats.file_list_generation_time()
     }
 
     /// Returns the duration spent transmitting the file list to the peer.
     #[must_use]
-    pub fn file_list_transfer_time(&self) -> Duration {
+    pub const fn file_list_transfer_time(&self) -> Duration {
         self.stats.file_list_transfer_time()
     }
 }
@@ -389,7 +389,7 @@ impl ClientEvent {
 
     /// Returns the action recorded by this event.
     #[must_use]
-    pub fn kind(&self) -> &ClientEventKind {
+    pub const fn kind(&self) -> &ClientEventKind {
         &self.kind
     }
 
@@ -413,7 +413,7 @@ impl ClientEvent {
 
     /// Returns the metadata associated with the event, when available.
     #[must_use]
-    pub fn metadata(&self) -> Option<&ClientEntryMetadata> {
+    pub const fn metadata(&self) -> Option<&ClientEntryMetadata> {
         self.metadata.as_ref()
     }
 

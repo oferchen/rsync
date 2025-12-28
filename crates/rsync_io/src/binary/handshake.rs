@@ -159,7 +159,7 @@ impl<R> BinaryHandshake<R> {
 
     /// Returns a mutable reference to the replaying stream.
     #[must_use]
-    pub fn stream_mut(&mut self) -> &mut NegotiatedStream<R> {
+    pub const fn stream_mut(&mut self) -> &mut NegotiatedStream<R> {
         &mut self.stream
     }
 

@@ -96,7 +96,7 @@ impl<'a> LegacyDaemonGreeting<'a> {
         self.digest_list.is_some()
     }
 
-    pub(super) fn new(
+    pub(super) const fn new(
         protocol: ProtocolVersion,
         advertised_protocol: u32,
         subprotocol: Option<u32>,

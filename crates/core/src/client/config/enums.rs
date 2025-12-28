@@ -32,7 +32,7 @@ impl TransferTimeout {
     /// Returns the timeout expressed as a [`Duration`] using the provided
     /// default when the setting is [`TransferTimeout::Default`].
     #[must_use]
-    pub fn effective(self, default: Duration) -> Option<Duration> {
+    pub const fn effective(self, default: Duration) -> Option<Duration> {
         match self {
             TransferTimeout::Default => Some(default),
             TransferTimeout::Disabled => None,
@@ -130,7 +130,7 @@ pub enum HumanReadableModeParseError {
 impl HumanReadableModeParseError {
     /// Returns the invalid value supplied by the caller when available.
     #[must_use]
-    pub fn invalid_value(&self) -> Option<&str> {
+    pub const fn invalid_value(&self) -> Option<&str> {
         match self {
             Self::Invalid { value } => Some(value.as_str()),
             Self::Empty => None,

@@ -69,7 +69,7 @@ pub(crate) fn parse_protocol_version_arg(value: &OsStr) -> Result<ProtocolVersio
     }
 }
 
-fn supported_protocols_list() -> &'static str {
+const fn supported_protocols_list() -> &'static str {
     ProtocolVersion::supported_protocol_numbers_display()
 }
 

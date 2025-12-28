@@ -35,7 +35,7 @@ pub struct ModuleList {
 }
 
 impl ModuleList {
-    fn new(
+    const fn new(
         motd: Vec<String>,
         warnings: Vec<String>,
         capabilities: Vec<String>,
@@ -381,7 +381,7 @@ fn configure_daemon_stream(
     Ok(())
 }
 
-fn effective_timeout(timeout: TransferTimeout, default: Duration) -> Option<Duration> {
+const fn effective_timeout(timeout: TransferTimeout, default: Duration) -> Option<Duration> {
     match timeout {
         TransferTimeout::Default => Some(default),
         TransferTimeout::Disabled => None,

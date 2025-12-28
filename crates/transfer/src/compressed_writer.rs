@@ -205,7 +205,7 @@ impl<W: Write> CompressedWriter<W> {
     /// Caller must ensure that any writes to the underlying writer don't corrupt
     /// the compression stream. This should only be used for multiplex control
     /// messages that are handled at a different protocol layer.
-    pub fn inner_mut(&mut self) -> &mut W {
+    pub const fn inner_mut(&mut self) -> &mut W {
         &mut self.inner
     }
 }

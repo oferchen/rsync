@@ -69,20 +69,20 @@ impl VersionInfoReport {
 
     /// Returns a report with the supplied program name.
     #[must_use]
-    pub fn with_program_name(mut self, program_name: &'static str) -> Self {
+    pub const fn with_program_name(mut self, program_name: &'static str) -> Self {
         self.metadata = version_metadata_for_program(program_name);
         self
     }
 
     /// Returns a report using the client program name associated with `brand`.
     #[must_use]
-    pub fn with_client_brand(self, brand: Brand) -> Self {
+    pub const fn with_client_brand(self, brand: Brand) -> Self {
         self.with_program_name(brand.client_program_name())
     }
 
     /// Returns a report using the daemon program name associated with `brand`.
     #[must_use]
-    pub fn with_daemon_brand(self, brand: Brand) -> Self {
+    pub const fn with_daemon_brand(self, brand: Brand) -> Self {
         self.with_program_name(brand.daemon_program_name())
     }
 

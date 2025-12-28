@@ -36,37 +36,37 @@ impl<W, E> TryMapWriterError<W, E> {
 
     /// Returns a reference to the preserved [`MessageSink`].
     #[must_use]
-    pub fn sink(&self) -> &MessageSink<W> {
+    pub const fn sink(&self) -> &MessageSink<W> {
         &self.sink
     }
 
     /// Returns a mutable reference to the preserved [`MessageSink`].
     #[must_use]
-    pub fn sink_mut(&mut self) -> &mut MessageSink<W> {
+    pub const fn sink_mut(&mut self) -> &mut MessageSink<W> {
         &mut self.sink
     }
 
     /// Returns a reference to the conversion error.
     #[must_use]
-    pub fn error(&self) -> &E {
+    pub const fn error(&self) -> &E {
         &self.error
     }
 
     /// Returns a mutable reference to the conversion error.
     #[must_use]
-    pub fn error_mut(&mut self) -> &mut E {
+    pub const fn error_mut(&mut self) -> &mut E {
         &mut self.error
     }
 
     /// Returns shared references to the preserved sink and error.
     #[must_use]
-    pub fn as_ref(&self) -> (&MessageSink<W>, &E) {
+    pub const fn as_ref(&self) -> (&MessageSink<W>, &E) {
         (&self.sink, &self.error)
     }
 
     /// Returns mutable references to the preserved sink and error.
     #[must_use]
-    pub fn as_mut(&mut self) -> (&mut MessageSink<W>, &mut E) {
+    pub const fn as_mut(&mut self) -> (&mut MessageSink<W>, &mut E) {
         (&mut self.sink, &mut self.error)
     }
 

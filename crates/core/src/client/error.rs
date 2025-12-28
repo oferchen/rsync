@@ -39,7 +39,7 @@ pub struct ClientError {
 
 impl ClientError {
     /// Creates a new [`ClientError`] from the supplied message.
-    pub(crate) fn new(exit_code: i32, message: Message) -> Self {
+    pub(crate) const fn new(exit_code: i32, message: Message) -> Self {
         Self { exit_code, message }
     }
 
@@ -50,7 +50,7 @@ impl ClientError {
     }
 
     /// Returns the formatted diagnostic message that should be emitted.
-    pub fn message(&self) -> &Message {
+    pub const fn message(&self) -> &Message {
         &self.message
     }
 }

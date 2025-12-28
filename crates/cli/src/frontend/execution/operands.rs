@@ -16,7 +16,7 @@ pub(crate) struct UnsupportedOption {
 }
 
 impl UnsupportedOption {
-    pub(crate) fn new(option: OsString) -> Self {
+    pub(crate) const fn new(option: OsString) -> Self {
         Self { option }
     }
 

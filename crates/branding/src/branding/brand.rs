@@ -232,7 +232,7 @@ fn normalized_program_match(candidate: &str, canonical: &str) -> bool {
         })
 }
 
-fn program_alias_byte_eq(candidate: u8, canonical: u8) -> bool {
+const fn program_alias_byte_eq(candidate: u8, canonical: u8) -> bool {
     let candidate_lower = candidate.to_ascii_lowercase();
     let canonical_lower = canonical.to_ascii_lowercase();
 

@@ -100,7 +100,7 @@ impl<R> NegotiatedStream<R> {
 
     /// Provides mutable access to the buffered negotiation storage.
     #[must_use]
-    pub(crate) fn buffer_storage_mut(&mut self) -> &mut NegotiationBuffer {
+    pub(crate) const fn buffer_storage_mut(&mut self) -> &mut NegotiationBuffer {
         &mut self.buffer
     }
 
@@ -133,7 +133,7 @@ impl<R> NegotiatedStream<R> {
 
     /// Returns a mutable reference to the inner reader.
     #[must_use]
-    pub fn inner_mut(&mut self) -> &mut R {
+    pub const fn inner_mut(&mut self) -> &mut R {
         &mut self.inner
     }
 
@@ -208,7 +208,7 @@ impl<R> NegotiatedStream<R> {
         }
     }
 
-    pub(crate) fn from_buffer(
+    pub(crate) const fn from_buffer(
         inner: R,
         decision: NegotiationPrologue,
         buffer: NegotiationBuffer,

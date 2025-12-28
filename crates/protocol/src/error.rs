@@ -33,7 +33,7 @@ impl NegotiationError {
     /// reason about the mismatch. Exposing the slice keeps higher layers from cloning the vector
     /// simply to inspect the diagnostic context while retaining ownership of the error value.
     #[must_use]
-    pub fn peer_versions(&self) -> Option<&[u8]> {
+    pub const fn peer_versions(&self) -> Option<&[u8]> {
         match self {
             Self::NoMutualProtocol { peer_versions } => Some(peer_versions.as_slice()),
             _ => None,
@@ -59,7 +59,7 @@ impl NegotiationError {
     /// borrowed view keeps the same capability in higher layers without forcing them to clone the
     /// string owned by the error value.
     #[must_use]
-    pub fn malformed_legacy_greeting(&self) -> Option<&str> {
+    pub const fn malformed_legacy_greeting(&self) -> Option<&str> {
         match self {
             Self::MalformedLegacyGreeting { input } => Some(input.as_str()),
             _ => None,

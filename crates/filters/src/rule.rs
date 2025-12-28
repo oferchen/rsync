@@ -67,7 +67,7 @@ impl FilterRule {
     /// Clears all previously configured rules for the applicable transfer sides.
     #[must_use]
     #[doc(alias = "!")]
-    pub fn clear() -> Self {
+    pub const fn clear() -> Self {
         Self {
             action: FilterAction::Clear,
             pattern: String::new(),

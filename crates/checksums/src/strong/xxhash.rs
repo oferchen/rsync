@@ -26,7 +26,7 @@ pub struct Xxh64 {
 impl Xxh64 {
     /// Creates a hasher with the supplied seed.
     #[must_use]
-    pub fn new(seed: u64) -> Self {
+    pub const fn new(seed: u64) -> Self {
         Self {
             inner: xxhash_rust::xxh64::Xxh64::new(seed),
         }

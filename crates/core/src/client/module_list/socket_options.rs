@@ -108,7 +108,7 @@ struct ParsedSocketOption {
 }
 
 impl ParsedSocketOption {
-    fn name(&self) -> &'static str {
+    const fn name(&self) -> &'static str {
         self.name
     }
 

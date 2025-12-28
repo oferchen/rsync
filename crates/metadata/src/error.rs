@@ -37,7 +37,7 @@ impl MetadataError {
 
     /// Returns the underlying [`io::Error`] that triggered this failure.
     #[must_use]
-    pub fn source_error(&self) -> &io::Error {
+    pub const fn source_error(&self) -> &io::Error {
         &self.source
     }
 

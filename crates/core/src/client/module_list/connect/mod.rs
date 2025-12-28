@@ -45,7 +45,7 @@ pub(super) fn open_daemon_stream(
     Ok(DaemonStream::tcp(stream))
 }
 
-pub(crate) fn resolve_connect_timeout(
+pub(crate) const fn resolve_connect_timeout(
     connect_timeout: TransferTimeout,
     fallback: TransferTimeout,
     default: Duration,
@@ -67,11 +67,11 @@ pub(super) enum DaemonStream {
 }
 
 impl DaemonStream {
-    fn tcp(stream: TcpStream) -> Self {
+    const fn tcp(stream: TcpStream) -> Self {
         Self::Tcp(stream)
     }
 
-    fn program(stream: ConnectProgramStream) -> Self {
+    const fn program(stream: ConnectProgramStream) -> Self {
         Self::Program(stream)
     }
 }

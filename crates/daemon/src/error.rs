@@ -26,7 +26,7 @@ pub struct DaemonError {
 
 impl DaemonError {
     /// Creates a new [`DaemonError`] from the supplied message and exit code.
-    pub(crate) fn new(exit_code: i32, message: Message) -> Self {
+    pub(crate) const fn new(exit_code: i32, message: Message) -> Self {
         Self { exit_code, message }
     }
 
@@ -37,7 +37,7 @@ impl DaemonError {
     }
 
     /// Returns the formatted diagnostic message that should be emitted.
-    pub fn message(&self) -> &Message {
+    pub const fn message(&self) -> &Message {
         &self.message
     }
 }

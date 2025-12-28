@@ -18,7 +18,7 @@ pub struct LocalCopyRecord {
 
 impl LocalCopyRecord {
     /// Creates a new [`LocalCopyRecord`].
-    pub(in crate::local_copy) fn new(
+    pub(in crate::local_copy) const fn new(
         relative_path: PathBuf,
         action: LocalCopyAction,
         bytes_transferred: u64,
@@ -40,7 +40,7 @@ impl LocalCopyRecord {
 
     /// Marks whether the record corresponds to the creation of a new destination entry.
     #[must_use]
-    pub(in crate::local_copy) fn with_creation(mut self, created: bool) -> Self {
+    pub(in crate::local_copy) const fn with_creation(mut self, created: bool) -> Self {
         self.created = created;
         self
     }
@@ -53,7 +53,7 @@ impl LocalCopyRecord {
 
     /// Returns the action performed by this record.
     #[must_use]
-    pub fn action(&self) -> &LocalCopyAction {
+    pub const fn action(&self) -> &LocalCopyAction {
         &self.action
     }
 
@@ -77,7 +77,7 @@ impl LocalCopyRecord {
 
     /// Returns the metadata snapshot associated with this record, when available.
     #[must_use]
-    pub fn metadata(&self) -> Option<&LocalCopyMetadata> {
+    pub const fn metadata(&self) -> Option<&LocalCopyMetadata> {
         self.metadata.as_ref()
     }
 
@@ -95,7 +95,7 @@ impl LocalCopyRecord {
 
     /// Associates a change-set with the record.
     #[must_use]
-    pub(in crate::local_copy) fn with_change_set(mut self, change_set: LocalCopyChangeSet) -> Self {
+    pub(in crate::local_copy) const fn with_change_set(mut self, change_set: LocalCopyChangeSet) -> Self {
         self.change_set = change_set;
         self
     }

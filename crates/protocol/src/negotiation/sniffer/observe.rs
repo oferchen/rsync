@@ -135,14 +135,14 @@ impl NegotiationPrologueSniffer {
     /// Reports whether the canonical legacy prefix (`@RSYNCD:`) has already been fully observed.
     #[must_use]
     #[inline]
-    pub fn legacy_prefix_complete(&self) -> bool {
+    pub const fn legacy_prefix_complete(&self) -> bool {
         self.detector.legacy_prefix_complete()
     }
 
     /// Reports how many additional bytes are still required to finish buffering the canonical prefix.
     #[must_use]
     #[inline]
-    pub fn legacy_prefix_remaining(&self) -> Option<usize> {
+    pub const fn legacy_prefix_remaining(&self) -> Option<usize> {
         self.detector.legacy_prefix_remaining()
     }
 

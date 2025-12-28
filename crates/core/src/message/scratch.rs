@@ -47,11 +47,11 @@ impl MessageScratch {
         }
     }
 
-    pub(super) fn prefix_buffer(&self) -> &[u8; 48] {
+    pub(super) const fn prefix_buffer(&self) -> &[u8; 48] {
         &self.prefix_buffer
     }
 
-    pub(super) fn prefix_buffer_mut(&mut self) -> &mut [u8; 48] {
+    pub(super) const fn prefix_buffer_mut(&mut self) -> &mut [u8; 48] {
         &mut self.prefix_buffer
     }
 

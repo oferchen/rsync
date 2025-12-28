@@ -220,7 +220,7 @@ impl StaticCompiledFeatures {
 
     /// Returns an iterator over the compiled features without allocating.
     #[must_use]
-    pub fn iter(&self) -> StaticCompiledFeaturesIter<'_> {
+    pub const fn iter(&self) -> StaticCompiledFeaturesIter<'_> {
         StaticCompiledFeaturesIter::new(&self.features, self.len)
     }
 }
@@ -326,7 +326,7 @@ impl FromStr for CompiledFeature {
 
 /// Returns an iterator over the optional features compiled into the current build.
 #[must_use]
-pub fn compiled_features_iter() -> CompiledFeaturesIter {
+pub const fn compiled_features_iter() -> CompiledFeaturesIter {
     CompiledFeaturesIter::new()
 }
 
@@ -371,7 +371,7 @@ impl CompiledFeaturesIter {
         }
     }
 
-    fn consume(&mut self, feature: CompiledFeature) -> CompiledFeature {
+    const fn consume(&mut self, feature: CompiledFeature) -> CompiledFeature {
         self.remaining_bitmap &= !feature.bit();
         self.remaining = self.remaining.saturating_sub(1);
         feature
@@ -451,7 +451,7 @@ pub struct CompiledFeaturesDisplay {
 impl CompiledFeaturesDisplay {
     /// Creates a display wrapper from an explicit feature list.
     #[must_use]
-    pub fn new(features: Vec<CompiledFeature>) -> Self {
+    pub const fn new(features: Vec<CompiledFeature>) -> Self {
         Self { features }
     }
 
@@ -463,13 +463,13 @@ impl CompiledFeaturesDisplay {
 
     /// Returns the number of compiled features captured by the display.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.features.len()
     }
 
     /// Reports whether the feature list is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.features.is_empty()
     }
 

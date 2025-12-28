@@ -162,7 +162,7 @@ fn contains_standalone_sequence(haystack: &[u8], needle: &[u8]) -> bool {
     false
 }
 
-fn is_identifier_byte(byte: u8) -> bool {
+const fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
 

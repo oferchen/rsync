@@ -27,7 +27,7 @@ struct ModuleDefinitionBuilder {
 }
 
 impl ModuleDefinitionBuilder {
-    fn new(name: String, line: usize) -> Self {
+    const fn new(name: String, line: usize) -> Self {
         Self {
             name,
             path: None,

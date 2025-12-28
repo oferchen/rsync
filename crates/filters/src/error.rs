@@ -11,7 +11,7 @@ pub struct FilterError {
 
 impl FilterError {
     /// Creates a new [`FilterError`] for the given pattern and source error.
-    pub(crate) fn new(pattern: String, source: globset::Error) -> Self {
+    pub(crate) const fn new(pattern: String, source: globset::Error) -> Self {
         Self { pattern, source }
     }
 

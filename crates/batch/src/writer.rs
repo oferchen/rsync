@@ -150,7 +150,7 @@ impl BatchWriter {
     }
 
     /// Get a reference to the batch configuration.
-    pub fn config(&self) -> &BatchConfig {
+    pub const fn config(&self) -> &BatchConfig {
         &self.config
     }
 }

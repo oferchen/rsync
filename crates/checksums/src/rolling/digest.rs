@@ -204,7 +204,7 @@ impl RollingDigest {
     ///
     /// Returns [`RollingSliceError`] when `out` does not contain exactly four bytes. The buffer is
     /// left untouched on error.
-    pub fn write_le_bytes(&self, out: &mut [u8]) -> Result<(), RollingSliceError> {
+    pub const fn write_le_bytes(&self, out: &mut [u8]) -> Result<(), RollingSliceError> {
         if out.len() != RollingSliceError::EXPECTED_LEN {
             return Err(RollingSliceError::new(out.len()));
         }

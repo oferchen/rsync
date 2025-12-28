@@ -91,7 +91,7 @@ impl Message {
     /// Returns the recorded source location, if any.
     #[inline]
     #[must_use]
-    pub fn source(&self) -> Option<&SourceLocation> {
+    pub const fn source(&self) -> Option<&SourceLocation> {
         self.source.as_ref()
     }
 }

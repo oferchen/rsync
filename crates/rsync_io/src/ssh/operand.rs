@@ -32,7 +32,7 @@ pub struct RemoteOperand {
 impl RemoteOperand {
     /// Creates a new remote operand with the specified components.
     #[must_use]
-    pub fn new(user: Option<String>, host: String, port: Option<u16>, path: String) -> Self {
+    pub const fn new(user: Option<String>, host: String, port: Option<u16>, path: String) -> Self {
         Self {
             user,
             host,

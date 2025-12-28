@@ -131,7 +131,7 @@ impl ClientConfigBuilder {
     #[must_use]
     #[doc(alias = "--implied-dirs")]
     #[doc(alias = "--no-implied-dirs")]
-    pub fn implied_dirs(mut self, implied: bool) -> Self {
+    pub const fn implied_dirs(mut self, implied: bool) -> Self {
         self.implied_dirs = Some(implied);
         self
     }

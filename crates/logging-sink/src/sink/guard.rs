@@ -16,7 +16,7 @@ pub struct LineModeGuard<'a, W> {
 }
 
 impl<'a, W> LineModeGuard<'a, W> {
-    pub(crate) fn new(sink: &'a mut MessageSink<W>, previous: LineMode) -> Self {
+    pub(crate) const fn new(sink: &'a mut MessageSink<W>, previous: LineMode) -> Self {
         Self {
             sink: Some(sink),
             previous,

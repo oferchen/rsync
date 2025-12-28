@@ -77,7 +77,7 @@ pub struct ReceiverContext {
 
 impl ReceiverContext {
     /// Creates a new receiver context from handshake result and config.
-    pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+    pub const fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
         Self {
             protocol: handshake.protocol,
             config,
@@ -241,7 +241,7 @@ impl ReceiverContext {
     ///
     /// In client mode, skip reading because the client already sent filters to the daemon.
     #[must_use]
-    fn should_read_filter_list(&self) -> bool {
+    const fn should_read_filter_list(&self) -> bool {
         let receiver_wants_list = self.config.flags.delete || self.config.flags.prune_empty_dirs;
         !self.config.client_mode && receiver_wants_list
     }
@@ -813,7 +813,7 @@ impl SumHead {
 
     /// Creates a `SumHead` from a file signature.
     #[must_use]
-    pub fn from_signature(signature: &FileSignature) -> Self {
+    pub const fn from_signature(signature: &FileSignature) -> Self {
         let layout = signature.layout();
         Self {
             count: layout.block_count() as u32,

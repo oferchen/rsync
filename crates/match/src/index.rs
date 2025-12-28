@@ -65,13 +65,13 @@ impl DeltaSignatureIndex {
 
     /// Returns the canonical block length expressed in bytes.
     #[must_use]
-    pub fn block_length(&self) -> usize {
+    pub const fn block_length(&self) -> usize {
         self.block_length
     }
 
     /// Returns the strong checksum length used by the signature.
     #[must_use]
-    pub fn strong_length(&self) -> usize {
+    pub const fn strong_length(&self) -> usize {
         self.strong_length
     }
 
