@@ -842,7 +842,7 @@ impl GeneratorContext {
     /// Maps the wire protocol representation to the filters crate's `FilterSet`
     /// for use during file walking.
     fn parse_received_filters(&self, wire_rules: &[FilterRuleWireFormat]) -> io::Result<FilterSet> {
-        let mut rules = Vec::new();
+        let mut rules = Vec::with_capacity(wire_rules.len());
 
         for wire_rule in wire_rules {
             // Convert wire RuleType to FilterRule
