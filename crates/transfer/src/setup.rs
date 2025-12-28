@@ -4,6 +4,7 @@
 //! handling protocol version negotiation and compatibility flags exchange.
 
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
+use std::borrow::Cow;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
@@ -48,7 +49,7 @@ pub struct SetupResult {
 /// - `["-e", "fxCIvu"]` → "fxCIvu"
 /// - `["-efxCIvu"]` → "fxCIvu"
 /// - `["-vvde.LsfxCIvu"]` → ".LsfxCIvu" (combined short options)
-fn parse_client_info(client_args: &[String]) -> String {
+fn parse_client_info(client_args: &[String]) -> Cow<'_, str> {
     // Look for -e followed by capability string
     for i in 0..client_args.len() {
         let arg = &client_args[i];
@@ -66,19 +67,19 @@ fn parse_client_info(client_args: &[String]) -> String {
                 // Skip leading '.' which is a version placeholder
                 // (upstream puts '.' when protocol_version != PROTOCOL_VERSION)
                 if caps.starts_with('.') && caps.len() > 1 {
-                    return caps[1..].to_string();
+                    return Cow::Borrowed(&caps[1..]);
                 }
-                return caps.to_string();
+                return Cow::Borrowed(caps);
             }
         }
 
         // Check for "-e" "fxCIvu" (separate args)
         if arg == "-e" && i + 1 < client_args.len() {
-            return client_args[i + 1].clone();
+            return Cow::Borrowed(&client_args[i + 1]);
         }
     }
 
-    String::new()
+    Cow::Borrowed("")
 }
 
 /// Capability mapping entry for table-driven flag parsing.
