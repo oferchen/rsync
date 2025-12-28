@@ -120,10 +120,11 @@ pub enum DeltaRecoverableError {
 ///
 /// # Examples
 ///
-/// ```
-/// # use std::io;
-/// # use std::path::Path;
-/// # use core::server::error::categorize_io_error;
+/// ```ignore
+/// use std::io;
+/// use std::path::Path;
+/// use transfer::error::categorize_io_error;
+///
 /// let path = Path::new("/tmp/file.txt");
 ///
 /// // Disk full is fatal

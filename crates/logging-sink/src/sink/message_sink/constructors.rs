@@ -5,19 +5,19 @@ use core::{branding::Brand, message::MessageScratch};
 impl<W> MessageSink<W> {
     /// Creates a new sink that appends a newline after each rendered message.
     #[must_use]
-    pub fn new(writer: W) -> Self {
+    pub const fn new(writer: W) -> Self {
         Self::with_line_mode_and_brand(writer, LineMode::WithNewline, Brand::Upstream)
     }
 
     /// Creates a sink that appends a newline after each message while using `brand` when rendering.
     #[must_use]
-    pub fn with_brand(writer: W, brand: Brand) -> Self {
+    pub const fn with_brand(writer: W, brand: Brand) -> Self {
         Self::with_line_mode_and_brand(writer, LineMode::WithNewline, brand)
     }
 
     /// Creates a sink with the provided [`LineMode`].
     #[must_use]
-    pub fn with_line_mode(writer: W, line_mode: LineMode) -> Self {
+    pub const fn with_line_mode(writer: W, line_mode: LineMode) -> Self {
         Self::with_line_mode_and_brand(writer, line_mode, Brand::Upstream)
     }
 
