@@ -106,12 +106,14 @@ impl RollingChecksum {
     }
 
     /// Returns the number of bytes that contributed to the current state.
+    #[inline]
     #[must_use]
     pub const fn len(&self) -> usize {
         self.len
     }
 
     /// Returns `true` if no bytes have been observed yet.
+    #[inline]
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.len == 0
@@ -410,6 +412,7 @@ impl RollingChecksum {
     /// let s1 = packed & 0xFFFF;
     /// let s2 = packed >> 16;
     /// ```
+    #[inline]
     #[must_use]
     pub const fn value(&self) -> u32 {
         (self.s2 << 16) | self.s1
