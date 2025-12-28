@@ -95,3 +95,149 @@ pub(crate) fn find_reference_action(
 
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== resolve_reference_candidate tests ====================
+
+    #[test]
+    fn resolve_absolute_base_ignores_destination() {
+        let base = Path::new("/absolute/ref");
+        let relative = Path::new("file.txt");
+        let destination = Path::new("/some/other/dest");
+        let result = resolve_reference_candidate(base, relative, destination);
+        assert_eq!(result, PathBuf::from("/absolute/ref/file.txt"));
+    }
+
+    #[test]
+    fn resolve_absolute_base_with_nested_relative() {
+        let base = Path::new("/ref");
+        let relative = Path::new("dir/subdir/file.txt");
+        let destination = Path::new("/dest");
+        let result = resolve_reference_candidate(base, relative, destination);
+        assert_eq!(result, PathBuf::from("/ref/dir/subdir/file.txt"));
+    }
+
+    #[test]
+    fn resolve_relative_base_computes_from_destination() {
+        let base = Path::new("../backup");
+        let relative = Path::new("file.txt");
+        let destination = Path::new("/home/user/dest");
+        let result = resolve_reference_candidate(base, relative, destination);
+        // destination "/home/user/dest" -> pop 1 level (for relative depth 1) -> "/home/user"
+        // then join "../backup" -> "/home/backup"
+        // then join "file.txt" -> "/home/backup/file.txt"
+        assert_eq!(result, PathBuf::from("/home/user/../backup/file.txt"));
+    }
+
+    #[test]
+    fn resolve_relative_base_with_deeper_relative_path() {
+        let base = Path::new("ref");
+        let relative = Path::new("a/b/c/file.txt");
+        let destination = Path::new("/x/y/z/dest");
+        // depth of relative is 4, so pop 4 levels from destination
+        // "/x/y/z/dest" -> "/x/y/z" -> "/x/y" -> "/x" -> "/"
+        // then join "ref" -> "/ref"
+        // then join "a/b/c/file.txt" -> "/ref/a/b/c/file.txt"
+        let result = resolve_reference_candidate(base, relative, destination);
+        assert_eq!(result, PathBuf::from("/ref/a/b/c/file.txt"));
+    }
+
+    #[test]
+    fn resolve_relative_base_single_component() {
+        let base = Path::new("backup");
+        let relative = Path::new("file.txt");
+        let destination = Path::new("/dest/path");
+        // depth 1, pop 1 from "/dest/path" -> "/dest"
+        // join "backup" -> "/dest/backup"
+        // join "file.txt" -> "/dest/backup/file.txt"
+        let result = resolve_reference_candidate(base, relative, destination);
+        assert_eq!(result, PathBuf::from("/dest/backup/file.txt"));
+    }
+
+    #[test]
+    fn resolve_empty_relative_path() {
+        let base = Path::new("/ref");
+        let relative = Path::new("");
+        let destination = Path::new("/dest");
+        let result = resolve_reference_candidate(base, relative, destination);
+        assert_eq!(result, PathBuf::from("/ref"));
+    }
+
+    #[test]
+    fn resolve_relative_base_with_empty_relative() {
+        let base = Path::new("backup");
+        let relative = Path::new("");
+        let destination = Path::new("/dest");
+        // empty relative has 0 components, pop 0 times
+        let result = resolve_reference_candidate(base, relative, destination);
+        assert_eq!(result, PathBuf::from("/dest/backup"));
+    }
+
+    #[test]
+    fn resolve_dotdot_in_base() {
+        let base = Path::new("/ref/../other");
+        let relative = Path::new("file.txt");
+        let destination = Path::new("/dest");
+        let result = resolve_reference_candidate(base, relative, destination);
+        // base is absolute, so just join
+        assert_eq!(result, PathBuf::from("/ref/../other/file.txt"));
+    }
+
+    // ==================== ReferenceDecision tests ====================
+
+    #[test]
+    fn reference_decision_skip_variant() {
+        let decision = ReferenceDecision::Skip;
+        assert!(matches!(decision, ReferenceDecision::Skip));
+    }
+
+    #[test]
+    fn reference_decision_copy_variant() {
+        let path = PathBuf::from("/some/path");
+        let decision = ReferenceDecision::Copy(path.clone());
+        match decision {
+            ReferenceDecision::Copy(p) => assert_eq!(p, path),
+            _ => panic!("Expected Copy variant"),
+        }
+    }
+
+    #[test]
+    fn reference_decision_link_variant() {
+        let path = PathBuf::from("/link/target");
+        let decision = ReferenceDecision::Link(path.clone());
+        match decision {
+            ReferenceDecision::Link(p) => assert_eq!(p, path),
+            _ => panic!("Expected Link variant"),
+        }
+    }
+
+    // ==================== ReferenceQuery tests ====================
+
+    #[test]
+    fn reference_query_fields_accessible() {
+        let dest = PathBuf::from("/dest");
+        let rel = PathBuf::from("relative");
+        let src = PathBuf::from("/src");
+        let meta = fs::metadata(".").unwrap_or_else(|_| fs::metadata("/").unwrap());
+
+        let query = ReferenceQuery {
+            destination: &dest,
+            relative: &rel,
+            source: &src,
+            metadata: &meta,
+            size_only: true,
+            ignore_times: false,
+            checksum: true,
+        };
+
+        assert_eq!(query.destination, Path::new("/dest"));
+        assert_eq!(query.relative, Path::new("relative"));
+        assert_eq!(query.source, Path::new("/src"));
+        assert!(query.size_only);
+        assert!(!query.ignore_times);
+        assert!(query.checksum);
+    }
+}
