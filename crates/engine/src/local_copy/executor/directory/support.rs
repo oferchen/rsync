@@ -60,7 +60,7 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     }
 }
 
-pub(crate) fn is_fifo(file_type: &fs::FileType) -> bool {
+pub(crate) fn is_fifo(file_type: fs::FileType) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileTypeExt;
@@ -75,7 +75,7 @@ pub(crate) fn is_fifo(file_type: &fs::FileType) -> bool {
     }
 }
 
-pub(crate) fn is_device(file_type: &fs::FileType) -> bool {
+pub(crate) fn is_device(file_type: fs::FileType) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileTypeExt;
@@ -163,14 +163,14 @@ mod tests {
         std::fs::write(&path, b"content").expect("write");
 
         let metadata = std::fs::metadata(&path).expect("metadata");
-        assert!(!is_fifo(&metadata.file_type()));
+        assert!(!is_fifo(metadata.file_type()));
     }
 
     #[test]
     fn is_fifo_returns_false_for_directory() {
         let temp = tempfile::tempdir().expect("tempdir");
         let metadata = std::fs::metadata(temp.path()).expect("metadata");
-        assert!(!is_fifo(&metadata.file_type()));
+        assert!(!is_fifo(metadata.file_type()));
     }
 
     // ==================== is_device tests ====================
@@ -182,14 +182,14 @@ mod tests {
         std::fs::write(&path, b"content").expect("write");
 
         let metadata = std::fs::metadata(&path).expect("metadata");
-        assert!(!is_device(&metadata.file_type()));
+        assert!(!is_device(metadata.file_type()));
     }
 
     #[test]
     fn is_device_returns_false_for_directory() {
         let temp = tempfile::tempdir().expect("tempdir");
         let metadata = std::fs::metadata(temp.path()).expect("metadata");
-        assert!(!is_device(&metadata.file_type()));
+        assert!(!is_device(metadata.file_type()));
     }
 
     // ==================== DirectoryEntry tests ====================

@@ -192,7 +192,7 @@ pub(crate) fn copy_symlink(
                 return Ok(());
             }
 
-            if is_fifo(&target_type) {
+            if is_fifo(target_type) {
                 if !context.specials_enabled() {
                     context.record_skipped_non_regular(record_path.as_deref());
                     context.register_progress();
@@ -209,7 +209,7 @@ pub(crate) fn copy_symlink(
                 return Ok(());
             }
 
-            if is_device(&target_type) {
+            if is_device(target_type) {
                 if !context.devices_enabled() {
                     context.record_skipped_non_regular(record_path.as_deref());
                     context.register_progress();
