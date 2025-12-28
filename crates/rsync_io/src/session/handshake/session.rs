@@ -501,3 +501,569 @@ impl<R> TryFrom<SessionHandshake<R>> for LegacyDaemonHandshake<R> {
         handshake.into_legacy()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sniff_negotiation_stream;
+    use protocol::{CompatibilityFlags, parse_legacy_daemon_greeting_owned};
+    use std::io::Cursor;
+
+    fn create_binary_handshake() -> BinaryHandshake<Cursor<Vec<u8>>> {
+        // Binary negotiation is triggered by first byte != '@'
+        // Protocol 31 as BE u32: 0x00 0x00 0x00 0x1f
+        let stream = sniff_negotiation_stream(Cursor::new(vec![0x00, 0x00, 0x00, 0x1f]))
+            .expect("sniff succeeds");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        BinaryHandshake::from_components(
+            31,
+            proto31,
+            proto31,
+            proto31,
+            CompatibilityFlags::EMPTY,
+            stream,
+        )
+    }
+
+    fn create_legacy_handshake() -> LegacyDaemonHandshake<Cursor<Vec<u8>>> {
+        let stream = sniff_negotiation_stream(Cursor::new(b"@RSYNCD: 31.0\n".to_vec()))
+            .expect("sniff succeeds");
+        let greeting = parse_legacy_daemon_greeting_owned("@RSYNCD: 31.0").expect("valid greeting");
+        let proto31 = ProtocolVersion::from_supported(31).unwrap();
+        LegacyDaemonHandshake::from_components(greeting, proto31, stream)
+    }
+
+    // ==== decision() tests ====
+
+    #[test]
+    fn decision_returns_binary_for_binary_variant() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert_eq!(session.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn decision_returns_legacy_for_legacy_variant() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert_eq!(session.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== is_binary() / is_legacy() tests ====
+
+    #[test]
+    fn is_binary_true_for_binary_variant() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert!(session.is_binary());
+        assert!(!session.is_legacy());
+    }
+
+    #[test]
+    fn is_legacy_true_for_legacy_variant() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert!(session.is_legacy());
+        assert!(!session.is_binary());
+    }
+
+    // ==== negotiated_protocol() tests ====
+
+    #[test]
+    fn negotiated_protocol_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert_eq!(session.negotiated_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn negotiated_protocol_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert_eq!(session.negotiated_protocol().as_u8(), 31);
+    }
+
+    // ==== remote_protocol() tests ====
+
+    #[test]
+    fn remote_protocol_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert_eq!(session.remote_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn remote_protocol_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert_eq!(session.remote_protocol().as_u8(), 31);
+    }
+
+    // ==== remote_advertised_protocol() tests ====
+
+    #[test]
+    fn remote_advertised_protocol_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert_eq!(session.remote_advertised_protocol(), 31);
+    }
+
+    #[test]
+    fn remote_advertised_protocol_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert_eq!(session.remote_advertised_protocol(), 31);
+    }
+
+    // ==== local_advertised_protocol() tests ====
+
+    #[test]
+    fn local_advertised_protocol_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert_eq!(session.local_advertised_protocol().as_u8(), 31);
+    }
+
+    #[test]
+    fn local_advertised_protocol_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert_eq!(session.local_advertised_protocol().as_u8(), 31);
+    }
+
+    // ==== server_greeting() tests ====
+
+    #[test]
+    fn server_greeting_none_for_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert!(session.server_greeting().is_none());
+    }
+
+    #[test]
+    fn server_greeting_some_for_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert!(session.server_greeting().is_some());
+    }
+
+    // ==== stream() tests ====
+
+    #[test]
+    fn stream_returns_reference_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let stream = session.stream();
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn stream_returns_reference_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let stream = session.stream();
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== stream_mut() tests ====
+
+    #[test]
+    fn stream_mut_returns_mutable_reference_binary() {
+        let binary = create_binary_handshake();
+        let mut session = SessionHandshake::Binary(binary);
+        let stream = session.stream_mut();
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn stream_mut_returns_mutable_reference_legacy() {
+        let legacy = create_legacy_handshake();
+        let mut session = SessionHandshake::Legacy(legacy);
+        let stream = session.stream_mut();
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== into_stream() tests ====
+
+    #[test]
+    fn into_stream_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let stream = session.into_stream();
+        assert_eq!(stream.decision(), NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn into_stream_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let stream = session.into_stream();
+        assert_eq!(stream.decision(), NegotiationPrologue::LegacyAscii);
+    }
+
+    // ==== as_binary() / as_binary_mut() tests ====
+
+    #[test]
+    fn as_binary_returns_some_for_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert!(session.as_binary().is_some());
+    }
+
+    #[test]
+    fn as_binary_returns_none_for_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert!(session.as_binary().is_none());
+    }
+
+    #[test]
+    fn as_binary_mut_returns_some_for_binary() {
+        let binary = create_binary_handshake();
+        let mut session = SessionHandshake::Binary(binary);
+        assert!(session.as_binary_mut().is_some());
+    }
+
+    #[test]
+    fn as_binary_mut_returns_none_for_legacy() {
+        let legacy = create_legacy_handshake();
+        let mut session = SessionHandshake::Legacy(legacy);
+        assert!(session.as_binary_mut().is_none());
+    }
+
+    // ==== as_legacy() / as_legacy_mut() tests ====
+
+    #[test]
+    fn as_legacy_returns_some_for_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert!(session.as_legacy().is_some());
+    }
+
+    #[test]
+    fn as_legacy_returns_none_for_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert!(session.as_legacy().is_none());
+    }
+
+    #[test]
+    fn as_legacy_mut_returns_some_for_legacy() {
+        let legacy = create_legacy_handshake();
+        let mut session = SessionHandshake::Legacy(legacy);
+        assert!(session.as_legacy_mut().is_some());
+    }
+
+    #[test]
+    fn as_legacy_mut_returns_none_for_binary() {
+        let binary = create_binary_handshake();
+        let mut session = SessionHandshake::Binary(binary);
+        assert!(session.as_legacy_mut().is_none());
+    }
+
+    // ==== into_binary() / into_legacy() tests ====
+
+    #[test]
+    fn into_binary_ok_for_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert!(session.into_binary().is_ok());
+    }
+
+    #[test]
+    fn into_binary_err_for_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert!(session.into_binary().is_err());
+    }
+
+    #[test]
+    fn into_legacy_ok_for_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        assert!(session.into_legacy().is_ok());
+    }
+
+    #[test]
+    fn into_legacy_err_for_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        assert!(session.into_legacy().is_err());
+    }
+
+    // ==== From implementations tests ====
+
+    #[test]
+    fn from_binary_handshake() {
+        let binary = create_binary_handshake();
+        let session: SessionHandshake<_> = binary.into();
+        assert!(session.is_binary());
+    }
+
+    #[test]
+    fn from_legacy_handshake() {
+        let legacy = create_legacy_handshake();
+        let session: SessionHandshake<_> = legacy.into();
+        assert!(session.is_legacy());
+    }
+
+    // ==== TryFrom implementations tests ====
+
+    #[test]
+    fn try_from_session_to_binary_ok() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let result: Result<BinaryHandshake<_>, _> = session.try_into();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_session_to_binary_err() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let result: Result<BinaryHandshake<_>, _> = session.try_into();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn try_from_session_to_legacy_ok() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let result: Result<LegacyDaemonHandshake<_>, _> = session.try_into();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn try_from_session_to_legacy_err() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let result: Result<LegacyDaemonHandshake<_>, _> = session.try_into();
+        assert!(result.is_err());
+    }
+
+    // ==== into_parts / from_parts tests ====
+
+    #[test]
+    fn into_parts_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let parts = session.into_parts();
+        assert!(matches!(parts, SessionHandshakeParts::Binary(_)));
+    }
+
+    #[test]
+    fn into_parts_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let parts = session.into_parts();
+        assert!(matches!(parts, SessionHandshakeParts::Legacy(_)));
+    }
+
+    #[test]
+    fn into_stream_parts_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let parts = session.into_stream_parts();
+        assert!(matches!(parts, SessionHandshakeParts::Binary(_)));
+    }
+
+    #[test]
+    fn into_stream_parts_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let parts = session.into_stream_parts();
+        assert!(matches!(parts, SessionHandshakeParts::Legacy(_)));
+    }
+
+    #[test]
+    fn from_parts_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let parts = session.into_parts();
+        let rebuilt = SessionHandshake::from_parts(parts);
+        assert!(rebuilt.is_binary());
+    }
+
+    #[test]
+    fn from_parts_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let parts = session.into_parts();
+        let rebuilt = SessionHandshake::from_parts(parts);
+        assert!(rebuilt.is_legacy());
+    }
+
+    #[test]
+    fn from_stream_parts_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let parts = session.into_stream_parts();
+        let rebuilt = SessionHandshake::from_stream_parts(parts);
+        assert!(rebuilt.is_binary());
+    }
+
+    #[test]
+    fn from_stream_parts_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let parts = session.into_stream_parts();
+        let rebuilt = SessionHandshake::from_stream_parts(parts);
+        assert!(rebuilt.is_legacy());
+    }
+
+    // ==== From/Into SessionHandshakeParts tests ====
+
+    #[test]
+    fn parts_into_session_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let parts = session.into_parts();
+        let rebuilt: SessionHandshake<_> = parts.into();
+        assert!(rebuilt.is_binary());
+    }
+
+    #[test]
+    fn parts_into_session_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let parts = session.into_parts();
+        let rebuilt: SessionHandshake<_> = parts.into();
+        assert!(rebuilt.is_legacy());
+    }
+
+    #[test]
+    fn session_into_parts() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let parts: SessionHandshakeParts<_> = session.into();
+        assert!(matches!(parts, SessionHandshakeParts::Binary(_)));
+    }
+
+    // ==== map_stream_inner tests ====
+
+    #[test]
+    fn map_stream_inner_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let mapped = session.map_stream_inner(|_cursor| {
+            // Return a simple unit type to verify transformation
+        });
+        assert!(mapped.is_binary());
+    }
+
+    #[test]
+    fn map_stream_inner_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let mapped = session.map_stream_inner(|_cursor| {
+            // Return a simple unit type to verify transformation
+        });
+        assert!(mapped.is_legacy());
+    }
+
+    // ==== Clone / Debug tests ====
+
+    #[test]
+    fn clone_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let cloned = session.clone();
+        assert!(cloned.is_binary());
+        assert_eq!(session.negotiated_protocol(), cloned.negotiated_protocol());
+    }
+
+    #[test]
+    fn clone_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let cloned = session.clone();
+        assert!(cloned.is_legacy());
+        assert_eq!(session.negotiated_protocol(), cloned.negotiated_protocol());
+    }
+
+    #[test]
+    fn debug_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let debug = format!("{session:?}");
+        assert!(debug.contains("Binary"));
+    }
+
+    #[test]
+    fn debug_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let debug = format!("{session:?}");
+        assert!(debug.contains("Legacy"));
+    }
+
+    // ==== remote_advertisement tests ====
+
+    #[test]
+    fn remote_advertisement_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let adv = session.remote_advertisement();
+        assert!(matches!(adv, RemoteProtocolAdvertisement::Supported(_)));
+    }
+
+    #[test]
+    fn remote_advertisement_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let adv = session.remote_advertisement();
+        assert!(matches!(adv, RemoteProtocolAdvertisement::Supported(_)));
+    }
+
+    // ==== remote_protocol_was_clamped tests ====
+
+    #[test]
+    fn remote_protocol_was_clamped_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        // Our test handshake uses protocol 31 which is in supported range
+        assert!(!session.remote_protocol_was_clamped());
+    }
+
+    #[test]
+    fn remote_protocol_was_clamped_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        // Our test handshake uses protocol 31 which is in supported range
+        assert!(!session.remote_protocol_was_clamped());
+    }
+
+    // ==== local_protocol_was_capped tests ====
+
+    #[test]
+    fn local_protocol_was_capped_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        // Our test handshake uses the same protocol for desired and negotiated
+        assert!(!session.local_protocol_was_capped());
+    }
+
+    #[test]
+    fn local_protocol_was_capped_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        // Our test handshake uses the same protocol for desired and negotiated
+        assert!(!session.local_protocol_was_capped());
+    }
+
+    // ==== into_inner tests ====
+
+    #[test]
+    fn into_inner_binary() {
+        let binary = create_binary_handshake();
+        let session = SessionHandshake::Binary(binary);
+        let _inner: Cursor<Vec<u8>> = session.into_inner();
+    }
+
+    #[test]
+    fn into_inner_legacy() {
+        let legacy = create_legacy_handshake();
+        let session = SessionHandshake::Legacy(legacy);
+        let _inner: Cursor<Vec<u8>> = session.into_inner();
+    }
+}
