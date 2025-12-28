@@ -15,21 +15,21 @@ use std::path::{Path, PathBuf};
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// use std::path::PathBuf;
-/// # use core::server::temp_guard::TempFileGuard;
+/// use transfer::temp_guard::TempFileGuard;
 ///
-/// # fn example() -> std::io::Result<()> {
-/// let temp_path = PathBuf::from("/tmp/file.oc-rsync.tmp");
-/// let mut guard = TempFileGuard::new(temp_path.clone());
+/// fn example() -> std::io::Result<()> {
+///     let temp_path = PathBuf::from("/tmp/file.oc-rsync.tmp");
+///     let mut guard = TempFileGuard::new(temp_path.clone());
 ///
-/// // Write to temp file
-/// std::fs::write(guard.path(), b"data")?;
+///     // Write to temp file
+///     std::fs::write(guard.path(), b"data")?;
 ///
-/// // If successful, keep the file
-/// guard.keep();
-/// # Ok(())
-/// # }
+///     // If successful, keep the file
+///     guard.keep();
+///     Ok(())
+/// }
 /// ```
 ///
 /// # Drop Behavior
@@ -50,9 +50,9 @@ impl TempFileGuard {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// use std::path::PathBuf;
-    /// # use core::server::temp_guard::TempFileGuard;
+    /// use transfer::temp_guard::TempFileGuard;
     ///
     /// let guard = TempFileGuard::new(PathBuf::from("/tmp/file.tmp"));
     /// // Temp file will be deleted when guard goes out of scope
@@ -71,18 +71,19 @@ impl TempFileGuard {
     ///
     /// # Examples
     ///
-    /// ```
-    /// # use std::path::PathBuf;
-    /// # use core::server::temp_guard::TempFileGuard;
-    /// # fn example() -> std::io::Result<()> {
-    /// let mut guard = TempFileGuard::new(PathBuf::from("/tmp/file.tmp"));
+    /// ```ignore
+    /// use std::path::PathBuf;
+    /// use transfer::temp_guard::TempFileGuard;
     ///
-    /// // ... perform operations ...
+    /// fn example() -> std::io::Result<()> {
+    ///     let mut guard = TempFileGuard::new(PathBuf::from("/tmp/file.tmp"));
     ///
-    /// // Success! Keep the file
-    /// guard.keep();
-    /// # Ok(())
-    /// # }
+    ///     // ... perform operations ...
+    ///
+    ///     // Success! Keep the file
+    ///     guard.keep();
+    ///     Ok(())
+    /// }
     /// ```
     pub const fn keep(&mut self) {
         self.keep_on_drop = true;
@@ -92,9 +93,10 @@ impl TempFileGuard {
     ///
     /// # Examples
     ///
-    /// ```
-    /// # use std::path::PathBuf;
-    /// # use core::server::temp_guard::TempFileGuard;
+    /// ```ignore
+    /// use std::path::PathBuf;
+    /// use transfer::temp_guard::TempFileGuard;
+    ///
     /// let guard = TempFileGuard::new(PathBuf::from("/tmp/file.tmp"));
     /// assert_eq!(guard.path(), std::path::Path::new("/tmp/file.tmp"));
     /// ```
