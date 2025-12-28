@@ -84,21 +84,18 @@ numeric ids = yes
         thread::sleep(Duration::from_millis(500));
 
         // Check if daemon is still running
-        match child.try_wait()? {
-            Some(status) => {
-                let stderr = child.stderr.take();
-                let mut error_msg = format!("Daemon exited immediately with status: {status}");
-                if let Some(mut stderr) = stderr {
-                    let mut buf = String::new();
-                    if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                        error_msg.push_str(&format!("\nStderr: {buf}"));
-                    }
+        if let Some(status) = child.try_wait()? {
+            let stderr = child.stderr.take();
+            let mut error_msg = format!("Daemon exited immediately with status: {status}");
+            if let Some(mut stderr) = stderr {
+                let mut buf = String::new();
+                if stderr.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
+                    error_msg.push_str(&format!("\nStderr: {buf}"));
                 }
-                return Err(std::io::Error::other(error_msg));
             }
-            None => {
-                // Still running - good
-            }
+            return Err(std::io::Error::other(error_msg));
+        } else {
+            // Still running - good
         }
 
         Ok(Self {

@@ -205,26 +205,23 @@ impl BandwidthLimitComponents {
         let had_limit = self.rate.is_some();
 
         if override_components.limit_specified {
-            match override_components.rate {
-                Some(override_rate) => {
-                    rate = match rate {
-                        Some(existing) => Some(existing.min(override_rate)),
-                        None => Some(override_rate),
-                    };
+            if let Some(override_rate) = override_components.rate {
+                rate = match rate {
+                    Some(existing) => Some(existing.min(override_rate)),
+                    None => Some(override_rate),
+                };
 
-                    if override_components.burst_specified {
-                        burst = override_components.burst;
-                        burst_specified = true;
-                    } else if !had_limit {
-                        burst = None;
-                        burst_specified = false;
-                    }
-                }
-                None => {
-                    rate = None;
+                if override_components.burst_specified {
+                    burst = override_components.burst;
+                    burst_specified = true;
+                } else if !had_limit {
                     burst = None;
                     burst_specified = false;
                 }
+            } else {
+                rate = None;
+                burst = None;
+                burst_specified = false;
             }
         }
 
