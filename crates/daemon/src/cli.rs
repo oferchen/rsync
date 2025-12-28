@@ -143,8 +143,7 @@ pub(super) fn fallback_binary_configured() -> bool {
         return false;
     }
 
-    configured_fallback_binary()
-        .is_some_and(|binary| fallback_binary_available(binary.as_os_str()))
+    configured_fallback_binary().is_some_and(|binary| fallback_binary_available(binary.as_os_str()))
 }
 
 fn override_disables_fallback(name: &str) -> bool {

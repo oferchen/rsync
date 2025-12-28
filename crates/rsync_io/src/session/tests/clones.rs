@@ -399,10 +399,7 @@ fn session_handshake_parts_from_binary_components_round_trips() {
         negotiated,
         remote_flags,
         stream_parts,
-    ) = parts
-        
-        .into_binary()
-        .expect("binary components available");
+    ) = parts.into_binary().expect("binary components available");
 
     let rebuilt = SessionHandshakeParts::from_binary_components(
         remote_advertised,
@@ -419,7 +416,6 @@ fn session_handshake_parts_from_binary_components_round_trips() {
     assert_eq!(rebuilt.negotiated_protocol(), negotiated);
 
     let transport = rebuilt
-        
         .into_handshake()
         .into_binary()
         .expect("binary handshake reconstructed")
@@ -439,10 +435,8 @@ fn session_handshake_parts_from_legacy_components_round_trips() {
 
     let parts = negotiate_session_parts(transport, ProtocolVersion::NEWEST)
         .expect("legacy negotiation succeeds");
-    let (greeting, negotiated, stream_parts) = parts
-        
-        .into_legacy()
-        .expect("legacy components available");
+    let (greeting, negotiated, stream_parts) =
+        parts.into_legacy().expect("legacy components available");
     let expected_protocol = negotiated;
     let expected_advertised = greeting.advertised_protocol();
 

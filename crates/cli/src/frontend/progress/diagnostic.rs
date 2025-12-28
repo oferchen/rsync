@@ -97,7 +97,11 @@ pub fn render_diagnostic_events<W: Write>(
 ///
 /// Returns an I/O error if rendering fails.
 #[allow(dead_code)] // Scaffolding for logging crate integration
-pub const fn flush_diagnostics<W: Write>(out: &mut W, err: &mut W, msgs2stderr: bool) -> io::Result<()> {
+pub const fn flush_diagnostics<W: Write>(
+    out: &mut W,
+    err: &mut W,
+    msgs2stderr: bool,
+) -> io::Result<()> {
     // This will integrate with logging::verbosity::drain_events() once available
     // For now, just a placeholder that does nothing
     let _ = (out, err, msgs2stderr);

@@ -40,7 +40,8 @@ impl IconvSetting {
             .next()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or(IconvParseError::MissingLocalCharset)?.to_owned();
+            .ok_or(IconvParseError::MissingLocalCharset)?
+            .to_owned();
 
         match parts.next() {
             Some(remainder) => {
