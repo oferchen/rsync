@@ -1,10 +1,10 @@
 [package]
 name = "bin"
-version = "3.4.1-rust"
-edition = "2024"
-rust-version = "1.88"
-authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
-license = "GPL-3.0-or-later"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Pure-Rust implementation of the rsync client and daemon"
 repository.workspace = true
 publish = true
