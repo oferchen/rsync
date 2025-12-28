@@ -71,7 +71,7 @@ enum LegacyMessage<'a> {
 }
 
 impl LegacyMessage<'_> {
-    fn as_bytes(&self) -> &[u8] {
+    const fn as_bytes(&self) -> &[u8] {
         match self {
             LegacyMessage::Borrowed(bytes) => bytes,
             LegacyMessage::Owned(text) => text.as_bytes(),

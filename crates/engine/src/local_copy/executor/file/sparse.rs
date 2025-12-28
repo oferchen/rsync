@@ -12,7 +12,7 @@ pub(crate) struct SparseWriteState {
 }
 
 impl SparseWriteState {
-    fn accumulate(&mut self, additional: usize) {
+    const fn accumulate(&mut self, additional: usize) {
         self.pending_zero_run = self.pending_zero_run.saturating_add(additional as u64);
     }
 
@@ -36,7 +36,7 @@ impl SparseWriteState {
         Ok(())
     }
 
-    fn replace(&mut self, next_run: usize) {
+    const fn replace(&mut self, next_run: usize) {
         self.pending_zero_run = next_run as u64;
     }
 

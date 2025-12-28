@@ -159,7 +159,7 @@ mod windows_gnu {
 mod not_windows_gnu {
     /// No-op helper invoked by dependants to keep linkage symmetric across targets.
     #[inline(always)]
-    pub fn force_link() {}
+    pub const fn force_link() {}
 }
 
 #[cfg(all(target_os = "windows", target_env = "gnu"))]

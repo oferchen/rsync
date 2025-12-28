@@ -90,7 +90,7 @@ impl DirMergeOptions {
 
     /// Applies an enforced rule kind to entries parsed from the file.
     #[must_use]
-    pub fn with_enforced_kind(mut self, kind: Option<DirMergeEnforcedKind>) -> Self {
+    pub const fn with_enforced_kind(mut self, kind: Option<DirMergeEnforcedKind>) -> Self {
         self.parser = match self.parser {
             DirMergeParser::Lines { allow_comments, .. } => DirMergeParser::Lines {
                 enforce_kind: kind,
@@ -103,7 +103,7 @@ impl DirMergeOptions {
 
     /// Switches parsing to whitespace-separated tokens instead of whole lines.
     #[must_use]
-    pub fn use_whitespace(mut self) -> Self {
+    pub const fn use_whitespace(mut self) -> Self {
         let enforce = self.parser.enforce_kind();
         self.parser = DirMergeParser::Whitespace {
             enforce_kind: enforce,
@@ -113,7 +113,7 @@ impl DirMergeOptions {
 
     /// Toggles comment handling for line-based parsing.
     #[must_use]
-    pub fn allow_comments(mut self, allow: bool) -> Self {
+    pub const fn allow_comments(mut self, allow: bool) -> Self {
         self.parser = match self.parser {
             DirMergeParser::Lines { enforce_kind, .. } => DirMergeParser::Lines {
                 enforce_kind,
@@ -133,7 +133,7 @@ impl DirMergeOptions {
 
     /// Applies the sender-side modifier to rules loaded from the filter file.
     #[must_use]
-    pub fn sender_modifier(mut self) -> Self {
+    pub const fn sender_modifier(mut self) -> Self {
         self.sender_side = SideState::Enabled;
         if matches!(self.receiver_side, SideState::Unspecified) {
             self.receiver_side = SideState::Disabled;
@@ -143,7 +143,7 @@ impl DirMergeOptions {
 
     /// Applies the receiver-side modifier to rules loaded from the filter file.
     #[must_use]
-    pub fn receiver_modifier(mut self) -> Self {
+    pub const fn receiver_modifier(mut self) -> Self {
         self.receiver_side = SideState::Enabled;
         if matches!(self.sender_side, SideState::Unspecified) {
             self.sender_side = SideState::Disabled;
@@ -153,7 +153,7 @@ impl DirMergeOptions {
 
     /// Overrides the sender/receiver applicability flags without inferring defaults.
     #[must_use]
-    pub fn with_side_overrides(mut self, sender: Option<bool>, receiver: Option<bool>) -> Self {
+    pub const fn with_side_overrides(mut self, sender: Option<bool>, receiver: Option<bool>) -> Self {
         self.sender_side = match sender {
             Some(true) => SideState::Enabled,
             Some(false) => SideState::Disabled,

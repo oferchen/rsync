@@ -26,7 +26,7 @@ impl ClientConfig {
 
     /// Reports whether a transfer was explicitly requested.
     #[must_use]
-    pub fn has_transfer_request(&self) -> bool {
+    pub const fn has_transfer_request(&self) -> bool {
         !self.transfer_args.is_empty()
     }
 
@@ -35,7 +35,7 @@ impl ClientConfig {
     #[doc(alias = "--write-batch")]
     #[doc(alias = "--only-write-batch")]
     #[doc(alias = "--read-batch")]
-    pub fn batch_config(&self) -> Option<&engine::batch::BatchConfig> {
+    pub const fn batch_config(&self) -> Option<&engine::batch::BatchConfig> {
         self.batch_config.as_ref()
     }
 }

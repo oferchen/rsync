@@ -13,7 +13,7 @@ pub(crate) struct OutFormat {
 
 impl OutFormat {
     /// Constructs a new [`OutFormat`] from parsed tokens.
-    pub(super) fn new(tokens: Vec<OutFormatToken>) -> Self {
+    pub(super) const fn new(tokens: Vec<OutFormatToken>) -> Self {
         Self { tokens }
     }
 
@@ -24,7 +24,7 @@ impl OutFormat {
 
     /// Returns `true` when no tokens were parsed from the format string.
     #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
 }

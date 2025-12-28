@@ -60,7 +60,7 @@ impl<W> MessageSink<W> {
     /// The method performs an in-place swap, keeping the existing [`core::message::MessageScratch`] zeroed and
     /// reusing it for subsequent writes.
     #[must_use = "the returned writer contains diagnostics produced before the replacement"]
-    pub fn replace_writer(&mut self, mut writer: W) -> W {
+    pub const fn replace_writer(&mut self, mut writer: W) -> W {
         mem::swap(&mut self.writer, &mut writer);
         writer
     }

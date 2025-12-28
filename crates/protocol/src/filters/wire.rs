@@ -24,7 +24,7 @@ pub enum RuleType {
 
 impl RuleType {
     /// Returns the prefix character for this rule type.
-    pub fn prefix_char(self) -> char {
+    pub const fn prefix_char(self) -> char {
         match self {
             RuleType::Include => '+',
             RuleType::Exclude => '-',
@@ -37,7 +37,7 @@ impl RuleType {
     }
 
     /// Parses a rule type from its prefix character.
-    pub fn from_prefix_char(c: char) -> Option<Self> {
+    pub const fn from_prefix_char(c: char) -> Option<Self> {
         match c {
             '+' => Some(RuleType::Include),
             '-' => Some(RuleType::Exclude),
@@ -84,7 +84,7 @@ pub struct FilterRuleWireFormat {
 
 impl FilterRuleWireFormat {
     /// Creates a simple exclude rule with default modifiers.
-    pub fn exclude(pattern: String) -> Self {
+    pub const fn exclude(pattern: String) -> Self {
         Self {
             rule_type: RuleType::Exclude,
             pattern,
@@ -103,7 +103,7 @@ impl FilterRuleWireFormat {
     }
 
     /// Creates a simple include rule with default modifiers.
-    pub fn include(pattern: String) -> Self {
+    pub const fn include(pattern: String) -> Self {
         Self {
             rule_type: RuleType::Include,
             pattern,
@@ -122,26 +122,26 @@ impl FilterRuleWireFormat {
     }
 
     /// Sets the anchored flag.
-    pub fn with_anchored(mut self, anchored: bool) -> Self {
+    pub const fn with_anchored(mut self, anchored: bool) -> Self {
         self.anchored = anchored;
         self
     }
 
     /// Sets the directory-only flag.
-    pub fn with_directory_only(mut self, directory_only: bool) -> Self {
+    pub const fn with_directory_only(mut self, directory_only: bool) -> Self {
         self.directory_only = directory_only;
         self
     }
 
     /// Sets sender and receiver side flags.
-    pub fn with_sides(mut self, sender: bool, receiver: bool) -> Self {
+    pub const fn with_sides(mut self, sender: bool, receiver: bool) -> Self {
         self.sender_side = sender;
         self.receiver_side = receiver;
         self
     }
 
     /// Sets the perishable flag.
-    pub fn with_perishable(mut self, perishable: bool) -> Self {
+    pub const fn with_perishable(mut self, perishable: bool) -> Self {
         self.perishable = perishable;
         self
     }

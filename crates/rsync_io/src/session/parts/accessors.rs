@@ -35,7 +35,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Returns the negotiated protocol version retained by the parts structure.
     #[must_use]
-    pub fn negotiated_protocol(&self) -> ProtocolVersion {
+    pub const fn negotiated_protocol(&self) -> ProtocolVersion {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.negotiated_protocol(),
             SessionHandshakeParts::Legacy(parts) => parts.negotiated_protocol(),
@@ -44,7 +44,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Returns the protocol advertised by the remote peer.
     #[must_use]
-    pub fn remote_protocol(&self) -> ProtocolVersion {
+    pub const fn remote_protocol(&self) -> ProtocolVersion {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.remote_protocol(),
             SessionHandshakeParts::Legacy(parts) => parts.server_protocol(),
@@ -53,7 +53,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Returns the raw protocol number advertised by the remote peer.
     #[must_use]
-    pub fn remote_advertised_protocol(&self) -> u32 {
+    pub const fn remote_advertised_protocol(&self) -> u32 {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.remote_advertised_protocol(),
             SessionHandshakeParts::Legacy(parts) => parts.remote_advertised_protocol(),
@@ -63,7 +63,7 @@ impl<R> SessionHandshakeParts<R> {
     /// Returns the protocol version advertised by the local peer before the negotiation settled.
     #[doc(alias = "--protocol")]
     #[must_use]
-    pub fn local_advertised_protocol(&self) -> ProtocolVersion {
+    pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.local_advertised_protocol(),
             SessionHandshakeParts::Legacy(parts) => parts.local_advertised_protocol(),
@@ -72,7 +72,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Returns the classification of the peer's protocol advertisement.
     #[must_use]
-    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+    pub const fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.remote_advertisement(),
             SessionHandshakeParts::Legacy(parts) => parts.remote_advertisement(),
@@ -81,7 +81,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Returns the legacy daemon greeting advertised by the server when available.
     #[must_use]
-    pub fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
+    pub const fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
         match self {
             SessionHandshakeParts::Binary(_) => None,
             SessionHandshakeParts::Legacy(parts) => Some(parts.server_greeting()),
@@ -90,7 +90,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Returns a shared reference to the replaying stream parts.
     #[must_use]
-    pub fn stream(&self) -> &NegotiatedStreamParts<R> {
+    pub const fn stream(&self) -> &NegotiatedStreamParts<R> {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.stream_parts(),
             SessionHandshakeParts::Legacy(parts) => parts.stream_parts(),
@@ -99,7 +99,7 @@ impl<R> SessionHandshakeParts<R> {
 
     /// Returns a mutable reference to the replaying stream parts.
     #[must_use]
-    pub fn stream_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
+    pub const fn stream_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
         match self {
             SessionHandshakeParts::Binary(parts) => parts.stream_parts_mut(),
             SessionHandshakeParts::Legacy(parts) => parts.stream_parts_mut(),

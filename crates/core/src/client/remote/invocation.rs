@@ -118,7 +118,7 @@ pub struct RemoteInvocationBuilder<'a> {
 impl<'a> RemoteInvocationBuilder<'a> {
     /// Creates a new builder for the specified role and client configuration.
     #[must_use]
-    pub fn new(config: &'a ClientConfig, role: RemoteRole) -> Self {
+    pub const fn new(config: &'a ClientConfig, role: RemoteRole) -> Self {
         Self { config, role }
     }
 

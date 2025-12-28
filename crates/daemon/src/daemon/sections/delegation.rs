@@ -53,7 +53,7 @@ impl SessionDelegation {
         }
     }
 
-    fn binary(&self) -> &OsString {
+    const fn binary(&self) -> &OsString {
         &self.binary
     }
 

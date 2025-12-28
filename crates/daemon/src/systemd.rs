@@ -23,7 +23,7 @@ impl ServiceNotifier {
     /// available. When the `sd-notify` feature is disabled or `NOTIFY_SOCKET`
     /// is absent the notifier becomes a no-op.
     #[must_use]
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         #[cfg(feature = "sd-notify")]
         {
             let available = std::env::var_os("NOTIFY_SOCKET").is_some();
@@ -37,7 +37,7 @@ impl ServiceNotifier {
     }
 
     /// Reports service readiness to the init system.
-    pub(crate) fn ready(&self, status: Option<&str>) -> io::Result<()> {
+    pub(crate) const fn ready(&self, status: Option<&str>) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
             if let Some(text) = status {
@@ -55,7 +55,7 @@ impl ServiceNotifier {
     }
 
     /// Sends an updated status message.
-    pub(crate) fn status(&self, status: &str) -> io::Result<()> {
+    pub(crate) const fn status(&self, status: &str) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
             self.send_states(&[NotifyState::Status(status)])
@@ -69,7 +69,7 @@ impl ServiceNotifier {
     }
 
     /// Indicates that the daemon is shutting down.
-    pub(crate) fn stopping(&self) -> io::Result<()> {
+    pub(crate) const fn stopping(&self) -> io::Result<()> {
         #[cfg(feature = "sd-notify")]
         {
             self.send_states(&[NotifyState::Stopping])

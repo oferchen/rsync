@@ -20,7 +20,7 @@ impl UnixProcessIdentity {
     }
 
     #[inline]
-    pub(super) fn is_root(&self) -> bool {
+    pub(super) const fn is_root(&self) -> bool {
         self.euid == 0
     }
 

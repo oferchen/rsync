@@ -11,7 +11,7 @@ pub struct LocalCopyReport {
 }
 
 impl LocalCopyReport {
-    pub(in crate::local_copy) fn new(
+    pub(in crate::local_copy) const fn new(
         summary: LocalCopySummary,
         records: Vec<LocalCopyRecord>,
         destination_root: PathBuf,

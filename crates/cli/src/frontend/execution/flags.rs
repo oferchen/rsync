@@ -26,7 +26,7 @@ pub(crate) struct InfoFlagSettings {
 }
 
 impl InfoFlagSettings {
-    fn enable_all(&mut self) {
+    const fn enable_all(&mut self) {
         self.progress = ProgressSetting::PerFile;
         self.stats = Some(1);
         self.name = Some(NameOutputLevel::UpdatedOnly);
@@ -42,7 +42,7 @@ impl InfoFlagSettings {
         self.symsafe = Some(1);
     }
 
-    fn disable_all(&mut self) {
+    const fn disable_all(&mut self) {
         self.progress = ProgressSetting::Disabled;
         self.stats = Some(0);
         self.name = Some(NameOutputLevel::Disabled);
@@ -245,7 +245,7 @@ pub(crate) struct DebugFlagSettings {
 }
 
 impl DebugFlagSettings {
-    fn enable_all(&mut self) {
+    const fn enable_all(&mut self) {
         self.acl = Some(1);
         self.backup = Some(1);
         self.bind = Some(1);
@@ -272,7 +272,7 @@ impl DebugFlagSettings {
         self.time = Some(1);
     }
 
-    fn disable_all(&mut self) {
+    const fn disable_all(&mut self) {
         self.acl = Some(0);
         self.backup = Some(0);
         self.bind = Some(0);

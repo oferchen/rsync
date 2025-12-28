@@ -126,7 +126,7 @@ impl<R> LegacyDaemonHandshakeParts<R> {
 
     /// Returns a mutable reference to the replaying stream parts.
     #[must_use]
-    pub fn stream_parts_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
+    pub const fn stream_parts_mut(&mut self) -> &mut NegotiatedStreamParts<R> {
         &mut self.stream
     }
 
@@ -404,7 +404,7 @@ impl<R> LegacyDaemonHandshakeParts<R> {
         (self.server_greeting, self.negotiated_protocol, self.stream)
     }
 
-    pub(super) fn from_components(
+    pub(super) const fn from_components(
         server_greeting: LegacyDaemonGreetingOwned,
         negotiated_protocol: ProtocolVersion,
         stream: NegotiatedStreamParts<R>,

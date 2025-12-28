@@ -472,7 +472,7 @@ struct CrossCompilerCandidate {
 }
 
 impl CrossCompilerCandidate {
-    fn program(&self) -> &'static str {
+    const fn program(&self) -> &'static str {
         match self.strategy {
             CrossCompilerStrategy::Direct { program } => program,
             CrossCompilerStrategy::Zig { program, .. } => program,

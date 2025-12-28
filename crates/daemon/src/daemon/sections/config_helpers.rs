@@ -234,14 +234,14 @@ pub(crate) enum AddressFamily {
 }
 
 impl AddressFamily {
-    fn from_ip(addr: IpAddr) -> Self {
+    const fn from_ip(addr: IpAddr) -> Self {
         match addr {
             IpAddr::V4(_) => Self::Ipv4,
             IpAddr::V6(_) => Self::Ipv6,
         }
     }
 
-    fn matches(self, addr: IpAddr) -> bool {
+    const fn matches(self, addr: IpAddr) -> bool {
         matches!(
             (self, addr),
             (Self::Ipv4, IpAddr::V4(_)) | (Self::Ipv6, IpAddr::V6(_))
@@ -365,7 +365,7 @@ impl HostPattern {
         }
     }
 
-    fn requires_hostname(&self) -> bool {
+    const fn requires_hostname(&self) -> bool {
         matches!(self, Self::Hostname(_))
     }
 }

@@ -37,7 +37,7 @@ impl<'a> LiveProgress<'a> {
         }
     }
 
-    pub(crate) fn rendered(&self) -> bool {
+    pub(crate) const fn rendered(&self) -> bool {
         self.rendered
     }
 

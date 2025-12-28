@@ -174,11 +174,11 @@ pub fn sync_acls(
 struct PosixAcl(sys::acl_t);
 
 impl PosixAcl {
-    fn as_ptr(&self) -> sys::acl_t {
+    const fn as_ptr(&self) -> sys::acl_t {
         self.0
     }
 
-    fn from_raw(raw: sys::acl_t) -> Self {
+    const fn from_raw(raw: sys::acl_t) -> Self {
         Self(raw)
     }
 

@@ -88,7 +88,7 @@ impl MessageFrame {
     /// mirror those call-sites without allocating or cloning.
     #[must_use]
     #[inline]
-    pub fn payload_len(&self) -> usize {
+    pub const fn payload_len(&self) -> usize {
         self.payload.len()
     }
 

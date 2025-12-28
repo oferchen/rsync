@@ -142,7 +142,7 @@ impl CompatibilityFlags {
     /// skipped, mirroring rsync's behaviour where future flags are tolerated but
     /// ignored by older implementations.
     #[must_use]
-    pub fn iter_known(self) -> KnownCompatibilityFlagsIter {
+    pub const fn iter_known(self) -> KnownCompatibilityFlagsIter {
         KnownCompatibilityFlagsIter::new(self)
     }
 

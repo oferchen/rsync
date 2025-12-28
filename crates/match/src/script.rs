@@ -29,7 +29,7 @@ pub enum DeltaToken {
 impl DeltaToken {
     /// Returns the number of bytes contributed by this token.
     #[must_use]
-    pub fn byte_len(&self) -> usize {
+    pub const fn byte_len(&self) -> usize {
         match self {
             DeltaToken::Literal(bytes) => bytes.len(),
             DeltaToken::Copy { len, .. } => *len,
@@ -54,7 +54,7 @@ pub struct DeltaScript {
 impl DeltaScript {
     /// Creates a new script from the provided token stream.
     #[must_use]
-    pub fn new(tokens: Vec<DeltaToken>, total_bytes: u64, literal_bytes: u64) -> Self {
+    pub const fn new(tokens: Vec<DeltaToken>, total_bytes: u64, literal_bytes: u64) -> Self {
         Self {
             tokens,
             total_bytes,
@@ -88,13 +88,13 @@ impl DeltaScript {
 
     /// Returns the number of bytes that will be copied from the basis file.
     #[must_use]
-    pub fn copy_bytes(&self) -> u64 {
+    pub const fn copy_bytes(&self) -> u64 {
         self.total_bytes.saturating_sub(self.literal_bytes)
     }
 
     /// Returns `true` when the script does not contain any tokens.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
 }

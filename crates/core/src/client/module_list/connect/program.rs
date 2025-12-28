@@ -110,7 +110,7 @@ impl ConnectProgramConfig {
         Ok(Self { template, shell })
     }
 
-    pub(crate) fn shell(&self) -> Option<&OsString> {
+    pub(crate) const fn shell(&self) -> Option<&OsString> {
         self.shell.as_ref()
     }
 
@@ -182,7 +182,7 @@ pub(crate) struct ConnectProgramStream {
 }
 
 impl ConnectProgramStream {
-    fn new(child: Child, stdin: ChildStdin, stdout: ChildStdout) -> Self {
+    const fn new(child: Child, stdin: ChildStdin, stdout: ChildStdout) -> Self {
         Self {
             child,
             stdin,

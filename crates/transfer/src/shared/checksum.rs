@@ -138,7 +138,7 @@ impl ChecksumFactory {
     ///
     /// The appropriate [`SignatureAlgorithm`] for use with the delta engine.
     #[must_use]
-    pub fn signature_algorithm(&self) -> SignatureAlgorithm {
+    pub const fn signature_algorithm(&self) -> SignatureAlgorithm {
         let seed_u64 = self.seed as u64;
 
         match self.algorithm {
@@ -188,7 +188,7 @@ impl ChecksumFactory {
     /// This is a convenience method for creating the seed configuration
     /// used with legacy protocols (< 30) or when CHECKSUM_SEED_FIX is not set.
     #[must_use]
-    pub fn legacy_md5_seed(&self) -> Md5Seed {
+    pub const fn legacy_md5_seed(&self) -> Md5Seed {
         Md5Seed::legacy(self.seed)
     }
 
@@ -197,13 +197,13 @@ impl ChecksumFactory {
     /// This is a convenience method for creating the seed configuration
     /// used with protocol 30+ when CHECKSUM_SEED_FIX is set.
     #[must_use]
-    pub fn proper_md5_seed(&self) -> Md5Seed {
+    pub const fn proper_md5_seed(&self) -> Md5Seed {
         Md5Seed::proper(self.seed)
     }
 
     /// Returns the MD5 seed configuration based on the factory's settings.
     #[must_use]
-    pub fn md5_seed(&self) -> Md5Seed {
+    pub const fn md5_seed(&self) -> Md5Seed {
         if self.use_proper_seed_order {
             Md5Seed::proper(self.seed)
         } else {

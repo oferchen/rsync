@@ -178,7 +178,7 @@ impl VersionParseError {
 
     /// Returns a human-readable description of the parse failure.
     #[must_use]
-    pub fn reason(&self) -> &str {
+    pub const fn reason(&self) -> &str {
         self.reason
     }
 }

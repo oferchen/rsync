@@ -205,7 +205,7 @@ pub fn remove_fake_super(path: &Path) -> io::Result<()> {
 }
 
 /// Checks if the file mode indicates a device file.
-fn is_device_file(mode: u32) -> bool {
+const fn is_device_file(mode: u32) -> bool {
     const S_IFMT: u32 = 0o170000;
     const S_IFBLK: u32 = 0o060000;
     const S_IFCHR: u32 = 0o020000;
@@ -216,7 +216,7 @@ fn is_device_file(mode: u32) -> bool {
 
 /// Extracts the major device number from a combined rdev value.
 #[cfg(target_os = "linux")]
-fn major(rdev: u64) -> u32 {
+const fn major(rdev: u64) -> u32 {
     ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32)
 }
 
@@ -227,7 +227,7 @@ fn major(rdev: u64) -> u32 {
 
 /// Extracts the minor device number from a combined rdev value.
 #[cfg(target_os = "linux")]
-fn minor(rdev: u64) -> u32 {
+const fn minor(rdev: u64) -> u32 {
     (rdev & 0xff) as u32 | (((rdev >> 12) & !0xff) as u32)
 }
 

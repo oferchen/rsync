@@ -22,12 +22,12 @@ pub(crate) type uid_t = u32;
 
 /// Indicates whether the platform supports resolving user names.
 #[inline]
-pub(crate) fn supports_user_name_lookup() -> bool {
+pub(crate) const fn supports_user_name_lookup() -> bool {
     cfg!(unix)
 }
 /// Indicates whether the platform supports resolving group names.
 #[inline]
-pub(crate) fn supports_group_name_lookup() -> bool {
+pub(crate) const fn supports_group_name_lookup() -> bool {
     cfg!(unix)
 }
 

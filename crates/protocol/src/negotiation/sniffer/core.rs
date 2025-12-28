@@ -92,7 +92,7 @@ impl NegotiationPrologueSniffer {
     /// Returns the number of bytes that have been buffered while sniffing the negotiation.
     #[must_use]
     #[inline]
-    pub fn buffered_len(&self) -> usize {
+    pub const fn buffered_len(&self) -> usize {
         self.buffered.len()
     }
 
@@ -104,7 +104,7 @@ impl NegotiationPrologueSniffer {
     /// Returns the length of the sniffed negotiation prefix in bytes.
     #[must_use]
     #[inline]
-    pub fn sniffed_prefix_len(&self) -> usize {
+    pub const fn sniffed_prefix_len(&self) -> usize {
         self.prefix_bytes_retained
     }
 
@@ -117,11 +117,11 @@ impl NegotiationPrologueSniffer {
     }
 
     #[cfg(test)]
-    pub(crate) fn buffered_storage(&self) -> &Vec<u8> {
+    pub(crate) const fn buffered_storage(&self) -> &Vec<u8> {
         &self.buffered
     }
 
-    pub(crate) fn buffered_storage_mut(&mut self) -> &mut Vec<u8> {
+    pub(crate) const fn buffered_storage_mut(&mut self) -> &mut Vec<u8> {
         &mut self.buffered
     }
 
@@ -189,7 +189,7 @@ impl NegotiationPrologueSniffer {
     /// Returns the cached negotiation decision, if any.
     #[must_use]
     #[inline]
-    pub fn decision(&self) -> Option<NegotiationPrologue> {
+    pub const fn decision(&self) -> Option<NegotiationPrologue> {
         self.detector.decision()
     }
 

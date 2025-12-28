@@ -557,7 +557,7 @@ fn network_error<T: fmt::Display>(action: &str, target: T, error: io::Error) -> 
     )
 }
 
-pub(crate) fn configured_fallback_binary() -> Option<OsString> {
+pub(crate) const fn configured_fallback_binary() -> Option<OsString> {
     None
 }
 
@@ -572,7 +572,7 @@ pub(crate) fn configured_fallback_binary() -> Option<OsString> {
 ///
 /// Always returns `None` (use internal Rust implementation)
 #[allow(dead_code)]
-pub(crate) fn configured_fallback_binary_for_daemon() -> Option<OsString> {
+pub(crate) const fn configured_fallback_binary_for_daemon() -> Option<OsString> {
     // Daemon mode never delegates - always use internal Rust implementation
     None
 }

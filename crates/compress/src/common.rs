@@ -30,19 +30,19 @@ pub(crate) struct CountingWriter<W> {
 }
 
 impl<W> CountingWriter<W> {
-    pub(crate) fn new(inner: W) -> Self {
+    pub(crate) const fn new(inner: W) -> Self {
         Self { inner, bytes: 0 }
     }
 
-    pub(crate) fn bytes(&self) -> u64 {
+    pub(crate) const fn bytes(&self) -> u64 {
         self.bytes
     }
 
-    pub(crate) fn inner_ref(&self) -> &W {
+    pub(crate) const fn inner_ref(&self) -> &W {
         &self.inner
     }
 
-    pub(crate) fn inner_mut(&mut self) -> &mut W {
+    pub(crate) const fn inner_mut(&mut self) -> &mut W {
         &mut self.inner
     }
 
@@ -50,7 +50,7 @@ impl<W> CountingWriter<W> {
         (self.inner, self.bytes)
     }
 
-    pub(crate) fn saturating_add_bytes(&mut self, written: usize) {
+    pub(crate) const fn saturating_add_bytes(&mut self, written: usize) {
         self.bytes = self.bytes.saturating_add(written as u64);
     }
 }

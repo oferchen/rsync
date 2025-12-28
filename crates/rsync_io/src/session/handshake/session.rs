@@ -65,7 +65,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns the negotiated protocol version after applying the caller cap.
     #[must_use]
-    pub fn negotiated_protocol(&self) -> ProtocolVersion {
+    pub const fn negotiated_protocol(&self) -> ProtocolVersion {
         match self {
             Self::Binary(handshake) => handshake.negotiated_protocol(),
             Self::Legacy(handshake) => handshake.negotiated_protocol(),
@@ -74,7 +74,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns the protocol version advertised by the peer before client caps are applied.
     #[must_use]
-    pub fn remote_protocol(&self) -> ProtocolVersion {
+    pub const fn remote_protocol(&self) -> ProtocolVersion {
         match self {
             Self::Binary(handshake) => handshake.remote_protocol(),
             Self::Legacy(handshake) => handshake.server_protocol(),
@@ -83,7 +83,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns the raw protocol number advertised by the remote peer before clamping.
     #[must_use]
-    pub fn remote_advertised_protocol(&self) -> u32 {
+    pub const fn remote_advertised_protocol(&self) -> u32 {
         match self {
             Self::Binary(handshake) => handshake.remote_advertised_protocol(),
             Self::Legacy(handshake) => handshake.remote_advertised_protocol(),
@@ -93,7 +93,7 @@ impl<R> SessionHandshake<R> {
     /// Returns the protocol version advertised by the local peer before the negotiation settled.
     #[doc(alias = "--protocol")]
     #[must_use]
-    pub fn local_advertised_protocol(&self) -> ProtocolVersion {
+    pub const fn local_advertised_protocol(&self) -> ProtocolVersion {
         match self {
             Self::Binary(handshake) => handshake.local_advertised_protocol(),
             Self::Legacy(handshake) => handshake.local_advertised_protocol(),
@@ -102,7 +102,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns the classification of the peer's protocol advertisement.
     #[must_use]
-    pub fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
+    pub const fn remote_advertisement(&self) -> RemoteProtocolAdvertisement {
         match self {
             Self::Binary(handshake) => handshake.remote_advertisement(),
             Self::Legacy(handshake) => handshake.remote_advertisement(),
@@ -111,7 +111,7 @@ impl<R> SessionHandshake<R> {
 
     /// Reports whether the remote advertisement had to be clamped to the supported range.
     #[must_use]
-    pub fn remote_protocol_was_clamped(&self) -> bool {
+    pub const fn remote_protocol_was_clamped(&self) -> bool {
         match self {
             Self::Binary(handshake) => handshake.remote_protocol_was_clamped(),
             Self::Legacy(handshake) => handshake.remote_protocol_was_clamped(),
@@ -172,7 +172,7 @@ impl<R> SessionHandshake<R> {
     /// ```
     #[doc(alias = "--protocol")]
     #[must_use]
-    pub fn local_protocol_was_capped(&self) -> bool {
+    pub const fn local_protocol_was_capped(&self) -> bool {
         match self {
             Self::Binary(handshake) => handshake.local_protocol_was_capped(),
             Self::Legacy(handshake) => handshake.local_protocol_was_capped(),
@@ -183,7 +183,7 @@ impl<R> SessionHandshake<R> {
     ///
     /// Binary negotiations do not exchange a greeting, so the method returns [`None`] in that case.
     #[must_use]
-    pub fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
+    pub const fn server_greeting(&self) -> Option<&LegacyDaemonGreetingOwned> {
         match self {
             Self::Binary(_) => None,
             Self::Legacy(handshake) => Some(handshake.server_greeting()),
@@ -192,7 +192,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns a shared reference to the replaying stream regardless of variant.
     #[must_use]
-    pub fn stream(&self) -> &NegotiatedStream<R> {
+    pub const fn stream(&self) -> &NegotiatedStream<R> {
         match self {
             Self::Binary(handshake) => handshake.stream(),
             Self::Legacy(handshake) => handshake.stream(),
@@ -201,7 +201,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns a mutable reference to the replaying stream regardless of variant.
     #[must_use]
-    pub fn stream_mut(&mut self) -> &mut NegotiatedStream<R> {
+    pub const fn stream_mut(&mut self) -> &mut NegotiatedStream<R> {
         match self {
             Self::Binary(handshake) => handshake.stream_mut(),
             Self::Legacy(handshake) => handshake.stream_mut(),
@@ -341,7 +341,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns the underlying binary handshake if the negotiation used that style.
     #[must_use]
-    pub fn as_binary(&self) -> Option<&BinaryHandshake<R>> {
+    pub const fn as_binary(&self) -> Option<&BinaryHandshake<R>> {
         match self {
             Self::Binary(handshake) => Some(handshake),
             Self::Legacy(_) => None,
@@ -350,7 +350,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns a mutable reference to the binary handshake when the negotiation used that style.
     #[must_use]
-    pub fn as_binary_mut(&mut self) -> Option<&mut BinaryHandshake<R>> {
+    pub const fn as_binary_mut(&mut self) -> Option<&mut BinaryHandshake<R>> {
         match self {
             Self::Binary(handshake) => Some(handshake),
             Self::Legacy(_) => None,
@@ -359,7 +359,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns the underlying legacy daemon handshake if the negotiation used that style.
     #[must_use]
-    pub fn as_legacy(&self) -> Option<&LegacyDaemonHandshake<R>> {
+    pub const fn as_legacy(&self) -> Option<&LegacyDaemonHandshake<R>> {
         match self {
             Self::Binary(_) => None,
             Self::Legacy(handshake) => Some(handshake),
@@ -368,7 +368,7 @@ impl<R> SessionHandshake<R> {
 
     /// Returns a mutable reference to the legacy daemon handshake when the negotiation used that style.
     #[must_use]
-    pub fn as_legacy_mut(&mut self) -> Option<&mut LegacyDaemonHandshake<R>> {
+    pub const fn as_legacy_mut(&mut self) -> Option<&mut LegacyDaemonHandshake<R>> {
         match self {
             Self::Binary(_) => None,
             Self::Legacy(handshake) => Some(handshake),

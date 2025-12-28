@@ -70,7 +70,7 @@ pub const HIGHEST_PROTOCOL_VERSION: u8 = workspace::protocol_version_u8();
 /// first non-empty line, and control characters cause the revision to be reported as
 /// `"unknown"` to avoid rendering artifacts in version banners.
 #[must_use]
-pub fn build_revision() -> &'static str {
+pub const fn build_revision() -> &'static str {
     branding_build_revision()
 }
 

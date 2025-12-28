@@ -121,7 +121,7 @@ pub struct InfoLevels {
 
 impl InfoLevels {
     /// Get the level for a specific flag.
-    pub fn get(&self, flag: InfoFlag) -> u8 {
+    pub const fn get(&self, flag: InfoFlag) -> u8 {
         match flag {
             InfoFlag::Backup => self.backup,
             InfoFlag::Copy => self.copy,
@@ -140,7 +140,7 @@ impl InfoLevels {
     }
 
     /// Set the level for a specific flag.
-    pub fn set(&mut self, flag: InfoFlag, level: u8) {
+    pub const fn set(&mut self, flag: InfoFlag, level: u8) {
         match flag {
             InfoFlag::Backup => self.backup = level,
             InfoFlag::Copy => self.copy = level,
@@ -159,7 +159,7 @@ impl InfoLevels {
     }
 
     /// Set all flags to the specified level.
-    pub fn set_all(&mut self, level: u8) {
+    pub const fn set_all(&mut self, level: u8) {
         self.backup = level;
         self.copy = level;
         self.del = level;
@@ -232,7 +232,7 @@ pub struct DebugLevels {
 
 impl DebugLevels {
     /// Get the level for a specific flag.
-    pub fn get(&self, flag: DebugFlag) -> u8 {
+    pub const fn get(&self, flag: DebugFlag) -> u8 {
         match flag {
             DebugFlag::Acl => self.acl,
             DebugFlag::Backup => self.backup,
@@ -262,7 +262,7 @@ impl DebugLevels {
     }
 
     /// Set the level for a specific flag.
-    pub fn set(&mut self, flag: DebugFlag, level: u8) {
+    pub const fn set(&mut self, flag: DebugFlag, level: u8) {
         match flag {
             DebugFlag::Acl => self.acl = level,
             DebugFlag::Backup => self.backup = level,
@@ -292,7 +292,7 @@ impl DebugLevels {
     }
 
     /// Set all flags to the specified level.
-    pub fn set_all(&mut self, level: u8) {
+    pub const fn set_all(&mut self, level: u8) {
         self.acl = level;
         self.backup = level;
         self.bind = level;

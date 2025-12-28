@@ -317,7 +317,7 @@ where
 {
     /// Creates a new context that streams output into the supplied writers.
     #[must_use]
-    pub fn new(stdout: &'a mut Out, stderr: &'a mut Err, args: RemoteFallbackArgs) -> Self {
+    pub const fn new(stdout: &'a mut Out, stderr: &'a mut Err, args: RemoteFallbackArgs) -> Self {
         Self {
             stdout,
             stderr,

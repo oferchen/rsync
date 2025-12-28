@@ -129,11 +129,11 @@ impl FilterDecision {
         self.excluded_for_delete_excluded && !self.protected
     }
 
-    pub(crate) fn protect(&mut self) {
+    pub(crate) const fn protect(&mut self) {
         self.protected = true;
     }
 
-    pub(crate) fn unprotect(&mut self) {
+    pub(crate) const fn unprotect(&mut self) {
         self.protected = false;
     }
 }

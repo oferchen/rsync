@@ -57,7 +57,7 @@ impl TempFileGuard {
     /// let guard = TempFileGuard::new(PathBuf::from("/tmp/file.tmp"));
     /// // Temp file will be deleted when guard goes out of scope
     /// ```
-    pub fn new(path: PathBuf) -> Self {
+    pub const fn new(path: PathBuf) -> Self {
         Self {
             path,
             keep_on_drop: false,
@@ -84,7 +84,7 @@ impl TempFileGuard {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn keep(&mut self) {
+    pub const fn keep(&mut self) {
         self.keep_on_drop = true;
     }
 

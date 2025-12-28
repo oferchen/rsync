@@ -21,7 +21,7 @@ pub struct CommandOutput {
 }
 
 impl CommandOutput {
-    fn new(stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
+    const fn new(stdout: Vec<u8>, stderr: Vec<u8>) -> Self {
         Self { stdout, stderr }
     }
 
@@ -62,7 +62,7 @@ pub enum CommandKind {
 }
 
 impl CommandKind {
-    fn description(self) -> &'static str {
+    const fn description(self) -> &'static str {
         match self {
             CommandKind::Client => "client",
             CommandKind::Server => "server",
@@ -132,7 +132,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(kind: CommandKind, status: i32, output: CommandOutput) -> Self {
+    const fn new(kind: CommandKind, status: i32, output: CommandOutput) -> Self {
         Self {
             status: ExitStatusError::new(kind, status),
             output,
@@ -153,7 +153,7 @@ impl CommandError {
 
     /// Returns the captured output buffers associated with the failure.
     #[must_use]
-    pub fn output(&self) -> &CommandOutput {
+    pub const fn output(&self) -> &CommandOutput {
         &self.output
     }
 
