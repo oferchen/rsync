@@ -142,7 +142,7 @@ impl<'a> CopyContext<'a> {
             destination_previously_existed,
         );
 
-        apply_file_metadata_with_options(destination, metadata, metadata_options)
+        apply_file_metadata_with_options(destination, metadata, &metadata_options)
             .map_err(map_metadata_error)?;
 
         #[cfg(all(unix, feature = "xattr"))]

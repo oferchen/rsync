@@ -107,7 +107,7 @@ pub(super) fn execute_transfer(
         }
 
         if skip {
-            apply_file_metadata_with_options(destination, metadata, metadata_options.clone())
+            apply_file_metadata_with_options(destination, metadata, &metadata_options)
                 .map_err(crate::local_copy::map_metadata_error)?;
             #[cfg(all(unix, feature = "xattr"))]
             sync_xattrs_if_requested(
