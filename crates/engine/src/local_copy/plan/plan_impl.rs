@@ -162,3 +162,129 @@ impl LocalCopyPlan {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // ==================== from_operands tests ====================
+
+    #[test]
+    fn from_operands_single_source() {
+        let operands = vec![OsString::from("src"), OsString::from("dst")];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.sources().len(), 1);
+        assert_eq!(plan.destination(), Path::new("dst"));
+    }
+
+    #[test]
+    fn from_operands_multiple_sources() {
+        let operands = vec![
+            OsString::from("src1"),
+            OsString::from("src2"),
+            OsString::from("dst"),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.sources().len(), 2);
+    }
+
+    #[test]
+    fn from_operands_fewer_than_two_fails() {
+        let operands = vec![OsString::from("only_one")];
+        let result = LocalCopyPlan::from_operands(&operands);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_operands_empty_fails() {
+        let operands: Vec<OsString> = vec![];
+        let result = LocalCopyPlan::from_operands(&operands);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_operands_empty_destination_fails() {
+        let operands = vec![OsString::from("src"), OsString::from("")];
+        let result = LocalCopyPlan::from_operands(&operands);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_operands_absolute_paths() {
+        let operands = vec![OsString::from("/tmp/src"), OsString::from("/tmp/dst")];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.destination(), Path::new("/tmp/dst"));
+    }
+
+    #[test]
+    fn from_operands_remote_destination_fails() {
+        let operands = vec![OsString::from("src"), OsString::from("host::module")];
+        let result = LocalCopyPlan::from_operands(&operands);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_operands_rsync_url_destination_fails() {
+        let operands = vec![
+            OsString::from("src"),
+            OsString::from("rsync://server/module"),
+        ];
+        let result = LocalCopyPlan::from_operands(&operands);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn from_operands_ssh_style_destination_fails() {
+        let operands = vec![OsString::from("src"), OsString::from("host:/path")];
+        let result = LocalCopyPlan::from_operands(&operands);
+        assert!(result.is_err());
+    }
+
+    // ==================== accessor tests ====================
+
+    #[test]
+    fn destination_returns_correct_path() {
+        let operands = vec![OsString::from("source"), OsString::from("dest_dir")];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.destination(), Path::new("dest_dir"));
+    }
+
+    #[test]
+    fn sources_returns_all_sources() {
+        let operands = vec![
+            OsString::from("a"),
+            OsString::from("b"),
+            OsString::from("c"),
+            OsString::from("dest"),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.sources().len(), 3);
+    }
+
+    // ==================== Clone and Eq tests ====================
+
+    #[test]
+    fn plan_is_clone() {
+        let operands = vec![OsString::from("src"), OsString::from("dst")];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        let cloned = plan.clone();
+        assert_eq!(plan, cloned);
+    }
+
+    #[test]
+    fn plan_is_eq() {
+        let operands = vec![OsString::from("src"), OsString::from("dst")];
+        let plan1 = LocalCopyPlan::from_operands(&operands).unwrap();
+        let plan2 = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan1, plan2);
+    }
+
+    #[test]
+    fn plan_debug_format() {
+        let operands = vec![OsString::from("src"), OsString::from("dst")];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        let debug = format!("{:?}", plan);
+        assert!(debug.contains("LocalCopyPlan"));
+    }
+}
