@@ -202,36 +202,62 @@ impl<W: Write> Write for TracingWriter<W> {
     }
 }
 
-/// Create a hex dump string from bytes
+/// Create a hex dump string from bytes.
+///
+/// Single-pass implementation that pre-allocates capacity to avoid
+/// intermediate Vec allocations.
 fn hex_dump(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<Vec<_>>()
-        .chunks(16)
-        .map(|chunk| chunk.join(" "))
-        .collect::<Vec<_>>()
-        .join("\n     ")
+    use std::fmt::Write;
+
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    // Each byte = 2 hex chars + 1 space, plus newlines every 16 bytes
+    let num_lines = bytes.len().div_ceil(16);
+    let capacity = bytes.len() * 3 + num_lines * 5;
+    let mut result = String::with_capacity(capacity);
+
+    for (i, chunk) in bytes.chunks(16).enumerate() {
+        if i > 0 {
+            result.push_str("\n     ");
+        }
+        for (j, b) in chunk.iter().enumerate() {
+            if j > 0 {
+                result.push(' ');
+            }
+            let _ = write!(result, "{b:02x}");
+        }
+    }
+    result
 }
 
-/// Create an ASCII dump string from bytes (show printable, '.' for non-printable)
+/// Create an ASCII dump string from bytes (show printable, '.' for non-printable).
+///
+/// Single-pass implementation that avoids intermediate allocations.
 fn ascii_dump(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|&b| {
-            if (0x20..=0x7E).contains(&b) {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    // Each byte = 1 char, plus newline+indent every 16 bytes
+    let num_lines = bytes.len().div_ceil(16);
+    let capacity = bytes.len() + num_lines * 7;
+    let mut result = String::with_capacity(capacity);
+
+    for (i, chunk) in bytes.chunks(16).enumerate() {
+        if i > 0 {
+            result.push_str("\n       ");
+        }
+        for &b in chunk {
+            result.push(if (0x20..=0x7E).contains(&b) {
                 b as char
             } else {
                 '.'
-            }
-        })
-        .collect::<String>()
-        .chars()
-        .collect::<Vec<_>>()
-        .chunks(16)
-        .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n       ")
+            });
+        }
+    }
+    result
 }
 
 #[cfg(test)]
