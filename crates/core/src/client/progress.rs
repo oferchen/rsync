@@ -119,7 +119,7 @@ impl<'a> ClientProgressForwarder<'a> {
         }
 
         let preview_report = plan
-            .execute_with_report(LocalCopyExecution::DryRun, options.clone())
+            .execute_with_report(LocalCopyExecution::DryRun, options)
             .map_err(map_local_copy_error)?;
 
         let destination_root = Arc::new(preview_report.destination_root().to_path_buf());

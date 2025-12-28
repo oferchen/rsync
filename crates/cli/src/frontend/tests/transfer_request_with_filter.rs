@@ -17,7 +17,7 @@ fn transfer_request_with_filter_excludes_patterns() {
         OsString::from(RSYNC),
         OsString::from("--filter"),
         OsString::from("- *.tmp"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -48,7 +48,7 @@ fn transfer_request_with_filter_clear_resets_rules() {
         OsString::from("- *.tmp"),
         OsString::from("--filter"),
         OsString::from("!"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -82,7 +82,7 @@ fn transfer_request_with_filter_merge_applies_rules() {
         OsString::from(RSYNC),
         OsString::from("--filter"),
         filter_arg,
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -117,7 +117,7 @@ fn transfer_request_with_filter_merge_clear_resets_rules() {
         OsString::from(RSYNC),
         OsString::from("--filter"),
         filter_arg,
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -151,7 +151,7 @@ fn transfer_request_with_filter_protect_preserves_destination_entry() {
         OsString::from("--filter"),
         OsString::from("protect keep.txt"),
         OsString::from("--dirs"), // Mirror upstream: --delete requires --recursive or --dirs
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 

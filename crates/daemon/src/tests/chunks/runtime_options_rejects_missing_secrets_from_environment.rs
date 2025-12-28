@@ -3,7 +3,7 @@ fn runtime_options_rejects_missing_secrets_from_environment() {
     let missing = OsString::from("/nonexistent/secrets.txt");
     let options = with_test_secrets_env(
         Some(TestSecretsEnvOverride {
-            branded: Some(missing.clone()),
+            branded: Some(missing),
             legacy: None,
         }),
         || RuntimeOptions::parse(&[]),

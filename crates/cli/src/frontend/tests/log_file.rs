@@ -17,7 +17,7 @@ fn local_transfer_appends_default_log_entries() {
         OsString::from(RSYNC),
         OsString::from("--log-file"),
         log_path.clone().into_os_string(),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination_dir.clone().into_os_string(),
     ]);
 
@@ -56,8 +56,8 @@ fn local_transfer_respects_custom_log_format() {
         OsString::from("--log-file"),
         log_path.clone().into_os_string(),
         OsString::from("--log-file-format=%f %l"),
-        source.clone().into_os_string(),
-        destination_dir.clone().into_os_string(),
+        source.into_os_string(),
+        destination_dir.into_os_string(),
     ]);
 
     assert_eq!(code, 0);

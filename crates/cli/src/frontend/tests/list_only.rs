@@ -25,7 +25,7 @@ fn list_only_lists_entries_without_copying() {
         OsString::from(RSYNC),
         OsString::from("--list-only"),
         OsString::from("--links"),
-        source_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
         destination_dir.clone().into_os_string(),
     ]);
 
@@ -54,7 +54,7 @@ fn list_only_formats_directory_without_trailing_slash() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
-        source_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
         dest_dir.into_os_string(),
     ]);
 
@@ -178,14 +178,14 @@ fn list_only_formats_special_permission_bits_like_rsync() {
     set_file_times(&sticky_exec, timestamp, timestamp).expect("set exec times");
     set_file_times(&sticky_plain, timestamp, timestamp).expect("set plain times");
 
-    let mut source_arg = source_dir.clone().into_os_string();
+    let mut source_arg = source_dir.into_os_string();
     source_arg.push(std::path::MAIN_SEPARATOR.to_string());
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
         source_arg,
-        dest_dir.clone().into_os_string(),
+        dest_dir.into_os_string(),
     ]);
 
     assert_eq!(code, 0);

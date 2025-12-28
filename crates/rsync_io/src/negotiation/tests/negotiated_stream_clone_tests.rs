@@ -80,7 +80,7 @@ fn negotiated_stream_parts_try_clone_with_clones_inner_reader() {
         .expect("cloned parts replay buffered bytes");
     assert_eq!(cloned_replay, legacy);
 
-    let mut original_stream = parts.clone().into_stream();
+    let mut original_stream = parts.into_stream();
     let mut original_replay = Vec::new();
     original_stream
         .read_to_end(&mut original_replay)

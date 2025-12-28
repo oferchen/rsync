@@ -20,7 +20,7 @@ fn transfer_request_with_exclude_from_skips_patterns() {
         OsString::from(RSYNC),
         OsString::from("--exclude-from"),
         exclude_file.as_os_str().to_os_string(),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 
@@ -50,7 +50,7 @@ fn transfer_request_with_exclude_from_stdin_skips_patterns() {
         OsString::from(RSYNC),
         OsString::from("--exclude-from"),
         OsString::from("-"),
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         dest_root.clone().into_os_string(),
     ]);
 

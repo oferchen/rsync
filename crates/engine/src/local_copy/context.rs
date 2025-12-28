@@ -467,7 +467,7 @@ mod tests {
             path: PathBuf::from("/some/path"),
             kind: CreatedEntryKind::Symlink,
         };
-        let cloned = entry.clone();
+        let cloned = entry;
         assert_eq!(cloned.path, PathBuf::from("/some/path"));
         assert!(matches!(cloned.kind, CreatedEntryKind::Symlink));
     }

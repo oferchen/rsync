@@ -18,7 +18,7 @@ fn create_sample_summary() -> (ClientSummary, TempDir) {
     fs::write(&source_file, b"transfer payload").expect("write source file");
 
     let config = ClientConfig::builder()
-        .transfer_args([source_file.clone(), dest_dir.clone()])
+        .transfer_args([source_file, dest_dir])
         .verbosity(2)
         .progress(true)
         .stats(true)

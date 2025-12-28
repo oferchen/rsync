@@ -13,7 +13,7 @@ fn progress_transfer_renders_progress_lines() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--progress"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -105,7 +105,7 @@ fn progress_transfer_routes_messages_to_stderr_when_requested() {
         OsString::from(RSYNC),
         OsString::from("--progress"),
         OsString::from("--msgs2stderr"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -143,7 +143,7 @@ fn progress_reports_intermediate_updates() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--progress"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -177,7 +177,7 @@ fn progress_reports_unknown_totals_with_placeholder() {
         OsString::from(RSYNC),
         OsString::from("--progress"),
         OsString::from("--specials"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -205,8 +205,8 @@ fn progress_with_verbose_inserts_separator_before_totals() {
         OsString::from(RSYNC),
         OsString::from("--progress"),
         OsString::from("-v"),
-        source.clone().into_os_string(),
-        destination.clone().into_os_string(),
+        source.into_os_string(),
+        destination.into_os_string(),
     ]);
 
     assert_eq!(code, 0);

@@ -338,7 +338,7 @@ mod tests {
             DeltaToken::Literal(vec![1, 2, 3]),
             DeltaToken::Copy { index: 0, len: 10 },
         ];
-        let script = DeltaScript::new(tokens.clone(), 13, 3);
+        let script = DeltaScript::new(tokens, 13, 3);
 
         assert_eq!(script.tokens().len(), 2);
         assert_eq!(script.total_bytes(), 13);

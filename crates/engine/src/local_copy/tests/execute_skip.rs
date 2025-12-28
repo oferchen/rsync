@@ -19,7 +19,7 @@ fn execute_skips_rewriting_identical_destination() {
     fs::set_permissions(&destination, dest_perms).expect("set destination readonly");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -60,7 +60,7 @@ fn execute_without_times_rewrites_when_checksum_disabled() {
     set_file_mtime(&destination, original_mtime).expect("set mtime");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -90,7 +90,7 @@ fn execute_without_times_skips_with_checksum() {
     set_file_mtime(&destination, preserved_mtime).expect("set mtime");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -124,7 +124,7 @@ fn execute_with_size_only_skips_same_size_different_content() {
     fs::write(&dest_path, b"xyz").expect("write destination");
 
     let operands = vec![
-        source_path.clone().into_os_string(),
+        source_path.into_os_string(),
         dest_path.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -155,7 +155,7 @@ fn execute_with_ignore_times_rewrites_matching_timestamps() {
     set_file_times(&destination, timestamp, timestamp).expect("set destination times");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -188,7 +188,7 @@ fn execute_with_ignore_existing_skips_existing_destination() {
     fs::write(&dest_path, b"original").expect("write destination");
 
     let operands = vec![
-        source_path.clone().into_os_string(),
+        source_path.into_os_string(),
         dest_path.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -217,7 +217,7 @@ fn execute_with_ignore_missing_args_skips_absent_sources() {
     fs::write(&destination, b"existing").expect("write destination");
 
     let operands = vec![
-        missing.clone().into_os_string(),
+        missing.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -247,8 +247,8 @@ fn execute_with_delete_missing_args_removes_destination_entries() {
     fs::write(&destination, b"stale").expect("write destination");
 
     let operands = vec![
-        missing.clone().into_os_string(),
-        destination_root.clone().into_os_string(),
+        missing.into_os_string(),
+        destination_root.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
@@ -277,7 +277,7 @@ fn execute_with_existing_only_skips_missing_entries() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create destination root");
 
-    let mut source_operand = source_root.clone().into_os_string();
+    let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -320,7 +320,7 @@ fn execute_skips_files_smaller_than_min_size_limit() {
     fs::write(&source, b"abc").expect("write source");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -347,7 +347,7 @@ fn execute_skips_files_larger_than_max_size_limit() {
     fs::write(&source, vec![0u8; 4096]).expect("write large source");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -375,7 +375,7 @@ fn execute_copies_files_matching_size_boundaries() {
     fs::write(&source, &payload).expect("write boundary source");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -414,7 +414,7 @@ fn execute_with_update_skips_newer_destination() {
     set_file_times(&dest_path, newer, newer).expect("set dest times");
 
     let operands = vec![
-        source_path.clone().into_os_string(),
+        source_path.into_os_string(),
         dest_path.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

@@ -16,7 +16,7 @@ fn info_progress2_enables_progress_output() {
         OsString::from(RSYNC),
         OsString::from("--info=progress2"),
         OsString::from("--specials"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -44,7 +44,7 @@ fn info_stats_enables_summary_block() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--info=stats"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -77,8 +77,8 @@ fn info_none_disables_progress_output() {
         OsString::from(RSYNC),
         OsString::from("--progress"),
         OsString::from("--info=none"),
-        source.clone().into_os_string(),
-        destination.clone().into_os_string(),
+        source.into_os_string(),
+        destination.into_os_string(),
     ]);
 
     assert_eq!(code, 0);
@@ -306,7 +306,7 @@ fn info_name_emits_filenames_without_verbose() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--info=name"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -334,8 +334,8 @@ fn info_name0_suppresses_verbose_output() {
         OsString::from(RSYNC),
         OsString::from("-v"),
         OsString::from("--info=name0"),
-        source.clone().into_os_string(),
-        destination.clone().into_os_string(),
+        source.into_os_string(),
+        destination.into_os_string(),
     ]);
 
     assert_eq!(code, 0);

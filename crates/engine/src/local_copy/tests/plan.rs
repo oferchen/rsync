@@ -142,7 +142,7 @@ fn local_copy_timeout_enforced() {
     fs::write(&source, vec![0u8; 1024]).expect("write source");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -172,7 +172,7 @@ fn local_copy_stop_at_enforced() {
     fs::write(&source, vec![0u8; 1024]).expect("write source");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

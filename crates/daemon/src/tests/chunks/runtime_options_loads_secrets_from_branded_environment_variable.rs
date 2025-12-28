@@ -24,7 +24,7 @@ fn runtime_options_loads_secrets_from_branded_environment_variable() {
         options.delegate_arguments,
         [
             OsString::from("--secrets-file"),
-            secrets_path.clone().into_os_string(),
+            secrets_path.into_os_string(),
         ]
     );
 }

@@ -10,7 +10,7 @@ fn execute_respects_exclude_filter() {
     fs::write(source.join("skip.tmp"), b"skip").expect("write skip");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -91,7 +91,7 @@ fn execute_prunes_empty_directories_with_size_filters() {
     fs::write(nested.join("tiny.bin"), b"x").expect("write small file");
 
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         destination_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -120,7 +120,7 @@ fn execute_respects_include_filter_override() {
     fs::write(source.join("skip.tmp"), b"skip").expect("write skip");
 
     let operands = vec![
-        source.clone().into_os_string(),
+        source.into_os_string(),
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -156,7 +156,7 @@ fn execute_skips_directories_with_exclude_if_present_marker() {
     fs::write(marker_dir.join("data.txt"), b"ignored").expect("write data");
 
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         destination_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -197,7 +197,7 @@ fn dir_merge_exclude_if_present_from_filter_file() {
     fs::write(project.join("data.txt"), b"ignored").expect("write data");
 
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         destination_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
@@ -231,7 +231,7 @@ fn filter_program_clear_discards_previous_rules() {
     fs::write(source_root.join("skip.bak"), b"bak").expect("write bak");
 
     let operands = vec![
-        source_root.clone().into_os_string(),
+        source_root.into_os_string(),
         destination_root.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");

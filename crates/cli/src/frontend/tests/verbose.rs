@@ -13,7 +13,7 @@ fn verbose_transfer_emits_event_lines() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-v"),
-        source.clone().into_os_string(),
+        source.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -44,7 +44,7 @@ fn verbose_transfer_reports_skipped_specials() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-v"),
-        source_fifo.clone().into_os_string(),
+        source_fifo.into_os_string(),
         destination.clone().into_os_string(),
     ]);
 
@@ -136,8 +136,8 @@ fn verbose_output_includes_symlink_target() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-av"),
-        source_dir.clone().into_os_string(),
-        destination_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
+        destination_dir.into_os_string(),
     ]);
 
     assert_eq!(code, 0);

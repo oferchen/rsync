@@ -278,7 +278,7 @@ fn update_reader_with_buffer_small_data() {
 fn update_reader_with_buffer_larger_than_buffer() {
     let mut checksum = RollingChecksum::new();
     let data = vec![0x77u8; 1000];
-    let mut reader = Cursor::new(data.clone());
+    let mut reader = Cursor::new(data);
     let mut buffer = [0u8; 64]; // Buffer smaller than data
     let total = checksum
         .update_reader_with_buffer(&mut reader, &mut buffer)

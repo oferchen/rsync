@@ -149,7 +149,7 @@ fn test_protocol_29_client_greeting_golden() {
 
     // Validate ASCII format
     let greeting =
-        String::from_utf8(golden.clone()).expect("Protocol 29 client greeting must be valid UTF-8");
+        String::from_utf8(golden).expect("Protocol 29 client greeting must be valid UTF-8");
 
     assert!(
         greeting.starts_with("@RSYNCD:"),
@@ -178,7 +178,7 @@ fn test_protocol_29_server_response_golden() {
 
     // Validate ASCII format
     let response =
-        String::from_utf8(golden.clone()).expect("Protocol 29 server response must be valid UTF-8");
+        String::from_utf8(golden).expect("Protocol 29 server response must be valid UTF-8");
 
     assert!(
         response.starts_with("@RSYNCD:"),
@@ -201,7 +201,7 @@ fn test_protocol_28_client_greeting_golden() {
 
     // Validate ASCII format
     let greeting =
-        String::from_utf8(golden.clone()).expect("Protocol 28 client greeting must be valid UTF-8");
+        String::from_utf8(golden).expect("Protocol 28 client greeting must be valid UTF-8");
 
     assert!(
         greeting.starts_with("@RSYNCD:"),
@@ -228,7 +228,7 @@ fn test_protocol_28_server_response_golden() {
 
     // Validate ASCII format
     let response =
-        String::from_utf8(golden.clone()).expect("Protocol 28 server response must be valid UTF-8");
+        String::from_utf8(golden).expect("Protocol 28 server response must be valid UTF-8");
 
     assert!(
         response.starts_with("@RSYNCD:"),

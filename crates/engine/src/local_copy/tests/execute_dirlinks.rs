@@ -110,7 +110,7 @@ fn execute_with_keep_dirlinks_allows_destination_directory_symlink() {
     symlink(&actual_destination, &destination_link).expect("create destination link");
 
     let operands = vec![
-        source_dir.clone().into_os_string(),
+        source_dir.into_os_string(),
         destination_link.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
