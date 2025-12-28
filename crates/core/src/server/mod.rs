@@ -71,6 +71,11 @@ mod compressed_reader;
 mod compressed_writer;
 /// Server configuration derived from the compact `--server` flag string.
 pub mod config;
+/// Delta application for file transfer.
+///
+/// Encapsulates the logic for applying delta data received from a sender.
+/// Mirrors upstream rsync's `receive_data()` function from `receiver.c:240`.
+pub mod delta_apply;
 /// Delta transfer implementation guide and documentation.
 ///
 /// **Start here** for comprehensive documentation on how the delta transfer algorithm works,
