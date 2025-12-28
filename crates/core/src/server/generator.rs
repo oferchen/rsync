@@ -34,7 +34,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use checksums::strong::{Md4, Md5, Xxh3, Xxh64};
+use super::delta_apply::ChecksumVerifier;
 use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
 use protocol::codec::{NDX_FLIST_EOF, NdxCodec, create_ndx_codec};
@@ -1256,69 +1256,25 @@ fn compute_file_checksum(
     _seed: i32,
     _compat_flags: Option<&CompatibilityFlags>,
 ) -> Vec<u8> {
-    // Collect all literal bytes from the script
-    let mut all_bytes = Vec::new();
+    // Special case: None uses a 1-byte placeholder
+    if matches!(algorithm, ChecksumAlgorithm::None) {
+        return vec![0u8];
+    }
+
+    // Use ChecksumVerifier for all other algorithms (uses trait delegation internally)
+    let mut verifier = ChecksumVerifier::for_algorithm(algorithm);
+
+    // Feed all literal bytes from the script to the verifier
     for token in script.tokens() {
         if let DeltaToken::Literal(data) = token {
-            all_bytes.extend_from_slice(data);
+            verifier.update(data);
         }
         // Note: Copy tokens reference basis file blocks - the receiver has those.
         // The checksum is computed on all data bytes (matching upstream behavior
         // where sum_update is called on each data chunk during match processing).
     }
 
-    // Compute checksum using the appropriate algorithm
-    match algorithm {
-        ChecksumAlgorithm::None => {
-            // Protocol uses a 1-byte placeholder when checksums are disabled
-            vec![0u8]
-        }
-        ChecksumAlgorithm::MD4 => {
-            // Upstream checksum.c sum_init() for CSUM_MD4: just mdfour_begin()
-            // The seed is NOT used for file transfer checksums.
-            // (Only CSUM_MD4_OLD/BUSTED/ARCHAIC variants use the seed)
-            let mut hasher = Md4::new();
-            hasher.update(&all_bytes);
-            hasher.finalize().to_vec()
-        }
-        ChecksumAlgorithm::MD5 => {
-            // Upstream checksum.c sum_init() for MD5: just md5_begin(&ctx_md)
-            // The seed is NOT used for MD5 file transfer checksums!
-            // (The seed is only used for MD4 variants and for block checksums)
-            let mut hasher = Md5::new();
-            hasher.update(&all_bytes);
-            hasher.finalize().to_vec()
-        }
-        ChecksumAlgorithm::SHA1 => {
-            // SHA1 doesn't use a seed for file transfer checksums
-            use checksums::strong::Sha1;
-            let mut hasher = Sha1::new();
-            hasher.update(&all_bytes);
-            hasher.finalize().to_vec()
-        }
-        ChecksumAlgorithm::XXH64 => {
-            // Upstream checksum.c line 583: XXH64_reset(xxh64_state, 0)
-            // XXH64 uses 0 as seed for file transfer checksums, NOT checksum_seed
-            let mut hasher = Xxh64::new(0);
-            hasher.update(&all_bytes);
-            hasher.finalize().to_vec()
-        }
-        ChecksumAlgorithm::XXH3 => {
-            // Upstream checksum.c line 590: XXH3_64bits_reset(xxh3_state)
-            // XXH3 uses default seed (0) for file transfer checksums
-            let mut hasher = Xxh3::new(0);
-            hasher.update(&all_bytes);
-            hasher.finalize().to_vec()
-        }
-        ChecksumAlgorithm::XXH128 => {
-            // Upstream checksum.c line 595: XXH3_128bits_reset(xxh3_state)
-            // XXH3_128 uses default seed (0) for file transfer checksums
-            use checksums::strong::Xxh3_128;
-            let mut hasher = Xxh3_128::new(0);
-            hasher.update(&all_bytes);
-            hasher.finalize().to_vec()
-        }
-    }
+    verifier.finalize()
 }
 
 /// Converts engine delta script to wire protocol delta operations.
