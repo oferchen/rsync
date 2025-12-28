@@ -435,7 +435,7 @@ impl GeneratorContext {
                 generate_delta_from_signature(
                     source_file,
                     block_length,
-                    &sig_blocks,
+                    sig_blocks,
                     strong_sum_length,
                     self.protocol,
                     self.negotiated_algorithms.as_ref(),
@@ -458,11 +458,7 @@ impl GeneratorContext {
             // Send sum_head back to receiver
             sum_head.write(&mut *writer)?;
 
-            // Send delta tokens
-            let wire_ops = script_to_wire_delta(&delta_script);
-            write_token_stream(&mut &mut *writer, &wire_ops)?;
-
-            // Send file transfer checksum
+            // Compute file checksum and save stats before consuming delta script
             let checksum_algorithm = self.get_checksum_algorithm();
             let file_checksum = compute_file_checksum(
                 &delta_script,
@@ -470,11 +466,18 @@ impl GeneratorContext {
                 self.checksum_seed,
                 self.compat_flags.as_ref(),
             );
+            let delta_total_bytes = delta_script.total_bytes();
+
+            // Send delta tokens (consumes delta_script to avoid clones)
+            let wire_ops = script_to_wire_delta(delta_script);
+            write_token_stream(&mut &mut *writer, &wire_ops)?;
+
+            // Send file transfer checksum
             writer.write_all(&file_checksum)?;
             writer.flush()?;
 
             // Track stats
-            bytes_sent += delta_script.total_bytes();
+            bytes_sent += delta_total_bytes;
             files_transferred += 1;
         }
 
@@ -1125,11 +1128,13 @@ pub fn calculate_duration_ms(start: Option<Instant>, end: Option<Instant>) -> u6
 ///
 /// Reconstructs the signature from wire format blocks, creates an index,
 /// and uses DeltaGenerator to produce the delta.
+///
+/// Takes ownership of sig_blocks to avoid cloning strong_sum data.
 #[allow(clippy::too_many_arguments)]
 fn generate_delta_from_signature<R: Read>(
     source: R,
     block_length: u32,
-    sig_blocks: &[protocol::wire::signature::SignatureBlock],
+    sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
     strong_sum_length: u8,
     protocol: ProtocolVersion,
     negotiated_algorithms: Option<&NegotiationResult>,
@@ -1163,14 +1168,14 @@ fn generate_delta_from_signature<R: Read>(
         strong_sum_length_nz,
     );
 
-    // Convert wire blocks to engine signature blocks
+    // Convert wire blocks to engine signature blocks (consumes sig_blocks)
     let engine_blocks: Vec<SignatureBlock> = sig_blocks
-        .iter()
+        .into_iter()
         .map(|wire_block| {
             SignatureBlock::from_raw_parts(
                 wire_block.index as u64,
                 RollingDigest::from_value(wire_block.rolling_sum, block_length as usize),
-                wire_block.strong_sum.clone(),
+                wire_block.strong_sum,
             )
         })
         .collect();
@@ -1273,15 +1278,17 @@ fn compute_file_checksum(
 }
 
 /// Converts engine delta script to wire protocol delta operations.
-fn script_to_wire_delta(script: &DeltaScript) -> Vec<DeltaOp> {
+///
+/// Takes ownership of the script to avoid cloning literal data.
+fn script_to_wire_delta(script: DeltaScript) -> Vec<DeltaOp> {
     script
-        .tokens()
-        .iter()
+        .into_tokens()
+        .into_iter()
         .map(|token| match token {
-            DeltaToken::Literal(data) => DeltaOp::Literal(data.clone()),
+            DeltaToken::Literal(data) => DeltaOp::Literal(data),
             DeltaToken::Copy { index, len } => DeltaOp::Copy {
-                block_index: *index as u32,
-                length: *len as u32,
+                block_index: index as u32,
+                length: len as u32,
             },
         })
         .collect()
@@ -1719,7 +1726,7 @@ mod tests {
         ];
         let script = DeltaScript::new(tokens, 6, 6);
 
-        let wire_ops = script_to_wire_delta(&script);
+        let wire_ops = script_to_wire_delta(script);
 
         assert_eq!(wire_ops.len(), 2);
         match &wire_ops[0] {
@@ -1744,7 +1751,7 @@ mod tests {
         ];
         let script = DeltaScript::new(tokens, 1537, 1);
 
-        let wire_ops = script_to_wire_delta(&script);
+        let wire_ops = script_to_wire_delta(script);
 
         assert_eq!(wire_ops.len(), 3);
         match &wire_ops[0] {

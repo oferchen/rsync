@@ -50,9 +50,8 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     {
         use std::os::windows::ffi::OsStrExt;
 
-        let left_wide: Vec<u16> = left.encode_wide().collect();
-        let right_wide: Vec<u16> = right.encode_wide().collect();
-        left_wide.cmp(&right_wide)
+        // Direct iterator comparison avoids two Vec allocations per comparison
+        left.encode_wide().cmp(right.encode_wide())
     }
 
     #[cfg(not(any(unix, windows)))]
