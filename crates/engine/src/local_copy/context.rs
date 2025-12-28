@@ -327,3 +327,173 @@ impl Drop for DirectoryFilterGuard {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== FileCopyOutcome tests ====================
+
+    #[test]
+    fn file_copy_outcome_new_stores_values() {
+        let outcome = FileCopyOutcome::new(1000, Some(500));
+        assert_eq!(outcome.literal_bytes(), 1000);
+        assert_eq!(outcome.compressed_bytes(), Some(500));
+    }
+
+    #[test]
+    fn file_copy_outcome_new_without_compression() {
+        let outcome = FileCopyOutcome::new(2000, None);
+        assert_eq!(outcome.literal_bytes(), 2000);
+        assert!(outcome.compressed_bytes().is_none());
+    }
+
+    #[test]
+    fn file_copy_outcome_zero_bytes() {
+        let outcome = FileCopyOutcome::new(0, Some(0));
+        assert_eq!(outcome.literal_bytes(), 0);
+        assert_eq!(outcome.compressed_bytes(), Some(0));
+    }
+
+    #[test]
+    fn file_copy_outcome_default_is_zero() {
+        let outcome = FileCopyOutcome::default();
+        assert_eq!(outcome.literal_bytes(), 0);
+        assert!(outcome.compressed_bytes().is_none());
+    }
+
+    #[test]
+    fn file_copy_outcome_clone() {
+        let outcome = FileCopyOutcome::new(100, Some(50));
+        let cloned = outcome;
+        assert_eq!(cloned.literal_bytes(), 100);
+        assert_eq!(cloned.compressed_bytes(), Some(50));
+    }
+
+    #[test]
+    fn file_copy_outcome_debug_format() {
+        let outcome = FileCopyOutcome::new(100, None);
+        let debug = format!("{outcome:?}");
+        assert!(debug.contains("FileCopyOutcome"));
+        assert!(debug.contains("100"));
+    }
+
+    #[test]
+    fn file_copy_outcome_eq() {
+        let a = FileCopyOutcome::new(100, Some(50));
+        let b = FileCopyOutcome::new(100, Some(50));
+        let c = FileCopyOutcome::new(100, Some(60));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    // ==================== CreatedEntryKind tests ====================
+
+    #[test]
+    fn created_entry_kind_file_debug() {
+        let kind = CreatedEntryKind::File;
+        let debug = format!("{kind:?}");
+        assert!(debug.contains("File"));
+    }
+
+    #[test]
+    fn created_entry_kind_directory_debug() {
+        let kind = CreatedEntryKind::Directory;
+        let debug = format!("{kind:?}");
+        assert!(debug.contains("Directory"));
+    }
+
+    #[test]
+    fn created_entry_kind_symlink_debug() {
+        let kind = CreatedEntryKind::Symlink;
+        let debug = format!("{kind:?}");
+        assert!(debug.contains("Symlink"));
+    }
+
+    #[test]
+    fn created_entry_kind_fifo_debug() {
+        let kind = CreatedEntryKind::Fifo;
+        let debug = format!("{kind:?}");
+        assert!(debug.contains("Fifo"));
+    }
+
+    #[test]
+    fn created_entry_kind_device_debug() {
+        let kind = CreatedEntryKind::Device;
+        let debug = format!("{kind:?}");
+        assert!(debug.contains("Device"));
+    }
+
+    #[test]
+    fn created_entry_kind_hard_link_debug() {
+        let kind = CreatedEntryKind::HardLink;
+        let debug = format!("{kind:?}");
+        assert!(debug.contains("HardLink"));
+    }
+
+    #[test]
+    fn created_entry_kind_clone() {
+        let kind = CreatedEntryKind::File;
+        let cloned = kind;
+        assert!(matches!(cloned, CreatedEntryKind::File));
+    }
+
+    #[test]
+    fn created_entry_kind_copy() {
+        let kind = CreatedEntryKind::Directory;
+        let copied = kind;
+        // Original still usable after copy
+        assert!(matches!(kind, CreatedEntryKind::Directory));
+        assert!(matches!(copied, CreatedEntryKind::Directory));
+    }
+
+    // ==================== CreatedEntry tests ====================
+
+    #[test]
+    fn created_entry_debug_contains_path() {
+        let entry = CreatedEntry {
+            path: PathBuf::from("/test/path"),
+            kind: CreatedEntryKind::File,
+        };
+        let debug = format!("{entry:?}");
+        assert!(debug.contains("CreatedEntry"));
+        assert!(debug.contains("/test/path"));
+        assert!(debug.contains("File"));
+    }
+
+    #[test]
+    fn created_entry_clone() {
+        let entry = CreatedEntry {
+            path: PathBuf::from("/some/path"),
+            kind: CreatedEntryKind::Symlink,
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.path, PathBuf::from("/some/path"));
+        assert!(matches!(cloned.kind, CreatedEntryKind::Symlink));
+    }
+
+    // ==================== DeferredDeletion tests ====================
+
+    #[test]
+    fn deferred_deletion_creation() {
+        let deletion = DeferredDeletion {
+            destination: PathBuf::from("/dest"),
+            relative: Some(PathBuf::from("rel")),
+            keep: vec![OsString::from("file1"), OsString::from("file2")],
+        };
+        assert_eq!(deletion.destination, PathBuf::from("/dest"));
+        assert_eq!(deletion.relative, Some(PathBuf::from("rel")));
+        assert_eq!(deletion.keep.len(), 2);
+    }
+
+    #[test]
+    fn deferred_deletion_no_relative() {
+        let deletion = DeferredDeletion {
+            destination: PathBuf::from("/dest"),
+            relative: None,
+            keep: Vec::new(),
+        };
+        assert!(deletion.relative.is_none());
+        assert!(deletion.keep.is_empty());
+    }
+}

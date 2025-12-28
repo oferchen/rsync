@@ -229,3 +229,198 @@ fn absolutize(path: PathBuf) -> Result<PathBuf, FileListError> {
         Ok(cwd.join(path))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== absolutize tests ====================
+
+    #[test]
+    fn absolutize_returns_absolute_path_unchanged() {
+        let path = PathBuf::from("/some/absolute/path");
+        let result = absolutize(path.clone());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), path);
+    }
+
+    #[test]
+    fn absolutize_returns_absolute_path_unchanged_root() {
+        let path = PathBuf::from("/");
+        let result = absolutize(path.clone());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), path);
+    }
+
+    #[test]
+    fn absolutize_converts_relative_path_to_absolute() {
+        let path = PathBuf::from("relative/path");
+        let result = absolutize(path.clone());
+        assert!(result.is_ok());
+        let abs = result.unwrap();
+        assert!(abs.is_absolute());
+        assert!(abs.ends_with("relative/path"));
+    }
+
+    #[test]
+    fn absolutize_handles_dot_path() {
+        let path = PathBuf::from(".");
+        let result = absolutize(path);
+        assert!(result.is_ok());
+        let abs = result.unwrap();
+        assert!(abs.is_absolute());
+    }
+
+    #[test]
+    fn absolutize_handles_empty_path() {
+        let path = PathBuf::from("");
+        let result = absolutize(path);
+        assert!(result.is_ok());
+        let abs = result.unwrap();
+        assert!(abs.is_absolute());
+    }
+
+    // ==================== DirectoryState::next_name tests ====================
+
+    #[test]
+    fn directory_state_next_name_returns_none_when_empty() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: Vec::new(),
+            index: 0,
+            depth: 0,
+        };
+        assert!(state.next_name().is_none());
+    }
+
+    #[test]
+    fn directory_state_next_name_returns_entries_in_order() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: vec![
+                OsString::from("a"),
+                OsString::from("b"),
+                OsString::from("c"),
+            ],
+            index: 0,
+            depth: 0,
+        };
+        assert_eq!(state.next_name(), Some(OsString::from("a")));
+        assert_eq!(state.next_name(), Some(OsString::from("b")));
+        assert_eq!(state.next_name(), Some(OsString::from("c")));
+        assert!(state.next_name().is_none());
+    }
+
+    #[test]
+    fn directory_state_next_name_advances_index() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: vec![OsString::from("first"), OsString::from("second")],
+            index: 0,
+            depth: 0,
+        };
+        let _ = state.next_name();
+        assert_eq!(state.index, 1);
+        let _ = state.next_name();
+        assert_eq!(state.index, 2);
+    }
+
+    #[test]
+    fn directory_state_next_name_returns_none_after_exhaustion() {
+        let mut state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: vec![OsString::from("only")],
+            index: 0,
+            depth: 0,
+        };
+        assert_eq!(state.next_name(), Some(OsString::from("only")));
+        assert!(state.next_name().is_none());
+        assert!(state.next_name().is_none()); // Repeated calls still return None
+    }
+
+    #[test]
+    fn directory_state_clone() {
+        let state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::from("rel"),
+            entries: vec![OsString::from("entry")],
+            index: 0,
+            depth: 5,
+        };
+        let cloned = state.clone();
+        assert_eq!(cloned.fs_path, state.fs_path);
+        assert_eq!(cloned.relative_prefix, state.relative_prefix);
+        assert_eq!(cloned.depth, state.depth);
+    }
+
+    #[test]
+    fn directory_state_debug() {
+        let state = DirectoryState {
+            fs_path: PathBuf::from("/test"),
+            relative_prefix: PathBuf::new(),
+            entries: Vec::new(),
+            index: 0,
+            depth: 0,
+        };
+        let debug = format!("{state:?}");
+        assert!(debug.contains("DirectoryState"));
+        assert!(debug.contains("/test"));
+    }
+
+    // ==================== FileListWalker tests with filesystem ====================
+
+    #[test]
+    fn file_list_walker_walks_temp_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("test.txt");
+        std::fs::write(&file_path, b"content").expect("write");
+
+        let walker =
+            FileListWalker::new(temp.path().to_path_buf(), false, true).expect("create walker");
+
+        let entries: Vec<_> = walker.collect();
+        assert!(!entries.is_empty());
+
+        // Should have at least the root directory and one file
+        let mut found_file = false;
+        for result in entries {
+            let entry = result.expect("entry");
+            if entry.relative_path.to_string_lossy().contains("test.txt") {
+                found_file = true;
+            }
+        }
+        assert!(found_file);
+    }
+
+    #[test]
+    fn file_list_walker_empty_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let walker =
+            FileListWalker::new(temp.path().to_path_buf(), false, true).expect("create walker");
+
+        let entries: Vec<_> = walker.collect();
+        // Should have just the root directory
+        assert_eq!(entries.len(), 1);
+        let entry = entries[0].as_ref().expect("entry");
+        assert!(entry.is_root);
+    }
+
+    #[test]
+    fn file_list_walker_single_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("single.txt");
+        std::fs::write(&file_path, b"content").expect("write");
+
+        let walker = FileListWalker::new(file_path.clone(), false, true).expect("create walker");
+
+        let entries: Vec<_> = walker.collect();
+        assert_eq!(entries.len(), 1);
+        let entry = entries[0].as_ref().expect("entry");
+        assert!(entry.is_root);
+        assert_eq!(entry.full_path, file_path);
+    }
+}

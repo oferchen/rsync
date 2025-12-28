@@ -200,3 +200,188 @@ fn write_daemon_unavailable_error<Err: Write>(stderr: &mut Err, brand: Brand) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== daemon_mode_arguments tests ====================
+
+    #[test]
+    fn daemon_mode_arguments_empty_args() {
+        let args: Vec<OsString> = vec![];
+        assert!(daemon_mode_arguments(&args).is_none());
+    }
+
+    #[test]
+    fn daemon_mode_arguments_no_daemon_flag() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("-av"),
+            OsString::from("src/"),
+            OsString::from("dest/"),
+        ];
+        assert!(daemon_mode_arguments(&args).is_none());
+    }
+
+    #[test]
+    fn daemon_mode_arguments_with_daemon_flag() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--daemon"),
+            OsString::from("--port=8873"),
+        ];
+        let result = daemon_mode_arguments(&args);
+        assert!(result.is_some());
+        let daemon_args = result.unwrap();
+        // Should have program name and --port=8873, but not --daemon
+        assert!(daemon_args.iter().any(|a| a == "--port=8873"));
+        assert!(!daemon_args.iter().any(|a| a == "--daemon"));
+    }
+
+    #[test]
+    fn daemon_mode_arguments_daemon_flag_with_config() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--daemon"),
+            OsString::from("--config=/etc/rsyncd.conf"),
+            OsString::from("--no-detach"),
+        ];
+        let result = daemon_mode_arguments(&args);
+        assert!(result.is_some());
+        let daemon_args = result.unwrap();
+        assert!(daemon_args.iter().any(|a| a == "--config=/etc/rsyncd.conf"));
+        assert!(daemon_args.iter().any(|a| a == "--no-detach"));
+    }
+
+    #[test]
+    fn daemon_mode_arguments_daemon_after_double_dash_ignored() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("-av"),
+            OsString::from("--"),
+            OsString::from("--daemon"),
+        ];
+        // --daemon after -- should not trigger daemon mode
+        let result = daemon_mode_arguments(&args);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn daemon_mode_arguments_double_dash_preserved() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--daemon"),
+            OsString::from("--"),
+            OsString::from("extra-arg"),
+        ];
+        let result = daemon_mode_arguments(&args);
+        assert!(result.is_some());
+        let daemon_args = result.unwrap();
+        assert!(daemon_args.iter().any(|a| a == "--"));
+        assert!(daemon_args.iter().any(|a| a == "extra-arg"));
+    }
+
+    #[test]
+    fn daemon_mode_arguments_program_only() {
+        let args: Vec<OsString> = vec![OsString::from("rsync")];
+        assert!(daemon_mode_arguments(&args).is_none());
+    }
+
+    #[test]
+    fn daemon_mode_arguments_oc_rsync_program() {
+        let args: Vec<OsString> = vec![
+            OsString::from("oc-rsync"),
+            OsString::from("--daemon"),
+        ];
+        let result = daemon_mode_arguments(&args);
+        assert!(result.is_some());
+        // The first argument should be the daemon program name
+        let daemon_args = result.unwrap();
+        assert!(!daemon_args.is_empty());
+    }
+
+    // ==================== server_mode_requested tests ====================
+
+    #[test]
+    fn server_mode_requested_no_server_flag() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("-av"),
+            OsString::from("src/"),
+            OsString::from("dest/"),
+        ];
+        assert!(!server_mode_requested(&args));
+    }
+
+    #[test]
+    fn server_mode_requested_with_server_flag() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("-logDtprze.iLsfxC"),
+            OsString::from("."),
+            OsString::from("src/"),
+        ];
+        assert!(server_mode_requested(&args));
+    }
+
+    #[test]
+    fn server_mode_requested_server_first_arg() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+        ];
+        assert!(server_mode_requested(&args));
+    }
+
+    #[test]
+    fn server_mode_requested_empty_args() {
+        let args: Vec<OsString> = vec![];
+        assert!(!server_mode_requested(&args));
+    }
+
+    #[test]
+    fn server_mode_requested_program_only() {
+        let args: Vec<OsString> = vec![OsString::from("rsync")];
+        assert!(!server_mode_requested(&args));
+    }
+
+    #[test]
+    fn server_mode_requested_with_sender() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--sender"),
+            OsString::from("-logDtprze.iLsfxC"),
+            OsString::from("."),
+            OsString::from("src/"),
+        ];
+        assert!(server_mode_requested(&args));
+    }
+
+    #[test]
+    fn server_mode_requested_with_receiver() {
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("--server"),
+            OsString::from("--receiver"),
+            OsString::from("-logDtprze.iLsfxC"),
+            OsString::from("."),
+            OsString::from("dest/"),
+        ];
+        assert!(server_mode_requested(&args));
+    }
+
+    #[test]
+    fn server_mode_requested_server_not_in_first_position() {
+        // --server can appear anywhere in args after the program name
+        let args: Vec<OsString> = vec![
+            OsString::from("rsync"),
+            OsString::from("-v"),
+            OsString::from("--server"),
+            OsString::from("-logDtprze.iLsfxC"),
+        ];
+        assert!(server_mode_requested(&args));
+    }
+}
