@@ -52,18 +52,21 @@ where
     }
 
     /// Returns the number of compressed bytes produced so far.
+    #[inline]
     #[must_use]
     pub fn bytes_written(&self) -> u64 {
         self.inner.get_ref().bytes()
     }
 
     /// Provides immutable access to the underlying sink.
+    #[inline]
     #[must_use]
     pub fn get_ref(&self) -> &W {
         self.inner.get_ref().inner_ref()
     }
 
     /// Provides mutable access to the underlying sink.
+    #[inline]
     #[must_use]
     pub fn get_mut(&mut self) -> &mut W {
         self.inner.get_mut().inner_mut()
@@ -96,24 +99,28 @@ where
     }
 
     /// Returns the number of decompressed bytes read so far.
+    #[inline]
     #[must_use]
     pub const fn bytes_read(&self) -> u64 {
         self.bytes
     }
 
     /// Returns a mutable reference to the underlying reader.
+    #[inline]
     #[must_use]
     pub fn get_mut(&mut self) -> &mut R {
         self.inner.get_mut().get_mut()
     }
 
     /// Returns an immutable reference to the wrapped reader.
+    #[inline]
     #[must_use]
     pub fn get_ref(&self) -> &R {
         self.inner.get_ref().get_ref()
     }
 
     /// Consumes the decoder and returns the wrapped reader.
+    #[inline]
     #[must_use]
     pub fn into_inner(self) -> R {
         self.inner.finish().into_inner()
