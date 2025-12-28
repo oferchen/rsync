@@ -116,61 +116,50 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    /// Creates a new regular file entry.
-    #[must_use]
-    pub fn new_file(name: PathBuf, size: u64, permissions: u32) -> Self {
+    /// Core constructor with all parameters - Template Method pattern.
+    ///
+    /// All public constructors delegate to this method to ensure consistent
+    /// initialization and reduce code duplication.
+    #[inline]
+    fn new_with_type(
+        name: PathBuf,
+        size: u64,
+        file_type: FileType,
+        permissions: u32,
+        link_target: Option<PathBuf>,
+    ) -> Self {
         Self {
             name,
             size,
-            mode: FileType::Regular.to_mode_bits() | (permissions & 0o7777),
+            mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime: 0,
             mtime_nsec: 0,
             uid: None,
             gid: None,
             rdev_major: None,
             rdev_minor: None,
-            link_target: None,
+            link_target,
             hardlink_idx: None,
             flags: super::flags::FileFlags::default(),
         }
+    }
+
+    /// Creates a new regular file entry.
+    #[must_use]
+    pub fn new_file(name: PathBuf, size: u64, permissions: u32) -> Self {
+        Self::new_with_type(name, size, FileType::Regular, permissions, None)
     }
 
     /// Creates a new directory entry.
     #[must_use]
     pub fn new_directory(name: PathBuf, permissions: u32) -> Self {
-        Self {
-            name,
-            size: 0,
-            mode: FileType::Directory.to_mode_bits() | (permissions & 0o7777),
-            mtime: 0,
-            mtime_nsec: 0,
-            uid: None,
-            gid: None,
-            rdev_major: None,
-            rdev_minor: None,
-            link_target: None,
-            hardlink_idx: None,
-            flags: super::flags::FileFlags::default(),
-        }
+        Self::new_with_type(name, 0, FileType::Directory, permissions, None)
     }
 
     /// Creates a new symlink entry.
     #[must_use]
     pub fn new_symlink(name: PathBuf, target: PathBuf) -> Self {
-        Self {
-            name,
-            size: 0,
-            mode: FileType::Symlink.to_mode_bits() | 0o777,
-            mtime: 0,
-            mtime_nsec: 0,
-            uid: None,
-            gid: None,
-            rdev_major: None,
-            rdev_minor: None,
-            link_target: Some(target),
-            hardlink_idx: None,
-            flags: super::flags::FileFlags::default(),
-        }
+        Self::new_with_type(name, 0, FileType::Symlink, 0o777, Some(target))
     }
 
     /// Creates a file entry from raw components (used during decoding).
