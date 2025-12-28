@@ -17,7 +17,7 @@ pub struct ClientSummary {
 impl ClientSummary {
     pub(crate) fn from_report(report: LocalCopyReport) -> Self {
         let stats = *report.summary();
-        let destination_root = Arc::new(report.destination_root().to_path_buf());
+        let destination_root: Arc<Path> = Arc::from(report.destination_root());
         let events = report
             .records()
             .iter()
@@ -296,13 +296,13 @@ pub struct ClientEvent {
     elapsed: Duration,
     metadata: Option<ClientEntryMetadata>,
     created: bool,
-    destination_root: Arc<PathBuf>,
+    destination_root: Arc<Path>,
     destination_path: PathBuf,
     change_set: LocalCopyChangeSet,
 }
 
 impl ClientEvent {
-    pub(crate) fn from_record(record: &LocalCopyRecord, destination_root: Arc<PathBuf>) -> Self {
+    pub(crate) fn from_record(record: &LocalCopyRecord, destination_root: Arc<Path>) -> Self {
         let kind = match record.action() {
             LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
             LocalCopyAction::MetadataReused => ClientEventKind::MetadataReused,
@@ -364,7 +364,7 @@ impl ClientEvent {
         bytes_transferred: u64,
         total_bytes: Option<u64>,
         elapsed: Duration,
-        destination_root: Arc<PathBuf>,
+        destination_root: Arc<Path>,
     ) -> Self {
         let destination_path = Self::resolve_destination_path(&destination_root, relative);
         Self {
