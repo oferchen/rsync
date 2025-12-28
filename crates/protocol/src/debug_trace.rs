@@ -85,13 +85,12 @@ impl<R: Read> TracingReader<R> {
             self.config.trace_dir, self.config.prefix, self.sequence
         );
 
-        let mut file = match OpenOptions::new()
+        let Ok(mut file) = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&trace_path)
-        {
-            Ok(f) => f,
-            Err(_) => return,
+        else {
+            return;
         };
 
         match result {
@@ -167,13 +166,12 @@ impl<W: Write> TracingWriter<W> {
             self.config.trace_dir, self.config.prefix, self.sequence
         );
 
-        let mut file = match OpenOptions::new()
+        let Ok(mut file) = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&trace_path)
-        {
-            Ok(f) => f,
-            Err(_) => return,
+        else {
+            return;
         };
 
         match result {

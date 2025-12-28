@@ -1014,26 +1014,21 @@ pub fn find_basis_file(
 
             // Use FuzzyMatcher to find a similar file in dest_dir
             let fuzzy_matcher = FuzzyMatcher::new();
-            let target_name = match relative_path.file_name() {
-                Some(name) => name,
-                None => {
-                    return BasisFileResult {
-                        signature: None,
-                        basis_path: None,
-                    };
-                }
+            let Some(target_name) = relative_path.file_name() else {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
+                };
             };
 
-            let fuzzy_match =
-                match fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size) {
-                    Some(m) => m,
-                    None => {
-                        return BasisFileResult {
-                            signature: None,
-                            basis_path: None,
-                        };
-                    }
+            let Some(fuzzy_match) =
+                fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
+            else {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
                 };
+            };
 
             // Open the fuzzy-matched file as basis
             let fuzzy_path = fuzzy_match.path;

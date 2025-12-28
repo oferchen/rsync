@@ -81,9 +81,8 @@ pub(crate) fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error
 }
 
 pub(crate) fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
-    let c_name = match CString::new(name) {
-        Ok(name) => name,
-        Err(_) => return Ok(None),
+    let Ok(c_name) = CString::new(name) else {
+        return Ok(None);
     };
 
     let mut buffer = vec![0_u8; 1024];
@@ -153,9 +152,8 @@ pub(crate) fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Erro
 }
 
 pub(crate) fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
-    let c_name = match CString::new(name) {
-        Ok(name) => name,
-        Err(_) => return Ok(None),
+    let Ok(c_name) = CString::new(name) else {
+        return Ok(None);
     };
 
     let mut buffer = vec![0_u8; 1024];
