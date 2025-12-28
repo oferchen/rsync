@@ -123,6 +123,7 @@ pub(crate) fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
+#[cold]
 pub(crate) fn invalid_percent_encoding_error() -> ClientError {
     daemon_error(
         "invalid percent-encoding in daemon host",
@@ -130,6 +131,7 @@ pub(crate) fn invalid_percent_encoding_error() -> ClientError {
     )
 }
 
+#[cold]
 pub(crate) fn invalid_host_utf8_error() -> ClientError {
     daemon_error(
         "daemon host contains invalid UTF-8",
@@ -137,6 +139,7 @@ pub(crate) fn invalid_host_utf8_error() -> ClientError {
     )
 }
 
+#[cold]
 pub(crate) fn invalid_username_percent_encoding_error() -> ClientError {
     daemon_error(
         "invalid percent-encoding in daemon username",
@@ -144,6 +147,7 @@ pub(crate) fn invalid_username_percent_encoding_error() -> ClientError {
     )
 }
 
+#[cold]
 pub(crate) fn invalid_username_utf8_error() -> ClientError {
     daemon_error(
         "daemon username contains invalid UTF-8",
