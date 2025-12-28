@@ -271,7 +271,7 @@ impl ReceiverContext {
                 if let Err(meta_err) =
                     apply_metadata_from_file_entry(&dir_path, file_entry, metadata_opts)
                 {
-                    metadata_errors.push((dir_path.to_path_buf(), meta_err.to_string()));
+                    metadata_errors.push((dir_path.clone(), meta_err.to_string()));
                 }
             }
         }
@@ -713,7 +713,7 @@ impl ReceiverContext {
                 apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
             {
                 // Collect error for final report - metadata failure shouldn't abort transfer
-                metadata_errors.push((file_path.to_path_buf(), meta_err.to_string()));
+                metadata_errors.push((file_path.clone(), meta_err.to_string()));
             }
 
             // Step 7: Track stats
