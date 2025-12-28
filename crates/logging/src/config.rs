@@ -228,7 +228,7 @@ impl VerbosityConfig {
 /// Parse a flag token like "copy2" into ("copy", 2) or "del" into ("del", 1).
 fn parse_flag_token(token: &str) -> Result<(&str, u8), String> {
     if token.is_empty() {
-        return Err("empty flag token".to_string());
+        return Err("empty flag token".to_owned());
     }
 
     // Find where the digits start

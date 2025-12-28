@@ -76,7 +76,7 @@ fn map_cargo_failure(
         tool_missing_error(display, install_hint)
     } else {
         TaskError::CommandFailed {
-            program: program_label.unwrap_or_else(|| display.to_string()),
+            program: program_label.unwrap_or_else(|| display.to_owned()),
             status: output.status,
         }
     }
@@ -141,7 +141,7 @@ pub fn ensure_rust_target_installed(target: &str) -> TaskResult<()> {
 
     if !query.status.success() {
         return Err(TaskError::CommandFailed {
-            program: LIST_DISPLAY.to_string(),
+            program: LIST_DISPLAY.to_owned(),
             status: query.status,
         });
     }

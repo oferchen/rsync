@@ -40,7 +40,7 @@ where
     }
 
     if items.is_empty() {
-        return Err(empty_error.to_string());
+        return Err(empty_error.to_owned());
     }
 
     Ok(items)
@@ -53,7 +53,7 @@ pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
     parse_dedup_list(
         value,
         |s| s.to_ascii_lowercase(),
-        |s| s.to_string(),
+        |s| s.to_owned(),
         "must specify at least one username",
     )
 }
@@ -253,7 +253,7 @@ impl HostPattern {
     pub(crate) fn parse(token: &str) -> Result<Self, String> {
         let token = token.trim();
         if token.is_empty() {
-            return Err("host pattern must be non-empty".to_string());
+            return Err("host pattern must be non-empty".to_owned());
         }
 
         if token == "*" || token.eq_ignore_ascii_case("all") {
@@ -271,7 +271,7 @@ impl HostPattern {
                 .map(|value| {
                     value
                         .parse::<u8>()
-                        .map_err(|_| "invalid IPv4 prefix length".to_string())
+                        .map_err(|_| "invalid IPv4 prefix length".to_owned())
                 })
                 .transpose()?;
             return Self::from_ipv4(ipv4, prefix.unwrap_or(32));
@@ -282,14 +282,14 @@ impl HostPattern {
                 .map(|value| {
                     value
                         .parse::<u8>()
-                        .map_err(|_| "invalid IPv6 prefix length".to_string())
+                        .map_err(|_| "invalid IPv6 prefix length".to_owned())
                 })
                 .transpose()?;
             return Self::from_ipv6(ipv6, prefix.unwrap_or(128));
         }
 
         if prefix_text.is_some() {
-            return Err("invalid host pattern; expected IPv4/IPv6 address".to_string());
+            return Err("invalid host pattern; expected IPv4/IPv6 address".to_owned());
         }
 
         HostnamePattern::parse(address_str).map(Self::Hostname)
@@ -297,7 +297,7 @@ impl HostPattern {
 
     fn from_ipv4(addr: Ipv4Addr, prefix: u8) -> Result<Self, String> {
         if prefix > 32 {
-            return Err("IPv4 prefix length must be between 0 and 32".to_string());
+            return Err("IPv4 prefix length must be between 0 and 32".to_owned());
         }
 
         if prefix == 0 {
@@ -318,7 +318,7 @@ impl HostPattern {
 
     fn from_ipv6(addr: Ipv6Addr, prefix: u8) -> Result<Self, String> {
         if prefix > 128 {
-            return Err("IPv6 prefix length must be between 0 and 128".to_string());
+            return Err("IPv6 prefix length must be between 0 and 128".to_owned());
         }
 
         if prefix == 0 {
@@ -386,7 +386,7 @@ impl HostnamePattern {
     fn parse(pattern: &str) -> Result<Self, String> {
         let trimmed = pattern.trim();
         if trimmed.is_empty() {
-            return Err("host pattern must be non-empty".to_string());
+            return Err("host pattern must be non-empty".to_owned());
         }
 
         let normalized = trimmed.trim_end_matches('.');
@@ -399,7 +399,7 @@ impl HostnamePattern {
         }
 
         if lower.starts_with('.') {
-            let suffix = lower.trim_start_matches('.').to_string();
+            let suffix = lower.trim_start_matches('.').to_owned();
             return Ok(Self {
                 kind: HostnamePatternKind::Suffix(suffix),
             });

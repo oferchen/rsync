@@ -89,7 +89,7 @@ pub(crate) fn format_list_timestamp(modified: Option<SystemTime>) -> String {
     {
         return datetime;
     }
-    "1970/01/01 00:00:00".to_string()
+    "1970/01/01 00:00:00".to_owned()
 }
 
 pub(crate) fn format_list_size(size: u64, human_readable: HumanReadableMode) -> String {
@@ -262,8 +262,8 @@ pub(crate) fn format_progress_percent(bytes: u64, total: Option<u64>) -> String 
             let percent = (capped.saturating_mul(100)) / total_bytes;
             format!("{percent}%")
         }
-        Some(_) => "100%".to_string(),
-        None => "??%".to_string(),
+        Some(_) => "100%".to_owned(),
+        None => "??%".to_owned(),
     }
 }
 
@@ -275,18 +275,18 @@ pub(crate) fn format_progress_rate(
 ) -> String {
     if bytes == 0 || elapsed.is_zero() {
         return if human_readable.is_enabled() {
-            "0.00B/s".to_string()
+            "0.00B/s".to_owned()
         } else {
-            "0.00kB/s".to_string()
+            "0.00kB/s".to_owned()
         };
     }
 
     let seconds = elapsed.as_secs_f64();
     if seconds <= 0.0 {
         return if human_readable.is_enabled() {
-            "0.00B/s".to_string()
+            "0.00B/s".to_owned()
         } else {
-            "0.00kB/s".to_string()
+            "0.00kB/s".to_owned()
         };
     }
 

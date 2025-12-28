@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn invalid_format_error() {
-        let err = BatchError::InvalidFormat("corrupted header".to_string());
+        let err = BatchError::InvalidFormat("corrupted header".to_owned());
 
         assert!(matches!(err, BatchError::InvalidFormat(_)));
         assert!(err.to_string().contains("Invalid batch format"));
@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn unsupported_error() {
-        let err = BatchError::Unsupported("feature X".to_string());
+        let err = BatchError::Unsupported("feature X".to_owned());
 
         assert!(matches!(err, BatchError::Unsupported(_)));
         assert!(err.to_string().contains("Unsupported operation"));
@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn debug_format() {
-        let err = BatchError::InvalidFormat("test".to_string());
+        let err = BatchError::InvalidFormat("test".to_owned());
         let debug = format!("{err:?}");
 
         assert!(debug.contains("InvalidFormat"));

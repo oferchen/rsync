@@ -323,9 +323,9 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
     // Check for trailing slash (directory-only)
     if let Some(stripped) = pattern_text.strip_suffix('/') {
         rule.directory_only = true;
-        rule.pattern = stripped.to_string();
+        rule.pattern = stripped.to_owned();
     } else {
-        rule.pattern = pattern_text.to_string();
+        rule.pattern = pattern_text.to_owned();
     }
 
     Ok(rule)
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn simple_exclude_pattern() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::exclude("*.log".to_string());
+        let rule = FilterRuleWireFormat::exclude("*.log".to_owned());
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn simple_include_pattern() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::include("*.txt".to_string());
+        let rule = FilterRuleWireFormat::include("*.txt".to_owned());
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn anchored_pattern() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::exclude("/tmp".to_string()).with_anchored(true);
+        let rule = FilterRuleWireFormat::exclude("/tmp".to_owned()).with_anchored(true);
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn directory_only_pattern() {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
-        let rule = FilterRuleWireFormat::exclude("cache".to_string()).with_directory_only(true);
+        let rule = FilterRuleWireFormat::exclude("cache".to_owned()).with_directory_only(true);
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn sender_side_filter_v29() {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
-        let rule = FilterRuleWireFormat::exclude("*.tmp".to_string()).with_sides(true, false);
+        let rule = FilterRuleWireFormat::exclude("*.tmp".to_owned()).with_sides(true, false);
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -435,7 +435,7 @@ mod tests {
     #[test]
     fn receiver_side_filter_v29() {
         let protocol = ProtocolVersion::from_supported(29).unwrap();
-        let rule = FilterRuleWireFormat::exclude("*.bak".to_string()).with_sides(false, true);
+        let rule = FilterRuleWireFormat::exclude("*.bak".to_owned()).with_sides(false, true);
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn perishable_filter_v30() {
         let protocol = ProtocolVersion::from_supported(30).unwrap();
-        let rule = FilterRuleWireFormat::exclude("*.swp".to_string()).with_perishable(true);
+        let rule = FilterRuleWireFormat::exclude("*.swp".to_owned()).with_perishable(true);
 
         let mut buf = Vec::new();
         write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn protocol_downgrade_strips_unsupported() {
         // Create rule with v30 features
-        let rule = FilterRuleWireFormat::exclude("test".to_string())
+        let rule = FilterRuleWireFormat::exclude("test".to_owned())
             .with_sides(true, false)
             .with_perishable(true);
 

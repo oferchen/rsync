@@ -59,7 +59,7 @@ impl Message {
                 {
                     // Extract just the role part (before any =)
                     let role_part = trailer.split('=').next().unwrap_or(trailer);
-                    Some(role_part.trim().to_string())
+                    Some(role_part.trim().to_owned())
                 } else {
                     None
                 }
@@ -79,7 +79,7 @@ pub fn extract_messages_from_output(stderr: &str) -> Vec<Message> {
     stderr
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| Message::new(line.to_string()))
+        .map(|line| Message::new(line.to_owned()))
         .collect()
 }
 
@@ -234,14 +234,14 @@ mod tests {
 
     #[test]
     fn test_parse_error_message_with_role() {
-        let msg = Message::new("rsync: error in file IO [sender=3.4.1-rust]".to_string());
+        let msg = Message::new("rsync: error in file IO [sender=3.4.1-rust]".to_owned());
         assert_eq!(msg.severity, Some(Severity::Error));
-        assert_eq!(msg.role, Some("sender".to_string()));
+        assert_eq!(msg.role, Some("sender".to_owned()));
     }
 
     #[test]
     fn test_parse_warning_message() {
-        let msg = Message::new("rsync: warning: some files vanished".to_string());
+        let msg = Message::new("rsync: warning: some files vanished".to_owned());
         assert_eq!(msg.severity, Some(Severity::Warning));
     }
 

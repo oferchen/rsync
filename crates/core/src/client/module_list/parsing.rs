@@ -67,7 +67,7 @@ pub(crate) fn decode_percent_component(
     invalid_utf8: fn() -> ClientError,
 ) -> Result<String, ClientError> {
     if !input.contains('%') {
-        return Ok(input.to_string());
+        return Ok(input.to_owned());
     }
 
     let mut decoded = Vec::with_capacity(input.len());
@@ -239,7 +239,7 @@ pub(crate) fn parse_host_port(
     let username = username.map(decode_daemon_username).transpose()?;
 
     if input.is_empty() {
-        let address = DaemonAddress::new(DEFAULT_HOST.to_string(), default_port)?;
+        let address = DaemonAddress::new(DEFAULT_HOST.to_owned(), default_port)?;
         return Ok(ParsedDaemonTarget { address, username });
     }
 
@@ -415,13 +415,13 @@ mod tests {
     #[test]
     fn parse_bracketed_host_extracts_ipv6() {
         let result = parse_bracketed_host("::1]", 873).expect("parse");
-        assert_eq!(result, ("::1".to_string(), 873));
+        assert_eq!(result, ("::1".to_owned(), 873));
     }
 
     #[test]
     fn parse_bracketed_host_extracts_ipv6_with_port() {
         let result = parse_bracketed_host("::1]:8873", 873).expect("parse");
-        assert_eq!(result, ("::1".to_string(), 8873));
+        assert_eq!(result, ("::1".to_owned(), 8873));
     }
 
     #[test]
@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn parse_host_port_parses_with_username() {
         let result = parse_host_port("user@localhost", 873).expect("parse");
-        assert_eq!(result.username, Some("user".to_string()));
+        assert_eq!(result.username, Some("user".to_owned()));
     }
 
     #[test]

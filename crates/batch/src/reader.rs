@@ -231,7 +231,7 @@ mod tests {
         fn create_with_nonexistent_file() {
             let config = BatchConfig::new(
                 BatchMode::Read,
-                "/nonexistent/path/batch.file".to_string(),
+                "/nonexistent/path/batch.file".to_owned(),
                 30,
             );
 

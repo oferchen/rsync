@@ -184,7 +184,7 @@ fn handle_legacy_session(
             }
             Ok(LegacyDaemonMessage::Other(payload)) => {
                 if let Some(option) = parse_daemon_option(payload) {
-                    refused_options.push(option.to_string());
+                    refused_options.push(option.to_owned());
                     continue;
                 }
             }
@@ -406,7 +406,7 @@ mod session_runtime_tests {
             daemon_limit: None,
             daemon_burst: None,
             log_sink: None,
-            peer_host: Some("example.com".to_string()),
+            peer_host: Some("example.com".to_owned()),
             reverse_lookup: true,
         };
         assert_eq!(params.peer_host.as_deref(), Some("example.com"));

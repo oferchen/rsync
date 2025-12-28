@@ -281,7 +281,7 @@ impl ConnectionLimiter {
 
         result.map(|_| ConnectionLockGuard {
             limiter: Arc::clone(self),
-            module: module.to_string(),
+            module: module.to_owned(),
         })
     }
 
@@ -309,7 +309,7 @@ impl ConnectionLimiter {
             return Err(ModuleConnectionError::Limit(limit));
         }
 
-        counts.insert(module.to_string(), current.saturating_add(1));
+        counts.insert(module.to_owned(), current.saturating_add(1));
         self.write_counts(file, &counts)
             .map_err(ModuleConnectionError::io)
     }
@@ -337,7 +337,7 @@ impl ConnectionLimiter {
             let mut parts = line.split_whitespace();
             if let (Some(name), Some(value)) = (parts.next(), parts.next())
                 && let Ok(parsed) = value.parse::<u32>() {
-                    counts.insert(name.to_string(), parsed);
+                    counts.insert(name.to_owned(), parsed);
                 }
         }
 
@@ -482,7 +482,7 @@ pub(crate) struct TestSecretsEnvOverride {
 pub(crate) fn set_test_hostname_override(addr: IpAddr, hostname: Option<&str>) {
     TEST_HOSTNAME_OVERRIDES.with(|map| {
         map.borrow_mut()
-            .insert(addr, hostname.map(|value| value.to_string()));
+            .insert(addr, hostname.map(|value| value.to_owned()));
     });
 }
 
@@ -568,7 +568,7 @@ mod module_state_tests {
     fn module_definition_requires_hostname_lookup_when_hostname_pattern() {
         let def = ModuleDefinition {
             hosts_allow: vec![HostPattern::Hostname(HostnamePattern {
-                kind: HostnamePatternKind::Suffix("example.com".to_string()),
+                kind: HostnamePatternKind::Suffix("example.com".to_owned()),
             })],
             ..Default::default()
         };
@@ -590,7 +590,7 @@ mod module_state_tests {
     #[test]
     fn module_definition_requires_authentication_when_auth_users_set() {
         let def = ModuleDefinition {
-            auth_users: vec!["alice".to_string()],
+            auth_users: vec!["alice".to_owned()],
             ..Default::default()
         };
         assert!(def.requires_authentication());
@@ -605,7 +605,7 @@ mod module_state_tests {
     #[test]
     fn module_definition_inherit_refuse_options() {
         let mut def = ModuleDefinition::default();
-        let options = vec!["delete".to_string(), "delete-after".to_string()];
+        let options = vec!["delete".to_owned(), "delete-after".to_owned()];
         def.inherit_refuse_options(&options);
         assert_eq!(def.refuse_options, options);
     }
@@ -613,12 +613,12 @@ mod module_state_tests {
     #[test]
     fn module_definition_inherit_refuse_options_preserves_existing() {
         let mut def = ModuleDefinition {
-            refuse_options: vec!["hardlinks".to_string()],
+            refuse_options: vec!["hardlinks".to_owned()],
             ..Default::default()
         };
-        let options = vec!["delete".to_string()];
+        let options = vec!["delete".to_owned()];
         def.inherit_refuse_options(&options);
-        assert_eq!(def.refuse_options, vec!["hardlinks".to_string()]);
+        assert_eq!(def.refuse_options, vec!["hardlinks".to_owned()]);
     }
 
     #[test]
@@ -633,8 +633,8 @@ mod module_state_tests {
     #[test]
     fn module_definition_inherit_chmod_preserves_existing() {
         let mut def = ModuleDefinition {
-            incoming_chmod: Some("existing".to_string()),
-            outgoing_chmod: Some("existing".to_string()),
+            incoming_chmod: Some("existing".to_owned()),
+            outgoing_chmod: Some("existing".to_owned()),
             ..Default::default()
         };
         def.inherit_incoming_chmod(Some("new"));
@@ -674,7 +674,7 @@ mod module_state_tests {
     #[test]
     fn module_runtime_from_definition() {
         let def = ModuleDefinition {
-            name: "test".to_string(),
+            name: "test".to_owned(),
             path: PathBuf::from("/test"),
             ..Default::default()
         };
@@ -685,7 +685,7 @@ mod module_state_tests {
     #[test]
     fn module_runtime_deref_to_definition() {
         let def = ModuleDefinition {
-            name: "deref_test".to_string(),
+            name: "deref_test".to_owned(),
             ..Default::default()
         };
         let runtime: ModuleRuntime = def.into();
@@ -695,7 +695,7 @@ mod module_state_tests {
     #[test]
     fn module_runtime_requires_authentication() {
         let def = ModuleDefinition {
-            auth_users: vec!["user".to_string()],
+            auth_users: vec!["user".to_owned()],
             ..Default::default()
         };
         let runtime: ModuleRuntime = def.into();
@@ -745,19 +745,19 @@ mod module_state_tests {
 
     #[test]
     fn normalize_hostname_removes_trailing_dot() {
-        let result = normalize_hostname_owned("example.com.".to_string());
+        let result = normalize_hostname_owned("example.com.".to_owned());
         assert_eq!(result, "example.com");
     }
 
     #[test]
     fn normalize_hostname_lowercases() {
-        let result = normalize_hostname_owned("EXAMPLE.COM".to_string());
+        let result = normalize_hostname_owned("EXAMPLE.COM".to_owned());
         assert_eq!(result, "example.com");
     }
 
     #[test]
     fn normalize_hostname_combined() {
-        let result = normalize_hostname_owned("Example.COM.".to_string());
+        let result = normalize_hostname_owned("Example.COM.".to_owned());
         assert_eq!(result, "example.com");
     }
 
@@ -767,7 +767,7 @@ mod module_state_tests {
     fn module_peer_hostname_returns_none_when_lookup_disabled() {
         let def = ModuleDefinition {
             hosts_allow: vec![HostPattern::Hostname(HostnamePattern {
-                kind: HostnamePatternKind::Suffix("example.com".to_string()),
+                kind: HostnamePatternKind::Suffix("example.com".to_owned()),
             })],
             ..Default::default()
         };
@@ -793,12 +793,12 @@ mod module_state_tests {
     fn module_peer_hostname_uses_cache() {
         let def = ModuleDefinition {
             hosts_allow: vec![HostPattern::Hostname(HostnamePattern {
-                kind: HostnamePatternKind::Suffix("example.com".to_string()),
+                kind: HostnamePatternKind::Suffix("example.com".to_owned()),
             })],
             ..Default::default()
         };
         // Pre-populate cache
-        let mut cache = Some(Some("cached.example.com".to_string()));
+        let mut cache = Some(Some("cached.example.com".to_owned()));
         let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let result = module_peer_hostname(&def, &mut cache, addr, true);
         assert_eq!(result, Some("cached.example.com"));
