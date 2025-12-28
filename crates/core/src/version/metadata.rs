@@ -286,9 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn rust_version_accessor_contains_rust_suffix() {
+    fn rust_version_accessor_is_valid_semver() {
         let meta = version_metadata();
-        assert!(meta.rust_version().contains("rust"));
+        let version = meta.rust_version();
+        let parts: Vec<&str> = version.split('.').collect();
+        assert_eq!(parts.len(), 3, "rust_version should have three components");
+        for part in parts {
+            assert!(part.parse::<u32>().is_ok(), "each component should be numeric");
+        }
     }
 
     #[test]

@@ -34,7 +34,7 @@ fn render_metadata_json(pretty: bool) -> String {
 /// ```
 /// let json = branding::workspace::metadata_json();
 /// assert!(json.contains("\"brand\":\"oc\""));
-/// assert!(json.contains("\"rust_version\":\"3.4.1-rust\""));
+/// assert!(json.contains("\"rust_version\":"));
 /// ```
 #[must_use]
 pub fn metadata_json() -> &'static str {

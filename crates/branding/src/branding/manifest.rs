@@ -50,7 +50,7 @@ pub struct BrandManifest {
 /// let oc = manifest.summary_for(Brand::Oc);
 /// assert_eq!(oc.client_program_name(), "oc-rsync");
 /// assert_eq!(oc.daemon_config_path(), "/etc/oc-rsyncd/oc-rsyncd.conf");
-/// assert!(oc.to_string().contains("3.4.1-rust"));
+/// assert!(oc.to_string().contains(&format!("version={}", oc.rust_version())));
 /// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BrandSummary {
@@ -402,7 +402,7 @@ mod tests {
         let rendered = summary.to_string();
         assert!(rendered.contains("brand=oc"));
         assert!(rendered.contains("client=oc-rsync"));
-        assert!(rendered.contains("version=3.4.1-rust"));
+        assert!(rendered.contains(&format!("version={}", manifest.rust_version())));
     }
 
     #[test]
