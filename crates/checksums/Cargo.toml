@@ -1,8 +1,10 @@
 [package]
 name = "checksums"
 version.workspace = true
-edition = "2024"
-license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
