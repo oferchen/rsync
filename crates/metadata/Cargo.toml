@@ -1,9 +1,10 @@
 [package]
 name = "metadata"
 version.workspace = true
-edition = "2024"
-authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
-license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Metadata preservation helpers for the Rust rsync implementation"
 repository.workspace = true
 build = "build.rs"
