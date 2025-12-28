@@ -90,220 +90,297 @@ pub(crate) enum SettingsOutcome {
     Exit(i32),
 }
 
-/// Parses advanced execution settings derived from CLI flags.
-pub(crate) fn derive_settings<Out, Err>(
+/// Result of parsing info flags.
+struct InfoFlagsResult {
+    progress_setting: ProgressSetting,
+    stats: bool,
+    name_level: NameOutputLevel,
+    name_overridden: bool,
+}
+
+/// Parses --info flags and returns display settings.
+fn parse_info_settings<Out, Err>(
     stdout: &mut Out,
     stderr: &mut MessageSink<Err>,
-    inputs: SettingsInputs<'_>,
-) -> SettingsOutcome
+    info_args: &[OsString],
+    initial_progress: ProgressSetting,
+    initial_stats: bool,
+    initial_name_level: NameOutputLevel,
+    initial_name_overridden: bool,
+) -> Result<InfoFlagsResult, i32>
 where
     Out: Write,
     Err: Write,
 {
-    let mut out_format_template = match inputs.out_format {
-        Some(value) => match parse_out_format(value.as_os_str()) {
-            Ok(template) => Some(template),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
-        },
-        None => None,
-    };
+    let mut progress_setting = initial_progress;
+    let mut stats = initial_stats;
+    let mut name_level = initial_name_level;
+    let mut name_overridden = initial_name_overridden;
 
-    if inputs.itemize_changes && out_format_template.is_none() {
-        out_format_template = Some(
-            parse_out_format(OsString::from(ITEMIZE_CHANGES_FORMAT).as_os_str())
-                .expect("default itemize-changes format parses"),
-        );
+    if info_args.is_empty() {
+        return Ok(InfoFlagsResult {
+            progress_setting,
+            stats,
+            name_level,
+            name_overridden,
+        });
     }
 
-    let mut progress_setting = inputs.initial_progress;
-    let mut stats = inputs.initial_stats;
-    let mut name_level = inputs.initial_name_level;
-    let mut name_overridden = inputs.initial_name_overridden;
-    let mut debug_flags_list = Vec::new();
+    match parse_info_flags(info_args) {
+        Ok(settings) => {
+            if settings.help_requested {
+                if stdout.write_all(INFO_HELP_TEXT.as_bytes()).is_err() {
+                    let _ = write!(stderr.writer_mut(), "{INFO_HELP_TEXT}");
+                    return Err(1);
+                }
+                return Err(0);
+            }
 
-    if !inputs.info.is_empty() {
-        match parse_info_flags(inputs.info) {
-            Ok(settings) => {
-                if settings.help_requested {
-                    if stdout.write_all(INFO_HELP_TEXT.as_bytes()).is_err() {
-                        let _ = write!(stderr.writer_mut(), "{INFO_HELP_TEXT}");
-                        return SettingsOutcome::Exit(1);
-                    }
-                    return SettingsOutcome::Exit(0);
-                }
+            match settings.progress {
+                ProgressSetting::Unspecified => {}
+                value => progress_setting = value,
+            }
+            if let Some(level) = settings.stats {
+                stats = level > 0;
+            }
+            if let Some(level) = settings.name {
+                name_level = level;
+                name_overridden = true;
+            }
 
-                match settings.progress {
-                    ProgressSetting::Unspecified => {}
-                    value => progress_setting = value,
-                }
-                if let Some(level) = settings.stats {
-                    stats = level > 0;
-                }
-                if let Some(level) = settings.name {
-                    name_level = level;
-                    name_overridden = true;
-                }
-
-                // Apply info flags to verbosity config
-                for info_arg in inputs.info {
-                    if let Some(s) = info_arg.to_str() {
-                        for token in s.split(',') {
-                            let token = token.trim();
-                            if !token.is_empty() && token != "help" {
-                                let _ = logging::apply_info_flag(token);
-                            }
+            // Apply info flags to verbosity config
+            for info_arg in info_args {
+                if let Some(s) = info_arg.to_str() {
+                    for token in s.split(',') {
+                        let token = token.trim();
+                        if !token.is_empty() && token != "help" {
+                            let _ = logging::apply_info_flag(token);
                         }
                     }
                 }
             }
-            Err(message) => {
-                return SettingsOutcome::Exit(fail_with_message(message, stderr));
-            }
+
+            Ok(InfoFlagsResult {
+                progress_setting,
+                stats,
+                name_level,
+                name_overridden,
+            })
         }
+        Err(message) => Err(fail_with_message(message, stderr)),
+    }
+}
+
+/// Parses --debug flags and returns debug flag list.
+fn parse_debug_settings<Out, Err>(
+    stdout: &mut Out,
+    stderr: &mut MessageSink<Err>,
+    debug_args: &[OsString],
+) -> Result<Vec<OsString>, i32>
+where
+    Out: Write,
+    Err: Write,
+{
+    if debug_args.is_empty() {
+        return Ok(Vec::new());
     }
 
-    if !inputs.debug.is_empty() {
-        match parse_debug_flags(inputs.debug) {
-            Ok(settings) => {
-                if settings.help_requested {
-                    if stdout.write_all(DEBUG_HELP_TEXT.as_bytes()).is_err() {
-                        let _ = write!(stderr.writer_mut(), "{DEBUG_HELP_TEXT}");
-                        return SettingsOutcome::Exit(1);
-                    }
-                    return SettingsOutcome::Exit(0);
+    match parse_debug_flags(debug_args) {
+        Ok(settings) => {
+            if settings.help_requested {
+                if stdout.write_all(DEBUG_HELP_TEXT.as_bytes()).is_err() {
+                    let _ = write!(stderr.writer_mut(), "{DEBUG_HELP_TEXT}");
+                    return Err(1);
                 }
+                return Err(0);
+            }
 
-                // Convert DebugFlagSettings to Vec<OsString> for now
-                // This is a temporary bridge until logging module integration is complete
-                let mut flags = Vec::new();
+            let mut flags = Vec::new();
 
-                macro_rules! add_flag {
-                    ($field:expr, $name:expr) => {
-                        if let Some(level) = $field {
-                            if level > 0 {
-                                flags.push(OsString::from(format!("{}{}", $name, level)));
-                            }
+            macro_rules! add_flag {
+                ($field:expr, $name:expr) => {
+                    if let Some(level) = $field {
+                        if level > 0 {
+                            flags.push(OsString::from(format!("{}{}", $name, level)));
                         }
-                    };
-                }
+                    }
+                };
+            }
 
-                add_flag!(settings.acl, "acl");
-                add_flag!(settings.backup, "backup");
-                add_flag!(settings.bind, "bind");
-                add_flag!(settings.chdir, "chdir");
-                add_flag!(settings.connect, "connect");
-                add_flag!(settings.cmd, "cmd");
-                add_flag!(settings.del, "del");
-                add_flag!(settings.deltasum, "deltasum");
-                add_flag!(settings.dup, "dup");
-                add_flag!(settings.exit, "exit");
-                add_flag!(settings.filter, "filter");
-                add_flag!(settings.flist, "flist");
-                add_flag!(settings.fuzzy, "fuzzy");
-                add_flag!(settings.genr, "genr");
-                add_flag!(settings.hash, "hash");
-                add_flag!(settings.hlink, "hlink");
-                add_flag!(settings.iconv, "iconv");
-                add_flag!(settings.io, "io");
-                add_flag!(settings.nstr, "nstr");
-                add_flag!(settings.own, "own");
-                add_flag!(settings.proto, "proto");
-                add_flag!(settings.recv, "recv");
-                add_flag!(settings.send, "send");
-                add_flag!(settings.time, "time");
+            add_flag!(settings.acl, "acl");
+            add_flag!(settings.backup, "backup");
+            add_flag!(settings.bind, "bind");
+            add_flag!(settings.chdir, "chdir");
+            add_flag!(settings.connect, "connect");
+            add_flag!(settings.cmd, "cmd");
+            add_flag!(settings.del, "del");
+            add_flag!(settings.deltasum, "deltasum");
+            add_flag!(settings.dup, "dup");
+            add_flag!(settings.exit, "exit");
+            add_flag!(settings.filter, "filter");
+            add_flag!(settings.flist, "flist");
+            add_flag!(settings.fuzzy, "fuzzy");
+            add_flag!(settings.genr, "genr");
+            add_flag!(settings.hash, "hash");
+            add_flag!(settings.hlink, "hlink");
+            add_flag!(settings.iconv, "iconv");
+            add_flag!(settings.io, "io");
+            add_flag!(settings.nstr, "nstr");
+            add_flag!(settings.own, "own");
+            add_flag!(settings.proto, "proto");
+            add_flag!(settings.recv, "recv");
+            add_flag!(settings.send, "send");
+            add_flag!(settings.time, "time");
 
-                debug_flags_list = flags;
-
-                // Apply debug flags to verbosity config
-                for debug_arg in inputs.debug {
-                    if let Some(s) = debug_arg.to_str() {
-                        for token in s.split(',') {
-                            let token = token.trim();
-                            if !token.is_empty() && token != "help" {
-                                let _ = logging::apply_debug_flag(token);
-                            }
+            // Apply debug flags to verbosity config
+            for debug_arg in debug_args {
+                if let Some(s) = debug_arg.to_str() {
+                    for token in s.split(',') {
+                        let token = token.trim();
+                        if !token.is_empty() && token != "help" {
+                            let _ = logging::apply_debug_flag(token);
                         }
                     }
                 }
             }
-            Err(message) => {
-                return SettingsOutcome::Exit(fail_with_message(message, stderr));
-            }
+
+            Ok(flags)
         }
+        Err(message) => Err(fail_with_message(message, stderr)),
     }
+}
 
-    let progress_mode = progress_setting.resolved();
+/// Result of parsing size/limit arguments.
+struct SizeLimitsResult {
+    bandwidth_limit: Option<BandwidthLimit>,
+    max_delete_limit: Option<u64>,
+    min_size_limit: Option<u64>,
+    max_size_limit: Option<u64>,
+    block_size_override: Option<NonZeroU32>,
+    max_alloc_limit: Option<u64>,
+    modify_window_setting: Option<u64>,
+}
 
-    let bandwidth_limit = match inputs.bwlimit.as_ref() {
+/// Parses bandwidth and size limit arguments.
+fn parse_size_limits<Err>(
+    stderr: &mut MessageSink<Err>,
+    bwlimit: &Option<BandwidthArgument>,
+    max_delete: &Option<OsString>,
+    min_size: &Option<OsString>,
+    max_size: &Option<OsString>,
+    block_size: &Option<OsString>,
+    max_alloc: &Option<OsString>,
+    modify_window: &Option<OsString>,
+) -> Result<SizeLimitsResult, i32>
+where
+    Err: Write,
+{
+    let bandwidth_limit = match bwlimit.as_ref() {
         Some(BandwidthArgument::Limit(value)) => match parse_bandwidth_limit(value.as_os_str()) {
             Ok(limit) => limit,
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         Some(BandwidthArgument::Disabled) | None => None,
     };
 
-    let max_delete_limit = match inputs.max_delete {
+    let max_delete_limit = match max_delete {
         Some(value) => match parse_max_delete_argument(value.as_os_str()) {
             Ok(limit) => Some(limit),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
 
-    let min_size_limit = match inputs.min_size.as_ref() {
+    let min_size_limit = match min_size.as_ref() {
         Some(value) => match parse_size_limit_argument(value.as_os_str(), "--min-size") {
             Ok(limit) => Some(limit),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
 
-    let max_size_limit = match inputs.max_size.as_ref() {
+    let max_size_limit = match max_size.as_ref() {
         Some(value) => match parse_size_limit_argument(value.as_os_str(), "--max-size") {
             Ok(limit) => Some(limit),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
 
-    let block_size_override = match inputs.block_size.as_ref() {
+    let block_size_override = match block_size.as_ref() {
         Some(value) => match parse_block_size_argument(value.as_os_str()) {
             Ok(size) => Some(size),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
 
-    let max_alloc_limit = match inputs.max_alloc.as_ref() {
+    let max_alloc_limit = match max_alloc.as_ref() {
         Some(value) => match parse_size_limit_argument(value.as_os_str(), "--max-alloc") {
             Ok(limit) => Some(limit),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
 
-    let modify_window_setting = match inputs.modify_window.as_ref() {
+    let modify_window_setting = match modify_window.as_ref() {
         Some(value) => match parse_modify_window_argument(value.as_os_str()) {
             Ok(window) => Some(window),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
 
-    let mut compress = inputs.compress_flag;
+    Ok(SizeLimitsResult {
+        bandwidth_limit,
+        max_delete_limit,
+        min_size_limit,
+        max_size_limit,
+        block_size_override,
+        max_alloc_limit,
+        modify_window_setting,
+    })
+}
+
+/// Result of parsing compression settings.
+struct CompressionResult {
+    compress: bool,
+    compress_disabled: bool,
+    compression_level_override: Option<CompressionLevel>,
+    compress_level_cli: Option<OsString>,
+    skip_compress_list: Option<SkipCompressList>,
+    compression_setting: CompressionSetting,
+    compress_choice_cli: Option<OsString>,
+    compression_algorithm: Option<CompressionAlgorithm>,
+}
+
+/// Parses all compression-related settings.
+fn parse_compression_settings<Err>(
+    stderr: &mut MessageSink<Err>,
+    compress_flag: bool,
+    no_compress: bool,
+    compress_level: &Option<OsString>,
+    compress_choice: &Option<OsString>,
+    skip_compress: &Option<OsString>,
+) -> Result<CompressionResult, i32>
+where
+    Err: Write,
+{
+    let mut compress = compress_flag;
     let mut compression_level_override = None;
     let mut compression_algorithm = None;
-    let mut compress_choice_cli = inputs.compress_choice.clone();
+    let mut compress_choice_cli = compress_choice.clone();
     let mut compress_choice_disabled = false;
-    let mut compress_level_setting = match inputs.compress_level {
+
+    let mut compress_level_setting = match compress_level {
         Some(value) => match parse_compress_level(value.as_os_str()) {
             Ok(setting) => Some(setting),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         },
         None => None,
     };
 
-    if let Some(choice) = inputs.compress_choice.as_ref() {
+    if let Some(choice) = compress_choice.as_ref() {
         match parse_compress_choice(choice.as_os_str()) {
             Ok(None) => {
                 compress = false;
@@ -314,11 +391,11 @@ where
             }
             Ok(Some(algorithm)) => {
                 compression_algorithm = Some(algorithm);
-                if !inputs.no_compress {
+                if !no_compress {
                     compress = true;
                 }
             }
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         }
     }
 
@@ -328,7 +405,7 @@ where
                 compress = false;
             }
             CompressLevelArg::Level(level) => {
-                if !inputs.no_compress {
+                if !no_compress {
                     compress = true;
                     compression_level_override = Some(CompressionLevel::precise(*level));
                 }
@@ -336,13 +413,13 @@ where
         }
     }
 
-    let mut compress_disabled = inputs.no_compress
+    let mut compress_disabled = no_compress
         || compress_choice_disabled
         || matches!(compress_level_setting, Some(CompressLevelArg::Disable));
 
     let force_no_compress = match force_no_compress_from_env("OC_RSYNC_FORCE_NO_COMPRESS") {
         Ok(value) => value,
-        Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+        Err(message) => return Err(fail_with_message(message, stderr)),
     };
 
     if force_no_compress == Some(true) {
@@ -366,15 +443,15 @@ where
         _ => None,
     };
 
-    let skip_compress_list = if let Some(value) = inputs.skip_compress.as_ref() {
+    let skip_compress_list = if let Some(value) = skip_compress.as_ref() {
         match parse_skip_compress_list(value.as_os_str()) {
             Ok(list) => Some(list),
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         }
     } else {
         match skip_compress_from_env("RSYNC_SKIP_COMPRESS") {
             Ok(value) => value,
-            Err(message) => return SettingsOutcome::Exit(fail_with_message(message, stderr)),
+            Err(message) => return Err(fail_with_message(message, stderr)),
         }
     };
 
@@ -384,14 +461,14 @@ where
             CompressionSetting::level(CompressionLevel::precise(level))
         }
         None => {
-            if let Some(value) = inputs.compress_level {
+            if let Some(value) = compress_level {
                 match parse_compress_level_argument(value.as_os_str()) {
                     Ok(setting) => {
                         compress = !setting.is_disabled();
                         setting
                     }
                     Err(message) => {
-                        return SettingsOutcome::Exit(fail_with_message(message, stderr));
+                        return Err(fail_with_message(message, stderr));
                     }
                 }
             } else {
@@ -400,39 +477,7 @@ where
         }
     };
 
-    let (log_file_path, log_file_format_cli, log_file_template) = match inputs.log_file {
-        Some(path) => {
-            let (format_string, format_cli) = if let Some(spec) = inputs.log_file_format {
-                (spec.clone(), Some(spec.clone()))
-            } else {
-                (OsString::from("%i %n%L"), None)
-            };
-
-            match parse_out_format(format_string.as_os_str()) {
-                Ok(template) => (Some(path.clone()), format_cli, Some(template)),
-                Err(message) => {
-                    return SettingsOutcome::Exit(fail_with_message(message, stderr));
-                }
-            }
-        }
-        None => (None, None, None),
-    };
-
-    SettingsOutcome::Proceed(Box::new(DerivedSettings {
-        out_format_template,
-        progress_setting,
-        progress_mode,
-        stats,
-        name_level,
-        name_overridden,
-        debug_flags_list,
-        bandwidth_limit,
-        max_delete_limit,
-        min_size_limit,
-        max_size_limit,
-        block_size_override,
-        max_alloc_limit,
-        modify_window_setting,
+    Ok(CompressionResult {
         compress,
         compress_disabled,
         compression_level_override,
@@ -441,8 +486,176 @@ where
         compression_setting,
         compress_choice_cli,
         compression_algorithm,
-        log_file_path,
-        log_file_format_cli,
-        log_file_template,
+    })
+}
+
+/// Result of parsing log file settings.
+struct LogFileResult {
+    log_file_path: Option<OsString>,
+    log_file_format_cli: Option<OsString>,
+    log_file_template: Option<OutFormat>,
+}
+
+/// Parses log file path and format settings.
+fn parse_log_settings<Err>(
+    stderr: &mut MessageSink<Err>,
+    log_file: Option<&OsString>,
+    log_file_format: Option<&OsString>,
+) -> Result<LogFileResult, i32>
+where
+    Err: Write,
+{
+    match log_file {
+        Some(path) => {
+            let (format_string, format_cli) = if let Some(spec) = log_file_format {
+                (spec.clone(), Some(spec.clone()))
+            } else {
+                (OsString::from("%i %n%L"), None)
+            };
+
+            match parse_out_format(format_string.as_os_str()) {
+                Ok(template) => Ok(LogFileResult {
+                    log_file_path: Some(path.clone()),
+                    log_file_format_cli: format_cli,
+                    log_file_template: Some(template),
+                }),
+                Err(message) => Err(fail_with_message(message, stderr)),
+            }
+        }
+        None => Ok(LogFileResult {
+            log_file_path: None,
+            log_file_format_cli: None,
+            log_file_template: None,
+        }),
+    }
+}
+
+/// Parses out format template from CLI arguments.
+fn parse_out_format_template<Err>(
+    stderr: &mut MessageSink<Err>,
+    out_format: Option<&OsString>,
+    itemize_changes: bool,
+) -> Result<Option<OutFormat>, i32>
+where
+    Err: Write,
+{
+    let template = match out_format {
+        Some(value) => match parse_out_format(value.as_os_str()) {
+            Ok(template) => Some(template),
+            Err(message) => return Err(fail_with_message(message, stderr)),
+        },
+        None => None,
+    };
+
+    if itemize_changes && template.is_none() {
+        Ok(Some(
+            parse_out_format(OsString::from(ITEMIZE_CHANGES_FORMAT).as_os_str())
+                .expect("default itemize-changes format parses"),
+        ))
+    } else {
+        Ok(template)
+    }
+}
+
+/// Parses advanced execution settings derived from CLI flags.
+pub(crate) fn derive_settings<Out, Err>(
+    stdout: &mut Out,
+    stderr: &mut MessageSink<Err>,
+    inputs: SettingsInputs<'_>,
+) -> SettingsOutcome
+where
+    Out: Write,
+    Err: Write,
+{
+    // Parse output format template
+    let out_format_template = match parse_out_format_template(
+        stderr,
+        inputs.out_format,
+        inputs.itemize_changes,
+    ) {
+        Ok(template) => template,
+        Err(code) => return SettingsOutcome::Exit(code),
+    };
+
+    // Parse info flags for display settings
+    let info_result = match parse_info_settings(
+        stdout,
+        stderr,
+        inputs.info,
+        inputs.initial_progress,
+        inputs.initial_stats,
+        inputs.initial_name_level,
+        inputs.initial_name_overridden,
+    ) {
+        Ok(result) => result,
+        Err(code) => return SettingsOutcome::Exit(code),
+    };
+
+    // Parse debug flags
+    let debug_flags_list = match parse_debug_settings(stdout, stderr, inputs.debug) {
+        Ok(flags) => flags,
+        Err(code) => return SettingsOutcome::Exit(code),
+    };
+
+    // Parse size and bandwidth limits
+    let limits = match parse_size_limits(
+        stderr,
+        inputs.bwlimit,
+        inputs.max_delete,
+        inputs.min_size,
+        inputs.max_size,
+        inputs.block_size,
+        inputs.max_alloc,
+        inputs.modify_window,
+    ) {
+        Ok(limits) => limits,
+        Err(code) => return SettingsOutcome::Exit(code),
+    };
+
+    // Parse compression settings
+    let compression = match parse_compression_settings(
+        stderr,
+        inputs.compress_flag,
+        inputs.no_compress,
+        inputs.compress_level,
+        inputs.compress_choice,
+        inputs.skip_compress,
+    ) {
+        Ok(result) => result,
+        Err(code) => return SettingsOutcome::Exit(code),
+    };
+
+    // Parse log file settings
+    let log = match parse_log_settings(stderr, inputs.log_file, inputs.log_file_format) {
+        Ok(result) => result,
+        Err(code) => return SettingsOutcome::Exit(code),
+    };
+
+    SettingsOutcome::Proceed(Box::new(DerivedSettings {
+        out_format_template,
+        progress_setting: info_result.progress_setting,
+        progress_mode: info_result.progress_setting.resolved(),
+        stats: info_result.stats,
+        name_level: info_result.name_level,
+        name_overridden: info_result.name_overridden,
+        debug_flags_list,
+        bandwidth_limit: limits.bandwidth_limit,
+        max_delete_limit: limits.max_delete_limit,
+        min_size_limit: limits.min_size_limit,
+        max_size_limit: limits.max_size_limit,
+        block_size_override: limits.block_size_override,
+        max_alloc_limit: limits.max_alloc_limit,
+        modify_window_setting: limits.modify_window_setting,
+        compress: compression.compress,
+        compress_disabled: compression.compress_disabled,
+        compression_level_override: compression.compression_level_override,
+        compress_level_cli: compression.compress_level_cli,
+        skip_compress_list: compression.skip_compress_list,
+        compression_setting: compression.compression_setting,
+        compress_choice_cli: compression.compress_choice_cli,
+        compression_algorithm: compression.compression_algorithm,
+        log_file_path: log.log_file_path,
+        log_file_format_cli: log.log_file_format_cli,
+        log_file_template: log.log_file_template,
     }))
 }
