@@ -329,3 +329,361 @@ fn push_file_list_entry(bytes: &[u8], entries: &mut Vec<OsString>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    // ==================== operand_is_remote tests ====================
+
+    #[test]
+    fn operand_is_remote_rsync_url() {
+        assert!(operand_is_remote(OsStr::new("rsync://example.com/module")));
+        assert!(operand_is_remote(OsStr::new("rsync://localhost/path")));
+        assert!(operand_is_remote(OsStr::new("rsync://user@host/mod")));
+    }
+
+    #[test]
+    fn operand_is_remote_double_colon() {
+        assert!(operand_is_remote(OsStr::new("host::module")));
+        assert!(operand_is_remote(OsStr::new("user@host::module/path")));
+        assert!(operand_is_remote(OsStr::new("server.example.com::backup")));
+    }
+
+    #[test]
+    fn operand_is_remote_ssh_style() {
+        assert!(operand_is_remote(OsStr::new("host:path")));
+        assert!(operand_is_remote(OsStr::new("user@host:path/to/file")));
+        assert!(operand_is_remote(OsStr::new("server:/etc/config")));
+    }
+
+    #[test]
+    fn operand_is_remote_local_paths() {
+        assert!(!operand_is_remote(OsStr::new("/home/user/file.txt")));
+        assert!(!operand_is_remote(OsStr::new("relative/path")));
+        assert!(!operand_is_remote(OsStr::new("./local")));
+        assert!(!operand_is_remote(OsStr::new("../parent")));
+    }
+
+    #[test]
+    fn operand_is_remote_local_path_with_slash_before_colon() {
+        // Paths with a slash before the colon are local
+        assert!(!operand_is_remote(OsStr::new("/path/with:colon")));
+        assert!(!operand_is_remote(OsStr::new("some/path:with:colons")));
+    }
+
+    #[test]
+    fn operand_is_remote_empty_string() {
+        assert!(!operand_is_remote(OsStr::new("")));
+    }
+
+    #[test]
+    fn operand_is_remote_no_colon() {
+        assert!(!operand_is_remote(OsStr::new("simple-filename")));
+        assert!(!operand_is_remote(OsStr::new("path/to/file")));
+    }
+
+    // ==================== read_file_list_from_reader tests ====================
+
+    #[test]
+    fn read_file_list_newline_terminated() {
+        let input = b"file1.txt\nfile2.txt\nfile3.txt\n";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, false, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0], "file1.txt");
+        assert_eq!(entries[1], "file2.txt");
+        assert_eq!(entries[2], "file3.txt");
+    }
+
+    #[test]
+    fn read_file_list_no_trailing_newline() {
+        let input = b"file1.txt\nfile2.txt";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, false, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], "file1.txt");
+        assert_eq!(entries[1], "file2.txt");
+    }
+
+    #[test]
+    fn read_file_list_crlf_line_endings() {
+        let input = b"file1.txt\r\nfile2.txt\r\n";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, false, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], "file1.txt");
+        assert_eq!(entries[1], "file2.txt");
+    }
+
+    #[test]
+    fn read_file_list_skips_comments() {
+        let input = b"# This is a comment\nfile1.txt\n; Also a comment\nfile2.txt\n";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, false, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], "file1.txt");
+        assert_eq!(entries[1], "file2.txt");
+    }
+
+    #[test]
+    fn read_file_list_zero_terminated() {
+        let input = b"file1.txt\0file2.txt\0file3.txt\0";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, true, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0], "file1.txt");
+        assert_eq!(entries[1], "file2.txt");
+        assert_eq!(entries[2], "file3.txt");
+    }
+
+    #[test]
+    fn read_file_list_zero_terminated_no_trailing_null() {
+        let input = b"file1.txt\0file2.txt";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, true, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], "file1.txt");
+        assert_eq!(entries[1], "file2.txt");
+    }
+
+    #[test]
+    fn read_file_list_zero_terminated_allows_hash_and_semicolon() {
+        // With zero termination, # and ; are not treated as comments
+        let input = b"#not-a-comment\0;also-not-a-comment\0";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, true, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0], "#not-a-comment");
+        assert_eq!(entries[1], ";also-not-a-comment");
+    }
+
+    #[test]
+    fn read_file_list_empty_input() {
+        let input = b"";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, false, &mut entries).unwrap();
+
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn read_file_list_empty_lines_skipped() {
+        let input = b"file1.txt\n\n\nfile2.txt\n";
+        let mut reader = Cursor::new(input);
+        let mut entries = Vec::new();
+
+        read_file_list_from_reader(&mut reader, false, &mut entries).unwrap();
+
+        assert_eq!(entries.len(), 2);
+    }
+
+    // ==================== resolve_file_list_entries tests ====================
+
+    #[test]
+    fn resolve_file_list_entries_empty_entries() {
+        let mut entries: Vec<OsString> = Vec::new();
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn resolve_file_list_entries_single_operand_no_change() {
+        let mut entries = vec![OsString::from("file.txt")];
+        let operands = vec![OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        // Single operand means no base path to prepend
+        assert_eq!(entries[0], "file.txt");
+    }
+
+    #[test]
+    fn resolve_file_list_entries_relative_enabled() {
+        let mut entries = vec![OsString::from("file.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, true);
+
+        // With relative paths enabled, no resolution happens
+        assert_eq!(entries[0], "file.txt");
+    }
+
+    #[test]
+    fn resolve_file_list_entries_prepends_base() {
+        let mut entries = vec![OsString::from("subdir/file.txt")];
+        let operands = vec![OsString::from("/base/path"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        assert_eq!(entries[0], OsString::from("/base/path/subdir/file.txt"));
+    }
+
+    #[test]
+    fn resolve_file_list_entries_absolute_path_unchanged() {
+        let mut entries = vec![OsString::from("/absolute/path.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        // Absolute paths are not modified
+        assert_eq!(entries[0], "/absolute/path.txt");
+    }
+
+    #[test]
+    fn resolve_file_list_entries_remote_base_no_change() {
+        let mut entries = vec![OsString::from("file.txt")];
+        let operands = vec![OsString::from("host:path"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        // Remote base path means no resolution
+        assert_eq!(entries[0], "file.txt");
+    }
+
+    #[test]
+    fn resolve_file_list_entries_remote_entry_no_change() {
+        let mut entries = vec![OsString::from("host:remote/file.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        // Remote entries are not modified
+        assert_eq!(entries[0], "host:remote/file.txt");
+    }
+
+    #[test]
+    fn resolve_file_list_entries_multiple_sources_no_change() {
+        let mut entries = vec![OsString::from("file.txt")];
+        let operands = vec![
+            OsString::from("/source1"),
+            OsString::from("/source2"),
+            OsString::from("/dest"),
+        ];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        // Multiple source operands means no single base, so no resolution
+        assert_eq!(entries[0], "file.txt");
+    }
+
+    #[test]
+    fn resolve_file_list_entries_empty_entry_unchanged() {
+        let mut entries = vec![OsString::from(""), OsString::from("file.txt")];
+        let operands = vec![OsString::from("/base"), OsString::from("/dest")];
+
+        resolve_file_list_entries(&mut entries, &operands, false);
+
+        assert_eq!(entries[0], "");
+        assert_eq!(entries[1], OsString::from("/base/file.txt"));
+    }
+
+    // ==================== transfer_requires_remote tests ====================
+
+    #[test]
+    fn transfer_requires_remote_all_local() {
+        let remainder = vec![OsString::from("/local/path"), OsString::from("/dest")];
+        let file_list: Vec<OsString> = vec![];
+
+        assert!(!transfer_requires_remote(&remainder, &file_list));
+    }
+
+    #[test]
+    fn transfer_requires_remote_with_remote_operand() {
+        let remainder = vec![OsString::from("host:path"), OsString::from("/dest")];
+        let file_list: Vec<OsString> = vec![];
+
+        assert!(transfer_requires_remote(&remainder, &file_list));
+    }
+
+    #[test]
+    fn transfer_requires_remote_with_remote_in_file_list() {
+        let remainder = vec![OsString::from("/local"), OsString::from("/dest")];
+        let file_list = vec![OsString::from("host:remote/file")];
+
+        assert!(transfer_requires_remote(&remainder, &file_list));
+    }
+
+    #[test]
+    fn transfer_requires_remote_both_empty() {
+        let remainder: Vec<OsString> = vec![];
+        let file_list: Vec<OsString> = vec![];
+
+        assert!(!transfer_requires_remote(&remainder, &file_list));
+    }
+
+    // ==================== push_file_list_entry tests ====================
+
+    #[test]
+    fn push_file_list_entry_empty_bytes() {
+        let mut entries = Vec::new();
+        push_file_list_entry(b"", &mut entries);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn push_file_list_entry_simple() {
+        let mut entries = Vec::new();
+        push_file_list_entry(b"filename.txt", &mut entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], "filename.txt");
+    }
+
+    #[test]
+    fn push_file_list_entry_strips_trailing_cr() {
+        let mut entries = Vec::new();
+        push_file_list_entry(b"filename.txt\r\r\r", &mut entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], "filename.txt");
+    }
+
+    #[test]
+    fn push_file_list_entry_all_cr_produces_nothing() {
+        let mut entries = Vec::new();
+        push_file_list_entry(b"\r\r\r", &mut entries);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn push_file_list_entry_preserves_internal_cr() {
+        let mut entries = Vec::new();
+        push_file_list_entry(b"file\rname.txt", &mut entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], "file\rname.txt");
+    }
+
+    #[test]
+    fn push_file_list_entry_with_path() {
+        let mut entries = Vec::new();
+        push_file_list_entry(b"path/to/file.txt", &mut entries);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], "path/to/file.txt");
+    }
+}

@@ -245,3 +245,96 @@ fn merge_directive_requires_argument(keyword: &str) -> bool {
         || keyword == "."
         || keyword == ":"
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== merge_directive_requires_argument tests ====================
+
+    #[test]
+    fn requires_argument_include() {
+        assert!(merge_directive_requires_argument("include"));
+    }
+
+    #[test]
+    fn requires_argument_exclude() {
+        assert!(merge_directive_requires_argument("exclude"));
+    }
+
+    #[test]
+    fn requires_argument_show() {
+        assert!(merge_directive_requires_argument("show"));
+    }
+
+    #[test]
+    fn requires_argument_hide() {
+        assert!(merge_directive_requires_argument("hide"));
+    }
+
+    #[test]
+    fn requires_argument_protect() {
+        assert!(merge_directive_requires_argument("protect"));
+    }
+
+    #[test]
+    fn requires_argument_risk() {
+        assert!(merge_directive_requires_argument("risk"));
+    }
+
+    #[test]
+    fn requires_argument_exclude_if_present() {
+        assert!(merge_directive_requires_argument("exclude-if-present"));
+    }
+
+    #[test]
+    fn requires_argument_merge() {
+        assert!(merge_directive_requires_argument("merge"));
+    }
+
+    #[test]
+    fn requires_argument_merge_with_modifiers() {
+        assert!(merge_directive_requires_argument("merge,n"));
+        assert!(merge_directive_requires_argument("merge,e"));
+    }
+
+    #[test]
+    fn requires_argument_dir_merge() {
+        assert!(merge_directive_requires_argument("dir-merge"));
+    }
+
+    #[test]
+    fn requires_argument_per_dir() {
+        assert!(merge_directive_requires_argument("per-dir"));
+    }
+
+    #[test]
+    fn requires_argument_dot() {
+        assert!(merge_directive_requires_argument("."));
+    }
+
+    #[test]
+    fn requires_argument_colon() {
+        assert!(merge_directive_requires_argument(":"));
+    }
+
+    #[test]
+    fn does_not_require_argument_with_equals() {
+        assert!(!merge_directive_requires_argument("include=*.txt"));
+        assert!(!merge_directive_requires_argument("exclude=*.log"));
+    }
+
+    #[test]
+    fn does_not_require_argument_for_unknown() {
+        assert!(!merge_directive_requires_argument("clear"));
+        assert!(!merge_directive_requires_argument("!"));
+        assert!(!merge_directive_requires_argument("unknown"));
+    }
+
+    #[test]
+    fn does_not_require_argument_for_shorthand() {
+        // Single-char shortcuts like + and - don't require separate arguments
+        assert!(!merge_directive_requires_argument("+"));
+        assert!(!merge_directive_requires_argument("-"));
+    }
+}
