@@ -12,15 +12,15 @@ use std::io;
 #[cfg(feature = "sd-notify")]
 use sd_notify::NotifyState;
 
-// Allow trivially_copy_pass_by_ref: struct is ZST when sd-notify is disabled,
-// but &self is idiomatic for methods and the struct has a field when enabled.
-#[allow(clippy::trivially_copy_pass_by_ref)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ServiceNotifier {
     #[cfg(feature = "sd-notify")]
     available: bool,
 }
 
+// Allow trivially_copy_pass_by_ref: struct is ZST when sd-notify is disabled,
+// but &self is idiomatic for methods and the struct has a field when enabled.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 impl ServiceNotifier {
     /// Constructs a notifier that reports whether `sd_notify` integration is
     /// available. When the `sd-notify` feature is disabled or `NOTIFY_SOCKET`
