@@ -30,10 +30,29 @@ scenario = "protocol_version_mismatch"
 text = "rsync error: protocol incompatibility (code 2) at compat.c(178) [sender]"
 role = "sender"
 scenario = "protocol_version_mismatch"
+optional = true
+
+[[messages]]
+text = "rsync error: protocol incompatibility (code 2) at compat.c(178) [Receiver=3.1.3]"
+scenario = "protocol_version_mismatch"
+optional = true
 
 [[messages]]
 text = "rsync error: received SIGUSR1 (code 19) at main.c(1463) [Receiver=3.1.3]"
 scenario = "protocol_version_mismatch"
+optional = true
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at io.c(235) [sender]"
+role = "sender"
+scenario = "protocol_version_mismatch"
+optional = true
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at io.c(329) [sender]"
+role = "sender"
+scenario = "protocol_version_mismatch"
+optional = true
 
 [[messages]]
 text = 'rsync: change_dir "/nonexistent/source" failed: No such file or directory (2)'
