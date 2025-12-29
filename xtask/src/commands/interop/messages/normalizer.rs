@@ -42,19 +42,46 @@ impl NormalizedMessage {
 fn normalize_text(text: &str) -> String {
     let mut normalized = text.to_owned();
 
-    // 1. Strip Rust source suffix: " at path/to/file.rs:123"
+    // 1. Fix doubled messages from race conditions (e.g., "foo barfoo bar" -> "foo bar")
+    normalized = fix_doubled_message(&normalized);
+
+    // 2. Strip Rust source suffix: " at path/to/file.rs:123"
     normalized = strip_rust_source_suffix(&normalized);
 
-    // 2. Strip version suffixes from role trailers: [sender=0.5.0] -> [sender]
+    // 3. Strip version suffixes from role trailers: [sender=0.5.0] -> [sender]
     normalized = strip_version_from_role(&normalized);
 
-    // 3. Normalize absolute paths to relative (if any)
+    // 4. Normalize absolute paths to relative (if any)
     normalized = normalize_paths(&normalized);
 
-    // 4. Normalize whitespace (collapse multiple spaces, trim)
+    // 5. Normalize whitespace (collapse multiple spaces, trim)
     normalized = normalize_whitespace(&normalized);
 
     normalized
+}
+
+/// Fix doubled messages caused by race conditions.
+///
+/// When sender and receiver processes write the same message simultaneously,
+/// their output can get concatenated without newlines, resulting in messages like:
+/// "protocol version mismatch -- is your shell clean?protocol version mismatch -- is your shell clean?"
+///
+/// This function detects such doubled messages and returns just one copy.
+fn fix_doubled_message(text: &str) -> String {
+    let len = text.len();
+    // Only check if length is even and >= 2
+    if len < 2 || len % 2 != 0 {
+        return text.to_owned();
+    }
+
+    let half = len / 2;
+    let (first_half, second_half) = text.split_at(half);
+
+    if first_half == second_half {
+        first_half.to_owned()
+    } else {
+        text.to_owned()
+    }
 }
 
 /// Strip Rust source location suffix like " at crates/core/src/message.rs:123".
@@ -220,4 +247,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_fix_doubled_message() {
+        // Test doubled message (race condition artifact)
+        let doubled = "protocol version mismatch -- is your shell clean?protocol version mismatch -- is your shell clean?";
+        assert_eq!(
+            fix_doubled_message(doubled),
+            "protocol version mismatch -- is your shell clean?"
+        );
+
+        // Test normal message (not doubled)
+        let normal = "rsync: error in file IO";
+        assert_eq!(fix_doubled_message(normal), normal);
+
+        // Test odd-length message (cannot be doubled)
+        let odd = "abc";
+        assert_eq!(fix_doubled_message(odd), odd);
+
+        // Test empty message
+        let empty = "";
+        assert_eq!(fix_doubled_message(empty), empty);
+
+        // Test single char
+        let single = "a";
+        assert_eq!(fix_doubled_message(single), single);
+
+        // Test even length but not doubled
+        let even_not_doubled = "abcd";
+        assert_eq!(fix_doubled_message(even_not_doubled), even_not_doubled);
+    }
 }
