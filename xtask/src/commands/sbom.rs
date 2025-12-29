@@ -1,12 +1,9 @@
+use crate::cli::SbomArgs;
 use crate::error::{TaskError, TaskResult};
-#[cfg(test)]
-use crate::util::is_help_flag;
 use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use cargo_metadata::{CargoOpt, Metadata, MetadataCommand, Package};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-#[cfg(test)]
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -17,44 +14,12 @@ pub struct SbomOptions {
     pub output: Option<PathBuf>,
 }
 
-/// Parses CLI arguments for the `sbom` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<SbomOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut args = args.into_iter();
-    let mut output = None;
-
-    while let Some(arg) = args.next() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
+impl From<SbomArgs> for SbomOptions {
+    fn from(args: SbomArgs) -> Self {
+        Self {
+            output: args.output,
         }
-
-        if arg == "--output" {
-            let value = args.next().ok_or_else(|| {
-                TaskError::Usage(String::from(
-                    "--output requires a path argument; see `cargo xtask sbom --help`",
-                ))
-            })?;
-
-            if output.is_some() {
-                return Err(TaskError::Usage(String::from(
-                    "--output specified multiple times",
-                )));
-            }
-
-            output = Some(PathBuf::from(value));
-            continue;
-        }
-
-        return Err(TaskError::Usage(format!(
-            "unrecognised argument '{}' for sbom command",
-            arg.to_string_lossy()
-        )));
     }
-
-    Ok(SbomOptions { output })
 }
 
 /// Executes the `sbom` command.
@@ -81,14 +46,6 @@ pub fn execute(workspace: &Path, options: SbomOptions) -> TaskResult<()> {
         .map_err(|error| TaskError::Metadata(format!("failed to encode SBOM JSON: {error}")))?;
     fs::write(output_path, document)?;
     Ok(())
-}
-
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask sbom [--output PATH]\n\nOptions:\n  --output PATH    Override the SBOM output path (relative to the workspace root unless absolute)\n  -h, --help       Show this help message",
-    )
 }
 
 fn load_metadata(manifest_path: &Path) -> TaskResult<Metadata> {
@@ -243,48 +200,29 @@ fn bom_reference(package: &Package) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::SbomArgs;
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     #[test]
-    fn parse_args_accepts_default_configuration() {
-        let options = parse_args(std::iter::empty()).expect("parse succeeds");
+    fn from_args_default_configuration() {
+        let args = SbomArgs::default();
+        let options: SbomOptions = args.into();
         assert_eq!(options, SbomOptions { output: None });
     }
 
     #[test]
-    fn parse_args_reports_help_request() {
-        let error = parse_args([OsString::from("--help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message == usage()));
-    }
-
-    #[test]
-    fn parse_args_accepts_output_override() {
-        let options = parse_args([OsString::from("--output"), OsString::from("custom.json")])
-            .expect("parse succeeds");
+    fn from_args_with_output() {
+        let args = SbomArgs {
+            output: Some(PathBuf::from("custom.json")),
+        };
+        let options: SbomOptions = args.into();
         assert_eq!(
             options,
             SbomOptions {
                 output: Some(PathBuf::from("custom.json")),
             }
         );
-    }
-
-    #[test]
-    fn parse_args_rejects_duplicate_output_flags() {
-        let error = parse_args([
-            OsString::from("--output"),
-            OsString::from("one.json"),
-            OsString::from("--output"),
-        ])
-        .unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("--output")));
-    }
-
-    #[test]
-    fn parse_args_rejects_unknown_argument() {
-        let error = parse_args([OsString::from("--unknown")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
     }
 
     fn workspace_root() -> &'static Path {

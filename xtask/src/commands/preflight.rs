@@ -1,9 +1,5 @@
 use crate::error::{TaskError, TaskResult};
-#[cfg(test)]
-use crate::util::is_help_flag;
 use crate::workspace::{parse_workspace_branding_from_value, read_workspace_manifest};
-#[cfg(test)]
-use std::ffi::OsString;
 use std::path::Path;
 use toml::Value;
 
@@ -16,28 +12,6 @@ use validation::{
 /// Options accepted by the `preflight` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PreflightOptions;
-
-/// Parses CLI arguments for the `preflight` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<PreflightOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut args = args.into_iter();
-
-    if let Some(arg) = args.next() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
-        }
-
-        return Err(TaskError::Usage(format!(
-            "unrecognised argument '{}' for preflight command",
-            arg.to_string_lossy()
-        )));
-    }
-
-    Ok(PreflightOptions)
-}
 
 /// Executes the `preflight` command.
 pub fn execute(workspace: &Path, _options: PreflightOptions) -> TaskResult<()> {
@@ -59,14 +33,3 @@ pub fn execute(workspace: &Path, _options: PreflightOptions) -> TaskResult<()> {
 
     Ok(())
 }
-
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask preflight\n\nOptions:\n  -h, --help      Show this help message",
-    )
-}
-
-#[cfg(test)]
-mod tests;
