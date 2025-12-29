@@ -771,7 +771,18 @@ scenario = "protocol_version_mismatch"
 optional = true
 
 [[messages]]
+text = "rsync error: protocol incompatibility (code 2) at compat.c(622) [Receiver=3.4.1]"
+scenario = "protocol_version_mismatch"
+optional = true
+
+[[messages]]
 text = "rsync error: received SIGUSR1 (code 19) at main.c(1600) [Receiver=3.4.1]"
+scenario = "protocol_version_mismatch"
+optional = true
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at io.c(232) [sender]"
+role = "sender"
 scenario = "protocol_version_mismatch"
 optional = true
 
