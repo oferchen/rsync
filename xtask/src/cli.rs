@@ -40,19 +40,19 @@ pub enum Command {
     Interop(InteropArgs),
 
     /// Assert the git index contains no binary artifacts.
-    NoBinaries(NoBinariesArgs),
+    NoBinaries,
 
     /// Ensure Rust sources are free from placeholder code.
-    NoPlaceholders(NoPlaceholdersArgs),
+    NoPlaceholders,
 
     /// Build distribution artifacts (deb/rpm/tarball).
     Package(PackageArgs),
 
     /// Run packaging preflight validation.
-    Preflight(PreflightArgs),
+    Preflight,
 
     /// Ensure README versions match workspace metadata.
-    ReadmeVersion(ReadmeVersionArgs),
+    ReadmeVersion,
 
     /// Run aggregated release-readiness checks.
     Release(ReleaseArgs),
@@ -179,14 +179,6 @@ pub struct InteropCommonArgs {
     pub log_dir: Option<String>,
 }
 
-/// Arguments for the `no-binaries` command.
-#[derive(Parser, Debug, Default)]
-pub struct NoBinariesArgs;
-
-/// Arguments for the `no-placeholders` command.
-#[derive(Parser, Debug, Default)]
-pub struct NoPlaceholdersArgs;
-
 /// Arguments for the `package` command.
 #[derive(Parser, Debug, Default)]
 pub struct PackageArgs {
@@ -222,14 +214,6 @@ pub struct PackageArgs {
     #[arg(long, group = "profile_group")]
     pub no_profile: bool,
 }
-
-/// Arguments for the `preflight` command.
-#[derive(Parser, Debug, Default)]
-pub struct PreflightArgs;
-
-/// Arguments for the `readme-version` command.
-#[derive(Parser, Debug, Default)]
-pub struct ReadmeVersionArgs;
 
 /// Arguments for the `release` command.
 #[derive(Parser, Debug, Default)]

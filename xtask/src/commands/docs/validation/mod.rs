@@ -3,9 +3,10 @@ mod ci;
 
 use crate::error::{TaskError, TaskResult};
 use crate::workspace::load_workspace_branding;
-use std::fs;
-use std::io;
 use std::path::Path;
+
+/// Re-export `read_file_with_context` under the legacy name used by submodules.
+pub(super) use crate::util::read_file_with_context as read_file;
 
 pub(super) fn validate_documents(workspace: &Path) -> TaskResult<()> {
     let branding = load_workspace_branding(workspace)?;
@@ -24,13 +25,6 @@ pub(super) fn validate_documents(workspace: &Path) -> TaskResult<()> {
             failures.join("\n")
         )))
     }
-}
-
-pub(super) fn read_file(path: &Path) -> TaskResult<String> {
-    fs::read_to_string(path).map_err(|error| {
-        let message = format!("failed to read {}: {}", path.display(), error);
-        TaskError::Io(io::Error::new(error.kind(), message))
-    })
 }
 
 pub(super) fn ensure_contains(

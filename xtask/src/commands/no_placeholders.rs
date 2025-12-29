@@ -4,10 +4,6 @@ use std::fs;
 use std::io::BufRead;
 use std::path::Path;
 
-/// Options accepted by the `no-placeholders` command.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct NoPlaceholdersOptions;
-
 const TODO_MACRO_BYTES: [u8; 5] = [b't', b'o', b'd', b'o', b'!'];
 const UNIMPLEMENTED_MACRO_BYTES: [u8; 14] = [
     b'u', b'n', b'i', b'm', b'p', b'l', b'e', b'm', b'e', b'n', b't', b'e', b'd', b'!',
@@ -20,7 +16,7 @@ const UNIMPLEMENTED_WORD_BYTES: [u8; 13] = [
 ];
 
 /// Executes the `no-placeholders` command.
-pub fn execute(workspace: &Path, _options: NoPlaceholdersOptions) -> TaskResult<()> {
+pub fn execute(workspace: &Path) -> TaskResult<()> {
     let mut violations_present = false;
     let rust_files = list_rust_sources_via_git(workspace)?;
 

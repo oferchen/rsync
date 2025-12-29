@@ -1,4 +1,4 @@
-use crate::error::TaskResult;
+use crate::error::{TaskError, TaskResult};
 use std::fs;
 use std::io::{self, BufRead, Read};
 use std::path::Path;
@@ -63,6 +63,26 @@ pub fn count_file_lines(path: &Path) -> TaskResult<usize> {
     }
 
     Ok(count)
+}
+
+/// Reads a file to string with contextual error message including the file path.
+pub fn read_file_with_context(path: &Path) -> TaskResult<String> {
+    fs::read_to_string(path).map_err(|error| {
+        TaskError::Io(io::Error::new(
+            error.kind(),
+            format!("failed to read {}: {error}", path.display()),
+        ))
+    })
+}
+
+/// Resolves a path relative to the workspace root, or returns it unchanged if absolute.
+pub fn resolve_workspace_path(workspace: &Path, path: impl AsRef<Path>) -> std::path::PathBuf {
+    let path = path.as_ref();
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace.join(path)
+    }
 }
 
 #[cfg(test)]
