@@ -1,9 +1,4 @@
-#[cfg(test)]
-use crate::error::{TaskError, TaskResult};
-#[cfg(test)]
-use crate::util::is_help_flag;
-#[cfg(test)]
-use std::ffi::OsString;
+use crate::cli::DocsArgs;
 
 /// Options accepted by the `docs` command.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -14,54 +9,13 @@ pub struct DocsOptions {
     pub validate: bool,
 }
 
-/// Parses CLI arguments for the `docs` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<DocsOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut options = DocsOptions::default();
-
-    for arg in args {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
+impl From<DocsArgs> for DocsOptions {
+    fn from(args: DocsArgs) -> Self {
+        Self {
+            open: args.open,
+            validate: args.validate,
         }
-
-        if arg == "--open" {
-            if options.open {
-                return Err(TaskError::Usage(String::from(
-                    "--open specified multiple times",
-                )));
-            }
-            options.open = true;
-            continue;
-        }
-
-        if arg == "--validate" {
-            if options.validate {
-                return Err(TaskError::Usage(String::from(
-                    "--validate specified multiple times",
-                )));
-            }
-            options.validate = true;
-            continue;
-        }
-
-        return Err(TaskError::Usage(format!(
-            "unrecognised argument '{}' for docs command",
-            arg.to_string_lossy()
-        )));
     }
-
-    Ok(options)
-}
-
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask docs [--open] [--validate]\n\nOptions:\n  --open          Open documentation after building\n  --validate     Validate branding references in Markdown documents\n  -h, --help      Show this help message",
-    )
 }
 
 #[cfg(test)]
@@ -69,46 +23,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_args_accepts_default_configuration() {
-        let options = parse_args(std::iter::empty()).expect("parse succeeds");
-        assert_eq!(options, DocsOptions::default());
-    }
-
-    #[test]
-    fn parse_args_reports_help_request() {
-        let error = parse_args([OsString::from("--help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message == usage()));
-    }
-
-    #[test]
-    fn parse_args_rejects_duplicate_open_flags() {
-        let error = parse_args([OsString::from("--open"), OsString::from("--open")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("--open")));
-    }
-
-    #[test]
-    fn parse_args_accepts_validate_flag() {
-        let options =
-            parse_args([OsString::from("--validate")]).expect("parse succeeds with validate");
-        assert!(options.validate);
+    fn from_args_default_options() {
+        let args = DocsArgs {
+            open: false,
+            validate: false,
+        };
+        let options: DocsOptions = args.into();
         assert!(!options.open);
+        assert!(!options.validate);
     }
 
     #[test]
-    fn parse_args_rejects_duplicate_validate_flags() {
-        let error =
-            parse_args([OsString::from("--validate"), OsString::from("--validate")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("--validate")));
+    fn from_args_with_open_flag() {
+        let args = DocsArgs {
+            open: true,
+            validate: false,
+        };
+        let options: DocsOptions = args.into();
+        assert!(options.open);
+        assert!(!options.validate);
     }
 
     #[test]
-    fn parse_args_rejects_unknown_argument() {
-        let error = parse_args([OsString::from("--unknown")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("--unknown")));
-    }
-
-    #[test]
-    fn usage_text_is_exposed_through_module_interface() {
-        assert!(crate::commands::docs::usage().contains("Usage:"));
+    fn from_args_with_validate_flag() {
+        let args = DocsArgs {
+            open: false,
+            validate: true,
+        };
+        let options: DocsOptions = args.into();
+        assert!(!options.open);
+        assert!(options.validate);
     }
 }

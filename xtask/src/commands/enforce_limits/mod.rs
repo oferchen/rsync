@@ -1,11 +1,6 @@
-#[cfg(test)]
-use crate::error::TaskError;
+use crate::cli::EnforceLimitsArgs;
 use crate::error::TaskResult;
-#[cfg(test)]
-use crate::util::is_help_flag;
 use crate::util::{count_file_lines, read_limit_env_var, validation_error};
-#[cfg(test)]
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -24,67 +19,14 @@ pub struct EnforceLimitsOptions {
     pub config_path: Option<PathBuf>,
 }
 
-/// Parses CLI arguments for the `enforce-limits` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<EnforceLimitsOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut args = args.into_iter();
-    let mut options = EnforceLimitsOptions::default();
-
-    while let Some(arg) = args.next() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
-        }
-
-        match arg.to_string_lossy().as_ref() {
-            "--max-lines" => {
-                let value = args.next().ok_or_else(|| {
-                    TaskError::Usage(String::from(
-                        "--max-lines requires a positive integer value",
-                    ))
-                })?;
-                let parsed = parse_positive_usize_arg(&value, "--max-lines")?;
-                options.max_lines = Some(parsed);
-            }
-            "--warn-lines" => {
-                let value = args.next().ok_or_else(|| {
-                    TaskError::Usage(String::from(
-                        "--warn-lines requires a positive integer value",
-                    ))
-                })?;
-                let parsed = parse_positive_usize_arg(&value, "--warn-lines")?;
-                options.warn_lines = Some(parsed);
-            }
-            "--config" => {
-                let value = args.next().ok_or_else(|| {
-                    TaskError::Usage(String::from("--config requires a path argument"))
-                })?;
-                if value.is_empty() {
-                    return Err(TaskError::Usage(String::from(
-                        "--config requires a non-empty path argument",
-                    )));
-                }
-                options.config_path = Some(PathBuf::from(value));
-            }
-            other => {
-                return Err(TaskError::Usage(format!(
-                    "unrecognised argument '{other}' for enforce-limits command"
-                )));
-            }
+impl From<EnforceLimitsArgs> for EnforceLimitsOptions {
+    fn from(args: EnforceLimitsArgs) -> Self {
+        Self {
+            max_lines: args.max_lines,
+            warn_lines: args.warn_lines,
+            config_path: args.config,
         }
     }
-
-    if let (Some(warn), Some(max)) = (options.warn_lines, options.max_lines)
-        && warn > max
-    {
-        return Err(TaskError::Usage(format!(
-            "warn line limit ({warn}) cannot exceed maximum line limit ({max})"
-        )));
-    }
-
-    Ok(options)
 }
 
 /// Executes the `enforce-limits` command.
@@ -202,27 +144,6 @@ pub fn execute(workspace: &Path, options: EnforceLimitsOptions) -> TaskResult<()
     Ok(())
 }
 
-#[cfg(test)]
-fn parse_positive_usize_arg(value: &OsString, flag: &str) -> TaskResult<usize> {
-    let text = value.to_str().ok_or_else(|| {
-        TaskError::Usage(format!("{flag} requires a UTF-8 positive integer value"))
-    })?;
-
-    let parsed = text.parse::<usize>().map_err(|_| {
-        TaskError::Usage(format!(
-            "{flag} requires a positive integer value, found '{text}'"
-        ))
-    })?;
-
-    if parsed == 0 {
-        return Err(TaskError::Usage(format!(
-            "{flag} requires a positive integer value, found '{text}'"
-        )));
-    }
-
-    Ok(parsed)
-}
-
 fn collect_rust_sources(root: &Path) -> TaskResult<Vec<PathBuf>> {
     let mut stack = vec![root.to_path_buf()];
     let mut files = Vec::new();
@@ -261,18 +182,11 @@ fn should_skip_directory(path: &Path) -> bool {
     )
 }
 
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask enforce-limits [OPTIONS]\n\nOptions:\n  --max-lines N    Fail when a Rust source exceeds N lines\n  --warn-lines N   Warn when a Rust source exceeds N lines\n  --config PATH    Override the line limit configuration path\n  -h, --help       Show this help message",
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::config::parse_line_limits_config;
     use super::*;
+    use crate::error::TaskError;
     use crate::util::test_env::EnvGuard;
     use std::io::Write;
     use tempfile::tempdir;
@@ -305,45 +219,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_accepts_default_configuration() {
-        let options = parse_args(std::iter::empty()).expect("parse succeeds");
+    fn from_args_maps_all_fields() {
+        let args = EnforceLimitsArgs {
+            max_lines: Some(700),
+            warn_lines: Some(500),
+            config: Some(PathBuf::from("custom.toml")),
+        };
+        let options: EnforceLimitsOptions = args.into();
+        assert_eq!(options.max_lines, Some(700));
+        assert_eq!(options.warn_lines, Some(500));
+        assert_eq!(options.config_path, Some(PathBuf::from("custom.toml")));
+    }
+
+    #[test]
+    fn from_args_default_values() {
+        let args = EnforceLimitsArgs::default();
+        let options: EnforceLimitsOptions = args.into();
         assert_eq!(options, EnforceLimitsOptions::default());
-    }
-
-    #[test]
-    fn parse_args_accepts_custom_limits() {
-        let options = parse_args([
-            OsString::from("--max-lines"),
-            OsString::from("700"),
-            OsString::from("--warn-lines"),
-            OsString::from("500"),
-        ])
-        .expect("parse succeeds");
-        assert_eq!(
-            options,
-            EnforceLimitsOptions {
-                max_lines: Some(700),
-                warn_lines: Some(500),
-                config_path: None,
-            }
-        );
-    }
-
-    #[test]
-    fn parse_args_accepts_config_path() {
-        let options = parse_args([
-            OsString::from("--config"),
-            OsString::from("tools/line_limits.toml"),
-        ])
-        .expect("parse succeeds");
-        assert_eq!(
-            options,
-            EnforceLimitsOptions {
-                max_lines: None,
-                warn_lines: None,
-                config_path: Some(PathBuf::from("tools/line_limits.toml")),
-            }
-        );
     }
 
     #[test]
@@ -398,30 +290,6 @@ max_lines = 900
             error,
             TaskError::Validation(message) if message.contains("parent directory")
         ));
-    }
-
-    #[test]
-    fn parse_args_rejects_invalid_values() {
-        let error = parse_args([OsString::from("--max-lines"), OsString::from("0")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("--max-lines")));
-    }
-
-    #[test]
-    fn parse_args_reports_help_request() {
-        let error = parse_args([OsString::from("--help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message == usage()));
-    }
-
-    #[test]
-    fn parse_args_rejects_warn_exceeding_maximum() {
-        let error = parse_args([
-            OsString::from("--warn-lines"),
-            OsString::from("800"),
-            OsString::from("--max-lines"),
-            OsString::from("700"),
-        ])
-        .unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("warn line limit")));
     }
 
     #[test]
