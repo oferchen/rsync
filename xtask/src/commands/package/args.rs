@@ -1,4 +1,6 @@
+#[cfg(test)]
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use crate::util::is_help_flag;
 use std::ffi::OsString;
 
@@ -35,6 +37,7 @@ impl PackageOptions {
 }
 
 /// Parses CLI arguments for the `package` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<PackageOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -151,6 +154,7 @@ where
     })
 }
 
+#[cfg(test)]
 fn set_profile_option(
     profile: &mut Option<OsString>,
     explicit: &mut bool,
@@ -168,6 +172,7 @@ fn set_profile_option(
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask package [OPTIONS]\n\nOptions:\n  --deb            Build only the Debian package\n  --rpm            Build only the RPM package\n  --tarball        Build only the tar.gz distributions\n  --tarball-target TARGET\n                  Restrict tarball generation to the specified target triple\n  --release        Build using the dist profile (default)\n  --debug          Build using the debug profile\n  --profile NAME   Build using the named cargo profile\n  --no-profile     Do not override the cargo profile\n  -h, --help       Show this help message",

@@ -1,5 +1,8 @@
 use crate::error::{TaskError, TaskResult};
-use crate::util::{is_help_flag, is_probably_binary, list_tracked_files};
+#[cfg(test)]
+use crate::util::is_help_flag;
+use crate::util::{is_probably_binary, list_tracked_files};
+#[cfg(test)]
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -8,6 +11,7 @@ use std::path::Path;
 pub struct NoBinariesOptions;
 
 /// Parses CLI arguments for the `no-binaries` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<NoBinariesOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -50,6 +54,7 @@ pub fn execute(workspace: &Path, _options: NoBinariesOptions) -> TaskResult<()> 
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask no-binaries\n\nOptions:\n  -h, --help      Show this help message",
