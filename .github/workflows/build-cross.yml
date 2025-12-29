@@ -432,9 +432,9 @@ jobs:
           git config user.name "oc-rsync-bot"
           git config user.email "actions@github.com"
 
-          # Fetch master and create branch with a hard reset to ensure clean state
-          # This prevents any workflow file changes from the tag checkout being included
-          git fetch origin master --depth=1
+          # Fetch master BRANCH explicitly (refs/heads/master) to avoid ambiguity in shallow tag checkouts
+          # Then hard reset to ensure clean state with no workflow file changes from tag checkout
+          git fetch origin refs/heads/master --depth=1
           git checkout -B "${BRANCH}" FETCH_HEAD
           git reset --hard FETCH_HEAD
 
