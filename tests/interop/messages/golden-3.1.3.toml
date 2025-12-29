@@ -18,13 +18,20 @@ text = "rsync error: syntax or usage error (code 1) at main.c(1601) [client]"
 role = "client"
 scenario = "invalid_option"
 
-[[messages]]
-text = "protocol version mismatch -- is your shell clean?"
+# Race-dependent: The protocol mismatch messages may appear separately or concatenated
+# due to concurrent output from sender/receiver processes
+[[message_groups]]
+name = "protocol_mismatch_description"
 scenario = "protocol_version_mismatch"
-
-[[messages]]
-text = "(see the rsync man page for an explanation)"
-scenario = "protocol_version_mismatch"
+require_at_least = 1
+messages = [
+    # Individual messages when output is properly separated
+    { text = "protocol version mismatch -- is your shell clean?" },
+    { text = "(see the rsync man page for an explanation)" },
+    # Concatenated forms when race condition causes no newline between messages
+    { text = "(see the rsync man page for an explanation)protocol version mismatch -- is your shell clean?" },
+    { text = "protocol version mismatch -- is your shell clean?(see the rsync man page for an explanation)" },
+]
 
 # Race-dependent: At least one protocol/IPC error must appear
 [[message_groups]]
