@@ -14,6 +14,7 @@ pub enum TaskError {
     /// Incorrect usage detected while parsing arguments.
     Usage(String),
     /// Help text requested by the caller.
+    #[allow(dead_code)]
     Help(String),
     /// I/O failure encountered while reading or writing files.
     Io(io::Error),

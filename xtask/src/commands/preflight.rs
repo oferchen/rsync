@@ -1,6 +1,8 @@
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use crate::util::is_help_flag;
 use crate::workspace::{parse_workspace_branding_from_value, read_workspace_manifest};
+#[cfg(test)]
 use std::ffi::OsString;
 use std::path::Path;
 use toml::Value;
@@ -16,6 +18,7 @@ use validation::{
 pub struct PreflightOptions;
 
 /// Parses CLI arguments for the `preflight` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<PreflightOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -58,6 +61,7 @@ pub fn execute(workspace: &Path, _options: PreflightOptions) -> TaskResult<()> {
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask preflight\n\nOptions:\n  -h, --help      Show this help message",

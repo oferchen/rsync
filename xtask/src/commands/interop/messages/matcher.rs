@@ -90,12 +90,7 @@ pub struct PatternMatcher {
 }
 
 impl PatternMatcher {
-    pub fn new(
-        pattern: String,
-        role: Option<String>,
-        scenario: String,
-        optional: bool,
-    ) -> Self {
+    pub fn new(pattern: String, role: Option<String>, scenario: String, optional: bool) -> Self {
         Self {
             pattern,
             compiled: OnceLock::new(),
@@ -107,9 +102,8 @@ impl PatternMatcher {
 
     fn regex(&self) -> &Regex {
         self.compiled.get_or_init(|| {
-            Regex::new(&self.pattern).unwrap_or_else(|e| {
-                panic!("Invalid regex pattern '{}': {}", self.pattern, e)
-            })
+            Regex::new(&self.pattern)
+                .unwrap_or_else(|e| panic!("Invalid regex pattern '{}': {}", self.pattern, e))
         })
     }
 }
