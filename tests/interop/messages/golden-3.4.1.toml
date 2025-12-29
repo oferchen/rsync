@@ -885,3 +885,9 @@ text = "rsync error: error in rsync protocol data stream (code 12) at io.c(231) 
 role = "sender"
 scenario = "remote_not_found"
 optional = true
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at io.c(232) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+optional = true
