@@ -42,6 +42,9 @@ impl NormalizedMessage {
 fn normalize_text(text: &str) -> String {
     let mut normalized = text.to_owned();
 
+    // 0. Fix doubled messages from concurrent process output (CI-specific issue)
+    normalized = fix_doubled_message(&normalized);
+
     // 1. Strip Rust source suffix: " at path/to/file.rs:123"
     normalized = strip_rust_source_suffix(&normalized);
 
@@ -95,6 +98,21 @@ fn normalize_whitespace(text: &str) -> String {
     let re = WHITESPACE_RE.get_or_init(|| Regex::new(r"\s+").expect("valid regex"));
 
     re.replace_all(text.trim(), " ").to_string()
+}
+
+/// Fix doubled messages caused by concurrent writes from sender/receiver processes.
+/// In some CI environments, both processes may write to stderr without proper line buffering,
+/// resulting in messages like "foo?foo?" instead of separate lines "foo?\nfoo?".
+fn fix_doubled_message(text: &str) -> String {
+    let len = text.len();
+    if len >= 2 && len % 2 == 0 {
+        let half = len / 2;
+        let (first, second) = text.split_at(half);
+        if first == second {
+            return first.to_string();
+        }
+    }
+    text.to_string()
 }
 
 /// Normalize a collection of messages for comparison.
@@ -218,5 +236,20 @@ mod tests {
             "Optional messages should not be required: {:?}",
             differences
         );
+    }
+
+    #[test]
+    fn test_fix_doubled_message() {
+        // Doubled message should be fixed
+        let doubled = "protocol version mismatch?protocol version mismatch?";
+        assert_eq!(fix_doubled_message(doubled), "protocol version mismatch?");
+
+        // Non-doubled message should remain unchanged
+        let single = "protocol version mismatch?";
+        assert_eq!(fix_doubled_message(single), "protocol version mismatch?");
+
+        // Different halves should remain unchanged
+        let different = "hello worldgoodbye world";
+        assert_eq!(fix_doubled_message(different), "hello worldgoodbye world");
     }
 }
