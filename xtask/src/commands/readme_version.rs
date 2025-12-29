@@ -10,39 +10,13 @@
 //! canonical human-readable reference for the supported release line.
 
 use crate::error::{TaskError, TaskResult};
-#[cfg(test)]
-use crate::util::is_help_flag;
 use crate::workspace::load_workspace_branding;
-#[cfg(test)]
-use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
 /// Options accepted by the `readme-version` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ReadmeVersionOptions;
-
-/// Parses CLI arguments for the `readme-version` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<ReadmeVersionOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut args = args.into_iter();
-
-    if let Some(arg) = args.next() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
-        }
-
-        return Err(TaskError::Usage(format!(
-            "unrecognised argument '{}' for readme-version command",
-            arg.to_string_lossy()
-        )));
-    }
-
-    Ok(ReadmeVersionOptions)
-}
 
 /// Executes the `readme-version` command.
 pub fn execute(workspace: &Path, _options: ReadmeVersionOptions) -> TaskResult<()> {
@@ -80,36 +54,10 @@ fn validate_contains(readme: &str, needle: &str, label: &str) -> TaskResult<()> 
     }
 }
 
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask readme-version\n\nOptions:\n  -h, --help      Show this help message",
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
-
-    #[test]
-    fn parse_args_accepts_default_configuration() {
-        let options = parse_args(std::iter::empty()).expect("parse succeeds");
-        assert_eq!(options, ReadmeVersionOptions);
-    }
-
-    #[test]
-    fn parse_args_reports_help_request() {
-        let error = parse_args([OsString::from("--help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message == usage()));
-    }
-
-    #[test]
-    fn parse_args_rejects_unknown_argument() {
-        let error = parse_args([OsString::from("--unknown")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("readme-version")));
-    }
 
     #[test]
     fn validate_contains_accepts_present_version() {

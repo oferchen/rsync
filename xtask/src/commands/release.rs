@@ -1,5 +1,6 @@
 mod upload;
 
+use crate::cli::ReleaseArgs;
 use crate::commands::{
     docs::{self, DocsOptions},
     enforce_limits::{self, EnforceLimitsOptions},
@@ -9,14 +10,8 @@ use crate::commands::{
     preflight::{self, PreflightOptions},
     readme_version::{self, ReadmeVersionOptions},
 };
-#[cfg(test)]
-use crate::error::TaskError;
 use crate::error::TaskResult;
-#[cfg(test)]
-use crate::util::is_help_flag;
 use crate::workspace::load_workspace_branding;
-#[cfg(test)]
-use std::ffi::OsString;
 use std::path::Path;
 use upload::upload_release_artifacts;
 
@@ -37,63 +32,16 @@ pub struct ReleaseOptions {
     pub skip_upload: bool,
 }
 
-/// Parses CLI arguments for the `release` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<ReleaseOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut options = ReleaseOptions::default();
-
-    for arg in args.into_iter() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
+impl From<ReleaseArgs> for ReleaseOptions {
+    fn from(args: ReleaseArgs) -> Self {
+        Self {
+            skip_docs: args.skip_docs,
+            skip_hygiene: args.skip_hygiene,
+            skip_placeholder_scan: args.skip_placeholder_scan,
+            skip_binary_scan: args.skip_binary_scan,
+            skip_packages: args.skip_packages,
+            skip_upload: args.skip_upload,
         }
-
-        match arg.to_string_lossy().as_ref() {
-            "--skip-docs" => {
-                ensure_flag_unused(options.skip_docs, "--skip-docs")?;
-                options.skip_docs = true;
-            }
-            "--skip-hygiene" => {
-                ensure_flag_unused(options.skip_hygiene, "--skip-hygiene")?;
-                options.skip_hygiene = true;
-            }
-            "--skip-placeholder-scan" => {
-                ensure_flag_unused(options.skip_placeholder_scan, "--skip-placeholder-scan")?;
-                options.skip_placeholder_scan = true;
-            }
-            "--skip-binary-scan" => {
-                ensure_flag_unused(options.skip_binary_scan, "--skip-binary-scan")?;
-                options.skip_binary_scan = true;
-            }
-            "--skip-packages" => {
-                ensure_flag_unused(options.skip_packages, "--skip-packages")?;
-                options.skip_packages = true;
-            }
-            "--skip-upload" => {
-                ensure_flag_unused(options.skip_upload, "--skip-upload")?;
-                options.skip_upload = true;
-            }
-            other => {
-                return Err(TaskError::Usage(format!(
-                    "unrecognised argument '{other}' for release command"
-                )));
-            }
-        }
-    }
-
-    Ok(options)
-}
-
-#[cfg(test)]
-fn ensure_flag_unused(already_set: bool, flag: &str) -> TaskResult<()> {
-    if already_set {
-        Err(TaskError::Usage(format!(
-            "{flag} was specified multiple times"
-        )))
-    } else {
-        Ok(())
     }
 }
 
@@ -172,36 +120,29 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
     Ok(())
 }
 
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask release [OPTIONS]\n\nOptions:\n  --skip-docs                Skip building docs and running doctests\n  --skip-hygiene            Skip enforce-limits line-count checks\n  --skip-placeholder-scan   Skip placeholder detection scans\n  --skip-binary-scan        Skip checking the git index for binary files\n  --skip-packages           Skip building release packages\n  --skip-upload             Skip uploading release packages to GitHub\n  -h, --help                Show this help message",
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    // use crate::workspace;
+    use crate::cli::ReleaseArgs;
 
     #[test]
-    fn parse_args_accepts_default_configuration() {
-        let options = parse_args(std::iter::empty()).expect("parse succeeds");
+    fn from_args_default_configuration() {
+        let args = ReleaseArgs::default();
+        let options: ReleaseOptions = args.into();
         assert_eq!(options, ReleaseOptions::default());
     }
 
     #[test]
-    fn parse_args_recognises_all_skip_flags() {
-        let args = [
-            OsString::from("--skip-docs"),
-            OsString::from("--skip-hygiene"),
-            OsString::from("--skip-placeholder-scan"),
-            OsString::from("--skip-binary-scan"),
-            OsString::from("--skip-packages"),
-            OsString::from("--skip-upload"),
-        ];
-        let options = parse_args(args).expect("parse succeeds");
+    fn from_args_all_skip_flags() {
+        let args = ReleaseArgs {
+            skip_docs: true,
+            skip_hygiene: true,
+            skip_placeholder_scan: true,
+            skip_binary_scan: true,
+            skip_packages: true,
+            skip_upload: true,
+        };
+        let options: ReleaseOptions = args.into();
         assert!(options.skip_docs);
         assert!(options.skip_hygiene);
         assert!(options.skip_placeholder_scan);
@@ -211,29 +152,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_rejects_duplicate_flags() {
-        let args = [OsString::from("--skip-docs"), OsString::from("--skip-docs")];
-        let error = parse_args(args).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("skip-docs")));
+    fn from_args_partial_skip_flags() {
+        let args = ReleaseArgs {
+            skip_docs: true,
+            skip_upload: true,
+            ..Default::default()
+        };
+        let options: ReleaseOptions = args.into();
+        assert!(options.skip_docs);
+        assert!(!options.skip_hygiene);
+        assert!(!options.skip_placeholder_scan);
+        assert!(!options.skip_binary_scan);
+        assert!(!options.skip_packages);
+        assert!(options.skip_upload);
     }
-
-    #[test]
-    fn parse_args_reports_help_request() {
-        let error = parse_args([OsString::from("--help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message == usage()));
-    }
-
-    // #[test]
-    // fn execute_runs_core_checks_when_optional_steps_skipped() {
-    //     let workspace = workspace::workspace_root().expect("workspace root");
-    //     let options = ReleaseOptions {
-    //         skip_docs: true,
-    //         skip_hygiene: true,
-    //         skip_placeholder_scan: true,
-    //         skip_binary_scan: true,
-    //         skip_packages: true,
-    //         skip_upload: true,
-    //     };
-    //     execute(&workspace, options).expect("release validation succeeds");
-    // }
 }

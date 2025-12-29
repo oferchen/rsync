@@ -23,15 +23,6 @@ pub use git::{list_rust_sources_via_git, list_tracked_files};
 pub use limits::read_limit_env_var;
 
 use crate::error::{TaskError, TaskResult};
-#[cfg(test)]
-use std::ffi::OsString;
-
-/// Returns `true` when the argument requests help output.
-#[cfg(test)]
-#[must_use]
-pub fn is_help_flag(value: &OsString) -> bool {
-    value == "--help" || value == "-h"
-}
 
 /// Ensures the provided condition holds, returning a [`TaskError::Validation`]
 /// otherwise.
@@ -51,16 +42,8 @@ pub fn validation_error(message: impl Into<String>) -> TaskError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure, is_help_flag, validation_error};
+    use super::{ensure, validation_error};
     use crate::error::TaskError;
-    use std::ffi::OsString;
-
-    #[test]
-    fn help_flag_detection_matches_short_and_long_forms() {
-        assert!(is_help_flag(&OsString::from("--help")));
-        assert!(is_help_flag(&OsString::from("-h")));
-        assert!(!is_help_flag(&OsString::from("--HELP")));
-    }
 
     #[test]
     fn ensure_reports_validation_failure() {

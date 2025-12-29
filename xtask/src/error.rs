@@ -13,9 +13,6 @@ pub type TaskResult<T> = Result<T, TaskError>;
 pub enum TaskError {
     /// Incorrect usage detected while parsing arguments.
     Usage(String),
-    /// Help text requested by the caller.
-    #[allow(dead_code)]
-    Help(String),
     /// I/O failure encountered while reading or writing files.
     Io(io::Error),
     /// Required external tooling was unavailable.
@@ -39,7 +36,6 @@ impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TaskError::Usage(message)
-            | TaskError::Help(message)
             | TaskError::Validation(message)
             | TaskError::ToolMissing(message)
             | TaskError::Metadata(message) => f.write_str(message),
@@ -79,7 +75,6 @@ mod tests {
     #[test]
     fn display_messages_match_variant_contents() {
         assert_eq!(TaskError::Usage("usage".into()).to_string(), "usage");
-        assert_eq!(TaskError::Help("help".into()).to_string(), "help");
         assert_eq!(TaskError::Metadata("meta".into()).to_string(), "meta");
         assert_eq!(
             TaskError::Validation("invalid".into()).to_string(),
