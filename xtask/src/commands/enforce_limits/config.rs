@@ -1,7 +1,6 @@
 use crate::error::{TaskError, TaskResult};
-use crate::util::validation_error;
+use crate::util::{read_file_with_context, resolve_workspace_path, validation_error};
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 use toml::Value;
 
@@ -29,12 +28,7 @@ pub(super) fn resolve_config_path(
     override_path: Option<PathBuf>,
 ) -> TaskResult<Option<PathBuf>> {
     if let Some(path) = override_path {
-        let absolute = if path.is_absolute() {
-            path
-        } else {
-            workspace.join(path)
-        };
-        return Ok(Some(absolute));
+        return Ok(Some(resolve_workspace_path(workspace, path)));
     }
 
     let default = workspace.join("tools/line_limits.toml");
@@ -49,12 +43,7 @@ pub(super) fn load_line_limits_config(
     workspace: &Path,
     path: &Path,
 ) -> TaskResult<LineLimitsConfig> {
-    let contents = fs::read_to_string(path).map_err(|error| {
-        TaskError::Io(std::io::Error::new(
-            error.kind(),
-            format!("failed to read {}: {error}", path.display()),
-        ))
-    })?;
+    let contents = read_file_with_context(path)?;
     let config = parse_line_limits_config(&contents, path)?;
     validate_line_limit_overrides(workspace, path, &config)?;
     Ok(config)
@@ -243,6 +232,7 @@ fn parse_positive_usize_value(value: &Value, field: &str, origin: &Path) -> Task
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     fn write_config(path: &Path, contents: &str) {

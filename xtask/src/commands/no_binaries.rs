@@ -2,12 +2,8 @@ use crate::error::{TaskError, TaskResult};
 use crate::util::{is_probably_binary, list_tracked_files};
 use std::path::Path;
 
-/// Options accepted by the `no-binaries` command.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct NoBinariesOptions;
-
 /// Executes the `no-binaries` command.
-pub fn execute(workspace: &Path, _options: NoBinariesOptions) -> TaskResult<()> {
+pub fn execute(workspace: &Path) -> TaskResult<()> {
     let tracked_files = list_tracked_files(workspace)?;
     let mut binary_paths = Vec::new();
 
@@ -67,7 +63,7 @@ mod tests {
         fs::write(&source, "fn main() {}\n").expect("write source file");
         git_add(temp.path(), &source);
 
-        execute(temp.path(), NoBinariesOptions).expect("no binary files detected");
+        execute(temp.path()).expect("no binary files detected");
     }
 
     #[test]
@@ -84,7 +80,7 @@ mod tests {
         fs::write(&binary_file, [0_u8, 1, 2, 3, 4]).expect("write binary file");
         git_add(temp.path(), &binary_file);
 
-        let error = execute(temp.path(), NoBinariesOptions).unwrap_err();
+        let error = execute(temp.path()).unwrap_err();
         match error {
             TaskError::BinaryFiles(paths) => {
                 assert_eq!(paths, vec![std::path::PathBuf::from("artifacts/blob.bin")]);

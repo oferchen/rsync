@@ -4,11 +4,9 @@ use crate::cli::ReleaseArgs;
 use crate::commands::{
     docs::{self, DocsOptions},
     enforce_limits::{self, EnforceLimitsOptions},
-    no_binaries::{self, NoBinariesOptions},
-    no_placeholders::{self, NoPlaceholdersOptions},
+    no_binaries, no_placeholders,
     package::{self, PackageOptions},
-    preflight::{self, PreflightOptions},
-    readme_version::{self, ReadmeVersionOptions},
+    preflight, readme_version,
 };
 use crate::error::TaskResult;
 use crate::workspace::load_workspace_branding;
@@ -53,14 +51,14 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
     if options.skip_binary_scan {
         skipped_steps.push("no-binaries");
     } else {
-        no_binaries::execute(workspace, NoBinariesOptions)?;
+        no_binaries::execute(workspace)?;
         executed_steps.push("no-binaries");
     }
 
-    preflight::execute(workspace, PreflightOptions)?;
+    preflight::execute(workspace)?;
     executed_steps.push("preflight");
 
-    readme_version::execute(workspace, ReadmeVersionOptions)?;
+    readme_version::execute(workspace)?;
     executed_steps.push("readme-version");
 
     if options.skip_docs {
@@ -84,7 +82,7 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
     if options.skip_placeholder_scan {
         skipped_steps.push("no-placeholders");
     } else {
-        no_placeholders::execute(workspace, NoPlaceholdersOptions)?;
+        no_placeholders::execute(workspace)?;
         executed_steps.push("no-placeholders");
     }
 
