@@ -23,9 +23,11 @@ pub use git::{list_rust_sources_via_git, list_tracked_files};
 pub use limits::read_limit_env_var;
 
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use std::ffi::OsString;
 
 /// Returns `true` when the argument requests help output.
+#[cfg(test)]
 #[must_use]
 pub fn is_help_flag(value: &OsString) -> bool {
     value == "--help" || value == "-h"

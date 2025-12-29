@@ -1,5 +1,8 @@
+#[cfg(test)]
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use crate::util::is_help_flag;
+#[cfg(test)]
 use std::ffi::OsString;
 
 /// Options accepted by the `docs` command.
@@ -12,6 +15,7 @@ pub struct DocsOptions {
 }
 
 /// Parses CLI arguments for the `docs` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<DocsOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -53,6 +57,7 @@ where
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask docs [--open] [--validate]\n\nOptions:\n  --open          Open documentation after building\n  --validate     Validate branding references in Markdown documents\n  -h, --help      Show this help message",

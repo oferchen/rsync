@@ -10,7 +10,7 @@ mod args;
 mod render;
 mod validate;
 
-pub use args::{BrandingOptions, BrandingOutputFormat, parse_args};
+pub use args::{BrandingOptions, BrandingOutputFormat};
 pub use render::render_branding;
 pub use validate::validate_branding;
 

@@ -10,8 +10,10 @@
 //! canonical human-readable reference for the supported release line.
 
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use crate::util::is_help_flag;
 use crate::workspace::load_workspace_branding;
+#[cfg(test)]
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -21,6 +23,7 @@ use std::path::Path;
 pub struct ReadmeVersionOptions;
 
 /// Parses CLI arguments for the `readme-version` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<ReadmeVersionOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -78,6 +81,7 @@ fn validate_contains(readme: &str, needle: &str, label: &str) -> TaskResult<()> 
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask readme-version\n\nOptions:\n  -h, --help      Show this help message",

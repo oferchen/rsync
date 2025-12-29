@@ -4,7 +4,9 @@
 //! it into a tarball suitable for hosting or distribution with releases.
 
 use crate::error::TaskError;
+#[cfg(test)]
 use crate::util::is_help_flag;
+#[cfg(test)]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,6 +30,8 @@ impl Default for DocPackageOptions {
 }
 
 /// Parse command-line arguments for doc packaging
+#[cfg(test)]
+#[allow(dead_code)]
 pub fn parse_args<I>(args: I) -> Result<DocPackageOptions, TaskError>
 where
     I: IntoIterator<Item = OsString>,
@@ -126,6 +130,8 @@ pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskE
     Ok(())
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 fn usage() -> String {
     String::from(
         r#"cargo xtask doc-package

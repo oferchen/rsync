@@ -1,5 +1,10 @@
-use crate::error::{TaskError, TaskResult};
-use crate::util::{is_help_flag, list_rust_sources_via_git, validation_error};
+#[cfg(test)]
+use crate::error::TaskError;
+use crate::error::TaskResult;
+#[cfg(test)]
+use crate::util::is_help_flag;
+use crate::util::{list_rust_sources_via_git, validation_error};
+#[cfg(test)]
 use std::ffi::OsString;
 use std::fs;
 use std::io::BufRead;
@@ -24,6 +29,7 @@ const UNIMPLEMENTED_WORD_BYTES: [u8; 13] = [
 ];
 
 /// Parses CLI arguments for the `no-placeholders` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<NoPlaceholdersOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -167,6 +173,7 @@ const fn is_identifier_byte(byte: u8) -> bool {
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask no-placeholders\n\nOptions:\n  -h, --help      Show this help message",
