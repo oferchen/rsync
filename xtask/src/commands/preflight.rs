@@ -9,12 +9,8 @@ use validation::{
     validate_packaging_assets, validate_workspace_package_rust_version,
 };
 
-/// Options accepted by the `preflight` command.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct PreflightOptions;
-
 /// Executes the `preflight` command.
-pub fn execute(workspace: &Path, _options: PreflightOptions) -> TaskResult<()> {
+pub fn execute(workspace: &Path) -> TaskResult<()> {
     let manifest_text = read_workspace_manifest(workspace)?;
     let manifest_value: Value = manifest_text.parse().map_err(|error| {
         TaskError::Metadata(format!("failed to parse workspace manifest: {error}"))

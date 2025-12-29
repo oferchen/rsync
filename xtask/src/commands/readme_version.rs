@@ -10,19 +10,15 @@
 //! canonical human-readable reference for the supported release line.
 
 use crate::error::{TaskError, TaskResult};
+use crate::util::read_file_with_context;
 use crate::workspace::load_workspace_branding;
-use std::fs;
 use std::path::Path;
 
-/// Options accepted by the `readme-version` command.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ReadmeVersionOptions;
-
 /// Executes the `readme-version` command.
-pub fn execute(workspace: &Path, _options: ReadmeVersionOptions) -> TaskResult<()> {
+pub fn execute(workspace: &Path) -> TaskResult<()> {
     let branding = load_workspace_branding(workspace)?;
     let readme_path = workspace.join("README.md");
-    let readme = readme_contents(&readme_path)?;
+    let readme = read_file_with_context(&readme_path)?;
 
     validate_contains(&readme, &branding.rust_version, "Rust-branded version")?;
     validate_contains(&readme, &branding.upstream_version, "upstream version")?;
@@ -33,15 +29,6 @@ pub fn execute(workspace: &Path, _options: ReadmeVersionOptions) -> TaskResult<(
     );
 
     Ok(())
-}
-
-fn readme_contents(path: &Path) -> TaskResult<String> {
-    fs::read_to_string(path).map_err(|error| {
-        TaskError::Io(std::io::Error::new(
-            error.kind(),
-            format!("failed to read README at {}: {error}", path.display()),
-        ))
-    })
 }
 
 fn validate_contains(readme: &str, needle: &str, label: &str) -> TaskResult<()> {
@@ -79,7 +66,7 @@ mod tests {
     #[test]
     fn execute_reports_versions_present() {
         let workspace = workspace::workspace_root().expect("resolve workspace root");
-        execute(&workspace, ReadmeVersionOptions).expect("workspace README matches versions");
+        execute(&workspace).expect("workspace README matches versions");
     }
 
     mod workspace {

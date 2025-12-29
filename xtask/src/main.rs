@@ -86,15 +86,11 @@ fn run_command(cli: Cli) -> Result<(), TaskError> {
         Command::DocPackage(args) => doc_package::execute(&workspace, args.into()),
         Command::EnforceLimits(args) => enforce_limits::execute(&workspace, args.into()),
         Command::Interop(args) => interop::execute(&workspace, args.into()),
-        Command::NoBinaries(_) => no_binaries::execute(&workspace, no_binaries::NoBinariesOptions),
-        Command::NoPlaceholders(_) => {
-            no_placeholders::execute(&workspace, no_placeholders::NoPlaceholdersOptions)
-        }
+        Command::NoBinaries => no_binaries::execute(&workspace),
+        Command::NoPlaceholders => no_placeholders::execute(&workspace),
         Command::Package(args) => package::execute(&workspace, args.into()),
-        Command::Preflight(_) => preflight::execute(&workspace, preflight::PreflightOptions),
-        Command::ReadmeVersion(_) => {
-            readme_version::execute(&workspace, readme_version::ReadmeVersionOptions)
-        }
+        Command::Preflight => preflight::execute(&workspace),
+        Command::ReadmeVersion => readme_version::execute(&workspace),
         Command::Release(args) => release::execute(&workspace, args.into()),
         Command::Sbom(args) => sbom::execute(&workspace, args.into()),
         Command::Test(args) => test::execute(&workspace, args.into()),
