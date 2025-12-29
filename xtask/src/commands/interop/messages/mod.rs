@@ -2,6 +2,7 @@
 
 mod extractor;
 mod golden;
+mod matcher;
 mod normalizer;
 
 use crate::commands::interop::args::MessagesOptions;
@@ -228,24 +229,22 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
             match msg_scenario.execute(binary.binary_path(), &extractor_opts) {
                 Ok(messages) => {
                     let actual_normalized = normalizer::normalize_messages(&messages);
-                    let expected_messages = golden.get_messages_for_scenario(&scenario.name);
 
-                    // Convert expected messages to NormalizedMessage for comparison
-                    let expected_normalized: Vec<normalizer::NormalizedMessage> = expected_messages
+                    // Convert actual messages to format expected by matcher
+                    let actual_for_matcher: Vec<(String, Option<String>)> = actual_normalized
                         .iter()
-                        .map(|m| normalizer::NormalizedMessage {
-                            text: m.text.clone(),
-                            role: m.role.clone(),
-                            optional: m.optional,
-                        })
+                        .map(|m| (m.text.clone(), m.role.clone()))
                         .collect();
 
-                    // Compare
-                    let differences =
-                        normalizer::find_differences(&actual_normalized, &expected_normalized);
+                    // Get matchers and groups for this scenario
+                    let (matchers, groups) = golden.get_matchers_for_scenario(&scenario.name);
+
+                    // Validate using the new matcher infrastructure
+                    let result = matcher::validate_messages(&actual_for_matcher, &matchers, &groups);
 
                     total_checked += 1;
 
+                    let differences = result.differences();
                     if !differences.is_empty() {
                         eprintln!(
                             "[interop]   Scenario '{}': {} differences",

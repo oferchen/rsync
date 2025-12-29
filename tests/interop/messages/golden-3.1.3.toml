@@ -26,33 +26,16 @@ scenario = "protocol_version_mismatch"
 text = "(see the rsync man page for an explanation)"
 scenario = "protocol_version_mismatch"
 
-[[messages]]
-text = "rsync error: protocol incompatibility (code 2) at compat.c(178) [sender]"
-role = "sender"
+# Race-dependent: At least one protocol/IPC error must appear
+[[message_groups]]
+name = "protocol_mismatch_errors"
 scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: protocol incompatibility (code 2) at compat.c(178) [Receiver=3.1.3]"
-scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: received SIGUSR1 (code 19) at main.c(1463) [Receiver=3.1.3]"
-scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(235) [sender]"
-role = "sender"
-scenario = "protocol_version_mismatch"
-optional = true
-
-[[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(329) [sender]"
-role = "sender"
-scenario = "protocol_version_mismatch"
-optional = true
+require_at_least = 1
+messages = [
+    { pattern = "rsync error: protocol incompatibility \\(code 2\\) at compat\\.c\\(\\d+\\) \\[.*\\]" },
+    { pattern = "rsync error: received SIGUSR1 \\(code 19\\) at main\\.c\\(\\d+\\) \\[.*\\]" },
+    { pattern = "rsync error: error in IPC code \\(code 14\\) at io\\.c\\(\\d+\\) \\[sender\\]", role = "sender" },
+]
 
 [[messages]]
 text = 'rsync: change_dir "/nonexistent/source" failed: No such file or directory (2)'
@@ -119,27 +102,13 @@ text = "rsync error: error in IPC code (code 14) at pipe.c(85) [sender]"
 role = "sender"
 scenario = "remote_not_found"
 
-# Race-dependent messages for remote_not_found - may or may not appear
-[[messages]]
-text = "rsync: safe_write failed to write 4 bytes to socket [sender]: Broken pipe (32)"
-role = "sender"
+# Race-dependent: At least one IPC/connection error must appear after exec failure
+[[message_groups]]
+name = "remote_not_found_errors"
 scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(329) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync: connection unexpectedly closed (0 bytes received so far) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
-
-[[messages]]
-text = "rsync error: error in IPC code (code 14) at io.c(235) [sender]"
-role = "sender"
-scenario = "remote_not_found"
-optional = true
+require_at_least = 1
+messages = [
+    { pattern = "rsync: safe_write failed to write \\d+ bytes to socket \\[sender\\]: Broken pipe.*", role = "sender" },
+    { pattern = "rsync error: error in IPC code \\(code 14\\) at io\\.c\\(\\d+\\) \\[sender\\]", role = "sender" },
+    { pattern = "rsync: connection unexpectedly closed.*\\[sender\\]", role = "sender" },
+]
