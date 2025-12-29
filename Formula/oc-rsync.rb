@@ -2,17 +2,17 @@ class OcRsync < Formula
   desc "Pure-Rust rsync 3.4.1-compatible implementation"
   homepage "https://github.com/oferchen/rsync"
   license "GPL-3.0-or-later"
-  version "3.4.1-rust"
+  version "master"
 
   on_macos do
     on_intel do
-      url "https://github.com/oferchen/rsync/releases/download/v3.4.1-rust/oc-rsync-3.4.1-rust-darwin-x86_64.tar.gz"
-      sha256 "d97197f4e8a71cc13a5476f687f9ab64ec84bfc8a28418136ecfa9c2c8fdeb49"
+      url "https://github.com/oferchen/rsync/releases/download/master/oc-rsync-0.5.0-darwin-x86_64.tar.gz"
+      sha256 "58e411a48e730c41c13c770c17fc1cc6a101ebecd8b4c09b2c5cffa0c2e8211f"
     end
 
     on_arm do
-      url "https://github.com/oferchen/rsync/releases/download/v3.4.1-rust/oc-rsync-3.4.1-rust-darwin-aarch64.tar.gz"
-      sha256 "e9b02ab14decb3985f89598cf3d0ce758b2bf7fbd779fb3722320cc5eb3380cf"
+      url "https://github.com/oferchen/rsync/releases/download/master/oc-rsync-0.5.0-darwin-aarch64.tar.gz"
+      sha256 "a99777d04375a7fc92cbe79df2c2f850ec5c03d331d930c8c8e4a8c17bfba77d"
     end
   end
 
