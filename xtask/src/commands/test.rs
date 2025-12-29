@@ -1,6 +1,5 @@
+use crate::cli::TestArgs;
 use crate::error::{TaskError, TaskResult};
-#[cfg(test)]
-use crate::util::is_help_flag;
 use crate::util::run_cargo_tool;
 use std::ffi::OsString;
 use std::path::Path;
@@ -30,31 +29,13 @@ pub struct TestOptions {
     pub install_nextest: bool,
 }
 
-/// Parses CLI arguments for the `test` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<TestOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut options = TestOptions::default();
-
-    for arg in args.into_iter() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
-        }
-
-        match arg.to_string_lossy().as_ref() {
-            "--use-cargo-test" => options.force_cargo_test = true,
-            "--install-nextest" => options.install_nextest = true,
-            other => {
-                return Err(TaskError::Usage(format!(
-                    "unrecognised argument '{other}' for test command"
-                )));
-            }
+impl From<TestArgs> for TestOptions {
+    fn from(args: TestArgs) -> Self {
+        Self {
+            force_cargo_test: args.use_cargo_test,
+            install_nextest: args.install_nextest,
         }
     }
-
-    Ok(options)
 }
 
 /// Executes the `test` command.
@@ -120,52 +101,40 @@ fn install_nextest(workspace: &Path) -> TaskResult<()> {
     )
 }
 
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask test [--use-cargo-test] [--install-nextest]\\n\\n\\\
-Options:\\n  --use-cargo-test    Force running cargo test even when cargo-nextest is available\\n  --install-nextest   Install cargo-nextest when missing before falling back to cargo test\\n  -h, --help          Show this help message",
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::TaskError;
+    use crate::cli::TestArgs;
     use crate::util::test_env::EnvGuard;
     use crate::workspace::workspace_root;
 
     const FORCE_MISSING_ENV: &str = "OC_RSYNC_FORCE_MISSING_CARGO_TOOLS";
 
     #[test]
-    fn parse_args_accepts_default_configuration() {
-        let options = parse_args(std::iter::empty()).expect("parse succeeds");
+    fn from_args_default_configuration() {
+        let args = TestArgs::default();
+        let options: TestOptions = args.into();
         assert_eq!(options, TestOptions::default());
     }
 
     #[test]
-    fn parse_args_supports_force_cargo_test_flag() {
-        let options = parse_args([OsString::from("--use-cargo-test")]).expect("parse succeeds");
+    fn from_args_use_cargo_test_flag() {
+        let args = TestArgs {
+            use_cargo_test: true,
+            ..Default::default()
+        };
+        let options: TestOptions = args.into();
         assert!(options.force_cargo_test);
     }
 
     #[test]
-    fn parse_args_supports_install_nextest_flag() {
-        let options = parse_args([OsString::from("--install-nextest")]).expect("parse succeeds");
+    fn from_args_install_nextest_flag() {
+        let args = TestArgs {
+            install_nextest: true,
+            ..Default::default()
+        };
+        let options: TestOptions = args.into();
         assert!(options.install_nextest);
-    }
-
-    #[test]
-    fn parse_args_reports_help_request() {
-        let error = parse_args([OsString::from("--help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message == usage()));
-    }
-
-    #[test]
-    fn parse_args_rejects_unknown_argument() {
-        let error = parse_args([OsString::from("--unknown")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("test")));
     }
 
     #[test]
