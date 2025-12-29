@@ -1,5 +1,10 @@
-use crate::error::{TaskError, TaskResult};
-use crate::util::{count_file_lines, is_help_flag, read_limit_env_var, validation_error};
+#[cfg(test)]
+use crate::error::TaskError;
+use crate::error::TaskResult;
+#[cfg(test)]
+use crate::util::is_help_flag;
+use crate::util::{count_file_lines, read_limit_env_var, validation_error};
+#[cfg(test)]
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,6 +25,7 @@ pub struct EnforceLimitsOptions {
 }
 
 /// Parses CLI arguments for the `enforce-limits` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<EnforceLimitsOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -196,6 +202,7 @@ pub fn execute(workspace: &Path, options: EnforceLimitsOptions) -> TaskResult<()
     Ok(())
 }
 
+#[cfg(test)]
 fn parse_positive_usize_arg(value: &OsString, flag: &str) -> TaskResult<usize> {
     let text = value.to_str().ok_or_else(|| {
         TaskError::Usage(format!("{flag} requires a UTF-8 positive integer value"))
@@ -255,6 +262,7 @@ fn should_skip_directory(path: &Path) -> bool {
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask enforce-limits [OPTIONS]\n\nOptions:\n  --max-lines N    Fail when a Rust source exceeds N lines\n  --warn-lines N   Warn when a Rust source exceeds N lines\n  --config PATH    Override the line limit configuration path\n  -h, --help       Show this help message",

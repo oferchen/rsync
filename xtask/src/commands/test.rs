@@ -1,5 +1,7 @@
 use crate::error::{TaskError, TaskResult};
-use crate::util::{is_help_flag, run_cargo_tool};
+#[cfg(test)]
+use crate::util::is_help_flag;
+use crate::util::run_cargo_tool;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -22,11 +24,14 @@ const CARGO_TEST_INSTALL_HINT: &str = "install Rust and cargo from https://rustu
 /// Options accepted by the `test` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TestOptions {
-    force_cargo_test: bool,
-    install_nextest: bool,
+    /// Force running cargo test even when cargo-nextest is available.
+    pub force_cargo_test: bool,
+    /// Install cargo-nextest when missing before falling back to cargo test.
+    pub install_nextest: bool,
 }
 
 /// Parses CLI arguments for the `test` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<TestOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -116,6 +121,7 @@ fn install_nextest(workspace: &Path) -> TaskResult<()> {
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask test [--use-cargo-test] [--install-nextest]\\n\\n\\\

@@ -1,5 +1,8 @@
+#[cfg(test)]
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use crate::util::is_help_flag;
+#[cfg(test)]
 use std::ffi::OsString;
 
 /// Output format supported by the `branding` command.
@@ -20,6 +23,7 @@ pub struct BrandingOptions {
 }
 
 /// Parses CLI arguments for the `branding` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<BrandingOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -58,6 +62,7 @@ where
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask branding [--json]\n\nOptions:\n  --json          Emit branding metadata in JSON format\n  -h, --help      Show this help message",

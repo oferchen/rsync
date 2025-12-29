@@ -48,6 +48,7 @@
 //! - [CycloneDX Specification](https://cyclonedx.org/specification/) — format
 //!   reference for the generated Software Bill of Materials.
 
+mod cli;
 mod commands;
 mod error;
 #[cfg(test)]
@@ -55,186 +56,188 @@ mod test_support;
 mod util;
 mod workspace;
 
+use crate::cli::{Cli, Command, InteropCommand};
 use crate::commands::{
     branding, doc_package, docs, enforce_limits, interop, no_binaries, no_placeholders, package,
     preflight, readme_version, release, sbom, test,
 };
 use crate::error::TaskError;
-use crate::util::is_help_flag;
 use crate::workspace::workspace_root;
-use std::env;
+use clap::Parser;
 use std::ffi::OsString;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    match run_with_args(env::args_os().skip(1)) {
+    let cli = Cli::parse();
+    match run_command(cli) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(TaskError::Help(text)) => {
-            println!("{text}");
-            ExitCode::SUCCESS
-        }
         Err(error) => {
             eprintln!("{error}");
-            if let TaskError::Usage(_) = error {
-                eprintln!("{}", top_level_usage());
-            }
             ExitCode::FAILURE
         }
     }
 }
 
-fn run_with_args<I>(args: I) -> Result<(), TaskError>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut args = args.into_iter();
-    let Some(first) = args.next() else {
-        return Err(TaskError::Usage(String::from(
-            "missing command; run with --help to see available tasks",
-        )));
-    };
+fn run_command(cli: Cli) -> Result<(), TaskError> {
+    let workspace = workspace_root()?;
 
-    if is_help_flag(&first) {
-        return Err(TaskError::Help(top_level_usage()));
-    }
-
-    let command = first.to_string_lossy();
-    match command.as_ref() {
-        "help" => Err(TaskError::Help(top_level_usage())),
-        "branding" => {
-            let options = branding::parse_args(args)?;
-            let workspace = workspace_root()?;
+    match cli.command {
+        Command::Branding(args) => {
+            let options = branding::BrandingOptions {
+                format: if args.json {
+                    branding::BrandingOutputFormat::Json
+                } else {
+                    branding::BrandingOutputFormat::Text
+                },
+            };
             branding::execute(&workspace, options)
         }
-        "docs" => {
-            let options = docs::parse_args(args)?;
-            let workspace = workspace_root()?;
+
+        Command::Docs(args) => {
+            let options = docs::DocsOptions {
+                open: args.open,
+                validate: args.validate,
+            };
             docs::execute(&workspace, options)
         }
-        "doc-package" => {
-            let options = doc_package::parse_args(args)?;
-            let workspace = workspace_root()?;
+
+        Command::DocPackage(args) => {
+            let options = doc_package::DocPackageOptions {
+                output: args.output,
+                open: args.open,
+            };
             doc_package::execute(&workspace, options)
         }
-        "no-binaries" => {
-            let options = no_binaries::parse_args(args)?;
-            let workspace = workspace_root()?;
-            no_binaries::execute(&workspace, options)
-        }
-        "enforce-limits" => {
-            let options = enforce_limits::parse_args(args)?;
-            let workspace = workspace_root()?;
+
+        Command::EnforceLimits(args) => {
+            // Validate warn_lines <= max_lines if both provided
+            if let (Some(warn), Some(max)) = (args.warn_lines, args.max_lines) {
+                if warn > max {
+                    return Err(TaskError::Usage(format!(
+                        "warn line limit ({warn}) cannot exceed maximum line limit ({max})"
+                    )));
+                }
+            }
+            let options = enforce_limits::EnforceLimitsOptions {
+                max_lines: args.max_lines,
+                warn_lines: args.warn_lines,
+                config_path: args.config,
+            };
             enforce_limits::execute(&workspace, options)
         }
-        "interop" => {
-            let options = interop::parse_args(args)?;
-            let workspace = workspace_root()?;
+
+        Command::Interop(args) => {
+            let command = args.command.unwrap_or(InteropCommand::All);
+            let options = match command {
+                InteropCommand::ExitCodes(common) => interop::InteropOptions {
+                    command: interop::InteropCommand::ExitCodes(interop::ExitCodesOptions {
+                        regenerate: common.regenerate,
+                        version: common.version,
+                        verbose: common.verbose,
+                        implementation: common.implementation,
+                        show_output: common.show_output,
+                        log_dir: common.log_dir,
+                    }),
+                },
+                InteropCommand::Messages(common) => interop::InteropOptions {
+                    command: interop::InteropCommand::Messages(interop::MessagesOptions {
+                        regenerate: common.regenerate,
+                        version: common.version,
+                        verbose: common.verbose,
+                        implementation: common.implementation,
+                        show_output: common.show_output,
+                        log_dir: common.log_dir,
+                    }),
+                },
+                InteropCommand::All => interop::InteropOptions {
+                    command: interop::InteropCommand::All,
+                },
+            };
             interop::execute(&workspace, options)
         }
-        "no-placeholders" => {
-            let options = no_placeholders::parse_args(args)?;
-            let workspace = workspace_root()?;
-            no_placeholders::execute(&workspace, options)
+
+        Command::NoBinaries(_) => no_binaries::execute(&workspace, no_binaries::NoBinariesOptions),
+
+        Command::NoPlaceholders(_) => {
+            no_placeholders::execute(&workspace, no_placeholders::NoPlaceholdersOptions)
         }
-        "preflight" => {
-            let options = preflight::parse_args(args)?;
-            let workspace = workspace_root()?;
-            preflight::execute(&workspace, options)
-        }
-        "release" => {
-            let options = release::parse_args(args)?;
-            let workspace = workspace_root()?;
-            release::execute(&workspace, options)
-        }
-        "sbom" => {
-            let options = sbom::parse_args(args)?;
-            let workspace = workspace_root()?;
-            sbom::execute(&workspace, options)
-        }
-        "readme-version" => {
-            let options = readme_version::parse_args(args)?;
-            let workspace = workspace_root()?;
-            readme_version::execute(&workspace, options)
-        }
-        "package" => {
-            let options = package::parse_args(args)?;
-            let workspace = workspace_root()?;
+
+        Command::Package(args) => {
+            let profile = if args.no_profile {
+                None
+            } else if args.debug {
+                Some(OsString::from("debug"))
+            } else if let Some(ref name) = args.profile {
+                Some(OsString::from(name))
+            } else {
+                // Default to dist profile (--release is also default)
+                Some(OsString::from(package::DIST_PROFILE))
+            };
+
+            let (build_deb, build_rpm, build_tarball) = if !args.deb && !args.rpm && !args.tarball {
+                // Default to building all
+                (true, true, true)
+            } else {
+                (args.deb, args.rpm, args.tarball)
+            };
+
+            let options = package::PackageOptions {
+                build_deb,
+                build_rpm,
+                build_tarball,
+                tarball_target: args.tarball_target.map(OsString::from),
+                profile,
+            };
             package::execute(&workspace, options)
         }
-        "test" => {
-            let options = test::parse_args(args)?;
-            let workspace = workspace_root()?;
+
+        Command::Preflight(_) => preflight::execute(&workspace, preflight::PreflightOptions),
+
+        Command::ReadmeVersion(_) => {
+            readme_version::execute(&workspace, readme_version::ReadmeVersionOptions)
+        }
+
+        Command::Release(args) => {
+            let options = release::ReleaseOptions {
+                skip_docs: args.skip_docs,
+                skip_hygiene: args.skip_hygiene,
+                skip_placeholder_scan: args.skip_placeholder_scan,
+                skip_binary_scan: args.skip_binary_scan,
+                skip_packages: args.skip_packages,
+                skip_upload: args.skip_upload,
+            };
+            release::execute(&workspace, options)
+        }
+
+        Command::Sbom(args) => {
+            let options = sbom::SbomOptions {
+                output: args.output,
+            };
+            sbom::execute(&workspace, options)
+        }
+
+        Command::Test(args) => {
+            let options = test::TestOptions {
+                force_cargo_test: args.use_cargo_test,
+                install_nextest: args.install_nextest,
+            };
             test::execute(&workspace, options)
         }
-        other => Err(TaskError::Usage(format!(
-            "unrecognised command '{other}'; run with --help for available tasks"
-        ))),
     }
 }
 
-fn top_level_usage() -> String {
-    String::from(concat!(
-        "Usage: cargo xtask <command>\n\nCommands:\n",
-        "  branding         Validate workspace branding metadata\n",
-        "  docs            Build API docs and run doctests\n",
-        "  enforce-limits   Enforce source line and comment hygiene limits\n",
-        "  interop          Validate interoperability with upstream rsync\n",
-        "  no-binaries      Assert the git index contains no binary artifacts\n",
-        "  no-placeholders  Ensure Rust sources are free from placeholder code\n",
-        "  package         Build distribution artifacts (deb/rpm)\n",
-        "  preflight        Run packaging preflight validation\n",
-        "  release         Run aggregated release-readiness checks\n",
-        "  readme-version   Ensure README versions match workspace metadata\n",
-        "  test            Run the workspace test suite (prefers cargo-nextest)\n",
-        "  sbom             Generate a CycloneDX SBOM for the workspace\n",
-        "  help             Show this help message\n\n",
-        "Run `cargo xtask <command> --help` for command-specific options."
-    ))
-}
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
 
     #[test]
-    fn top_level_usage_mentions_enforce_limits_command() {
-        let usage = top_level_usage();
-        assert!(usage.contains("enforce-limits"));
-        assert!(usage.contains("readme-version"));
-        assert!(usage.contains("release"));
-        assert!(usage.contains("test"));
-    }
-
-    #[test]
-    fn run_with_args_requires_command() {
-        let error = run_with_args(std::iter::empty()).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("missing command")));
-    }
-
-    #[test]
-    fn run_with_args_reports_help_for_help_command() {
-        let error = run_with_args([OsString::from("help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message.contains("Usage")));
-    }
-
-    #[test]
-    fn run_with_args_reports_unknown_command() {
-        let error = run_with_args([OsString::from("unknown")]).unwrap_err();
-        assert!(
-            matches!(error, TaskError::Usage(message) if message.contains("unrecognised command"))
-        );
-    }
-
-    #[test]
-    fn run_with_args_executes_sbom_command() {
+    fn run_command_executes_sbom() {
         let temp = tempdir().expect("create temp dir");
         let output = temp.path().join("cmd-sbom.json");
-        run_with_args([
-            OsString::from("sbom"),
-            OsString::from("--output"),
-            output.clone().into_os_string(),
-        ])
-        .expect("sbom command succeeds");
+
+        let cli = Cli::parse_from(["cargo-xtask", "sbom", "--output", output.to_str().unwrap()]);
+        run_command(cli).expect("sbom command succeeds");
         assert!(output.exists());
     }
 }

@@ -9,9 +9,13 @@ use crate::commands::{
     preflight::{self, PreflightOptions},
     readme_version::{self, ReadmeVersionOptions},
 };
-use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
+use crate::error::TaskError;
+use crate::error::TaskResult;
+#[cfg(test)]
 use crate::util::is_help_flag;
 use crate::workspace::load_workspace_branding;
+#[cfg(test)]
 use std::ffi::OsString;
 use std::path::Path;
 use upload::upload_release_artifacts;
@@ -34,6 +38,7 @@ pub struct ReleaseOptions {
 }
 
 /// Parses CLI arguments for the `release` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<ReleaseOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -81,6 +86,7 @@ where
     Ok(options)
 }
 
+#[cfg(test)]
 fn ensure_flag_unused(already_set: bool, flag: &str) -> TaskResult<()> {
     if already_set {
         Err(TaskError::Usage(format!(
@@ -167,6 +173,7 @@ pub fn execute(workspace: &Path, options: ReleaseOptions) -> TaskResult<()> {
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask release [OPTIONS]\n\nOptions:\n  --skip-docs                Skip building docs and running doctests\n  --skip-hygiene            Skip enforce-limits line-count checks\n  --skip-placeholder-scan   Skip placeholder detection scans\n  --skip-binary-scan        Skip checking the git index for binary files\n  --skip-packages           Skip building release packages\n  --skip-upload             Skip uploading release packages to GitHub\n  -h, --help                Show this help message",

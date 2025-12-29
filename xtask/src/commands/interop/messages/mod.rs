@@ -240,7 +240,8 @@ fn validate_messages(workspace: &Path, options: MessagesOptions) -> TaskResult<(
                     let (matchers, groups) = golden.get_matchers_for_scenario(&scenario.name);
 
                     // Validate using the new matcher infrastructure
-                    let result = matcher::validate_messages(&actual_for_matcher, &matchers, &groups);
+                    let result =
+                        matcher::validate_messages(&actual_for_matcher, &matchers, &groups);
 
                     total_checked += 1;
 

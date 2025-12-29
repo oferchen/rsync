@@ -1,6 +1,8 @@
 //! CLI argument parsing for interop validation commands.
 
+#[cfg(test)]
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use std::ffi::OsString;
 
 /// Options for the interop command.
@@ -57,6 +59,8 @@ pub struct MessagesOptions {
 }
 
 /// Parse interop command arguments.
+#[cfg(test)]
+#[allow(dead_code)]
 pub fn parse<I>(args: I) -> TaskResult<InteropOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -109,6 +113,8 @@ where
 }
 
 /// Common options shared by exit-codes and messages subcommands.
+#[cfg(test)]
+#[allow(dead_code)]
 struct CommonOptions {
     regenerate: bool,
     version: Option<String>,
@@ -119,6 +125,8 @@ struct CommonOptions {
 }
 
 /// Parse common options (--regenerate, --version, --verbose, --impl, --show-output, --log-dir).
+#[cfg(test)]
+#[allow(dead_code)]
 fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
     let mut regenerate = false;
     let mut version = None;
@@ -189,6 +197,8 @@ fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
 }
 
 /// Return usage information.
+#[cfg(test)]
+#[allow(dead_code)]
 pub fn usage() -> String {
     r#"
 USAGE:

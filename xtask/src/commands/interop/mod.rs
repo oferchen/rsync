@@ -13,7 +13,7 @@ mod shared;
 use crate::error::TaskResult;
 use std::path::Path;
 
-pub use args::{InteropCommand, InteropOptions};
+pub use args::{ExitCodesOptions, InteropCommand, InteropOptions, MessagesOptions};
 
 /// Execute the interop validation command.
 pub fn execute(workspace: &Path, options: InteropOptions) -> TaskResult<()> {
@@ -38,6 +38,8 @@ pub fn execute(workspace: &Path, options: InteropOptions) -> TaskResult<()> {
 }
 
 /// Parse command-line arguments for the interop command.
+#[cfg(test)]
+#[allow(dead_code)]
 pub fn parse_args<I>(args: I) -> TaskResult<InteropOptions>
 where
     I: IntoIterator<Item = std::ffi::OsString>,
@@ -46,6 +48,7 @@ where
 }
 
 /// Return usage information for the interop command.
+#[cfg(test)]
 #[allow(dead_code)]
 pub fn usage() -> String {
     args::usage()
