@@ -33,6 +33,7 @@ impl NormalizedMessage {
     }
 
     /// Check if this message matches another (ignoring acceptable variations).
+    #[cfg(test)]
     pub fn matches(&self, other: &NormalizedMessage) -> bool {
         self.text == other.text && self.role == other.role
     }
@@ -133,6 +134,7 @@ pub fn normalize_messages(messages: &[Message]) -> Vec<NormalizedMessage> {
 }
 
 /// Compare two sets of normalized messages and return differences.
+#[cfg(test)]
 pub fn find_differences(
     actual: &[NormalizedMessage],
     expected: &[NormalizedMessage],
