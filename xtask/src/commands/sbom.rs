@@ -1,9 +1,11 @@
 use crate::error::{TaskError, TaskResult};
+#[cfg(test)]
 use crate::util::is_help_flag;
 use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use cargo_metadata::{CargoOpt, Metadata, MetadataCommand, Package};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +18,7 @@ pub struct SbomOptions {
 }
 
 /// Parses CLI arguments for the `sbom` command.
+#[cfg(test)]
 pub fn parse_args<I>(args: I) -> TaskResult<SbomOptions>
 where
     I: IntoIterator<Item = OsString>,
@@ -81,6 +84,7 @@ pub fn execute(workspace: &Path, options: SbomOptions) -> TaskResult<()> {
 }
 
 /// Returns usage text for the command.
+#[cfg(test)]
 pub fn usage() -> String {
     String::from(
         "Usage: cargo xtask sbom [--output PATH]\n\nOptions:\n  --output PATH    Override the SBOM output path (relative to the workspace root unless absolute)\n  -h, --help       Show this help message",
