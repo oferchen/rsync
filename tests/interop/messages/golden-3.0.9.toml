@@ -129,12 +129,27 @@ text = "rsync error: error in IPC code (code 14) at pipe.c(84) [sender]"
 role = "sender"
 scenario = "remote_not_found"
 
+# Race-dependent messages for remote_not_found - may or may not appear
 [[messages]]
 text = "rsync: writefd_unbuffered failed to write 4 bytes to socket [sender]: Broken pipe (32)"
 role = "sender"
 scenario = "remote_not_found"
+optional = true
 
 [[messages]]
 text = "rsync error: error in IPC code (code 14) at io.c(1532) [sender]"
 role = "sender"
 scenario = "remote_not_found"
+optional = true
+
+[[messages]]
+text = "rsync: connection unexpectedly closed (0 bytes received so far) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+optional = true
+
+[[messages]]
+text = "rsync error: error in IPC code (code 14) at io.c(605) [sender]"
+role = "sender"
+scenario = "remote_not_found"
+optional = true
