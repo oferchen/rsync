@@ -107,10 +107,10 @@ windows = ["x86_64", "aarch64"]
         let error = execute(tempdir.path(), BrandingOptions::default()).unwrap_err();
         match error {
             TaskError::Io(inner) => {
+                let message = inner.to_string();
                 assert!(
-                    inner
-                        .to_string()
-                        .contains("failed to read workspace manifest")
+                    message.contains("failed to read") && message.contains("Cargo.toml"),
+                    "expected error about reading Cargo.toml, got: {message}"
                 );
             }
             other => panic!("unexpected error: {other:?}"),

@@ -1,8 +1,8 @@
 use crate::error::{TaskError, TaskResult};
+use crate::util::read_file_with_context;
 use branding::workspace;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 use toml::Value;
 
@@ -86,16 +86,7 @@ pub fn workspace_manifest_path(workspace: &Path) -> PathBuf {
 
 /// Reads the workspace manifest into memory.
 pub fn read_workspace_manifest(workspace: &Path) -> TaskResult<String> {
-    let manifest_path = workspace_manifest_path(workspace);
-    fs::read_to_string(&manifest_path).map_err(|error| {
-        TaskError::Io(std::io::Error::new(
-            error.kind(),
-            format!(
-                "failed to read workspace manifest at {}: {error}",
-                manifest_path.display()
-            ),
-        ))
-    })
+    read_file_with_context(&workspace_manifest_path(workspace))
 }
 
 /// Loads the workspace branding metadata from the manifest on disk.

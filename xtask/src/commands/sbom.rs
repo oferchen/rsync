@@ -1,5 +1,6 @@
 use crate::cli::SbomArgs;
 use crate::error::{TaskError, TaskResult};
+use crate::util::resolve_workspace_path;
 use crate::workspace::{WorkspaceBranding, load_workspace_branding};
 use cargo_metadata::{CargoOpt, Metadata, MetadataCommand, Package};
 use serde::Serialize;
@@ -26,11 +27,7 @@ impl From<SbomArgs> for SbomOptions {
 pub fn execute(workspace: &Path, options: SbomOptions) -> TaskResult<()> {
     let default_output = PathBuf::from("target/sbom/rsync.cdx.json");
     let raw_output = options.output.unwrap_or(default_output);
-    let output_path = if raw_output.is_absolute() {
-        raw_output
-    } else {
-        workspace.join(raw_output)
-    };
+    let output_path = resolve_workspace_path(workspace, raw_output);
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)?;

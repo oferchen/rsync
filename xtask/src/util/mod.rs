@@ -18,7 +18,9 @@ pub use commands::{
     ensure_command_available, ensure_rust_target_installed, probe_cargo_tool, run_cargo_tool,
     run_cargo_tool_with_env,
 };
-pub use filesystem::{count_file_lines, is_probably_binary};
+pub use filesystem::{
+    count_file_lines, is_probably_binary, read_file_with_context, resolve_workspace_path,
+};
 pub use git::{list_rust_sources_via_git, list_tracked_files};
 pub use limits::read_limit_env_var;
 
