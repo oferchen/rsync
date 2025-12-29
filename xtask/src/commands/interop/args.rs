@@ -1,9 +1,6 @@
 //! CLI argument parsing for interop validation commands.
 
-#[cfg(test)]
-use crate::error::{TaskError, TaskResult};
-#[cfg(test)]
-use std::ffi::OsString;
+use crate::cli::{InteropArgs, InteropCommand as CliInteropCommand, InteropCommonArgs};
 
 /// Options for the interop command.
 #[derive(Debug, Clone)]
@@ -58,187 +55,40 @@ pub struct MessagesOptions {
     pub log_dir: Option<String>,
 }
 
-/// Parse interop command arguments.
-#[cfg(test)]
-#[allow(dead_code)]
-pub fn parse<I>(args: I) -> TaskResult<InteropOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let args: Vec<OsString> = args.into_iter().collect();
-
-    if args.is_empty() {
-        // Default to running all validations
-        return Ok(InteropOptions {
-            command: InteropCommand::All,
-        });
-    }
-
-    let subcommand = &args[0];
-    let remaining = &args[1..];
-
-    let command = match subcommand.to_string_lossy().as_ref() {
-        "exit-codes" => {
-            let opts = parse_common_options(remaining)?;
-            InteropCommand::ExitCodes(ExitCodesOptions {
-                regenerate: opts.regenerate,
-                version: opts.version,
-                verbose: opts.verbose,
-                implementation: opts.implementation,
-                show_output: opts.show_output,
-                log_dir: opts.log_dir,
-            })
-        }
-        "messages" => {
-            let opts = parse_common_options(remaining)?;
-            InteropCommand::Messages(MessagesOptions {
-                regenerate: opts.regenerate,
-                version: opts.version,
-                verbose: opts.verbose,
-                implementation: opts.implementation,
-                show_output: opts.show_output,
-                log_dir: opts.log_dir,
-            })
-        }
-        "all" => InteropCommand::All,
-        "--help" | "-h" => {
-            return Err(TaskError::Help(usage()));
-        }
-        other => {
-            return Err(TaskError::Usage(format!("Unknown subcommand: {}", other)));
-        }
-    };
-
-    Ok(InteropOptions { command })
-}
-
-/// Common options shared by exit-codes and messages subcommands.
-#[cfg(test)]
-#[allow(dead_code)]
-struct CommonOptions {
-    regenerate: bool,
-    version: Option<String>,
-    verbose: bool,
-    implementation: Option<String>,
-    show_output: bool,
-    log_dir: Option<String>,
-}
-
-/// Parse common options (--regenerate, --version, --verbose, --impl, --show-output, --log-dir).
-#[cfg(test)]
-#[allow(dead_code)]
-fn parse_common_options(args: &[OsString]) -> TaskResult<CommonOptions> {
-    let mut regenerate = false;
-    let mut version = None;
-    let mut verbose = false;
-    let mut implementation = None;
-    let mut show_output = false;
-    let mut log_dir = None;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].to_string_lossy().as_ref() {
-            "--regenerate" => {
-                regenerate = true;
-                i += 1;
-            }
-            "--version" => {
-                if i + 1 >= args.len() {
-                    return Err(TaskError::Usage(String::from(
-                        "--version requires an argument",
-                    )));
-                }
-                version = Some(args[i + 1].to_string_lossy().into_owned());
-                i += 2;
-            }
-            "--impl" => {
-                if i + 1 >= args.len() {
-                    return Err(TaskError::Usage(String::from(
-                        "--impl requires an argument (upstream or oc-rsync)",
-                    )));
-                }
-                implementation = Some(args[i + 1].to_string_lossy().into_owned());
-                i += 2;
-            }
-            "--verbose" | "-v" => {
-                verbose = true;
-                i += 1;
-            }
-            "--show-output" | "-o" => {
-                show_output = true;
-                i += 1;
-            }
-            "--log-dir" => {
-                if i + 1 >= args.len() {
-                    return Err(TaskError::Usage(String::from(
-                        "--log-dir requires a directory path",
-                    )));
-                }
-                log_dir = Some(args[i + 1].to_string_lossy().into_owned());
-                i += 2;
-            }
-            "--help" | "-h" => {
-                return Err(TaskError::Help(usage()));
-            }
-            other => {
-                return Err(TaskError::Usage(format!("Unknown option: {}", other)));
-            }
+impl From<InteropCommonArgs> for ExitCodesOptions {
+    fn from(args: InteropCommonArgs) -> Self {
+        Self {
+            regenerate: args.regenerate,
+            version: args.version,
+            verbose: args.verbose,
+            implementation: args.implementation,
+            show_output: args.show_output,
+            log_dir: args.log_dir,
         }
     }
-
-    Ok(CommonOptions {
-        regenerate,
-        version,
-        verbose,
-        implementation,
-        show_output,
-        log_dir,
-    })
 }
 
-/// Return usage information.
-#[cfg(test)]
-#[allow(dead_code)]
-pub fn usage() -> String {
-    r#"
-USAGE:
-    cargo xtask interop [SUBCOMMAND] [OPTIONS]
+impl From<InteropCommonArgs> for MessagesOptions {
+    fn from(args: InteropCommonArgs) -> Self {
+        Self {
+            regenerate: args.regenerate,
+            version: args.version,
+            verbose: args.verbose,
+            implementation: args.implementation,
+            show_output: args.show_output,
+            log_dir: args.log_dir,
+        }
+    }
+}
 
-SUBCOMMANDS:
-    exit-codes    Validate exit codes against upstream rsync
-    messages      Validate message formats against upstream rsync
-    all           Run all validations (default)
-
-OPTIONS:
-    --regenerate       Regenerate golden files instead of validating
-    --version VER      Test against specific upstream version (3.0.9, 3.1.3, 3.4.1)
-    --impl IMPL        Implementation to test: "upstream" (default) or "oc-rsync"
-    --verbose, -v      Enable verbose output
-    --show-output, -o  Show stdout/stderr from rsync commands
-    --log-dir DIR      Save rsync logs to directory (uses rsync --log-file)
-    --help, -h         Show this help message
-
-EXAMPLES:
-    # Validate exit codes against all upstream versions
-    cargo xtask interop exit-codes
-
-    # Validate with rsync output displayed
-    cargo xtask interop exit-codes -v --show-output
-
-    # Save rsync logs to a directory
-    cargo xtask interop exit-codes --log-dir /tmp/interop-logs
-
-    # Validate oc-rsync against golden files
-    cargo xtask interop exit-codes --impl oc-rsync
-
-    # Regenerate golden files for exit codes
-    cargo xtask interop exit-codes --regenerate
-
-    # Validate messages for specific upstream version
-    cargo xtask interop messages --version 3.4.1
-
-    # Run all validations (exit codes + messages)
-    cargo xtask interop all
-"#
-    .to_owned()
+impl From<InteropArgs> for InteropOptions {
+    fn from(args: InteropArgs) -> Self {
+        let command = args.command.unwrap_or(CliInteropCommand::All);
+        let command = match command {
+            CliInteropCommand::ExitCodes(common) => InteropCommand::ExitCodes(common.into()),
+            CliInteropCommand::Messages(common) => InteropCommand::Messages(common.into()),
+            CliInteropCommand::All => InteropCommand::All,
+        };
+        Self { command }
+    }
 }

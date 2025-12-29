@@ -3,11 +3,8 @@
 //! This command builds the rustdoc documentation for the workspace and packages
 //! it into a tarball suitable for hosting or distribution with releases.
 
+use crate::cli::DocPackageArgs;
 use crate::error::TaskError;
-#[cfg(test)]
-use crate::util::is_help_flag;
-#[cfg(test)]
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,41 +26,13 @@ impl Default for DocPackageOptions {
     }
 }
 
-/// Parse command-line arguments for doc packaging
-#[cfg(test)]
-#[allow(dead_code)]
-pub fn parse_args<I>(args: I) -> Result<DocPackageOptions, TaskError>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut opts = DocPackageOptions::default();
-    let mut iter = args.into_iter();
-
-    while let Some(arg) = iter.next() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
-        }
-
-        let arg_str = arg.to_string_lossy();
-        match arg_str.as_ref() {
-            "--output" | "-o" => {
-                let Some(path) = iter.next() else {
-                    return Err(TaskError::Usage(format!(
-                        "{arg_str} requires a path argument"
-                    )));
-                };
-                opts.output = PathBuf::from(path);
-            }
-            "--open" => {
-                opts.open = true;
-            }
-            _ => {
-                return Err(TaskError::Usage(format!("unknown flag: {arg_str}")));
-            }
+impl From<DocPackageArgs> for DocPackageOptions {
+    fn from(args: DocPackageArgs) -> Self {
+        Self {
+            output: args.output,
+            open: args.open,
         }
     }
-
-    Ok(opts)
 }
 
 /// Execute doc packaging
@@ -131,48 +100,27 @@ pub fn execute(workspace: &Path, options: DocPackageOptions) -> Result<(), TaskE
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
-fn usage() -> String {
-    String::from(
-        r#"cargo xtask doc-package
+mod tests {
+    use super::*;
 
-Generate and package rustdoc for distribution.
+    #[test]
+    fn from_args_uses_specified_output() {
+        let args = DocPackageArgs {
+            output: PathBuf::from("custom/path"),
+            open: false,
+        };
+        let options: DocPackageOptions = args.into();
+        assert_eq!(options.output, PathBuf::from("custom/path"));
+        assert!(!options.open);
+    }
 
-This command:
-1. Builds rustdoc for all workspace crates with --no-deps
-2. Creates a tarball of the documentation
-3. Places the tarball in target/doc-dist/ (or custom --output path)
-
-The resulting tarball can be:
-- Uploaded to GitHub releases
-- Hosted on a static web server
-- Distributed with packages
-- Extracted locally for offline browsing
-
-OPTIONS:
-    --output, -o <PATH>    Output directory for tarball [default: target/doc-dist]
-    --open                 Open documentation in browser after building
-    --help, -h             Show this help message
-
-EXAMPLES:
-    # Generate and package documentation
-    cargo xtask doc-package
-
-    # Build, package, and open in browser
-    cargo xtask doc-package --open
-
-    # Package to custom location
-    cargo xtask doc-package --output artifacts/docs
-
-INTEGRATION WITH CI:
-    # In .github/workflows/release.yml:
-    - name: Package documentation
-      run: cargo xtask doc-package --output dist/
-
-    - name: Upload documentation
-      uses: actions/upload-artifact@v3
-      with:
-        name: rustdoc
-        path: dist/oc-rsync-rustdoc.tar.gz"#,
-    )
+    #[test]
+    fn from_args_with_open_flag() {
+        let args = DocPackageArgs {
+            output: PathBuf::from("target/doc-dist"),
+            open: true,
+        };
+        let options: DocPackageOptions = args.into();
+        assert!(options.open);
+    }
 }

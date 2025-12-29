@@ -1,17 +1,8 @@
-#[cfg(test)]
-use crate::error::TaskError;
 use crate::error::TaskResult;
-#[cfg(test)]
-use crate::util::is_help_flag;
 use crate::util::{list_rust_sources_via_git, validation_error};
-#[cfg(test)]
-use std::ffi::OsString;
 use std::fs;
 use std::io::BufRead;
 use std::path::Path;
-
-#[cfg(test)]
-use std::path::PathBuf;
 
 /// Options accepted by the `no-placeholders` command.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -27,28 +18,6 @@ const TRIPLE_X_WORD_BYTES: [u8; 3] = [b'x', b'x', b'x'];
 const UNIMPLEMENTED_WORD_BYTES: [u8; 13] = [
     b'u', b'n', b'i', b'm', b'p', b'l', b'e', b'm', b'e', b'n', b't', b'e', b'd',
 ];
-
-/// Parses CLI arguments for the `no-placeholders` command.
-#[cfg(test)]
-pub fn parse_args<I>(args: I) -> TaskResult<NoPlaceholdersOptions>
-where
-    I: IntoIterator<Item = OsString>,
-{
-    let mut args = args.into_iter();
-
-    if let Some(arg) = args.next() {
-        if is_help_flag(&arg) {
-            return Err(TaskError::Help(usage()));
-        }
-
-        return Err(TaskError::Usage(format!(
-            "unrecognised argument '{}' for no-placeholders command",
-            arg.to_string_lossy()
-        )));
-    }
-
-    Ok(NoPlaceholdersOptions)
-}
 
 /// Executes the `no-placeholders` command.
 pub fn execute(workspace: &Path, _options: NoPlaceholdersOptions) -> TaskResult<()> {
@@ -172,17 +141,10 @@ const fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'
 }
 
-/// Returns usage text for the command.
-#[cfg(test)]
-pub fn usage() -> String {
-    String::from(
-        "Usage: cargo xtask no-placeholders\n\nOptions:\n  -h, --help      Show this help message",
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn unique_temp_path(suffix: &str) -> PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -192,24 +154,6 @@ mod tests {
             .expect("time monotonic")
             .as_nanos();
         std::env::temp_dir().join(format!("rsync_xtask_{now}_{suffix}"))
-    }
-
-    #[test]
-    fn parse_args_accepts_default_configuration() {
-        let options = parse_args(std::iter::empty()).expect("parse succeeds");
-        assert_eq!(options, NoPlaceholdersOptions);
-    }
-
-    #[test]
-    fn parse_args_reports_help_request() {
-        let error = parse_args([OsString::from("--help")]).unwrap_err();
-        assert!(matches!(error, TaskError::Help(message) if message == usage()));
-    }
-
-    #[test]
-    fn parse_args_rejects_unknown_argument() {
-        let error = parse_args([OsString::from("--unknown")]).unwrap_err();
-        assert!(matches!(error, TaskError::Usage(message) if message.contains("no-placeholders")));
     }
 
     #[test]
