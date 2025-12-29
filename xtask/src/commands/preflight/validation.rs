@@ -1,9 +1,8 @@
-use crate::error::{TaskError, TaskResult};
-use crate::util::{cargo_metadata_json, ensure, validation_error};
+use crate::error::TaskResult;
+use crate::util::{cargo_metadata_json, ensure, read_file_with_context, validation_error};
 use crate::workspace::{self, WorkspaceBranding};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
 use toml::Value;
 
@@ -277,12 +276,7 @@ pub(crate) fn validate_documentation(
 
     for check in checks {
         let path = workspace.join(check.relative_path);
-        let contents = fs::read_to_string(&path).map_err(|error| {
-            TaskError::Io(std::io::Error::new(
-                error.kind(),
-                format!("failed to read {}: {error}", path.display()),
-            ))
-        })?;
+        let contents = read_file_with_context(&path)?;
 
         let missing: Vec<&str> = check
             .required_snippets
