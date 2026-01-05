@@ -275,11 +275,11 @@ pub struct TestArgs {
 // Task tree conversion
 // ─────────────────────────────────────────────────────────────────────────────
 
-use crate::task::tasks::{
-    DocsTask, DocPackageTask, EnforceLimitsTask, NoBinariesTask, NoPlaceholdersTask,
-    PackageTask, PreflightTask, ReleaseTask, SbomTask, TestTask,
-};
 use crate::task::Task;
+use crate::task::tasks::{
+    DocPackageTask, DocsTask, EnforceLimitsTask, NoBinariesTask, NoPlaceholdersTask, PackageTask,
+    PreflightTask, ReleaseTask, SbomTask, TestTask,
+};
 
 /// Extension trait for converting commands to task trees.
 pub trait CommandExt {
@@ -498,13 +498,7 @@ mod tests {
 
     #[test]
     fn parse_package_deb_variant() {
-        let cli = Cli::parse_from([
-            "cargo-xtask",
-            "package",
-            "--deb",
-            "--deb-variant",
-            "focal",
-        ]);
+        let cli = Cli::parse_from(["cargo-xtask", "package", "--deb", "--deb-variant", "focal"]);
         match cli.command {
             Command::Package(args) => {
                 assert!(args.deb);

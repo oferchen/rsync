@@ -120,10 +120,7 @@ impl Task for BuildRpmTask {
     }
 
     fn subtasks(&self) -> Vec<Box<dyn Task>> {
-        vec![
-            Box::new(CheckRpmbuildTask),
-            Box::new(InvokeCargoRpmTask),
-        ]
+        vec![Box::new(CheckRpmbuildTask), Box::new(InvokeCargoRpmTask)]
     }
 }
 

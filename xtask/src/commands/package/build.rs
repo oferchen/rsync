@@ -590,9 +590,10 @@ fn rename_deb_with_variant_suffix(
     profile: &Option<OsString>,
     variant: &str,
 ) -> TaskResult<()> {
-    let profile_dir = profile
-        .as_ref()
-        .map_or_else(|| String::from("debug"), |v| v.to_string_lossy().into_owned());
+    let profile_dir = profile.as_ref().map_or_else(
+        || String::from("debug"),
+        |v| v.to_string_lossy().into_owned(),
+    );
     let deb_dir = workspace.join("target").join(&profile_dir);
 
     // Find the generated deb file (cargo-deb outputs to target/<profile>/*.deb)
@@ -601,8 +602,10 @@ fn rename_deb_with_variant_suffix(
     for entry in entries.flatten() {
         let path = entry.path();
         if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-            if filename.starts_with(&format!("{}_{}", branding.client_bin, branding.rust_version))
-                && filename.ends_with(".deb")
+            if filename.starts_with(&format!(
+                "{}_{}",
+                branding.client_bin, branding.rust_version
+            )) && filename.ends_with(".deb")
                 && !filename.contains(&format!("_{variant}.deb"))
             {
                 // Insert variant before .deb extension
