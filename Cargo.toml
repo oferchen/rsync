@@ -71,6 +71,9 @@ members = [
     "xtask",
     "crates/apple-fs",
 ]
+exclude = [
+    "crates/protocol/fuzz",
+]
 resolver = "2"
 
 [workspace.package]

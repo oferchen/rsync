@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! crates/batch/src/lib.rs
 //!
 //! Batch mode support for offline/disconnected transfer workflows.

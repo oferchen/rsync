@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! crates/match/src/lib.rs
 //!
 //! Block matching and delta generation for rsync transfers.
