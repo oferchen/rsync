@@ -428,7 +428,7 @@ The workspace uses Cargo feature flags to enable optional functionality. The fol
 | `acl` | core, cli, engine, metadata | POSIX ACL (Access Control List) preservation |
 | `xattr` | core, cli, engine, metadata | Extended attribute preservation |
 | `iconv` | core, protocol | Filename encoding conversion (via encoding_rs) |
-| `openssl-vendored` | checksums | OpenSSL with vendored build (default for checksums) |
+| `xxh3-simd` | checksums | Runtime SIMD detection for XXH3 (AVX2/NEON) |
 
 ### Optional Features
 
@@ -441,6 +441,9 @@ The workspace uses Cargo feature flags to enable optional functionality. The fol
 | `sd-notify` | daemon, core | systemd notification support for service integration |
 | `serde` | logging, protocol, flist | Serialization support for configuration and protocol types |
 | `test-support` | bandwidth | Test utilities for bandwidth limiting |
+| `openssl` | checksums | Use OpenSSL for hash implementations (adds C dependency) |
+| `openssl-vendored` | checksums | Use vendored OpenSSL build (adds C dependency) |
+| `zlib-sys` | compress | Use system zlib instead of pure-Rust miniz_oxide |
 
 ### Building with Features
 
