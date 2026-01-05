@@ -29,8 +29,6 @@ pub struct FileListWriter {
     protocol: ProtocolVersion,
     /// Protocol codec for version-aware encoding.
     codec: ProtocolCodecEnum,
-    /// Compatibility flags for this session.
-    compat_flags: Option<CompatibilityFlags>,
     /// Compression state for cross-entry field sharing.
     state: FileListCompressionState,
     /// Whether to preserve (and thus write) UID values to the wire.
@@ -39,6 +37,10 @@ pub struct FileListWriter {
     preserve_gid: bool,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
+    /// Cached: whether varint flag encoding is enabled (computed once at construction).
+    use_varint_flags: bool,
+    /// Cached: whether safe file list mode is enabled (computed once at construction).
+    use_safe_file_list: bool,
 }
 
 impl FileListWriter {
@@ -48,11 +50,12 @@ impl FileListWriter {
         Self {
             protocol,
             codec: create_protocol_codec(protocol.as_u8()),
-            compat_flags: None,
             state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
             iconv: None,
+            use_varint_flags: false,
+            use_safe_file_list: protocol.safe_file_list_always_enabled(),
         }
     }
 
@@ -62,11 +65,13 @@ impl FileListWriter {
         Self {
             protocol,
             codec: create_protocol_codec(protocol.as_u8()),
-            compat_flags: Some(compat_flags),
             state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
             iconv: None,
+            use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+            use_safe_file_list: compat_flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
+                || protocol.safe_file_list_always_enabled(),
         }
     }
 
@@ -93,17 +98,14 @@ impl FileListWriter {
 
     /// Returns whether varint flag encoding is enabled.
     #[inline]
-    fn use_varint_flags(&self) -> bool {
-        self.compat_flags
-            .is_some_and(|f| f.contains(CompatibilityFlags::VARINT_FLIST_FLAGS))
+    const fn use_varint_flags(&self) -> bool {
+        self.use_varint_flags
     }
 
     /// Returns whether safe file list mode is enabled.
     #[inline]
-    fn use_safe_file_list(&self) -> bool {
-        self.compat_flags
-            .is_some_and(|f| f.contains(CompatibilityFlags::SAFE_FILE_LIST))
-            || self.protocol.safe_file_list_always_enabled()
+    const fn use_safe_file_list(&self) -> bool {
+        self.use_safe_file_list
     }
 
     /// Calculates xflags for an entry based on comparison with previous entry.
