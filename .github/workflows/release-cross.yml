@@ -279,6 +279,23 @@ jobs:
             gcc-aarch64-linux-gnu \
             ca-certificates
 
+          # Enable arm64 multiarch for cross-compilation
+          dpkg --add-architecture arm64
+          # Add arm64 sources (ports.ubuntu.com for Ubuntu 20.04)
+          cat >> /etc/apt/sources.list <<EOF
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-security main restricted universe multiverse
+          EOF
+          apt-get update
+          apt-get -y install \
+            libssl-dev:arm64 \
+            libacl1-dev:arm64 \
+            libattr1-dev:arm64 \
+            libzstd-dev:arm64 \
+            zlib1g-dev:arm64 \
+            libxxhash-dev:arm64
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -297,6 +314,10 @@ jobs:
 
       - name: Install cargo-deb
         shell: bash
+        env:
+          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
+          RUSTC_WRAPPER: ""
+          CARGO_BUILD_RUSTC_WRAPPER: ""
         run: |
           set -euo pipefail
           if ! command -v cargo-deb >/dev/null 2>&1; then
@@ -305,6 +326,10 @@ jobs:
 
       - name: Build Linux focal x86_64 deb
         shell: bash
+        env:
+          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
+          RUSTC_WRAPPER: ""
+          CARGO_BUILD_RUSTC_WRAPPER: ""
         run: |
           set -euo pipefail
           printf 'Building focal variant deb for x86_64...\n'
@@ -316,7 +341,13 @@ jobs:
       - name: Build Linux focal aarch64 deb
         shell: bash
         env:
+          # Override linker from .cargo/config.toml (not available in container)
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_AR: aarch64-linux-gnu-ar
+          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
+          RUSTC_WRAPPER: ""
+          CARGO_BUILD_RUSTC_WRAPPER: ""
           PKG_CONFIG_ALLOW_CROSS: "1"
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
         run: |
