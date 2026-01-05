@@ -281,6 +281,8 @@ jobs:
 
           # Enable arm64 multiarch for cross-compilation
           dpkg --add-architecture arm64
+          # Restrict existing sources to amd64 only (arm64 comes from ports.ubuntu.com)
+          sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
           # Add arm64 sources (ports.ubuntu.com for Ubuntu 20.04)
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse" >> /etc/apt/sources.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-updates main restricted universe multiverse" >> /etc/apt/sources.list
