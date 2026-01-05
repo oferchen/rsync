@@ -511,29 +511,57 @@ jobs:
 
           echo "=== Verifying all expected artifacts are present ==="
 
-          # Define expected artifact patterns
+          # Use flexible patterns to match both x86_64/amd64 naming conventions
+          # Linux tarballs: may use amd64 or x86_64, aarch64
+          # macOS tarballs: use x86_64, aarch64
+          # Windows tarballs: may use amd64 or x86_64
+          # Debs: use amd64, arm64 (Debian convention)
           declare -a REQUIRED_PATTERNS=(
-            "dist/**/oc-rsync-*-linux-x86_64.tar.gz"
-            "dist/**/oc-rsync-*-linux-aarch64.tar.gz"
-            "dist/**/oc-rsync-*-darwin-x86_64.tar.gz"
-            "dist/**/oc-rsync-*-darwin-aarch64.tar.gz"
-            "dist/**/oc-rsync-*-windows-x86_64.tar.gz"
-            "dist/**/oc-rsync_*_amd64.deb"
-            "dist/**/oc-rsync_*_arm64.deb"
+            "dist/**/oc-rsync-*-linux-*.tar.gz"        # Linux x86_64/amd64
+            "dist/**/oc-rsync-*-darwin-*.tar.gz"       # macOS (both archs)
+            "dist/**/oc-rsync-*-windows-*.tar.gz"      # Windows
+            "dist/**/oc-rsync_*_amd64.deb"             # Linux amd64 deb
+            "dist/**/oc-rsync_*_arm64.deb"             # Linux arm64 deb
           )
 
           MISSING=0
           for pattern in "${REQUIRED_PATTERNS[@]}"; do
-            if ! ls $pattern 1>/dev/null 2>&1; then
-              echo "::error::Missing required artifact: $pattern"
-              MISSING=$((MISSING + 1))
+            files=$(find dist -type f -name "$(basename "$pattern")" 2>/dev/null | head -1)
+            if [ -z "$files" ]; then
+              # Try glob expansion
+              if ! compgen -G "$pattern" > /dev/null 2>&1; then
+                echo "::error::Missing required artifact: $pattern"
+                MISSING=$((MISSING + 1))
+              else
+                echo "✓ Found: $pattern"
+              fi
             else
               echo "✓ Found: $pattern"
             fi
           done
 
+          # Additional sanity check: must have at least 2 linux tarballs (x86 + arm)
+          LINUX_COUNT=$(find dist -name "oc-rsync-*-linux-*.tar.gz" | wc -l)
+          if [ "$LINUX_COUNT" -lt 2 ]; then
+            echo "::error::Expected at least 2 Linux tarballs, found $LINUX_COUNT"
+            MISSING=$((MISSING + 1))
+          else
+            echo "✓ Found $LINUX_COUNT Linux tarballs"
+          fi
+
+          # Must have at least 2 macOS tarballs
+          MACOS_COUNT=$(find dist -name "oc-rsync-*-darwin-*.tar.gz" | wc -l)
+          if [ "$MACOS_COUNT" -lt 2 ]; then
+            echo "::error::Expected at least 2 macOS tarballs, found $MACOS_COUNT"
+            MISSING=$((MISSING + 1))
+          else
+            echo "✓ Found $MACOS_COUNT macOS tarballs"
+          fi
+
           if [ $MISSING -gt 0 ]; then
-            echo "::error::$MISSING required artifacts are missing!"
+            echo "::error::$MISSING validation checks failed!"
+            echo "=== Actual files found ==="
+            find dist -type f -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" | sort
             exit 1
           fi
 
