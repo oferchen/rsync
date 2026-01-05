@@ -158,6 +158,9 @@ conf-files = [
 ]
 maintainer-scripts = "packaging/deb"
 
+[package.metadata.deb.variants.focal]
+depends = "libc6 (>= 2.31), libgcc-s1"
+
 [package.metadata.rpm]
 release = "0"
 dist = ".rust"

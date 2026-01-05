@@ -147,6 +147,20 @@ Prebuilt artifacts are (or will be) published on the GitHub **Releases** page (D
 
 The packaging pipeline installs `oc-rsync` under dedicated paths so that the system `rsync` can remain installed in parallel.
 
+#### Debian Package Compatibility
+
+| Package | glibc | Target Distributions |
+|---------|-------|---------------------|
+| `oc-rsync_*_amd64.deb` | ≥ 2.34 | Ubuntu 22.04+, Debian 12+ |
+| `oc-rsync_*_arm64.deb` | ≥ 2.34 | Ubuntu 22.04+, Debian 12+ (ARM64) |
+| `oc-rsync_*_amd64_focal.deb` | ≥ 2.31 | Ubuntu 20.04 (Focal Fossa) |
+| `oc-rsync_*_arm64_focal.deb` | ≥ 2.31 | Ubuntu 20.04 (Focal Fossa, ARM64) |
+
+**Selecting the right package:**
+
+- For **Ubuntu 22.04+ or Debian 12+**: Use the standard `.deb` packages (without `_focal` suffix)
+- For **Ubuntu 20.04 (Focal)**: Use the `_focal` packages which are built with lower glibc requirements
+
 ---
 
 ### Homebrew 🍺
