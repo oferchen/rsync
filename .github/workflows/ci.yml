@@ -34,6 +34,8 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -87,6 +89,9 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
+          # Use shared key for cache reuse from lint-and-test job
+          shared-key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
+          # Feature-specific suffix for this matrix entry
           key: features-${{ matrix.name }}
 
       - name: Build (${{ matrix.name }})
@@ -104,8 +109,6 @@ jobs:
     name: interop with upstream rsync
     runs-on: ubuntu-latest
     needs: lint-and-test
-    # Remove continue-on-error once tests are stable
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -117,21 +120,15 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
+          # Use shared key for cache reuse from lint-and-test job
+          shared-key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
           key: interop
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            pkg-config \
-            zlib1g-dev \
-            curl \
-            autoconf \
-            automake \
-            libtool \
-            libacl1-dev \
-            libattr1-dev
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          version: 1.0
 
       - name: Run interop tests
         run: bash tools/ci/run_interop.sh
