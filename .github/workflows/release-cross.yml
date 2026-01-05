@@ -316,7 +316,6 @@ jobs:
           set -euo pipefail
           printf 'Building focal variant deb for aarch64...\n'
           cargo build \
-            --release \
             --target aarch64-unknown-linux-gnu \
             --profile dist
           cargo deb \
