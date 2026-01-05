@@ -337,6 +337,13 @@ jobs:
             --deb \
             --deb-variant focal \
             --profile dist
+          # Rename to include focal suffix
+          DEBFILE=$(ls target/debian/oc-rsync_*_amd64.deb 2>/dev/null | head -1)
+          if [ -n "$DEBFILE" ] && [ -f "$DEBFILE" ]; then
+            NEWNAME="${DEBFILE%.deb}_focal.deb"
+            mv "$DEBFILE" "$NEWNAME"
+            printf 'Renamed %s -> %s\n' "$(basename "$DEBFILE")" "$(basename "$NEWNAME")"
+          fi
 
       - name: Build Linux focal aarch64 deb
         shell: bash
@@ -375,7 +382,7 @@ jobs:
           name: dist-linux-focal
           retention-days: 7
           path: |
-            target/dist/oc-rsync_*_amd64_focal.deb
+            target/debian/oc-rsync_*_amd64_focal.deb
             target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64_focal.deb
 
   macos:
