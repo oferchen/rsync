@@ -188,6 +188,92 @@ jobs:
             target/dist/oc-rsync-*.rpm
 
 
+  linux-focal:
+    name: linux focal release artifacts (Ubuntu 20.04)
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-linux-focal
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get -y install \
+            pkg-config \
+            libssl-dev \
+            libacl1-dev \
+            libattr1-dev \
+            libzstd-dev \
+            zlib1g-dev \
+            libxxhash-dev \
+            gcc-aarch64-linux-gnu
+
+      - name: Install cargo-deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v cargo-deb >/dev/null 2>&1; then
+            cargo install --locked cargo-deb
+          fi
+
+      - name: Build Linux focal x86_64 deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Building focal variant deb for x86_64...\n'
+          cargo xtask package \
+            --deb \
+            --deb-variant focal \
+            --profile dist
+
+      - name: Build Linux focal aarch64 deb
+        shell: bash
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          printf 'Building focal variant deb for aarch64...\n'
+          cargo build \
+            --release \
+            --target aarch64-unknown-linux-gnu \
+            --profile dist
+          cargo deb \
+            --target aarch64-unknown-linux-gnu \
+            --no-build \
+            --variant focal \
+            --profile dist
+          # Rename to include focal suffix
+          DEBFILE=$(ls target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64.deb 2>/dev/null | head -1)
+          if [ -n "$DEBFILE" ] && [ -f "$DEBFILE" ]; then
+            NEWNAME="${DEBFILE%.deb}_focal.deb"
+            mv "$DEBFILE" "$NEWNAME"
+            printf 'Renamed %s -> %s\n' "$(basename "$DEBFILE")" "$(basename "$NEWNAME")"
+          fi
+
+      - name: Upload Linux focal artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-focal
+          path: |
+            target/dist/oc-rsync_*_amd64_focal.deb
+            target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64_focal.deb
+
   macos:
     name: macOS release artifacts
     runs-on: macos-latest
@@ -297,6 +383,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - linux
+      - linux-focal
       - macos
       - windows
 
@@ -319,6 +406,8 @@ jobs:
             dist/**/oc-rsync-*-linux-*.tar.gz
             dist/**/oc-rsync_*_amd64.deb
             dist/**/oc-rsync_*_arm64.deb
+            dist/**/oc-rsync_*_amd64_focal.deb
+            dist/**/oc-rsync_*_arm64_focal.deb
             dist/**/oc-rsync-*.rpm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

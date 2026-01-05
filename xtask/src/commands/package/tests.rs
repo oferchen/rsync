@@ -48,6 +48,7 @@ fn execute_with_no_targets_returns_success() {
             build_rpm: false,
             build_tarball: false,
             tarball_target: None,
+            deb_variant: None,
             profile: None,
         },
     )
@@ -69,6 +70,7 @@ fn execute_reports_missing_cargo_deb_tool() {
             build_rpm: false,
             build_tarball: false,
             tarball_target: None,
+            deb_variant: None,
             profile: Some(OsString::from(DIST_PROFILE)),
         },
     )
@@ -106,6 +108,7 @@ fn execute_reports_missing_cargo_rpm_tool() {
             build_rpm: true,
             build_tarball: false,
             tarball_target: None,
+            deb_variant: None,
             profile: Some(OsString::from("debug")),
         },
     )
@@ -131,6 +134,7 @@ fn execute_reports_missing_rpmbuild_tool() {
             build_rpm: true,
             build_tarball: false,
             tarball_target: None,
+            deb_variant: None,
             profile: Some(OsString::from(DIST_PROFILE)),
         },
     )

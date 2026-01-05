@@ -15,6 +15,8 @@ pub struct PackageOptions {
     pub build_tarball: bool,
     /// Optional target triple override for tarball packaging.
     pub tarball_target: Option<OsString>,
+    /// Optional deb variant (e.g., "focal" for Ubuntu 20.04).
+    pub deb_variant: Option<String>,
     /// Optional profile override.
     pub profile: Option<OsString>,
 }
@@ -28,6 +30,7 @@ impl PackageOptions {
             build_rpm: true,
             build_tarball: true,
             tarball_target: None,
+            deb_variant: None,
             profile: Some(OsString::from(DIST_PROFILE)),
         }
     }
@@ -59,6 +62,7 @@ impl From<PackageArgs> for PackageOptions {
             build_rpm,
             build_tarball,
             tarball_target: args.tarball_target.map(OsString::from),
+            deb_variant: args.deb_variant,
             profile,
         }
     }
@@ -90,6 +94,7 @@ mod tests {
                 build_rpm: false,
                 build_tarball: true,
                 tarball_target: None,
+                deb_variant: None,
                 profile: Some(OsString::from(DIST_PROFILE)),
             }
         );
@@ -110,6 +115,7 @@ mod tests {
                 build_rpm: false,
                 build_tarball: true,
                 tarball_target: Some(OsString::from("x86_64-unknown-linux-gnu")),
+                deb_variant: None,
                 profile: Some(OsString::from(DIST_PROFILE)),
             }
         );
@@ -146,11 +152,24 @@ mod tests {
     }
 
     #[test]
+    fn from_args_deb_variant() {
+        let args = PackageArgs {
+            deb: true,
+            deb_variant: Some("focal".to_owned()),
+            ..Default::default()
+        };
+        let options: PackageOptions = args.into();
+        assert_eq!(options.deb_variant, Some("focal".to_owned()));
+        assert!(options.build_deb);
+    }
+
+    #[test]
     fn release_all_returns_dist_profile_with_all_targets() {
         let options = PackageOptions::release_all();
         assert!(options.build_deb);
         assert!(options.build_rpm);
         assert!(options.build_tarball);
+        assert_eq!(options.deb_variant, None);
         assert_eq!(options.profile, Some(OsString::from(DIST_PROFILE)));
     }
 }
