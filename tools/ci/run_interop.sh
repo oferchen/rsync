@@ -21,6 +21,28 @@ fi
 
 export GIT_TERMINAL_PROMPT=0
 
+# Retry helper for network operations with exponential backoff
+retry_curl() {
+  local url=$1
+  local output=$2
+  local max_attempts=${3:-3}
+  local attempt=1
+
+  while [ $attempt -le $max_attempts ]; do
+    if curl -fsSL --connect-timeout 30 --max-time 120 "$url" -o "$output"; then
+      return 0
+    fi
+    echo "Attempt $attempt/$max_attempts failed for $url" >&2
+    if [ $attempt -lt $max_attempts ]; then
+      local delay=$((attempt * 5))
+      echo "Retrying in ${delay}s..." >&2
+      sleep $delay
+    fi
+    attempt=$((attempt + 1))
+  done
+  return 1
+}
+
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 target_dir="${workspace_root}/target/dist"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
@@ -103,7 +125,7 @@ try_fetch_deb() {
 
   local tmp_deb
   tmp_deb=$(mktemp)
-  if ! curl -fsSL "$url" -o "$tmp_deb"; then
+  if ! retry_curl "$url" "$tmp_deb"; then
     rm -f "$tmp_deb"
     return 1
   fi
@@ -181,7 +203,7 @@ try_fetch_deb_generic() {
   esac
 
   for url in "${candidates[@]}"; do
-    if curl -fsSL "$url" -o "$tmp_deb" 2>/dev/null; then
+    if retry_curl "$url" "$tmp_deb" 2>/dev/null; then
       if ! command -v ar >/dev/null 2>&1; then
         rm -f "$tmp_deb"
         return 1
@@ -244,7 +266,7 @@ fetch_upstream_tarball() {
   local tmp_tar
   tmp_tar=$(mktemp)
 
-  if ! curl -fsSL "$tarball_url" -o "$tmp_tar"; then
+  if ! retry_curl "$tarball_url" "$tmp_tar"; then
     rm -f "$tmp_tar"
     return 1
   fi
