@@ -282,11 +282,9 @@ jobs:
           # Enable arm64 multiarch for cross-compilation
           dpkg --add-architecture arm64
           # Add arm64 sources (ports.ubuntu.com for Ubuntu 20.04)
-          cat >> /etc/apt/sources.list <<EOF
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-security main restricted universe multiverse
-          EOF
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse" >> /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-updates main restricted universe multiverse" >> /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-security main restricted universe multiverse" >> /etc/apt/sources.list
           apt-get update
           apt-get -y install \
             libssl-dev:arm64 \
