@@ -32,6 +32,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 - [Feature Flags](#feature-flags)
 - [Logging](#logging)
 - [Contributing](#contributing)
+- [Security](#security)
 - [License](#license)
 - [Acknowledgements](#acknowledgements)
 
@@ -541,6 +542,45 @@ Contributions, bug reports, and interop findings are very welcome.
    * Any interop impact or protocol changes
 
 Please keep changes focused and align with the existing crate split and error handling patterns.
+
+---
+
+## Security
+
+oc-rsync is designed with security as a core principle, leveraging Rust's memory safety guarantees to eliminate entire classes of vulnerabilities that have affected the C rsync implementation.
+
+### Memory Safety
+
+- **No unsafe code in protocol handling**: All wire protocol parsing crates (`protocol`, `batch`, `signature`, `matching`) enforce `#![deny(unsafe_code)]`, ensuring memory safety through Rust's type system.
+- **Bounds-checked operations**: All buffer accesses use Rust's safe indexing, eliminating buffer overflows.
+- **No uninitialized memory**: Rust's initialization requirements prevent information leaks from uninitialized stack/heap memory.
+
+### CVE Immunity
+
+oc-rsync is **not vulnerable** to known rsync CVEs due to its Rust implementation:
+
+| CVE | Description | oc-rsync Status |
+|-----|-------------|-----------------|
+| CVE-2024-12084 | Heap buffer overflow in checksum parsing | **Not vulnerable** - Vec<u8> handles sizing |
+| CVE-2024-12085 | Info leak via uninitialized stack buffer | **Not vulnerable** - No uninitialized memory |
+| CVE-2024-12086 | Server leaks arbitrary client files | **Not vulnerable** - Strict path validation |
+| CVE-2024-12087 | Path traversal via `--inc-recursive` | **Not vulnerable** - Path sanitization |
+| CVE-2024-12088 | `--safe-links` bypass | **Mitigated** - Rust path handling |
+| CVE-2024-12747 | Symlink race condition | **Mitigated** - See note below |
+
+**Note on symlink races**: While Rust eliminates memory corruption, TOCTOU races are an OS-level concern. The `symlink_target_is_safe()` function validates paths, but atomic operations depend on filesystem support.
+
+### Fuzzing
+
+The `crates/protocol/fuzz` directory contains cargo-fuzz targets for critical parsing functions:
+- Variable-length integer decoding (`fuzz_varint`)
+- Delta wire protocol (`fuzz_delta`)
+- Multiplex frame parsing (`fuzz_multiplex_frame`)
+- Legacy greeting parsing (`fuzz_legacy_greeting`)
+
+### Reporting Security Issues
+
+For security vulnerabilities, please see [SECURITY.md](./SECURITY.md) or email the maintainer directly rather than opening a public issue.
 
 ---
 
