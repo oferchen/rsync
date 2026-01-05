@@ -516,7 +516,7 @@ jobs:
           TAG="${{ steps.vars.outputs.tag }}"
           BRANCH="ci/brew-formula-${TAG}"
 
-          # Save the generated formula before resetting
+          # Save the generated formula before any git operations
           cp "${FORMULA_PATH}" /tmp/oc-rsync.rb
 
           git config user.name "oc-rsync-bot"
@@ -525,13 +525,13 @@ jobs:
           # Configure git to use the PAT for push operations
           git remote set-url origin "https://x-access-token:${BREW_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
-          # Fetch master BRANCH explicitly (refs/heads/master) to avoid ambiguity in shallow tag checkouts
-          # Then hard reset to ensure clean state with no workflow file changes from tag checkout
+          # Fetch master branch explicitly (refs/heads/master) to avoid ambiguity in shallow tag checkouts
           git fetch origin refs/heads/master --depth=1
-          git checkout -B "${BRANCH}" FETCH_HEAD
-          git reset --hard FETCH_HEAD
 
-          # Restore only the formula file
+          # Force checkout to discard local changes from formula generation step
+          git checkout --force -B "${BRANCH}" FETCH_HEAD
+
+          # Restore the generated formula file
           mkdir -p "$(dirname "${FORMULA_PATH}")"
           cp /tmp/oc-rsync.rb "${FORMULA_PATH}"
 
