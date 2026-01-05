@@ -17,6 +17,10 @@ use std::path::PathBuf;
 #[command(about = "Workspace maintenance commands for oc-rsync")]
 #[command(version)]
 pub struct Cli {
+    /// Display task tree without executing.
+    #[arg(long, global = true)]
+    pub tree: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -267,6 +271,157 @@ pub struct TestArgs {
     pub install_nextest: bool,
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Task tree conversion
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::task::tasks::{
+    DocsTask, DocPackageTask, EnforceLimitsTask, NoBinariesTask, NoPlaceholdersTask,
+    PackageTask, PreflightTask, ReleaseTask, SbomTask, TestTask,
+};
+use crate::task::Task;
+
+/// Extension trait for converting commands to task trees.
+pub trait CommandExt {
+    /// Converts this command into a task tree for visualization.
+    fn as_task(&self) -> Box<dyn Task>;
+}
+
+impl CommandExt for Command {
+    fn as_task(&self) -> Box<dyn Task> {
+        match self {
+            Command::Branding(args) => args.as_task(),
+            Command::Docs(args) => args.as_task(),
+            Command::DocPackage(args) => args.as_task(),
+            Command::EnforceLimits(_) => Box::new(EnforceLimitsTask),
+            Command::Interop(args) => args.as_task(),
+            Command::NoBinaries => Box::new(NoBinariesTask),
+            Command::NoPlaceholders => Box::new(NoPlaceholdersTask),
+            Command::Package(args) => args.as_task(),
+            Command::Preflight => Box::new(PreflightTask),
+            Command::ReadmeVersion => Box::new(ReadmeVersionTask),
+            Command::Release(args) => args.as_task(),
+            Command::Sbom(_) => Box::new(SbomTask),
+            Command::Test(args) => args.as_task(),
+        }
+    }
+}
+
+impl CommandExt for BrandingArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(BrandingTask)
+    }
+}
+
+impl CommandExt for DocsArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(DocsTask {
+            open: self.open,
+            validate: self.validate,
+        })
+    }
+}
+
+impl CommandExt for DocPackageArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(DocPackageTask { open: self.open })
+    }
+}
+
+impl CommandExt for InteropArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(InteropTask)
+    }
+}
+
+impl CommandExt for PackageArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        let build_all = !self.deb && !self.rpm && !self.tarball;
+        Box::new(PackageTask {
+            build_deb: self.deb || build_all,
+            build_rpm: self.rpm || build_all,
+            build_tarball: self.tarball || build_all,
+            deb_variant: self.deb_variant.clone(),
+        })
+    }
+}
+
+impl CommandExt for ReleaseArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(ReleaseTask {
+            skip_docs: self.skip_docs,
+            skip_hygiene: self.skip_hygiene,
+            skip_placeholder_scan: self.skip_placeholder_scan,
+            skip_binary_scan: self.skip_binary_scan,
+            skip_packages: self.skip_packages,
+            skip_upload: self.skip_upload,
+        })
+    }
+}
+
+impl CommandExt for TestArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(TestTask {
+            use_nextest: !self.use_cargo_test,
+        })
+    }
+}
+
+// Simple leaf tasks for commands without complex decomposition.
+
+use std::time::Duration;
+
+/// Task for branding validation.
+struct BrandingTask;
+
+impl Task for BrandingTask {
+    fn name(&self) -> &'static str {
+        "branding"
+    }
+
+    fn description(&self) -> &'static str {
+        "Validate workspace branding"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(2))
+    }
+}
+
+/// Task for interop validation.
+struct InteropTask;
+
+impl Task for InteropTask {
+    fn name(&self) -> &'static str {
+        "interop"
+    }
+
+    fn description(&self) -> &'static str {
+        "Validate upstream rsync compatibility"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(60))
+    }
+}
+
+/// Task for README version validation.
+struct ReadmeVersionTask;
+
+impl Task for ReadmeVersionTask {
+    fn name(&self) -> &'static str {
+        "readme-version"
+    }
+
+    fn description(&self) -> &'static str {
+        "Validate README version references"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(1))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +563,36 @@ mod tests {
             }
             _ => panic!("expected test command"),
         }
+    }
+
+    #[test]
+    fn parse_tree_flag_before_command() {
+        let cli = Cli::parse_from(["cargo-xtask", "--tree", "package"]);
+        assert!(cli.tree);
+    }
+
+    #[test]
+    fn parse_tree_flag_after_command() {
+        let cli = Cli::parse_from(["cargo-xtask", "package", "--tree"]);
+        assert!(cli.tree);
+    }
+
+    #[test]
+    fn command_ext_package_creates_task() {
+        let args = PackageArgs {
+            deb: true,
+            rpm: false,
+            tarball: false,
+            ..Default::default()
+        };
+        let task = args.as_task();
+        assert_eq!(task.name(), "package");
+    }
+
+    #[test]
+    fn command_ext_release_creates_task() {
+        let args = ReleaseArgs::default();
+        let task = args.as_task();
+        assert_eq!(task.name(), "release");
     }
 }
