@@ -1,12 +1,24 @@
 name: Build-cross
 
+# =============================================================================
+# Release Workflow
+# =============================================================================
+# This workflow handles the complete release process:
+#   1. Validates tag matches Cargo.toml version (fail-fast)
+#   2. Builds release artifacts for all platforms
+#   3. Uploads artifacts to GitHub Release
+#   4. Updates Homebrew formula and creates PR
+#
+# Trigger: Push a tag matching vX.Y.Z (e.g., v0.5.1)
+# Prerequisites: Cargo.toml version MUST match the tag (without 'v' prefix)
+# =============================================================================
+
 on:
   push:
     tags:
-      # Support both version schemes:
-      # - Semantic: v0.5.0, v1.0.0, v1.2.3
-      # - Legacy branded: v3.4.1-rust, v3.4.1a-rust
+      # Semantic versioning: v0.5.0, v1.0.0, v1.2.3
       - "v[0-9]*.[0-9]*.[0-9]*"
+      # Legacy branded: v3.4.1-rust, v3.4.1a-rust
       - "v[0-9]*.[0-9]*.[0-9]*-rust"
       - "v[0-9]*.[0-9]*.[0-9]*[a-z]-rust"
   workflow_dispatch:
@@ -22,9 +34,58 @@ env:
   FORMULA_PATH: Formula/oc-rsync.rb
 
 jobs:
+  # ===========================================================================
+  # Version Validation (fail-fast gate)
+  # ===========================================================================
+  validate-version:
+    name: validate tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      tag: ${{ steps.extract.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract and validate version
+        id: extract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Extract tag from ref (refs/tags/v0.5.1 -> v0.5.1)
+          TAG="${GITHUB_REF##*/}"
+          VERSION="${TAG#v}"  # Strip leading 'v'
+
+          # Extract version from Cargo.toml
+          CARGO_VERSION="$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
+
+          printf 'Tag: %s\n' "${TAG}"
+          printf 'Tag version: %s\n' "${VERSION}"
+          printf 'Cargo.toml version: %s\n' "${CARGO_VERSION}"
+
+          # Validate versions match
+          if [ "${VERSION}" != "${CARGO_VERSION}" ]; then
+            printf '::error::Version mismatch! Tag %s does not match Cargo.toml version %s\n' "${TAG}" "${CARGO_VERSION}"
+            printf '\nTo fix this:\n'
+            printf '  1. Update Cargo.toml: version = "%s"\n' "${VERSION}"
+            printf '  2. Commit and push\n'
+            printf '  3. Delete and recreate tag: git tag -d %s && git tag %s && git push origin %s --force\n' "${TAG}" "${TAG}" "${TAG}"
+            exit 1
+          fi
+
+          printf '::notice::Version validated: %s\n' "${VERSION}"
+          printf 'version=%s\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
+          printf 'tag=%s\n' "${TAG}" >> "${GITHUB_OUTPUT}"
+
+  # ===========================================================================
+  # Build Jobs (all depend on version validation)
+  # ===========================================================================
   linux:
     name: linux release artifacts
     runs-on: ubuntu-latest
+    needs: validate-version
 
     steps:
       - name: Checkout
@@ -191,6 +252,7 @@ jobs:
   linux-focal:
     name: linux focal release artifacts (Ubuntu 20.04)
     runs-on: ubuntu-20.04
+    needs: validate-version
 
     steps:
       - name: Checkout
@@ -277,6 +339,7 @@ jobs:
   macos:
     name: macOS release artifacts
     runs-on: macos-latest
+    needs: validate-version
 
     steps:
       - name: Checkout
@@ -313,6 +376,7 @@ jobs:
   windows:
     name: windows release artifacts
     runs-on: windows-latest
+    needs: validate-version
 
     steps:
       - name: Checkout
@@ -382,6 +446,7 @@ jobs:
     name: create GitHub Release and upload assets
     runs-on: ubuntu-latest
     needs:
+      - validate-version
       - linux
       - linux-focal
       - macos
@@ -416,6 +481,7 @@ jobs:
     name: update Homebrew formula
     runs-on: ubuntu-latest
     needs:
+      - validate-version
       - linux
       - macos
       - windows
@@ -423,14 +489,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Extract tag
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF##*/}"
-          printf 'tag=%s\n' "${TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
@@ -455,8 +513,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${{ steps.vars.outputs.tag }}"
-          VERSION="${TAG#v}"
+          TAG="${{ needs.validate-version.outputs.tag }}"
+          VERSION="${{ needs.validate-version.outputs.version }}"
           REPO="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
           mkdir -p Formula
@@ -513,7 +571,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${{ steps.vars.outputs.tag }}"
+          TAG="${{ needs.validate-version.outputs.tag }}"
           BRANCH="ci/brew-formula-${TAG}"
 
           # Save the generated formula before any git operations
@@ -554,7 +612,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${{ steps.vars.outputs.tag }}"
+          TAG="${{ needs.validate-version.outputs.tag }}"
           BRANCH="ci/brew-formula-${TAG}"
 
           # Check if PR already exists
