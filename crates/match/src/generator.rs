@@ -2,7 +2,6 @@
 //!
 //! Delta token generation pipeline.
 
-use std::collections::VecDeque;
 use std::io::{self, Read};
 
 use checksums::RollingChecksum;
@@ -12,6 +11,7 @@ use logging::debug_log;
 use tracing::instrument;
 
 use crate::index::DeltaSignatureIndex;
+use crate::ring_buffer::RingBuffer;
 use crate::script::{DeltaScript, DeltaToken};
 
 /// Default buffer size used by [`DeltaGenerator::generate`].
@@ -46,11 +46,9 @@ impl DeltaGenerator {
         index: &DeltaSignatureIndex,
     ) -> io::Result<DeltaScript> {
         let block_len = index.block_length();
-        let mut window: VecDeque<u8> = VecDeque::with_capacity(block_len);
+        let mut window = RingBuffer::with_capacity(block_len);
         let mut pending_literals = Vec::with_capacity(block_len);
-        let mut scratch = Vec::with_capacity(block_len);
         let mut rolling = RollingChecksum::new();
-        let mut outgoing: Option<u8> = None;
         let mut tokens = Vec::new();
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
@@ -71,21 +69,31 @@ impl DeltaGenerator {
             let byte = buffer[buffer_pos];
             buffer_pos += 1;
 
-            window.push_back(byte);
-            if let Some(outgoing_byte) = outgoing.take() {
+            // Ring buffer auto-evicts when at capacity, returning the evicted byte
+            let evicted = window.push_back(byte);
+
+            // Rolling checksum update: use evicted byte directly (if any)
+            if let Some(outgoing_byte) = evicted {
+                // Window was full: roll with evicted byte leaving, new byte entering
                 rolling
                     .roll_many(&[outgoing_byte], &[byte])
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                // Evicted byte becomes a literal
+                pending_literals.push(outgoing_byte);
             } else {
+                // Window not yet full: just add the new byte to checksum
                 rolling.update(&[byte]);
             }
 
-            if window.len() < block_len {
+            // Only check for matches when window is full
+            if !window.is_full() {
                 continue;
             }
 
             let digest = rolling.digest();
-            if let Some(block_index) = index.find_match_window(digest, &window, &mut scratch) {
+            // Get contiguous slice for matching (O(1) when not wrapped, rare O(n) rotation otherwise)
+            if let Some(block_index) = index.find_match_bytes(digest, window.as_slice()) {
+                // Flush any pending literals before the copy token
                 if !pending_literals.is_empty() {
                     literal_bytes += pending_literals.len() as u64;
                     total_bytes += pending_literals.len() as u64;
@@ -101,16 +109,11 @@ impl DeltaGenerator {
 
                 window.clear();
                 rolling.reset();
-                outgoing = None;
                 continue;
-            }
-
-            if let Some(front) = window.pop_front() {
-                pending_literals.push(front);
-                outgoing = Some(front);
             }
         }
 
+        // Drain remaining bytes from window as literals
         while let Some(byte) = window.pop_front() {
             pending_literals.push(byte);
         }
