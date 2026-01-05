@@ -42,7 +42,11 @@ pub trait Task {
 
 /// Counts total tasks in a tree (including root).
 pub fn count_tasks(task: &dyn Task) -> usize {
-    1 + task.subtasks().iter().map(|t| count_tasks(t.as_ref())).sum::<usize>()
+    1 + task
+        .subtasks()
+        .iter()
+        .map(|t| count_tasks(t.as_ref()))
+        .sum::<usize>()
 }
 
 #[cfg(test)]
@@ -51,8 +55,12 @@ mod tests {
 
     struct LeafTask;
     impl Task for LeafTask {
-        fn name(&self) -> &'static str { "leaf" }
-        fn description(&self) -> &'static str { "A leaf task" }
+        fn name(&self) -> &'static str {
+            "leaf"
+        }
+        fn description(&self) -> &'static str {
+            "A leaf task"
+        }
         fn explicit_duration(&self) -> Option<Duration> {
             Some(Duration::from_secs(10))
         }
@@ -60,8 +68,12 @@ mod tests {
 
     struct ParentTask;
     impl Task for ParentTask {
-        fn name(&self) -> &'static str { "parent" }
-        fn description(&self) -> &'static str { "A parent task" }
+        fn name(&self) -> &'static str {
+            "parent"
+        }
+        fn description(&self) -> &'static str {
+            "A parent task"
+        }
         fn subtasks(&self) -> Vec<Box<dyn Task>> {
             vec![Box::new(LeafTask), Box::new(LeafTask)]
         }
