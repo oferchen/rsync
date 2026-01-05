@@ -154,7 +154,12 @@ impl<W: Write> TreeRenderer<W> {
 
     fn style_name(&self, s: &str) -> String {
         if self.use_color {
-            format!("{}{}{}", self.name_style.render(), s, self.name_style.render_reset())
+            format!(
+                "{}{}{}",
+                self.name_style.render(),
+                s,
+                self.name_style.render_reset()
+            )
         } else {
             s.to_string()
         }
@@ -162,7 +167,12 @@ impl<W: Write> TreeRenderer<W> {
 
     fn style_desc(&self, s: &str) -> String {
         if self.use_color {
-            format!("{}{}{}", self.desc_style.render(), s, self.desc_style.render_reset())
+            format!(
+                "{}{}{}",
+                self.desc_style.render(),
+                s,
+                self.desc_style.render_reset()
+            )
         } else {
             s.to_string()
         }
@@ -170,7 +180,12 @@ impl<W: Write> TreeRenderer<W> {
 
     fn style_duration(&self, s: &str) -> String {
         if self.use_color {
-            format!("{}{}{}", self.duration_style.render(), s, self.duration_style.render_reset())
+            format!(
+                "{}{}{}",
+                self.duration_style.render(),
+                s,
+                self.duration_style.render_reset()
+            )
         } else {
             s.to_string()
         }
@@ -178,7 +193,12 @@ impl<W: Write> TreeRenderer<W> {
 
     fn style_dim(&self, s: &str) -> String {
         if self.use_color {
-            format!("{}{}{}", self.dim_style.render(), s, self.dim_style.render_reset())
+            format!(
+                "{}{}{}",
+                self.dim_style.render(),
+                s,
+                self.dim_style.render_reset()
+            )
         } else {
             s.to_string()
         }
@@ -281,8 +301,12 @@ mod tests {
     }
 
     impl Task for TestTask {
-        fn name(&self) -> &'static str { self.name }
-        fn description(&self) -> &'static str { self.desc }
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn description(&self) -> &'static str {
+            self.desc
+        }
         fn explicit_duration(&self) -> Option<Duration> {
             if self.children.is_empty() {
                 Some(self.duration)
@@ -291,14 +315,17 @@ mod tests {
             }
         }
         fn subtasks(&self) -> Vec<Box<dyn Task>> {
-            self.children.iter().map(|_| {
-                Box::new(TestTask {
-                    name: "child",
-                    desc: "Child task",
-                    duration: Duration::from_secs(5),
-                    children: vec![],
-                }) as Box<dyn Task>
-            }).collect()
+            self.children
+                .iter()
+                .map(|_| {
+                    Box::new(TestTask {
+                        name: "child",
+                        desc: "Child task",
+                        duration: Duration::from_secs(5),
+                        children: vec![],
+                    }) as Box<dyn Task>
+                })
+                .collect()
         }
     }
 
