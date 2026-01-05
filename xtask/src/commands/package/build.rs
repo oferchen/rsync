@@ -24,11 +24,20 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
     }
 
     if options.build_deb {
-        println!("Building Debian package with cargo deb");
+        let variant_label = options
+            .deb_variant
+            .as_ref()
+            .map_or(String::new(), |v| format!(" (variant={v})"));
+        println!("Building Debian package with cargo deb{variant_label}");
+
         let mut deb_args = vec![OsString::from("deb"), OsString::from("--locked")];
         if let Some(profile) = &options.profile {
             deb_args.push(OsString::from("--profile"));
             deb_args.push(profile.clone());
+        }
+        if let Some(variant) = &options.deb_variant {
+            deb_args.push(OsString::from("--variant"));
+            deb_args.push(OsString::from(variant));
         }
         run_cargo_tool(
             workspace,
@@ -36,6 +45,11 @@ pub fn execute(workspace: &Path, options: PackageOptions) -> TaskResult<()> {
             "cargo deb",
             "install the cargo-deb subcommand (cargo install cargo-deb)",
         )?;
+
+        // Rename output file to include variant suffix if specified
+        if let Some(variant) = &options.deb_variant {
+            rename_deb_with_variant_suffix(workspace, &branding, &options.profile, variant)?;
+        }
     }
 
     if options.build_rpm {
@@ -565,6 +579,52 @@ fn create_zig_linker_shim(
     }
 
     Ok(shim_path.into_os_string())
+}
+
+/// Renames the generated deb file to include a variant suffix.
+///
+/// For example, `oc-rsync_0.5.0_amd64.deb` becomes `oc-rsync_0.5.0_amd64_focal.deb`.
+fn rename_deb_with_variant_suffix(
+    workspace: &Path,
+    branding: &WorkspaceBranding,
+    profile: &Option<OsString>,
+    variant: &str,
+) -> TaskResult<()> {
+    let profile_dir = profile
+        .as_ref()
+        .map_or_else(|| String::from("debug"), |v| v.to_string_lossy().into_owned());
+    let deb_dir = workspace.join("target").join(&profile_dir);
+
+    // Find the generated deb file (cargo-deb outputs to target/<profile>/*.deb)
+    let entries = fs::read_dir(&deb_dir)?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+            if filename.starts_with(&format!("{}_{}", branding.client_bin, branding.rust_version))
+                && filename.ends_with(".deb")
+                && !filename.contains(&format!("_{variant}.deb"))
+            {
+                // Insert variant before .deb extension
+                let new_filename = filename.replace(".deb", &format!("_{variant}.deb"));
+                let new_path = deb_dir.join(&new_filename);
+                fs::rename(&path, &new_path).map_err(|error| {
+                    TaskError::Io(std::io::Error::new(
+                        error.kind(),
+                        format!(
+                            "failed to rename {} to {}: {error}",
+                            path.display(),
+                            new_path.display()
+                        ),
+                    ))
+                })?;
+                println!("Renamed {filename} -> {new_filename}");
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(all(test, target_os = "linux"))]

@@ -198,6 +198,10 @@ pub struct PackageArgs {
     #[arg(long, value_name = "TARGET")]
     pub tarball_target: Option<String>,
 
+    /// Build deb using the specified variant (e.g., "focal" for Ubuntu 20.04).
+    #[arg(long, value_name = "VARIANT")]
+    pub deb_variant: Option<String>,
+
     /// Build using the dist profile (default).
     #[arg(long, group = "profile_group")]
     pub release: bool,
@@ -332,6 +336,24 @@ mod tests {
                     args.tarball_target,
                     Some("x86_64-unknown-linux-gnu".to_owned())
                 );
+            }
+            _ => panic!("expected package command"),
+        }
+    }
+
+    #[test]
+    fn parse_package_deb_variant() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "package",
+            "--deb",
+            "--deb-variant",
+            "focal",
+        ]);
+        match cli.command {
+            Command::Package(args) => {
+                assert!(args.deb);
+                assert_eq!(args.deb_variant, Some("focal".to_owned()));
             }
             _ => panic!("expected package command"),
         }
