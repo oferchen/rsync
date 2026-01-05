@@ -51,27 +51,47 @@
 mod cli;
 mod commands;
 mod error;
+mod task;
 #[cfg(test)]
 mod test_support;
 mod util;
 mod workspace;
 
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, Command, CommandExt};
 use crate::commands::{
     branding, doc_package, docs, enforce_limits, interop, no_binaries, no_placeholders, package,
     preflight, readme_version, release, sbom, test,
 };
 use crate::error::TaskError;
+use crate::task::TreeRenderer;
 use crate::workspace::workspace_root;
 use clap::Parser;
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if cli.tree {
+        return render_task_tree(&cli.command);
+    }
     match run_command(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Renders the task tree for a command and exits.
+fn render_task_tree(command: &Command) -> ExitCode {
+    let task = command.as_task();
+    let use_color = io::stdout().is_terminal();
+    let mut renderer = TreeRenderer::new(io::stdout(), use_color);
+    match renderer.render(task.as_ref()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Failed to render task tree: {e}");
             ExitCode::FAILURE
         }
     }
