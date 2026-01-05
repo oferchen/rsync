@@ -93,20 +93,13 @@ impl FuzzyMatcher {
 
         // Search destination directory
         if let Some(m) = self.search_directory(dest_dir, &target_name_str, target_size) {
-            if m.score >= self.min_score {
-                best_match = Some(m);
-            }
+            update_best_match(&mut best_match, m, self.min_score);
         }
 
         // Search additional fuzzy basis directories if configured
         for basis_dir in &self.fuzzy_basis_dirs {
             if let Some(m) = self.search_directory(basis_dir, &target_name_str, target_size) {
-                if m.score >= self.min_score {
-                    match &best_match {
-                        Some(existing) if existing.score >= m.score => {}
-                        _ => best_match = Some(m),
-                    }
-                }
+                update_best_match(&mut best_match, m, self.min_score);
             }
         }
 
@@ -149,16 +142,23 @@ impl FuzzyMatcher {
                 compute_similarity_score(target_name, &candidate_name, target_size, metadata.len());
 
             if score >= self.min_score {
-                match &best_match {
-                    Some(existing) if existing.score >= score => {}
-                    _ => {
-                        best_match = Some(FuzzyMatch { path, score });
-                    }
-                }
+                update_best_match(&mut best_match, FuzzyMatch { path, score }, self.min_score);
             }
         }
 
         best_match
+    }
+}
+
+/// Updates the best match if the new candidate has a higher score and meets the threshold.
+#[inline]
+fn update_best_match(best: &mut Option<FuzzyMatch>, candidate: FuzzyMatch, min_score: u32) {
+    if candidate.score < min_score {
+        return;
+    }
+    match best {
+        Some(existing) if existing.score >= candidate.score => {}
+        _ => *best = Some(candidate),
     }
 }
 
@@ -231,20 +231,70 @@ fn split_name_extension(name: &str) -> (&str, &str) {
 }
 
 /// Computes the length of the common prefix between two strings.
+///
+/// Optimized for ASCII filenames (common case) with fallback to Unicode handling.
+#[inline]
 fn common_prefix_length(a: &str, b: &str) -> usize {
-    a.chars()
-        .zip(b.chars())
-        .take_while(|(ca, cb)| ca == cb)
-        .count()
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+
+    // Fast path: compare bytes directly for ASCII
+    let min_len = a_bytes.len().min(b_bytes.len());
+    let mut common_bytes = 0;
+
+    for i in 0..min_len {
+        if a_bytes[i] != b_bytes[i] {
+            break;
+        }
+        common_bytes = i + 1;
+    }
+
+    // If we're at a UTF-8 boundary on both sides, count chars in the prefix
+    if a.is_char_boundary(common_bytes) && b.is_char_boundary(common_bytes) {
+        a[..common_bytes].chars().count()
+    } else {
+        // Fallback: count matching Unicode chars
+        a.chars()
+            .zip(b.chars())
+            .take_while(|(ca, cb)| ca == cb)
+            .count()
+    }
 }
 
 /// Computes the length of the common suffix between two strings.
+///
+/// Optimized for ASCII filenames (common case) with fallback to Unicode handling.
+#[inline]
 fn common_suffix_length(a: &str, b: &str) -> usize {
-    a.chars()
-        .rev()
-        .zip(b.chars().rev())
-        .take_while(|(ca, cb)| ca == cb)
-        .count()
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+
+    // Fast path: compare bytes directly from the end for ASCII
+    let min_len = a_bytes.len().min(b_bytes.len());
+    let mut common_bytes = 0;
+
+    for i in 0..min_len {
+        let a_idx = a_bytes.len() - 1 - i;
+        let b_idx = b_bytes.len() - 1 - i;
+        if a_bytes[a_idx] != b_bytes[b_idx] {
+            break;
+        }
+        common_bytes = i + 1;
+    }
+
+    // If we're at a UTF-8 boundary on both sides, count chars in the suffix
+    let a_start = a_bytes.len() - common_bytes;
+    let b_start = b_bytes.len() - common_bytes;
+    if a.is_char_boundary(a_start) && b.is_char_boundary(b_start) {
+        a[a_start..].chars().count()
+    } else {
+        // Fallback: count matching Unicode chars from the end
+        a.chars()
+            .rev()
+            .zip(b.chars().rev())
+            .take_while(|(ca, cb)| ca == cb)
+            .count()
+    }
 }
 
 #[cfg(test)]
