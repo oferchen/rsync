@@ -254,11 +254,31 @@ jobs:
 
   linux-focal:
     name: linux focal release artifacts (Ubuntu 20.04)
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     needs: validate-version
     timeout-minutes: 45
+    container:
+      image: ubuntu:20.04
 
     steps:
+      - name: Install container dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get -y install \
+            curl \
+            git \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            libacl1-dev \
+            libattr1-dev \
+            libzstd-dev \
+            zlib1g-dev \
+            libxxhash-dev \
+            gcc-aarch64-linux-gnu \
+            ca-certificates
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -271,22 +291,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: build-linux-focal
-
-      - name: Install system dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update
-          sudo apt-get -y install \
-            pkg-config \
-            libssl-dev \
-            libacl1-dev \
-            libattr1-dev \
-            libzstd-dev \
-            zlib1g-dev \
-            libxxhash-dev \
-            gcc-aarch64-linux-gnu
 
       - name: Install cargo-deb
         shell: bash
