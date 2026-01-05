@@ -67,10 +67,8 @@ impl Task for DocPackageTask {
     }
 
     fn subtasks(&self) -> Vec<Box<dyn Task>> {
-        let mut tasks: Vec<Box<dyn Task>> = vec![
-            Box::new(CargoDocTask),
-            Box::new(CreateDocTarballTask),
-        ];
+        let mut tasks: Vec<Box<dyn Task>> =
+            vec![Box::new(CargoDocTask), Box::new(CreateDocTarballTask)];
 
         if self.open {
             tasks.push(Box::new(OpenDocsTask));
