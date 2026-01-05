@@ -13,7 +13,9 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["openssl-vendored", "xxh3-simd"]
+# Default: pure-Rust implementations only (smaller binaries, no C dependencies)
+# Enable openssl-vendored for potentially faster hashing on some platforms
+default = ["xxh3-simd"]
 openssl = ["dep:openssl"]
 openssl-vendored = ["openssl", "openssl/vendored"]
 # Parallel checksum computation using rayon
