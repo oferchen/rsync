@@ -1,0 +1,47 @@
+[package]
+name = "protocol-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.protocol]
+path = ".."
+
+[[bin]]
+name = "fuzz_varint"
+path = "fuzz_targets/fuzz_varint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_delta"
+path = "fuzz_targets/fuzz_delta.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_multiplex_frame"
+path = "fuzz_targets/fuzz_multiplex_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_legacy_greeting"
+path = "fuzz_targets/fuzz_legacy_greeting.rs"
+test = false
+doc = false
+bench = false
+
+# Standalone workspace - not part of root workspace
+[workspace]

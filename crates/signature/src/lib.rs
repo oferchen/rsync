@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! crates/signature/src/lib.rs
 //!
 //! File signature layout and generation for the Rust rsync implementation.
