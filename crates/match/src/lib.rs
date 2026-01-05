@@ -23,6 +23,7 @@
 mod fuzzy;
 mod generator;
 mod index;
+mod ring_buffer;
 mod script;
 
 pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
