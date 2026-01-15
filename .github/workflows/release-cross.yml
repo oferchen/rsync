@@ -268,7 +268,8 @@ jobs:
 
       - name: Build static musl binary
         env:
-          RUSTFLAGS: "-D warnings"
+          # Allow deprecated warning for libc::time_t on musl (will be fixed upstream)
+          RUSTFLAGS: "-D warnings -A deprecated"
         run: |
           set -euo pipefail
 
