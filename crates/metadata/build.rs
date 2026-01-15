@@ -16,6 +16,21 @@ fn main() {
         return;
     }
 
+    // For musl targets, use static linking
+    // libacl depends on libattr, so link both (attr must come after acl)
+    if is_musl_target() {
+        // Add search path for cross-compiled musl sysroot
+        if let Ok(target) = env::var("TARGET") {
+            // Cross toolchain stores libs in /usr/local/{arch}-linux-musl/lib/
+            let arch = target.split('-').next().unwrap_or("x86_64");
+            let musl_lib_dir = format!("/usr/local/{}-linux-musl/lib", arch);
+            println!("cargo:rustc-link-search=native={}", musl_lib_dir);
+        }
+        println!("cargo:rustc-link-lib=static=acl");
+        println!("cargo:rustc-link-lib=static=attr");
+        return;
+    }
+
     if target_triplet_mismatch() {
         println!("cargo:rustc-link-lib=dylib=acl");
         return;
@@ -46,6 +61,12 @@ fn target_triplet_mismatch() -> bool {
         (Ok(host), Ok(target)) => host != target,
         _ => false,
     }
+}
+
+fn is_musl_target() -> bool {
+    env::var("CARGO_CFG_TARGET_ENV")
+        .map(|env| env == "musl")
+        .unwrap_or(false)
 }
 
 fn target_exposes_acl_via_libsystem() -> bool {
