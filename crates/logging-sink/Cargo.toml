@@ -15,4 +15,4 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-core = { path = "../core" }
+core = { path = "../core", default-features = false }
