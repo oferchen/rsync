@@ -22,7 +22,7 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-transfer = { path = "../transfer" }
+transfer = { path = "../transfer", default-features = false }
 protocol = { path = "../protocol" }
 metadata = { path = "../metadata", default-features = false }
 engine = { path = "../engine", default-features = false }
@@ -62,11 +62,11 @@ features = ["xattr"]
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
-acl = ["metadata/acl", "engine/acl"]
+acl = ["metadata/acl", "engine/acl", "transfer/acl"]
 # xattr in core is a no-op on Windows; on Unix the target deps above add the real bits
-xattr = []
-zstd = ["engine/zstd", "compress/zstd"]
-lz4 = ["engine/lz4", "compress/lz4"]
+xattr = ["transfer/xattr"]
+zstd = ["engine/zstd", "compress/zstd", "transfer/zstd"]
+lz4 = ["engine/lz4", "compress/lz4", "transfer/lz4"]
 iconv = ["protocol/iconv"]
 sd-notify = []
 # Async runtime support - enables tokio-based async I/O for core operations
