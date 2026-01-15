@@ -80,7 +80,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
 ## Status
 
 - **Upstream baseline:** tracking `rsync` **3.4.1** (protocol 32).
-- **oc-rsync release:** **0.5.1**.
+- **oc-rsync release:** **0.5.2**.
 - **Stability:** beta; core transfer functionality is complete with full protocol interoperability. Ongoing work focuses on edge cases, performance optimization, and production hardening.
 
 ### Implementation Status
