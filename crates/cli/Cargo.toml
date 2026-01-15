@@ -21,13 +21,13 @@ lz4 = ["core/lz4", "compress/lz4"]
 
 [dependencies]
 clap = { version = "4.5.17", features = ["std"] }
-core = { path = "../core" }
-engine = { path = "../engine" }
+core = { path = "../core", default-features = false }
+engine = { path = "../engine", default-features = false }
 logging = { path = "../logging" }
 logging-sink = { path = "../logging-sink" }
 protocol = { path = "../protocol" }
-compress = { path = "../compress" }
-metadata = { path = "../metadata" }
+compress = { path = "../compress", default-features = false }
+metadata = { path = "../metadata", default-features = false }
 rsync_io = { path = "../rsync_io", package = "rsync_io" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = "3.10"
