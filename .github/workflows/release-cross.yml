@@ -96,149 +96,69 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
 
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-linux
+          key: build-linux-musl
 
-      - name: Install system dependencies
+      - name: Install musl toolchains
         shell: bash
         run: |
           set -euo pipefail
-
-          # Enable arm64 multiarch
-          sudo dpkg --add-architecture arm64
-
-          # Discover codename (e.g. noble)
-          . /etc/os-release
-          codename="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
-          printf 'Ubuntu codename: %s\n' "${codename}"
-
-          # If deb822 ubuntu.sources exists (24.04+), make it amd64-only
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo awk '
-              BEGIN { in_stanza = 0; had_arch = 0 }
-              /^Types:/ { in_stanza = 1; had_arch = 0 }
-              /^$/     { in_stanza = 0; had_arch = 0 }
-              /^Architectures:/ { had_arch = 1 }
-              {
-                print
-                if (in_stanza && /^Components:/ && !had_arch) {
-                  print "Architectures: amd64"
-                  had_arch = 1
-                }
-              }
-            ' /etc/apt/sources.list.d/ubuntu.sources \
-              | sudo tee /etc/apt/sources.list.d/ubuntu.sources.new >/dev/null
-            sudo mv /etc/apt/sources.list.d/ubuntu.sources.new /etc/apt/sources.list.d/ubuntu.sources
-          fi
-
-          # Add ports.ubuntu.com for arm64
-          sudo sh -c '
-            codename="$1"
-            {
-              printf "Types: deb\n"
-              printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
-              printf "Suites: %s %s-updates %s-backports\n" "$codename" "$codename" "$codename"
-              printf "Components: main restricted universe multiverse\n"
-              printf "Architectures: arm64\n"
-              printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
-              printf "\n"
-              printf "Types: deb\n"
-              printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
-              printf "Suites: %s-security\n" "$codename"
-              printf "Components: main restricted universe multiverse\n"
-              printf "Architectures: arm64\n"
-              printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
-            } > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources
-          ' sh "$codename"
 
           export DEBIAN_FRONTEND=noninteractive
           sudo apt-get update
-          sudo apt-get -y install \
-            pkg-config \
-            libssl-dev \
-            libacl1-dev \
-            libattr1-dev \
-            libzstd-dev \
-            zlib1g-dev \
-            libxxhash-dev \
-            gcc-aarch64-linux-gnu \
-            libssl-dev:arm64 \
-            libacl1-dev:arm64 \
-            libattr1-dev:arm64 \
-            libzstd-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libxxhash-dev:arm64
 
-      - name: Install cargo-deb and cargo-rpm
-        shell: bash
-        run: |
-          set -euo pipefail
+          # Install musl toolchain for x86_64
+          sudo apt-get -y install musl-tools
 
-          if ! command -v cargo-deb >/dev/null 2>&1; then
-            cargo install --locked cargo-deb
-          fi
+          # Install cross-compilation toolchain for aarch64-musl
+          # Using musl-cross-make prebuilt binaries
+          curl -fsSL https://musl.cc/aarch64-linux-musl-cross.tgz | sudo tar xzf - -C /opt
+          echo "/opt/aarch64-linux-musl-cross/bin" | sudo tee -a $GITHUB_PATH
 
-          if ! command -v cargo-rpm >/dev/null 2>&1; then
-            cargo install --locked cargo-rpm
-          fi
+          # Verify installations
+          printf 'x86_64 musl-gcc: %s\n' "$(which musl-gcc)"
+          printf 'aarch64 musl-gcc: %s\n' "$(which aarch64-linux-musl-gcc || echo 'will be in PATH')"
 
-      - name: Build Linux packages (deb + tarball, try RPM)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          printf 'Running cargo xtask package with RPM...\n'
-          if cargo xtask package \
-              --deb \
-              --rpm \
-              --tarball \
-              --tarball-target x86_64-unknown-linux-gnu \
-              --profile dist
-          then
-            printf 'cargo xtask package (with RPM) completed successfully.\n'
-          else
-            printf 'cargo xtask package failed (likely during RPM build).\n'
-            printf 'Falling back to packaging without RPM...\n'
-            cargo xtask package \
-              --deb \
-              --tarball \
-              --tarball-target x86_64-unknown-linux-gnu \
-              --profile dist
-          fi
-
-      - name: Build Linux aarch64 artifacts (tarball + deb + rpm)
+      - name: Build Linux x86_64 static binary (musl)
         shell: bash
         env:
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: |
           set -euo pipefail
-          printf 'Running cargo xtask package for aarch64 (tarball)...\n'
+
+          printf 'Building x86_64-unknown-linux-musl static binary...\n'
           cargo xtask package \
             --tarball \
-            --tarball-target aarch64-unknown-linux-gnu \
+            --tarball-target x86_64-unknown-linux-musl \
             --profile dist
 
-          printf 'Building aarch64 .deb (reusing dist binaries)...\n'
-          cargo deb \
-            --target aarch64-unknown-linux-gnu \
-            --no-build \
-            --profile dist
+          # Verify static linking
+          printf 'Verifying static binary...\n'
+          file target/x86_64-unknown-linux-musl/dist/oc-rsync || true
+          ldd target/x86_64-unknown-linux-musl/dist/oc-rsync 2>&1 || printf 'Not a dynamic executable (expected for static build)\n'
 
-          printf 'Building aarch64 .rpm (reusing dist binaries)...\n'
-          if cargo rpm build \
-              --target aarch64-unknown-linux-gnu \
-              --output target/dist/
-          then
-            printf 'cargo rpm build (aarch64) completed successfully.\n'
-          else
-            printf 'cargo rpm build (aarch64) failed; skipping aarch64 RPM.\n'
-          fi
+      - name: Build Linux aarch64 static binary (musl)
+        shell: bash
+        env:
+          CC_aarch64_unknown_linux_musl: aarch64-linux-musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_AR: aarch64-linux-musl-ar
+        run: |
+          set -euo pipefail
+
+          # Ensure aarch64-musl toolchain is in PATH
+          export PATH="/opt/aarch64-linux-musl-cross/bin:$PATH"
+
+          printf 'Building aarch64-unknown-linux-musl static binary...\n'
+          cargo xtask package \
+            --tarball \
+            --tarball-target aarch64-unknown-linux-musl \
+            --profile dist
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
@@ -247,143 +167,10 @@ jobs:
           retention-days: 7
           path: |
             target/dist/oc-rsync-*-linux-*.tar.gz
-            target/debian/oc-rsync_*_amd64.deb
-            target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64.deb
-            target/dist/oc-rsync-*.rpm
 
 
-  linux-focal:
-    name: linux focal release artifacts (Ubuntu 20.04)
-    runs-on: ubuntu-latest
-    needs: validate-version
-    timeout-minutes: 45
-    container:
-      image: ubuntu:20.04
-
-    steps:
-      - name: Install container dependencies
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get -y install \
-            curl \
-            git \
-            build-essential \
-            pkg-config \
-            libssl-dev \
-            libacl1-dev \
-            libattr1-dev \
-            libzstd-dev \
-            zlib1g-dev \
-            libxxhash-dev \
-            gcc-aarch64-linux-gnu \
-            ca-certificates
-
-          # Enable arm64 multiarch for cross-compilation
-          dpkg --add-architecture arm64
-          # Restrict existing sources to amd64 only (arm64 comes from ports.ubuntu.com)
-          sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
-          # Add arm64 sources (ports.ubuntu.com for Ubuntu 20.04)
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse" >> /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-updates main restricted universe multiverse" >> /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-security main restricted universe multiverse" >> /etc/apt/sources.list
-          apt-get update
-          apt-get -y install \
-            libssl-dev:arm64 \
-            libacl1-dev:arm64 \
-            libattr1-dev:arm64 \
-            libzstd-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libxxhash-dev:arm64
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure git safe directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
-
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: build-linux-focal
-
-      - name: Install cargo-deb
-        shell: bash
-        env:
-          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
-          RUSTC_WRAPPER: ""
-          CARGO_BUILD_RUSTC_WRAPPER: ""
-        run: |
-          set -euo pipefail
-          if ! command -v cargo-deb >/dev/null 2>&1; then
-            cargo install --locked cargo-deb
-          fi
-
-      - name: Build Linux focal x86_64 deb
-        shell: bash
-        env:
-          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
-          RUSTC_WRAPPER: ""
-          CARGO_BUILD_RUSTC_WRAPPER: ""
-        run: |
-          set -euo pipefail
-          printf 'Building focal variant deb for x86_64...\n'
-          cargo xtask package \
-            --deb \
-            --deb-variant focal \
-            --profile dist
-          # Rename to include focal suffix
-          DEBFILE=$(ls target/debian/oc-rsync_*_amd64.deb 2>/dev/null | head -1)
-          if [ -n "$DEBFILE" ] && [ -f "$DEBFILE" ]; then
-            NEWNAME="${DEBFILE%.deb}_focal.deb"
-            mv "$DEBFILE" "$NEWNAME"
-            printf 'Renamed %s -> %s\n' "$(basename "$DEBFILE")" "$(basename "$NEWNAME")"
-          fi
-
-      - name: Build Linux focal aarch64 deb
-        shell: bash
-        env:
-          # Override linker from .cargo/config.toml (not available in container)
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_AR: aarch64-linux-gnu-ar
-          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
-          RUSTC_WRAPPER: ""
-          CARGO_BUILD_RUSTC_WRAPPER: ""
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
-        run: |
-          set -euo pipefail
-          printf 'Building focal variant deb for aarch64...\n'
-          cargo build \
-            --target aarch64-unknown-linux-gnu \
-            --profile dist
-          cargo deb \
-            --target aarch64-unknown-linux-gnu \
-            --no-build \
-            --variant focal \
-            --profile dist
-          # Rename to include focal suffix
-          DEBFILE=$(ls target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64.deb 2>/dev/null | head -1)
-          if [ -n "$DEBFILE" ] && [ -f "$DEBFILE" ]; then
-            NEWNAME="${DEBFILE%.deb}_focal.deb"
-            mv "$DEBFILE" "$NEWNAME"
-            printf 'Renamed %s -> %s\n' "$(basename "$DEBFILE")" "$(basename "$NEWNAME")"
-          fi
-
-      - name: Upload Linux focal artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-linux-focal
-          retention-days: 7
-          path: |
-            target/debian/oc-rsync_*_amd64_focal.deb
-            target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64_focal.deb
+  # NOTE: linux-focal job removed - musl static binaries work on all Linux distributions
+  # including Ubuntu 20.04 (focal) without glibc version requirements
 
   macos:
     name: macOS release artifacts
@@ -498,7 +285,6 @@ jobs:
     needs:
       - validate-version
       - linux
-      - linux-focal
       - macos
       - windows
 
@@ -519,16 +305,13 @@ jobs:
           echo "=== Verifying all expected artifacts are present ==="
 
           # Use flexible patterns to match both x86_64/amd64 naming conventions
-          # Linux tarballs: may use amd64 or x86_64, aarch64
+          # Linux tarballs: static musl binaries (x86_64, aarch64)
           # macOS tarballs: use x86_64, aarch64
           # Windows tarballs: may use amd64 or x86_64
-          # Debs: use amd64, arm64 (Debian convention)
           declare -a REQUIRED_PATTERNS=(
-            "dist/**/oc-rsync-*-linux-*.tar.gz"        # Linux x86_64/amd64
+            "dist/**/oc-rsync-*-linux-*.tar.gz"        # Linux static musl binaries
             "dist/**/oc-rsync-*-darwin-*.tar.gz"       # macOS (both archs)
             "dist/**/oc-rsync-*-windows-*.tar.gz"      # Windows
-            "dist/**/oc-rsync_*_amd64.deb"             # Linux amd64 deb
-            "dist/**/oc-rsync_*_arm64.deb"             # Linux arm64 deb
           )
 
           MISSING=0
@@ -568,7 +351,7 @@ jobs:
           if [ $MISSING -gt 0 ]; then
             echo "::error::$MISSING validation checks failed!"
             echo "=== Actual files found ==="
-            find dist -type f -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" | sort
+            find dist -type f -name "*.tar.gz" -o -name "*.zip" | sort
             exit 1
           fi
 
@@ -582,11 +365,7 @@ jobs:
             dist/**/oc-rsync-*-windows-*.tar.gz
             dist/**/oc-rsync-*-darwin-*.tar.gz
             dist/**/oc-rsync-*-linux-*.tar.gz
-            dist/**/oc-rsync_*_amd64.deb
-            dist/**/oc-rsync_*_arm64.deb
-            dist/**/oc-rsync_*_amd64_focal.deb
-            dist/**/oc-rsync_*_arm64_focal.deb
-            dist/**/oc-rsync-*.rpm
+            dist/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

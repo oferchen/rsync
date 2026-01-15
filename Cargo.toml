@@ -218,6 +218,14 @@ buildflags = ["--profile", "dist", "--bins"]
 
 [profile.dist]
 inherits = "release"
-lto = "thin"
-codegen-units = 1
-strip = true
+opt-level = "z"           # Optimize for size
+lto = "fat"               # Full link-time optimization
+codegen-units = 1         # Single codegen unit for maximum optimization
+panic = "abort"           # Remove unwinding code (~10% smaller)
+strip = "symbols"         # Strip symbols from binary
+
+# Optimize dependencies for size in dist builds
+[profile.dist.package."*"]
+opt-level = "z"
+codegen-units = 16        # Faster dependency compilation
+strip = "symbols"
