@@ -46,15 +46,7 @@ jobs:
           version: 1.0
 
       - name: Build upstream rsync binaries
-        run: |
-          bash tools/ci/run_interop.sh build-only || true
-          # The script may not have a build-only mode, so we run it normally
-          # It will build the binaries and place them in target/interop/upstream-install/
-
-      - name: Check for upstream binaries
-        run: |
-          echo "Checking for upstream rsync binaries..."
-          ls -la target/interop/upstream-install/*/bin/rsync || true
+        run: bash tools/ci/run_interop.sh build-only
 
       - name: Build oc-rsync
         run: cargo build --release
@@ -103,8 +95,7 @@ jobs:
           version: 1.0
 
       - name: Build upstream rsync binaries
-        run: |
-          bash tools/ci/run_interop.sh build-only || true
+        run: bash tools/ci/run_interop.sh build-only
 
       - name: Build oc-rsync
         run: cargo build --release
@@ -155,7 +146,7 @@ jobs:
           version: 1.0
 
       - name: Build upstream rsync binaries
-        run: bash tools/ci/run_interop.sh build-only || true
+        run: bash tools/ci/run_interop.sh build-only
 
       - name: Regenerate exit code goldens
         run: cargo xtask interop exit-codes --regenerate --verbose
