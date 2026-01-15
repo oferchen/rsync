@@ -275,12 +275,11 @@ jobs:
 
           printf 'Building %s static binary...\n' "${{ matrix.target }}"
 
-          # Build without acl/xattr features (not available in musl static builds)
+          # Build with all features including acl/xattr
+          # Custom Dockerfiles (.cross/) install musl-compatible libacl from Alpine
           cross build \
             --profile dist \
-            --target ${{ matrix.target }} \
-            --no-default-features \
-            --features "zstd lz4"
+            --target ${{ matrix.target }}
 
       - name: Create tarball
         run: |
