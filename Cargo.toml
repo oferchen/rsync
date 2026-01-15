@@ -128,8 +128,10 @@ macos = ["x86_64", "aarch64"]
 windows = ["x86_64"]
 
 [workspace.metadata.oc_rsync.cross_compile_matrix]
-"linux-x86_64" = true
-"linux-aarch64" = true
+"linux-x86_64-musl" = true
+"linux-aarch64-musl" = true
+"linux-x86_64-gnu" = true
+"linux-aarch64-gnu" = true
 "darwin-x86_64" = true
 "darwin-aarch64" = true
 "windows-x86_64" = true
