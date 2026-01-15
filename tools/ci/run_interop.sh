@@ -578,12 +578,41 @@ run_interop_case() {
 
 # ------------------ main ------------------
 
-ensure_workspace_binaries
+# Parse command line arguments
+build_only=false
+for arg in "$@"; do
+  case "$arg" in
+    build-only)
+      build_only=true
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      echo "Usage: $0 [build-only]" >&2
+      exit 1
+      ;;
+  esac
+done
 
+# Build upstream binaries first (always needed)
 mkdir -p "$upstream_src_root" "$upstream_install_root"
 for version in "${versions[@]}"; do
   ensure_upstream_build "$version"
 done
+
+# If build-only mode, exit after building upstream binaries
+if [[ "$build_only" == "true" ]]; then
+  echo "Built upstream rsync binaries (build-only mode)"
+  for version in "${versions[@]}"; do
+    binary="${upstream_install_root}/${version}/bin/rsync"
+    if [[ -x "$binary" ]]; then
+      echo "  - ${version}: $binary"
+    fi
+  done
+  exit 0
+fi
+
+# For full interop tests, build oc-rsync
+ensure_workspace_binaries
 
 oc_client="${target_dir}/oc-rsync"
 oc_binary="${target_dir}/oc-rsync"
