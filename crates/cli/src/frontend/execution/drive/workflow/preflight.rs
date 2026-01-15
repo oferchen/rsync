@@ -124,7 +124,7 @@ where
     }
 }
 
-pub(crate) const fn validate_feature_support<Err>(
+pub(crate) fn validate_feature_support<Err>(
     preserve_acls: bool,
     xattrs: Option<bool>,
     stderr: &mut MessageSink<Err>,
