@@ -26,9 +26,9 @@ iconv = ["core/iconv"]
 async = ["daemon/async", "core/async"]
 
 [dependencies]
-cli = { path = "crates/cli" }
-daemon = { path = "crates/daemon" }
-core = { path = "crates/core" }
+cli = { path = "crates/cli", default-features = false }
+daemon = { path = "crates/daemon", default-features = false }
+core = { path = "crates/core", default-features = false }
 
 [dev-dependencies]
 assert_cmd = "2.0"
