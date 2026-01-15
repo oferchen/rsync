@@ -1,0 +1,71 @@
+FROM ghcr.io/cross-rs/x86_64-unknown-linux-musl:main
+
+# Install musl-compatible libacl and libattr from Alpine packages
+# Using Alpine's apk-tools-static for proper package management without version hardcoding
+RUN set -ex && \
+    ALPINE_VERSION="3.21" && \
+    ARCH="x86_64" && \
+    ALPINE_MIRROR="https://dl-cdn.alpinelinux.org/alpine" && \
+    APK_TOOLS_URL="${ALPINE_MIRROR}/v${ALPINE_VERSION}/main/${ARCH}" && \
+    # Create directories
+    mkdir -p /tmp/alpine-root /tmp/alpine-cache && \
+    cd /tmp && \
+    # Download and extract apk-tools-static to bootstrap apk
+    APK_TOOLS_PKG=$(curl -sSL "${APK_TOOLS_URL}/APKINDEX.tar.gz" | tar -tzf - 2>/dev/null | head -1 || echo "") && \
+    curl -sSL "${APK_TOOLS_URL}/" -o index.html && \
+    APK_TOOLS_FILE=$(grep -oP 'apk-tools-static-[0-9][^"]+\.apk' index.html | head -1) && \
+    curl -sSL "${APK_TOOLS_URL}/${APK_TOOLS_FILE}" -o apk-tools-static.apk && \
+    tar -xzf apk-tools-static.apk -C /tmp 2>/dev/null || true && \
+    # Initialize minimal Alpine root and install packages
+    /tmp/sbin/apk.static \
+        --arch ${ARCH} \
+        --root /tmp/alpine-root \
+        --initdb \
+        --repository "${ALPINE_MIRROR}/v${ALPINE_VERSION}/main" \
+        --allow-untrusted \
+        --no-scripts \
+        add acl-dev acl attr-dev attr acl-static attr-static 2>/dev/null || \
+    # Fallback: try without static packages if not available
+    /tmp/sbin/apk.static \
+        --arch ${ARCH} \
+        --root /tmp/alpine-root \
+        --initdb \
+        --repository "${ALPINE_MIRROR}/v${ALPINE_VERSION}/main" \
+        --allow-untrusted \
+        --no-scripts \
+        add acl-dev acl attr-dev attr && \
+    # Copy libraries and headers to musl sysroot
+    MUSL_SYSROOT="/usr/local/x86_64-linux-musl" && \
+    mkdir -p "${MUSL_SYSROOT}/include/sys" "${MUSL_SYSROOT}/include/acl" "${MUSL_SYSROOT}/include/attr" "${MUSL_SYSROOT}/lib" && \
+    # Copy headers
+    cp /tmp/alpine-root/usr/include/sys/acl.h "${MUSL_SYSROOT}/include/sys/" 2>/dev/null || true && \
+    cp /tmp/alpine-root/usr/include/acl/*.h "${MUSL_SYSROOT}/include/acl/" 2>/dev/null || true && \
+    cp /tmp/alpine-root/usr/include/attr/*.h "${MUSL_SYSROOT}/include/attr/" 2>/dev/null || true && \
+    # Copy static libraries (preferred for fully static builds)
+    cp /tmp/alpine-root/usr/lib/*.a "${MUSL_SYSROOT}/lib/" 2>/dev/null || true && \
+    # Copy dynamic libraries as fallback
+    cp /tmp/alpine-root/usr/lib/libacl.so* "${MUSL_SYSROOT}/lib/" 2>/dev/null || true && \
+    cp /tmp/alpine-root/usr/lib/libattr.so* "${MUSL_SYSROOT}/lib/" 2>/dev/null || true && \
+    cp /tmp/alpine-root/lib/libacl.so* "${MUSL_SYSROOT}/lib/" 2>/dev/null || true && \
+    cp /tmp/alpine-root/lib/libattr.so* "${MUSL_SYSROOT}/lib/" 2>/dev/null || true && \
+    # Create pkg-config files
+    mkdir -p "${MUSL_SYSROOT}/lib/pkgconfig" && \
+    echo 'prefix=/usr/local/x86_64-linux-musl' > "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'exec_prefix=${prefix}' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'libdir=${exec_prefix}/lib' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'includedir=${prefix}/include' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'Name: libacl' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'Description: Access Control Lists library' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'Version: 2.3' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'Libs: -L${libdir} -lacl' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    echo 'Cflags: -I${includedir}' >> "${MUSL_SYSROOT}/lib/pkgconfig/libacl.pc" && \
+    # Cleanup
+    rm -rf /tmp/alpine-root /tmp/alpine-cache /tmp/sbin /tmp/index.html /tmp/apk-tools-static.apk && \
+    # Verify installation
+    echo "=== Installed libraries ===" && \
+    ls -la "${MUSL_SYSROOT}/lib/"*acl* "${MUSL_SYSROOT}/lib/"*attr* 2>/dev/null || echo "Warning: some libraries not found"
+
+# Set environment for cross-compilation
+ENV PKG_CONFIG_PATH="/usr/local/x86_64-linux-musl/lib/pkgconfig"
+ENV LIBRARY_PATH="/usr/local/x86_64-linux-musl/lib"
+ENV C_INCLUDE_PATH="/usr/local/x86_64-linux-musl/include"
