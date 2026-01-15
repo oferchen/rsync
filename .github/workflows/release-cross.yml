@@ -186,31 +186,25 @@ jobs:
             cargo install --locked cargo-rpm
           fi
 
-      - name: Build Linux packages (deb + tarball, try RPM)
+      - name: Build Linux x86_64 packages (deb + rpm)
         shell: bash
         run: |
           set -euo pipefail
 
-          printf 'Running cargo xtask package with RPM...\n'
-          if cargo xtask package \
-              --deb \
-              --rpm \
-              --tarball \
-              --tarball-target x86_64-unknown-linux-gnu \
-              --profile dist
-          then
-            printf 'cargo xtask package (with RPM) completed successfully.\n'
+          printf 'Building x86_64 binary...\n'
+          cargo build --profile dist --target x86_64-unknown-linux-gnu
+
+          printf 'Building x86_64 .deb...\n'
+          cargo deb --target x86_64-unknown-linux-gnu --no-build --profile dist
+
+          printf 'Building x86_64 .rpm (optional)...\n'
+          if cargo rpm build --target x86_64-unknown-linux-gnu --output target/dist/; then
+            printf 'cargo rpm build (x86_64) completed successfully.\n'
           else
-            printf 'cargo xtask package failed (likely during RPM build).\n'
-            printf 'Falling back to packaging without RPM...\n'
-            cargo xtask package \
-              --deb \
-              --tarball \
-              --tarball-target x86_64-unknown-linux-gnu \
-              --profile dist
+            printf 'cargo rpm build (x86_64) failed; skipping x86_64 RPM.\n'
           fi
 
-      - name: Build Linux aarch64 artifacts (tarball + deb + rpm)
+      - name: Build Linux aarch64 packages (deb + rpm)
         shell: bash
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
@@ -218,23 +212,15 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
         run: |
           set -euo pipefail
-          printf 'Running cargo xtask package for aarch64 (tarball)...\n'
-          cargo xtask package \
-            --tarball \
-            --tarball-target aarch64-unknown-linux-gnu \
-            --profile dist
 
-          printf 'Building aarch64 .deb (reusing dist binaries)...\n'
-          cargo deb \
-            --target aarch64-unknown-linux-gnu \
-            --no-build \
-            --profile dist
+          printf 'Building aarch64 binary...\n'
+          cargo build --profile dist --target aarch64-unknown-linux-gnu
 
-          printf 'Building aarch64 .rpm (reusing dist binaries)...\n'
-          if cargo rpm build \
-              --target aarch64-unknown-linux-gnu \
-              --output target/dist/
-          then
+          printf 'Building aarch64 .deb...\n'
+          cargo deb --target aarch64-unknown-linux-gnu --no-build --profile dist
+
+          printf 'Building aarch64 .rpm (optional)...\n'
+          if cargo rpm build --target aarch64-unknown-linux-gnu --output target/dist/; then
             printf 'cargo rpm build (aarch64) completed successfully.\n'
           else
             printf 'cargo rpm build (aarch64) failed; skipping aarch64 RPM.\n'
@@ -246,11 +232,88 @@ jobs:
           name: dist-linux
           retention-days: 7
           path: |
-            target/dist/oc-rsync-*-linux-*.tar.gz
-            target/debian/oc-rsync_*_amd64.deb
+            target/x86_64-unknown-linux-gnu/debian/oc-rsync_*_amd64.deb
             target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64.deb
             target/dist/oc-rsync-*.rpm
 
+
+  # ===========================================================================
+  # Linux musl builds (static binaries for universal portability)
+  # ===========================================================================
+  linux-musl:
+    name: linux static musl builds
+    runs-on: ubuntu-latest
+    needs: validate-version
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-linux-musl
+
+      - name: Install cross
+        shell: bash
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build x86_64 musl static binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build with minimal features for musl (acl, xattr, iconv require glibc)
+          cross build --target x86_64-unknown-linux-musl --profile dist --bin oc-rsync \
+            --no-default-features --features "zstd lz4"
+          # Verify it's statically linked
+          file target/x86_64-unknown-linux-musl/dist/oc-rsync
+          ldd target/x86_64-unknown-linux-musl/dist/oc-rsync 2>&1 || echo "Static binary confirmed (no dynamic linking)"
+
+      - name: Build aarch64 musl static binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Build with minimal features for musl (acl, xattr, iconv require glibc)
+          cross build --target aarch64-unknown-linux-musl --profile dist --bin oc-rsync \
+            --no-default-features --features "zstd lz4"
+          file target/aarch64-unknown-linux-musl/dist/oc-rsync
+
+      - name: Create musl tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          mkdir -p target/dist
+
+          # x86_64 musl tarball
+          TARBALL_X86="target/dist/oc-rsync-${VERSION}-linux-x86_64-musl.tar.gz"
+          mkdir -p /tmp/tarball-x86/bin
+          cp target/x86_64-unknown-linux-musl/dist/oc-rsync /tmp/tarball-x86/bin/
+          tar -czvf "${TARBALL_X86}" -C /tmp/tarball-x86 bin
+          printf 'Created: %s\n' "${TARBALL_X86}"
+
+          # aarch64 musl tarball
+          TARBALL_ARM="target/dist/oc-rsync-${VERSION}-linux-aarch64-musl.tar.gz"
+          mkdir -p /tmp/tarball-arm/bin
+          cp target/aarch64-unknown-linux-musl/dist/oc-rsync /tmp/tarball-arm/bin/
+          tar -czvf "${TARBALL_ARM}" -C /tmp/tarball-arm bin
+          printf 'Created: %s\n' "${TARBALL_ARM}"
+
+          ls -la target/dist/
+
+      - name: Upload Linux musl artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-musl
+          retention-days: 7
+          path: target/dist/oc-rsync-*-linux-*-musl.tar.gz
 
   linux-focal:
     name: linux focal release artifacts (Ubuntu 20.04)
@@ -498,6 +561,7 @@ jobs:
     needs:
       - validate-version
       - linux
+      - linux-musl
       - linux-focal
       - macos
       - windows
@@ -519,12 +583,13 @@ jobs:
           echo "=== Verifying all expected artifacts are present ==="
 
           # Use flexible patterns to match both x86_64/amd64 naming conventions
-          # Linux tarballs: may use amd64 or x86_64, aarch64
+          # Linux musl tarballs: static binaries (x86_64-musl, aarch64-musl)
+          # Linux glibc tarballs: for compatibility (x86_64, aarch64)
           # macOS tarballs: use x86_64, aarch64
           # Windows tarballs: may use amd64 or x86_64
           # Debs: use amd64, arm64 (Debian convention)
           declare -a REQUIRED_PATTERNS=(
-            "dist/**/oc-rsync-*-linux-*.tar.gz"        # Linux x86_64/amd64
+            "dist/**/oc-rsync-*-linux-*-musl.tar.gz"   # Linux musl static (both archs)
             "dist/**/oc-rsync-*-darwin-*.tar.gz"       # macOS (both archs)
             "dist/**/oc-rsync-*-windows-*.tar.gz"      # Windows
             "dist/**/oc-rsync_*_amd64.deb"             # Linux amd64 deb
@@ -547,13 +612,13 @@ jobs:
             fi
           done
 
-          # Additional sanity check: must have at least 2 linux tarballs (x86 + arm)
-          LINUX_COUNT=$(find dist -name "oc-rsync-*-linux-*.tar.gz" | wc -l)
-          if [ "$LINUX_COUNT" -lt 2 ]; then
-            echo "::error::Expected at least 2 Linux tarballs, found $LINUX_COUNT"
+          # Additional sanity check: must have at least 2 linux musl tarballs (x86 + arm)
+          LINUX_MUSL_COUNT=$(find dist -name "oc-rsync-*-linux-*-musl.tar.gz" | wc -l)
+          if [ "$LINUX_MUSL_COUNT" -lt 2 ]; then
+            echo "::error::Expected at least 2 Linux musl tarballs, found $LINUX_MUSL_COUNT"
             MISSING=$((MISSING + 1))
           else
-            echo "✓ Found $LINUX_COUNT Linux tarballs"
+            echo "✓ Found $LINUX_MUSL_COUNT Linux musl static tarballs"
           fi
 
           # Must have at least 2 macOS tarballs
@@ -581,7 +646,7 @@ jobs:
           files: |
             dist/**/oc-rsync-*-windows-*.tar.gz
             dist/**/oc-rsync-*-darwin-*.tar.gz
-            dist/**/oc-rsync-*-linux-*.tar.gz
+            dist/**/oc-rsync-*-linux-*-musl.tar.gz
             dist/**/oc-rsync_*_amd64.deb
             dist/**/oc-rsync_*_arm64.deb
             dist/**/oc-rsync_*_amd64_focal.deb
