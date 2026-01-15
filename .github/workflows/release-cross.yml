@@ -267,9 +267,6 @@ jobs:
           key: build-linux-musl-${{ matrix.arch }}
 
       - name: Build static musl binary
-        env:
-          # Allow deprecated warning for libc::time_t on musl (will be fixed upstream)
-          RUSTFLAGS: "-D warnings -A deprecated"
         run: |
           set -euo pipefail
 
