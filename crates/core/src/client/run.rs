@@ -164,6 +164,12 @@ fn run_client_internal(
 
     // Attach batch writer to options if in batch write mode
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {
+        // Determine preserve_xattrs conditionally based on feature
+        #[cfg(feature = "xattr")]
+        let preserve_xattrs = config.preserve_xattrs();
+        #[cfg(not(feature = "xattr"))]
+        let preserve_xattrs = false;
+
         // Write batch header with stream flags before starting transfer
         let batch_flags = engine::batch::BatchFlags {
             recurse: config.recursive(),
@@ -174,7 +180,7 @@ fn run_client_internal(
             always_checksum: config.checksum(),
             xfer_dirs: config.dirs(),
             do_compression: config.compress(),
-            preserve_xattrs: config.preserve_xattrs(),
+            preserve_xattrs,
             inplace: config.inplace(),
             append: config.append(),
             append_verify: config.append_verify(),
