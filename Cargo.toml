@@ -81,7 +81,7 @@ edition = "2024"
 rust-version = "1.88"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
-version = "0.5.3"
+version = "0.5.2"
 repository = "https://github.com/oferchen/rsync"
 
 [workspace.dependencies]
