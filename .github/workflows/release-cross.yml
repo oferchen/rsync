@@ -236,8 +236,9 @@ jobs:
 
   linux-musl:
     name: linux musl static tarballs
+    runs-on: ubuntu-latest
     needs: validate-version
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     strategy:
       fail-fast: false
@@ -245,56 +246,39 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             arch: x86_64
-            runner: ubuntu-latest
           - target: aarch64-unknown-linux-musl
             arch: aarch64
-            runner: ubuntu-24.04-arm
-
-    runs-on: ${{ matrix.runner }}
-    container:
-      image: alpine:3.21
 
     steps:
-      - name: Install build dependencies
-        run: |
-          apk add --no-cache \
-            curl \
-            git \
-            build-base \
-            musl-dev \
-            acl-dev \
-            acl-static \
-            attr-dev \
-            attr-static \
-            zlib-dev \
-            zlib-static \
-            openssl-dev \
-            openssl-libs-static
-
-      - name: Install Rust toolchain
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --target ${{ matrix.target }}
-          . "$HOME/.cargo/env"
-          rustup target add ${{ matrix.target }}
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-linux-musl-${{ matrix.arch }}
+
       - name: Build static musl binary
         env:
-          RUSTFLAGS: "-D warnings -C target-feature=+crt-static"
+          RUSTFLAGS: "-D warnings"
         run: |
-          . "$HOME/.cargo/env"
+          set -euo pipefail
 
           printf 'Building %s static binary with full features...\n' "${{ matrix.target }}"
 
-          # Build with all default features (includes acl, xattr, zstd, lz4)
-          # Alpine provides native musl with libacl/libattr
-          cargo build --profile dist --target ${{ matrix.target }}
-
-          # Verify the binary is statically linked
-          file "target/${{ matrix.target }}/dist/oc-rsync" || true
+          # Custom Dockerfiles in docker/ directory provide musl-compatible
+          # libacl and libattr from Alpine packages for full feature parity
+          cross build \
+            --profile dist \
+            --target ${{ matrix.target }}
 
       - name: Create tarball
         run: |

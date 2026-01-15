@@ -1,0 +1,52 @@
+# Custom cross image for aarch64-unknown-linux-musl with ACL and xattr support
+# Uses Alpine packages for musl-native libacl and libattr
+
+FROM ghcr.io/cross-rs/aarch64-unknown-linux-musl:main
+
+# Install wget for downloading Alpine packages
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
+# Set up Alpine package download location
+WORKDIR /tmp/alpine-packages
+
+# Download Alpine packages directly for aarch64 target architecture
+# APK files are tar.gz archives that can be extracted directly
+RUN wget -q https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/acl-2.3.2-r1.apk && \
+    wget -q https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/acl-dev-2.3.2-r1.apk && \
+    wget -q https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/acl-static-2.3.2-r1.apk && \
+    wget -q https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/attr-2.5.2-r2.apk && \
+    wget -q https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/attr-dev-2.5.2-r2.apk && \
+    wget -q https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/attr-static-2.5.2-r2.apk && \
+    wget -q https://dl-cdn.alpinelinux.org/alpine/v3.21/main/aarch64/libattr-2.5.2-r2.apk && \
+    ls -la *.apk
+
+# Extract the packages
+RUN mkdir -p /tmp/extracted && \
+    for pkg in *.apk; do \
+        echo "Extracting $pkg..." && \
+        tar -xzf "$pkg" -C /tmp/extracted; \
+    done && \
+    echo "=== Extracted contents ===" && \
+    find /tmp/extracted -type f \( -name "*.a" -o -name "*.so*" -o -name "*.h" \)
+
+# Copy headers to the cross-compiler's sysroot (preserve directory structure)
+RUN cp -rv /tmp/extracted/usr/include/* /usr/local/aarch64-linux-musl/include/
+
+# Copy static libraries to the cross-compiler's sysroot
+RUN cp -v /tmp/extracted/usr/lib/*.a /usr/local/aarch64-linux-musl/lib/
+
+# Copy shared libraries for completeness (optional, may not exist)
+RUN cp -v /tmp/extracted/usr/lib/*.so* /usr/local/aarch64-linux-musl/lib/ 2>/dev/null || true && \
+    cp -v /tmp/extracted/lib/*.so* /usr/local/aarch64-linux-musl/lib/ 2>/dev/null || true
+
+# Cleanup
+RUN rm -rf /tmp/alpine-packages /tmp/extracted
+
+# Verify the installation
+RUN echo "=== Verifying installation ===" && \
+    ls -la /usr/local/aarch64-linux-musl/include/sys/acl.h && \
+    ls -la /usr/local/aarch64-linux-musl/include/attr/attributes.h && \
+    ls -la /usr/local/aarch64-linux-musl/lib/libacl.a && \
+    ls -la /usr/local/aarch64-linux-musl/lib/libattr.a
+
+WORKDIR /
