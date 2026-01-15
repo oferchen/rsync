@@ -1,8 +1,15 @@
 use crate::auth::SUPPORTED_DAEMON_DIGESTS;
 use crate::branding::Brand;
 use crate::version::{VersionMetadata, version_metadata, version_metadata_for_program};
-use libc::{ino_t, off_t, time_t};
+use libc::{ino_t, off_t};
 use std::borrow::Cow;
+
+// libc::time_t is deprecated on musl targets (musl 1.2.0+ uses 64-bit time_t).
+// Use a platform-specific type alias to avoid the deprecation warning.
+#[cfg(target_env = "musl")]
+type TimeT = i64;
+#[cfg(not(target_env = "musl"))]
+type TimeT = libc::time_t;
 use std::fmt::{self, Write as FmtWrite};
 use std::mem;
 use std::string::String;
@@ -276,7 +283,7 @@ impl VersionInfoReport {
         items.push(InfoItem::Section("Capabilities"));
         items.push(bits_entry::<off_t>("files"));
         items.push(bits_entry::<ino_t>("inums"));
-        items.push(bits_entry::<time_t>("timestamps"));
+        items.push(bits_entry::<TimeT>("timestamps"));
         items.push(bits_entry::<i64>("long ints"));
         items.push(capability_entry("socketpairs", config.supports_socketpairs));
         items.push(capability_entry("symlinks", config.supports_symlinks));
