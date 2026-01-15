@@ -23,6 +23,11 @@ on:
       - "v[0-9]*.[0-9]*.[0-9]*[a-z]-rust"
   workflow_dispatch:
 
+# Cancel in-progress runs when a new run is triggered for the same tag
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -174,17 +179,9 @@ jobs:
             libxxhash-dev:arm64
 
       - name: Install cargo-deb and cargo-rpm
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if ! command -v cargo-deb >/dev/null 2>&1; then
-            cargo install --locked cargo-deb
-          fi
-
-          if ! command -v cargo-rpm >/dev/null 2>&1; then
-            cargo install --locked cargo-rpm
-          fi
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-rpm
 
       - name: Build Linux x86_64 packages (deb + rpm)
         shell: bash
