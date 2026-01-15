@@ -274,6 +274,9 @@ jobs:
 
       - name: Build ${{ matrix.arch }} musl static binary
         shell: bash
+        env:
+          # Allow libc::time_t deprecation warning for musl (see libc#1848)
+          RUSTFLAGS: "-D warnings -A deprecated"
         run: |
           set -euo pipefail
           # Build with minimal features for musl (acl, xattr, iconv require glibc)
