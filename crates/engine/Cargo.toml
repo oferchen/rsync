@@ -29,7 +29,6 @@ rayon = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 globset = "0.4"
 rustix = { version = "0.38", features = ["fs", "process"] }
-libc = { version = "0.2", optional = true }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 md5 = { version = "0.7", optional = true }
 xxhash-rust = { version = "0.8", features = ["xxh64"], optional = true }
@@ -41,10 +40,14 @@ checksums = { path = "../checksums" }
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }
 
+# libc is needed for O_NOATIME on Linux/Android
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
+
 [features]
 default = ["zstd", "lz4", "acl", "xattr"]
 xattr = ["metadata/xattr"]
-acl = ["metadata/acl", "dep:libc"]
+acl = ["metadata/acl"]
 zstd = ["compress/zstd"]
 lz4 = ["compress/lz4"]
 # Async runtime support - enables tokio-based async I/O for file operations
