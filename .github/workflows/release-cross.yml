@@ -244,7 +244,15 @@ jobs:
     name: linux static musl builds
     runs-on: ubuntu-latest
     needs: validate-version
-    timeout-minutes: 45
+    timeout-minutes: 60
+
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
 
     steps:
       - name: Checkout
@@ -253,67 +261,47 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
+          targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-linux-musl
+          key: build-linux-musl-${{ matrix.arch }}
+          shared-key: musl-${{ matrix.target }}
 
       - name: Install cross
-        shell: bash
-        run: |
-          cargo install cross --git https://github.com/cross-rs/cross
+        uses: taiki-e/install-action@cross
 
-      - name: Build x86_64 musl static binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Build with minimal features for musl (acl, xattr, iconv require glibc)
-          cross build --target x86_64-unknown-linux-musl --profile dist --bin oc-rsync \
-            --no-default-features --features "zstd lz4"
-          # Verify it's statically linked
-          file target/x86_64-unknown-linux-musl/dist/oc-rsync
-          ldd target/x86_64-unknown-linux-musl/dist/oc-rsync 2>&1 || echo "Static binary confirmed (no dynamic linking)"
-
-      - name: Build aarch64 musl static binary
+      - name: Build ${{ matrix.arch }} musl static binary
         shell: bash
         run: |
           set -euo pipefail
           # Build with minimal features for musl (acl, xattr, iconv require glibc)
-          cross build --target aarch64-unknown-linux-musl --profile dist --bin oc-rsync \
+          cross build --target ${{ matrix.target }} --profile dist --bin oc-rsync \
             --no-default-features --features "zstd lz4"
-          file target/aarch64-unknown-linux-musl/dist/oc-rsync
+          # Verify the binary
+          file target/${{ matrix.target }}/dist/oc-rsync
 
-      - name: Create musl tarballs
+      - name: Create musl tarball
         shell: bash
         run: |
           set -euo pipefail
           VERSION="${{ needs.validate-version.outputs.version }}"
           mkdir -p target/dist
 
-          # x86_64 musl tarball
-          TARBALL_X86="target/dist/oc-rsync-${VERSION}-linux-x86_64-musl.tar.gz"
-          mkdir -p /tmp/tarball-x86/bin
-          cp target/x86_64-unknown-linux-musl/dist/oc-rsync /tmp/tarball-x86/bin/
-          tar -czvf "${TARBALL_X86}" -C /tmp/tarball-x86 bin
-          printf 'Created: %s\n' "${TARBALL_X86}"
-
-          # aarch64 musl tarball
-          TARBALL_ARM="target/dist/oc-rsync-${VERSION}-linux-aarch64-musl.tar.gz"
-          mkdir -p /tmp/tarball-arm/bin
-          cp target/aarch64-unknown-linux-musl/dist/oc-rsync /tmp/tarball-arm/bin/
-          tar -czvf "${TARBALL_ARM}" -C /tmp/tarball-arm bin
-          printf 'Created: %s\n' "${TARBALL_ARM}"
-
+          TARBALL="target/dist/oc-rsync-${VERSION}-linux-${{ matrix.arch }}-musl.tar.gz"
+          mkdir -p /tmp/tarball/bin
+          cp target/${{ matrix.target }}/dist/oc-rsync /tmp/tarball/bin/
+          tar -czvf "${TARBALL}" -C /tmp/tarball bin
+          printf 'Created: %s\n' "${TARBALL}"
           ls -la target/dist/
 
-      - name: Upload Linux musl artifacts
+      - name: Upload Linux musl artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist-linux-musl
+          name: dist-linux-musl-${{ matrix.arch }}
           retention-days: 7
-          path: target/dist/oc-rsync-*-linux-*-musl.tar.gz
+          path: target/dist/oc-rsync-*-linux-${{ matrix.arch }}-musl.tar.gz
 
   linux-focal:
     name: linux focal release artifacts (Ubuntu 20.04)
