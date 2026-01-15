@@ -108,7 +108,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [workspace.metadata.oc_rsync]
 brand = "oc"
 upstream_version = "3.4.1"
-rust_version = "0.5.1"
+rust_version = "0.5.2"
 protocol = 32
 client_bin = "oc-rsync"
 daemon_bin = "oc-rsync"
