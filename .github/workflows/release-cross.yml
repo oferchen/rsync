@@ -237,16 +237,14 @@ jobs:
             target/dist/oc-rsync-*.rpm
 
 
-  # ===========================================================================
-  # Linux musl builds (static binaries for universal portability)
-  # ===========================================================================
   linux-musl:
-    name: linux static musl builds
+    name: linux musl static tarballs
     runs-on: ubuntu-latest
     needs: validate-version
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
@@ -263,181 +261,59 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
           key: build-linux-musl-${{ matrix.arch }}
-          shared-key: musl-${{ matrix.target }}
 
-      - name: Install cross
-        uses: taiki-e/install-action@cross
-
-      - name: Build ${{ matrix.arch }} musl static binary
-        shell: bash
+      - name: Build static musl binary
         env:
-          # Allow libc::time_t deprecation warning for musl (see libc#1848)
+          # Allow deprecated warning for libc::time_t in musl 1.2.0
           RUSTFLAGS: "-D warnings -A deprecated"
         run: |
           set -euo pipefail
-          # Build with minimal features for musl (acl, xattr, iconv require glibc)
-          cross build --target ${{ matrix.target }} --profile dist --bin oc-rsync \
-            --no-default-features --features "zstd lz4"
-          # Verify the binary
-          file target/${{ matrix.target }}/dist/oc-rsync
 
-      - name: Create musl tarball
-        shell: bash
+          printf 'Building %s static binary...\n' "${{ matrix.target }}"
+
+          # Build without acl/xattr features (not available in musl static builds)
+          cross build \
+            --profile dist \
+            --target ${{ matrix.target }} \
+            --no-default-features \
+            --features "zstd lz4"
+
+      - name: Create tarball
         run: |
           set -euo pipefail
+
           VERSION="${{ needs.validate-version.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCH="${{ matrix.arch }}"
+
+          # Determine tarball name matching xtask convention
+          TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl.tar.gz"
+
           mkdir -p target/dist
+          mkdir -p staging/bin
 
-          TARBALL="target/dist/oc-rsync-${VERSION}-linux-${{ matrix.arch }}-musl.tar.gz"
-          mkdir -p /tmp/tarball/bin
-          cp target/${{ matrix.target }}/dist/oc-rsync /tmp/tarball/bin/
-          tar -czvf "${TARBALL}" -C /tmp/tarball bin
-          printf 'Created: %s\n' "${TARBALL}"
-          ls -la target/dist/
+          # Copy binary
+          cp "target/${TARGET}/dist/oc-rsync" staging/bin/
 
-      - name: Upload Linux musl artifact
+          # Create tarball
+          tar -czf "target/dist/${TARBALL_NAME}" -C staging bin
+
+          printf 'Created tarball: %s\n' "${TARBALL_NAME}"
+          ls -la "target/dist/${TARBALL_NAME}"
+
+      - name: Upload musl artifact
         uses: actions/upload-artifact@v4
         with:
           name: dist-linux-musl-${{ matrix.arch }}
           retention-days: 7
-          path: target/dist/oc-rsync-*-linux-${{ matrix.arch }}-musl.tar.gz
-
-  linux-focal:
-    name: linux focal release artifacts (Ubuntu 20.04)
-    runs-on: ubuntu-latest
-    needs: validate-version
-    timeout-minutes: 45
-    container:
-      image: ubuntu:20.04
-
-    steps:
-      - name: Install container dependencies
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get -y install \
-            curl \
-            git \
-            build-essential \
-            pkg-config \
-            libssl-dev \
-            libacl1-dev \
-            libattr1-dev \
-            libzstd-dev \
-            zlib1g-dev \
-            libxxhash-dev \
-            gcc-aarch64-linux-gnu \
-            ca-certificates
-
-          # Enable arm64 multiarch for cross-compilation
-          dpkg --add-architecture arm64
-          # Restrict existing sources to amd64 only (arm64 comes from ports.ubuntu.com)
-          sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
-          # Add arm64 sources (ports.ubuntu.com for Ubuntu 20.04)
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse" >> /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-updates main restricted universe multiverse" >> /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ focal-security main restricted universe multiverse" >> /etc/apt/sources.list
-          apt-get update
-          apt-get -y install \
-            libssl-dev:arm64 \
-            libacl1-dev:arm64 \
-            libattr1-dev:arm64 \
-            libzstd-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libxxhash-dev:arm64
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure git safe directory
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
-
-      - name: Cache cargo builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: build-linux-focal
-
-      - name: Install cargo-deb
-        shell: bash
-        env:
-          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
-          RUSTC_WRAPPER: ""
-          CARGO_BUILD_RUSTC_WRAPPER: ""
-        run: |
-          set -euo pipefail
-          if ! command -v cargo-deb >/dev/null 2>&1; then
-            cargo install --locked cargo-deb
-          fi
-
-      - name: Build Linux focal x86_64 deb
-        shell: bash
-        env:
-          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
-          RUSTC_WRAPPER: ""
-          CARGO_BUILD_RUSTC_WRAPPER: ""
-        run: |
-          set -euo pipefail
-          printf 'Building focal variant deb for x86_64...\n'
-          cargo xtask package \
-            --deb \
-            --deb-variant focal \
-            --profile dist
-          # Rename to include focal suffix
-          DEBFILE=$(ls target/debian/oc-rsync_*_amd64.deb 2>/dev/null | head -1)
-          if [ -n "$DEBFILE" ] && [ -f "$DEBFILE" ]; then
-            NEWNAME="${DEBFILE%.deb}_focal.deb"
-            mv "$DEBFILE" "$NEWNAME"
-            printf 'Renamed %s -> %s\n' "$(basename "$DEBFILE")" "$(basename "$NEWNAME")"
-          fi
-
-      - name: Build Linux focal aarch64 deb
-        shell: bash
-        env:
-          # Override linker from .cargo/config.toml (not available in container)
-          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_AR: aarch64-linux-gnu-ar
-          # Disable rustc-wrapper from .cargo/config.toml (not available in container)
-          RUSTC_WRAPPER: ""
-          CARGO_BUILD_RUSTC_WRAPPER: ""
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
-        run: |
-          set -euo pipefail
-          printf 'Building focal variant deb for aarch64...\n'
-          cargo build \
-            --target aarch64-unknown-linux-gnu \
-            --profile dist
-          cargo deb \
-            --target aarch64-unknown-linux-gnu \
-            --no-build \
-            --variant focal \
-            --profile dist
-          # Rename to include focal suffix
-          DEBFILE=$(ls target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64.deb 2>/dev/null | head -1)
-          if [ -n "$DEBFILE" ] && [ -f "$DEBFILE" ]; then
-            NEWNAME="${DEBFILE%.deb}_focal.deb"
-            mv "$DEBFILE" "$NEWNAME"
-            printf 'Renamed %s -> %s\n' "$(basename "$DEBFILE")" "$(basename "$NEWNAME")"
-          fi
-
-      - name: Upload Linux focal artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-linux-focal
-          retention-days: 7
-          path: |
-            target/debian/oc-rsync_*_amd64_focal.deb
-            target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64_focal.deb
+          path: target/dist/oc-rsync-*-linux-*-musl.tar.gz
 
   macos:
     name: macOS release artifacts
@@ -553,7 +429,6 @@ jobs:
       - validate-version
       - linux
       - linux-musl
-      - linux-focal
       - macos
       - windows
 
@@ -575,7 +450,6 @@ jobs:
 
           # Use flexible patterns to match both x86_64/amd64 naming conventions
           # Linux musl tarballs: static binaries (x86_64-musl, aarch64-musl)
-          # Linux glibc tarballs: for compatibility (x86_64, aarch64)
           # macOS tarballs: use x86_64, aarch64
           # Windows tarballs: may use amd64 or x86_64
           # Debs: use amd64, arm64 (Debian convention)
@@ -637,11 +511,9 @@ jobs:
           files: |
             dist/**/oc-rsync-*-windows-*.tar.gz
             dist/**/oc-rsync-*-darwin-*.tar.gz
-            dist/**/oc-rsync-*-linux-*-musl.tar.gz
+            dist/**/oc-rsync-*-linux-*.tar.gz
             dist/**/oc-rsync_*_amd64.deb
             dist/**/oc-rsync_*_arm64.deb
-            dist/**/oc-rsync_*_amd64_focal.deb
-            dist/**/oc-rsync_*_arm64_focal.deb
             dist/**/oc-rsync-*.rpm
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
