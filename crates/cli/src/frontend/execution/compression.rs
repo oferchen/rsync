@@ -117,6 +117,7 @@ fn render_compress_choice_error(err: CompressionAlgorithmParseError, trimmed: &s
     } else {
         trimmed
     };
+    #[allow(unused_mut)]
     let mut supported = vec!["zlib", "zlibx"];
     #[cfg(feature = "lz4")]
     {
