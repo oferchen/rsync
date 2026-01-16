@@ -770,6 +770,11 @@ impl GeneratorContext {
             .with_preserve_uid(self.config.flags.owner)
             .with_preserve_gid(self.config.flags.group);
 
+        // Wire up iconv converter if configured
+        if let Some(ref converter) = self.config.iconv {
+            flist_writer = flist_writer.with_iconv(converter.clone());
+        }
+
         for entry in &self.file_list {
             flist_writer.write_entry(writer, entry)?;
         }
@@ -1395,6 +1400,7 @@ mod tests {
             client_mode: false,
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
+            iconv: None,
         }
     }
 
@@ -2409,6 +2415,7 @@ mod tests {
             client_mode: false,
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
+            iconv: None,
         }
     }
 
@@ -2513,6 +2520,7 @@ mod tests {
             client_mode: false,
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
+            iconv: None,
         };
         let receiver = ReceiverContext::new(&handshake, recv_config);
 
@@ -2555,6 +2563,7 @@ mod tests {
             client_mode: false,
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
+            iconv: None,
         };
         let receiver = ReceiverContext::new(&handshake, recv_config);
 
