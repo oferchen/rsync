@@ -800,12 +800,8 @@ impl Hasher for Xxh64Hasher {
 /// Checks if a buffer contains only zeros.
 #[inline]
 fn is_all_zeros(buf: &[u8]) -> bool {
-    // Use u128 for faster comparison
-    let (prefix, aligned, suffix) = unsafe { buf.align_to::<u128>() };
-
-    prefix.iter().all(|&b| b == 0)
-        && aligned.iter().all(|&v| v == 0)
-        && suffix.iter().all(|&b| b == 0)
+    // Use chunks for efficient comparison without unsafe
+    buf.chunks(16).all(|chunk| chunk.iter().all(|&b| b == 0))
 }
 
 #[cfg(test)]
