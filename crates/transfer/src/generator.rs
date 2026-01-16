@@ -37,7 +37,7 @@ use std::time::Instant;
 use super::delta_apply::ChecksumVerifier;
 use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
-use protocol::codec::{NDX_FLIST_EOF, NdxCodec, create_ndx_codec};
+use protocol::codec::{NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
 use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
@@ -188,59 +188,54 @@ impl GeneratorContext {
         Ok(())
     }
 
-    /// Sends UID/GID lists for non-INC_RECURSE protocols.
+    /// Sends UID/GID name-to-ID mapping lists to the receiver.
     ///
-    /// Upstream sends UID/GID mappings after the file list if preserve_uid/gid is set.
-    /// For now, we send empty lists (just the terminator) if preserve flags are set.
+    /// When `--numeric-ids` is not set, transmits name mappings so the receiver can
+    /// translate user/group names to local numeric IDs. When `--numeric-ids` is set,
+    /// no mappings are sent and numeric IDs are used as-is.
+    ///
+    /// Currently sends empty lists (just terminators) as name collection is not yet
+    /// implemented.
     ///
     /// # Wire Format
     ///
-    /// - `varint id`, `byte name_len`, `name bytes`, ... `varint 0` terminator
-    /// - ID0_NAMES compat flag (protocol 32+) requires sending name for id=0
-    ///   after the terminator (see `uidlist.c:send_user_name/send_group_name`)
+    /// Each list contains `(varint id, byte name_len, name_bytes)*` tuples terminated
+    /// by `varint 0`. With `ID0_NAMES` compat flag, an additional name for id=0
+    /// follows the terminator.
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2513-2514` - ID list transmission
-    fn send_id_lists<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    /// - `flist.c:2513-2514` - `if (numeric_ids <= 0 && !inc_recurse) send_id_lists(f);`
+    /// - `uidlist.c:407-414` - `send_id_lists()`
+    pub(crate) fn send_id_lists<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let inc_recurse = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
 
-        if inc_recurse {
-            return Ok(()); // INC_RECURSE handles ID lists differently
+        // Skip ID lists for INC_RECURSE (handled inline) or when numeric_ids is set
+        if inc_recurse || self.config.flags.numeric_ids {
+            return Ok(());
         }
 
-        // ID0_NAMES compat flag (protocol 32+) requires sending name for id=0
         let id0_names = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
 
-        // Send UID list if preserve_uid
         if self.config.flags.owner {
-            // Empty list: just write varint 0 terminator
             protocol::write_varint(writer, 0)?;
-
-            // ID0_NAMES: send name for id=0 after terminator (empty name)
             if id0_names {
                 writer.write_all(&[0u8])?;
             }
         }
 
-        // Send GID list if preserve_gid
         if self.config.flags.group {
-            // Empty list: just write varint 0 terminator
             protocol::write_varint(writer, 0)?;
-
-            // ID0_NAMES: send name for id=0 after terminator (empty name)
             if id0_names {
                 writer.write_all(&[0u8])?;
             }
         }
 
-        // CRITICAL: Flush UID/GID lists before entering main loop.
-        // Without this flush, data stays in write buffer causing deadlock:
-        // we wait to read from daemon, daemon waits to receive our UID/GID lists.
+        // Flush to prevent deadlock: receiver waits for ID lists before proceeding
         writer.flush()
     }
 
@@ -350,28 +345,44 @@ impl GeneratorContext {
             // Read NDX value from receiver
             let ndx = ndx_read_codec.read_ndx(&mut *reader)?;
 
-            // Handle NDX_DONE (-1): phase transition (upstream sender.c lines 236-258)
-            if ndx == -1 {
-                phase += 1;
-
-                if phase > max_phase {
-                    // All phases complete, exit loop
-                    break;
-                }
-
-                // Echo NDX_DONE back and continue to next phase
-                ndx_write_codec.write_ndx_done(&mut *writer)?;
-                writer.flush()?;
-
-                continue;
-            }
-
-            // Handle other negative NDX values (NDX_FLIST_EOF, etc.)
+            // Handle negative NDX values (upstream io.c:1736-1750, sender.c:236-258)
             if ndx < 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    format!("negative NDX value {ndx} not yet implemented"),
-                ));
+                match ndx {
+                    NDX_DONE => {
+                        // Phase transition
+                        phase += 1;
+                        if phase > max_phase {
+                            break;
+                        }
+                        ndx_write_codec.write_ndx_done(&mut *writer)?;
+                        writer.flush()?;
+                        continue;
+                    }
+                    NDX_FLIST_EOF => {
+                        // End of incremental file lists (upstream io.c:1738-1741)
+                        debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
+                        continue;
+                    }
+                    NDX_DEL_STATS => {
+                        // Deletion statistics (upstream main.c:228-230)
+                        // Read and discard: 5 varints for deleted file counts
+                        for _ in 0..5 {
+                            protocol::read_varint(&mut *reader)?;
+                        }
+                        debug_log!(Flist, 2, "received and discarded NDX_DEL_STATS");
+                        continue;
+                    }
+                    _ if ndx <= NDX_FLIST_OFFSET => {
+                        // Incremental file list directory index (upstream flist.c)
+                        debug_log!(Flist, 2, "received NDX_FLIST_OFFSET {}, not supported", ndx);
+                        continue;
+                    }
+                    _ => {
+                        // Unknown negative NDX - log and continue
+                        debug_log!(Flist, 1, "received unknown negative NDX value {}", ndx);
+                        continue;
+                    }
+                }
             }
 
             let ndx = ndx as usize;
@@ -796,6 +807,20 @@ impl GeneratorContext {
             })?;
         }
 
+        // Step 1b: Activate compression on reader if negotiated (Protocol 30+ with compression algorithm)
+        // This mirrors upstream io.c:io_start_buffering_in()
+        // Compression is activated AFTER multiplex, wrapping the multiplexed stream
+        if let Some(ref negotiated) = self.negotiated_algorithms
+            && let Some(compress_alg) = negotiated.compression.to_compress_algorithm()?
+        {
+            reader = reader.activate_compression(compress_alg).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("failed to activate INPUT compression: {e}"),
+                )
+            })?;
+        }
+
         // Step 2: Receive filter list from client (server mode only)
         self.receive_filter_list_if_server(&mut reader)?;
 
@@ -860,8 +885,20 @@ impl GeneratorContext {
                     continue;
                 }
                 RuleType::Merge | RuleType::DirMerge => {
-                    // Merge rules not yet supported in server mode
-                    // Skip for now; will be implemented in future phases
+                    // Merge rules require per-directory filter file loading during file walking.
+                    // Implementation requires:
+                    // 1. Store merge rule specs (filename, options like inherit/exclude_self)
+                    // 2. During build_file_list(), check each directory for the merge file
+                    // 3. Parse merge file contents using engine::local_copy::dir_merge parsing
+                    // 4. Inject parsed rules into the active FilterSet for that subtree
+                    // 5. Pop rules when leaving directories (if no_inherit is set)
+                    //
+                    // See crates/engine/src/local_copy/dir_merge/ for the local copy implementation
+                    // that can be adapted for server mode. The challenge is that FilterSet is
+                    // currently immutable after construction.
+                    //
+                    // For now, clients can pre-expand merge rules before transmission, or use
+                    // local copy mode which fully supports merge rules.
                     continue;
                 }
             };
@@ -1357,6 +1394,7 @@ mod tests {
             compression_level: None,
             client_mode: false,
             filter_rules: Vec::new(),
+            reference_directories: Vec::new(),
         }
     }
 
@@ -2352,5 +2390,206 @@ mod tests {
         apply_permutation_in_place(&mut a, &mut b, indices);
         assert_eq!(a, vec![42]);
         assert_eq!(b, vec!["x"]);
+    }
+
+    /// Creates test config with specific flags for ID list tests.
+    fn config_with_flags(owner: bool, group: bool, numeric_ids: bool) -> ServerConfig {
+        ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            flags: ParsedServerFlags {
+                owner,
+                group,
+                numeric_ids,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            compression_level: None,
+            client_mode: false,
+            filter_rules: Vec::new(),
+            reference_directories: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn send_id_lists_skips_when_numeric_ids_true() {
+        let handshake = test_handshake();
+        let config = config_with_flags(true, true, true);
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        let mut output = Vec::new();
+        let result = ctx.send_id_lists(&mut output);
+
+        assert!(result.is_ok());
+        // With numeric_ids=true, nothing should be written
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn send_id_lists_sends_uid_list_when_owner_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(true, false, false);
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        let mut output = Vec::new();
+        let result = ctx.send_id_lists(&mut output);
+
+        assert!(result.is_ok());
+        // Empty UID list: varint 0 terminator
+        assert_eq!(output, vec![0]);
+    }
+
+    #[test]
+    fn send_id_lists_sends_gid_list_when_group_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(false, true, false);
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        let mut output = Vec::new();
+        let result = ctx.send_id_lists(&mut output);
+
+        assert!(result.is_ok());
+        // Empty GID list: varint 0 terminator
+        assert_eq!(output, vec![0]);
+    }
+
+    #[test]
+    fn send_id_lists_sends_both_when_owner_and_group_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(true, true, false);
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        let mut output = Vec::new();
+        let result = ctx.send_id_lists(&mut output);
+
+        assert!(result.is_ok());
+        // Both lists: two varint 0 terminators
+        assert_eq!(output, vec![0, 0]);
+    }
+
+    #[test]
+    fn send_id_lists_skips_both_when_neither_flag_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(false, false, false);
+        let ctx = GeneratorContext::new(&handshake, config);
+
+        let mut output = Vec::new();
+        let result = ctx.send_id_lists(&mut output);
+
+        assert!(result.is_ok());
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn id_lists_round_trip_with_numeric_ids_false() {
+        use super::super::receiver::ReceiverContext;
+
+        let handshake = test_handshake();
+
+        // Generator sends ID lists (numeric_ids=false, owner/group=true)
+        let gen_config = config_with_flags(true, true, false);
+        let generator = GeneratorContext::new(&handshake, gen_config);
+
+        let mut wire_data = Vec::new();
+        generator.send_id_lists(&mut wire_data).unwrap();
+
+        // Both empty lists with terminators
+        assert_eq!(wire_data, vec![0, 0]);
+
+        // Receiver reads ID lists with matching flags
+        let recv_config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            flags: ParsedServerFlags {
+                owner: true,
+                group: true,
+                numeric_ids: false,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            compression_level: None,
+            client_mode: false,
+            filter_rules: Vec::new(),
+            reference_directories: Vec::new(),
+        };
+        let receiver = ReceiverContext::new(&handshake, recv_config);
+
+        let mut cursor = Cursor::new(&wire_data[..]);
+        let result = receiver.receive_id_lists(&mut cursor);
+
+        assert!(result.is_ok());
+        assert_eq!(cursor.position() as usize, wire_data.len());
+    }
+
+    #[test]
+    fn id_lists_round_trip_with_numeric_ids_true() {
+        use super::super::receiver::ReceiverContext;
+
+        let handshake = test_handshake();
+
+        // Generator skips ID lists (numeric_ids=true)
+        let gen_config = config_with_flags(true, true, true);
+        let generator = GeneratorContext::new(&handshake, gen_config);
+
+        let mut wire_data = Vec::new();
+        generator.send_id_lists(&mut wire_data).unwrap();
+
+        // No data written when numeric_ids=true
+        assert!(wire_data.is_empty());
+
+        // Receiver also skips reading with matching flags
+        let recv_config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            flags: ParsedServerFlags {
+                owner: true,
+                group: true,
+                numeric_ids: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            compression_level: None,
+            client_mode: false,
+            filter_rules: Vec::new(),
+            reference_directories: Vec::new(),
+        };
+        let receiver = ReceiverContext::new(&handshake, recv_config);
+
+        let mut cursor = Cursor::new(&wire_data[..]);
+        let result = receiver.receive_id_lists(&mut cursor);
+
+        assert!(result.is_ok());
+        assert_eq!(cursor.position(), 0);
+    }
+
+    #[test]
+    fn generator_context_stores_negotiated_compression() {
+        let mut handshake = test_handshake();
+        handshake.negotiated_algorithms = Some(NegotiationResult {
+            checksum: ChecksumAlgorithm::XXH3,
+            compression: protocol::CompressionAlgorithm::Zlib,
+        });
+
+        let ctx = GeneratorContext::new(&handshake, test_config());
+        assert!(ctx.negotiated_algorithms.is_some());
+        let negotiated = ctx.negotiated_algorithms.as_ref().unwrap();
+        assert_eq!(negotiated.compression, protocol::CompressionAlgorithm::Zlib);
+    }
+
+    #[test]
+    fn generator_context_handles_no_compression() {
+        let mut handshake = test_handshake();
+        handshake.negotiated_algorithms = Some(NegotiationResult {
+            checksum: ChecksumAlgorithm::MD5,
+            compression: protocol::CompressionAlgorithm::None,
+        });
+
+        let ctx = GeneratorContext::new(&handshake, test_config());
+        assert!(ctx.negotiated_algorithms.is_some());
+        let negotiated = ctx.negotiated_algorithms.as_ref().unwrap();
+        assert_eq!(negotiated.compression, protocol::CompressionAlgorithm::None);
     }
 }

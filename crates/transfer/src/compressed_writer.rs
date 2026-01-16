@@ -35,7 +35,6 @@ pub struct CompressedWriter<W: Write> {
 /// Enum wrapper around different compression encoder types.
 ///
 /// Each variant holds an encoder configured to write to a Vec<u8> sink.
-#[allow(dead_code)] // Used in production code once compression is integrated
 #[allow(clippy::large_enum_variant)]
 enum EncoderVariant {
     /// zlib encoder writing to Vec<u8>
@@ -50,7 +49,6 @@ enum EncoderVariant {
 
 impl<W: Write> CompressedWriter<W> {
     /// Creates a new compressed writer wrapping the given writer.
-    #[allow(dead_code)] // Used in production code once compression is integrated
     ///
     /// The compressor is initialized based on the negotiated algorithm and writes
     /// compressed data to an internal buffer before flushing to the underlying writer.
@@ -150,7 +148,6 @@ impl<W: Write> CompressedWriter<W> {
     /// # Errors
     ///
     /// Returns an error if finishing the compression stream or flushing fails.
-    #[allow(dead_code)] // Used in production code once compression is integrated
     pub fn finish(mut self) -> io::Result<W> {
         // Finish the encoder - this writes final trailer bytes to the sink
         match self.encoder {
@@ -183,7 +180,6 @@ impl<W: Write> CompressedWriter<W> {
 
     /// Returns the number of compressed bytes written so far.
     #[must_use]
-    #[allow(dead_code)] // Used in production code once compression is integrated
     pub fn bytes_written(&self) -> u64 {
         match &self.encoder {
             EncoderVariant::Zlib(encoder) => encoder.bytes_written(),

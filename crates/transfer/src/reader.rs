@@ -15,7 +15,6 @@ use super::compressed_reader::CompressedReader;
 ///
 /// Upstream rsync modifies global I/O buffer state via `io_start_multiplex_in()`.
 /// We achieve the same by wrapping the reader and delegating based on mode.
-#[allow(dead_code)]
 #[allow(private_interfaces)]
 #[allow(clippy::large_enum_variant)]
 pub enum ServerReader<R: Read> {
@@ -24,11 +23,9 @@ pub enum ServerReader<R: Read> {
     /// Multiplex mode - extract data from MSG_DATA frames
     Multiplex(MultiplexReader<R>),
     /// Compressed+Multiplex mode - decompress then demultiplex
-    #[allow(dead_code)] // Used in production code once compression is integrated
     Compressed(CompressedReader<MultiplexReader<R>>),
 }
 
-#[allow(dead_code)]
 impl<R: Read> ServerReader<R> {
     /// Creates a new plain-mode reader
     #[inline]
@@ -63,7 +60,6 @@ impl<R: Read> ServerReader<R> {
     /// - The reader is not in multiplex mode (decompression requires multiplex first)
     /// - Compression is already active
     /// - The compression algorithm is not supported in this build
-    #[allow(dead_code)] // Used in production code once compression is integrated
     pub fn activate_compression(self, algorithm: CompressionAlgorithm) -> io::Result<Self> {
         match self {
             Self::Multiplex(mux) => {

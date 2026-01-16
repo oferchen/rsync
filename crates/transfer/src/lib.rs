@@ -107,7 +107,7 @@ pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
-pub use self::config::ServerConfig;
+pub use self::config::{ReferenceDirectory, ReferenceDirectoryKind, ServerConfig};
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
 pub use self::generator::{GeneratorContext, GeneratorStats};
 pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_handshake};
