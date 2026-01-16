@@ -432,7 +432,7 @@ mod tests {
             ".",
             ".",
         ];
-        let _error = run_server(args).expect_err("server mode is not implemented yet");
+        let _error = run_server(args).expect_err("server requires protocol data on stdin");
 
         // Capture-mode embedding: should report non-zero exit and route
         // all diagnostics to stderr, leaving stdout empty.

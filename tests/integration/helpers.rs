@@ -357,3 +357,270 @@ fn collect_files_recursive(
     }
     Ok(())
 }
+
+// ============ Protocol Version Testing Infrastructure ============
+
+/// Test infrastructure for server-mode protocol testing.
+///
+/// This enables testing oc-rsync in `--server` mode against upstream rsync clients.
+/// Protocol version is determined by the maximum version both sides support:
+/// - rsync 3.0.9 → protocol 30 (MD5 checksums)
+/// - rsync 3.1.3 → protocol 31 (MD5 checksums)
+/// - rsync 3.4.1 → protocol 32 (MD5/XXH3 checksums)
+///
+/// Note: Protocol 28-29 (MD4 checksums) would require older rsync versions
+/// like rsync 2.6.x which are not commonly available.
+pub struct ServerModeTest {
+    oc_rsync_binary: PathBuf,
+    upstream_binary: PathBuf,
+}
+
+impl ServerModeTest {
+    /// Create a new server-mode test with specified upstream rsync binary.
+    pub fn new(upstream_binary: &Path) -> Option<Self> {
+        let oc_rsync_binary = locate_binary("oc-rsync")?;
+        if !upstream_binary.is_file() {
+            return None;
+        }
+        Some(Self {
+            oc_rsync_binary,
+            upstream_binary: upstream_binary.to_path_buf(),
+        })
+    }
+
+    /// Run a push transfer: upstream rsync client (sender) → oc-rsync server (receiver).
+    ///
+    /// The upstream rsync initiates a transfer to oc-rsync running in server mode.
+    /// Protocol version is negotiated based on the upstream version's maximum.
+    pub fn push_transfer(&self, source: &Path, dest: &Path) -> io::Result<TransferResult> {
+        use std::io::{Read, Write};
+        use std::process::Stdio;
+        use std::thread;
+
+        // Spawn oc-rsync in --server mode (receiver)
+        // Flag string format: -vlogDtprze.iLsfxCIvu
+        let mut server = Command::new(&self.oc_rsync_binary)
+            .arg("--server")
+            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(".")
+            .arg(dest.to_string_lossy().as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        // Spawn upstream rsync in --server --sender mode
+        // This simulates the remote server that normally runs via SSH
+        let mut client = Command::new(&self.upstream_binary)
+            .arg("--server")
+            .arg("--sender")
+            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(".")
+            .arg(source.to_string_lossy().as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        // Wire up bidirectional pipes between processes
+        let client_stdout = client.stdout.take().unwrap();
+        let client_stdin = client.stdin.take().unwrap();
+        let server_stdout = server.stdout.take().unwrap();
+        let server_stdin = server.stdin.take().unwrap();
+
+        // Spawn threads to copy data in both directions
+        let c2s = thread::spawn(move || -> io::Result<()> {
+            let mut reader = std::io::BufReader::new(client_stdout);
+            let mut writer = std::io::BufWriter::new(server_stdin);
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = reader.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                writer.write_all(&buf[..n])?;
+                writer.flush()?;
+            }
+            Ok(())
+        });
+
+        let s2c = thread::spawn(move || -> io::Result<()> {
+            let mut reader = std::io::BufReader::new(server_stdout);
+            let mut writer = std::io::BufWriter::new(client_stdin);
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = reader.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                writer.write_all(&buf[..n])?;
+                writer.flush()?;
+            }
+            Ok(())
+        });
+
+        // Collect stderr asynchronously
+        let client_stderr_handle = client.stderr.take();
+        let server_stderr_handle = server.stderr.take();
+
+        // Wait for both processes to complete
+        let client_status = client.wait()?;
+        let server_status = server.wait()?;
+
+        // Collect stderr output
+        let mut client_stderr_buf = Vec::new();
+        let mut server_stderr_buf = Vec::new();
+        if let Some(mut stderr) = client_stderr_handle {
+            let _ = stderr.read_to_end(&mut client_stderr_buf);
+        }
+        if let Some(mut stderr) = server_stderr_handle {
+            let _ = stderr.read_to_end(&mut server_stderr_buf);
+        }
+
+        // Wait for pipe threads (may error when processes exit)
+        let _ = c2s.join();
+        let _ = s2c.join();
+
+        Ok(TransferResult {
+            client_success: client_status.success(),
+            server_success: server_status.success(),
+            client_stderr: String::from_utf8_lossy(&client_stderr_buf).into_owned(),
+            server_stderr: String::from_utf8_lossy(&server_stderr_buf).into_owned(),
+        })
+    }
+
+    /// Run a pull transfer: oc-rsync server (sender) → upstream rsync client (receiver).
+    ///
+    /// The oc-rsync runs in server sender mode, upstream rsync receives.
+    pub fn pull_transfer(&self, source: &Path, dest: &Path) -> io::Result<TransferResult> {
+        use std::io::{Read, Write};
+        use std::process::Stdio;
+        use std::thread;
+
+        // Spawn oc-rsync in --server --sender mode
+        let mut server = Command::new(&self.oc_rsync_binary)
+            .arg("--server")
+            .arg("--sender")
+            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(".")
+            .arg(source.to_string_lossy().as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        // Spawn upstream rsync in --server mode (receiver)
+        let mut client = Command::new(&self.upstream_binary)
+            .arg("--server")
+            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(".")
+            .arg(dest.to_string_lossy().as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        // Wire up bidirectional pipes
+        let client_stdout = client.stdout.take().unwrap();
+        let client_stdin = client.stdin.take().unwrap();
+        let server_stdout = server.stdout.take().unwrap();
+        let server_stdin = server.stdin.take().unwrap();
+
+        let c2s = thread::spawn(move || -> io::Result<()> {
+            let mut reader = std::io::BufReader::new(client_stdout);
+            let mut writer = std::io::BufWriter::new(server_stdin);
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = reader.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                writer.write_all(&buf[..n])?;
+                writer.flush()?;
+            }
+            Ok(())
+        });
+
+        let s2c = thread::spawn(move || -> io::Result<()> {
+            let mut reader = std::io::BufReader::new(server_stdout);
+            let mut writer = std::io::BufWriter::new(client_stdin);
+            let mut buf = [0u8; 4096];
+            loop {
+                let n = reader.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                writer.write_all(&buf[..n])?;
+                writer.flush()?;
+            }
+            Ok(())
+        });
+
+        let client_stderr_handle = client.stderr.take();
+        let server_stderr_handle = server.stderr.take();
+
+        let client_status = client.wait()?;
+        let server_status = server.wait()?;
+
+        let mut client_stderr_buf = Vec::new();
+        let mut server_stderr_buf = Vec::new();
+        if let Some(mut stderr) = client_stderr_handle {
+            let _ = stderr.read_to_end(&mut client_stderr_buf);
+        }
+        if let Some(mut stderr) = server_stderr_handle {
+            let _ = stderr.read_to_end(&mut server_stderr_buf);
+        }
+
+        let _ = c2s.join();
+        let _ = s2c.join();
+
+        Ok(TransferResult {
+            client_success: client_status.success(),
+            server_success: server_status.success(),
+            client_stderr: String::from_utf8_lossy(&client_stderr_buf).into_owned(),
+            server_stderr: String::from_utf8_lossy(&server_stderr_buf).into_owned(),
+        })
+    }
+}
+
+/// Result of a server-mode transfer test.
+#[derive(Debug)]
+pub struct TransferResult {
+    /// Whether the client process exited successfully.
+    pub client_success: bool,
+    /// Whether the server process exited successfully.
+    pub server_success: bool,
+    /// Stderr output from the client.
+    pub client_stderr: String,
+    /// Stderr output from the server.
+    pub server_stderr: String,
+}
+
+impl TransferResult {
+    /// Check if both client and server succeeded.
+    pub fn success(&self) -> bool {
+        self.client_success && self.server_success
+    }
+
+    /// Assert that the transfer succeeded, printing debug info on failure.
+    pub fn assert_success(&self) {
+        if !self.success() {
+            eprintln!("=== Transfer failed ===");
+            eprintln!("Client success: {}", self.client_success);
+            eprintln!("Server success: {}", self.server_success);
+            eprintln!("=== Client stderr ===");
+            eprintln!("{}", self.client_stderr);
+            eprintln!("=== Server stderr ===");
+            eprintln!("{}", self.server_stderr);
+            panic!("Transfer should have succeeded");
+        }
+    }
+}
+
+/// Locate an upstream rsync binary by version.
+pub fn upstream_rsync_binary(version: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(format!(
+        "target/interop/upstream-install/{version}/bin/rsync"
+    ));
+    if path.is_file() { Some(path) } else { None }
+}

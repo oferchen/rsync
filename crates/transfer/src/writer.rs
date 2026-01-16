@@ -20,7 +20,6 @@ pub enum ServerWriter<W: Write> {
     /// Multiplex mode - wrap data in MSG_DATA frames
     Multiplex(MultiplexWriter<W>),
     /// Compressed+Multiplex mode - compress then multiplex
-    #[allow(dead_code)] // Used in production code once compression is integrated
     Compressed(CompressedWriter<MultiplexWriter<W>>),
     /// Temporary state during in-place transformations.
     /// Any operation on a Taken writer panics.
@@ -63,7 +62,6 @@ impl<W: Write> ServerWriter<W> {
     /// - The writer is not in multiplex mode (compression requires multiplex first)
     /// - Compression is already active
     /// - The compression algorithm is not supported in this build
-    #[allow(dead_code)] // Used in production code once compression is integrated
     pub fn activate_compression(
         self,
         algorithm: CompressionAlgorithm,

@@ -258,59 +258,279 @@ fn delta_transfer_multiple_files_protocol_consistency() {
     }
 }
 
-// ============ Future Test Stubs ============
+// ============ Server Mode Protocol Tests ============
 //
-// These tests are commented out until we have --protocol support in client mode
-// or implement server-mode testing infrastructure.
+// These tests validate oc-rsync's --server mode against upstream rsync,
+// verifying protocol negotiation and data transfer correctness.
+//
+// Protocol version is determined by the upstream rsync version:
+// - rsync 3.0.9 → protocol 30 (MD5 checksums)
+// - rsync 3.1.3 → protocol 31 (MD5 checksums)
+// - rsync 3.4.1 → protocol 32 (MD5/XXH3 checksums)
+//
+// Note: Testing protocol 28-29 (MD4 checksums) would require rsync 2.6.x
+// which is not commonly available in modern environments.
 
-/*
+use integration::helpers::{ServerModeTest, upstream_rsync_binary};
+
 #[test]
-fn force_protocol_28_uses_md4_checksums() {
-    // TODO: Requires --protocol=28 support in oc-rsync client mode
-    // This would test:
-    // 1. Force protocol 28 negotiation
-    // 2. Verify MD4 checksums are used
-    // 3. Validate delta transfer works correctly
-    unimplemented!("Requires --protocol support in client mode");
+fn server_mode_push_protocol_30() {
+    // Test: upstream rsync 3.0.9 (protocol 30) → oc-rsync server (receiver)
+    let upstream = match upstream_rsync_binary("3.0.9") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: rsync 3.0.9 not available");
+            return;
+        }
+    };
+
+    let test = match ServerModeTest::new(&upstream) {
+        Some(t) => t,
+        None => {
+            eprintln!("Skipping: oc-rsync binary not found");
+            return;
+        }
+    };
+
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    // Create test file
+    let content = b"Test content for protocol 30 server mode push";
+    fs::write(src_dir.join("test.txt"), content).unwrap();
+
+    let result = test.push_transfer(&src_dir, &dest_dir).unwrap();
+    result.assert_success();
+
+    // Verify transfer
+    let dest_content = fs::read(dest_dir.join("test.txt")).unwrap();
+    assert_eq!(dest_content, content, "Content should match after transfer");
 }
 
 #[test]
-fn force_protocol_29_uses_md4_checksums() {
-    // TODO: Similar to protocol 28 test
-    unimplemented!("Requires --protocol support in client mode");
+fn server_mode_push_protocol_31() {
+    // Test: upstream rsync 3.1.3 (protocol 31) → oc-rsync server (receiver)
+    let upstream = match upstream_rsync_binary("3.1.3") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: rsync 3.1.3 not available");
+            return;
+        }
+    };
+
+    let test = match ServerModeTest::new(&upstream) {
+        Some(t) => t,
+        None => {
+            eprintln!("Skipping: oc-rsync binary not found");
+            return;
+        }
+    };
+
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    let content = b"Test content for protocol 31 server mode push";
+    fs::write(src_dir.join("test.txt"), content).unwrap();
+
+    let result = test.push_transfer(&src_dir, &dest_dir).unwrap();
+    result.assert_success();
+
+    let dest_content = fs::read(dest_dir.join("test.txt")).unwrap();
+    assert_eq!(dest_content, content);
 }
 
 #[test]
-fn force_protocol_30_uses_md5_checksums() {
-    // TODO: Force protocol 30 and verify MD5 checksums
-    unimplemented!("Requires --protocol support in client mode");
+fn server_mode_push_protocol_32() {
+    // Test: upstream rsync 3.4.1 (protocol 32) → oc-rsync server (receiver)
+    let upstream = match upstream_rsync_binary("3.4.1") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: rsync 3.4.1 not available");
+            return;
+        }
+    };
+
+    let test = match ServerModeTest::new(&upstream) {
+        Some(t) => t,
+        None => {
+            eprintln!("Skipping: oc-rsync binary not found");
+            return;
+        }
+    };
+
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    let content = b"Test content for protocol 32 server mode push";
+    fs::write(src_dir.join("test.txt"), content).unwrap();
+
+    let result = test.push_transfer(&src_dir, &dest_dir).unwrap();
+    result.assert_success();
+
+    let dest_content = fs::read(dest_dir.join("test.txt")).unwrap();
+    assert_eq!(dest_content, content);
 }
 
 #[test]
-fn protocol_downgrade_to_mutual_maximum() {
-    // TODO: Test that when oc-rsync (protocol 32) connects to upstream
-    // rsync 3.0.9 (protocol 30), they negotiate to protocol 30
-    unimplemented!("Requires protocol negotiation visibility");
+fn server_mode_pull_protocol_30() {
+    // Test: oc-rsync server (sender) → upstream rsync 3.0.9 (receiver)
+    let upstream = match upstream_rsync_binary("3.0.9") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: rsync 3.0.9 not available");
+            return;
+        }
+    };
+
+    let test = match ServerModeTest::new(&upstream) {
+        Some(t) => t,
+        None => {
+            eprintln!("Skipping: oc-rsync binary not found");
+            return;
+        }
+    };
+
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    let content = b"Test content for protocol 30 server mode pull";
+    fs::write(src_dir.join("test.txt"), content).unwrap();
+
+    let result = test.pull_transfer(&src_dir, &dest_dir).unwrap();
+    result.assert_success();
+
+    let dest_content = fs::read(dest_dir.join("test.txt")).unwrap();
+    assert_eq!(dest_content, content);
 }
 
 #[test]
-fn protocol_mismatch_error_handling() {
-    // TODO: Test error handling when protocols are incompatible
-    unimplemented!("Requires protocol mismatch scenario");
+fn server_mode_pull_protocol_31() {
+    // Test: oc-rsync server (sender) → upstream rsync 3.1.3 (receiver)
+    let upstream = match upstream_rsync_binary("3.1.3") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: rsync 3.1.3 not available");
+            return;
+        }
+    };
+
+    let test = match ServerModeTest::new(&upstream) {
+        Some(t) => t,
+        None => {
+            eprintln!("Skipping: oc-rsync binary not found");
+            return;
+        }
+    };
+
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    let content = b"Test content for protocol 31 server mode pull";
+    fs::write(src_dir.join("test.txt"), content).unwrap();
+
+    let result = test.pull_transfer(&src_dir, &dest_dir).unwrap();
+    result.assert_success();
+
+    let dest_content = fs::read(dest_dir.join("test.txt")).unwrap();
+    assert_eq!(dest_content, content);
 }
 
 #[test]
-fn upstream_as_sender_protocol_28_to_oc_rsync_receiver() {
-    // TODO: Use upstream rsync --protocol=28 as sender, oc-rsync as receiver
-    // This requires setting up oc-rsync in --server mode or daemon mode
-    require_upstream_binary!(UPSTREAM_RSYNC_3_4_1, "3.4.1");
-    unimplemented!("Requires --server mode test infrastructure");
+fn server_mode_pull_protocol_32() {
+    // Test: oc-rsync server (sender) → upstream rsync 3.4.1 (receiver)
+    let upstream = match upstream_rsync_binary("3.4.1") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: rsync 3.4.1 not available");
+            return;
+        }
+    };
+
+    let test = match ServerModeTest::new(&upstream) {
+        Some(t) => t,
+        None => {
+            eprintln!("Skipping: oc-rsync binary not found");
+            return;
+        }
+    };
+
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    let content = b"Test content for protocol 32 server mode pull";
+    fs::write(src_dir.join("test.txt"), content).unwrap();
+
+    let result = test.pull_transfer(&src_dir, &dest_dir).unwrap();
+    result.assert_success();
+
+    let dest_content = fs::read(dest_dir.join("test.txt")).unwrap();
+    assert_eq!(dest_content, content);
 }
 
 #[test]
-fn upstream_as_sender_protocol_29_to_oc_rsync_receiver() {
-    // TODO: Similar to protocol 28 test
-    require_upstream_binary!(UPSTREAM_RSYNC_3_4_1, "3.4.1");
-    unimplemented!("Requires --server mode test infrastructure");
+fn server_mode_delta_transfer_protocol_32() {
+    // Test delta transfer with protocol 32 (MD5/XXH3 checksums)
+    let upstream = match upstream_rsync_binary("3.4.1") {
+        Some(p) => p,
+        None => {
+            eprintln!("Skipping: rsync 3.4.1 not available");
+            return;
+        }
+    };
+
+    let test = match ServerModeTest::new(&upstream) {
+        Some(t) => t,
+        None => {
+            eprintln!("Skipping: oc-rsync binary not found");
+            return;
+        }
+    };
+
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    // Create source file with specific pattern for delta testing
+    let mut src_content = Vec::new();
+    src_content.extend(vec![b'A'; 4096]);
+    src_content.extend(vec![b'B'; 4096]);
+    src_content.extend(vec![b'C'; 4096]);
+    fs::write(src_dir.join("data.bin"), &src_content).unwrap();
+
+    // Create basis file with modified middle section
+    let mut basis_content = Vec::new();
+    basis_content.extend(vec![b'A'; 4096]);
+    basis_content.extend(vec![b'X'; 4096]); // Different middle
+    basis_content.extend(vec![b'C'; 4096]);
+    fs::write(dest_dir.join("data.bin"), &basis_content).unwrap();
+
+    // Make destination older for delta transfer
+    let old_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_times(dest_dir.join("data.bin"), old_time, old_time).unwrap();
+
+    let result = test.push_transfer(&src_dir, &dest_dir).unwrap();
+    result.assert_success();
+
+    // Verify correct reconstruction
+    let dest_content = fs::read(dest_dir.join("data.bin")).unwrap();
+    assert_eq!(dest_content, src_content, "Delta transfer should reconstruct correctly");
 }
-*/
+
+// ============ Future Test Notes ============
+//
+// Protocol 28-29 (MD4 checksums) testing:
+// These protocols are used by rsync versions older than 3.0.0 (released 2008).
+// Testing would require rsync 2.6.x binaries which are rarely available.
+// The MD4 checksum implementation in oc-rsync is validated through unit tests
+// in the protocol crate.
+//
+// Protocol mismatch testing:
+// Modern rsync versions (3.0+) all support protocol 30+, making incompatible
+// protocol scenarios rare. The handshake code handles version negotiation
+// and is tested via unit tests in the protocol crate.

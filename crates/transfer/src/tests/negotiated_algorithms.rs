@@ -39,6 +39,7 @@ fn test_config() -> ServerConfig {
         compression_level: None,
         client_mode: false,
         filter_rules: Vec::new(),
+        reference_directories: Vec::new(),
     }
 }
 
@@ -52,6 +53,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         compression_level: Some(level),
         client_mode: false,
         filter_rules: Vec::new(),
+        reference_directories: Vec::new(),
     }
 }
 

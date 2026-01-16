@@ -383,9 +383,9 @@ pub fn determine_transfer_role(
 
     match (has_remote_source, dest_is_remote) {
         (true, true) => {
-            // Both source and dest are remote - not supported
+            // Both source and dest are remote - not supported (mirrors upstream main.c:1414)
             Err(invalid_argument_error(
-                "both source and destination cannot be remote",
+                "The source and destination cannot both be remote.",
                 1,
             ))
         }
