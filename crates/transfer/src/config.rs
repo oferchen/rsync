@@ -2,6 +2,7 @@
 //! Server configuration derived from the compact flag string and trailing arguments.
 
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 use compress::zlib::CompressionLevel;
 use protocol::ProtocolVersion;
@@ -9,6 +10,28 @@ use protocol::filters::FilterRuleWireFormat;
 
 use super::flags::ParsedServerFlags;
 use super::role::ServerRole;
+
+/// Identifies how a reference directory should be used when looking for basis files.
+///
+/// This mirrors the engine crate's `ReferenceDirectoryKind` for use in remote transfers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReferenceDirectoryKind {
+    /// `--compare-dest`: Skip creating destination when reference matches.
+    Compare,
+    /// `--copy-dest`: Copy from reference when it matches.
+    Copy,
+    /// `--link-dest`: Hard-link to reference when it matches.
+    Link,
+}
+
+/// A reference directory used for basis file lookup during delta transfers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceDirectory {
+    /// The kind of reference directory operation.
+    pub kind: ReferenceDirectoryKind,
+    /// The path to the reference directory.
+    pub path: PathBuf,
+}
 
 /// Configuration supplied to the server entry point.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -45,6 +68,12 @@ pub struct ServerConfig {
     ///
     /// This is empty for normal server mode (where we receive filter list).
     pub filter_rules: Vec<FilterRuleWireFormat>,
+    /// Reference directories for basis file lookup (`--compare-dest`, `--copy-dest`, `--link-dest`).
+    ///
+    /// These directories are searched in order when looking for basis files during delta
+    /// transfers. Each directory can be used for comparison, copying, or hard-linking
+    /// depending on its kind.
+    pub reference_directories: Vec<ReferenceDirectory>,
 }
 
 impl ServerConfig {
@@ -78,6 +107,7 @@ impl ServerConfig {
             compression_level: None,
             client_mode: false,
             filter_rules: Vec::new(),
+            reference_directories: Vec::new(),
         })
     }
 }

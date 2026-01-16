@@ -32,7 +32,6 @@ pub struct CompressedReader<R: Read> {
 /// Enum wrapper around different compression decoder types.
 ///
 /// Each variant holds a decoder configured to read from the underlying stream.
-#[allow(dead_code)] // Used in production code once compression is integrated
 #[allow(clippy::large_enum_variant)]
 enum DecoderVariant<R: Read> {
     /// zlib decoder
@@ -84,7 +83,6 @@ impl<R: Read> CompressedReader<R> {
 
     /// Returns the number of compressed bytes read so far.
     #[must_use]
-    #[allow(dead_code)] // Used in production code once compression is integrated
     pub const fn bytes_read(&self) -> u64 {
         match &self.decoder {
             DecoderVariant::Zlib(decoder) => decoder.bytes_read(),
