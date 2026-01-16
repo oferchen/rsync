@@ -100,6 +100,7 @@ use core::{
 use execution::execute;
 use logging_sink::MessageSink;
 use outbuf::{OutbufAdapter, parse_outbuf_mode};
+use progress::diagnostic::flush_diagnostics;
 #[cfg(test)]
 use std::collections::HashSet;
 #[cfg(test)]
@@ -287,6 +288,12 @@ where
                 Some(mode) => {
                     let mut adapter = OutbufAdapter::new(stdout, mode);
                     let exit_code = execute(parsed, &mut adapter, &mut stderr_sink);
+                    // Flush any pending diagnostic events to stderr
+                    let _ = flush_diagnostics(
+                        &mut adapter,
+                        stderr_sink.writer_mut(),
+                        true, // Route all diagnostics to stderr
+                    );
                     if let Err(error) = adapter.flush() {
                         let message =
                             rsync_error!(1, "failed to flush stdout: {error}", error = error)
@@ -299,7 +306,16 @@ where
                         exit_code
                     }
                 }
-                None => execute(parsed, stdout, &mut stderr_sink),
+                None => {
+                    let exit_code = execute(parsed, stdout, &mut stderr_sink);
+                    // Flush any pending diagnostic events to stderr
+                    let _ = flush_diagnostics(
+                        stdout,
+                        stderr_sink.writer_mut(),
+                        true, // Route all diagnostics to stderr
+                    );
+                    exit_code
+                }
             }
         }
         Err(error) => {
