@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use compress::zlib::CompressionLevel;
+use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
 
@@ -74,6 +75,12 @@ pub struct ServerConfig {
     /// transfers. Each directory can be used for comparison, copying, or hard-linking
     /// depending on its kind.
     pub reference_directories: Vec<ReferenceDirectory>,
+    /// Optional filename encoding converter for `--iconv` support.
+    ///
+    /// When set, filenames are converted between local and remote character encodings
+    /// during file list transmission. This is used when the local and remote systems
+    /// use different filename encodings.
+    pub iconv: Option<FilenameConverter>,
 }
 
 impl ServerConfig {
@@ -108,6 +115,7 @@ impl ServerConfig {
             client_mode: false,
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
+            iconv: None,
         })
     }
 }

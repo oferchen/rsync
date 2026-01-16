@@ -61,6 +61,24 @@ pub struct FilenameConverter {
     remote_encoding: &'static encoding_rs::Encoding,
 }
 
+impl PartialEq for FilenameConverter {
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(feature = "iconv")]
+        {
+            self.local_encoding == other.local_encoding
+                && self.remote_encoding == other.remote_encoding
+        }
+        #[cfg(not(feature = "iconv"))]
+        {
+            // Without iconv, all converters are identity converters
+            let _ = other;
+            true
+        }
+    }
+}
+
+impl Eq for FilenameConverter {}
+
 impl Default for FilenameConverter {
     fn default() -> Self {
         Self::identity()
