@@ -1,38 +1,11 @@
 //! Rendering of info and debug diagnostic events.
 //!
 //! This module provides infrastructure for rendering diagnostic messages
-//! from the logging system's thread-local event queue. The actual integration
-//! with `logging::verbosity::drain_events()` will be completed once the
-//! logging crate exposes its event API.
+//! from the logging system's thread-local event queue.
 
 use std::io::{self, Write};
 
-/// Placeholder diagnostic event until logging::verbosity is available.
-///
-/// This type will be replaced with the actual event type from the logging
-/// crate once the thread-local event queue is implemented.
-#[derive(Clone, Debug)]
-#[allow(dead_code)] // Fields reserved for future use in level-aware rendering
-pub enum DiagnosticEvent {
-    /// Info-level diagnostic message.
-    Info {
-        /// The info flag that triggered this message (e.g., "progress", "stats").
-        flag: String,
-        /// The verbosity level for this flag.
-        level: u8,
-        /// The formatted message text.
-        message: String,
-    },
-    /// Debug-level diagnostic message.
-    Debug {
-        /// The debug flag that triggered this message (e.g., "filter", "io").
-        flag: String,
-        /// The verbosity level for this flag.
-        level: u8,
-        /// The formatted message text.
-        message: String,
-    },
-}
+pub use logging::DiagnosticEvent;
 
 /// Render diagnostic events to the appropriate output stream.
 ///
@@ -49,11 +22,10 @@ pub enum DiagnosticEvent {
 /// # Errors
 ///
 /// Returns an I/O error if writing to either stream fails.
-#[allow(dead_code)] // Scaffolding for logging crate integration
-pub fn render_diagnostic_events<W: Write>(
+pub fn render_diagnostic_events<O: Write, E: Write>(
     events: &[DiagnosticEvent],
-    out: &mut W,
-    err: &mut W,
+    out: &mut O,
+    err: &mut E,
     msgs2stderr: bool,
 ) -> io::Result<()> {
     for event in events {
@@ -75,17 +47,17 @@ pub fn render_diagnostic_events<W: Write>(
                 message,
             } => {
                 // Debug always goes to stderr with flag prefix
-                writeln!(err, "[{flag}] {message}")?;
+                writeln!(err, "[{flag:?}] {message}")?;
             }
         }
     }
     Ok(())
 }
 
-/// Drain any pending diagnostic events and render them.
+/// Drain any pending diagnostic events from the thread-local queue and render them.
 ///
-/// This is a placeholder that will integrate with `logging::verbosity::drain_events()`
-/// once the logging crate's event queue is available.
+/// This integrates with `logging::drain_events()` to collect all pending
+/// events and render them to the appropriate output streams.
 ///
 /// # Arguments
 ///
@@ -96,26 +68,27 @@ pub fn render_diagnostic_events<W: Write>(
 /// # Errors
 ///
 /// Returns an I/O error if rendering fails.
-#[allow(dead_code)] // Scaffolding for logging crate integration
-pub const fn flush_diagnostics<W: Write>(
-    out: &mut W,
-    err: &mut W,
+pub fn flush_diagnostics<O: Write, E: Write>(
+    out: &mut O,
+    err: &mut E,
     msgs2stderr: bool,
 ) -> io::Result<()> {
-    // This will integrate with logging::verbosity::drain_events() once available
-    // For now, just a placeholder that does nothing
-    let _ = (out, err, msgs2stderr);
+    let events = logging::drain_events();
+    if !events.is_empty() {
+        render_diagnostic_events(&events, out, err, msgs2stderr)?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use logging::{DebugFlag, InfoFlag};
 
     #[test]
     fn test_info_event_renders_to_stdout() {
         let events = vec![DiagnosticEvent::Info {
-            flag: "progress".to_owned(),
+            flag: InfoFlag::Progress,
             level: 1,
             message: "transferred 1024 bytes".to_owned(),
         }];
@@ -135,7 +108,7 @@ mod tests {
     #[test]
     fn test_debug_event_renders_to_stderr_with_flag() {
         let events = vec![DiagnosticEvent::Debug {
-            flag: "filter".to_owned(),
+            flag: DebugFlag::Filter,
             level: 1,
             message: "excluding file foo.txt".to_owned(),
         }];
@@ -148,7 +121,7 @@ mod tests {
         assert!(stdout.is_empty());
         assert_eq!(
             String::from_utf8(stderr).unwrap(),
-            "[filter] excluding file foo.txt\n"
+            "[Filter] excluding file foo.txt\n"
         );
     }
 
@@ -156,12 +129,12 @@ mod tests {
     fn test_msgs2stderr_routes_all_to_stderr() {
         let events = vec![
             DiagnosticEvent::Info {
-                flag: "progress".to_owned(),
+                flag: InfoFlag::Progress,
                 level: 1,
                 message: "info message".to_owned(),
             },
             DiagnosticEvent::Debug {
-                flag: "filter".to_owned(),
+                flag: DebugFlag::Filter,
                 level: 1,
                 message: "debug message".to_owned(),
             },
@@ -175,24 +148,24 @@ mod tests {
         assert!(stdout.is_empty());
         let stderr_output = String::from_utf8(stderr).unwrap();
         assert!(stderr_output.contains("info message\n"));
-        assert!(stderr_output.contains("[filter] debug message\n"));
+        assert!(stderr_output.contains("[Filter] debug message\n"));
     }
 
     #[test]
     fn test_multiple_events_rendered_in_order() {
         let events = vec![
             DiagnosticEvent::Info {
-                flag: "progress".to_owned(),
+                flag: InfoFlag::Progress,
                 level: 1,
                 message: "first".to_owned(),
             },
             DiagnosticEvent::Debug {
-                flag: "io".to_owned(),
+                flag: DebugFlag::Io,
                 level: 2,
                 message: "second".to_owned(),
             },
             DiagnosticEvent::Info {
-                flag: "stats".to_owned(),
+                flag: InfoFlag::Stats,
                 level: 1,
                 message: "third".to_owned(),
             },
@@ -208,18 +181,32 @@ mod tests {
         assert!(stdout_output.contains("third\n"));
 
         let stderr_output = String::from_utf8(stderr).unwrap();
-        assert_eq!(stderr_output, "[io] second\n");
+        assert_eq!(stderr_output, "[Io] second\n");
     }
 
     #[test]
-    fn test_flush_diagnostics_placeholder() {
+    fn test_flush_diagnostics_drains_events() {
+        // Emit some events to the thread-local queue
+        logging::emit_info(InfoFlag::Progress, 1, "test info".to_owned());
+        logging::emit_debug(DebugFlag::Filter, 1, "test debug".to_owned());
+
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        // Should succeed but do nothing
+        // Flush should drain and render them
         flush_diagnostics(&mut stdout, &mut stderr, false).unwrap();
 
-        assert!(stdout.is_empty());
-        assert!(stderr.is_empty());
+        let stdout_output = String::from_utf8(stdout).unwrap();
+        assert!(stdout_output.contains("test info"));
+
+        let stderr_output = String::from_utf8(stderr).unwrap();
+        assert!(stderr_output.contains("[Filter] test debug"));
+
+        // Second flush should be empty
+        let mut stdout2 = Vec::new();
+        let mut stderr2 = Vec::new();
+        flush_diagnostics(&mut stdout2, &mut stderr2, false).unwrap();
+        assert!(stdout2.is_empty());
+        assert!(stderr2.is_empty());
     }
 }

@@ -46,7 +46,7 @@ use engine::delta::{DeltaScript, DeltaToken, SignatureLayoutParams, calculate_si
 use engine::fuzzy::FuzzyMatcher;
 use engine::signature::{FileSignature, generate_file_signature};
 
-use super::config::ServerConfig;
+use super::config::{ReferenceDirectory, ServerConfig};
 use super::handshake::HandshakeResult;
 use super::shared::ChecksumFactory;
 use super::temp_guard::TempFileGuard;
@@ -165,27 +165,32 @@ impl ReceiverContext {
         Ok(count)
     }
 
-    /// Reads UID/GID lists from the sender.
+    /// Reads UID/GID name-to-ID mapping lists from the sender.
     ///
-    /// Mirrors upstream `recv_id_list()` in uidlist.c:460.
-    /// Each list is varint-terminated: reads (id, name_len, name) tuples until id=0.
+    /// When `--numeric-ids` is not set, the sender transmits name mappings so the
+    /// receiver can translate remote user/group names to local numeric IDs. When
+    /// `--numeric-ids` is set, no mappings are sent and numeric IDs are used as-is.
     ///
-    /// IMPORTANT: Both sender and receiver must use the same flags for ID lists.
-    /// The sender only sends ID lists if preserve_uid/gid is set on THEIR side,
-    /// which should match the client's flags since the daemon parses the client's
-    /// flag string.
+    /// # Wire Format
     ///
-    /// For now, we consume but don't store the mappings (no ownership preservation yet).
-    fn receive_id_lists<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<()> {
-        // Read UID list if preserve_uid is set (owner flag)
-        // Upstream condition: (preserve_uid || preserve_acls) && numeric_ids <= 0
-        // Note: numeric_ids is not implemented yet, assume false (0)
+    /// Each list contains `(varint id, byte name_len, name_bytes)*` tuples terminated
+    /// by `varint 0`. With `ID0_NAMES` compat flag, an additional name for id=0
+    /// follows the terminator.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `uidlist.c:460-479` - `recv_id_list()`
+    /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
+    pub(crate) fn receive_id_lists<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<()> {
+        // Skip ID lists when numeric_ids is set (upstream: numeric_ids <= 0)
+        if self.config.flags.numeric_ids {
+            return Ok(());
+        }
+
         if self.config.flags.owner {
             self.read_one_id_list(reader)?;
         }
 
-        // Read GID list if preserve_gid is set (group flag)
-        // Upstream condition: (preserve_gid || preserve_acls) && numeric_ids <= 0
         if self.config.flags.group {
             self.read_one_id_list(reader)?;
         }
@@ -533,13 +538,14 @@ impl ReceiverContext {
             writer.flush()?;
 
             // Step 1 & 2: Generate signature if basis file exists
-            // Uses find_basis_file() helper to encapsulate exact match and fuzzy logic.
+            // Uses find_basis_file() helper to encapsulate exact match, reference directories, and fuzzy logic.
             let basis_result = find_basis_file(
                 &file_path,
                 &dest_dir,
                 relative_path,
                 file_entry.size(),
                 self.config.flags.fuzzy,
+                &self.config.reference_directories,
                 self.protocol,
                 checksum_length,
                 checksum_algorithm,
@@ -970,15 +976,55 @@ impl BasisFileResult {
     }
 }
 
+/// Tries to find a basis file in the reference directories.
+///
+/// Iterates through reference directories in order, checking if the relative
+/// path exists in each one. Returns the first match found.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1400` - Reference directory basis file lookup
+fn try_reference_directories(
+    relative_path: &std::path::Path,
+    reference_directories: &[ReferenceDirectory],
+) -> Option<(fs::File, u64, PathBuf)> {
+    for ref_dir in reference_directories {
+        let candidate = ref_dir.path.join(relative_path);
+        if let Ok(file) = fs::File::open(&candidate) {
+            if let Ok(meta) = file.metadata() {
+                if meta.is_file() {
+                    return Some((file, meta.len(), candidate));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Finds a basis file for delta transfer.
 ///
-/// First attempts to open the exact file path. If not found and fuzzy matching
-/// is enabled, searches for a similar file to use as basis.
+/// Search order:
+/// 1. Exact file at destination path
+/// 2. Reference directories (in order provided)
+/// 3. Fuzzy matching in destination directory (if enabled)
+///
+/// # Arguments
+///
+/// * `file_path` - Target file path in destination
+/// * `dest_dir` - Destination directory base
+/// * `relative_path` - Relative path from destination root
+/// * `target_size` - Expected size of the target file
+/// * `fuzzy_enabled` - Whether to try fuzzy matching
+/// * `reference_directories` - List of reference directories to check
+/// * `protocol` - Protocol version for signature generation
+/// * `checksum_length` - Checksum truncation length
+/// * `checksum_algorithm` - Algorithm for strong checksums
 ///
 /// # Upstream Reference
 ///
 /// - `generator.c:1450` - Basis file selection in `recv_generator()`
 /// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
+/// - `generator.c:1400` - Reference directory checking
 #[allow(clippy::too_many_arguments)]
 pub fn find_basis_file(
     file_path: &std::path::Path,
@@ -986,6 +1032,7 @@ pub fn find_basis_file(
     relative_path: &std::path::Path,
     target_size: u64,
     fuzzy_enabled: bool,
+    reference_directories: &[ReferenceDirectory],
     protocol: ProtocolVersion,
     checksum_length: NonZeroU8,
     checksum_algorithm: engine::signature::SignatureAlgorithm,
@@ -1003,52 +1050,59 @@ pub fn find_basis_file(
         };
         (f, size, file_path.to_path_buf())
     } else {
-        // Exact file not found - try fuzzy matching if enabled
-        if !fuzzy_enabled {
-            return BasisFileResult {
-                signature: None,
-                basis_path: None,
+        // Exact file not found - try reference directories first
+        let ref_result = try_reference_directories(relative_path, reference_directories);
+        if let Some((file, size, path)) = ref_result {
+            (file, size, path)
+        } else {
+            // Reference directories didn't yield a basis - try fuzzy matching if enabled
+            if !fuzzy_enabled {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
+                };
+            }
+
+            // Use FuzzyMatcher to find a similar file in dest_dir
+            let fuzzy_matcher = FuzzyMatcher::new();
+            let Some(target_name) = relative_path.file_name() else {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
+                };
             };
+
+            let Some(fuzzy_match) =
+                fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
+            else {
+                return BasisFileResult {
+                    signature: None,
+                    basis_path: None,
+                };
+            };
+
+            // Open the fuzzy-matched file as basis
+            let fuzzy_path = fuzzy_match.path;
+            let fuzzy_file = match fs::File::open(&fuzzy_path) {
+                Ok(f) => f,
+                Err(_) => {
+                    return BasisFileResult {
+                        signature: None,
+                        basis_path: None,
+                    };
+                }
+            };
+            let fuzzy_size = match fuzzy_file.metadata() {
+                Ok(meta) => meta.len(),
+                Err(_) => {
+                    return BasisFileResult {
+                        signature: None,
+                        basis_path: None,
+                    };
+                }
+            };
+            (fuzzy_file, fuzzy_size, fuzzy_path)
         }
-
-        // Use FuzzyMatcher to find a similar file in dest_dir
-        let fuzzy_matcher = FuzzyMatcher::new();
-        let Some(target_name) = relative_path.file_name() else {
-            return BasisFileResult {
-                signature: None,
-                basis_path: None,
-            };
-        };
-
-        let Some(fuzzy_match) = fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
-        else {
-            return BasisFileResult {
-                signature: None,
-                basis_path: None,
-            };
-        };
-
-        // Open the fuzzy-matched file as basis
-        let fuzzy_path = fuzzy_match.path;
-        let fuzzy_file = match fs::File::open(&fuzzy_path) {
-            Ok(f) => f,
-            Err(_) => {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
-            }
-        };
-        let fuzzy_size = match fuzzy_file.metadata() {
-            Ok(meta) => meta.len(),
-            Err(_) => {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
-            }
-        };
-        (fuzzy_file, fuzzy_size, fuzzy_path)
     };
 
     // Calculate signature layout
@@ -1188,6 +1242,7 @@ mod tests {
             compression_level: None,
             client_mode: false,
             filter_rules: Vec::new(),
+            reference_directories: Vec::new(),
         }
     }
 
@@ -1862,5 +1917,197 @@ mod tests {
             basis_path: Some(PathBuf::from("/tmp/basis")),
         };
         assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn try_reference_directories_finds_file_in_first_directory() {
+        use super::ReferenceDirectory;
+        use crate::config::ReferenceDirectoryKind;
+        use tempfile::tempdir;
+
+        // Create two reference directories
+        let ref_dir1 = tempdir().unwrap();
+        let ref_dir2 = tempdir().unwrap();
+
+        // Create a file in the first reference directory
+        let test_file = ref_dir1.path().join("subdir/test.txt");
+        fs::create_dir_all(test_file.parent().unwrap()).unwrap();
+        fs::write(&test_file, b"test content from ref1").unwrap();
+
+        let ref_dirs = vec![
+            ReferenceDirectory {
+                kind: ReferenceDirectoryKind::Compare,
+                path: ref_dir1.path().to_path_buf(),
+            },
+            ReferenceDirectory {
+                kind: ReferenceDirectoryKind::Link,
+                path: ref_dir2.path().to_path_buf(),
+            },
+        ];
+
+        let relative_path = std::path::Path::new("subdir/test.txt");
+        let result = super::try_reference_directories(relative_path, &ref_dirs);
+
+        assert!(result.is_some());
+        let (_, size, path) = result.unwrap();
+        assert_eq!(size, 22); // "test content from ref1".len()
+        assert_eq!(path, test_file);
+    }
+
+    #[test]
+    fn try_reference_directories_finds_file_in_second_directory() {
+        use super::ReferenceDirectory;
+        use crate::config::ReferenceDirectoryKind;
+        use tempfile::tempdir;
+
+        // Create two reference directories
+        let ref_dir1 = tempdir().unwrap();
+        let ref_dir2 = tempdir().unwrap();
+
+        // Create a file only in the second reference directory
+        let test_file = ref_dir2.path().join("test.txt");
+        fs::write(&test_file, b"test content from ref2").unwrap();
+
+        let ref_dirs = vec![
+            ReferenceDirectory {
+                kind: ReferenceDirectoryKind::Compare,
+                path: ref_dir1.path().to_path_buf(),
+            },
+            ReferenceDirectory {
+                kind: ReferenceDirectoryKind::Copy,
+                path: ref_dir2.path().to_path_buf(),
+            },
+        ];
+
+        let relative_path = std::path::Path::new("test.txt");
+        let result = super::try_reference_directories(relative_path, &ref_dirs);
+
+        assert!(result.is_some());
+        let (_, size, path) = result.unwrap();
+        assert_eq!(size, 22); // "test content from ref2".len()
+        assert_eq!(path, test_file);
+    }
+
+    #[test]
+    fn try_reference_directories_returns_none_when_not_found() {
+        use super::ReferenceDirectory;
+        use crate::config::ReferenceDirectoryKind;
+        use tempfile::tempdir;
+
+        let ref_dir = tempdir().unwrap();
+
+        let ref_dirs = vec![ReferenceDirectory {
+            kind: ReferenceDirectoryKind::Link,
+            path: ref_dir.path().to_path_buf(),
+        }];
+
+        let relative_path = std::path::Path::new("nonexistent.txt");
+        let result = super::try_reference_directories(relative_path, &ref_dirs);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn try_reference_directories_empty_list_returns_none() {
+        let ref_dirs: Vec<super::ReferenceDirectory> = vec![];
+        let relative_path = std::path::Path::new("test.txt");
+        let result = super::try_reference_directories(relative_path, &ref_dirs);
+
+        assert!(result.is_none());
+    }
+
+    /// Creates test config with specific flags for ID list tests.
+    fn config_with_flags(owner: bool, group: bool, numeric_ids: bool) -> ServerConfig {
+        ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            flags: ParsedServerFlags {
+                owner,
+                group,
+                numeric_ids,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            compression_level: None,
+            client_mode: false,
+            filter_rules: Vec::new(),
+            reference_directories: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn receive_id_lists_skips_when_numeric_ids_true() {
+        let handshake = test_handshake();
+        let config = config_with_flags(true, true, true);
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        // With numeric_ids=true, no data should be read even with owner/group set
+        let data: &[u8] = &[];
+        let mut cursor = Cursor::new(data);
+        let result = ctx.receive_id_lists(&mut cursor);
+
+        assert!(result.is_ok());
+        // Cursor position unchanged - nothing read
+        assert_eq!(cursor.position(), 0);
+    }
+
+    #[test]
+    fn receive_id_lists_reads_uid_list_when_owner_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(true, false, false);
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        // Empty UID list: varint 0 terminator only
+        let data: &[u8] = &[0];
+        let mut cursor = Cursor::new(data);
+        let result = ctx.receive_id_lists(&mut cursor);
+
+        assert!(result.is_ok());
+        assert_eq!(cursor.position(), 1);
+    }
+
+    #[test]
+    fn receive_id_lists_reads_gid_list_when_group_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(false, true, false);
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        // Empty GID list: varint 0 terminator only
+        let data: &[u8] = &[0];
+        let mut cursor = Cursor::new(data);
+        let result = ctx.receive_id_lists(&mut cursor);
+
+        assert!(result.is_ok());
+        assert_eq!(cursor.position(), 1);
+    }
+
+    #[test]
+    fn receive_id_lists_reads_both_when_owner_and_group_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(true, true, false);
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        // Both lists: two varint 0 terminators
+        let data: &[u8] = &[0, 0];
+        let mut cursor = Cursor::new(data);
+        let result = ctx.receive_id_lists(&mut cursor);
+
+        assert!(result.is_ok());
+        assert_eq!(cursor.position(), 2);
+    }
+
+    #[test]
+    fn receive_id_lists_skips_both_when_neither_flag_set() {
+        let handshake = test_handshake();
+        let config = config_with_flags(false, false, false);
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        let data: &[u8] = &[];
+        let mut cursor = Cursor::new(data);
+        let result = ctx.receive_id_lists(&mut cursor);
+
+        assert!(result.is_ok());
+        assert_eq!(cursor.position(), 0);
     }
 }
