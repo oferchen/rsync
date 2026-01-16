@@ -108,7 +108,7 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ **Error handling** - RAII cleanup, error categorization, ENOSPC detection
 
 **Test Coverage**:
-- 8,300+ tests passing (100% pass rate)
+- 8,900+ tests passing (100% pass rate)
 - Comprehensive integration tests for delta transfer
 - Error scenario tests (cleanup, categorization, edge cases)
 - Protocol version interoperability validated (protocols 28-32)
@@ -158,46 +158,43 @@ Each release provides multiple package variants to ensure compatibility across d
 |---------|-------|---------------------|
 | `oc-rsync_*_amd64.deb` | ≥ 2.35 | Ubuntu 22.04+, Debian 12+ |
 | `oc-rsync_*_arm64.deb` | ≥ 2.35 | Ubuntu 22.04+, Debian 12+ (ARM64) |
-| `oc-rsync_*_amd64_focal.deb` | ≥ 2.31 | Ubuntu 20.04+, Debian 11+ |
-| `oc-rsync_*_arm64_focal.deb` | ≥ 2.31 | Ubuntu 20.04+, Debian 11+ (ARM64) |
 
-##### Linux Tarballs
+##### RPM Packages (.rpm)
 
-| Tarball | glibc | Architecture |
-|---------|-------|--------------|
-| `oc-rsync-*-linux-amd64.tar.gz` | ≥ 2.35 | x86_64 |
-| `oc-rsync-*-linux-aarch64.tar.gz` | ≥ 2.35 | ARM64/AArch64 |
+| Package | glibc | Target Distributions |
+|---------|-------|---------------------|
+| `oc-rsync-*.x86_64.rpm` | ≥ 2.35 | Fedora 36+, RHEL 9+, Rocky 9+, Alma 9+ |
+| `oc-rsync-*.aarch64.rpm` | ≥ 2.35 | Fedora 36+, RHEL 9+, Rocky 9+, Alma 9+ (ARM64) |
 
-##### Understanding glibc Compatibility
+##### Static musl Tarballs (Portable)
 
-Linux binaries are dynamically linked against the GNU C Library (glibc). A binary built on a newer system may require a glibc version that older systems don't have, causing errors like:
+For maximum portability, statically-linked musl binaries are available. These have **no glibc dependency** and work on any Linux distribution:
 
-```
-/lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found
-```
+| Tarball | Linking | Architecture |
+|---------|---------|--------------|
+| `oc-rsync-*-linux-x86_64-musl.tar.gz` | Static (musl) | x86_64 |
+| `oc-rsync-*-linux-aarch64-musl.tar.gz` | Static (musl) | ARM64/AArch64 |
 
-**Check your system's glibc version:**
+The musl builds include full feature parity with glibc builds, including ACL and extended attribute support.
 
-```bash
-ldd --version | head -1
-# Example output: ldd (Ubuntu GLIBC 2.31-0ubuntu9.18) 2.31
-```
-
-**Selecting the right package:**
+##### Selecting the Right Package
 
 | Your Distribution | Recommended Package |
 |-------------------|---------------------|
-| Ubuntu 24.04 (Noble) | Standard packages (no suffix) |
-| Ubuntu 22.04 (Jammy) | Standard packages (no suffix) |
-| Ubuntu 20.04 (Focal) | `_focal` packages |
-| Debian 12 (Bookworm) | Standard packages (no suffix) |
-| Debian 11 (Bullseye) | `_focal` packages |
-| RHEL/Rocky/Alma 9 | Standard tarballs |
-| RHEL/Rocky/Alma 8 | `_focal` packages or build from source |
+| Ubuntu 22.04+ / Debian 12+ | `.deb` packages |
+| Fedora 36+ / RHEL 9+ / Rocky 9+ / Alma 9+ | `.rpm` packages |
+| RHEL 8 / Rocky 8 / Alma 8 | musl static tarballs |
+| Older glibc systems | musl static tarballs |
+| Alpine Linux | musl static tarballs |
+| Any Linux (portable) | musl static tarballs |
 
-**Why separate focal builds?**
+**Why musl static builds?**
 
-The `_focal` packages are built in an Ubuntu 20.04 container environment, ensuring they only depend on glibc 2.31 symbols. This provides broader compatibility at the cost of missing some newer glibc optimizations. For most use cases, there is no functional difference between the standard and focal builds.
+The musl tarballs are fully statically linked, meaning they have zero runtime dependencies. This makes them ideal for:
+- Older distributions with outdated glibc
+- Containers and minimal environments
+- Systems where you cannot install packages
+- Maximum portability across Linux distributions
 
 ---
 
@@ -431,9 +428,10 @@ cargo xtask package --release --tarball --tarball-target x86_64-apple-darwin
 
 CI publishes artifacts across:
 
-* Linux (`x86_64` / `aarch64`) `.deb` / `.rpm`
-* macOS and Windows tarballs (for supported targets)
-* CycloneDX SBOM built from the same `dist` binaries.
+* Linux (`x86_64` / `aarch64`) `.deb` and `.rpm` packages
+* Linux (`x86_64` / `aarch64`) musl static tarballs (portable, no glibc dependency)
+* macOS (`x86_64` / `aarch64`) tarballs
+* Windows (`x86_64`) tarballs
 
 ---
 

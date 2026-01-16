@@ -194,12 +194,12 @@ jobs:
           printf 'Building x86_64 .deb...\n'
           cargo deb --target x86_64-unknown-linux-gnu --no-build --profile dist
 
-          printf 'Building x86_64 .rpm (optional)...\n'
-          if cargo rpm build --target x86_64-unknown-linux-gnu --output target/dist/; then
-            printf 'cargo rpm build (x86_64) completed successfully.\n'
-          else
-            printf 'cargo rpm build (x86_64) failed; skipping x86_64 RPM.\n'
-          fi
+          printf 'Building x86_64 .rpm...\n'
+          # cargo-rpm doesn't support workspace version inheritance, patch temporarily
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          sed -i "s/^version\.workspace = true$/version = \"${VERSION}\"/" Cargo.toml
+          cargo rpm build --target x86_64-unknown-linux-gnu --output target/dist/
+          git checkout Cargo.toml
 
       - name: Build Linux aarch64 packages (deb + rpm)
         shell: bash
@@ -216,12 +216,12 @@ jobs:
           printf 'Building aarch64 .deb...\n'
           cargo deb --target aarch64-unknown-linux-gnu --no-build --profile dist
 
-          printf 'Building aarch64 .rpm (optional)...\n'
-          if cargo rpm build --target aarch64-unknown-linux-gnu --output target/dist/; then
-            printf 'cargo rpm build (aarch64) completed successfully.\n'
-          else
-            printf 'cargo rpm build (aarch64) failed; skipping aarch64 RPM.\n'
-          fi
+          printf 'Building aarch64 .rpm...\n'
+          # cargo-rpm doesn't support workspace version inheritance, patch temporarily
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          sed -i "s/^version\.workspace = true$/version = \"${VERSION}\"/" Cargo.toml
+          cargo rpm build --target aarch64-unknown-linux-gnu --output target/dist/
+          git checkout Cargo.toml
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
