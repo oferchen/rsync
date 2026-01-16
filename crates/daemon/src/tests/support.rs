@@ -185,9 +185,10 @@ pub(super) fn write_executable_script(path: &Path, contents: &str) {
 }
 
 pub(super) fn connect_with_retries(port: u16) -> TcpStream {
-    const INITIAL_BACKOFF: Duration = Duration::from_millis(20);
-    const MAX_BACKOFF: Duration = Duration::from_millis(200);
-    const TIMEOUT: Duration = Duration::from_secs(15);
+    const INITIAL_BACKOFF: Duration = Duration::from_millis(50);
+    const MAX_BACKOFF: Duration = Duration::from_millis(500);
+    // CI environments may have resource constraints causing slower daemon startup
+    const TIMEOUT: Duration = Duration::from_secs(30);
 
     let target = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let deadline = Instant::now() + TIMEOUT;
