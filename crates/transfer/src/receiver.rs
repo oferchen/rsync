@@ -138,6 +138,11 @@ impl ReceiverContext {
         // uid/gid values are included in the file list and we must consume them.
         .with_preserve_uid(self.config.flags.owner)
         .with_preserve_gid(self.config.flags.group);
+
+        // Wire up iconv converter if configured
+        if let Some(ref converter) = self.config.iconv {
+            flist_reader = flist_reader.with_iconv(converter.clone());
+        }
         let mut count = 0;
 
         // Read entries until end marker or error
@@ -1243,6 +1248,7 @@ mod tests {
             client_mode: false,
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
+            iconv: None,
         }
     }
 
@@ -2033,6 +2039,7 @@ mod tests {
             client_mode: false,
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
+            iconv: None,
         }
     }
 
