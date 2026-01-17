@@ -20,6 +20,8 @@ pub mod filters;
 pub mod flist;
 /// Filename encoding conversion (iconv) for cross-platform transfers.
 pub mod iconv;
+/// UID/GID mapping lists for name-based ownership transfer.
+pub mod idlist;
 mod legacy;
 mod multiplex;
 mod negotiation;

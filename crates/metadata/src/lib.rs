@@ -96,7 +96,7 @@ mod chmod;
 mod error;
 
 #[cfg(unix)]
-mod id_lookup;
+pub mod id_lookup;
 
 #[cfg(unix)]
 mod mapping;
