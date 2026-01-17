@@ -6,7 +6,7 @@
 //!
 //! Reference: rsync 3.4.1 log.c for debug output behavior.
 
-use logging::{debug_log, DebugFlag, VerbosityConfig, drain_events, init, DiagnosticEvent};
+use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, debug_log, drain_events, init};
 
 // ============================================================================
 // Basic Debug Log Emission Tests
@@ -25,7 +25,11 @@ fn debug_log_emits_when_level_sufficient() {
     let events = drain_events();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        DiagnosticEvent::Debug { flag, level, message } => {
+        DiagnosticEvent::Debug {
+            flag,
+            level,
+            message,
+        } => {
             assert_eq!(*flag, DebugFlag::Recv);
             assert_eq!(*level, 1);
             assert_eq!(message, "test message");
@@ -267,12 +271,13 @@ fn debug_log_preserves_order() {
     let events = drain_events();
     assert_eq!(events.len(), 3);
 
-    let messages: Vec<_> = events.iter().map(|e| {
-        match e {
+    let messages: Vec<_> = events
+        .iter()
+        .map(|e| match e {
             DiagnosticEvent::Debug { message, .. } => message.as_str(),
             _ => panic!("expected debug event"),
-        }
-    }).collect();
+        })
+        .collect();
 
     assert_eq!(messages, vec!["first", "second", "third"]);
 }

@@ -207,8 +207,8 @@ fn sender_only_include_after_sender_only_exclude() {
 #[test]
 fn show_with_exclude_interaction() {
     let rules = [
-        FilterRule::exclude("*"),           // Exclude everything
-        FilterRule::show("important/**"),   // But show important on sender
+        FilterRule::exclude("*"),         // Exclude everything
+        FilterRule::show("important/**"), // But show important on sender
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -223,8 +223,8 @@ fn show_with_exclude_interaction() {
 #[test]
 fn hide_with_include_interaction() {
     let rules = [
-        FilterRule::include("*"),           // Include everything
-        FilterRule::hide("secret/**"),      // But hide secret on sender
+        FilterRule::include("*"),      // Include everything
+        FilterRule::hide("secret/**"), // But hide secret on sender
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -295,8 +295,8 @@ fn clear_both_sides() {
 #[test]
 fn receiver_context_skips_sender_only_tail_rule() {
     let rules = [
-        FilterRule::exclude("*.tmp").with_sides(false, true),   // Receiver exclude
-        FilterRule::include("*.tmp").with_sides(true, false),   // Sender include (tail)
+        FilterRule::exclude("*.tmp").with_sides(false, true), // Receiver exclude
+        FilterRule::include("*.tmp").with_sides(true, false), // Sender include (tail)
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -411,7 +411,7 @@ fn rule_modified_to_both_sides() {
 #[test]
 fn with_sides_overrides_previous() {
     let rule = FilterRule::show("*.log") // Starts sender-only
-        .with_sides(false, true);         // Change to receiver-only
+        .with_sides(false, true); // Change to receiver-only
 
     assert!(!rule.applies_to_sender());
     assert!(rule.applies_to_receiver());

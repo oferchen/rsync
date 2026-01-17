@@ -181,7 +181,12 @@ impl IdList {
     /// * `reader` - The source of encoded data
     /// * `id0_names` - Whether to read id=0's name (ID0_NAMES compat flag)
     /// * `name_to_id` - Function to resolve a name to a local ID
-    pub fn read<R: Read + ?Sized, F>(&mut self, reader: &mut R, id0_names: bool, name_to_id: F) -> io::Result<()>
+    pub fn read<R: Read + ?Sized, F>(
+        &mut self,
+        reader: &mut R,
+        id0_names: bool,
+        name_to_id: F,
+    ) -> io::Result<()>
     where
         F: Fn(&[u8]) -> Option<u32>,
     {
@@ -368,12 +373,10 @@ mod tests {
 
         let mut receiver = IdList::new();
         receiver
-            .read(&mut buf.as_slice(), false, |name| {
-                match name {
-                    b"root" => Some(0),
-                    b"user" => Some(500),
-                    _ => None,
-                }
+            .read(&mut buf.as_slice(), false, |name| match name {
+                b"root" => Some(0),
+                b"user" => Some(500),
+                _ => None,
             })
             .unwrap();
 

@@ -42,7 +42,9 @@
 //! - `match.c:140` - `hash_search()` - Rolling checksum matching
 //! - `match.c:362` - `match_sums()` - Main delta generation entry point
 
-use matching::{DeltaGenerator, DeltaSignatureIndex, DeltaScript, DeltaToken, apply_delta, generate_delta};
+use matching::{
+    DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta,
+};
 use protocol::ProtocolVersion;
 use signature::{
     SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
@@ -63,8 +65,7 @@ fn build_index(data: &[u8]) -> Option<DeltaSignatureIndex> {
         NonZeroU8::new(16).unwrap(),
     );
     let layout = calculate_signature_layout(params).ok()?;
-    let signature =
-        generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
+    let signature = generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
     DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
 }
 
@@ -78,13 +79,16 @@ fn build_index_with_block_hint(data: &[u8], block_hint: u32) -> Option<DeltaSign
         NonZeroU8::new(16).unwrap(),
     );
     let layout = calculate_signature_layout(params).ok()?;
-    let signature =
-        generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
+    let signature = generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
     DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
 }
 
 /// Applies a delta script and returns the reconstructed output.
-fn apply_and_reconstruct(basis: &[u8], index: &DeltaSignatureIndex, script: &DeltaScript) -> Vec<u8> {
+fn apply_and_reconstruct(
+    basis: &[u8],
+    index: &DeltaSignatureIndex,
+    script: &DeltaScript,
+) -> Vec<u8> {
     let mut basis_cursor = Cursor::new(basis);
     let mut output = Vec::new();
     apply_delta(&mut basis_cursor, &mut output, index, script).expect("apply_delta should succeed");
@@ -96,7 +100,10 @@ fn verify_round_trip(basis: &[u8], input: &[u8]) -> DeltaScript {
     let index = build_index(basis).expect("should build index");
     let script = generate_delta(&input[..], &index).expect("should generate delta");
     let reconstructed = apply_and_reconstruct(basis, &index, &script);
-    assert_eq!(reconstructed, input, "round-trip reconstruction should match input");
+    assert_eq!(
+        reconstructed, input,
+        "round-trip reconstruction should match input"
+    );
     script
 }
 
@@ -121,8 +128,15 @@ fn uniform_data_generates_copy_tokens() {
     let script = verify_round_trip(&basis, &input);
 
     // Should be mostly copy tokens since data is identical
-    let copy_count = script.tokens().iter().filter(|t| matches!(t, DeltaToken::Copy { .. })).count();
-    assert!(copy_count > 0, "identical uniform data should produce copy tokens");
+    let copy_count = script
+        .tokens()
+        .iter()
+        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+        .count();
+    assert!(
+        copy_count > 0,
+        "identical uniform data should produce copy tokens"
+    );
 
     // Most bytes should be copied (allowing for trailing partial block as literals)
     assert!(
@@ -142,7 +156,11 @@ fn different_uniform_data_generates_literals() {
     let script = verify_round_trip(&basis, &input);
 
     // Different content should produce all literals
-    assert_eq!(script.literal_bytes(), input.len() as u64, "different data should be all literals");
+    assert_eq!(
+        script.literal_bytes(),
+        input.len() as u64,
+        "different data should be all literals"
+    );
 }
 
 /// Verifies delta generation with random data (no correlations).
@@ -233,8 +251,7 @@ fn sparse_data_with_islands() {
 #[test]
 fn text_like_data_pattern() {
     // Simulate text: printable ASCII with newlines
-    let text = "The quick brown fox jumps over the lazy dog.\n"
-        .repeat(200);
+    let text = "The quick brown fox jumps over the lazy dog.\n".repeat(200);
     let basis = text.as_bytes().to_vec();
     let input = basis.clone();
 
@@ -304,8 +321,14 @@ fn partial_matches_modified_middle() {
     let script = verify_round_trip(&basis, &input);
 
     // Should have both copy and literal tokens
-    assert!(script.literal_bytes() > 0, "modified region should produce literals");
-    assert!(script.copy_bytes() > 0, "unmodified regions should produce copies");
+    assert!(
+        script.literal_bytes() > 0,
+        "modified region should produce literals"
+    );
+    assert!(
+        script.copy_bytes() > 0,
+        "unmodified regions should produce copies"
+    );
 }
 
 /// Verifies handling of insertions at the beginning.
@@ -324,8 +347,14 @@ fn insertion_at_beginning() {
     assert_eq!(reconstructed, input);
 
     // Should have literals for the insertion plus copies for the rest
-    assert!(script.literal_bytes() >= 50, "should have literals for insertion");
-    assert!(script.copy_bytes() >= block_len as u64, "should have copies for original data");
+    assert!(
+        script.literal_bytes() >= 50,
+        "should have literals for insertion"
+    );
+    assert!(
+        script.copy_bytes() >= block_len as u64,
+        "should have copies for original data"
+    );
 }
 
 /// Verifies handling of insertions at the end.
@@ -341,7 +370,10 @@ fn insertion_at_end() {
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
 
     assert_eq!(reconstructed, input);
-    assert!(script.literal_bytes() >= 100, "should have literals for appended data");
+    assert!(
+        script.literal_bytes() >= 100,
+        "should have literals for appended data"
+    );
 }
 
 /// Verifies handling of insertions in the middle.
@@ -359,7 +391,10 @@ fn insertion_in_middle() {
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
 
     assert_eq!(reconstructed, input);
-    assert!(script.literal_bytes() >= 200, "should have literals for insertion");
+    assert!(
+        script.literal_bytes() >= 200,
+        "should have literals for insertion"
+    );
 }
 
 /// Verifies handling of deletions at the beginning.
@@ -422,8 +457,15 @@ fn block_reordering() {
     assert_eq!(reconstructed, input);
 
     // Reordered blocks should still be found and copied
-    let copy_count = script.tokens().iter().filter(|t| matches!(t, DeltaToken::Copy { .. })).count();
-    assert!(copy_count >= num_blocks, "reordered blocks should still match");
+    let copy_count = script
+        .tokens()
+        .iter()
+        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+        .count();
+    assert!(
+        copy_count >= num_blocks,
+        "reordered blocks should still match"
+    );
 }
 
 // ============================================================================
@@ -439,7 +481,10 @@ fn empty_input_produces_empty_script() {
     let input: &[u8] = &[];
     let script = generate_delta(input, &index).expect("should generate delta");
 
-    assert!(script.tokens().is_empty(), "empty input should produce no tokens");
+    assert!(
+        script.tokens().is_empty(),
+        "empty input should produce no tokens"
+    );
     assert_eq!(script.total_bytes(), 0);
     assert_eq!(script.literal_bytes(), 0);
 }
@@ -491,7 +536,11 @@ fn input_exactly_one_block() {
 
     // Should be a single copy token
     assert_eq!(script.literal_bytes(), 0);
-    let copy_count = script.tokens().iter().filter(|t| matches!(t, DeltaToken::Copy { .. })).count();
+    let copy_count = script
+        .tokens()
+        .iter()
+        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+        .count();
     assert_eq!(copy_count, 1, "should produce exactly one copy token");
 
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
@@ -510,7 +559,11 @@ fn input_at_block_boundaries() {
     let input = basis[..block_len * num_blocks].to_vec();
     let script = generate_delta(&input[..], &index).expect("should generate delta");
 
-    assert_eq!(script.literal_bytes(), 0, "block-aligned identical data should be all copies");
+    assert_eq!(
+        script.literal_bytes(),
+        0,
+        "block-aligned identical data should be all copies"
+    );
 
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
     assert_eq!(reconstructed, input);
@@ -574,7 +627,10 @@ fn large_file_handling() {
     assert_eq!(reconstructed, input);
 
     // Most should be copies, some literals for modified section
-    assert!(script.copy_bytes() > script.literal_bytes(), "large file should mostly copy");
+    assert!(
+        script.copy_bytes() > script.literal_bytes(),
+        "large file should mostly copy"
+    );
 }
 
 // ============================================================================
@@ -627,10 +683,18 @@ fn buffer_size_independence() {
     let gen_large = DeltaGenerator::new().with_buffer_len(32768);
     let gen_default = DeltaGenerator::new();
 
-    let script_small = gen_small.generate(&input[..], &index).expect("small buffer");
-    let script_medium = gen_medium.generate(&input[..], &index).expect("medium buffer");
-    let script_large = gen_large.generate(&input[..], &index).expect("large buffer");
-    let script_default = gen_default.generate(&input[..], &index).expect("default buffer");
+    let script_small = gen_small
+        .generate(&input[..], &index)
+        .expect("small buffer");
+    let script_medium = gen_medium
+        .generate(&input[..], &index)
+        .expect("medium buffer");
+    let script_large = gen_large
+        .generate(&input[..], &index)
+        .expect("large buffer");
+    let script_default = gen_default
+        .generate(&input[..], &index)
+        .expect("default buffer");
 
     // All should produce the same byte counts
     assert_eq!(script_small.total_bytes(), script_default.total_bytes());
@@ -638,7 +702,10 @@ fn buffer_size_independence() {
     assert_eq!(script_large.total_bytes(), script_default.total_bytes());
 
     assert_eq!(script_small.literal_bytes(), script_default.literal_bytes());
-    assert_eq!(script_medium.literal_bytes(), script_default.literal_bytes());
+    assert_eq!(
+        script_medium.literal_bytes(),
+        script_default.literal_bytes()
+    );
     assert_eq!(script_large.literal_bytes(), script_default.literal_bytes());
 
     // All should reconstruct correctly
@@ -674,8 +741,15 @@ fn rolling_checksum_finds_offset_match() {
     assert_eq!(reconstructed, input);
 
     // Should find the matching block despite the prefix
-    let copy_count = script.tokens().iter().filter(|t| matches!(t, DeltaToken::Copy { .. })).count();
-    assert!(copy_count >= 1, "should find the matching block after prefix");
+    let copy_count = script
+        .tokens()
+        .iter()
+        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+        .count();
+    assert!(
+        copy_count >= 1,
+        "should find the matching block after prefix"
+    );
 }
 
 /// Verifies matching of blocks at various offsets in the input stream.
@@ -695,7 +769,11 @@ fn matching_at_various_offsets() {
 
         assert_eq!(reconstructed, input, "failed at offset {offset}");
 
-        let copy_count = script.tokens().iter().filter(|t| matches!(t, DeltaToken::Copy { .. })).count();
+        let copy_count = script
+            .tokens()
+            .iter()
+            .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+            .count();
         assert!(copy_count >= 1, "should find match at offset {offset}");
     }
 }
@@ -722,7 +800,11 @@ fn multiple_scattered_matches() {
 
     assert_eq!(reconstructed, input);
 
-    let copy_count = script.tokens().iter().filter(|t| matches!(t, DeltaToken::Copy { .. })).count();
+    let copy_count = script
+        .tokens()
+        .iter()
+        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+        .count();
     assert_eq!(copy_count, 3, "should find all three scattered blocks");
 }
 
@@ -737,7 +819,10 @@ fn index_block_length_accessor() {
     let index = build_index(&basis).expect("should build index");
 
     assert!(index.block_length() > 0, "block length should be positive");
-    assert!(index.block_length() <= basis.len(), "block length should not exceed data size");
+    assert!(
+        index.block_length() <= basis.len(),
+        "block length should not exceed data size"
+    );
 }
 
 /// Verifies that signature index correctly reports strong checksum length.
@@ -746,7 +831,11 @@ fn index_strong_length_accessor() {
     let basis = vec![0u8; 8192];
     let index = build_index(&basis).expect("should build index");
 
-    assert_eq!(index.strong_length(), 16, "strong length should match MD4 truncation");
+    assert_eq!(
+        index.strong_length(),
+        16,
+        "strong length should match MD4 truncation"
+    );
 }
 
 /// Verifies that index returns None for data without full blocks.
@@ -757,7 +846,10 @@ fn index_returns_none_for_small_data() {
     let result = build_index(&basis);
 
     // The index should return None because there are no full blocks
-    assert!(result.is_none(), "small data should not produce index with full blocks");
+    assert!(
+        result.is_none(),
+        "small data should not produce index with full blocks"
+    );
 }
 
 // ============================================================================
@@ -797,7 +889,10 @@ fn token_byte_len_accuracy() {
     let literal = DeltaToken::Literal(vec![1, 2, 3, 4, 5]);
     assert_eq!(literal.byte_len(), 5);
 
-    let copy = DeltaToken::Copy { index: 0, len: 1024 };
+    let copy = DeltaToken::Copy {
+        index: 0,
+        len: 1024,
+    };
     assert_eq!(copy.byte_len(), 1024);
 
     let empty_literal = DeltaToken::Literal(vec![]);
@@ -852,7 +947,9 @@ fn generator_builder_pattern() {
     // Should use last value
     let basis = vec![0u8; 4096];
     let index = build_index(&basis).expect("should build index");
-    let script = generator.generate(&[][..], &index).expect("should work with chained builder");
+    let script = generator
+        .generate(&[][..], &index)
+        .expect("should work with chained builder");
 
     assert!(script.is_empty());
 }
@@ -866,7 +963,9 @@ fn generator_zero_buffer_becomes_one() {
     let index = build_index(&basis).expect("should build index");
     let input = vec![1u8, 2, 3];
 
-    let script = generator.generate(&input[..], &index).expect("should handle minimum buffer");
+    let script = generator
+        .generate(&input[..], &index)
+        .expect("should handle minimum buffer");
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
 
     assert_eq!(reconstructed, input);
@@ -951,8 +1050,14 @@ fn apply_consecutive_copies() {
     // Copy block 0, then block 1
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Copy { index: 0, len: block_len },
-            DeltaToken::Copy { index: 1, len: block_len },
+            DeltaToken::Copy {
+                index: 0,
+                len: block_len,
+            },
+            DeltaToken::Copy {
+                index: 1,
+                len: block_len,
+            },
         ],
         (block_len * 2) as u64,
         0,
@@ -972,9 +1077,15 @@ fn apply_interleaved_tokens() {
     let script = DeltaScript::new(
         vec![
             DeltaToken::Literal(b"PREFIX".to_vec()),
-            DeltaToken::Copy { index: 0, len: block_len },
+            DeltaToken::Copy {
+                index: 0,
+                len: block_len,
+            },
             DeltaToken::Literal(b"MIDDLE".to_vec()),
-            DeltaToken::Copy { index: 1, len: block_len },
+            DeltaToken::Copy {
+                index: 1,
+                len: block_len,
+            },
             DeltaToken::Literal(b"SUFFIX".to_vec()),
         ],
         (block_len * 2 + 18) as u64,
@@ -1067,8 +1178,15 @@ fn alternating_match_regions() {
     assert_eq!(reconstructed, input);
 
     // Should have roughly half copies
-    let copy_count = script.tokens().iter().filter(|t| matches!(t, DeltaToken::Copy { .. })).count();
-    assert!(copy_count >= num_blocks / 4, "should find at least some matches");
+    let copy_count = script
+        .tokens()
+        .iter()
+        .filter(|t| matches!(t, DeltaToken::Copy { .. }))
+        .count();
+    assert!(
+        copy_count >= num_blocks / 4,
+        "should find at least some matches"
+    );
 }
 
 // ============================================================================
@@ -1085,10 +1203,22 @@ fn regression_basis_position_tracking() {
     // Copy non-sequential blocks to exercise seeking
     let script = DeltaScript::new(
         vec![
-            DeltaToken::Copy { index: 5, len: block_len }, // Block 5
-            DeltaToken::Copy { index: 2, len: block_len }, // Block 2 (backward seek)
-            DeltaToken::Copy { index: 7, len: block_len }, // Block 7 (forward seek)
-            DeltaToken::Copy { index: 0, len: block_len }, // Block 0 (backward seek)
+            DeltaToken::Copy {
+                index: 5,
+                len: block_len,
+            }, // Block 5
+            DeltaToken::Copy {
+                index: 2,
+                len: block_len,
+            }, // Block 2 (backward seek)
+            DeltaToken::Copy {
+                index: 7,
+                len: block_len,
+            }, // Block 7 (forward seek)
+            DeltaToken::Copy {
+                index: 0,
+                len: block_len,
+            }, // Block 0 (backward seek)
         ],
         (block_len * 4) as u64,
         0,
@@ -1152,7 +1282,12 @@ mod fuzzy_matching {
         assert!(result.is_some(), "should find a fuzzy match");
         let matched = result.unwrap();
         assert!(
-            matched.path.file_name().unwrap().to_string_lossy().contains("report"),
+            matched
+                .path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("report"),
             "matched file should be a report: {:?}",
             matched.path
         );
@@ -1168,14 +1303,13 @@ mod fuzzy_matching {
         fs::write(temp.path().join("beta.bin"), "data2").expect("write file");
 
         let matcher = FuzzyMatcher::new().with_min_score(100);
-        let result = matcher.find_fuzzy_basis(
-            OsStr::new("gamma.txt"),
-            temp.path(),
-            50,
-        );
+        let result = matcher.find_fuzzy_basis(OsStr::new("gamma.txt"), temp.path(), 50);
 
         // High threshold should prevent matching unrelated files
-        assert!(result.is_none(), "should not find unrelated files with high threshold");
+        assert!(
+            result.is_none(),
+            "should not find unrelated files with high threshold"
+        );
     }
 
     /// Verifies fuzzy matching respects minimum score threshold.
@@ -1187,21 +1321,16 @@ mod fuzzy_matching {
 
         // Low threshold should match
         let matcher_low = FuzzyMatcher::new().with_min_score(1);
-        let result_low = matcher_low.find_fuzzy_basis(
-            OsStr::new("file_b.txt"),
-            temp.path(),
-            100,
-        );
+        let result_low = matcher_low.find_fuzzy_basis(OsStr::new("file_b.txt"), temp.path(), 100);
         assert!(result_low.is_some(), "low threshold should find match");
 
         // Very high threshold should not match
         let matcher_high = FuzzyMatcher::new().with_min_score(10000);
-        let result_high = matcher_high.find_fuzzy_basis(
-            OsStr::new("file_b.txt"),
-            temp.path(),
-            100,
+        let result_high = matcher_high.find_fuzzy_basis(OsStr::new("file_b.txt"), temp.path(), 100);
+        assert!(
+            result_high.is_none(),
+            "very high threshold should not match"
         );
-        assert!(result_high.is_none(), "very high threshold should not match");
     }
 
     /// Verifies fuzzy matching searches additional basis directories.
@@ -1213,8 +1342,7 @@ mod fuzzy_matching {
         // Put the similar file in the second directory
         fs::write(temp2.path().join("config_v1.json"), "old config").expect("write file");
 
-        let matcher = FuzzyMatcher::new()
-            .with_fuzzy_basis_dirs(vec![temp2.path().to_path_buf()]);
+        let matcher = FuzzyMatcher::new().with_fuzzy_basis_dirs(vec![temp2.path().to_path_buf()]);
 
         let result = matcher.find_fuzzy_basis(
             OsStr::new("config_v2.json"),
@@ -1236,11 +1364,7 @@ mod fuzzy_matching {
         let temp = TempDir::new().expect("create temp dir");
 
         let matcher = FuzzyMatcher::new();
-        let result = matcher.find_fuzzy_basis(
-            OsStr::new("anyfile.txt"),
-            temp.path(),
-            100,
-        );
+        let result = matcher.find_fuzzy_basis(OsStr::new("anyfile.txt"), temp.path(), 100);
 
         assert!(result.is_none(), "empty directory should return no match");
     }
@@ -1256,11 +1380,7 @@ mod fuzzy_matching {
         fs::write(temp.path().join("different.bin"), "data").expect("write file");
 
         let matcher = FuzzyMatcher::new().with_min_score(1);
-        let result = matcher.find_fuzzy_basis(
-            OsStr::new("similar_file.txt"),
-            temp.path(),
-            100,
-        );
+        let result = matcher.find_fuzzy_basis(OsStr::new("similar_file.txt"), temp.path(), 100);
 
         // Should either find the different file (low score) or nothing,
         // but should not match the directory
@@ -1281,16 +1401,24 @@ mod fuzzy_matching {
         assert!(
             score_same_ext > score_no_ext,
             "same extension should add bonus: same_ext={}, no_ext={}",
-            score_same_ext, score_no_ext
+            score_same_ext,
+            score_no_ext
         );
 
         // Longer common prefix should score higher
-        let score_long_prefix = compute_similarity_score("application_config.json", "application_settings.json", 1000, 1000);
-        let score_short_prefix = compute_similarity_score("app_config.json", "application_settings.json", 1000, 1000);
+        let score_long_prefix = compute_similarity_score(
+            "application_config.json",
+            "application_settings.json",
+            1000,
+            1000,
+        );
+        let score_short_prefix =
+            compute_similarity_score("app_config.json", "application_settings.json", 1000, 1000);
         assert!(
             score_long_prefix > score_short_prefix,
             "longer prefix should score higher: long={}, short={}",
-            score_long_prefix, score_short_prefix
+            score_long_prefix,
+            score_short_prefix
         );
 
         // Similar file sizes should boost score
@@ -1299,7 +1427,8 @@ mod fuzzy_matching {
         assert!(
             score_similar_size > score_very_different_size,
             "similar sizes should score higher: similar={}, different={}",
-            score_similar_size, score_very_different_size
+            score_similar_size,
+            score_very_different_size
         );
 
         // Completely different files should score low
@@ -1332,7 +1461,12 @@ mod fuzzy_matching {
         let matched = result.unwrap();
         // Should prefer one of the similar backup files
         assert!(
-            matched.path.file_name().unwrap().to_string_lossy().contains("data_backup"),
+            matched
+                .path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains("data_backup"),
             "should match one of the backup files"
         );
     }
@@ -1346,7 +1480,8 @@ mod ring_buffer_behavior {
     use matching::{DeltaGenerator, DeltaSignatureIndex, generate_delta};
     use protocol::ProtocolVersion;
     use signature::{
-        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
+        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
+        generate_file_signature,
     };
     use std::num::NonZeroU8;
 
@@ -1358,8 +1493,7 @@ mod ring_buffer_behavior {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).ok()?;
-        let signature =
-            generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
+        let signature = generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
         DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
     }
 
@@ -1411,7 +1545,10 @@ mod ring_buffer_behavior {
         let script = generator.generate(&input[..], &index).expect("delta");
 
         // Should find the match despite buffer boundary
-        let has_copy = script.tokens().iter().any(|t| matches!(t, matching::DeltaToken::Copy { .. }));
+        let has_copy = script
+            .tokens()
+            .iter()
+            .any(|t| matches!(t, matching::DeltaToken::Copy { .. }));
         assert!(has_copy, "should find match that spans buffer boundary");
     }
 }
@@ -1421,10 +1558,11 @@ mod ring_buffer_behavior {
 // ============================================================================
 
 mod algorithm_correctness {
-    use matching::{DeltaSignatureIndex, DeltaToken, generate_delta, apply_delta};
+    use matching::{DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta};
     use protocol::ProtocolVersion;
     use signature::{
-        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
+        SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
+        generate_file_signature,
     };
     use std::io::Cursor;
     use std::num::NonZeroU8;
@@ -1437,8 +1575,7 @@ mod algorithm_correctness {
             NonZeroU8::new(16).unwrap(),
         );
         let layout = calculate_signature_layout(params).ok()?;
-        let signature =
-            generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
+        let signature = generate_file_signature(data, layout, SignatureAlgorithm::Md4).ok()?;
         DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
     }
 
@@ -1477,7 +1614,11 @@ mod algorithm_correctness {
         let script = generate_delta(&input[..], &index).expect("delta");
 
         for token in script.tokens() {
-            if let DeltaToken::Copy { index: block_idx, len } = token {
+            if let DeltaToken::Copy {
+                index: block_idx,
+                len,
+            } = token
+            {
                 assert!(
                     (*block_idx as usize) < num_blocks,
                     "copy token should reference valid block index: {} >= {}",
@@ -1511,7 +1652,9 @@ mod algorithm_correctness {
         assert!(copy_count >= 1, "should have copy tokens");
 
         // Verify total literal bytes match expected
-        let total_literal: usize = script.tokens().iter()
+        let total_literal: usize = script
+            .tokens()
+            .iter()
             .filter_map(|t| {
                 if let DeltaToken::Literal(bytes) = t {
                     Some(bytes.len())
@@ -1533,7 +1676,9 @@ mod algorithm_correctness {
             (0..5000).map(|i| (i % 251) as u8).collect(),
             vec![0u8; 4000],
             vec![0xFF; 4000],
-            (0..4000).map(|i| if i % 100 < 50 { 0 } else { 0xFF }).collect(),
+            (0..4000)
+                .map(|i| if i % 100 < 50 { 0 } else { 0xFF })
+                .collect(),
         ];
 
         for (idx, basis) in test_cases.iter().enumerate() {
@@ -1565,8 +1710,7 @@ mod algorithm_correctness {
 
                     let mut basis_cursor = Cursor::new(basis.clone());
                     let mut output = Vec::new();
-                    apply_delta(&mut basis_cursor, &mut output, &index, &script)
-                        .expect("apply");
+                    apply_delta(&mut basis_cursor, &mut output, &index, &script).expect("apply");
 
                     assert_eq!(
                         output, input,

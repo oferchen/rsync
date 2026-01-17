@@ -7,8 +7,8 @@
 //! Reference: rsync 3.4.1 options.c for verbosity level parsing.
 
 use logging::{
-    info_log, debug_log, InfoFlag, DebugFlag, VerbosityConfig,
-    drain_events, init, info_gte, debug_gte, apply_info_flag, apply_debug_flag,
+    DebugFlag, InfoFlag, VerbosityConfig, apply_debug_flag, apply_info_flag, debug_gte, debug_log,
+    drain_events, info_gte, info_log, init,
 };
 
 // ============================================================================
