@@ -454,8 +454,7 @@ fn error_message_is_informative() {
             let msg = error.to_string();
             assert!(
                 msg.contains("missing") || msg.contains("surely"),
-                "error message should reference the path: {}",
-                msg
+                "error message should reference the path: {msg}"
             );
         }
     }
@@ -539,7 +538,7 @@ fn walker_partial_consumption() {
     fs::create_dir(&root).expect("create root");
 
     for i in 0..10 {
-        fs::write(root.join(format!("file{}.txt", i)), b"data").expect("write file");
+        fs::write(root.join(format!("file{i}.txt")), b"data").expect("write file");
     }
 
     let mut walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -562,7 +561,7 @@ fn walker_early_termination() {
     fs::create_dir(&root).expect("create root");
 
     for i in 0..5 {
-        fs::write(root.join(format!("file{}.txt", i)), b"data").expect("write file");
+        fs::write(root.join(format!("file{i}.txt")), b"data").expect("write file");
     }
 
     let mut walker = FileListBuilder::new(&root).build().expect("build walker");

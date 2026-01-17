@@ -98,7 +98,7 @@ fn apply_and_reconstruct(
 /// Generates a delta and verifies round-trip reconstruction.
 fn verify_round_trip(basis: &[u8], input: &[u8]) -> DeltaScript {
     let index = build_index(basis).expect("should build index");
-    let script = generate_delta(&input[..], &index).expect("should generate delta");
+    let script = generate_delta(input, &index).expect("should generate delta");
     let reconstructed = apply_and_reconstruct(basis, &index, &script);
     assert_eq!(
         reconstructed, input,
@@ -139,11 +139,11 @@ fn uniform_data_generates_copy_tokens() {
     );
 
     // Most bytes should be copied (allowing for trailing partial block as literals)
+    let copy_bytes = script.copy_bytes();
+    let literal_bytes = script.literal_bytes();
     assert!(
-        script.copy_bytes() > script.literal_bytes(),
-        "identical data should be mostly copies: copy={}, literal={}",
-        script.copy_bytes(),
-        script.literal_bytes()
+        copy_bytes > literal_bytes,
+        "identical data should be mostly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
 }
 
@@ -191,11 +191,11 @@ fn repetitive_pattern_matching() {
     let script = verify_round_trip(&basis, &input);
 
     // Identical repetitive data should produce mostly copy tokens
+    let copy_bytes = script.copy_bytes();
+    let literal_bytes = script.literal_bytes();
     assert!(
-        script.copy_bytes() > script.literal_bytes(),
-        "identical repetitive data should be mostly copies: copy={}, literal={}",
-        script.copy_bytes(),
-        script.literal_bytes()
+        copy_bytes > literal_bytes,
+        "identical repetitive data should be mostly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
 }
 
@@ -210,11 +210,11 @@ fn incremental_data_pattern() {
     let script = verify_round_trip(&basis, &input);
 
     // Most bytes should be copied
+    let copy_bytes = script.copy_bytes();
+    let literal_bytes = script.literal_bytes();
     assert!(
-        script.copy_bytes() > script.literal_bytes(),
-        "identical incremental data should be mostly copies: copy={}, literal={}",
-        script.copy_bytes(),
-        script.literal_bytes()
+        copy_bytes > literal_bytes,
+        "identical incremental data should be mostly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
 }
 
@@ -237,11 +237,11 @@ fn sparse_data_with_islands() {
     let script = verify_round_trip(&basis, &input);
 
     // Most bytes should be copied
+    let copy_bytes = script.copy_bytes();
+    let literal_bytes = script.literal_bytes();
     assert!(
-        script.copy_bytes() > script.literal_bytes(),
-        "identical sparse data should be mostly copies: copy={}, literal={}",
-        script.copy_bytes(),
-        script.literal_bytes()
+        copy_bytes > literal_bytes,
+        "identical sparse data should be mostly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
 }
 
@@ -258,11 +258,11 @@ fn text_like_data_pattern() {
     let script = verify_round_trip(&basis, &input);
 
     // Most bytes should be copied
+    let copy_bytes = script.copy_bytes();
+    let literal_bytes = script.literal_bytes();
     assert!(
-        script.copy_bytes() > script.literal_bytes(),
-        "identical text should be mostly copies: copy={}, literal={}",
-        script.copy_bytes(),
-        script.literal_bytes()
+        copy_bytes > literal_bytes,
+        "identical text should be mostly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
 }
 
@@ -295,11 +295,11 @@ fn all_matches_identical_files() {
     let script = verify_round_trip(&basis, &input);
 
     // The vast majority should be copies
+    let copy_bytes = script.copy_bytes();
+    let literal_bytes = script.literal_bytes();
     assert!(
-        script.copy_bytes() > script.literal_bytes() * 10,
-        "identical files should be overwhelmingly copies: copy={}, literal={}",
-        script.copy_bytes(),
-        script.literal_bytes()
+        copy_bytes > literal_bytes * 10,
+        "identical files should be overwhelmingly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
     assert!(script.copy_bytes() > 0, "should have copy tokens");
 }
@@ -760,21 +760,21 @@ fn matching_at_various_offsets() {
     let block_len = index.block_length();
 
     // Test different offset positions
-    for offset in [1, 10, 50, 100, 255, 512] {
-        let mut input = vec![0xFFu8; offset];
+    for offset in [1, 10, 50, 100, 255, 512].iter() {
+        let mut input = vec![0xFFu8; *offset];
         input.extend_from_slice(&basis[..block_len]);
 
         let script = generate_delta(&input[..], &index).expect("should generate delta");
         let reconstructed = apply_and_reconstruct(&basis, &index, &script);
 
-        assert_eq!(reconstructed, input, "failed at offset {offset}");
+        assert_eq!(reconstructed, input, "failed at offset {}", *offset);
 
         let copy_count = script
             .tokens()
             .iter()
             .filter(|t| matches!(t, DeltaToken::Copy { .. }))
             .count();
-        assert!(copy_count >= 1, "should find match at offset {offset}");
+        assert!(copy_count >= 1, "should find match at offset {}", *offset);
     }
 }
 
@@ -1400,9 +1400,7 @@ mod fuzzy_matching {
         let score_no_ext = compute_similarity_score("a", "b", 1000, 1000);
         assert!(
             score_same_ext > score_no_ext,
-            "same extension should add bonus: same_ext={}, no_ext={}",
-            score_same_ext,
-            score_no_ext
+            "same extension should add bonus: same_ext={score_same_ext}, no_ext={score_no_ext}"
         );
 
         // Longer common prefix should score higher
@@ -1416,9 +1414,7 @@ mod fuzzy_matching {
             compute_similarity_score("app_config.json", "application_settings.json", 1000, 1000);
         assert!(
             score_long_prefix > score_short_prefix,
-            "longer prefix should score higher: long={}, short={}",
-            score_long_prefix,
-            score_short_prefix
+            "longer prefix should score higher: long={score_long_prefix}, short={score_short_prefix}"
         );
 
         // Similar file sizes should boost score
@@ -1426,17 +1422,14 @@ mod fuzzy_matching {
         let score_very_different_size = compute_similarity_score("file.dat", "data.dat", 1000, 10);
         assert!(
             score_similar_size > score_very_different_size,
-            "similar sizes should score higher: similar={}, different={}",
-            score_similar_size,
-            score_very_different_size
+            "similar sizes should score higher: similar={score_similar_size}, different={score_very_different_size}"
         );
 
         // Completely different files should score low
         let score_unrelated = compute_similarity_score("abc.xyz", "def.uvw", 100, 50000);
         assert!(
             score_unrelated < 50,
-            "unrelated files should score low: {}",
-            score_unrelated
+            "unrelated files should score low: {score_unrelated}"
         );
     }
 
@@ -1621,9 +1614,7 @@ mod algorithm_correctness {
             {
                 assert!(
                     (*block_idx as usize) < num_blocks,
-                    "copy token should reference valid block index: {} >= {}",
-                    block_idx,
-                    num_blocks
+                    "copy token should reference valid block index: {block_idx} >= {num_blocks}"
                 );
                 assert_eq!(*len, block_len, "copy length should equal block length");
             }
