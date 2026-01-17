@@ -127,8 +127,8 @@ fn risk_rule_applies_to_descendants() {
 fn multiple_protect_risk_interactions() {
     let rules = [
         FilterRule::protect("*"),          // Protect everything
-        FilterRule::risk("temp/"),          // Allow deletion of temp
-        FilterRule::protect("temp/keep/"),  // But protect keep within temp
+        FilterRule::risk("temp/"),         // Allow deletion of temp
+        FilterRule::protect("temp/keep/"), // But protect keep within temp
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -241,10 +241,7 @@ fn protect_rule_with_sender_side() {
 /// Verifies clear rule removes protect rules.
 #[test]
 fn clear_removes_protect_rules() {
-    let rules = [
-        FilterRule::protect("critical/"),
-        FilterRule::clear(),
-    ];
+    let rules = [FilterRule::protect("critical/"), FilterRule::clear()];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Protection is gone after clear
@@ -345,18 +342,12 @@ fn protect_with_double_star() {
 #[test]
 fn protect_risk_order_matters() {
     // Risk then protect
-    let rules1 = [
-        FilterRule::risk("file"),
-        FilterRule::protect("file"),
-    ];
+    let rules1 = [FilterRule::risk("file"), FilterRule::protect("file")];
     let set1 = FilterSet::from_rules(rules1).unwrap();
     assert!(!set1.allows_deletion(Path::new("file"), false)); // Protected (last wins)
 
     // Protect then risk
-    let rules2 = [
-        FilterRule::protect("file"),
-        FilterRule::risk("file"),
-    ];
+    let rules2 = [FilterRule::protect("file"), FilterRule::risk("file")];
     let set2 = FilterSet::from_rules(rules2).unwrap();
     assert!(set2.allows_deletion(Path::new("file"), false)); // Not protected (last wins)
 }

@@ -6,8 +6,8 @@
 //! Reference: rsync 3.4.1 log.c for message handling edge cases.
 
 use logging::{
-    info_log, debug_log, InfoFlag, DebugFlag, VerbosityConfig,
-    drain_events, init, DiagnosticEvent, apply_info_flag,
+    DebugFlag, DiagnosticEvent, InfoFlag, VerbosityConfig, apply_info_flag, debug_log,
+    drain_events, info_log, init,
 };
 
 // ============================================================================
@@ -302,9 +302,19 @@ fn message_with_many_arguments() {
     drain_events();
 
     debug_log!(
-        Io, 1,
+        Io,
+        1,
         "a={} b={} c={} d={} e={} f={} g={} h={} i={} j={}",
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
     );
 
     let events = drain_events();
@@ -468,7 +478,11 @@ fn diagnostic_event_info_fields() {
 
     let events = drain_events();
     match &events[0] {
-        DiagnosticEvent::Info { flag, level, message } => {
+        DiagnosticEvent::Info {
+            flag,
+            level,
+            message,
+        } => {
             assert_eq!(*flag, InfoFlag::Copy);
             assert_eq!(*level, 2);
             assert_eq!(message, "test message");
@@ -489,7 +503,11 @@ fn diagnostic_event_debug_fields() {
 
     let events = drain_events();
     match &events[0] {
-        DiagnosticEvent::Debug { flag, level, message } => {
+        DiagnosticEvent::Debug {
+            flag,
+            level,
+            message,
+        } => {
             assert_eq!(*flag, DebugFlag::Recv);
             assert_eq!(*level, 2);
             assert_eq!(message, "debug message");
@@ -509,7 +527,11 @@ fn diagnostic_event_clone() {
 
     let cloned = event.clone();
     match cloned {
-        DiagnosticEvent::Info { flag, level, message } => {
+        DiagnosticEvent::Info {
+            flag,
+            level,
+            message,
+        } => {
             assert_eq!(flag, InfoFlag::Name);
             assert_eq!(level, 1);
             assert_eq!(message, "cloneable");

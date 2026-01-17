@@ -39,8 +39,12 @@ use tempfile::TempDir;
 /// Creates a test batch file with the specified configuration and returns the path.
 fn create_test_batch(temp_dir: &TempDir, name: &str, protocol: i32, seed: i32) -> String {
     let batch_path = temp_dir.path().join(name);
-    let config = BatchConfig::new(BatchMode::Write, batch_path.to_string_lossy().to_string(), protocol)
-        .with_checksum_seed(seed);
+    let config = BatchConfig::new(
+        BatchMode::Write,
+        batch_path.to_string_lossy().to_string(),
+        protocol,
+    )
+    .with_checksum_seed(seed);
 
     let mut writer = BatchWriter::new(config).expect("writer creation should succeed");
     writer
@@ -50,7 +54,6 @@ fn create_test_batch(temp_dir: &TempDir, name: &str, protocol: i32, seed: i32) -
 
     batch_path.to_string_lossy().to_string()
 }
-
 
 // ============================================================================
 // Batch File Operations Tests
@@ -75,7 +78,10 @@ mod batch_file_operations {
         let writer = BatchWriter::new(config).expect("writer should be created");
         drop(writer);
 
-        assert!(batch_path.exists(), "Batch file should exist after writer creation");
+        assert!(
+            batch_path.exists(),
+            "Batch file should exist after writer creation"
+        );
     }
 
     #[test]
@@ -88,7 +94,10 @@ mod batch_file_operations {
         );
 
         let result = BatchWriter::new(config);
-        assert!(result.is_err(), "Should fail when parent directory doesn't exist");
+        assert!(
+            result.is_err(),
+            "Should fail when parent directory doesn't exist"
+        );
     }
 
     #[test]
@@ -164,7 +173,10 @@ mod batch_file_operations {
 
         // Verify file contains all data
         let content = fs::read(&batch_path).unwrap();
-        assert!(content.len() > 100 * 10, "File should contain all written chunks");
+        assert!(
+            content.len() > 100 * 10,
+            "File should contain all written chunks"
+        );
     }
 
     #[test]
@@ -208,7 +220,10 @@ mod batch_file_operations {
 
         // File should be readable immediately after finalize
         let content = fs::read(&batch_path).unwrap();
-        assert!(!content.is_empty(), "File should be readable after finalize");
+        assert!(
+            !content.is_empty(),
+            "File should be readable after finalize"
+        );
     }
 }
 
@@ -258,7 +273,10 @@ mod round_trip_tests {
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
 
-        assert_eq!(write_flags, read_flags, "Flags should match after round-trip");
+        assert_eq!(
+            write_flags, read_flags,
+            "Flags should match after round-trip"
+        );
 
         let header = reader.header().unwrap();
         assert_eq!(header.protocol_version, 30);
@@ -271,8 +289,8 @@ mod round_trip_tests {
         let batch_path = temp_dir.path().join("roundtrip31.batch");
         let path_str = batch_path.to_string_lossy().to_string();
 
-        let write_config = BatchConfig::new(BatchMode::Write, path_str.clone(), 31)
-            .with_checksum_seed(99999);
+        let write_config =
+            BatchConfig::new(BatchMode::Write, path_str.clone(), 31).with_checksum_seed(99999);
 
         let mut writer = BatchWriter::new(write_config).unwrap();
         let flags = BatchFlags {
@@ -373,7 +391,10 @@ mod round_trip_tests {
         let mut read_data = vec![0u8; 256];
         reader.read_exact(&mut read_data).unwrap();
 
-        assert_eq!(binary_data, read_data, "Binary data should survive round-trip");
+        assert_eq!(
+            binary_data, read_data,
+            "Binary data should survive round-trip"
+        );
     }
 
     #[test]
@@ -434,7 +455,10 @@ mod round_trip_tests {
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
 
-        assert_eq!(all_flags, read_flags, "All flags should match after round-trip");
+        assert_eq!(
+            all_flags, read_flags,
+            "All flags should match after round-trip"
+        );
     }
 
     #[test]
@@ -454,7 +478,10 @@ mod round_trip_tests {
         let mut reader = BatchReader::new(read_config).unwrap();
         let read_flags = reader.read_header().unwrap();
 
-        assert_eq!(no_flags, read_flags, "Default flags should match after round-trip");
+        assert_eq!(
+            no_flags, read_flags,
+            "Default flags should match after round-trip"
+        );
     }
 }
 
@@ -637,7 +664,10 @@ mod error_handling {
         let mut buf = [0u8; 1000];
         let result = reader.read_exact(&mut buf);
 
-        assert!(result.is_err(), "read_exact with insufficient data should fail");
+        assert!(
+            result.is_err(),
+            "read_exact with insufficient data should fail"
+        );
     }
 
     #[test]
@@ -697,7 +727,10 @@ mod error_handling {
         let entry = FileEntry::new("test.txt".to_owned(), 0o644, 100, 1234567890);
         let result = writer.write_file_entry(&entry);
 
-        assert!(result.is_err(), "Writing file entry before header should fail");
+        assert!(
+            result.is_err(),
+            "Writing file entry before header should fail"
+        );
     }
 
     #[test]
@@ -710,7 +743,10 @@ mod error_handling {
 
         let result = reader.read_file_entry();
 
-        assert!(result.is_err(), "Reading file entry before header should fail");
+        assert!(
+            result.is_err(),
+            "Reading file entry before header should fail"
+        );
     }
 }
 
@@ -821,8 +857,8 @@ mod edge_cases {
             let batch_path = temp_dir.path().join(format!("seed_{i}.batch"));
             let path_str = batch_path.to_string_lossy().to_string();
 
-            let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30)
-                .with_checksum_seed(seed);
+            let config =
+                BatchConfig::new(BatchMode::Write, path_str.clone(), 30).with_checksum_seed(seed);
 
             let mut writer = BatchWriter::new(config).unwrap();
             writer.write_header(BatchFlags::default()).unwrap();
@@ -879,8 +915,8 @@ mod edge_cases {
             let batch_path = temp_dir.path().join(format!("compat_{i}.batch"));
             let path_str = batch_path.to_string_lossy().to_string();
 
-            let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30)
-                .with_compat_flags(flags);
+            let config =
+                BatchConfig::new(BatchMode::Write, path_str.clone(), 30).with_compat_flags(flags);
 
             let mut writer = BatchWriter::new(config).unwrap();
             writer.write_header(BatchFlags::default()).unwrap();
@@ -1083,7 +1119,12 @@ mod file_entry_tests {
         let entries = vec![
             FileEntry::new("file1.txt".to_owned(), 0o100644, 100, 1000000000),
             FileEntry::new("dir/file2.txt".to_owned(), 0o100755, 200, 1000000001),
-            FileEntry::new("deep/nested/file3.dat".to_owned(), 0o100600, 300, 1000000002),
+            FileEntry::new(
+                "deep/nested/file3.dat".to_owned(),
+                0o100600,
+                300,
+                1000000002,
+            ),
         ];
 
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
@@ -1198,7 +1239,10 @@ mod file_entry_tests {
         let path_str = batch_path.to_string_lossy().to_string();
 
         // Create a path with 200 components
-        let long_path = (0..200).map(|i| format!("dir{i}")).collect::<Vec<_>>().join("/")
+        let long_path = (0..200)
+            .map(|i| format!("dir{i}"))
+            .collect::<Vec<_>>()
+            .join("/")
             + "/final_file.txt";
 
         let entry = FileEntry::new(long_path.clone(), 0o100644, 100, 1609459200);
@@ -1264,12 +1308,12 @@ mod file_entry_tests {
 
         // Note: mtime is stored as i32, so values outside that range are truncated
         let mtimes = [
-            0i64,                    // Unix epoch
-            1,                       // Just after epoch
-            -1,                      // Before epoch
-            i32::MAX as i64,         // Max positive i32
-            i32::MIN as i64,         // Min negative i32
-            1609459200,              // 2021-01-01 00:00:00 UTC
+            0i64,            // Unix epoch
+            1,               // Just after epoch
+            -1,              // Before epoch
+            i32::MAX as i64, // Max positive i32
+            i32::MIN as i64, // Min negative i32
+            1609459200,      // 2021-01-01 00:00:00 UTC
         ];
 
         let config = BatchConfig::new(BatchMode::Write, path_str.clone(), 30);
@@ -1426,21 +1470,21 @@ mod batch_flags_tests {
     fn flags_bitmap_values_match_upstream() {
         // Verify bitmap positions match upstream rsync's batch.c flag_ptr array
         let flags = BatchFlags {
-            recurse: true,          // bit 0
-            preserve_uid: true,     // bit 1
-            preserve_gid: true,     // bit 2
-            preserve_links: true,   // bit 3
-            preserve_devices: true, // bit 4
+            recurse: true,             // bit 0
+            preserve_uid: true,        // bit 1
+            preserve_gid: true,        // bit 2
+            preserve_links: true,      // bit 3
+            preserve_devices: true,    // bit 4
             preserve_hard_links: true, // bit 5
-            always_checksum: true,  // bit 6
-            xfer_dirs: true,        // bit 7 (protocol 29+)
-            do_compression: true,   // bit 8 (protocol 29+)
-            iconv: true,            // bit 9 (protocol 30+)
-            preserve_acls: true,    // bit 10 (protocol 30+)
-            preserve_xattrs: true,  // bit 11 (protocol 30+)
-            inplace: true,          // bit 12 (protocol 30+)
-            append: true,           // bit 13 (protocol 30+)
-            append_verify: true,    // bit 14 (protocol 30+)
+            always_checksum: true,     // bit 6
+            xfer_dirs: true,           // bit 7 (protocol 29+)
+            do_compression: true,      // bit 8 (protocol 29+)
+            iconv: true,               // bit 9 (protocol 30+)
+            preserve_acls: true,       // bit 10 (protocol 30+)
+            preserve_xattrs: true,     // bit 11 (protocol 30+)
+            inplace: true,             // bit 12 (protocol 30+)
+            append: true,              // bit 13 (protocol 30+)
+            append_verify: true,       // bit 14 (protocol 30+)
         };
 
         let bitmap = flags.to_bitmap(30);
@@ -1470,20 +1514,53 @@ mod batch_flags_tests {
         // Test each flag individually
         let flag_setters: Vec<(&str, Box<dyn Fn(&mut BatchFlags)>)> = vec![
             ("recurse", Box::new(|f: &mut BatchFlags| f.recurse = true)),
-            ("preserve_uid", Box::new(|f: &mut BatchFlags| f.preserve_uid = true)),
-            ("preserve_gid", Box::new(|f: &mut BatchFlags| f.preserve_gid = true)),
-            ("preserve_links", Box::new(|f: &mut BatchFlags| f.preserve_links = true)),
-            ("preserve_devices", Box::new(|f: &mut BatchFlags| f.preserve_devices = true)),
-            ("preserve_hard_links", Box::new(|f: &mut BatchFlags| f.preserve_hard_links = true)),
-            ("always_checksum", Box::new(|f: &mut BatchFlags| f.always_checksum = true)),
-            ("xfer_dirs", Box::new(|f: &mut BatchFlags| f.xfer_dirs = true)),
-            ("do_compression", Box::new(|f: &mut BatchFlags| f.do_compression = true)),
+            (
+                "preserve_uid",
+                Box::new(|f: &mut BatchFlags| f.preserve_uid = true),
+            ),
+            (
+                "preserve_gid",
+                Box::new(|f: &mut BatchFlags| f.preserve_gid = true),
+            ),
+            (
+                "preserve_links",
+                Box::new(|f: &mut BatchFlags| f.preserve_links = true),
+            ),
+            (
+                "preserve_devices",
+                Box::new(|f: &mut BatchFlags| f.preserve_devices = true),
+            ),
+            (
+                "preserve_hard_links",
+                Box::new(|f: &mut BatchFlags| f.preserve_hard_links = true),
+            ),
+            (
+                "always_checksum",
+                Box::new(|f: &mut BatchFlags| f.always_checksum = true),
+            ),
+            (
+                "xfer_dirs",
+                Box::new(|f: &mut BatchFlags| f.xfer_dirs = true),
+            ),
+            (
+                "do_compression",
+                Box::new(|f: &mut BatchFlags| f.do_compression = true),
+            ),
             ("iconv", Box::new(|f: &mut BatchFlags| f.iconv = true)),
-            ("preserve_acls", Box::new(|f: &mut BatchFlags| f.preserve_acls = true)),
-            ("preserve_xattrs", Box::new(|f: &mut BatchFlags| f.preserve_xattrs = true)),
+            (
+                "preserve_acls",
+                Box::new(|f: &mut BatchFlags| f.preserve_acls = true),
+            ),
+            (
+                "preserve_xattrs",
+                Box::new(|f: &mut BatchFlags| f.preserve_xattrs = true),
+            ),
             ("inplace", Box::new(|f: &mut BatchFlags| f.inplace = true)),
             ("append", Box::new(|f: &mut BatchFlags| f.append = true)),
-            ("append_verify", Box::new(|f: &mut BatchFlags| f.append_verify = true)),
+            (
+                "append_verify",
+                Box::new(|f: &mut BatchFlags| f.append_verify = true),
+            ),
         ];
 
         for (name, setter) in &flag_setters {
@@ -1531,7 +1608,10 @@ mod script_generation {
         script::generate_script(&config).unwrap();
 
         let script_path = config.script_file_path();
-        assert!(Path::new(&script_path).exists(), "Script file should be created");
+        assert!(
+            Path::new(&script_path).exists(),
+            "Script file should be created"
+        );
     }
 
     #[test]
@@ -1550,9 +1630,18 @@ mod script_generation {
         let script_path = config.script_file_path();
         let content = fs::read_to_string(&script_path).unwrap();
 
-        assert!(content.starts_with("#!/bin/sh\n"), "Script should start with shebang");
-        assert!(content.contains("--read-batch="), "Script should have --read-batch option");
-        assert!(content.contains("oc-rsync"), "Script should invoke oc-rsync");
+        assert!(
+            content.starts_with("#!/bin/sh\n"),
+            "Script should start with shebang"
+        );
+        assert!(
+            content.contains("--read-batch="),
+            "Script should have --read-batch option"
+        );
+        assert!(
+            content.contains("oc-rsync"),
+            "Script should invoke oc-rsync"
+        );
     }
 
     #[test]
@@ -1603,9 +1692,15 @@ mod script_generation {
         let script_path = config.script_file_path();
         let content = fs::read_to_string(&script_path).unwrap();
 
-        assert!(content.contains("--read-batch="), "Should convert to read-batch");
+        assert!(
+            content.contains("--read-batch="),
+            "Should convert to read-batch"
+        );
         assert!(content.contains("-avz"), "Should preserve -avz option");
-        assert!(content.contains("--progress"), "Should preserve --progress option");
+        assert!(
+            content.contains("--progress"),
+            "Should preserve --progress option"
+        );
     }
 
     #[test]
@@ -1702,16 +1797,16 @@ mod batch_config_tests {
 
     #[test]
     fn config_with_checksum_seed() {
-        let config = BatchConfig::new(BatchMode::Write, "test".to_owned(), 30)
-            .with_checksum_seed(12345);
+        let config =
+            BatchConfig::new(BatchMode::Write, "test".to_owned(), 30).with_checksum_seed(12345);
 
         assert_eq!(config.checksum_seed, 12345);
     }
 
     #[test]
     fn config_with_compat_flags_protocol_30() {
-        let config = BatchConfig::new(BatchMode::Write, "test".to_owned(), 30)
-            .with_compat_flags(0x42);
+        let config =
+            BatchConfig::new(BatchMode::Write, "test".to_owned(), 30).with_compat_flags(0x42);
 
         assert_eq!(config.compat_flags, Some(0x42));
     }
@@ -1719,8 +1814,8 @@ mod batch_config_tests {
     #[test]
     fn config_with_compat_flags_protocol_28_ignored() {
         // Protocol 28 doesn't support compat flags
-        let config = BatchConfig::new(BatchMode::Write, "test".to_owned(), 28)
-            .with_compat_flags(0x42);
+        let config =
+            BatchConfig::new(BatchMode::Write, "test".to_owned(), 28).with_compat_flags(0x42);
 
         // with_compat_flags only sets if protocol >= 30
         assert!(config.compat_flags.is_none());

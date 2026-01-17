@@ -32,10 +32,7 @@ fn clear_removes_all_previous_rules() {
 /// Verifies clear rule removes protect rules.
 #[test]
 fn clear_removes_protect_rules() {
-    let rules = [
-        FilterRule::protect("critical/"),
-        FilterRule::clear(),
-    ];
+    let rules = [FilterRule::protect("critical/"), FilterRule::clear()];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Protection is gone
@@ -243,10 +240,7 @@ fn complex_clear_scenario() {
 /// Verifies clear removes show rules.
 #[test]
 fn clear_removes_show_rules() {
-    let rules = [
-        FilterRule::show("logs/**"),
-        FilterRule::clear(),
-    ];
+    let rules = [FilterRule::show("logs/**"), FilterRule::clear()];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.is_empty());
@@ -255,10 +249,7 @@ fn clear_removes_show_rules() {
 /// Verifies clear removes hide rules.
 #[test]
 fn clear_removes_hide_rules() {
-    let rules = [
-        FilterRule::hide("secret/**"),
-        FilterRule::clear(),
-    ];
+    let rules = [FilterRule::hide("secret/**"), FilterRule::clear()];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(set.is_empty());
@@ -349,7 +340,7 @@ fn clear_partial_removes_from_both_sides_rule() {
     // A rule that applies to both sides has its sender component cleared
     // but receiver component remains
     let rules = [
-        FilterRule::exclude("both.txt"), // Applies to both sides
+        FilterRule::exclude("both.txt"),             // Applies to both sides
         FilterRule::clear().with_sides(true, false), // Clear sender only
     ];
     let set = FilterSet::from_rules(rules).unwrap();

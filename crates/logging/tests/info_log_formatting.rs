@@ -6,7 +6,7 @@
 //!
 //! Reference: rsync 3.4.1 log.c for info output formatting.
 
-use logging::{info_log, InfoFlag, VerbosityConfig, drain_events, init, DiagnosticEvent};
+use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
 
 // ============================================================================
 // Basic Info Log Emission Tests
@@ -25,7 +25,11 @@ fn info_log_emits_when_level_sufficient() {
     let events = drain_events();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        DiagnosticEvent::Info { flag, level, message } => {
+        DiagnosticEvent::Info {
+            flag,
+            level,
+            message,
+        } => {
             assert_eq!(*flag, InfoFlag::Name);
             assert_eq!(*level, 1);
             assert_eq!(message, "file.txt");
@@ -300,12 +304,13 @@ fn info_log_preserves_order() {
     let events = drain_events();
     assert_eq!(events.len(), 3);
 
-    let messages: Vec<_> = events.iter().map(|e| {
-        match e {
+    let messages: Vec<_> = events
+        .iter()
+        .map(|e| match e {
             DiagnosticEvent::Info { message, .. } => message.as_str(),
             _ => panic!("expected info event"),
-        }
-    }).collect();
+        })
+        .collect();
 
     assert_eq!(messages, vec!["file1.txt", "file2.txt", "file3.txt"]);
 }
