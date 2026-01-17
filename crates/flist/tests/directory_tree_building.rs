@@ -55,7 +55,11 @@ fn empty_directory_yields_root_only() {
     let walker = FileListBuilder::new(&root).build().expect("build walker");
     let entries = collect_all_entries(walker);
 
-    assert_eq!(entries.len(), 1, "empty directory should yield exactly one entry");
+    assert_eq!(
+        entries.len(),
+        1,
+        "empty directory should yield exactly one entry"
+    );
     assert!(entries[0].is_root(), "the single entry should be the root");
     assert!(entries[0].metadata().is_dir(), "root should be a directory");
 }
@@ -237,7 +241,10 @@ fn root_entry_properties_for_directory() {
         root_entry.relative_path().as_os_str().is_empty(),
         "root relative path should be empty"
     );
-    assert!(root_entry.full_path().is_absolute(), "full path should be absolute");
+    assert!(
+        root_entry.full_path().is_absolute(),
+        "full path should be absolute"
+    );
     assert!(root_entry.metadata().is_dir(), "root should be directory");
 }
 
@@ -248,7 +255,9 @@ fn root_entry_when_starting_from_file() {
     let file_path = temp.path().join("single_file.txt");
     fs::write(&file_path, b"content").expect("write file");
 
-    let mut walker = FileListBuilder::new(&file_path).build().expect("build walker");
+    let mut walker = FileListBuilder::new(&file_path)
+        .build()
+        .expect("build walker");
 
     let root_entry = walker.next().expect("root entry").expect("success");
     assert!(root_entry.is_root(), "entry should be root");
@@ -293,7 +302,10 @@ fn include_root_false_empty_directory_yields_nothing() {
         .expect("build walker");
 
     let entries: Vec<_> = walker.collect();
-    assert!(entries.is_empty(), "empty directory with no root should yield nothing");
+    assert!(
+        entries.is_empty(),
+        "empty directory with no root should yield nothing"
+    );
 }
 
 // ============================================================================
@@ -338,7 +350,10 @@ fn directory_entry_metadata() {
         .find(|e| e.relative_path() == Path::new("subdir"))
         .expect("subdir entry");
 
-    assert!(subdir_entry.metadata().is_dir(), "subdir should be directory");
+    assert!(
+        subdir_entry.metadata().is_dir(),
+        "subdir should be directory"
+    );
 }
 
 // ============================================================================
@@ -547,7 +562,10 @@ fn builder_debug_format() {
         .include_root(false);
 
     let debug = format!("{:?}", builder);
-    assert!(debug.contains("FileListBuilder"), "debug should contain type name");
+    assert!(
+        debug.contains("FileListBuilder"),
+        "debug should contain type name"
+    );
 }
 
 /// Verifies builder method chaining works correctly.

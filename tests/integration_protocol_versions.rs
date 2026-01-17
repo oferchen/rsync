@@ -519,7 +519,10 @@ fn server_mode_delta_transfer_protocol_32() {
 
     // Verify correct reconstruction
     let dest_content = fs::read(dest_dir.join("data.bin")).unwrap();
-    assert_eq!(dest_content, src_content, "Delta transfer should reconstruct correctly");
+    assert_eq!(
+        dest_content, src_content,
+        "Delta transfer should reconstruct correctly"
+    );
 }
 
 // ============ Future Test Notes ============

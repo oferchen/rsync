@@ -127,7 +127,11 @@ fn very_deep_nesting() {
     });
 
     assert!(file_entry.is_some(), "should find deep file");
-    assert_eq!(file_entry.unwrap().depth(), 51, "file should be at depth 51");
+    assert_eq!(
+        file_entry.unwrap().depth(),
+        51,
+        "file should be at depth 51"
+    );
 }
 
 /// Verifies depth tracking in complex structures.
@@ -312,7 +316,10 @@ fn single_file_no_children() {
     let root = walker.next().expect("root entry");
     assert!(root.is_ok());
 
-    assert!(walker.next().is_none(), "single file should have no children");
+    assert!(
+        walker.next().is_none(),
+        "single file should have no children"
+    );
 }
 
 // ============================================================================
@@ -327,7 +334,10 @@ fn nonexistent_path_error() {
     match result {
         Ok(_) => panic!("expected error for nonexistent path"),
         Err(error) => {
-            assert!(matches!(error.kind(), FileListErrorKind::RootMetadata { .. }));
+            assert!(matches!(
+                error.kind(),
+                FileListErrorKind::RootMetadata { .. }
+            ));
             assert!(error.path().to_string_lossy().contains("nonexistent"));
         }
     }
