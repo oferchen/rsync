@@ -41,10 +41,14 @@ use protocol::codec::{NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, 
 use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
+use protocol::idlist::IdList;
 use protocol::wire::{DeltaOp, SignatureBlock, write_token_stream};
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
+
+#[cfg(unix)]
+use metadata::id_lookup::{lookup_group_name, lookup_user_name};
 
 use super::config::ServerConfig;
 use super::handshake::HandshakeResult;
@@ -86,11 +90,16 @@ pub struct GeneratorContext {
     flist_xfer_end: Option<Instant>,
     /// Total bytes read from network during transfer (for total_read statistic).
     total_bytes_read: u64,
+    /// Collected UID mappings for name-based ownership transfer.
+    uid_list: IdList,
+    /// Collected GID mappings for name-based ownership transfer.
+    gid_list: IdList,
 }
 
 impl GeneratorContext {
     /// Creates a new generator context from handshake result and config.
-    pub const fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+    #[must_use]
+    pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
         Self {
             protocol: handshake.protocol,
             config,
@@ -105,6 +114,8 @@ impl GeneratorContext {
             flist_xfer_start: None,
             flist_xfer_end: None,
             total_bytes_read: 0,
+            uid_list: IdList::new(),
+            gid_list: IdList::new(),
         }
     }
 
@@ -188,14 +199,57 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Collects unique UID/GID values from the file list and looks up their names.
+    ///
+    /// This must be called after `build_file_list` and before `send_id_lists`.
+    /// On non-Unix platforms, this is a no-op since ownership is not preserved.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `uidlist.c:add_uid()` / `add_gid()` - called during file list building
+    #[cfg(unix)]
+    pub fn collect_id_mappings(&mut self) {
+        // Skip if numeric_ids is set - no name mapping needed
+        if self.config.flags.numeric_ids {
+            return;
+        }
+
+        self.uid_list.clear();
+        self.gid_list.clear();
+
+        for entry in &self.file_list {
+            // Collect UIDs if preserving ownership
+            if self.config.flags.owner {
+                if let Some(uid) = entry.uid() {
+                    // Look up name for this UID
+                    let name = lookup_user_name(uid).ok().flatten();
+                    self.uid_list.add_id(uid, name);
+                }
+            }
+
+            // Collect GIDs if preserving group
+            if self.config.flags.group {
+                if let Some(gid) = entry.gid() {
+                    // Look up name for this GID
+                    let name = lookup_group_name(gid).ok().flatten();
+                    self.gid_list.add_id(gid, name);
+                }
+            }
+        }
+    }
+
+    /// Collects unique UID/GID values from the file list.
+    /// No-op on non-Unix platforms since ownership is not preserved.
+    #[cfg(not(unix))]
+    pub fn collect_id_mappings(&mut self) {
+        // No-op on non-Unix platforms
+    }
+
     /// Sends UID/GID name-to-ID mapping lists to the receiver.
     ///
     /// When `--numeric-ids` is not set, transmits name mappings so the receiver can
     /// translate user/group names to local numeric IDs. When `--numeric-ids` is set,
     /// no mappings are sent and numeric IDs are used as-is.
-    ///
-    /// Currently sends empty lists (just terminators) as name collection is not yet
-    /// implemented.
     ///
     /// # Wire Format
     ///
@@ -221,18 +275,14 @@ impl GeneratorContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
 
+        // Send UID list if preserving ownership
         if self.config.flags.owner {
-            protocol::write_varint(writer, 0)?;
-            if id0_names {
-                writer.write_all(&[0u8])?;
-            }
+            self.uid_list.write(writer, id0_names)?;
         }
 
+        // Send GID list if preserving group
         if self.config.flags.group {
-            protocol::write_varint(writer, 0)?;
-            if id0_names {
-                writer.write_all(&[0u8])?;
-            }
+            self.gid_list.write(writer, id0_names)?;
         }
 
         // Flush to prevent deadlock: receiver waits for ID lists before proceeding
@@ -620,6 +670,9 @@ impl GeneratorContext {
 
         // Record end time for flist_buildtime statistic
         self.flist_build_end = Some(Instant::now());
+
+        // Collect UID/GID mappings for name-based ownership transfer
+        self.collect_id_mappings();
 
         let count = self.file_list.len();
         info_log!(Flist, 1, "built file list with {} entries", count);
@@ -2522,7 +2575,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
         };
-        let receiver = ReceiverContext::new(&handshake, recv_config);
+        let mut receiver = ReceiverContext::new(&handshake, recv_config);
 
         let mut cursor = Cursor::new(&wire_data[..]);
         let result = receiver.receive_id_lists(&mut cursor);
@@ -2565,7 +2618,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
         };
-        let receiver = ReceiverContext::new(&handshake, recv_config);
+        let mut receiver = ReceiverContext::new(&handshake, recv_config);
 
         let mut cursor = Cursor::new(&wire_data[..]);
         let result = receiver.receive_id_lists(&mut cursor);

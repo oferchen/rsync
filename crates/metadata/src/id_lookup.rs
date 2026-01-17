@@ -1,3 +1,14 @@
+//! UID/GID lookup and mapping utilities.
+//!
+//! This module provides functions for looking up user and group names from
+//! numeric IDs and vice versa. These are used for rsync's UID/GID name mapping
+//! feature, which translates user/group names between systems rather than using
+//! raw numeric IDs.
+//!
+//! # Upstream Reference
+//!
+//! - `uidlist.c` - UID/GID list management in upstream rsync
+
 #![allow(unsafe_code)]
 
 use crate::ownership;
@@ -10,7 +21,12 @@ use std::{
     mem::MaybeUninit,
 };
 
-pub(crate) fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
+/// Maps a remote UID to a local UID.
+///
+/// When `numeric_ids` is true, returns the UID unchanged.
+/// Otherwise, looks up the name for the remote UID and finds the local UID with that name.
+/// If lookup fails, returns the original UID.
+pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
     if numeric_ids {
         return Some(ownership::uid_from_raw(uid));
     }
@@ -28,7 +44,12 @@ pub(crate) fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
     Some(ownership::uid_from_raw(mapped))
 }
 
-pub(crate) fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
+/// Maps a remote GID to a local GID.
+///
+/// When `numeric_ids` is true, returns the GID unchanged.
+/// Otherwise, looks up the name for the remote GID and finds the local GID with that name.
+/// If lookup fails, returns the original GID.
+pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
     if numeric_ids {
         return Some(ownership::gid_from_raw(gid));
     }
@@ -46,7 +67,11 @@ pub(crate) fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
     Some(ownership::gid_from_raw(mapped))
 }
 
-pub(crate) fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
+/// Looks up the username for a given UID.
+///
+/// Returns `Ok(Some(name))` if the user exists, `Ok(None)` if not found.
+/// Uses `getpwuid_r` for thread-safe lookup.
+pub fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
     let mut buffer = vec![0_u8; 1024];
     loop {
         let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
@@ -80,7 +105,11 @@ pub(crate) fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error
     }
 }
 
-pub(crate) fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
+/// Looks up the UID for a given username.
+///
+/// Returns `Ok(Some(uid))` if the user exists, `Ok(None)` if not found.
+/// Uses `getpwnam_r` for thread-safe lookup.
+pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
     let Ok(c_name) = CString::new(name) else {
         return Ok(None);
     };
@@ -117,7 +146,11 @@ pub(crate) fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Err
     }
 }
 
-pub(crate) fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
+/// Looks up the group name for a given GID.
+///
+/// Returns `Ok(Some(name))` if the group exists, `Ok(None)` if not found.
+/// Uses `getgrgid_r` for thread-safe lookup.
+pub fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
     let mut buffer = vec![0_u8; 1024];
     loop {
         let mut grp = MaybeUninit::<libc::group>::zeroed();
@@ -151,7 +184,11 @@ pub(crate) fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Erro
     }
 }
 
-pub(crate) fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
+/// Looks up the GID for a given group name.
+///
+/// Returns `Ok(Some(gid))` if the group exists, `Ok(None)` if not found.
+/// Uses `getgrnam_r` for thread-safe lookup.
+pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
     let Ok(c_name) = CString::new(name) else {
         return Ok(None);
     };
