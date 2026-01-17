@@ -165,7 +165,7 @@ mod batch_file_operations {
 
         // Write multiple chunks
         for i in 0..100 {
-            let data = format!("chunk_{:04}", i);
+            let data = format!("chunk_{i:04}");
             writer.write_data(data.as_bytes()).unwrap();
         }
 
@@ -500,7 +500,7 @@ mod error_handling {
         let batch_path = temp_dir.path().join("truncated.batch");
 
         // Write only 3 bytes - not enough for a valid header
-        fs::write(&batch_path, &[0x01, 0x02, 0x03]).unwrap();
+        fs::write(&batch_path, [0x01, 0x02, 0x03]).unwrap();
 
         let config = BatchConfig::new(
             BatchMode::Read,
@@ -1512,6 +1512,7 @@ mod batch_flags_tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Test each flag individually
+        #[allow(clippy::type_complexity)]
         let flag_setters: Vec<(&str, Box<dyn Fn(&mut BatchFlags)>)> = vec![
             ("recurse", Box::new(|f: &mut BatchFlags| f.recurse = true)),
             (
@@ -1935,7 +1936,7 @@ mod integration_scenarios {
             let entry = reader.read_file_entry().unwrap().unwrap();
             assert_eq!(entry.path, *expected_path);
             assert_eq!(entry.mode, *expected_mode);
-            assert_eq!(entry.size, *expected_size as u64);
+            assert_eq!(entry.size, *expected_size);
             assert_eq!(entry.uid, Some(1000));
             assert_eq!(entry.gid, Some(1000));
         }
