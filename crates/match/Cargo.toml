@@ -33,3 +33,4 @@ tracing = ["dep:tracing"]
 
 [dev-dependencies]
 protocol = { path = "../protocol" }
+tempfile = "3"
