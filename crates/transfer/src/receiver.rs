@@ -37,8 +37,12 @@ use std::path::PathBuf;
 use protocol::codec::{NdxCodec, create_ndx_codec};
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
+use protocol::idlist::IdList;
 use protocol::wire::DeltaOp;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
+
+#[cfg(unix)]
+use metadata::id_lookup::{lookup_group_by_name, lookup_user_by_name};
 
 use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 
@@ -73,11 +77,16 @@ pub struct ReceiverContext {
     compat_flags: Option<CompatibilityFlags>,
     /// Checksum seed for XXHash algorithms.
     checksum_seed: i32,
+    /// UID mappings from remote to local IDs.
+    uid_list: IdList,
+    /// GID mappings from remote to local IDs.
+    gid_list: IdList,
 }
 
 impl ReceiverContext {
     /// Creates a new receiver context from handshake result and config.
-    pub const fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+    #[must_use]
+    pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
         Self {
             protocol: handshake.protocol,
             config,
@@ -85,6 +94,8 @@ impl ReceiverContext {
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
+            uid_list: IdList::new(),
+            gid_list: IdList::new(),
         }
     }
 
@@ -186,61 +197,77 @@ impl ReceiverContext {
     ///
     /// - `uidlist.c:460-479` - `recv_id_list()`
     /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
-    pub(crate) fn receive_id_lists<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<()> {
+    #[cfg(unix)]
+    pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
         // Skip ID lists when numeric_ids is set (upstream: numeric_ids <= 0)
         if self.config.flags.numeric_ids {
             return Ok(());
         }
 
+        let id0_names = self
+            .compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
+
+        // Read UID list if preserving ownership
         if self.config.flags.owner {
-            self.read_one_id_list(reader)?;
+            self.uid_list.read(reader, id0_names, |name| {
+                lookup_user_by_name(name).ok().flatten()
+            })?;
         }
 
+        // Read GID list if preserving group
         if self.config.flags.group {
-            self.read_one_id_list(reader)?;
+            self.gid_list.read(reader, id0_names, |name| {
+                lookup_group_by_name(name).ok().flatten()
+            })?;
         }
 
         Ok(())
     }
 
-    /// Reads a single ID list (uid or gid).
-    ///
-    /// Format: (varint id, byte name_len, name bytes)* followed by varint 0 terminator.
-    /// If ID0_NAMES compat flag is set, also reads name for id=0 after terminator.
-    fn read_one_id_list<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<()> {
-        // Read (id, name) pairs until id=0
-        loop {
-            let id = protocol::read_varint(reader)?;
-            if id == 0 {
-                break;
-            }
-            // Read name: 1 byte length, then that many bytes
-            let mut len_buf = [0u8; 1];
-            reader.read_exact(&mut len_buf)?;
-            let name_len = len_buf[0] as usize;
-            if name_len > 0 {
-                let mut name_buf = vec![0u8; name_len];
-                reader.read_exact(&mut name_buf)?;
-            }
+    /// Reads UID/GID name-to-ID mapping lists from the sender (non-Unix stub).
+    #[cfg(not(unix))]
+    pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
+        // Skip ID lists when numeric_ids is set (upstream: numeric_ids <= 0)
+        if self.config.flags.numeric_ids {
+            return Ok(());
         }
 
-        // If ID0_NAMES flag is set, also read name for id=0
-        // Note: This is only used with modern rsync (3.2.0+) and when preserve_uid/gid is set
         let id0_names = self
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
-        if id0_names {
-            // recv_user_name(f, 0) or recv_group_name(f, 0)
-            let mut len_buf = [0u8; 1];
-            reader.read_exact(&mut len_buf)?;
-            let name_len = len_buf[0] as usize;
-            if name_len > 0 {
-                let mut name_buf = vec![0u8; name_len];
-                reader.read_exact(&mut name_buf)?;
-            }
+
+        // Read UID list (but don't resolve names on non-Unix)
+        if self.config.flags.owner {
+            self.uid_list.read(reader, id0_names, |_| None)?;
+        }
+
+        // Read GID list (but don't resolve names on non-Unix)
+        if self.config.flags.group {
+            self.gid_list.read(reader, id0_names, |_| None)?;
         }
 
         Ok(())
+    }
+
+    /// Translates a remote UID to a local UID using the received mappings.
+    ///
+    /// Returns the mapped local UID if a mapping exists, otherwise returns the
+    /// remote UID unchanged (falling back to numeric ID).
+    #[inline]
+    #[must_use]
+    pub fn match_uid(&self, remote_uid: u32) -> u32 {
+        self.uid_list.match_id(remote_uid)
+    }
+
+    /// Translates a remote GID to a local GID using the received mappings.
+    ///
+    /// Returns the mapped local GID if a mapping exists, otherwise returns the
+    /// remote GID unchanged (falling back to numeric ID).
+    #[inline]
+    #[must_use]
+    pub fn match_gid(&self, remote_gid: u32) -> u32 {
+        self.gid_list.match_id(remote_gid)
     }
 
     /// Determines if filter list should be read from sender.
@@ -2047,7 +2074,7 @@ mod tests {
     fn receive_id_lists_skips_when_numeric_ids_true() {
         let handshake = test_handshake();
         let config = config_with_flags(true, true, true);
-        let ctx = ReceiverContext::new(&handshake, config);
+        let mut ctx = ReceiverContext::new(&handshake, config);
 
         // With numeric_ids=true, no data should be read even with owner/group set
         let data: &[u8] = &[];
@@ -2063,7 +2090,7 @@ mod tests {
     fn receive_id_lists_reads_uid_list_when_owner_set() {
         let handshake = test_handshake();
         let config = config_with_flags(true, false, false);
-        let ctx = ReceiverContext::new(&handshake, config);
+        let mut ctx = ReceiverContext::new(&handshake, config);
 
         // Empty UID list: varint 0 terminator only
         let data: &[u8] = &[0];
@@ -2078,7 +2105,7 @@ mod tests {
     fn receive_id_lists_reads_gid_list_when_group_set() {
         let handshake = test_handshake();
         let config = config_with_flags(false, true, false);
-        let ctx = ReceiverContext::new(&handshake, config);
+        let mut ctx = ReceiverContext::new(&handshake, config);
 
         // Empty GID list: varint 0 terminator only
         let data: &[u8] = &[0];
@@ -2093,7 +2120,7 @@ mod tests {
     fn receive_id_lists_reads_both_when_owner_and_group_set() {
         let handshake = test_handshake();
         let config = config_with_flags(true, true, false);
-        let ctx = ReceiverContext::new(&handshake, config);
+        let mut ctx = ReceiverContext::new(&handshake, config);
 
         // Both lists: two varint 0 terminators
         let data: &[u8] = &[0, 0];
@@ -2108,7 +2135,7 @@ mod tests {
     fn receive_id_lists_skips_both_when_neither_flag_set() {
         let handshake = test_handshake();
         let config = config_with_flags(false, false, false);
-        let ctx = ReceiverContext::new(&handshake, config);
+        let mut ctx = ReceiverContext::new(&handshake, config);
 
         let data: &[u8] = &[];
         let mut cursor = Cursor::new(data);
