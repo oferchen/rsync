@@ -6,7 +6,7 @@
 //!
 //! Reference: rsync 3.4.1 options.c for verbosity level to flag mapping.
 
-use logging::{VerbosityConfig, InfoFlag, DebugFlag, init, info_gte, debug_gte, drain_events};
+use logging::{DebugFlag, InfoFlag, VerbosityConfig, debug_gte, drain_events, info_gte, init};
 
 // ============================================================================
 // Verbose Level 0 (No -v flags)

@@ -35,15 +35,15 @@
 //! - `match.c` - Checksum usage patterns
 //! - Protocol documentation for checksum negotiation
 
-use checksums::strong::Md5Seed;
 use checksums::RollingDigest;
+use checksums::strong::Md5Seed;
 use protocol::ProtocolVersion;
 use signature::{
     FileSignature, SignatureAlgorithm, SignatureBlock, SignatureLayout, SignatureLayoutError,
     SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 use std::io::Cursor;
-use std::num::{NonZeroU32, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU32};
 
 // ============================================================================
 // Test Utilities
@@ -266,9 +266,8 @@ mod file_size_variations {
         // Block size should scale with file size (not the default 700)
         assert!(layout.block_length().get() > 700);
 
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         assert_eq!(signature.total_bytes(), size as u64);
         assert!(signature.blocks().len() > 1);
@@ -286,9 +285,8 @@ mod file_size_variations {
         // For 10MB, rsync uses sqrt-based heuristics
         assert!(layout.block_length().get() >= 1024);
 
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         assert_eq!(signature.total_bytes(), size as u64);
 
@@ -319,9 +317,8 @@ mod block_size_variations {
         assert_eq!(layout.block_count(), 100);
         assert_eq!(layout.remainder(), 0);
 
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         assert_eq!(signature.blocks().len(), 100);
     }
@@ -337,9 +334,8 @@ mod block_size_variations {
         assert_eq!(layout.block_count(), 2);
         assert_eq!(layout.remainder(), 0);
 
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         assert_eq!(signature.blocks().len(), 2);
     }
@@ -355,9 +351,8 @@ mod block_size_variations {
         assert_eq!(layout.block_count(), 1);
         assert_eq!(layout.remainder(), 500);
 
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         assert_eq!(signature.blocks().len(), 1);
         assert_eq!(signature.blocks()[0].len(), 500);
@@ -654,15 +649,11 @@ mod round_trip {
         let params = layout_params_with_block(data.len() as u64, 800, 12);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         assert_eq!(signature.layout(), layout);
-        assert_eq!(
-            signature.layout().block_length(),
-            layout.block_length()
-        );
+        assert_eq!(signature.layout().block_length(), layout.block_length());
         assert_eq!(
             signature.layout().strong_sum_length(),
             layout.strong_sum_length()
@@ -818,13 +809,15 @@ mod edge_cases {
         let params = layout_params(data.len() as u64, 2);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         // Strong checksum should be truncated to 2 bytes
         for block in signature.blocks() {
-            assert_eq!(block.strong().len(), layout.strong_sum_length().get() as usize);
+            assert_eq!(
+                block.strong().len(),
+                layout.strong_sum_length().get() as usize
+            );
         }
     }
 }
@@ -910,9 +903,8 @@ mod performance {
 
         let params = layout_params(size as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         let elapsed = start.elapsed();
 
@@ -929,13 +921,7 @@ mod performance {
     /// Block count scales appropriately with file size.
     #[test]
     fn block_count_scaling() {
-        let sizes = [
-            1_000u64,
-            10_000,
-            100_000,
-            1_000_000,
-            10_000_000,
-        ];
+        let sizes = [1_000u64, 10_000, 100_000, 1_000_000, 10_000_000];
 
         let mut prev_block_count = 0u64;
 
@@ -974,9 +960,8 @@ mod performance {
 
         // The Cursor provides streaming access, and generate_file_signature
         // should process block by block
-        let signature =
-            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
-                .expect("signature");
+        let signature = generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
 
         assert_eq!(signature.total_bytes(), size as u64);
     }
@@ -1224,9 +1209,7 @@ mod error_properties {
     /// SignatureLayoutError display formatting.
     #[test]
     fn layout_error_display() {
-        let too_large = SignatureLayoutError::FileTooLarge {
-            length: u64::MAX,
-        };
+        let too_large = SignatureLayoutError::FileTooLarge { length: u64::MAX };
         let display = format!("{}", too_large);
         assert!(display.contains("i64::MAX"));
 
@@ -1286,10 +1269,10 @@ mod upstream_compatibility {
     fn block_size_matches_upstream_heuristic() {
         // Known test cases from upstream rsync behavior
         let test_cases = [
-            (32u64, 700u32),           // Small file: default block size
-            (1000, 700),               // Still small: default
-            (490_000, 700),            // At threshold: default
-            (10 * 1024 * 1024, 3232),  // 10MB: scaled block size
+            (32u64, 700u32),          // Small file: default block size
+            (1000, 700),              // Still small: default
+            (490_000, 700),           // At threshold: default
+            (10 * 1024 * 1024, 3232), // 10MB: scaled block size
         ];
 
         for (file_size, expected_block) in test_cases {
