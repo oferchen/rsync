@@ -13,7 +13,7 @@
 // Currently we need unsafe code to split the borrow for stdin/stdout
 #![allow(unsafe_code)]
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -27,7 +27,7 @@ use super::super::error::{ClientError, invalid_argument_error};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::invocation::{
-    RemoteInvocationBuilder, RemoteOperands, RemoteRole, determine_transfer_role,
+    RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
 };
 use crate::server::{ServerConfig, ServerRole};
 
@@ -77,36 +77,82 @@ pub fn run_ssh_transfer(
     let (sources, destination) = args.split_at(args.len() - 1);
     let destination = &destination[0];
 
-    // Determine push vs pull
-    let (role, local_paths, remote_operands) = determine_transfer_role(sources, destination)?;
+    // Determine transfer type
+    let transfer_spec = determine_transfer_role(sources, destination)?;
 
-    // Step 2: Parse remote operand(s) and build invocation
-    let (invocation_args, ssh_host, ssh_user, ssh_port) = match remote_operands {
-        RemoteOperands::Single(ref operand_str) => {
-            // Single source or destination
-            let operand = parse_ssh_operand(operand_str.as_ref())
-                .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
-
-            let invocation_builder = RemoteInvocationBuilder::new(config, role);
-            let args = invocation_builder.build(operand.path());
-
-            (
-                args,
-                operand.host().to_owned(),
-                operand.user().map(String::from),
-                operand.port(),
-            )
+    match transfer_spec {
+        TransferSpec::Push {
+            local_sources,
+            remote_dest,
+        } => {
+            // Push: local → remote
+            let (invocation_args, ssh_host, ssh_user, ssh_port) =
+                parse_single_remote(&remote_dest, config, RemoteRole::Sender)?;
+            let connection =
+                build_ssh_connection(&ssh_user, &ssh_host, ssh_port, &invocation_args, config)?;
+            run_push_transfer(config, connection, &local_sources, observer)
         }
-        RemoteOperands::Multiple(ref operand_strs) => {
+        TransferSpec::Pull {
+            remote_sources,
+            local_dest,
+        } => {
+            // Pull: remote → local
+            let (invocation_args, ssh_host, ssh_user, ssh_port) =
+                parse_remote_operands(&remote_sources, config, RemoteRole::Receiver)?;
+            let connection =
+                build_ssh_connection(&ssh_user, &ssh_host, ssh_port, &invocation_args, config)?;
+            run_pull_transfer(config, connection, &[local_dest], observer)
+        }
+        TransferSpec::Proxy {
+            remote_sources,
+            remote_dest,
+        } => {
+            // Proxy: remote → remote (via local)
+            run_proxy_transfer(config, remote_sources, remote_dest, observer)
+        }
+    }
+}
+
+/// Parses a single remote operand and builds the invocation args.
+#[allow(clippy::type_complexity)]
+fn parse_single_remote(
+    operand_str: &str,
+    config: &ClientConfig,
+    role: RemoteRole,
+) -> Result<(Vec<OsString>, String, Option<String>, Option<u16>), ClientError> {
+    let operand = parse_ssh_operand(OsStr::new(operand_str))
+        .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
+
+    let invocation_builder = RemoteInvocationBuilder::new(config, role);
+    let args = invocation_builder.build(operand.path());
+
+    Ok((
+        args,
+        operand.host().to_owned(),
+        operand.user().map(String::from),
+        operand.port(),
+    ))
+}
+
+/// Parses remote operand(s) and builds the invocation args.
+#[allow(clippy::type_complexity)]
+fn parse_remote_operands(
+    remote_operands: &RemoteOperands,
+    config: &ClientConfig,
+    role: RemoteRole,
+) -> Result<(Vec<OsString>, String, Option<String>, Option<u16>), ClientError> {
+    match remote_operands {
+        RemoteOperands::Single(operand_str) => parse_single_remote(operand_str, config, role),
+        RemoteOperands::Multiple(operand_strs) => {
             // Multiple sources (pull operation)
             // Parse first operand to get SSH connection details
-            let first_operand = parse_ssh_operand(operand_strs[0].as_ref())
+            let first_operand = parse_ssh_operand(OsStr::new(&operand_strs[0]))
                 .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
             // Parse all operands to extract paths
             let mut paths = Vec::new();
             for operand_str in operand_strs {
-                let operand = parse_ssh_operand(operand_str.as_ref()).map_err(|e| {
+                let operand = parse_ssh_operand(OsStr::new(operand_str)).map_err(|e| {
                     invalid_argument_error(&format!("invalid remote operand: {e}"), 1)
                 })?;
                 paths.push(operand.path().to_owned());
@@ -117,30 +163,12 @@ pub fn run_ssh_transfer(
             let path_refs: Vec<&str> = paths.iter().map(|s| s.as_ref()).collect();
             let args = invocation_builder.build_with_paths(&path_refs);
 
-            (
+            Ok((
                 args,
                 first_operand.host().to_owned(),
                 first_operand.user().map(String::from),
                 first_operand.port(),
-            )
-        }
-    };
-
-    // Step 4: Spawn SSH connection
-    let connection =
-        build_ssh_connection(&ssh_user, &ssh_host, ssh_port, &invocation_args, config)?;
-
-    // Step 5-6: Execute transfer based on role
-    // We pass the connection directly to the transfer functions which will
-    // handle protocol negotiation and execution
-    match role {
-        RemoteRole::Receiver => {
-            // Pull: remote → local
-            run_pull_transfer(config, connection, &local_paths, observer)
-        }
-        RemoteRole::Sender => {
-            // Push: local → remote
-            run_push_transfer(config, connection, &local_paths, observer)
+            ))
         }
     }
 }
@@ -238,6 +266,25 @@ fn run_push_transfer(
 
     // Convert server stats to client summary
     Ok(convert_server_stats_to_summary(server_stats))
+}
+
+/// Executes a proxy transfer (remote → remote via local).
+///
+/// In a proxy transfer, the local machine relays protocol messages between
+/// two remote hosts. We spawn two SSH connections:
+/// 1. To the source with `rsync --server --sender` (acts as generator)
+/// 2. To the destination with `rsync --server` (acts as receiver)
+///
+/// Data flows: source → local (relay) → destination
+fn run_proxy_transfer(
+    config: &ClientConfig,
+    remote_sources: RemoteOperands,
+    remote_dest: String,
+    _observer: Option<&mut dyn ClientProgressObserver>,
+) -> Result<ClientSummary, ClientError> {
+    use super::remote_to_remote::run_remote_to_remote_transfer;
+
+    run_remote_to_remote_transfer(config, remote_sources, remote_dest)
 }
 
 /// Converts server-side statistics to a client summary.
