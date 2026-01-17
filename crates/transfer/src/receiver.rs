@@ -30,7 +30,7 @@
 //! - [`protocol::wire`] - Wire format for signatures and deltas
 
 use std::fs;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, SeekFrom, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
@@ -45,6 +45,7 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use metadata::id_lookup::{lookup_group_by_name, lookup_user_by_name};
 
 use super::delta_apply::{ChecksumVerifier, SparseWriteState};
+use super::error::{read_exact_retry, seek_retry};
 
 use engine::delta::{DeltaScript, DeltaToken, SignatureLayoutParams, calculate_signature_layout};
 use engine::fuzzy::FuzzyMatcher;
@@ -709,11 +710,13 @@ impl ReceiverContext {
                                 format!("failed to open basis file {basis_path:?}: {e}"),
                             )
                         })?;
-                        basis_file.seek(SeekFrom::Start(offset))?;
+                        // Use seek_retry to handle EINTR (upstream rsync retries on interrupt)
+                        seek_retry(&mut basis_file, SeekFrom::Start(offset))?;
 
                         // Read block data and write to output
+                        // Use read_exact_retry to handle EINTR (upstream rsync retries on interrupt)
                         let mut block_data = vec![0u8; bytes_to_copy];
-                        basis_file.read_exact(&mut block_data)?;
+                        read_exact_retry(&mut basis_file, &mut block_data)?;
                         // Use sparse writing if enabled
                         if let Some(ref mut sparse) = sparse_state {
                             sparse.write(&mut output, &block_data)?;
