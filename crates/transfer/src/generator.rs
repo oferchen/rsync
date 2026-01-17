@@ -55,6 +55,20 @@ use super::handshake::HandshakeResult;
 use super::receiver::SumHead;
 use super::shared::ChecksumFactory;
 
+/// I/O error flags for file list building (upstream rsync.h:168-170).
+///
+/// These flags are OR'd together to track different types of errors that
+/// occur during file list building and transfer.
+pub mod io_error_flags {
+    /// General I/O error occurred during file operations.
+    /// Must be 1 for backward compatibility with upstream rsync.
+    pub const IOERR_GENERAL: i32 = 1 << 0;
+    /// A file or directory vanished (was deleted) during the transfer.
+    pub const IOERR_VANISHED: i32 = 1 << 1;
+    /// Delete limit was exceeded during --delete operations.
+    pub const IOERR_DEL_LIMIT: i32 = 1 << 2;
+}
+
 /// Context for the generator role during a transfer.
 #[derive(Debug)]
 pub struct GeneratorContext {
@@ -94,6 +108,9 @@ pub struct GeneratorContext {
     uid_list: IdList,
     /// Collected GID mappings for name-based ownership transfer.
     gid_list: IdList,
+    /// I/O error flags accumulated during file list building and transfer.
+    /// Uses [`io_error_flags`] constants (IOERR_GENERAL, IOERR_VANISHED, etc.).
+    io_error: i32,
 }
 
 impl GeneratorContext {
@@ -116,6 +133,7 @@ impl GeneratorContext {
             total_bytes_read: 0,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
+            io_error: 0,
         }
     }
 
@@ -289,16 +307,38 @@ impl GeneratorContext {
         writer.flush()
     }
 
+    /// Adds an I/O error flag to the accumulated error state.
+    ///
+    /// Use constants from [`io_error_flags`] module (IOERR_GENERAL, IOERR_VANISHED, etc.).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// ctx.add_io_error(io_error_flags::IOERR_GENERAL);
+    /// ```
+    pub fn add_io_error(&mut self, flag: i32) {
+        self.io_error |= flag;
+    }
+
+    /// Returns the current I/O error flags.
+    #[must_use]
+    pub const fn io_error(&self) -> i32 {
+        self.io_error
+    }
+
     /// Sends io_error flag for protocol < 30.
+    ///
+    /// For protocol >= 30, errors are sent as part of the file list end marker
+    /// via SAFE_FILE_LIST support instead.
     ///
     /// # Upstream Reference
     ///
     /// - `flist.c:2517-2518`: `write_int(f, ignore_errors ? 0 : io_error);`
-    ///
-    /// We always send 0 (no error) for now.
     fn send_io_error_flag<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         if self.protocol.as_u8() < 30 {
-            writer.write_all(&0i32.to_le_bytes())?;
+            // For protocol < 30, send io_error as 4-byte int
+            // If ignore_errors is set, would send 0 instead (not yet implemented)
+            writer.write_all(&self.io_error.to_le_bytes())?;
             writer.flush()?;
         }
         Ok(())
@@ -696,7 +736,19 @@ impl GeneratorContext {
     ///
     /// See flist.c:send_file_list() which adds "." for the top-level directory.
     fn walk_path(&mut self, base: &Path, path: &Path) -> io::Result<()> {
-        let metadata = std::fs::symlink_metadata(path)?;
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(m) => m,
+            Err(e) => {
+                // Record error and continue (upstream rsync behavior)
+                // ENOENT = vanished, other errors = general I/O error
+                if e.kind() == io::ErrorKind::NotFound {
+                    self.add_io_error(io_error_flags::IOERR_VANISHED);
+                } else {
+                    self.add_io_error(io_error_flags::IOERR_GENERAL);
+                }
+                return Ok(());
+            }
+        };
 
         // Calculate relative path
         let relative = path.strip_prefix(base).unwrap_or(path).to_path_buf();
@@ -705,9 +757,31 @@ impl GeneratorContext {
         // Some clients may not expect/handle the "." entry correctly
         if relative.as_os_str().is_empty() && metadata.is_dir() {
             // Walk children of the base directory (no "." entry)
-            for entry in std::fs::read_dir(path)? {
-                let entry = entry?;
-                self.walk_path(base, &entry.path())?;
+            match std::fs::read_dir(path) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(entry) => {
+                                self.walk_path(base, &entry.path())?;
+                            }
+                            Err(e) => {
+                                // Entry vanished or unreadable during iteration
+                                if e.kind() == io::ErrorKind::NotFound {
+                                    self.add_io_error(io_error_flags::IOERR_VANISHED);
+                                } else {
+                                    self.add_io_error(io_error_flags::IOERR_GENERAL);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::NotFound {
+                        self.add_io_error(io_error_flags::IOERR_VANISHED);
+                    } else {
+                        self.add_io_error(io_error_flags::IOERR_GENERAL);
+                    }
+                }
             }
             return Ok(());
         }
@@ -722,15 +796,43 @@ impl GeneratorContext {
         }
 
         // Create file entry based on type
-        let entry = self.create_entry(path, &relative, &metadata)?;
+        let entry = match self.create_entry(path, &relative, &metadata) {
+            Ok(e) => e,
+            Err(_) => {
+                // Failed to create entry (e.g., symlink target unreadable)
+                self.add_io_error(io_error_flags::IOERR_GENERAL);
+                return Ok(());
+            }
+        };
         self.file_list.push(entry);
         self.full_paths.push(path.to_path_buf());
 
         // Recurse into directories if recursive mode is enabled
         if metadata.is_dir() && self.config.flags.recursive {
-            for dir_entry in std::fs::read_dir(path)? {
-                let dir_entry = dir_entry?;
-                self.walk_path(base, &dir_entry.path())?;
+            match std::fs::read_dir(path) {
+                Ok(entries) => {
+                    for dir_entry in entries {
+                        match dir_entry {
+                            Ok(dir_entry) => {
+                                self.walk_path(base, &dir_entry.path())?;
+                            }
+                            Err(e) => {
+                                if e.kind() == io::ErrorKind::NotFound {
+                                    self.add_io_error(io_error_flags::IOERR_VANISHED);
+                                } else {
+                                    self.add_io_error(io_error_flags::IOERR_GENERAL);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::NotFound {
+                        self.add_io_error(io_error_flags::IOERR_VANISHED);
+                    } else {
+                        self.add_io_error(io_error_flags::IOERR_GENERAL);
+                    }
+                }
             }
         }
 
@@ -832,9 +934,13 @@ impl GeneratorContext {
             flist_writer.write_entry(writer, entry)?;
         }
 
-        // Write end marker with no error (SAFE_FILE_LIST support)
-        // Future: track I/O errors during file list building and pass them here
-        flist_writer.write_end(writer, None)?;
+        // Write end marker with io_error if any (SAFE_FILE_LIST support)
+        let io_error_for_end = if self.io_error != 0 {
+            Some(self.io_error)
+        } else {
+            None
+        };
+        flist_writer.write_end(writer, io_error_for_end)?;
         writer.flush()?;
 
         // Record end time for flist_xfertime statistic
