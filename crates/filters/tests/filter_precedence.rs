@@ -53,10 +53,10 @@ fn exclude_after_include() {
 #[test]
 fn alternating_rules() {
     let rules = [
-        FilterRule::exclude("*"),         // Exclude everything
-        FilterRule::include("*.txt"),     // Include .txt
-        FilterRule::exclude("temp.txt"),  // Exclude temp.txt
-        FilterRule::include("temp.txt"),  // Include temp.txt again
+        FilterRule::exclude("*"),        // Exclude everything
+        FilterRule::include("*.txt"),    // Include .txt
+        FilterRule::exclude("temp.txt"), // Exclude temp.txt
+        FilterRule::include("temp.txt"), // Include temp.txt again
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -98,8 +98,8 @@ fn specific_pattern_last() {
 #[test]
 fn general_pattern_after_specific() {
     let rules = [
-        FilterRule::exclude("important.txt"),  // Specific
-        FilterRule::include("*.txt"),          // General (comes last)
+        FilterRule::exclude("important.txt"), // Specific
+        FilterRule::include("*.txt"),         // General (comes last)
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -111,8 +111,8 @@ fn general_pattern_after_specific() {
 #[test]
 fn directory_vs_file_pattern() {
     let rules = [
-        FilterRule::exclude("build"),    // Matches file or directory named build
-        FilterRule::include("build/"),   // Matches only directory named build
+        FilterRule::exclude("build"),  // Matches file or directory named build
+        FilterRule::include("build/"), // Matches only directory named build
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -180,8 +180,8 @@ fn multiple_wildcard_patterns() {
 #[test]
 fn anchored_vs_unanchored() {
     let rules = [
-        FilterRule::exclude("build"),     // Unanchored - matches anywhere
-        FilterRule::include("/build"),    // Anchored - only at root
+        FilterRule::exclude("build"),  // Unanchored - matches anywhere
+        FilterRule::include("/build"), // Anchored - only at root
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -275,9 +275,9 @@ fn sender_receiver_independence() {
 #[test]
 fn show_hide_vs_include_exclude() {
     let rules = [
-        FilterRule::exclude("*"),           // Exclude all
-        FilterRule::show("visible/**"),     // Show visible (sender-only)
-        FilterRule::include("always/**"),   // Include always (both sides)
+        FilterRule::exclude("*"),         // Exclude all
+        FilterRule::show("visible/**"),   // Show visible (sender-only)
+        FilterRule::include("always/**"), // Include always (both sides)
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -376,8 +376,8 @@ fn overlapping_patterns() {
 #[test]
 fn subset_patterns() {
     let rules = [
-        FilterRule::exclude("**/*.rs"),      // All .rs files
-        FilterRule::include("src/**/*.rs"),  // But include src .rs files
+        FilterRule::exclude("**/*.rs"),     // All .rs files
+        FilterRule::include("src/**/*.rs"), // But include src .rs files
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 

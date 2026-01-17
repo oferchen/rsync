@@ -37,7 +37,9 @@ use std::time::Instant;
 use super::delta_apply::ChecksumVerifier;
 use filters::{FilterRule, FilterSet};
 use logging::{debug_log, info_log};
-use protocol::codec::{NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec};
+use protocol::codec::{
+    NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, create_ndx_codec,
+};
 use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};

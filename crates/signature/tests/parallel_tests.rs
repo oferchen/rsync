@@ -27,8 +27,8 @@
 
 #![cfg(feature = "parallel")]
 
-use checksums::strong::Md5Seed;
 use checksums::RollingDigest;
+use checksums::strong::Md5Seed;
 use protocol::ProtocolVersion;
 use signature::parallel::{
     PARALLEL_THRESHOLD_BYTES, generate_file_signature_auto, generate_file_signature_parallel,
@@ -37,7 +37,7 @@ use signature::{
     SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 use std::io::Cursor;
-use std::num::{NonZeroU32, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU32};
 
 // ============================================================================
 // Test Utilities
@@ -88,19 +88,13 @@ mod equivalence {
         let params = layout_params(data.len() as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
         assert_eq!(sequential.total_bytes(), parallel.total_bytes());
         assert_eq!(sequential.blocks().len(), parallel.blocks().len());
@@ -120,19 +114,13 @@ mod equivalence {
         let params = layout_params(data.len() as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
         assert_eq!(sequential.total_bytes(), parallel.total_bytes());
         assert_eq!(sequential.blocks().len(), parallel.blocks().len());
@@ -153,19 +141,13 @@ mod equivalence {
 
         assert_ne!(layout.remainder(), 0, "test requires non-zero remainder");
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
         assert_eq!(sequential.blocks().len(), parallel.blocks().len());
 
@@ -183,12 +165,9 @@ mod equivalence {
         let params = layout_params(0, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let sequential = generate_file_signature(
-            Cursor::new(Vec::new()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(Vec::new()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
         let parallel = generate_file_signature_parallel(
             Cursor::new(Vec::new()),
@@ -220,19 +199,13 @@ mod algorithm_equivalence {
         let params = layout_params(data.len() as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
             assert_eq!(seq.strong(), par.strong());
@@ -250,19 +223,11 @@ mod algorithm_equivalence {
             seed_config: Md5Seed::none(),
         };
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            algorithm,
-        )
-        .expect("sequential");
+        let sequential = generate_file_signature(Cursor::new(data.clone()), layout, algorithm)
+            .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            algorithm,
-        )
-        .expect("parallel");
+        let parallel = generate_file_signature_parallel(Cursor::new(data), layout, algorithm)
+            .expect("parallel");
 
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
             assert_eq!(seq.strong(), par.strong());
@@ -280,19 +245,11 @@ mod algorithm_equivalence {
             seed_config: Md5Seed::proper(12345),
         };
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            algorithm,
-        )
-        .expect("sequential");
+        let sequential = generate_file_signature(Cursor::new(data.clone()), layout, algorithm)
+            .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            algorithm,
-        )
-        .expect("parallel");
+        let parallel = generate_file_signature_parallel(Cursor::new(data), layout, algorithm)
+            .expect("parallel");
 
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
             assert_eq!(seq.strong(), par.strong());
@@ -306,19 +263,13 @@ mod algorithm_equivalence {
         let params = layout_params(data.len() as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Sha1,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Sha1)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Sha1,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Sha1)
+                .expect("parallel");
 
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
             assert_eq!(seq.strong(), par.strong());
@@ -334,19 +285,11 @@ mod algorithm_equivalence {
 
         let algorithm = SignatureAlgorithm::Xxh64 { seed: 42 };
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            algorithm,
-        )
-        .expect("sequential");
+        let sequential = generate_file_signature(Cursor::new(data.clone()), layout, algorithm)
+            .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            algorithm,
-        )
-        .expect("parallel");
+        let parallel = generate_file_signature_parallel(Cursor::new(data), layout, algorithm)
+            .expect("parallel");
 
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
             assert_eq!(seq.strong(), par.strong());
@@ -362,19 +305,11 @@ mod algorithm_equivalence {
 
         let algorithm = SignatureAlgorithm::Xxh3 { seed: 999 };
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            algorithm,
-        )
-        .expect("sequential");
+        let sequential = generate_file_signature(Cursor::new(data.clone()), layout, algorithm)
+            .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            algorithm,
-        )
-        .expect("parallel");
+        let parallel = generate_file_signature_parallel(Cursor::new(data), layout, algorithm)
+            .expect("parallel");
 
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
             assert_eq!(seq.strong(), par.strong());
@@ -390,19 +325,11 @@ mod algorithm_equivalence {
 
         let algorithm = SignatureAlgorithm::Xxh3_128 { seed: 777 };
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            algorithm,
-        )
-        .expect("sequential");
+        let sequential = generate_file_signature(Cursor::new(data.clone()), layout, algorithm)
+            .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            algorithm,
-        )
-        .expect("parallel");
+        let parallel = generate_file_signature_parallel(Cursor::new(data), layout, algorithm)
+            .expect("parallel");
 
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
             assert_eq!(seq.strong(), par.strong());
@@ -435,12 +362,9 @@ mod auto_selection {
         )
         .expect("auto");
 
-        let sequential = generate_file_signature(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
         assert_eq!(auto_sig.total_bytes(), sequential.total_bytes());
     }
@@ -461,12 +385,9 @@ mod auto_selection {
         )
         .expect("auto");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
         assert_eq!(auto_sig.total_bytes(), parallel.total_bytes());
     }
@@ -479,12 +400,9 @@ mod auto_selection {
         let params = layout_params(data.len() as u64, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let auto_sig = generate_file_signature_auto(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("auto at threshold");
+        let auto_sig =
+            generate_file_signature_auto(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("auto at threshold");
 
         assert_eq!(auto_sig.total_bytes(), size as u64);
     }
@@ -495,12 +413,9 @@ mod auto_selection {
         let params = layout_params(0, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let auto_sig = generate_file_signature_auto(
-            Cursor::new(Vec::new()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("auto empty");
+        let auto_sig =
+            generate_file_signature_auto(Cursor::new(Vec::new()), layout, SignatureAlgorithm::Md4)
+                .expect("auto empty");
 
         assert!(auto_sig.blocks().is_empty());
         assert_eq!(auto_sig.total_bytes(), 0);
@@ -513,12 +428,9 @@ mod auto_selection {
         let params = layout_params(1, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let auto_sig = generate_file_signature_auto(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("auto single byte");
+        let auto_sig =
+            generate_file_signature_auto(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("auto single byte");
 
         assert_eq!(auto_sig.blocks().len(), 1);
         assert_eq!(auto_sig.total_bytes(), 1);
@@ -561,11 +473,8 @@ mod error_handling {
 
         // Provide more data than expected
         let data = vec![0u8; 150];
-        let result = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        );
+        let result =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4);
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -580,11 +489,8 @@ mod error_handling {
 
         // Provide less data than expected
         let data = vec![0u8; 500];
-        let result = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        );
+        let result =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4);
 
         assert!(result.is_err());
     }
@@ -597,11 +503,8 @@ mod error_handling {
 
         // Provide trailing data
         let data = vec![0u8; 150];
-        let result = generate_file_signature_auto(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        );
+        let result =
+            generate_file_signature_auto(Cursor::new(data), layout, SignatureAlgorithm::Md4);
 
         assert!(result.is_err());
     }
@@ -625,19 +528,13 @@ mod block_configurations {
 
         assert_eq!(layout.block_count(), 100);
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
         assert_eq!(sequential.blocks().len(), parallel.blocks().len());
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
@@ -655,19 +552,13 @@ mod block_configurations {
 
         assert_eq!(layout.block_count(), 2);
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
         assert_eq!(sequential.blocks().len(), parallel.blocks().len());
         for (seq, par) in sequential.blocks().iter().zip(parallel.blocks().iter()) {
@@ -685,22 +576,22 @@ mod block_configurations {
 
         assert_eq!(layout.block_count(), 1);
 
-        let sequential = generate_file_signature(
-            Cursor::new(data.clone()),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sequential");
+        let sequential =
+            generate_file_signature(Cursor::new(data.clone()), layout, SignatureAlgorithm::Md4)
+                .expect("sequential");
 
-        let parallel = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("parallel");
+        let parallel =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("parallel");
 
-        assert_eq!(sequential.blocks()[0].rolling(), parallel.blocks()[0].rolling());
-        assert_eq!(sequential.blocks()[0].strong(), parallel.blocks()[0].strong());
+        assert_eq!(
+            sequential.blocks()[0].rolling(),
+            parallel.blocks()[0].rolling()
+        );
+        assert_eq!(
+            sequential.blocks()[0].strong(),
+            parallel.blocks()[0].strong()
+        );
     }
 }
 
@@ -764,12 +655,9 @@ mod performance {
 
         let start = std::time::Instant::now();
 
-        let signature = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("signature");
+        let signature =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
 
         let elapsed = start.elapsed();
 
@@ -823,12 +711,9 @@ mod determinism {
         )
         .expect("sig2");
 
-        let sig3 = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("sig3");
+        let sig3 =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("sig3");
 
         assert_eq!(sig1.blocks().len(), sig2.blocks().len());
         assert_eq!(sig2.blocks().len(), sig3.blocks().len());
@@ -846,12 +731,9 @@ mod determinism {
         let params = layout_params_with_block(data.len() as u64, 500, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let signature = generate_file_signature_parallel(
-            Cursor::new(data),
-            layout,
-            SignatureAlgorithm::Md4,
-        )
-        .expect("signature");
+        let signature =
+            generate_file_signature_parallel(Cursor::new(data), layout, SignatureAlgorithm::Md4)
+                .expect("signature");
 
         for (expected_idx, block) in signature.blocks().iter().enumerate() {
             assert_eq!(

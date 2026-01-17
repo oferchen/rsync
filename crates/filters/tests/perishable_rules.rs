@@ -78,7 +78,7 @@ fn perishable_include_ignored_during_deletion() {
 fn perishable_and_non_perishable_includes() {
     let rules = [
         FilterRule::exclude("*"),
-        FilterRule::include("permanent/**"),                // Non-perishable
+        FilterRule::include("permanent/**"), // Non-perishable
         FilterRule::include("temporary/**").with_perishable(true), // Perishable
     ];
     let set = FilterSet::from_rules(rules).unwrap();

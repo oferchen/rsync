@@ -51,7 +51,10 @@ fn include_root_true_includes_root_entry() {
 
     let entries = collect_all_entries(walker);
 
-    assert!(entries.iter().any(|e| e.is_root()), "should include root entry");
+    assert!(
+        entries.iter().any(|e| e.is_root()),
+        "should include root entry"
+    );
     assert_eq!(entries.len(), 2, "root + file");
 }
 
@@ -293,7 +296,10 @@ mod combined_option_tests {
         // No root entry, but symlink is followed
         assert!(!entries.iter().any(|e| e.is_root()));
 
-        let paths: Vec<_> = entries.iter().map(|e| e.relative_path().to_path_buf()).collect();
+        let paths: Vec<_> = entries
+            .iter()
+            .map(|e| e.relative_path().to_path_buf())
+            .collect();
         assert_eq!(
             paths,
             vec![PathBuf::from("link"), PathBuf::from("link/file.txt")]
