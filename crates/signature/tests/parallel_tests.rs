@@ -666,13 +666,13 @@ mod performance {
         // Should complete in reasonable time
         assert!(
             elapsed.as_secs() < 10,
-            "parallel signature took too long: {:?}",
-            elapsed
+            "parallel signature took too long: {elapsed:?}"
         );
     }
 
     /// Parallel threshold is sensible.
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn parallel_threshold_is_reasonable() {
         // Threshold should be at least a few blocks worth
         assert!(PARALLEL_THRESHOLD_BYTES >= 64 * 1024);
