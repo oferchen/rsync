@@ -386,8 +386,7 @@ fn relative_paths_at_various_depths() {
         let expected_depth = path.components().count();
         assert_eq!(
             *depth, expected_depth,
-            "depth {} should match component count {} for {:?}",
-            depth, expected_depth, path
+            "depth {depth} should match component count {expected_depth} for {path:?}"
         );
     }
 
@@ -561,7 +560,7 @@ fn builder_debug_format() {
         .follow_symlinks(true)
         .include_root(false);
 
-    let debug = format!("{:?}", builder);
+    let debug = format!("{builder:?}");
     assert!(
         debug.contains("FileListBuilder"),
         "debug should contain type name"

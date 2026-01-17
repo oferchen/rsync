@@ -454,10 +454,10 @@ fn escaped_question_mark() {
 #[test]
 fn long_pattern() {
     let long_name = "a".repeat(200);
-    let pattern = format!("{}.txt", long_name);
+    let pattern = format!("{long_name}.txt");
     let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
 
-    assert!(!set.allows(Path::new(&format!("{}.txt", long_name)), false));
+    assert!(!set.allows(Path::new(&format!("{long_name}.txt")), false));
 }
 
 /// Verifies patterns that could match empty strings.

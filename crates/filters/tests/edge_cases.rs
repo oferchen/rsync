@@ -289,10 +289,10 @@ fn very_long_path() {
 #[test]
 fn very_long_pattern() {
     let long_name = "x".repeat(200);
-    let pattern = format!("{}*.txt", long_name);
+    let pattern = format!("{long_name}*.txt");
     let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
 
-    let matching = format!("{}foo.txt", long_name);
+    let matching = format!("{long_name}foo.txt");
     assert!(!set.allows(Path::new(&matching), false));
 }
 
@@ -388,7 +388,7 @@ fn filter_rule_clone() {
 #[test]
 fn filter_rule_debug() {
     let rule = FilterRule::exclude("*.tmp");
-    let debug = format!("{:?}", rule);
+    let debug = format!("{rule:?}");
 
     assert!(debug.contains("FilterRule"));
     assert!(debug.contains("Exclude"));
@@ -410,7 +410,7 @@ fn filter_set_clone() {
 #[test]
 fn filter_set_debug() {
     let set = FilterSet::from_rules([FilterRule::exclude("*.tmp")]).unwrap();
-    let debug = format!("{:?}", set);
+    let debug = format!("{set:?}");
 
     assert!(debug.contains("FilterSet"));
 }
@@ -423,7 +423,7 @@ fn filter_error_access() {
     if let Err(error) = result {
         assert_eq!(error.pattern(), "[");
         // Error should have source
-        assert!(error.to_string().len() > 0);
+        assert!(!error.to_string().is_empty());
     } else {
         panic!("Expected error");
     }
@@ -487,7 +487,7 @@ fn anchor_to_root() {
 #[test]
 fn many_rules() {
     let rules: Vec<_> = (0..1000)
-        .map(|i| FilterRule::exclude(format!("file{}.txt", i)))
+        .map(|i| FilterRule::exclude(format!("file{i}.txt")))
         .collect();
 
     let set = FilterSet::from_rules(rules).unwrap();
@@ -515,7 +515,7 @@ fn unicode_patterns() {
     let set = FilterSet::from_rules([FilterRule::exclude("*.txt")]).unwrap();
 
     // Unicode in path (but ASCII pattern)
-    assert!(set.allows(Path::new("cafe.txt"), false) == false);
+    assert!(!set.allows(Path::new("cafe.txt"), false));
 }
 
 /// Verifies special characters in patterns.

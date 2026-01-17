@@ -291,8 +291,7 @@ mod file_size_variations {
         assert_eq!(signature.total_bytes(), size as u64);
 
         // Verify reasonable block count
-        let expected_blocks = (size as u64 + layout.block_length().get() as u64 - 1)
-            / layout.block_length().get() as u64;
+        let expected_blocks = (size as u64).div_ceil(layout.block_length().get() as u64);
         assert_eq!(signature.blocks().len() as u64, expected_blocks);
     }
 }
@@ -913,8 +912,7 @@ mod performance {
         // Should complete well under 5 seconds on most systems
         assert!(
             elapsed.as_secs() < 5,
-            "signature generation took too long: {:?}",
-            elapsed
+            "signature generation took too long: {elapsed:?}"
         );
     }
 
@@ -1014,10 +1012,12 @@ mod algorithm_properties {
     /// Algorithm debug formatting works.
     #[test]
     fn algorithm_debug_format() {
-        let debug = format!("{:?}", SignatureAlgorithm::Md4);
+        let algo = SignatureAlgorithm::Md4;
+        let debug = format!("{algo:?}");
         assert!(debug.contains("Md4"));
 
-        let debug = format!("{:?}", SignatureAlgorithm::Xxh3 { seed: 123 });
+        let algo = SignatureAlgorithm::Xxh3 { seed: 123 };
+        let debug = format!("{algo:?}");
         assert!(debug.contains("Xxh3"));
         assert!(debug.contains("123"));
     }
@@ -1074,7 +1074,7 @@ mod layout_properties {
         let params = layout_params(1000, 16);
         let layout = calculate_signature_layout(params).expect("layout");
 
-        let debug = format!("{:?}", layout);
+        let debug = format!("{layout:?}");
         assert!(debug.contains("SignatureLayout"));
     }
 
@@ -1132,7 +1132,7 @@ mod file_signature_properties {
         let data = generate_test_data(100);
         let (signature, _) = generate_signature_from_data(&data, SignatureAlgorithm::Md4);
 
-        let debug = format!("{:?}", signature);
+        let debug = format!("{signature:?}");
         assert!(debug.contains("FileSignature"));
     }
 }
@@ -1176,7 +1176,7 @@ mod block_properties {
         let rolling = RollingDigest::from_bytes(b"test");
         let block = SignatureBlock::from_raw_parts(42, rolling, vec![1, 2, 3]);
 
-        let debug = format!("{:?}", block);
+        let debug = format!("{block:?}");
         assert!(debug.contains("SignatureBlock"));
     }
 
@@ -1210,14 +1210,14 @@ mod error_properties {
     #[test]
     fn layout_error_display() {
         let too_large = SignatureLayoutError::FileTooLarge { length: u64::MAX };
-        let display = format!("{}", too_large);
+        let display = format!("{too_large}");
         assert!(display.contains("i64::MAX"));
 
         let overflow = SignatureLayoutError::BlockCountOverflow {
             block_length: 700,
             blocks: 1_000_000_000,
         };
-        let display = format!("{}", overflow);
+        let display = format!("{overflow}");
         assert!(display.contains("700"));
         assert!(display.contains("1000000000"));
     }
@@ -1228,7 +1228,7 @@ mod error_properties {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "test error");
         let sig_err: SignatureError = io_err.into();
 
-        let display = format!("{}", sig_err);
+        let display = format!("{sig_err}");
         assert!(display.contains("read"));
     }
 
@@ -1247,7 +1247,7 @@ mod error_properties {
         );
 
         if let Err(e) = result {
-            let display = format!("{}", e);
+            let display = format!("{e}");
             assert!(display.contains("digest") || display.contains("checksum"));
         }
     }
@@ -1279,13 +1279,10 @@ mod upstream_compatibility {
             let params = layout_params(file_size, 16);
             let layout = calculate_signature_layout(params).expect("layout");
 
+            let got = layout.block_length().get();
             assert_eq!(
-                layout.block_length().get(),
-                expected_block,
-                "file size {} expected block size {}, got {}",
-                file_size,
-                expected_block,
-                layout.block_length().get()
+                got, expected_block,
+                "file size {file_size} expected block size {expected_block}, got {got}"
             );
         }
     }

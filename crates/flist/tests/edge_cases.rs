@@ -111,7 +111,7 @@ fn very_deep_nesting() {
     // Create 50 levels deep
     let mut current = root.clone();
     for i in 0..50 {
-        current = current.join(format!("level{}", i));
+        current = current.join(format!("level{i}"));
     }
     fs::create_dir_all(&current).expect("create deep structure");
     fs::write(current.join("deep_file.txt"), b"found").expect("write deep file");
@@ -222,7 +222,7 @@ fn filenames_with_special_characters() {
     ];
 
     for name in &names {
-        fs::write(root.join(name), b"data").expect(&format!("write {}", name));
+        fs::write(root.join(name), b"data").unwrap_or_else(|_| panic!("write {name}"));
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -231,8 +231,7 @@ fn filenames_with_special_characters() {
     for name in &names {
         assert!(
             paths.contains(&PathBuf::from(*name)),
-            "should contain {}",
-            name
+            "should contain {name}"
         );
     }
 }
@@ -251,7 +250,7 @@ fn unicode_filenames() {
     ];
 
     for name in &unicode_names {
-        fs::write(root.join(name), b"data").expect(&format!("write {}", name));
+        fs::write(root.join(name), b"data").unwrap_or_else(|_| panic!("write {name}"));
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -369,8 +368,7 @@ fn error_display_message() {
             let msg = error.to_string();
             assert!(
                 msg.contains("missing") || msg.contains("path"),
-                "error should reference path: {}",
-                msg
+                "error should reference path: {msg}"
             );
         }
     }
@@ -384,7 +382,7 @@ fn error_debug_format() {
     match result {
         Ok(_) => panic!("expected error for missing path"),
         Err(error) => {
-            let debug = format!("{:?}", error);
+            let debug = format!("{error:?}");
             assert!(debug.contains("FileListError"));
         }
     }
@@ -436,7 +434,7 @@ fn many_files_in_single_directory() {
 
     // Create 100 files
     for i in 0..100 {
-        fs::write(root.join(format!("file{:03}.txt", i)), b"data").expect("write file");
+        fs::write(root.join(format!("file{i:03}.txt")), b"data").expect("write file");
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -459,10 +457,10 @@ fn large_directory_tree() {
 
     // Create tree with 10 dirs, each with 10 files
     for i in 0..10 {
-        let dir = root.join(format!("dir{:02}", i));
+        let dir = root.join(format!("dir{i:02}"));
         fs::create_dir(&dir).expect("create dir");
         for j in 0..10 {
-            fs::write(dir.join(format!("file{:02}.txt", j)), b"data").expect("write file");
+            fs::write(dir.join(format!("file{j:02}.txt")), b"data").expect("write file");
         }
     }
 
@@ -530,7 +528,7 @@ fn walker_iterator_patterns() {
     fs::create_dir(&root).expect("create root");
 
     for i in 0..5 {
-        fs::write(root.join(format!("file{}.txt", i)), b"data").expect("write file");
+        fs::write(root.join(format!("file{i}.txt")), b"data").expect("write file");
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -554,7 +552,7 @@ fn walker_with_iterator_adapters() {
     fs::create_dir(&root).expect("create root");
 
     for i in 0..10 {
-        fs::write(root.join(format!("file{}.txt", i)), b"data").expect("write file");
+        fs::write(root.join(format!("file{i}.txt")), b"data").expect("write file");
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -579,7 +577,7 @@ fn walker_for_each() {
     fs::create_dir(&root).expect("create root");
 
     for i in 0..3 {
-        fs::write(root.join(format!("file{}.txt", i)), b"data").expect("write file");
+        fs::write(root.join(format!("file{i}.txt")), b"data").expect("write file");
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -605,7 +603,7 @@ fn multiple_walkers_same_directory() {
     fs::create_dir(&root).expect("create root");
 
     for i in 0..5 {
-        fs::write(root.join(format!("file{}.txt", i)), b"data").expect("write file");
+        fs::write(root.join(format!("file{i}.txt")), b"data").expect("write file");
     }
 
     // Create multiple walkers
@@ -657,8 +655,7 @@ fn relative_paths_no_parent_refs() {
         let path_str = entry.relative_path().to_string_lossy();
         assert!(
             !path_str.contains(".."),
-            "relative path should not contain ..: {}",
-            path_str
+            "relative path should not contain ..: {path_str}"
         );
     }
 }
