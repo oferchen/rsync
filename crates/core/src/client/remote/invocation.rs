@@ -58,6 +58,12 @@ pub enum RemoteRole {
     ///
     /// Used for pull operations: `oc-rsync user@host:remote.txt local.txt`
     Receiver,
+
+    /// Local process is a proxy relaying between two remote hosts.
+    ///
+    /// Used for remote-to-remote transfers: `oc-rsync user@src:file user@dst:file`
+    /// The local machine spawns two SSH connections and relays protocol messages.
+    Proxy,
 }
 
 /// Parsed components of a remote operand for validation.
@@ -89,6 +95,56 @@ pub enum RemoteOperands {
     ///
     /// All operands must be from the same host with the same user and port.
     Multiple(Vec<String>),
+}
+
+/// Full specification of a transfer, capturing both endpoints and their types.
+///
+/// This enum replaces the previous tuple return type of `determine_transfer_role`
+/// to provide a cleaner, more explicit representation of all transfer types.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TransferSpec {
+    /// Push transfer: local sources → remote destination.
+    ///
+    /// The local process acts as generator/sender.
+    Push {
+        /// Local file paths to send.
+        local_sources: Vec<String>,
+        /// Remote destination operand (e.g., "user@host:/path").
+        remote_dest: String,
+    },
+
+    /// Pull transfer: remote sources → local destination.
+    ///
+    /// The local process acts as receiver.
+    Pull {
+        /// Remote source operand(s) (e.g., "user@host:/path").
+        remote_sources: RemoteOperands,
+        /// Local destination path.
+        local_dest: String,
+    },
+
+    /// Proxy transfer: remote sources → remote destination (via local).
+    ///
+    /// The local process relays protocol messages between two remote hosts.
+    Proxy {
+        /// Remote source operand(s) (e.g., "user@src:/path").
+        remote_sources: RemoteOperands,
+        /// Remote destination operand (e.g., "user@dst:/path").
+        remote_dest: String,
+    },
+}
+
+impl TransferSpec {
+    /// Returns the transfer role for the local process.
+    #[inline]
+    #[must_use]
+    pub fn role(&self) -> RemoteRole {
+        match self {
+            TransferSpec::Push { .. } => RemoteRole::Sender,
+            TransferSpec::Pull { .. } => RemoteRole::Receiver,
+            TransferSpec::Proxy { .. } => RemoteRole::Proxy,
+        }
+    }
 }
 
 /// Builder for constructing remote rsync `--server` invocation arguments.
@@ -348,7 +404,10 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
     Ok(())
 }
 
-/// Determines the transfer role from source and destination operands.
+/// Determines the transfer type and role from source and destination operands.
+///
+/// Analyzes the operands to determine whether this is a push (local → remote),
+/// pull (remote → local), or proxy (remote → remote) transfer.
 ///
 /// # Arguments
 ///
@@ -357,22 +416,18 @@ fn validate_same_host(operands: &[RemoteOperandParsed]) -> Result<(), ClientErro
 ///
 /// # Returns
 ///
-/// A tuple of:
-/// - `RemoteRole` - Whether we're sender or receiver
-/// - `Vec<String>` - Local paths (for sender role) or local destination (for receiver role)
-/// - `RemoteOperands` - Remote operand(s) string(s)
+/// A [`TransferSpec`] describing the transfer type with all relevant operands.
 ///
 /// # Errors
 ///
 /// Returns error if:
-/// - Both source and destination are remote (not yet supported)
 /// - Neither source nor destination is remote (should use local copy)
 /// - Multiple sources with different remote/local mix
 /// - Multiple remote sources from different hosts, users, or ports
 pub fn determine_transfer_role(
     sources: &[OsString],
     destination: &OsString,
-) -> Result<(RemoteRole, Vec<String>, RemoteOperands), ClientError> {
+) -> Result<TransferSpec, ClientError> {
     let dest_is_remote = operand_is_remote(destination);
 
     // Check if any sources are remote
@@ -383,11 +438,40 @@ pub fn determine_transfer_role(
 
     match (has_remote_source, dest_is_remote) {
         (true, true) => {
-            // Both source and dest are remote - not supported (mirrors upstream main.c:1414)
-            Err(invalid_argument_error(
-                "The source and destination cannot both be remote.",
-                1,
-            ))
+            // Remote-to-remote: proxy between two remote hosts
+            if !all_sources_remote {
+                return Err(invalid_argument_error(
+                    "mixing remote and local sources is not supported",
+                    1,
+                ));
+            }
+
+            // Parse all remote sources
+            let parsed_sources: Result<Vec<_>, _> = sources
+                .iter()
+                .map(|s| parse_remote_operand(&s.to_string_lossy()))
+                .collect();
+            let parsed_sources = parsed_sources?;
+
+            // Validate all sources are from the same host
+            validate_same_host(&parsed_sources)?;
+
+            // Build remote source operands
+            let remote_sources = if sources.len() > 1 {
+                RemoteOperands::Multiple(
+                    sources
+                        .iter()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .collect(),
+                )
+            } else {
+                RemoteOperands::Single(sources[0].to_string_lossy().to_string())
+            };
+
+            Ok(TransferSpec::Proxy {
+                remote_sources,
+                remote_dest: destination.to_string_lossy().to_string(),
+            })
         }
         (false, false) => {
             // Neither is remote - should use local copy
@@ -412,10 +496,10 @@ pub fn determine_transfer_role(
             // Validate all sources are from the same host
             validate_same_host(&parsed_sources)?;
 
-            let local_path = destination.to_string_lossy().to_string();
+            let local_dest = destination.to_string_lossy().to_string();
 
             // Return Multiple if > 1 source, Single otherwise
-            let remote_operands = if sources.len() > 1 {
+            let remote_sources = if sources.len() > 1 {
                 RemoteOperands::Multiple(
                     sources
                         .iter()
@@ -426,18 +510,22 @@ pub fn determine_transfer_role(
                 RemoteOperands::Single(sources[0].to_string_lossy().to_string())
             };
 
-            Ok((RemoteRole::Receiver, vec![local_path], remote_operands))
+            Ok(TransferSpec::Pull {
+                remote_sources,
+                local_dest,
+            })
         }
         (false, true) => {
             // Push: local source(s) → remote destination
-            let local_paths: Vec<String> = sources
+            let local_sources: Vec<String> = sources
                 .iter()
                 .map(|s| s.to_string_lossy().to_string())
                 .collect();
 
-            let remote_operand = RemoteOperands::Single(destination.to_string_lossy().to_string());
-
-            Ok((RemoteRole::Sender, local_paths, remote_operand))
+            Ok(TransferSpec::Push {
+                local_sources,
+                remote_dest: destination.to_string_lossy().to_string(),
+            })
         }
     }
 }
@@ -524,12 +612,17 @@ mod tests {
 
         let result = determine_transfer_role(&sources, &destination).unwrap();
 
-        assert_eq!(result.0, RemoteRole::Sender);
-        assert_eq!(result.1, vec!["local.txt"]);
-        assert_eq!(
-            result.2,
-            RemoteOperands::Single("user@host:/remote.txt".to_owned())
-        );
+        assert_eq!(result.role(), RemoteRole::Sender);
+        match result {
+            TransferSpec::Push {
+                local_sources,
+                remote_dest,
+            } => {
+                assert_eq!(local_sources, vec!["local.txt"]);
+                assert_eq!(remote_dest, "user@host:/remote.txt");
+            }
+            _ => panic!("Expected Push transfer"),
+        }
     }
 
     #[test]
@@ -539,12 +632,20 @@ mod tests {
 
         let result = determine_transfer_role(&sources, &destination).unwrap();
 
-        assert_eq!(result.0, RemoteRole::Receiver);
-        assert_eq!(result.1, vec!["local.txt"]);
-        assert_eq!(
-            result.2,
-            RemoteOperands::Single("user@host:/remote.txt".to_owned())
-        );
+        assert_eq!(result.role(), RemoteRole::Receiver);
+        match result {
+            TransferSpec::Pull {
+                remote_sources,
+                local_dest,
+            } => {
+                assert_eq!(local_dest, "local.txt");
+                assert_eq!(
+                    remote_sources,
+                    RemoteOperands::Single("user@host:/remote.txt".to_owned())
+                );
+            }
+            _ => panic!("Expected Pull transfer"),
+        }
     }
 
     #[test]
@@ -554,18 +655,39 @@ mod tests {
 
         let result = determine_transfer_role(&sources, &destination).unwrap();
 
-        assert_eq!(result.0, RemoteRole::Sender);
-        assert_eq!(result.1, vec!["file1.txt", "file2.txt"]);
-        assert_eq!(result.2, RemoteOperands::Single("host:/dest/".to_owned()));
+        assert_eq!(result.role(), RemoteRole::Sender);
+        match result {
+            TransferSpec::Push {
+                local_sources,
+                remote_dest,
+            } => {
+                assert_eq!(local_sources, vec!["file1.txt", "file2.txt"]);
+                assert_eq!(remote_dest, "host:/dest/");
+            }
+            _ => panic!("Expected Push transfer"),
+        }
     }
 
     #[test]
-    fn rejects_both_remote() {
+    fn detects_proxy_when_both_remote() {
         let sources = vec![OsString::from("host1:/file")];
         let destination = OsString::from("host2:/file");
 
-        let result = determine_transfer_role(&sources, &destination);
-        assert!(result.is_err());
+        let result = determine_transfer_role(&sources, &destination).unwrap();
+        assert_eq!(result.role(), RemoteRole::Proxy);
+        match result {
+            TransferSpec::Proxy {
+                remote_sources,
+                remote_dest,
+            } => {
+                assert_eq!(
+                    remote_sources,
+                    RemoteOperands::Single("host1:/file".to_owned())
+                );
+                assert_eq!(remote_dest, "host2:/file");
+            }
+            _ => panic!("Expected Proxy transfer"),
+        }
     }
 
     #[test]
@@ -595,12 +717,23 @@ mod tests {
         let destination = OsString::from("dest/");
 
         let result = determine_transfer_role(&sources, &destination).unwrap();
-        assert_eq!(result.0, RemoteRole::Receiver);
-        assert_eq!(result.1, vec!["dest/"]);
-        assert_eq!(
-            result.2,
-            RemoteOperands::Multiple(vec!["host:/file1".to_owned(), "host:/file2".to_owned()])
-        );
+        assert_eq!(result.role(), RemoteRole::Receiver);
+        match result {
+            TransferSpec::Pull {
+                remote_sources,
+                local_dest,
+            } => {
+                assert_eq!(local_dest, "dest/");
+                assert_eq!(
+                    remote_sources,
+                    RemoteOperands::Multiple(vec![
+                        "host:/file1".to_owned(),
+                        "host:/file2".to_owned()
+                    ])
+                );
+            }
+            _ => panic!("Expected Pull transfer"),
+        }
     }
 
     #[test]
