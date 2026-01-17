@@ -183,44 +183,64 @@ fn test_ssh_operand_detection() {
 
 #[test]
 fn test_transfer_role_detection() {
-    use core::client::remote::{RemoteOperands, RemoteRole, determine_transfer_role};
+    use core::client::remote::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
     use std::ffi::OsString;
 
     // Test push detection (local → remote)
     let sources = vec![OsString::from("local.txt")];
     let destination = OsString::from("host:remote.txt");
     let result = determine_transfer_role(&sources, &destination).expect("Should detect push");
-    assert_eq!(result.0, RemoteRole::Sender);
-    assert_eq!(result.1, vec!["local.txt"]);
-    assert_eq!(
-        result.2,
-        RemoteOperands::Single("host:remote.txt".to_string())
-    );
+    assert_eq!(result.role(), RemoteRole::Sender);
+    match result {
+        TransferSpec::Push {
+            local_sources,
+            remote_dest,
+        } => {
+            assert_eq!(local_sources, vec!["local.txt"]);
+            assert_eq!(remote_dest, "host:remote.txt");
+        }
+        _ => panic!("Expected Push transfer"),
+    }
 
     // Test pull detection (remote → local)
     let sources = vec![OsString::from("host:remote.txt")];
     let destination = OsString::from("local.txt");
     let result = determine_transfer_role(&sources, &destination).expect("Should detect pull");
-    assert_eq!(result.0, RemoteRole::Receiver);
-    assert_eq!(result.1, vec!["local.txt"]);
-    assert_eq!(
-        result.2,
-        RemoteOperands::Single("host:remote.txt".to_string())
-    );
+    assert_eq!(result.role(), RemoteRole::Receiver);
+    match result {
+        TransferSpec::Pull {
+            remote_sources,
+            local_dest,
+        } => {
+            assert_eq!(local_dest, "local.txt");
+            assert_eq!(
+                remote_sources,
+                RemoteOperands::Single("host:remote.txt".to_string())
+            );
+        }
+        _ => panic!("Expected Pull transfer"),
+    }
 
     // Test multiple local sources with remote destination
     let sources = vec![OsString::from("file1.txt"), OsString::from("file2.txt")];
     let destination = OsString::from("host:/dest/");
     let result = determine_transfer_role(&sources, &destination).expect("Should detect push");
-    assert_eq!(result.0, RemoteRole::Sender);
-    assert_eq!(result.1, vec!["file1.txt", "file2.txt"]);
+    assert_eq!(result.role(), RemoteRole::Sender);
+    match result {
+        TransferSpec::Push {
+            local_sources,
+            remote_dest: _,
+        } => {
+            assert_eq!(local_sources, vec!["file1.txt", "file2.txt"]);
+        }
+        _ => panic!("Expected Push transfer"),
+    }
 
-    // Test error cases
-
-    // Both remote (not supported)
+    // Test remote-to-remote (proxy) - now returns Proxy instead of error
     let sources = vec![OsString::from("host1:file")];
     let destination = OsString::from("host2:file");
-    assert!(determine_transfer_role(&sources, &destination).is_err());
+    let result = determine_transfer_role(&sources, &destination).expect("Should detect proxy");
+    assert_eq!(result.role(), RemoteRole::Proxy);
 
     // Neither remote (should use local copy)
     let sources = vec![OsString::from("file1.txt")];
@@ -378,7 +398,7 @@ fn test_ssh_with_custom_port() {
 
 #[test]
 fn test_multiple_sources_same_host() {
-    use core::client::remote::{RemoteOperands, determine_transfer_role};
+    use core::client::remote::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
     use std::ffi::OsString;
 
     let sources = vec![
@@ -390,21 +410,29 @@ fn test_multiple_sources_same_host() {
 
     let result = determine_transfer_role(&sources, &destination).expect("Should succeed");
 
-    assert_eq!(result.0, core::client::remote::RemoteRole::Receiver);
-    assert_eq!(result.1, vec!["local/"]);
-    assert_eq!(
-        result.2,
-        RemoteOperands::Multiple(vec![
-            "host:/file1".to_string(),
-            "host:/file2".to_string(),
-            "host:/dir/file3".to_string(),
-        ])
-    );
+    assert_eq!(result.role(), RemoteRole::Receiver);
+    match result {
+        TransferSpec::Pull {
+            remote_sources,
+            local_dest,
+        } => {
+            assert_eq!(local_dest, "local/");
+            assert_eq!(
+                remote_sources,
+                RemoteOperands::Multiple(vec![
+                    "host:/file1".to_string(),
+                    "host:/file2".to_string(),
+                    "host:/dir/file3".to_string(),
+                ])
+            );
+        }
+        _ => panic!("Expected Pull transfer"),
+    }
 }
 
 #[test]
 fn test_multiple_sources_with_user_same_host() {
-    use core::client::remote::{RemoteOperands, determine_transfer_role};
+    use core::client::remote::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
     use std::ffi::OsString;
 
     let sources = vec![
@@ -415,15 +443,23 @@ fn test_multiple_sources_with_user_same_host() {
 
     let result = determine_transfer_role(&sources, &destination).expect("Should succeed");
 
-    assert_eq!(result.0, core::client::remote::RemoteRole::Receiver);
-    assert_eq!(result.1, vec!["local/"]);
-    assert_eq!(
-        result.2,
-        RemoteOperands::Multiple(vec![
-            "user@host:/file1".to_string(),
-            "user@host:/file2".to_string(),
-        ])
-    );
+    assert_eq!(result.role(), RemoteRole::Receiver);
+    match result {
+        TransferSpec::Pull {
+            remote_sources,
+            local_dest,
+        } => {
+            assert_eq!(local_dest, "local/");
+            assert_eq!(
+                remote_sources,
+                RemoteOperands::Multiple(vec![
+                    "user@host:/file1".to_string(),
+                    "user@host:/file2".to_string(),
+                ])
+            );
+        }
+        _ => panic!("Expected Pull transfer"),
+    }
 }
 
 #[test]
@@ -496,7 +532,7 @@ fn test_multiple_sources_mixed_explicit_implicit_user_error() {
 
 #[test]
 fn test_single_remote_source_returns_single_variant() {
-    use core::client::remote::{RemoteOperands, determine_transfer_role};
+    use core::client::remote::{RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role};
     use std::ffi::OsString;
 
     let sources = vec![OsString::from("host:/single/file")];
@@ -504,12 +540,20 @@ fn test_single_remote_source_returns_single_variant() {
 
     let result = determine_transfer_role(&sources, &destination).expect("Should succeed");
 
-    assert_eq!(result.0, core::client::remote::RemoteRole::Receiver);
-    assert_eq!(result.1, vec!["local/"]);
-    assert_eq!(
-        result.2,
-        RemoteOperands::Single("host:/single/file".to_string())
-    );
+    assert_eq!(result.role(), RemoteRole::Receiver);
+    match result {
+        TransferSpec::Pull {
+            remote_sources,
+            local_dest,
+        } => {
+            assert_eq!(local_dest, "local/");
+            assert_eq!(
+                remote_sources,
+                RemoteOperands::Single("host:/single/file".to_string())
+            );
+        }
+        _ => panic!("Expected Pull transfer"),
+    }
 }
 
 #[test]

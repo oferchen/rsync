@@ -32,7 +32,7 @@ use super::super::module_list::{
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
 use super::super::{CLIENT_SERVER_PROTOCOL_EXIT_CODE, DAEMON_SOCKET_TIMEOUT};
-use super::invocation::{RemoteRole, determine_transfer_role};
+use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 use crate::server::handshake::HandshakeResult;
 use crate::server::{ServerConfig, ServerRole};
 
@@ -136,7 +136,18 @@ pub fn run_daemon_transfer(
     let destination = &destination[0];
 
     // Determine push vs pull and extract local/remote paths
-    let (role, local_paths, _remote_operands) = determine_transfer_role(sources, destination)?;
+    let transfer_spec = determine_transfer_role(sources, destination)?;
+    let role = transfer_spec.role();
+    let local_paths = match &transfer_spec {
+        TransferSpec::Push { local_sources, .. } => local_sources.clone(),
+        TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
+        TransferSpec::Proxy { .. } => {
+            return Err(invalid_argument_error(
+                "remote-to-remote transfers via rsync daemon are not supported",
+                1,
+            ));
+        }
+    };
 
     // Find the rsync:// URL operand
     let daemon_url = config
@@ -181,6 +192,10 @@ pub fn run_daemon_transfer(
         RemoteRole::Sender => {
             // Push: local → remote
             run_push_transfer(config, stream, &local_paths, protocol)
+        }
+        RemoteRole::Proxy => {
+            // Already handled above with an error return
+            unreachable!("Proxy transfers via daemon are rejected earlier")
         }
     }
 }
