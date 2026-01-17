@@ -43,7 +43,7 @@ fn files_sorted_lexicographically() {
 
     // Create files in random order
     for name in ["zebra", "apple", "Banana", "cherry", "123", "_underscore"] {
-        fs::write(root.join(format!("{}.txt", name)), b"").expect("write file");
+        fs::write(root.join(format!("{name}.txt")), b"").expect("write file");
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -322,10 +322,10 @@ fn repeated_traversals_are_identical() {
 
     // Create some structure
     for i in 0..5 {
-        let dir = root.join(format!("dir{}", i));
+        let dir = root.join(format!("dir{i}"));
         fs::create_dir(&dir).expect("create dir");
         for j in 0..3 {
-            fs::write(dir.join(format!("file{}.txt", j)), b"data").expect("write file");
+            fs::write(dir.join(format!("file{j}.txt")), b"data").expect("write file");
         }
     }
 
@@ -340,11 +340,7 @@ fn repeated_traversals_are_identical() {
     // All results should be identical
     let first = &results[0];
     for (i, result) in results.iter().enumerate().skip(1) {
-        assert_eq!(
-            first, result,
-            "traversal {} differs from first traversal",
-            i
-        );
+        assert_eq!(first, result, "traversal {i} differs from first traversal");
     }
 }
 
