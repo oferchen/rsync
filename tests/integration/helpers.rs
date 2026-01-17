@@ -373,18 +373,59 @@ fn collect_files_recursive(
 pub struct ServerModeTest {
     oc_rsync_binary: PathBuf,
     upstream_binary: PathBuf,
+    /// Capability flags appropriate for the upstream rsync version.
+    /// - rsync 3.0.x: `.iLsfCI` (no 'v', 'x', 'u' - added in 3.1.0)
+    /// - rsync 3.1.x+: `.iLsfxCIvu` (full capabilities)
+    flags: String,
 }
 
 impl ServerModeTest {
     /// Create a new server-mode test with specified upstream rsync binary.
+    ///
+    /// The version is auto-detected from the path structure. For paths like
+    /// `target/interop/upstream-install/3.0.9/bin/rsync`, the version "3.0.9"
+    /// is extracted from the path components.
+    ///
+    /// The version determines which capability flags to use:
+    /// - 'v' (VARINT_FLIST_FLAGS) was added in rsync 3.1.0
+    /// - 'x' (AVOID_XATTR_OPTIMIZATION) was added in rsync 3.1.0
+    /// - 'u' (ID0_NAMES) was added in rsync 3.1.0
     pub fn new(upstream_binary: &Path) -> Option<Self> {
+        // Try to detect version from path structure
+        // Expected: target/interop/upstream-install/<version>/bin/rsync
+        let version = upstream_binary
+            .ancestors()
+            .find_map(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .filter(|n| n.starts_with("3."))
+            })
+            .unwrap_or("3.4.1"); // Default to latest if unknown
+
+        Self::with_version(upstream_binary, version)
+    }
+
+    /// Create a new server-mode test with explicit version specification.
+    pub fn with_version(upstream_binary: &Path, version: &str) -> Option<Self> {
         let oc_rsync_binary = locate_binary("oc-rsync")?;
         if !upstream_binary.is_file() {
             return None;
         }
+
+        // Determine flags based on version
+        // rsync 3.1.0 added: 'v' (varint flist flags), 'x' (xattr opt), 'u' (id0 names)
+        let flags = if version.starts_with("3.0") {
+            // rsync 3.0.x - no 'v', 'x', 'u'
+            "-vlogDtprze.iLsfCI".to_string()
+        } else {
+            // rsync 3.1.x and later - full capabilities
+            "-vlogDtprze.iLsfxCIvu".to_string()
+        };
+
         Some(Self {
             oc_rsync_binary,
             upstream_binary: upstream_binary.to_path_buf(),
+            flags,
         })
     }
 
@@ -398,10 +439,10 @@ impl ServerModeTest {
         use std::thread;
 
         // Spawn oc-rsync in --server mode (receiver)
-        // Flag string format: -vlogDtprze.iLsfxCIvu
+        // Flag string is version-appropriate (e.g., no 'v' for rsync 3.0.x)
         let mut server = Command::new(&self.oc_rsync_binary)
             .arg("--server")
-            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(&self.flags)
             .arg(".")
             .arg(dest.to_string_lossy().as_ref())
             .stdin(Stdio::piped())
@@ -414,7 +455,7 @@ impl ServerModeTest {
         let mut client = Command::new(&self.upstream_binary)
             .arg("--server")
             .arg("--sender")
-            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(&self.flags)
             .arg(".")
             .arg(source.to_string_lossy().as_ref())
             .stdin(Stdio::piped())
@@ -498,10 +539,11 @@ impl ServerModeTest {
         use std::thread;
 
         // Spawn oc-rsync in --server --sender mode
+        // Flag string is version-appropriate (e.g., no 'v' for rsync 3.0.x)
         let mut server = Command::new(&self.oc_rsync_binary)
             .arg("--server")
             .arg("--sender")
-            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(&self.flags)
             .arg(".")
             .arg(source.to_string_lossy().as_ref())
             .stdin(Stdio::piped())
@@ -512,7 +554,7 @@ impl ServerModeTest {
         // Spawn upstream rsync in --server mode (receiver)
         let mut client = Command::new(&self.upstream_binary)
             .arg("--server")
-            .arg("-vlogDtprze.iLsfxCIvu")
+            .arg(&self.flags)
             .arg(".")
             .arg(dest.to_string_lossy().as_ref())
             .stdin(Stdio::piped())
