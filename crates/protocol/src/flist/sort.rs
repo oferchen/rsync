@@ -1,5 +1,3 @@
-//! crates/protocol/src/flist/sort.rs
-//!
 //! File list sorting for rsync protocol.
 //!
 //! Both sender and receiver must sort their file lists identically after
