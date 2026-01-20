@@ -28,9 +28,12 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use rsync_io::ssh::{SshCommand, SshConnection, SshReader, SshWriter, parse_ssh_operand};
 
@@ -200,6 +203,9 @@ fn spawn_ssh_connection(
     })
 }
 
+/// Timeout for waiting on relay threads to complete after the transfer is done.
+const RELAY_THREAD_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Runs bidirectional relay between two SSH connections using threads.
 ///
 /// Spawns two threads for deadlock-free bidirectional relay:
@@ -232,37 +238,99 @@ fn run_bidirectional_relay(
     // Shared flag to signal shutdown
     let shutdown = Arc::new(AtomicBool::new(false));
 
+    // Channels for receiving thread completion (enables timeout)
+    let (s2d_tx, s2d_rx) = mpsc::channel();
+    let (d2s_tx, d2s_rx) = mpsc::channel();
+
     // Thread 1: source → destination (file data, file list)
     let shutdown_s2d = Arc::clone(&shutdown);
-    let s2d_handle =
-        thread::spawn(move || relay_data(source_reader, dest_writer, shutdown_s2d, "source→dest"));
+    thread::spawn(move || {
+        let result = run_relay_with_panic_guard(
+            source_reader,
+            dest_writer,
+            shutdown_s2d,
+            "source→dest",
+        );
+        let _ = s2d_tx.send(result);
+    });
 
     // Thread 2: destination → source (checksums, acks)
     let shutdown_d2s = Arc::clone(&shutdown);
-    let d2s_handle =
-        thread::spawn(move || relay_data(dest_reader, source_writer, shutdown_d2s, "dest→source"));
+    thread::spawn(move || {
+        let result = run_relay_with_panic_guard(
+            dest_reader,
+            source_writer,
+            shutdown_d2s,
+            "dest→source",
+        );
+        let _ = d2s_tx.send(result);
+    });
 
-    // Wait for both threads
-    let s2d_result = s2d_handle
-        .join()
-        .map_err(|_| invalid_argument_error("source→dest relay thread panicked", 23))?;
+    // Wait for both threads with timeout
+    let s2d_result = s2d_rx
+        .recv_timeout(RELAY_THREAD_TIMEOUT)
+        .map_err(|e| match e {
+            mpsc::RecvTimeoutError::Timeout => {
+                shutdown.store(true, Ordering::SeqCst);
+                invalid_argument_error("source→dest relay thread timed out", 23)
+            }
+            mpsc::RecvTimeoutError::Disconnected => {
+                invalid_argument_error("source→dest relay thread terminated unexpectedly", 23)
+            }
+        })??;
 
-    let d2s_result = d2s_handle
-        .join()
-        .map_err(|_| invalid_argument_error("dest→source relay thread panicked", 23))?;
+    let d2s_result = d2s_rx
+        .recv_timeout(RELAY_THREAD_TIMEOUT)
+        .map_err(|e| match e {
+            mpsc::RecvTimeoutError::Timeout => {
+                shutdown.store(true, Ordering::SeqCst);
+                invalid_argument_error("dest→source relay thread timed out", 23)
+            }
+            mpsc::RecvTimeoutError::Disconnected => {
+                invalid_argument_error("dest→source relay thread terminated unexpectedly", 23)
+            }
+        })??;
 
     // Wait for child processes
     let _ = source_handle.wait();
     let _ = dest_handle.wait();
 
-    // Collect results - return first error encountered
-    let bytes_source_to_dest = s2d_result?;
-    let bytes_dest_to_source = d2s_result?;
-
     Ok(ProxyStats {
-        bytes_source_to_dest,
-        bytes_dest_to_source,
+        bytes_source_to_dest: s2d_result,
+        bytes_dest_to_source: d2s_result,
     })
+}
+
+/// Runs the relay with panic recovery using `catch_unwind`.
+///
+/// Wraps `relay_data` in panic handling to ensure the shutdown flag is set
+/// on panic and to capture panic information for better error messages.
+fn run_relay_with_panic_guard(
+    reader: SshReader,
+    writer: SshWriter,
+    shutdown: Arc<AtomicBool>,
+    direction: &'static str,
+) -> Result<u64, ClientError> {
+    let shutdown_clone = Arc::clone(&shutdown);
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        relay_data(reader, writer, shutdown, direction)
+    }));
+
+    match result {
+        Ok(inner_result) => inner_result,
+        Err(panic_info) => {
+            // Ensure shutdown is signaled on panic
+            shutdown_clone.store(true, Ordering::SeqCst);
+            let message = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                format!("{direction} relay thread panicked: {s}")
+            } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                format!("{direction} relay thread panicked: {s}")
+            } else {
+                format!("{direction} relay thread panicked")
+            };
+            Err(invalid_argument_error(&message, 23))
+        }
+    }
 }
 
 /// Relays data from reader to writer until EOF or error.
