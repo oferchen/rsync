@@ -63,6 +63,10 @@ pub struct FileListReader {
     preserve_crtimes: bool,
     /// Whether sender is in checksum mode (--checksum / -c).
     always_checksum: bool,
+    /// Whether to preserve (and thus read) ACLs from the wire.
+    preserve_acls: bool,
+    /// Whether to preserve (and thus read) extended attributes from the wire.
+    preserve_xattrs: bool,
     /// Length of checksum to read (depends on protocol and checksum algorithm).
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
@@ -74,6 +78,8 @@ struct MetadataResult {
     mtime: i64,
     nsec: u32,
     mode: u32,
+    uid: Option<u32>,
+    gid: Option<u32>,
     user_name: Option<String>,
     group_name: Option<String>,
     atime: Option<i64>,
@@ -100,6 +106,8 @@ impl FileListReader {
             preserve_atimes: false,
             preserve_crtimes: false,
             always_checksum: false,
+            preserve_acls: false,
+            preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
         }
@@ -123,6 +131,8 @@ impl FileListReader {
             preserve_atimes: false,
             preserve_crtimes: false,
             always_checksum: false,
+            preserve_acls: false,
+            preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
         }
@@ -174,6 +184,26 @@ impl FileListReader {
     #[must_use]
     pub const fn with_preserve_crtimes(mut self, preserve: bool) -> Self {
         self.preserve_crtimes = preserve;
+        self
+    }
+
+    /// Sets whether ACLs should be read from the wire.
+    ///
+    /// When enabled, ACL indices are read after other metadata.
+    /// Note: ACL data itself is received in a separate exchange.
+    #[must_use]
+    pub const fn with_preserve_acls(mut self, preserve: bool) -> Self {
+        self.preserve_acls = preserve;
+        self
+    }
+
+    /// Sets whether extended attributes should be read from the wire.
+    ///
+    /// When enabled, xattr indices are read after ACL indices.
+    /// Note: Xattr data itself is received in a separate exchange.
+    #[must_use]
+    pub const fn with_preserve_xattrs(mut self, preserve: bool) -> Self {
+        self.preserve_xattrs = preserve;
         self
     }
 
@@ -307,14 +337,38 @@ impl FileListReader {
 
     /// Reads metadata fields in upstream rsync wire format order.
     ///
-    /// Order (matching flist.c recv_file_entry lines 826-920):
-    /// 1. mtime (if not XMIT_SAME_TIME)
-    /// 2. nsec (if XMIT_MOD_NSEC, protocol 31+)
-    /// 3. crtime (if preserving, not XMIT_CRTIME_EQ_MTIME)
-    /// 4. mode (if not XMIT_SAME_MODE)
-    /// 5. atime (if preserving, non-dir, not XMIT_SAME_ATIME)
-    /// 6. uid + user name (if preserving, not XMIT_SAME_UID)
-    /// 7. gid + group name (if preserving, not XMIT_SAME_GID)
+    /// This function decodes the variable-length metadata section of a file entry.
+    /// Fields are conditionally present based on XMIT flags - when a "SAME" flag is
+    /// set, the field is omitted and the previous entry's value is reused.
+    ///
+    /// # Wire Format Order
+    ///
+    /// Fields are read in this exact order (matching flist.c recv_file_entry lines 826-920):
+    ///
+    /// | Order | Field | Condition | Encoding |
+    /// |-------|-------|-----------|----------|
+    /// | 1 | mtime | `!XMIT_SAME_TIME` | varlong(4) |
+    /// | 2 | nsec | `XMIT_MOD_NSEC` (proto 31+) | varint30 |
+    /// | 3 | crtime | `preserve_crtimes && !XMIT_CRTIME_EQ_MTIME` | varlong(4) |
+    /// | 4 | mode | `!XMIT_SAME_MODE` | i32 LE (proto <30) or varint |
+    /// | 5 | atime | `preserve_atimes && !is_dir && !XMIT_SAME_ATIME` | varlong(4) |
+    /// | 6 | uid | `preserve_uid && !XMIT_SAME_UID` | i32 LE (proto <30) or varint |
+    /// | 6a | user_name | `XMIT_USER_NAME_FOLLOWS` (proto 30+) | u8 len + bytes |
+    /// | 7 | gid | `preserve_gid && !XMIT_SAME_GID` | i32 LE (proto <30) or varint |
+    /// | 7a | group_name | `XMIT_GROUP_NAME_FOLLOWS` (proto 30+) | u8 len + bytes |
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The byte stream to read from
+    /// * `flags` - The XMIT flags indicating which fields are present
+    ///
+    /// # Returns
+    ///
+    /// A `MetadataResult` containing all decoded metadata fields.
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `flist.c:recv_file_entry()` lines 826-920 for the metadata reading logic.
     fn read_metadata<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -322,7 +376,7 @@ impl FileListReader {
     ) -> io::Result<MetadataResult> {
         // 1. Read mtime
         let mtime = if flags.same_time() {
-            self.state.prev_mtime
+            self.state.prev_mtime()
         } else {
             let mtime = crate::read_varlong(reader, 4)?;
             self.state.update_mtime(mtime);
@@ -352,7 +406,7 @@ impl FileListReader {
 
         // 4. Read mode
         let mode = if flags.same_mode() {
-            self.state.prev_mode
+            self.state.prev_mode()
         } else {
             let mut mode_bytes = [0u8; 4];
             reader.read_exact(&mut mode_bytes)?;
@@ -367,7 +421,7 @@ impl FileListReader {
         // 5. Read atime if preserving atimes (AFTER mode, non-directories only)
         let atime = if self.preserve_atimes && !is_dir {
             if flags.same_atime() {
-                Some(self.state.prev_atime)
+                Some(self.state.prev_atime())
             } else {
                 let atime = crate::read_varlong(reader, 4)?;
                 self.state.update_atime(atime);
@@ -379,39 +433,69 @@ impl FileListReader {
 
         // 6. Read UID and optional user name
         let mut user_name = None;
-        if self.preserve_uid && !flags.same_uid() {
-            let uid = read_varint(reader)? as u32;
-            self.state.update_uid(uid);
-            // Read user name if flag set (protocol 30+)
-            if flags.user_name_follows() {
-                let mut len_buf = [0u8; 1];
-                reader.read_exact(&mut len_buf)?;
-                let len = len_buf[0] as usize;
-                if len > 0 {
-                    let mut name_bytes = vec![0u8; len];
-                    reader.read_exact(&mut name_bytes)?;
-                    user_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
+        let uid = if self.preserve_uid {
+            if flags.same_uid() {
+                // Use previous UID
+                Some(self.state.prev_uid())
+            } else {
+                // Read UID from wire (fixed encoding for protocol < 30)
+                let uid = if self.protocol.uses_fixed_encoding() {
+                    let mut buf = [0u8; 4];
+                    reader.read_exact(&mut buf)?;
+                    i32::from_le_bytes(buf) as u32
+                } else {
+                    read_varint(reader)? as u32
+                };
+                self.state.update_uid(uid);
+                // Read user name if flag set (protocol 30+)
+                if flags.user_name_follows() {
+                    let mut len_buf = [0u8; 1];
+                    reader.read_exact(&mut len_buf)?;
+                    let len = len_buf[0] as usize;
+                    if len > 0 {
+                        let mut name_bytes = vec![0u8; len];
+                        reader.read_exact(&mut name_bytes)?;
+                        user_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
+                    }
                 }
+                Some(uid)
             }
-        }
+        } else {
+            None
+        };
 
         // 7. Read GID and optional group name
         let mut group_name = None;
-        if self.preserve_gid && !flags.same_gid() {
-            let gid = read_varint(reader)? as u32;
-            self.state.update_gid(gid);
-            // Read group name if flag set (protocol 30+)
-            if flags.group_name_follows() {
-                let mut len_buf = [0u8; 1];
-                reader.read_exact(&mut len_buf)?;
-                let len = len_buf[0] as usize;
-                if len > 0 {
-                    let mut name_bytes = vec![0u8; len];
-                    reader.read_exact(&mut name_bytes)?;
-                    group_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
+        let gid = if self.preserve_gid {
+            if flags.same_gid() {
+                // Use previous GID
+                Some(self.state.prev_gid())
+            } else {
+                // Read GID from wire (fixed encoding for protocol < 30)
+                let gid = if self.protocol.uses_fixed_encoding() {
+                    let mut buf = [0u8; 4];
+                    reader.read_exact(&mut buf)?;
+                    i32::from_le_bytes(buf) as u32
+                } else {
+                    read_varint(reader)? as u32
+                };
+                self.state.update_gid(gid);
+                // Read group name if flag set (protocol 30+)
+                if flags.group_name_follows() {
+                    let mut len_buf = [0u8; 1];
+                    reader.read_exact(&mut len_buf)?;
+                    let len = len_buf[0] as usize;
+                    if len > 0 {
+                        let mut name_bytes = vec![0u8; len];
+                        reader.read_exact(&mut name_bytes)?;
+                        group_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
+                    }
                 }
+                Some(gid)
             }
-        }
+        } else {
+            None
+        };
 
         // Determine content_dir for directories (protocol 30+)
         // XMIT_NO_CONTENT_DIR shares bit with XMIT_SAME_RDEV_MAJOR but only applies to directories
@@ -427,6 +511,8 @@ impl FileListReader {
             mtime,
             nsec,
             mode,
+            uid,
+            gid,
             user_name,
             group_name,
             atime,
@@ -500,7 +586,7 @@ impl FileListReader {
 
         // Read major if not same as previous
         let major = if flags.same_rdev_major() {
-            self.state.prev_rdev_major
+            self.state.prev_rdev_major()
         } else {
             let m = read_varint30_int(reader, self.protocol.as_u8())? as u32;
             self.state.update_rdev_major(m);
@@ -559,7 +645,7 @@ impl FileListReader {
 
         // Read dev if not same as previous
         let dev = if flags.same_dev_pre30() {
-            self.state.prev_hardlink_dev
+            self.state.prev_hardlink_dev()
         } else {
             let raw_dev = crate::read_longint(reader)?;
             // Upstream stores dev + 1, so subtract 1
@@ -699,6 +785,10 @@ impl FileListReader {
     ///
     /// Returns `None` when the end-of-list marker is received (a zero byte).
     /// Returns an error on I/O failure or malformed data.
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `flist.c:recv_file_entry()` lines 760-1050 for the complete wire decoding.
     pub fn read_entry<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -735,6 +825,8 @@ impl FileListReader {
                         mtime: 0,
                         nsec: 0,
                         mode: 0,
+                        uid: None,
+                        gid: None,
                         user_name: None,
                         group_name: None,
                         atime: None,
@@ -805,43 +897,53 @@ impl FileListReader {
             entry.set_hardlink_idx(idx);
         }
 
-        // Step 13: Set user name if present
+        // Step 13: Set UID if present
+        if let Some(uid) = metadata.uid {
+            entry.set_uid(uid);
+        }
+
+        // Step 14: Set GID if present
+        if let Some(gid) = metadata.gid {
+            entry.set_gid(gid);
+        }
+
+        // Step 15: Set user name if present
         if let Some(name) = metadata.user_name {
             entry.set_user_name(name);
         }
 
-        // Step 14: Set group name if present
+        // Step 16: Set group name if present
         if let Some(name) = metadata.group_name {
             entry.set_group_name(name);
         }
 
-        // Step 15: Set atime if present
+        // Step 17: Set atime if present
         if let Some(atime) = metadata.atime {
             entry.set_atime(atime);
         }
 
-        // Step 16: Set crtime if present
+        // Step 18: Set crtime if present
         if let Some(crtime) = metadata.crtime {
             entry.set_crtime(crtime);
         }
 
-        // Step 17: Set content_dir for directories
+        // Step 19: Set content_dir for directories
         if entry.is_dir() {
             entry.set_content_dir(metadata.content_dir);
         }
 
-        // Step 18: Set hardlink dev/ino if present (protocol 28-29)
+        // Step 20: Set hardlink dev/ino if present (protocol 28-29)
         if let Some((dev, ino)) = hardlink_dev_ino {
             entry.set_hardlink_dev(dev);
             entry.set_hardlink_ino(ino);
         }
 
-        // Step 19: Set checksum if present
+        // Step 21: Set checksum if present
         if let Some(sum) = checksum {
             entry.set_checksum(sum);
         }
 
-        // Step 20: Update statistics
+        // Step 22: Update statistics
         self.update_stats(&entry);
 
         Ok(Some(entry))
@@ -872,20 +974,20 @@ impl FileListReader {
         };
 
         // Validate lengths
-        if same_len > self.state.prev_name.len() {
+        if same_len > self.state.prev_name().len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "same_len {} exceeds previous name length {}",
                     same_len,
-                    self.state.prev_name.len()
+                    self.state.prev_name().len()
                 ),
             ));
         }
 
         // Build full name
         let mut name = Vec::with_capacity(same_len + suffix_len);
-        name.extend_from_slice(&self.state.prev_name[..same_len]);
+        name.extend_from_slice(&self.state.prev_name()[..same_len]);
 
         if suffix_len > 0 {
             let start = name.len();

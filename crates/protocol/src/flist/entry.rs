@@ -127,6 +127,10 @@ pub struct FileEntry {
     hardlink_ino: Option<i64>,
     /// File checksum for --checksum mode (variable length, up to 32 bytes).
     checksum: Option<Vec<u8>>,
+    /// ACL index for --acls mode (index into ACL list, protocol 30+).
+    acl_ndx: Option<u32>,
+    /// Extended attribute index for --xattrs mode (index into xattr list).
+    xattr_ndx: Option<u32>,
 
     // 4-byte aligned fields
     /// Unix mode bits (type + permissions).
@@ -175,6 +179,8 @@ impl FileEntry {
             hardlink_dev: None,
             hardlink_ino: None,
             checksum: None,
+            acl_ndx: None,
+            xattr_ndx: None,
             mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime_nsec: 0,
             flags: super::flags::FileFlags::default(),
@@ -255,6 +261,8 @@ impl FileEntry {
             hardlink_dev: None,
             hardlink_ino: None,
             checksum: None,
+            acl_ndx: None,
+            xattr_ndx: None,
             mode,
             mtime_nsec,
             flags,
@@ -508,6 +516,30 @@ impl FileEntry {
     /// Sets the file checksum (for --checksum mode).
     pub fn set_checksum(&mut self, sum: Vec<u8>) {
         self.checksum = Some(sum);
+    }
+
+    /// Returns the ACL index if set (for --acls mode).
+    #[inline]
+    #[must_use]
+    pub const fn acl_ndx(&self) -> Option<u32> {
+        self.acl_ndx
+    }
+
+    /// Sets the ACL index (for --acls mode).
+    pub const fn set_acl_ndx(&mut self, ndx: u32) {
+        self.acl_ndx = Some(ndx);
+    }
+
+    /// Returns the extended attribute index if set (for --xattrs mode).
+    #[inline]
+    #[must_use]
+    pub const fn xattr_ndx(&self) -> Option<u32> {
+        self.xattr_ndx
+    }
+
+    /// Sets the extended attribute index (for --xattrs mode).
+    pub const fn set_xattr_ndx(&mut self, ndx: u32) {
+        self.xattr_ndx = Some(ndx);
     }
 
     /// Returns true if this entry is a block or character device.

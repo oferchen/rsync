@@ -32,6 +32,13 @@ pub const XMIT_SAME_MODE: u8 = 1 << 1;
 /// Upstream: `XMIT_EXTENDED_FLAGS (1<<2)` for protocol 28+
 pub const XMIT_EXTENDED_FLAGS: u8 = 1 << 2;
 
+/// Flag indicating same rdev as previous entry (protocols 20-27).
+///
+/// In protocols before 28, this bit indicates the device number matches
+/// the previous entry. Shares bit position with XMIT_EXTENDED_FLAGS.
+/// Upstream: `XMIT_SAME_RDEV_pre28 (1<<2)` for protocols 20-27
+pub const XMIT_SAME_RDEV_PRE28: u8 = 1 << 2;
+
 /// Flag indicating the entry has the same UID as the previous entry.
 ///
 /// Upstream: `XMIT_SAME_UID (1<<3)`
@@ -443,11 +450,18 @@ mod tests {
         assert_eq!(XMIT_TOP_DIR, 0b0000_0001);
         assert_eq!(XMIT_SAME_MODE, 0b0000_0010);
         assert_eq!(XMIT_EXTENDED_FLAGS, 0b0000_0100);
+        assert_eq!(XMIT_SAME_RDEV_PRE28, 0b0000_0100); // Same bit as EXTENDED_FLAGS for proto < 28
         assert_eq!(XMIT_SAME_UID, 0b0000_1000);
         assert_eq!(XMIT_SAME_GID, 0b0001_0000);
         assert_eq!(XMIT_SAME_NAME, 0b0010_0000);
         assert_eq!(XMIT_LONG_NAME, 0b0100_0000);
         assert_eq!(XMIT_SAME_TIME, 0b1000_0000);
+    }
+
+    #[test]
+    fn xmit_same_rdev_pre28_same_as_extended_flags() {
+        // These share the same bit position but are used in different protocol versions
+        assert_eq!(XMIT_SAME_RDEV_PRE28, XMIT_EXTENDED_FLAGS);
     }
 
     #[test]
