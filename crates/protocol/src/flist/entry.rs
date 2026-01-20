@@ -172,6 +172,22 @@ impl FileEntry {
         Self::new_with_type(name, 0, FileType::Symlink, 0o777, Some(target))
     }
 
+    /// Creates a new block device entry.
+    #[must_use]
+    pub fn new_block_device(name: PathBuf, permissions: u32, major: u32, minor: u32) -> Self {
+        let mut entry = Self::new_with_type(name, 0, FileType::BlockDevice, permissions, None);
+        entry.set_rdev(major, minor);
+        entry
+    }
+
+    /// Creates a new character device entry.
+    #[must_use]
+    pub fn new_char_device(name: PathBuf, permissions: u32, major: u32, minor: u32) -> Self {
+        let mut entry = Self::new_with_type(name, 0, FileType::CharDevice, permissions, None);
+        entry.set_rdev(major, minor);
+        entry
+    }
+
     /// Creates a file entry from raw components (used during decoding).
     #[must_use]
     pub(crate) const fn from_raw(
@@ -335,6 +351,49 @@ impl FileEntry {
     pub const fn set_rdev(&mut self, major: u32, minor: u32) {
         self.rdev_major = Some(major);
         self.rdev_minor = Some(minor);
+    }
+
+    /// Returns the hardlink index if this entry is a hardlink.
+    #[must_use]
+    pub const fn hardlink_idx(&self) -> Option<u32> {
+        self.hardlink_idx
+    }
+
+    /// Sets the hardlink index for this entry.
+    pub const fn set_hardlink_idx(&mut self, idx: u32) {
+        self.hardlink_idx = Some(idx);
+    }
+
+    /// Returns true if this entry is a block or character device.
+    ///
+    /// Checks for S_ISBLK (0o060000) or S_ISCHR (0o020000) mode bits.
+    #[inline]
+    #[must_use]
+    pub const fn is_device(&self) -> bool {
+        let type_bits = self.mode & 0o170000;
+        type_bits == 0o060000 || type_bits == 0o020000 // S_IFBLK or S_IFCHR
+    }
+
+    /// Returns true if this entry is a block device.
+    #[inline]
+    #[must_use]
+    pub const fn is_block_device(&self) -> bool {
+        self.mode & 0o170000 == 0o060000 // S_IFBLK
+    }
+
+    /// Returns true if this entry is a character device.
+    #[inline]
+    #[must_use]
+    pub const fn is_char_device(&self) -> bool {
+        self.mode & 0o170000 == 0o020000 // S_IFCHR
+    }
+
+    /// Returns true if this entry is a special file (socket or FIFO).
+    #[inline]
+    #[must_use]
+    pub const fn is_special(&self) -> bool {
+        let type_bits = self.mode & 0o170000;
+        type_bits == 0o140000 || type_bits == 0o010000 // S_IFSOCK or S_IFIFO
     }
 }
 
