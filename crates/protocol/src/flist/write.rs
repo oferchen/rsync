@@ -14,7 +14,7 @@ use crate::varint::{write_varint, write_varint30_int};
 use super::entry::FileEntry;
 use super::flags::{
     XMIT_CRTIME_EQ_MTIME, XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS, XMIT_HLINK_FIRST,
-    XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_NO_CONTENT_DIR,
+    XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_MOD_NSEC, XMIT_NO_CONTENT_DIR,
     XMIT_RDEV_MINOR_8_PRE30, XMIT_SAME_ATIME, XMIT_SAME_GID, XMIT_SAME_MODE, XMIT_SAME_NAME,
     XMIT_SAME_RDEV_MAJOR, XMIT_SAME_TIME, XMIT_SAME_UID, XMIT_TOP_DIR, XMIT_USER_NAME_FOLLOWS,
 };
@@ -270,6 +270,11 @@ impl FileListWriter {
             xflags |= (XMIT_CRTIME_EQ_MTIME as u32) << 16;
         }
 
+        // Modification time nanoseconds flag (protocol 31+)
+        if self.protocol.as_u8() >= 31 && entry.mtime_nsec() != 0 {
+            xflags |= (XMIT_MOD_NSEC as u32) << 8;
+        }
+
         xflags
     }
 
@@ -338,28 +343,48 @@ impl FileListWriter {
         writer.write_all(&name[same_len..])
     }
 
-    /// Writes metadata fields (size, mtime, mode, uid, gid).
+    /// Writes metadata fields in upstream rsync wire format order.
+    ///
+    /// Order (matching flist.c send_file_entry lines 580-620):
+    /// 1. size (varlong30)
+    /// 2. mtime (if not XMIT_SAME_TIME)
+    /// 3. nsec (if XMIT_MOD_NSEC, protocol 31+)
+    /// 4. crtime (if preserving, not XMIT_CRTIME_EQ_MTIME)
+    /// 5. mode (if not XMIT_SAME_MODE)
+    /// 6. atime (if preserving, non-dir, not XMIT_SAME_ATIME)
+    /// 7. uid + user name (if preserving, not XMIT_SAME_UID)
+    /// 8. gid + group name (if preserving, not XMIT_SAME_GID)
     fn write_metadata<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
         entry: &FileEntry,
         xflags: u32,
     ) -> io::Result<()> {
-        // Write file size
+        // 1. Write file size
         self.codec.write_file_size(writer, entry.size() as i64)?;
 
-        // Write mtime if different
+        // 2. Write mtime if different
         if xflags & (XMIT_SAME_TIME as u32) == 0 {
             self.codec.write_mtime(writer, entry.mtime())?;
         }
 
-        // Write mode if different
+        // 3. Write nsec if flag set (protocol 31+)
+        if (xflags & ((XMIT_MOD_NSEC as u32) << 8)) != 0 {
+            write_varint(writer, entry.mtime_nsec() as i32)?;
+        }
+
+        // 4. Write crtime if preserving and different from mtime
+        if self.preserve_crtimes && (xflags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16)) == 0 {
+            crate::write_varlong(writer, entry.crtime(), 4)?;
+        }
+
+        // 5. Write mode if different
         if xflags & (XMIT_SAME_MODE as u32) == 0 {
             let wire_mode = entry.mode() as i32;
             writer.write_all(&wire_mode.to_le_bytes())?;
         }
 
-        // Write atime if preserving and different (non-directories only)
+        // 6. Write atime if preserving and different (non-directories only)
         if self.preserve_atimes
             && !entry.is_dir()
             && (xflags & ((XMIT_SAME_ATIME as u32) << 8)) == 0
@@ -368,12 +393,7 @@ impl FileListWriter {
             self.state.update_atime(entry.atime());
         }
 
-        // Write crtime if preserving and different from mtime
-        if self.preserve_crtimes && (xflags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16)) == 0 {
-            crate::write_varlong(writer, entry.crtime(), 4)?;
-        }
-
-        // Write UID if preserving and different
+        // 7. Write UID if preserving and different
         let entry_uid = entry.uid().unwrap_or(0);
         if self.preserve_uid && (xflags & (XMIT_SAME_UID as u32)) == 0 {
             if self.protocol.uses_fixed_encoding() {
@@ -393,7 +413,7 @@ impl FileListWriter {
             self.state.update_uid(entry_uid);
         }
 
-        // Write GID if preserving and different
+        // 8. Write GID if preserving and different
         let entry_gid = entry.gid().unwrap_or(0);
         if self.preserve_gid && (xflags & (XMIT_SAME_GID as u32)) == 0 {
             if self.protocol.uses_fixed_encoding() {
@@ -539,6 +559,21 @@ impl FileListWriter {
     }
 
     /// Writes a file entry to the stream.
+    ///
+    /// Wire format order (matching upstream rsync flist.c send_file_entry):
+    /// 1. Flags
+    /// 2. Name (with prefix compression)
+    /// 3. Hardlink index (if follower) - then STOP for followers
+    /// 4. File size
+    /// 5. Mtime (if not XMIT_SAME_TIME)
+    /// 6. Nsec (if XMIT_MOD_NSEC)
+    /// 7. Crtime (if preserving and not XMIT_CRTIME_EQ_MTIME)
+    /// 8. Mode (if not XMIT_SAME_MODE)
+    /// 9. Atime (if preserving, non-dir, not XMIT_SAME_ATIME)
+    /// 10. UID (if preserving, not XMIT_SAME_UID) + user name
+    /// 11. GID (if preserving, not XMIT_SAME_GID) + group name
+    /// 12. Device numbers (if device/special file)
+    /// 13. Symlink target (if symlink)
     pub fn write_entry<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -561,22 +596,24 @@ impl FileListWriter {
         // Step 5: Write name
         self.write_name(writer, &name, same_len, suffix_len, xflags)?;
 
-        // Step 6-9: Write metadata (unless this is a hardlink follower)
+        // Step 6: Write hardlink index (MUST come immediately after name)
+        // For hardlink followers, this is the only field written after the name.
+        // Upstream rsync does "goto the_end" after writing the index for followers.
+        self.write_hardlink_idx(writer, entry, xflags)?;
+
+        // Step 7+: Write metadata (unless this is a hardlink follower)
         // Hardlink followers have their metadata copied from the leader entry,
         // so we skip writing size, mtime, mode, uid, gid, symlink, and rdev.
         if !self.is_hardlink_follower(xflags) {
-            // Step 6: Write metadata
+            // Step 7: Write metadata (size, mtime, nsec, crtime, mode, atime, uid, gid)
             self.write_metadata(writer, entry, xflags)?;
-
-            // Step 7: Write symlink target (if applicable)
-            self.write_symlink_target(writer, entry)?;
 
             // Step 8: Write device numbers (if applicable)
             self.write_rdev(writer, entry, xflags)?;
-        }
 
-        // Step 9: Write hardlink index (if applicable)
-        self.write_hardlink_idx(writer, entry, xflags)?;
+            // Step 9: Write symlink target (if applicable)
+            self.write_symlink_target(writer, entry)?;
+        }
 
         // Step 10: Update state
         self.state.update(
