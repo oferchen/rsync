@@ -46,7 +46,10 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
-            Self::Taken => panic!("ServerWriter in invalid Taken state"),
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
         }
     }
 
@@ -80,7 +83,10 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::AlreadyExists,
                 "compression already active",
             )),
-            Self::Taken => panic!("ServerWriter in invalid Taken state"),
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
         }
     }
 
@@ -97,9 +103,11 @@ impl<W: Write> ServerWriter<W> {
     /// the file list but before sending file data. Upstream rsync client sender
     /// calls io_start_multiplex_out() after send_file_list().
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the writer is in the Taken state (internal error).
+    /// Returns an error if:
+    /// - Multiplex mode is already active
+    /// - The writer is in an invalid Taken state
     pub fn activate_multiplex_in_place(&mut self) -> io::Result<()> {
         // Use a take-and-replace pattern with the Taken variant as placeholder
         let old_self = std::mem::replace(self, Self::Taken);
@@ -109,9 +117,10 @@ impl<W: Write> ServerWriter<W> {
                 *self = Self::Multiplex(MultiplexWriter::new(writer));
                 Ok(())
             }
-            Self::Taken => {
-                panic!("ServerWriter in invalid Taken state");
-            }
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
             other => {
                 // Restore original state
                 *self = other;
@@ -147,7 +156,10 @@ impl<W: Write> ServerWriter<W> {
                 io::ErrorKind::InvalidInput,
                 "cannot send control messages in plain mode",
             )),
-            Self::Taken => panic!("ServerWriter in invalid Taken state"),
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
         }
     }
 
@@ -181,7 +193,10 @@ impl<W: Write> ServerWriter<W> {
                 // Write directly to the multiplex layer's inner writer
                 compressed.inner_mut().write_raw(data)
             }
-            Self::Taken => panic!("ServerWriter in invalid Taken state"),
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
         }
     }
 }
@@ -192,7 +207,10 @@ impl<W: Write> Write for ServerWriter<W> {
             Self::Plain(w) => w.write(buf),
             Self::Multiplex(w) => w.write(buf),
             Self::Compressed(w) => w.write(buf),
-            Self::Taken => panic!("ServerWriter in invalid Taken state"),
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
         }
     }
 
@@ -201,7 +219,10 @@ impl<W: Write> Write for ServerWriter<W> {
             Self::Plain(w) => w.flush(),
             Self::Multiplex(w) => w.flush(),
             Self::Compressed(w) => w.flush(),
-            Self::Taken => panic!("ServerWriter in invalid Taken state"),
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
         }
     }
 }
@@ -464,6 +485,101 @@ mod tests {
         assert!(result.is_err());
         match result {
             Err(err) => assert_eq!(err.kind(), io::ErrorKind::AlreadyExists),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    // Tests for Taken state error handling (previously these would panic)
+
+    #[test]
+    fn taken_state_activate_multiplex_returns_error() {
+        let writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let result = writer.activate_multiplex();
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn taken_state_activate_compression_returns_error() {
+        use std::num::NonZeroU8;
+        let writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let level = CompressionLevel::precise(NonZeroU8::new(6).unwrap());
+        let result = writer.activate_compression(CompressionAlgorithm::Zlib, level);
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn taken_state_activate_multiplex_in_place_returns_error() {
+        let mut writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let result = writer.activate_multiplex_in_place();
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn taken_state_send_message_returns_error() {
+        let mut writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let result = writer.send_message(MessageCode::Data, b"test");
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn taken_state_write_raw_returns_error() {
+        let mut writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let result = writer.write_raw(b"test");
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn taken_state_write_returns_error() {
+        let mut writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let result = writer.write(b"test");
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn taken_state_flush_returns_error() {
+        let mut writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let result = writer.flush();
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
             Ok(_) => panic!("expected error"),
         }
     }

@@ -28,8 +28,11 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
-use rsync_io::ssh::{SshCommand, SshConnection, parse_ssh_operand};
+use rsync_io::ssh::{SshCommand, SshConnection, SshReader, SshWriter, parse_ssh_operand};
 
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error};
@@ -197,62 +200,132 @@ fn spawn_ssh_connection(
     })
 }
 
-/// Runs bidirectional relay between two connections.
+/// Runs bidirectional relay between two SSH connections using threads.
 ///
-/// Note: This is a simple sequential implementation that forwards data from
-/// source to destination. A full bidirectional implementation would require
-/// either async I/O or separate threads for each direction to avoid deadlocks.
+/// Spawns two threads for deadlock-free bidirectional relay:
+/// - Thread 1: source stdout → destination stdin (file data, protocol messages)
+/// - Thread 2: destination stdout → source stdin (checksums, acks)
 ///
-/// The current implementation works for rsync's protocol because:
-/// 1. Initial phase: source sends file list → destination
-/// 2. Response phase: destination sends checksums → source
-/// 3. Delta phase: source sends file data → destination
+/// Both threads run concurrently until EOF or error. This mirrors upstream rsync's
+/// approach of using non-blocking I/O for proxy transfers.
 ///
-/// Each phase is mostly unidirectional, so sequential relay works for basic transfers.
+/// # Arguments
+///
+/// * `source` - SSH connection to the source host (sender/generator)
+/// * `dest` - SSH connection to the destination host (receiver)
+///
+/// # Returns
+///
+/// Statistics on bytes relayed in each direction on success.
 fn run_bidirectional_relay(
     source: SshConnection,
     dest: SshConnection,
 ) -> Result<ProxyStats, ClientError> {
-    run_sequential_relay(source, dest)
+    // Split connections into read/write halves for thread-safe operation
+    let (source_reader, source_writer, source_handle) = source.split().map_err(|e| {
+        invalid_argument_error(&format!("failed to split source connection: {e}"), 23)
+    })?;
+    let (dest_reader, dest_writer, dest_handle) = dest.split().map_err(|e| {
+        invalid_argument_error(&format!("failed to split destination connection: {e}"), 23)
+    })?;
+
+    // Shared flag to signal shutdown
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    // Thread 1: source → destination (file data, file list)
+    let shutdown_s2d = Arc::clone(&shutdown);
+    let s2d_handle =
+        thread::spawn(move || relay_data(source_reader, dest_writer, shutdown_s2d, "source→dest"));
+
+    // Thread 2: destination → source (checksums, acks)
+    let shutdown_d2s = Arc::clone(&shutdown);
+    let d2s_handle =
+        thread::spawn(move || relay_data(dest_reader, source_writer, shutdown_d2s, "dest→source"));
+
+    // Wait for both threads
+    let s2d_result = s2d_handle
+        .join()
+        .map_err(|_| invalid_argument_error("source→dest relay thread panicked", 23))?;
+
+    let d2s_result = d2s_handle
+        .join()
+        .map_err(|_| invalid_argument_error("dest→source relay thread panicked", 23))?;
+
+    // Wait for child processes
+    let _ = source_handle.wait();
+    let _ = dest_handle.wait();
+
+    // Collect results - return first error encountered
+    let bytes_source_to_dest = s2d_result?;
+    let bytes_dest_to_source = d2s_result?;
+
+    Ok(ProxyStats {
+        bytes_source_to_dest,
+        bytes_dest_to_source,
+    })
 }
 
-/// Simple sequential relay for initial implementation.
+/// Relays data from reader to writer until EOF or error.
 ///
-/// This is a placeholder that performs a basic relay. It will be replaced
-/// with a proper threaded or async implementation.
-fn run_sequential_relay(
-    mut source: SshConnection,
-    mut dest: SshConnection,
-) -> Result<ProxyStats, ClientError> {
-    let mut stats = ProxyStats::default();
+/// Copies data in chunks, flushing after each write to maintain protocol
+/// synchronization. Returns the total bytes relayed.
+///
+/// # Arguments
+///
+/// * `reader` - Source of data
+/// * `writer` - Destination for data
+/// * `shutdown` - Shared flag to check for shutdown request
+/// * `direction` - Human-readable direction for error messages
+fn relay_data(
+    mut reader: SshReader,
+    mut writer: SshWriter,
+    shutdown: Arc<AtomicBool>,
+    direction: &str,
+) -> Result<u64, ClientError> {
     let mut buf = [0u8; 8192];
+    let mut total_bytes = 0u64;
 
-    // Copy from source to dest until EOF
     loop {
-        match source.read(&mut buf) {
-            Ok(0) => break, // EOF from source
+        // Check for shutdown signal
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+
+        match reader.read(&mut buf) {
+            Ok(0) => {
+                // EOF reached - signal shutdown and close writer
+                shutdown.store(true, Ordering::Relaxed);
+                let _ = writer.close();
+                break;
+            }
             Ok(n) => {
-                dest.write_all(&buf[..n])
-                    .map_err(|e| invalid_argument_error(&format!("relay write error: {e}"), 23))?;
-                dest.flush()
-                    .map_err(|e| invalid_argument_error(&format!("relay flush error: {e}"), 23))?;
-                stats.bytes_source_to_dest += n as u64;
+                writer.write_all(&buf[..n]).map_err(|e| {
+                    shutdown.store(true, Ordering::Relaxed);
+                    invalid_argument_error(&format!("{direction} write error: {e}"), 23)
+                })?;
+                writer.flush().map_err(|e| {
+                    shutdown.store(true, Ordering::Relaxed);
+                    invalid_argument_error(&format!("{direction} flush error: {e}"), 23)
+                })?;
+                total_bytes += n as u64;
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                // Non-blocking I/O - yield and retry
+                thread::yield_now();
+                continue;
+            }
             Err(e) => {
+                shutdown.store(true, Ordering::Relaxed);
                 return Err(invalid_argument_error(
-                    &format!("relay read error: {e}"),
+                    &format!("{direction} read error: {e}"),
                     23,
                 ));
             }
         }
     }
 
-    // Close source stdin and dest stdin
-    source.close_stdin().ok();
-    dest.close_stdin().ok();
-
-    Ok(stats)
+    Ok(total_bytes)
 }
 
 /// Builds a client summary from proxy transfer statistics.
