@@ -66,6 +66,7 @@ pub struct FileListReader {
 /// Result from reading metadata fields.
 struct MetadataResult {
     mtime: i64,
+    nsec: u32,
     mode: u32,
     user_name: Option<String>,
     group_name: Option<String>,
@@ -275,13 +276,22 @@ impl FileListReader {
         Ok(Some(error_code))
     }
 
-    /// Reads metadata fields (mtime, nsec, mode, uid, gid, user_name, group_name, atime, crtime) based on flags.
+    /// Reads metadata fields in upstream rsync wire format order.
+    ///
+    /// Order (matching flist.c recv_file_entry lines 826-920):
+    /// 1. mtime (if not XMIT_SAME_TIME)
+    /// 2. nsec (if XMIT_MOD_NSEC, protocol 31+)
+    /// 3. crtime (if preserving, not XMIT_CRTIME_EQ_MTIME)
+    /// 4. mode (if not XMIT_SAME_MODE)
+    /// 5. atime (if preserving, non-dir, not XMIT_SAME_ATIME)
+    /// 6. uid + user name (if preserving, not XMIT_SAME_UID)
+    /// 7. gid + group name (if preserving, not XMIT_SAME_GID)
     fn read_metadata<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
         flags: FileFlags,
     ) -> io::Result<MetadataResult> {
-        // Read mtime
+        // 1. Read mtime
         let mtime = if flags.same_time() {
             self.state.prev_mtime
         } else {
@@ -290,14 +300,28 @@ impl FileListReader {
             mtime
         };
 
-        // Read nanoseconds if present (protocol 31+)
-        let _nsec = if flags.mod_nsec() {
+        // 2. Read nanoseconds if flag set (protocol 31+)
+        let nsec = if flags.mod_nsec() {
             crate::read_varint(reader)? as u32
         } else {
             0
         };
 
-        // Read mode
+        // 3. Read crtime if preserving crtimes (BEFORE mode, per upstream)
+        let crtime = if self.preserve_crtimes {
+            if flags.crtime_eq_mtime() {
+                // Creation time equals mtime
+                Some(mtime)
+            } else {
+                // Read crtime from wire
+                let crtime = crate::read_varlong(reader, 4)?;
+                Some(crtime)
+            }
+        } else {
+            None
+        };
+
+        // 4. Read mode
         let mode = if flags.same_mode() {
             self.state.prev_mode
         } else {
@@ -308,7 +332,23 @@ impl FileListReader {
             mode
         };
 
-        // Read UID and optional user name
+        // Determine if this is a directory (needed for atime and content_dir)
+        let is_dir = (mode & 0o170000) == 0o040000;
+
+        // 5. Read atime if preserving atimes (AFTER mode, non-directories only)
+        let atime = if self.preserve_atimes && !is_dir {
+            if flags.same_atime() {
+                Some(self.state.prev_atime)
+            } else {
+                let atime = crate::read_varlong(reader, 4)?;
+                self.state.update_atime(atime);
+                Some(atime)
+            }
+        } else {
+            None
+        };
+
+        // 6. Read UID and optional user name
         let mut user_name = None;
         if self.preserve_uid && !flags.same_uid() {
             let uid = read_varint(reader)? as u32;
@@ -326,7 +366,7 @@ impl FileListReader {
             }
         }
 
-        // Read GID and optional group name
+        // 7. Read GID and optional group name
         let mut group_name = None;
         if self.preserve_gid && !flags.same_gid() {
             let gid = read_varint(reader)? as u32;
@@ -346,7 +386,6 @@ impl FileListReader {
 
         // Determine content_dir for directories (protocol 30+)
         // XMIT_NO_CONTENT_DIR shares bit with XMIT_SAME_RDEV_MAJOR but only applies to directories
-        let is_dir = (mode & 0o170000) == 0o040000;
         let content_dir = if is_dir && self.protocol.as_u8() >= 30 {
             // If XMIT_NO_CONTENT_DIR is NOT set, directory has content
             (flags.extended & XMIT_NO_CONTENT_DIR) == 0
@@ -355,35 +394,9 @@ impl FileListReader {
             true
         };
 
-        // Read atime if preserving atimes and not same as previous (non-directories only)
-        let atime = if self.preserve_atimes && !is_dir {
-            if flags.same_atime() {
-                Some(self.state.prev_atime)
-            } else {
-                let atime = crate::read_varlong(reader, 4)?;
-                self.state.update_atime(atime);
-                Some(atime)
-            }
-        } else {
-            None
-        };
-
-        // Read crtime if preserving crtimes
-        let crtime = if self.preserve_crtimes {
-            if flags.crtime_eq_mtime() {
-                // Creation time equals mtime
-                Some(mtime)
-            } else {
-                // Read crtime from wire
-                let crtime = crate::read_varlong(reader, 4)?;
-                Some(crtime)
-            }
-        } else {
-            None
-        };
-
         Ok(MetadataResult {
             mtime,
+            nsec,
             mode,
             user_name,
             group_name,
@@ -539,6 +552,21 @@ impl FileListReader {
 
     /// Reads the next file entry from the stream.
     ///
+    /// Wire format order (matching upstream rsync flist.c recv_file_entry):
+    /// 1. Flags
+    /// 2. Name (with prefix compression)
+    /// 3. Hardlink index (if follower) - then STOP for followers
+    /// 4. File size
+    /// 5. Mtime (if not XMIT_SAME_TIME)
+    /// 6. Nsec (if XMIT_MOD_NSEC)
+    /// 7. Crtime (if preserving, not XMIT_CRTIME_EQ_MTIME)
+    /// 8. Mode (if not XMIT_SAME_MODE)
+    /// 9. Atime (if preserving, non-dir, not XMIT_SAME_ATIME)
+    /// 10. UID + user name (if preserving, not XMIT_SAME_UID)
+    /// 11. GID + group name (if preserving, not XMIT_SAME_GID)
+    /// 12. Device numbers (if device/special file)
+    /// 13. Symlink target (if symlink)
+    ///
     /// Returns `None` when the end-of-list marker is received (a zero byte).
     /// Returns an error on I/O failure or malformed data.
     pub fn read_entry<R: Read + ?Sized>(
@@ -560,7 +588,12 @@ impl FileListReader {
         // Step 2: Read name with compression
         let name = self.read_name(reader, flags)?;
 
-        // Step 3-6: Read metadata (unless this is a hardlink follower)
+        // Step 3: Read hardlink index (MUST come immediately after name)
+        // For hardlink followers, this is the only field read after the name.
+        // Upstream rsync does "goto create_object" after reading the index for followers.
+        let hardlink_idx = self.read_hardlink_idx(reader, flags)?;
+
+        // Step 4+: Read metadata (unless this is a hardlink follower)
         // Hardlink followers have their metadata copied from the leader entry,
         // so we skip reading size, mtime, mode, uid, gid, symlink, and rdev.
         let (size, metadata, link_target, rdev) = if self.is_hardlink_follower(flags) {
@@ -569,6 +602,7 @@ impl FileListReader {
                 0u64,
                 MetadataResult {
                     mtime: 0,
+                    nsec: 0,
                     mode: 0,
                     user_name: None,
                     group_name: None,
@@ -580,30 +614,34 @@ impl FileListReader {
                 None,
             )
         } else {
-            // Step 3: Read file size
+            // Step 4: Read file size
             let size = self.read_size(reader)?;
 
-            // Step 4: Read metadata fields
+            // Step 5: Read metadata fields (mtime, nsec, crtime, mode, atime, uid, gid)
             let metadata = self.read_metadata(reader, flags)?;
-
-            // Step 5: Read symlink target (if applicable)
-            let link_target = self.read_symlink_target(reader, metadata.mode)?;
 
             // Step 6: Read device numbers (if applicable)
             let rdev = self.read_rdev(reader, metadata.mode, flags)?;
 
+            // Step 7: Read symlink target (if applicable)
+            let link_target = self.read_symlink_target(reader, metadata.mode)?;
+
             (size, metadata, link_target, rdev)
         };
-
-        // Step 7: Read hardlink index (if applicable)
-        let hardlink_idx = self.read_hardlink_idx(reader, flags)?;
 
         // Step 8: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
         // Step 9: Construct entry
         let path = PathBuf::from(String::from_utf8_lossy(&converted_name).into_owned());
-        let mut entry = FileEntry::from_raw(path, size, metadata.mode, metadata.mtime, 0, flags);
+        let mut entry = FileEntry::from_raw(
+            path,
+            size,
+            metadata.mode,
+            metadata.mtime,
+            metadata.nsec,
+            flags,
+        );
 
         // Step 10: Set symlink target if present
         if let Some(target) = link_target {
