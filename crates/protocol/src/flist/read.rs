@@ -17,7 +17,7 @@ use super::flags::{
     FileFlags, XMIT_EXTENDED_FLAGS, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST,
     XMIT_NO_CONTENT_DIR,
 };
-use super::state::FileListCompressionState;
+use super::state::{FileListCompressionState, FileListStats};
 
 /// Result of reading flags from the wire.
 #[derive(Debug)]
@@ -45,6 +45,8 @@ pub struct FileListReader {
     compat_flags: Option<CompatibilityFlags>,
     /// Compression state for cross-entry field sharing.
     state: FileListCompressionState,
+    /// Statistics collected during file list reading.
+    stats: FileListStats,
     /// Whether to preserve (and thus read) UID values from the wire.
     preserve_uid: bool,
     /// Whether to preserve (and thus read) GID values from the wire.
@@ -59,6 +61,10 @@ pub struct FileListReader {
     preserve_atimes: bool,
     /// Whether to preserve (and thus read) creation times from the wire.
     preserve_crtimes: bool,
+    /// Whether sender is in checksum mode (--checksum / -c).
+    always_checksum: bool,
+    /// Length of checksum to read (depends on protocol and checksum algorithm).
+    flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
 }
@@ -85,6 +91,7 @@ impl FileListReader {
             codec,
             compat_flags: None,
             state: FileListCompressionState::new(),
+            stats: FileListStats::default(),
             preserve_uid: false,
             preserve_gid: false,
             preserve_links: false,
@@ -92,6 +99,8 @@ impl FileListReader {
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
+            always_checksum: false,
+            flist_csum_len: 0,
             iconv: None,
         }
     }
@@ -105,6 +114,7 @@ impl FileListReader {
             codec,
             compat_flags: Some(compat_flags),
             state: FileListCompressionState::new(),
+            stats: FileListStats::default(),
             preserve_uid: false,
             preserve_gid: false,
             preserve_links: false,
@@ -112,6 +122,8 @@ impl FileListReader {
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
+            always_checksum: false,
+            flist_csum_len: 0,
             iconv: None,
         }
     }
@@ -165,11 +177,28 @@ impl FileListReader {
         self
     }
 
+    /// Enables checksum mode (--checksum / -c) with the given checksum length.
+    ///
+    /// When enabled, checksums are read for regular files. For protocol < 28,
+    /// checksums are also read for non-regular files (empty_sum).
+    #[must_use]
+    pub const fn with_always_checksum(mut self, csum_len: usize) -> Self {
+        self.always_checksum = true;
+        self.flist_csum_len = csum_len;
+        self
+    }
+
     /// Sets the filename encoding converter for iconv support.
     #[must_use]
     pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
         self
+    }
+
+    /// Returns the statistics collected during file list reading.
+    #[must_use]
+    pub const fn stats(&self) -> &FileListStats {
+        &self.stats
     }
 
     /// Returns whether varint flag encoding is enabled.
@@ -446,6 +475,8 @@ impl FileListReader {
 
     /// Reads device numbers if preserving devices and mode indicates a device.
     ///
+    /// Also reads dummy rdev for special files (FIFOs, sockets) in protocol < 31.
+    ///
     /// Wire format (protocol 28+):
     /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
     /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
@@ -455,11 +486,15 @@ impl FileListReader {
         mode: u32,
         flags: FileFlags,
     ) -> io::Result<Option<(u32, u32)>> {
-        // S_ISBLK (0o060000) or S_ISCHR (0o020000)
         let type_bits = mode & 0o170000;
-        let is_device = type_bits == 0o060000 || type_bits == 0o020000;
+        let is_device = type_bits == 0o060000 || type_bits == 0o020000; // S_ISBLK or S_ISCHR
+        let is_special = type_bits == 0o140000 || type_bits == 0o010000; // S_IFSOCK or S_IFIFO
 
-        if !self.preserve_devices || !is_device {
+        // Devices always, special files only for protocol < 31
+        let needs_rdev =
+            self.preserve_devices && (is_device || (is_special && self.protocol.as_u8() < 31));
+
+        if !needs_rdev {
             return Ok(None);
         }
 
@@ -477,9 +512,7 @@ impl FileListReader {
             read_varint(reader)? as u32
         } else {
             // Protocol 28-29: read byte or int based on XMIT_RDEV_MINOR_8_pre30
-            // For simplicity, we check if extended flag bit 3 (0x08) is set
-            // This corresponds to XMIT_RDEV_MINOR_8_pre30 in the extended byte
-            let minor_is_byte = (flags.extended & 0x08) != 0;
+            let minor_is_byte = flags.rdev_minor_8_pre30();
             if minor_is_byte {
                 let mut buf = [0u8; 1];
                 reader.read_exact(&mut buf)?;
@@ -491,7 +524,104 @@ impl FileListReader {
             }
         };
 
+        // For special files, we read but don't return the dummy rdev
+        if is_special {
+            return Ok(None);
+        }
+
         Ok(Some((major, minor)))
+    }
+
+    /// Reads hardlink device and inode for protocol 28-29.
+    ///
+    /// In protocols before 30, hardlinks are identified by (dev, ino) pairs
+    /// rather than indices.
+    ///
+    /// Wire format:
+    /// - If not XMIT_SAME_DEV_PRE30: read longint as dev (stored as dev + 1)
+    /// - Always read longint as ino
+    fn read_hardlink_dev_ino<R: Read + ?Sized>(
+        &mut self,
+        reader: &mut R,
+        flags: FileFlags,
+        mode: u32,
+    ) -> io::Result<Option<(i64, i64)>> {
+        // Only for protocol 28-29, non-directories
+        if !self.preserve_hard_links || self.protocol.as_u8() >= 30 || self.protocol.as_u8() < 28 {
+            return Ok(None);
+        }
+
+        // Directories don't have hardlink dev/ino
+        let is_dir = (mode & 0o170000) == 0o040000;
+        if is_dir {
+            return Ok(None);
+        }
+
+        // Read dev if not same as previous
+        let dev = if flags.same_dev_pre30() {
+            self.state.prev_hardlink_dev
+        } else {
+            let raw_dev = crate::read_longint(reader)?;
+            // Upstream stores dev + 1, so subtract 1
+            let dev = raw_dev - 1;
+            self.state.update_hardlink_dev(dev);
+            dev
+        };
+
+        // Always read ino
+        let ino = crate::read_longint(reader)?;
+
+        Ok(Some((dev, ino)))
+    }
+
+    /// Reads checksum if always_checksum mode is enabled.
+    ///
+    /// Wire format: raw bytes of length flist_csum_len
+    fn read_checksum<R: Read + ?Sized>(
+        &self,
+        reader: &mut R,
+        mode: u32,
+    ) -> io::Result<Option<Vec<u8>>> {
+        if !self.always_checksum || self.flist_csum_len == 0 {
+            return Ok(None);
+        }
+
+        let is_regular = (mode & 0o170000) == 0o100000; // S_IFREG
+
+        // For protocol < 28, non-regular files also have checksums (empty_sum)
+        // For protocol >= 28, only regular files have checksums
+        if !is_regular && self.protocol.as_u8() >= 28 {
+            return Ok(None);
+        }
+
+        let mut checksum = vec![0u8; self.flist_csum_len];
+        reader.read_exact(&mut checksum)?;
+
+        // For non-regular files, the checksum is empty_sum (all zeros), don't store
+        if !is_regular {
+            return Ok(None);
+        }
+
+        Ok(Some(checksum))
+    }
+
+    /// Updates file list statistics based on the entry.
+    fn update_stats(&mut self, entry: &FileEntry) {
+        if entry.is_dir() {
+            self.stats.num_dirs += 1;
+        } else if entry.is_file() {
+            self.stats.num_files += 1;
+            self.stats.total_size += entry.size();
+        } else if entry.is_symlink() {
+            self.stats.num_symlinks += 1;
+            if let Some(target) = entry.link_target() {
+                self.stats.total_size += target.as_os_str().len() as u64;
+            }
+        } else if entry.is_device() {
+            self.stats.num_devices += 1;
+        } else if entry.is_special() {
+            self.stats.num_specials += 1;
+        }
     }
 
     /// Reads hardlink index if preserving hardlinks and flags indicate it.
@@ -596,38 +726,55 @@ impl FileListReader {
         // Step 4+: Read metadata (unless this is a hardlink follower)
         // Hardlink followers have their metadata copied from the leader entry,
         // so we skip reading size, mtime, mode, uid, gid, symlink, and rdev.
-        let (size, metadata, link_target, rdev) = if self.is_hardlink_follower(flags) {
-            // Use default values for hardlink follower - caller should copy from leader
-            (
-                0u64,
-                MetadataResult {
-                    mtime: 0,
-                    nsec: 0,
-                    mode: 0,
-                    user_name: None,
-                    group_name: None,
-                    atime: None,
-                    crtime: None,
-                    content_dir: true,
-                },
-                None,
-                None,
-            )
-        } else {
-            // Step 4: Read file size
-            let size = self.read_size(reader)?;
+        let (size, metadata, link_target, rdev, hardlink_dev_ino, checksum) =
+            if self.is_hardlink_follower(flags) {
+                // Use default values for hardlink follower - caller should copy from leader
+                (
+                    0u64,
+                    MetadataResult {
+                        mtime: 0,
+                        nsec: 0,
+                        mode: 0,
+                        user_name: None,
+                        group_name: None,
+                        atime: None,
+                        crtime: None,
+                        content_dir: true,
+                    },
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            } else {
+                // Step 4: Read file size
+                let size = self.read_size(reader)?;
 
-            // Step 5: Read metadata fields (mtime, nsec, crtime, mode, atime, uid, gid)
-            let metadata = self.read_metadata(reader, flags)?;
+                // Step 5: Read metadata fields (mtime, nsec, crtime, mode, atime, uid, gid)
+                let metadata = self.read_metadata(reader, flags)?;
 
-            // Step 6: Read device numbers (if applicable)
-            let rdev = self.read_rdev(reader, metadata.mode, flags)?;
+                // Step 6: Read device numbers (if applicable)
+                // Also reads dummy rdev for special files in protocol < 31
+                let rdev = self.read_rdev(reader, metadata.mode, flags)?;
 
-            // Step 7: Read symlink target (if applicable)
-            let link_target = self.read_symlink_target(reader, metadata.mode)?;
+                // Step 7: Read symlink target (if applicable)
+                let link_target = self.read_symlink_target(reader, metadata.mode)?;
 
-            (size, metadata, link_target, rdev)
-        };
+                // Step 8: Read hardlink dev/ino for protocol 28-29
+                let hardlink_dev_ino = self.read_hardlink_dev_ino(reader, flags, metadata.mode)?;
+
+                // Step 9: Read checksum if always_checksum mode
+                let checksum = self.read_checksum(reader, metadata.mode)?;
+
+                (
+                    size,
+                    metadata,
+                    link_target,
+                    rdev,
+                    hardlink_dev_ino,
+                    checksum,
+                )
+            };
 
         // Step 8: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
@@ -682,6 +829,20 @@ impl FileListReader {
         if entry.is_dir() {
             entry.set_content_dir(metadata.content_dir);
         }
+
+        // Step 18: Set hardlink dev/ino if present (protocol 28-29)
+        if let Some((dev, ino)) = hardlink_dev_ino {
+            entry.set_hardlink_dev(dev);
+            entry.set_hardlink_ino(ino);
+        }
+
+        // Step 19: Set checksum if present
+        if let Some(sum) = checksum {
+            entry.set_checksum(sum);
+        }
+
+        // Step 20: Update statistics
+        self.update_stats(&entry);
 
         Ok(Some(entry))
     }

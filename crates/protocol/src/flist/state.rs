@@ -25,6 +25,27 @@ pub struct FileListCompressionState {
     pub prev_gid: u32,
     /// Previous entry's device major number (for XMIT_SAME_RDEV_MAJOR).
     pub prev_rdev_major: u32,
+    /// Previous hardlink device number (for XMIT_SAME_DEV_pre30, protocols 26-29).
+    pub prev_hardlink_dev: i64,
+}
+
+/// Statistics collected during file list transmission/reception.
+///
+/// Tracks counts and sizes for progress reporting and verification.
+#[derive(Debug, Clone, Default)]
+pub struct FileListStats {
+    /// Number of regular files processed.
+    pub num_files: u64,
+    /// Number of directories processed.
+    pub num_dirs: u64,
+    /// Number of symbolic links processed.
+    pub num_symlinks: u64,
+    /// Number of device files processed (block and character).
+    pub num_devices: u64,
+    /// Number of special files processed (FIFOs, sockets).
+    pub num_specials: u64,
+    /// Total size of all regular files and symlinks in bytes.
+    pub total_size: u64,
 }
 
 impl FileListCompressionState {
@@ -98,6 +119,11 @@ impl FileListCompressionState {
         self.prev_atime = atime;
     }
 
+    /// Updates only the hardlink device portion of the state (protocol < 30).
+    pub const fn update_hardlink_dev(&mut self, dev: i64) {
+        self.prev_hardlink_dev = dev;
+    }
+
     /// Resets the compression state to initial values.
     pub fn reset(&mut self) {
         *self = Self::default();
@@ -118,6 +144,7 @@ mod tests {
         assert_eq!(state.prev_uid, 0);
         assert_eq!(state.prev_gid, 0);
         assert_eq!(state.prev_rdev_major, 0);
+        assert_eq!(state.prev_hardlink_dev, 0);
     }
 
     #[test]
@@ -193,6 +220,7 @@ mod tests {
     fn reset_clears_all_fields() {
         let mut state = FileListCompressionState::new();
         state.update(b"test.txt", 0o644, 1700000000, 1000, 1000);
+        state.update_hardlink_dev(12345);
 
         state.reset();
 
@@ -203,6 +231,7 @@ mod tests {
         assert_eq!(state.prev_uid, 0);
         assert_eq!(state.prev_gid, 0);
         assert_eq!(state.prev_rdev_major, 0);
+        assert_eq!(state.prev_hardlink_dev, 0);
     }
 
     #[test]
@@ -210,5 +239,36 @@ mod tests {
         let mut state = FileListCompressionState::new();
         state.update_atime(1700000000);
         assert_eq!(state.prev_atime, 1700000000);
+    }
+
+    #[test]
+    fn update_hardlink_dev() {
+        let mut state = FileListCompressionState::new();
+        state.update_hardlink_dev(0x1234_5678_9ABC);
+        assert_eq!(state.prev_hardlink_dev, 0x1234_5678_9ABC);
+    }
+
+    #[test]
+    fn file_list_stats_default() {
+        let stats = FileListStats::default();
+        assert_eq!(stats.num_files, 0);
+        assert_eq!(stats.num_dirs, 0);
+        assert_eq!(stats.num_symlinks, 0);
+        assert_eq!(stats.num_devices, 0);
+        assert_eq!(stats.num_specials, 0);
+        assert_eq!(stats.total_size, 0);
+    }
+
+    #[test]
+    fn file_list_stats_clone() {
+        let stats = FileListStats {
+            num_files: 10,
+            total_size: 1024,
+            ..FileListStats::default()
+        };
+
+        let cloned = stats.clone();
+        assert_eq!(cloned.num_files, 10);
+        assert_eq!(cloned.total_size, 1024);
     }
 }

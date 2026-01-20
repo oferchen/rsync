@@ -121,6 +121,12 @@ pub struct FileEntry {
     rdev_minor: Option<u32>,
     /// Hardlink index (for hardlink preservation).
     hardlink_idx: Option<u32>,
+    /// Hardlink device number (for protocol < 30 hardlink deduplication).
+    hardlink_dev: Option<i64>,
+    /// Hardlink inode number (for protocol < 30 hardlink deduplication).
+    hardlink_ino: Option<i64>,
+    /// File checksum for --checksum mode (variable length, up to 32 bytes).
+    checksum: Option<Vec<u8>>,
 
     // 4-byte aligned fields
     /// Unix mode bits (type + permissions).
@@ -166,6 +172,9 @@ impl FileEntry {
             rdev_major: None,
             rdev_minor: None,
             hardlink_idx: None,
+            hardlink_dev: None,
+            hardlink_ino: None,
+            checksum: None,
             mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime_nsec: 0,
             flags: super::flags::FileFlags::default(),
@@ -207,6 +216,18 @@ impl FileEntry {
         entry
     }
 
+    /// Creates a new FIFO (named pipe) entry.
+    #[must_use]
+    pub fn new_fifo(name: PathBuf, permissions: u32) -> Self {
+        Self::new_with_type(name, 0, FileType::Fifo, permissions, None)
+    }
+
+    /// Creates a new Unix domain socket entry.
+    #[must_use]
+    pub fn new_socket(name: PathBuf, permissions: u32) -> Self {
+        Self::new_with_type(name, 0, FileType::Socket, permissions, None)
+    }
+
     /// Creates a file entry from raw components (used during decoding).
     #[must_use]
     pub(crate) const fn from_raw(
@@ -231,6 +252,9 @@ impl FileEntry {
             rdev_major: None,
             rdev_minor: None,
             hardlink_idx: None,
+            hardlink_dev: None,
+            hardlink_ino: None,
+            checksum: None,
             mode,
             mtime_nsec,
             flags,
@@ -448,6 +472,42 @@ impl FileEntry {
     /// When false, XMIT_NO_CONTENT_DIR flag is set on wire.
     pub const fn set_content_dir(&mut self, has_content: bool) {
         self.content_dir = has_content;
+    }
+
+    /// Returns the hardlink device number (for protocol < 30).
+    #[inline]
+    #[must_use]
+    pub const fn hardlink_dev(&self) -> Option<i64> {
+        self.hardlink_dev
+    }
+
+    /// Sets the hardlink device number (for protocol < 30).
+    pub const fn set_hardlink_dev(&mut self, dev: i64) {
+        self.hardlink_dev = Some(dev);
+    }
+
+    /// Returns the hardlink inode number (for protocol < 30).
+    #[inline]
+    #[must_use]
+    pub const fn hardlink_ino(&self) -> Option<i64> {
+        self.hardlink_ino
+    }
+
+    /// Sets the hardlink inode number (for protocol < 30).
+    pub const fn set_hardlink_ino(&mut self, ino: i64) {
+        self.hardlink_ino = Some(ino);
+    }
+
+    /// Returns the file checksum if set (for --checksum mode).
+    #[inline]
+    #[must_use]
+    pub fn checksum(&self) -> Option<&[u8]> {
+        self.checksum.as_deref()
+    }
+
+    /// Sets the file checksum (for --checksum mode).
+    pub fn set_checksum(&mut self, sum: Vec<u8>) {
+        self.checksum = Some(sum);
     }
 
     /// Returns true if this entry is a block or character device.

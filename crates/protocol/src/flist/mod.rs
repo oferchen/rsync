@@ -40,5 +40,5 @@ pub use entry::{FileEntry, FileType};
 pub use flags::FileFlags;
 pub use read::{FileListReader, read_file_entry};
 pub use sort::{compare_file_entries, sort_file_list};
-pub use state::FileListCompressionState;
+pub use state::{FileListCompressionState, FileListStats};
 pub use write::{FileListWriter, write_file_entry};
