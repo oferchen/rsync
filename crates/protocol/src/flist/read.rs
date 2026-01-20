@@ -58,6 +58,14 @@ pub struct FileListReader {
     iconv: Option<FilenameConverter>,
 }
 
+/// Result from reading metadata fields.
+struct MetadataResult {
+    mtime: i64,
+    mode: u32,
+    user_name: Option<String>,
+    group_name: Option<String>,
+}
+
 impl FileListReader {
     /// Creates a new file list reader for the given protocol version.
     #[must_use]
@@ -237,12 +245,12 @@ impl FileListReader {
         Ok(Some(error_code))
     }
 
-    /// Reads metadata fields (mtime, nsec, mode, uid, gid) based on flags.
+    /// Reads metadata fields (mtime, nsec, mode, uid, gid, user_name, group_name) based on flags.
     fn read_metadata<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
         flags: FileFlags,
-    ) -> io::Result<(i64, u32, u32)> {
+    ) -> io::Result<MetadataResult> {
         // Read mtime
         let mtime = if flags.same_time() {
             self.state.prev_mtime
@@ -270,19 +278,48 @@ impl FileListReader {
             mode
         };
 
-        // Read UID if preserving and not same
+        // Read UID and optional user name
+        let mut user_name = None;
         if self.preserve_uid && !flags.same_uid() {
             let uid = read_varint(reader)? as u32;
             self.state.update_uid(uid);
+            // Read user name if flag set (protocol 30+)
+            if flags.user_name_follows() {
+                let mut len_buf = [0u8; 1];
+                reader.read_exact(&mut len_buf)?;
+                let len = len_buf[0] as usize;
+                if len > 0 {
+                    let mut name_bytes = vec![0u8; len];
+                    reader.read_exact(&mut name_bytes)?;
+                    user_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
+                }
+            }
         }
 
-        // Read GID if preserving and not same
+        // Read GID and optional group name
+        let mut group_name = None;
         if self.preserve_gid && !flags.same_gid() {
             let gid = read_varint(reader)? as u32;
             self.state.update_gid(gid);
+            // Read group name if flag set (protocol 30+)
+            if flags.group_name_follows() {
+                let mut len_buf = [0u8; 1];
+                reader.read_exact(&mut len_buf)?;
+                let len = len_buf[0] as usize;
+                if len > 0 {
+                    let mut name_bytes = vec![0u8; len];
+                    reader.read_exact(&mut name_bytes)?;
+                    group_name = Some(String::from_utf8_lossy(&name_bytes).into_owned());
+                }
+            }
         }
 
-        Ok((mtime, 0, mode))
+        Ok(MetadataResult {
+            mtime,
+            mode,
+            user_name,
+            group_name,
+        })
     }
 
     /// Reads symlink target if preserving links and mode indicates a symlink.
@@ -419,6 +456,16 @@ impl FileListReader {
         }
     }
 
+    /// Returns true if this entry is a hardlink follower (metadata was skipped on wire).
+    ///
+    /// A hardlink follower has XMIT_HLINKED set but NOT XMIT_HLINK_FIRST.
+    /// Such entries reference another entry in the file list, so their metadata
+    /// (size, mtime, mode, uid, gid, symlink, rdev) was omitted from the wire.
+    #[inline]
+    fn is_hardlink_follower(&self, flags: FileFlags) -> bool {
+        flags.hlinked() && !flags.hlink_first()
+    }
+
     /// Reads the next file entry from the stream.
     ///
     /// Returns `None` when the end-of-list marker is received (a zero byte).
@@ -442,17 +489,37 @@ impl FileListReader {
         // Step 2: Read name with compression
         let name = self.read_name(reader, flags)?;
 
-        // Step 3: Read file size
-        let size = self.read_size(reader)?;
+        // Step 3-6: Read metadata (unless this is a hardlink follower)
+        // Hardlink followers have their metadata copied from the leader entry,
+        // so we skip reading size, mtime, mode, uid, gid, symlink, and rdev.
+        let (size, metadata, link_target, rdev) = if self.is_hardlink_follower(flags) {
+            // Use default values for hardlink follower - caller should copy from leader
+            (
+                0u64,
+                MetadataResult {
+                    mtime: 0,
+                    mode: 0,
+                    user_name: None,
+                    group_name: None,
+                },
+                None,
+                None,
+            )
+        } else {
+            // Step 3: Read file size
+            let size = self.read_size(reader)?;
 
-        // Step 4: Read metadata fields
-        let (mtime, _nsec, mode) = self.read_metadata(reader, flags)?;
+            // Step 4: Read metadata fields
+            let metadata = self.read_metadata(reader, flags)?;
 
-        // Step 5: Read symlink target (if applicable)
-        let link_target = self.read_symlink_target(reader, mode)?;
+            // Step 5: Read symlink target (if applicable)
+            let link_target = self.read_symlink_target(reader, metadata.mode)?;
 
-        // Step 6: Read device numbers (if applicable)
-        let rdev = self.read_rdev(reader, mode, flags)?;
+            // Step 6: Read device numbers (if applicable)
+            let rdev = self.read_rdev(reader, metadata.mode, flags)?;
+
+            (size, metadata, link_target, rdev)
+        };
 
         // Step 7: Read hardlink index (if applicable)
         let hardlink_idx = self.read_hardlink_idx(reader, flags)?;
@@ -462,7 +529,7 @@ impl FileListReader {
 
         // Step 9: Construct entry
         let path = PathBuf::from(String::from_utf8_lossy(&converted_name).into_owned());
-        let mut entry = FileEntry::from_raw(path, size, mode, mtime, 0, flags);
+        let mut entry = FileEntry::from_raw(path, size, metadata.mode, metadata.mtime, 0, flags);
 
         // Step 10: Set symlink target if present
         if let Some(target) = link_target {
@@ -477,6 +544,16 @@ impl FileListReader {
         // Step 12: Set hardlink index if present
         if let Some(idx) = hardlink_idx {
             entry.set_hardlink_idx(idx);
+        }
+
+        // Step 13: Set user name if present
+        if let Some(name) = metadata.user_name {
+            entry.set_user_name(name);
+        }
+
+        // Step 14: Set group name if present
+        if let Some(name) = metadata.group_name {
+            entry.set_group_name(name);
         }
 
         Ok(Some(entry))
@@ -810,5 +887,24 @@ mod tests {
             FlagsResult::IoError(code) => assert_eq!(code, 42),
             other => panic!("expected IoError(42), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn is_hardlink_follower_helper() {
+        use crate::flist::flags::{XMIT_HLINK_FIRST, XMIT_HLINKED};
+
+        let reader = FileListReader::new(test_protocol()).with_preserve_hard_links(true);
+
+        // No hardlink flags
+        let flags_none = FileFlags::new(0, 0);
+        assert!(!reader.is_hardlink_follower(flags_none));
+
+        // Leader (HLINKED + HLINK_FIRST)
+        let flags_leader = FileFlags::new(0, XMIT_HLINKED | XMIT_HLINK_FIRST);
+        assert!(!reader.is_hardlink_follower(flags_leader));
+
+        // Follower (HLINKED only, no HLINK_FIRST)
+        let flags_follower = FileFlags::new(0, XMIT_HLINKED);
+        assert!(reader.is_hardlink_follower(flags_follower));
     }
 }
