@@ -1279,6 +1279,7 @@ mod tests {
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
             iconv: None,
+            ignore_errors: false,
         }
     }
 
@@ -2070,6 +2071,7 @@ mod tests {
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
             iconv: None,
+            ignore_errors: false,
         }
     }
 
