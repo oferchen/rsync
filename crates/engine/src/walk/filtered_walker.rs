@@ -208,11 +208,9 @@ mod tests {
         let entries: Vec<_> = walker.flatten().collect();
 
         // Should not have .git directory or its contents
-        let has_git = entries.iter().any(|e| {
-            e.path()
-                .components()
-                .any(|c| c.as_os_str() == ".git")
-        });
+        let has_git = entries
+            .iter()
+            .any(|e| e.path().components().any(|c| c.as_os_str() == ".git"));
         assert!(!has_git);
     }
 
@@ -235,12 +233,9 @@ mod tests {
         assert!(!has_root_txt);
 
         // src/ and src/main.rs should be included
-        let has_src = entries.iter().any(|e| {
-            e.path()
-                .file_name()
-                .map(|n| n == "src")
-                .unwrap_or(false)
-        });
+        let has_src = entries
+            .iter()
+            .any(|e| e.path().file_name().map(|n| n == "src").unwrap_or(false));
         assert!(has_src);
     }
 
@@ -303,7 +298,11 @@ mod tests {
                 found_subdir = true;
                 walker.skip_current_dir();
             }
-            if entry.file_name().map(|n| n == "nested.txt").unwrap_or(false) {
+            if entry
+                .file_name()
+                .map(|n| n == "nested.txt")
+                .unwrap_or(false)
+            {
                 found_nested = true;
             }
         }
@@ -315,10 +314,8 @@ mod tests {
     #[test]
     fn handles_errors_from_inner_walker() {
         // Test that errors from the inner walker are propagated
-        let walker = WalkdirWalker::new(
-            Path::new("/nonexistent/path/12345"),
-            WalkConfig::default(),
-        );
+        let walker =
+            WalkdirWalker::new(Path::new("/nonexistent/path/12345"), WalkConfig::default());
         let filters = FilterSet::default();
         let filtered = FilteredWalker::new(walker, filters);
 
