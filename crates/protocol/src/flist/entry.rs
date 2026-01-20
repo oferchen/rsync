@@ -97,6 +97,10 @@ pub struct FileEntry {
     name: PathBuf,
     /// Symlink target path (for symlinks).
     link_target: Option<PathBuf>,
+    /// User name for cross-system ownership mapping (protocol 30+).
+    user_name: Option<String>,
+    /// Group name for cross-system ownership mapping (protocol 30+).
+    group_name: Option<String>,
 
     // 8-byte aligned fields
     /// File size in bytes (0 for directories and special files).
@@ -141,6 +145,8 @@ impl FileEntry {
         Self {
             name,
             link_target,
+            user_name: None,
+            group_name: None,
             size,
             mtime: 0,
             uid: None,
@@ -201,6 +207,8 @@ impl FileEntry {
         Self {
             name,
             link_target: None,
+            user_name: None,
+            group_name: None,
             size,
             mtime,
             uid: None,
@@ -340,6 +348,28 @@ impl FileEntry {
     /// Sets the group ID.
     pub const fn set_gid(&mut self, gid: u32) {
         self.gid = Some(gid);
+    }
+
+    /// Returns the user name if set.
+    #[must_use]
+    pub fn user_name(&self) -> Option<&str> {
+        self.user_name.as_deref()
+    }
+
+    /// Sets the user name for cross-system ownership mapping.
+    pub fn set_user_name(&mut self, name: String) {
+        self.user_name = Some(name);
+    }
+
+    /// Returns the group name if set.
+    #[must_use]
+    pub fn group_name(&self) -> Option<&str> {
+        self.group_name.as_deref()
+    }
+
+    /// Sets the group name for cross-system ownership mapping.
+    pub fn set_group_name(&mut self, name: String) {
+        self.group_name = Some(name);
     }
 
     /// Sets the symlink target.
