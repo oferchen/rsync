@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
-//! crates/batch/src/lib.rs
-//!
 //! Batch mode support for offline/disconnected transfer workflows.
 //!
 //! This crate implements rsync's batch mode functionality, which allows
