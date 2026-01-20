@@ -33,7 +33,7 @@ time = { version = "0.3", default-features = false, features = ["formatting", "m
 tempfile = "3.10"
 
 [target.'cfg(unix)'.dependencies]
-users = "0.11"
+uzers = "0.12"
 xattr = "1.6"
 daemon = { path = "../daemon" }
 

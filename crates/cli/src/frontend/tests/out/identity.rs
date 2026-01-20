@@ -2,7 +2,7 @@ use super::*;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use tempfile::tempdir;
-use users::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
+use uzers::{get_group_by_gid, get_user_by_uid, gid_t, uid_t};
 
 #[test]
 fn out_format_renders_permission_and_identity_placeholders() {
