@@ -339,8 +339,13 @@ impl GeneratorContext {
     fn send_io_error_flag<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         if self.protocol.as_u8() < 30 {
             // For protocol < 30, send io_error as 4-byte int
-            // If ignore_errors is set, would send 0 instead (not yet implemented)
-            writer.write_all(&self.io_error.to_le_bytes())?;
+            // If ignore_errors is set, send 0 instead of actual io_error
+            let value = if self.config.ignore_errors {
+                0
+            } else {
+                self.io_error
+            };
+            writer.write_all(&value.to_le_bytes())?;
             writer.flush()?;
         }
         Ok(())
@@ -1562,6 +1567,7 @@ mod tests {
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
             iconv: None,
+            ignore_errors: false,
         }
     }
 
@@ -2508,6 +2514,43 @@ mod tests {
     }
 
     #[test]
+    fn send_io_error_flag_with_errors_protocol_29() {
+        let mut handshake = test_handshake();
+        handshake.protocol = ProtocolVersion::try_from(29u8).unwrap();
+
+        let mut ctx = GeneratorContext::new(&handshake, test_config());
+        ctx.add_io_error(io_error_flags::IOERR_GENERAL);
+
+        let mut output = Vec::new();
+        ctx.send_io_error_flag(&mut output).unwrap();
+
+        // Protocol < 30 should write 4-byte io_error with actual value
+        assert_eq!(output.len(), 4);
+        let value = i32::from_le_bytes([output[0], output[1], output[2], output[3]]);
+        assert_eq!(value, io_error_flags::IOERR_GENERAL);
+    }
+
+    #[test]
+    fn send_io_error_flag_ignore_errors_suppresses_value() {
+        // Tests upstream behavior: flist.c:2518: write_int(f, ignore_errors ? 0 : io_error);
+        let mut handshake = test_handshake();
+        handshake.protocol = ProtocolVersion::try_from(29u8).unwrap();
+
+        let mut config = test_config();
+        config.ignore_errors = true;
+
+        let mut ctx = GeneratorContext::new(&handshake, config);
+        ctx.add_io_error(io_error_flags::IOERR_GENERAL);
+
+        let mut output = Vec::new();
+        ctx.send_io_error_flag(&mut output).unwrap();
+
+        // With ignore_errors=true, should send 0 even though io_error is set
+        assert_eq!(output.len(), 4);
+        assert_eq!(output, &[0, 0, 0, 0]);
+    }
+
+    #[test]
     fn apply_permutation_in_place_identity() {
         let mut a = vec![1, 2, 3, 4];
         let mut b = vec!["a", "b", "c", "d"];
@@ -2577,6 +2620,7 @@ mod tests {
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
             iconv: None,
+            ignore_errors: false,
         }
     }
 
@@ -2682,6 +2726,7 @@ mod tests {
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
             iconv: None,
+            ignore_errors: false,
         };
         let mut receiver = ReceiverContext::new(&handshake, recv_config);
 
@@ -2725,6 +2770,7 @@ mod tests {
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
             iconv: None,
+            ignore_errors: false,
         };
         let mut receiver = ReceiverContext::new(&handshake, recv_config);
 

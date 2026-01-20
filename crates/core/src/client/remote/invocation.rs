@@ -206,6 +206,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--sender"));
         }
 
+        // Add --ignore-errors if set (upstream sends this as full argument)
+        if self.config.ignore_errors() {
+            args.push(OsString::from("--ignore-errors"));
+        }
+
         // Build compact flag string
         let flags = self.build_flag_string();
         if !flags.is_empty() {
@@ -746,5 +751,31 @@ mod tests {
 
         let result = determine_transfer_role(&sources, &destination);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn includes_ignore_errors_flag_when_set() {
+        let config = ClientConfig::builder().ignore_errors(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        // --ignore-errors should appear after --server and --sender
+        assert!(
+            args.iter().any(|a| a == "--ignore-errors"),
+            "expected --ignore-errors in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn omits_ignore_errors_flag_when_not_set() {
+        let config = ClientConfig::builder().build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build("/path");
+
+        // --ignore-errors should not appear
+        assert!(
+            !args.iter().any(|a| a == "--ignore-errors"),
+            "unexpected --ignore-errors in args: {args:?}"
+        );
     }
 }
