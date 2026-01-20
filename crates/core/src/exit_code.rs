@@ -495,7 +495,10 @@ mod tests {
             ExitCode::CommandRun,
             ExitCode::CommandNotFound,
         ] {
-            assert!(!code.description().is_empty(), "Empty description for {:?}", code);
+            assert!(
+                !code.description().is_empty(),
+                "Empty description for {code:?}"
+            );
         }
     }
 }

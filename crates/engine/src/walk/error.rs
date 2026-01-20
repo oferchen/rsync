@@ -129,10 +129,8 @@ mod tests {
 
     #[test]
     fn loop_error_displays_correctly() {
-        let err = WalkError::symlink_loop(
-            PathBuf::from("/test/link"),
-            PathBuf::from("/test/ancestor"),
-        );
+        let err =
+            WalkError::symlink_loop(PathBuf::from("/test/link"), PathBuf::from("/test/ancestor"));
 
         let msg = err.to_string();
         assert!(msg.contains("symbolic link loop"));
@@ -145,7 +143,7 @@ mod tests {
         let err = WalkError::Io {
             action: "stat",
             path: path.clone(),
-            source: io::Error::new(io::ErrorKind::Other, "err"),
+            source: io::Error::other("err"),
         };
 
         assert_eq!(err.path(), &path);
@@ -191,7 +189,7 @@ mod tests {
         let err = WalkError::Io {
             action: "read directory",
             path: PathBuf::from("/test"),
-            source: io::Error::new(io::ErrorKind::Other, "test"),
+            source: io::Error::other("test"),
         };
         let debug = format!("{err:?}");
         assert!(debug.contains("Io"));
@@ -204,7 +202,7 @@ mod tests {
         let err = WalkError::Io {
             action: "read directory",
             path: PathBuf::from("/test"),
-            source: io::Error::new(io::ErrorKind::Other, "inner"),
+            source: io::Error::other("inner"),
         };
 
         assert!(err.source().is_some());

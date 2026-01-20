@@ -95,12 +95,10 @@ impl WalkdirWalker {
         // Get root device for one_file_system check
         #[cfg(unix)]
         let root_dev = if config.one_file_system {
-            fs::metadata(root)
-                .ok()
-                .map(|m| {
-                    use std::os::unix::fs::MetadataExt;
-                    m.dev()
-                })
+            fs::metadata(root).ok().map(|m| {
+                use std::os::unix::fs::MetadataExt;
+                m.dev()
+            })
         } else {
             None
         };
@@ -251,7 +249,10 @@ mod tests {
         assert_eq!(entries[0].depth(), 0);
 
         // Files should be sorted
-        let file_names: Vec<_> = names.iter().filter(|n| n.ends_with(".txt") && !n.contains("nested")).collect();
+        let file_names: Vec<_> = names
+            .iter()
+            .filter(|n| n.ends_with(".txt") && !n.contains("nested"))
+            .collect();
         assert_eq!(file_names, vec!["a.txt", "b.txt", "c.txt"]);
     }
 
@@ -326,7 +327,8 @@ mod tests {
 
     #[test]
     fn handles_nonexistent_root() {
-        let walker = WalkdirWalker::new(Path::new("/nonexistent/path/12345"), WalkConfig::default());
+        let walker =
+            WalkdirWalker::new(Path::new("/nonexistent/path/12345"), WalkConfig::default());
 
         let results: Vec<_> = walker.collect();
         assert_eq!(results.len(), 1);
@@ -335,9 +337,18 @@ mod tests {
 
     #[test]
     fn compare_file_names_ordering() {
-        assert_eq!(compare_file_names(OsStr::new("a"), OsStr::new("b")), Ordering::Less);
-        assert_eq!(compare_file_names(OsStr::new("b"), OsStr::new("a")), Ordering::Greater);
-        assert_eq!(compare_file_names(OsStr::new("a"), OsStr::new("a")), Ordering::Equal);
+        assert_eq!(
+            compare_file_names(OsStr::new("a"), OsStr::new("b")),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_file_names(OsStr::new("b"), OsStr::new("a")),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_file_names(OsStr::new("a"), OsStr::new("a")),
+            Ordering::Equal
+        );
     }
 
     #[cfg(unix)]

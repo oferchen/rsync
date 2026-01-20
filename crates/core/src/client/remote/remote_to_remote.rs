@@ -245,24 +245,16 @@ fn run_bidirectional_relay(
     // Thread 1: source → destination (file data, file list)
     let shutdown_s2d = Arc::clone(&shutdown);
     thread::spawn(move || {
-        let result = run_relay_with_panic_guard(
-            source_reader,
-            dest_writer,
-            shutdown_s2d,
-            "source→dest",
-        );
+        let result =
+            run_relay_with_panic_guard(source_reader, dest_writer, shutdown_s2d, "source→dest");
         let _ = s2d_tx.send(result);
     });
 
     // Thread 2: destination → source (checksums, acks)
     let shutdown_d2s = Arc::clone(&shutdown);
     thread::spawn(move || {
-        let result = run_relay_with_panic_guard(
-            dest_reader,
-            source_writer,
-            shutdown_d2s,
-            "dest→source",
-        );
+        let result =
+            run_relay_with_panic_guard(dest_reader, source_writer, shutdown_d2s, "dest→source");
         let _ = d2s_tx.send(result);
     });
 

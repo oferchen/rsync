@@ -362,7 +362,8 @@ mod tests {
         #[test]
         fn display_format() {
             let code = ExitCode::Syntax;
-            let message = rsync_error!(code.as_i32(), "display test message").with_role(Role::Client);
+            let message =
+                rsync_error!(code.as_i32(), "display test message").with_role(Role::Client);
             let error = ClientError::with_code(code, message);
             let display = format!("{error}");
 
