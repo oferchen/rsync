@@ -6,6 +6,8 @@
 
 /// Shared daemon authentication helpers.
 pub mod auth;
+/// Centralized exit code definitions matching upstream rsync's `errcode.h`.
+pub mod exit_code;
 /// Bandwidth parsing utilities shared by CLI and daemon entry points.
 pub mod bandwidth;
 /// Branding constants shared across binaries and packaging layers.

@@ -79,6 +79,7 @@ pub mod async_io;
 pub mod delta;
 pub mod error;
 pub mod local_copy;
+pub mod walk;
 
 // Re-export batch types from the batch crate for backward compatibility.
 // The batch crate is the source of truth for these types.
@@ -129,6 +130,7 @@ pub use local_copy::{
 pub use signature::{
     FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
+pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError, WalkdirWalker};
 
 #[cfg(feature = "async")]
 pub use async_io::{
