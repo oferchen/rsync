@@ -252,6 +252,28 @@ pub fn write_longint<W: Write + ?Sized>(writer: &mut W, value: i64) -> io::Resul
     }
 }
 
+/// Reads a 64-bit integer using rsync's legacy longint format (protocol < 30).
+///
+/// This mirrors upstream's `read_longint(int f)` from io.c.
+/// The encoding:
+/// - If first 4 bytes == 0xFFFFFFFF: next 8 bytes are the full i64 value
+/// - Otherwise: the 4 bytes are the value (sign-extended to i64)
+pub fn read_longint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i64> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    let first = i32::from_le_bytes(buf);
+
+    if first == -1 {
+        // Marker indicating full 64-bit value follows
+        let mut buf64 = [0u8; 8];
+        reader.read_exact(&mut buf64)?;
+        Ok(i64::from_le_bytes(buf64))
+    } else {
+        // Value fits in 32 bits (sign-extend to 64)
+        Ok(first as i64)
+    }
+}
+
 /// Writes a variable-length integer using protocol 30+ varlong encoding.
 ///
 /// This mirrors upstream's `write_varlong30(int f, int64 x, uchar min_bytes)` inline function.
