@@ -295,14 +295,16 @@ impl GeneratorContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
 
+        let protocol_version = self.protocol.as_u8();
+
         // Send UID list if preserving ownership
         if self.config.flags.owner {
-            self.uid_list.write(writer, id0_names)?;
+            self.uid_list.write(writer, id0_names, protocol_version)?;
         }
 
         // Send GID list if preserving group
         if self.config.flags.group {
-            self.gid_list.write(writer, id0_names)?;
+            self.gid_list.write(writer, id0_names, protocol_version)?;
         }
 
         // Flush to prevent deadlock: receiver waits for ID lists before proceeding
