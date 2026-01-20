@@ -9,6 +9,19 @@ use super::filter_program::{
 };
 
 /// Error produced when planning or executing a local copy fails.
+///
+/// # Exit Code Integration
+///
+/// This error type uses exit codes that match upstream rsync's `errcode.h`.
+/// When this error bubbles up to the `core` crate (via `ClientError`), the
+/// exit codes correspond to `core::exit_code::ExitCode` variants:
+///
+/// | Exit Code | Upstream Name | core::exit_code::ExitCode |
+/// |-----------|---------------|---------------------------|
+/// | 1         | RERR_SYNTAX   | `Syntax`                  |
+/// | 23        | RERR_PARTIAL  | `PartialTransfer`         |
+/// | 25        | RERR_DEL_LIMIT| `DeleteLimit`             |
+/// | 30        | RERR_TIMEOUT  | `Timeout`                 |
 #[derive(Debug, Error)]
 #[error(transparent)]
 pub struct LocalCopyError {
@@ -62,6 +75,8 @@ impl LocalCopyError {
     }
 
     /// Returns the exit code that mirrors upstream rsync's behaviour.
+    ///
+    /// See the struct-level documentation for mappings to `core::exit_code::ExitCode`.
     #[must_use]
     pub const fn exit_code(&self) -> i32 {
         match self.kind {
@@ -72,6 +87,23 @@ impl LocalCopyError {
             LocalCopyErrorKind::Timeout { .. } => TIMEOUT_EXIT_CODE,
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
             LocalCopyErrorKind::StopAtReached { .. } => TIMEOUT_EXIT_CODE,
+        }
+    }
+
+    /// Returns the upstream rsync error code name for debugging.
+    ///
+    /// These names correspond to constants in upstream rsync's `errcode.h`.
+    #[must_use]
+    pub const fn code_name(&self) -> &'static str {
+        match self.kind {
+            LocalCopyErrorKind::MissingSourceOperands => "RERR_SYNTAX",
+            LocalCopyErrorKind::InvalidArgument(_) | LocalCopyErrorKind::Io { .. } => {
+                "RERR_PARTIAL"
+            }
+            LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
+                "RERR_TIMEOUT"
+            }
+            LocalCopyErrorKind::DeleteLimitExceeded { .. } => "RERR_DEL_LIMIT",
         }
     }
 
@@ -371,5 +403,42 @@ mod tests {
         for variant in variants {
             assert!(!variant.message().is_empty());
         }
+    }
+
+    #[test]
+    fn code_name_for_missing_operands() {
+        let error = LocalCopyError::missing_operands();
+        assert_eq!(error.code_name(), "RERR_SYNTAX");
+    }
+
+    #[test]
+    fn code_name_for_invalid_argument() {
+        let error = LocalCopyError::invalid_argument(LocalCopyArgumentError::EmptySourceOperand);
+        assert_eq!(error.code_name(), "RERR_PARTIAL");
+    }
+
+    #[test]
+    fn code_name_for_io() {
+        let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
+        let error = LocalCopyError::io("read", PathBuf::from("/test"), io_err);
+        assert_eq!(error.code_name(), "RERR_PARTIAL");
+    }
+
+    #[test]
+    fn code_name_for_timeout() {
+        let error = LocalCopyError::timeout(Duration::from_secs(30));
+        assert_eq!(error.code_name(), "RERR_TIMEOUT");
+    }
+
+    #[test]
+    fn code_name_for_delete_limit() {
+        let error = LocalCopyError::delete_limit_exceeded(100);
+        assert_eq!(error.code_name(), "RERR_DEL_LIMIT");
+    }
+
+    #[test]
+    fn code_name_for_stop_at_reached() {
+        let error = LocalCopyError::stop_at_reached(SystemTime::now());
+        assert_eq!(error.code_name(), "RERR_TIMEOUT");
     }
 }
