@@ -217,6 +217,27 @@ impl FileFlags {
     pub const fn io_error_endlist(&self) -> bool {
         self.extended & XMIT_IO_ERROR_ENDLIST != 0
     }
+
+    /// Returns true if this is the first entry in a hardlink group.
+    #[inline]
+    #[must_use]
+    pub const fn hlink_first(&self) -> bool {
+        self.extended & XMIT_HLINK_FIRST != 0
+    }
+
+    /// Returns true if a user name follows the UID.
+    #[inline]
+    #[must_use]
+    pub const fn user_name_follows(&self) -> bool {
+        self.extended & XMIT_USER_NAME_FOLLOWS != 0
+    }
+
+    /// Returns true if a group name follows the GID.
+    #[inline]
+    #[must_use]
+    pub const fn group_name_follows(&self) -> bool {
+        self.extended & XMIT_GROUP_NAME_FOLLOWS != 0
+    }
 }
 
 #[cfg(test)]
@@ -339,5 +360,38 @@ mod tests {
     #[test]
     fn xmit_io_error_endlist_alias() {
         assert_eq!(XMIT_IO_ERROR_ENDLIST, XMIT_HLINK_FIRST);
+    }
+
+    #[test]
+    fn flags_hlink_first() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_HLINK_FIRST);
+        assert!(flags.hlink_first());
+        assert!(!flags.hlinked());
+    }
+
+    #[test]
+    fn flags_user_name_follows() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_USER_NAME_FOLLOWS);
+        assert!(flags.user_name_follows());
+        assert!(!flags.group_name_follows());
+    }
+
+    #[test]
+    fn flags_group_name_follows() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS);
+        assert!(flags.group_name_follows());
+        assert!(!flags.user_name_follows());
+    }
+
+    #[test]
+    fn flags_combined_extended() {
+        let flags = FileFlags::new(
+            XMIT_EXTENDED_FLAGS,
+            XMIT_HLINKED | XMIT_HLINK_FIRST | XMIT_USER_NAME_FOLLOWS | XMIT_GROUP_NAME_FOLLOWS,
+        );
+        assert!(flags.hlinked());
+        assert!(flags.hlink_first());
+        assert!(flags.user_name_follows());
+        assert!(flags.group_name_follows());
     }
 }
