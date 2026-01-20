@@ -1,3 +1,20 @@
+//! Connect program support for daemon connections via `RSYNC_CONNECT_PROG`.
+//!
+//! This module provides [`ConnectProgramConfig`] for executing custom connection
+//! programs, mirroring upstream rsync's `RSYNC_CONNECT_PROG` functionality.
+//!
+//! # Security Model
+//!
+//! The `%H` (host) and `%P` (port) substitutions are performed without shell
+//! escaping, matching upstream rsync behavior. This is safe because:
+//!
+//! - `RSYNC_CONNECT_PROG` is set by the administrator, not end users
+//! - The template controls whether `%H`/`%P` are used at all
+//! - Hostnames with shell metacharacters are extremely rare
+//!
+//! If untrusted input could reach the host parameter, callers should validate
+//! the hostname format before invoking connection programs.
+
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
