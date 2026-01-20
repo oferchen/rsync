@@ -188,7 +188,14 @@ fn run_client_internal(
         };
 
         {
-            let mut w = writer.lock().unwrap();
+            let mut w = writer.lock().map_err(|_| {
+                use crate::message::Role;
+                use crate::rsync_error;
+                ClientError::new(
+                    1,
+                    rsync_error!(1, "batch writer lock poisoned").with_role(Role::Client),
+                )
+            })?;
             if let Err(e) = w.write_header(batch_flags) {
                 use crate::message::Role;
                 use crate::rsync_error;
@@ -253,7 +260,14 @@ fn run_client_internal(
     {
         // Finalize and close the batch file
         {
-            let mut writer = writer_arc.lock().unwrap();
+            let mut writer = writer_arc.lock().map_err(|_| {
+                use crate::message::Role;
+                use crate::rsync_error;
+                ClientError::new(
+                    1,
+                    rsync_error!(1, "batch writer lock poisoned").with_role(Role::Client),
+                )
+            })?;
             if let Err(e) = writer.flush() {
                 use crate::message::Role;
                 use crate::rsync_error;

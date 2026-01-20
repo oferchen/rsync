@@ -407,7 +407,8 @@ fn perform_daemon_handshake(
     // (mirrors upstream exchange_protocols lines 211-227)
     let our_protocol = ProtocolVersion::NEWEST.as_u8();
     let negotiated = if our_protocol < remote_protocol.as_u8() {
-        ProtocolVersion::try_from(our_protocol).unwrap()
+        // SAFETY: NEWEST is a valid protocol version by construction
+        ProtocolVersion::try_from(our_protocol).expect("NEWEST protocol version is always valid")
     } else {
         remote_protocol
     };
