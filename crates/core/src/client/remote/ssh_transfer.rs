@@ -473,7 +473,9 @@ fn send_filter_list_to_server(
     write_filter_list(connection, &wire_rules, protocol)
         .map_err(|e| invalid_argument_error(&format!("failed to send filter list: {e}"), 12))?;
 
-    eprintln!("[client] Sent {} filter rules to remote", wire_rules.len());
+    #[cfg(feature = "tracing")]
+    tracing::debug!(count = wire_rules.len(), "Sent filter rules to remote");
+
     Ok(())
 }
 

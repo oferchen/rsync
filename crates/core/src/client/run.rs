@@ -692,22 +692,22 @@ fn replay_batch(
     })?;
 
     // Read and validate the batch header
-    let flags = reader.read_header().map_err(|e| {
+    let _flags = reader.read_header().map_err(|e| {
         let msg = format!("failed to read batch header: {e}");
         ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
     })?;
 
     // Read file entries and apply delta operations
     // Format: Header, FileEntry1, DeltaOps1, FileEntry2, DeltaOps2, ..., EmptyPath
-    let mut file_count = 0u64;
-    let mut total_size = 0u64;
+    let mut _file_count = 0u64;
+    let mut _total_size = 0u64;
 
     while let Some(entry) = reader.read_file_entry().map_err(|e| {
         let msg = format!("failed to read file entry: {e}");
         ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
     })? {
-        file_count += 1;
-        total_size += entry.size;
+        _file_count += 1;
+        _total_size += entry.size;
 
         // Log the file being processed
         if config.verbosity() > 0 {
@@ -757,10 +757,17 @@ fn replay_batch(
     // reports file count and total size, handles single-file delta application.
 
     // Report what was read
-    if flags.recurse {
-        eprintln!("Batch mode enabled: recurse");
+    #[cfg(feature = "tracing")]
+    {
+        if _flags.recurse {
+            tracing::info!("Batch mode enabled: recurse");
+        }
+        tracing::info!(
+            file_count = _file_count,
+            total_size = _total_size,
+            "Batch replay complete"
+        );
     }
-    eprintln!("Batch replay: {file_count} files ({total_size} bytes total)");
 
     // Return a summary with the file count
     use engine::local_copy::LocalCopySummary;
