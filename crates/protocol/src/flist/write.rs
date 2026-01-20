@@ -13,9 +13,9 @@ use crate::varint::{write_varint, write_varint30_int};
 
 use super::entry::FileEntry;
 use super::flags::{
-    XMIT_EXTENDED_FLAGS, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME,
-    XMIT_SAME_GID, XMIT_SAME_MODE, XMIT_SAME_NAME, XMIT_SAME_RDEV_MAJOR, XMIT_SAME_TIME,
-    XMIT_SAME_UID, XMIT_TOP_DIR,
+    XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS, XMIT_HLINK_FIRST, XMIT_HLINKED,
+    XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_SAME_GID, XMIT_SAME_MODE, XMIT_SAME_NAME,
+    XMIT_SAME_RDEV_MAJOR, XMIT_SAME_TIME, XMIT_SAME_UID, XMIT_TOP_DIR, XMIT_USER_NAME_FOLLOWS,
 };
 use super::state::FileListCompressionState;
 
@@ -205,6 +205,24 @@ impl FileListWriter {
             }
         }
 
+        // User name follows flag (protocol 30+)
+        if self.preserve_uid
+            && self.protocol.as_u8() >= 30
+            && entry.user_name().is_some()
+            && (xflags & (XMIT_SAME_UID as u32)) == 0
+        {
+            xflags |= (XMIT_USER_NAME_FOLLOWS as u32) << 8;
+        }
+
+        // Group name follows flag (protocol 30+)
+        if self.preserve_gid
+            && self.protocol.as_u8() >= 30
+            && entry.group_name().is_some()
+            && (xflags & (XMIT_SAME_GID as u32)) == 0
+        {
+            xflags |= (XMIT_GROUP_NAME_FOLLOWS as u32) << 8;
+        }
+
         xflags
     }
 
@@ -301,6 +319,15 @@ impl FileListWriter {
                 writer.write_all(&(entry_uid as i32).to_le_bytes())?;
             } else {
                 write_varint(writer, entry_uid as i32)?;
+                // User name follows UID (protocol 30+)
+                if (xflags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0 {
+                    if let Some(name) = entry.user_name() {
+                        let name_bytes = name.as_bytes();
+                        let len = name_bytes.len().min(255) as u8;
+                        writer.write_all(&[len])?;
+                        writer.write_all(&name_bytes[..len as usize])?;
+                    }
+                }
             }
             self.state.update_uid(entry_uid);
         }
@@ -312,6 +339,15 @@ impl FileListWriter {
                 writer.write_all(&(entry_gid as i32).to_le_bytes())?;
             } else {
                 write_varint(writer, entry_gid as i32)?;
+                // Group name follows GID (protocol 30+)
+                if (xflags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
+                    if let Some(name) = entry.group_name() {
+                        let name_bytes = name.as_bytes();
+                        let len = name_bytes.len().min(255) as u8;
+                        writer.write_all(&[len])?;
+                        writer.write_all(&name_bytes[..len as usize])?;
+                    }
+                }
             }
             self.state.update_gid(entry_gid);
         }
@@ -428,6 +464,18 @@ impl FileListWriter {
         }
     }
 
+    /// Returns true if this entry is a hardlink follower (metadata should be skipped).
+    ///
+    /// A hardlink follower has XMIT_HLINKED set but NOT XMIT_HLINK_FIRST.
+    /// Such entries reference another entry in the file list, so their metadata
+    /// (size, mtime, mode, uid, gid, symlink, rdev) is omitted from the wire.
+    #[inline]
+    fn is_hardlink_follower(&self, xflags: u32) -> bool {
+        let hlinked = (xflags & ((XMIT_HLINKED as u32) << 8)) != 0;
+        let hlink_first = (xflags & ((XMIT_HLINK_FIRST as u32) << 8)) != 0;
+        hlinked && !hlink_first
+    }
+
     /// Writes a file entry to the stream.
     pub fn write_entry<W: Write + ?Sized>(
         &mut self,
@@ -451,14 +499,19 @@ impl FileListWriter {
         // Step 5: Write name
         self.write_name(writer, &name, same_len, suffix_len, xflags)?;
 
-        // Step 6: Write metadata
-        self.write_metadata(writer, entry, xflags)?;
+        // Step 6-9: Write metadata (unless this is a hardlink follower)
+        // Hardlink followers have their metadata copied from the leader entry,
+        // so we skip writing size, mtime, mode, uid, gid, symlink, and rdev.
+        if !self.is_hardlink_follower(xflags) {
+            // Step 6: Write metadata
+            self.write_metadata(writer, entry, xflags)?;
 
-        // Step 7: Write symlink target (if applicable)
-        self.write_symlink_target(writer, entry)?;
+            // Step 7: Write symlink target (if applicable)
+            self.write_symlink_target(writer, entry)?;
 
-        // Step 8: Write device numbers (if applicable)
-        self.write_rdev(writer, entry, xflags)?;
+            // Step 8: Write device numbers (if applicable)
+            self.write_rdev(writer, entry, xflags)?;
+        }
 
         // Step 9: Write hardlink index (if applicable)
         self.write_hardlink_idx(writer, entry, xflags)?;
@@ -1045,5 +1098,328 @@ mod tests {
 
         assert_eq!(read3.name(), "link2.txt");
         assert_eq!(read3.hardlink_idx(), Some(0));
+    }
+
+    #[test]
+    fn write_user_name_round_trip_protocol_30() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = FileEntry::new_file("file.txt".into(), 100, 0o644);
+        entry.set_uid(1000);
+        entry.set_user_name("testuser".to_string());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "file.txt");
+        assert_eq!(read_entry.user_name(), Some("testuser"));
+    }
+
+    #[test]
+    fn write_group_name_round_trip_protocol_30() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = FileEntry::new_file("file.txt".into(), 100, 0o644);
+        entry.set_gid(1000);
+        entry.set_group_name("testgroup".to_string());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "file.txt");
+        assert_eq!(read_entry.group_name(), Some("testgroup"));
+    }
+
+    #[test]
+    fn write_user_and_group_names_round_trip_protocol_32() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = FileEntry::new_file("owned.txt".into(), 500, 0o644);
+        entry.set_uid(1001);
+        entry.set_gid(1002);
+        entry.set_user_name("alice".to_string());
+        entry.set_group_name("developers".to_string());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "owned.txt");
+        assert_eq!(read_entry.user_name(), Some("alice"));
+        assert_eq!(read_entry.group_name(), Some("developers"));
+    }
+
+    #[test]
+    fn write_user_name_omitted_when_same_uid() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        // First entry sets the UID
+        let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
+        entry1.set_uid(1000);
+        entry1.set_user_name("testuser".to_string());
+
+        // Second entry has same UID - should use XMIT_SAME_UID (no name written)
+        let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
+        entry2.set_uid(1000);
+        entry2.set_user_name("testuser".to_string());
+
+        writer.write_entry(&mut buf, &entry1).unwrap();
+        let first_len = buf.len();
+        writer.write_entry(&mut buf, &entry2).unwrap();
+        let second_len = buf.len() - first_len;
+        writer.write_end(&mut buf, None).unwrap();
+
+        // Second entry should be smaller (no user name written)
+        assert!(
+            second_len < first_len,
+            "second entry should not include user name"
+        );
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        assert_eq!(read1.user_name(), Some("testuser"));
+        // Second entry doesn't get user_name since XMIT_SAME_UID was set
+        assert_eq!(read2.user_name(), None);
+    }
+
+    #[test]
+    fn write_names_omitted_for_protocol_29() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        // Protocol 29 doesn't support user/group name strings
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = FileEntry::new_file("file.txt".into(), 100, 0o644);
+        entry.set_uid(1000);
+        entry.set_gid(1000);
+        entry.set_user_name("testuser".to_string());
+        entry.set_group_name("testgroup".to_string());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        // Names should NOT be present for protocol 29
+        assert_eq!(read_entry.user_name(), None);
+        assert_eq!(read_entry.group_name(), None);
+    }
+
+    #[test]
+    fn write_hardlink_follower_skips_metadata() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+        // First: leader (u32::MAX) - full metadata
+        let mut entry1 = FileEntry::new_file("original.txt".into(), 500, 0o644);
+        entry1.set_mtime(1700000000, 0);
+        entry1.set_hardlink_idx(u32::MAX);
+
+        // Second: follower pointing to index 0 - metadata skipped
+        let mut entry2 = FileEntry::new_file("link.txt".into(), 500, 0o644);
+        entry2.set_mtime(1700000000, 0);
+        entry2.set_hardlink_idx(0);
+
+        writer.write_entry(&mut buf, &entry1).unwrap();
+        let first_len = buf.len();
+        writer.write_entry(&mut buf, &entry2).unwrap();
+        let second_len = buf.len() - first_len;
+        writer.write_end(&mut buf, None).unwrap();
+
+        // Follower should be MUCH smaller (no size, mtime, mode)
+        assert!(
+            second_len < first_len / 2,
+            "follower entry should be much smaller: {second_len} vs {first_len}"
+        );
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+        let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        // Leader has full metadata
+        assert_eq!(read1.name(), "original.txt");
+        assert_eq!(read1.size(), 500);
+        assert_eq!(read1.mtime(), 1700000000);
+        assert_eq!(read1.hardlink_idx(), Some(u32::MAX));
+
+        // Follower has zeroed metadata (caller should copy from leader)
+        assert_eq!(read2.name(), "link.txt");
+        assert_eq!(read2.size(), 0); // Metadata was skipped
+        assert_eq!(read2.mtime(), 0); // Metadata was skipped
+        assert_eq!(read2.hardlink_idx(), Some(0));
+    }
+
+    #[test]
+    fn write_hardlink_follower_with_uid_gid_skips_all() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_hard_links(true)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        // Leader with full metadata
+        let mut entry1 = FileEntry::new_file("leader.txt".into(), 1000, 0o755);
+        entry1.set_mtime(1700000000, 0);
+        entry1.set_uid(1000);
+        entry1.set_gid(1000);
+        entry1.set_user_name("testuser".to_string());
+        entry1.set_group_name("testgroup".to_string());
+        entry1.set_hardlink_idx(u32::MAX);
+
+        // Follower - all metadata should be skipped
+        let mut entry2 = FileEntry::new_file("follower.txt".into(), 1000, 0o755);
+        entry2.set_mtime(1700000000, 0);
+        entry2.set_uid(1000);
+        entry2.set_gid(1000);
+        entry2.set_hardlink_idx(0);
+
+        writer.write_entry(&mut buf, &entry1).unwrap();
+        let first_len = buf.len();
+        writer.write_entry(&mut buf, &entry2).unwrap();
+        let second_len = buf.len() - first_len;
+        writer.write_end(&mut buf, None).unwrap();
+
+        // Follower should be significantly smaller
+        assert!(
+            second_len < first_len / 2,
+            "follower should skip metadata: {second_len} vs {first_len}"
+        );
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_hard_links(true)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        // Leader has full metadata
+        assert_eq!(read1.user_name(), Some("testuser"));
+        assert_eq!(read1.group_name(), Some("testgroup"));
+
+        // Follower metadata was skipped
+        assert_eq!(read2.size(), 0);
+        assert_eq!(read2.mtime(), 0);
+        assert_eq!(read2.mode(), 0);
+        assert_eq!(read2.user_name(), None);
+        assert_eq!(read2.group_name(), None);
+        assert_eq!(read2.hardlink_idx(), Some(0));
+    }
+
+    #[test]
+    fn write_hardlink_leader_has_full_metadata() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+        // Leader should have full metadata even with hardlink flag
+        let mut entry = FileEntry::new_file("leader.txt".into(), 500, 0o644);
+        entry.set_mtime(1700000000, 0);
+        entry.set_hardlink_idx(u32::MAX); // Leader marker
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        // Leader has full metadata
+        assert_eq!(read_entry.name(), "leader.txt");
+        assert_eq!(read_entry.size(), 500);
+        assert_eq!(read_entry.mtime(), 1700000000);
+        assert_eq!(read_entry.hardlink_idx(), Some(u32::MAX));
+    }
+
+    #[test]
+    fn is_hardlink_follower_helper() {
+        let writer = FileListWriter::new(test_protocol()).with_preserve_hard_links(true);
+
+        // No hardlink flags
+        let xflags_none: u32 = 0;
+        assert!(!writer.is_hardlink_follower(xflags_none));
+
+        // Leader (HLINKED + HLINK_FIRST)
+        let xflags_leader = ((XMIT_HLINKED as u32) << 8) | ((XMIT_HLINK_FIRST as u32) << 8);
+        assert!(!writer.is_hardlink_follower(xflags_leader));
+
+        // Follower (HLINKED only)
+        let xflags_follower = (XMIT_HLINKED as u32) << 8;
+        assert!(writer.is_hardlink_follower(xflags_follower));
     }
 }
