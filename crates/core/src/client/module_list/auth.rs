@@ -38,6 +38,11 @@ impl DaemonAuthContext {
     }
 }
 
+/// Wrapper for sensitive byte data that is securely cleared on drop.
+///
+/// Uses volatile writes and memory fences to ensure the compiler cannot
+/// optimize away the zeroing operation, preventing sensitive data from
+/// lingering in memory after the value is dropped.
 pub(crate) struct SensitiveBytes(Vec<u8>);
 
 impl SensitiveBytes {
@@ -54,20 +59,32 @@ impl SensitiveBytes {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
+    #[allow(dead_code, unsafe_code)]
     pub(crate) fn into_zeroized_vec(mut self) -> Vec<u8> {
         for byte in &mut self.0 {
-            *byte = 0;
+            // SAFETY: Writing to valid memory owned by self.
+            unsafe {
+                std::ptr::write_volatile(byte, 0);
+            }
         }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
         std::mem::take(&mut self.0)
     }
 }
 
 impl Drop for SensitiveBytes {
+    #[allow(unsafe_code)]
     fn drop(&mut self) {
+        // Use volatile writes to prevent compiler from optimizing away the zeroing.
+        // This mirrors the approach used by the `zeroize` crate without the dependency.
         for byte in &mut self.0 {
-            *byte = 0;
+            // SAFETY: Writing to valid memory owned by self.
+            unsafe {
+                std::ptr::write_volatile(byte, 0);
+            }
         }
+        // Memory fence to ensure the writes complete before deallocation.
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
     }
 }
 
