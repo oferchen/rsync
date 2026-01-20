@@ -15,6 +15,7 @@ use crate::varint::{read_varint, read_varint30_int};
 use super::entry::FileEntry;
 use super::flags::{
     FileFlags, XMIT_EXTENDED_FLAGS, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST,
+    XMIT_NO_CONTENT_DIR,
 };
 use super::state::FileListCompressionState;
 
@@ -54,6 +55,10 @@ pub struct FileListReader {
     preserve_devices: bool,
     /// Whether to preserve (and thus read) hardlink indices from the wire.
     preserve_hard_links: bool,
+    /// Whether to preserve (and thus read) access times from the wire.
+    preserve_atimes: bool,
+    /// Whether to preserve (and thus read) creation times from the wire.
+    preserve_crtimes: bool,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
 }
@@ -64,6 +69,9 @@ struct MetadataResult {
     mode: u32,
     user_name: Option<String>,
     group_name: Option<String>,
+    atime: Option<i64>,
+    crtime: Option<i64>,
+    content_dir: bool,
 }
 
 impl FileListReader {
@@ -81,6 +89,8 @@ impl FileListReader {
             preserve_links: false,
             preserve_devices: false,
             preserve_hard_links: false,
+            preserve_atimes: false,
+            preserve_crtimes: false,
             iconv: None,
         }
     }
@@ -99,6 +109,8 @@ impl FileListReader {
             preserve_links: false,
             preserve_devices: false,
             preserve_hard_links: false,
+            preserve_atimes: false,
+            preserve_crtimes: false,
             iconv: None,
         }
     }
@@ -135,6 +147,20 @@ impl FileListReader {
     #[must_use]
     pub const fn with_preserve_hard_links(mut self, preserve: bool) -> Self {
         self.preserve_hard_links = preserve;
+        self
+    }
+
+    /// Sets whether access times should be read from the wire.
+    #[must_use]
+    pub const fn with_preserve_atimes(mut self, preserve: bool) -> Self {
+        self.preserve_atimes = preserve;
+        self
+    }
+
+    /// Sets whether creation times should be read from the wire.
+    #[must_use]
+    pub const fn with_preserve_crtimes(mut self, preserve: bool) -> Self {
+        self.preserve_crtimes = preserve;
         self
     }
 
@@ -190,14 +216,17 @@ impl FileListReader {
         }
 
         // Read extended flags
-        let ext_byte = if use_varint {
-            ((flags_value >> 8) & 0xFF) as u8
+        let (ext_byte, ext16_byte) = if use_varint {
+            (
+                ((flags_value >> 8) & 0xFF) as u8,
+                ((flags_value >> 16) & 0xFF) as u8,
+            )
         } else if (flags_value as u8 & XMIT_EXTENDED_FLAGS) != 0 {
             let mut buf = [0u8; 1];
             reader.read_exact(&mut buf)?;
-            buf[0]
+            (buf[0], 0u8)
         } else {
-            0
+            (0u8, 0u8)
         };
 
         let primary_byte = flags_value as u8;
@@ -208,8 +237,9 @@ impl FileListReader {
         }
 
         // Build flags structure
-        let flags = if ext_byte != 0 || (primary_byte & XMIT_EXTENDED_FLAGS) != 0 {
-            FileFlags::new(primary_byte, ext_byte)
+        let flags = if ext_byte != 0 || ext16_byte != 0 || (primary_byte & XMIT_EXTENDED_FLAGS) != 0
+        {
+            FileFlags::new_with_extended16(primary_byte, ext_byte, ext16_byte)
         } else {
             FileFlags::new(primary_byte, 0)
         };
@@ -245,7 +275,7 @@ impl FileListReader {
         Ok(Some(error_code))
     }
 
-    /// Reads metadata fields (mtime, nsec, mode, uid, gid, user_name, group_name) based on flags.
+    /// Reads metadata fields (mtime, nsec, mode, uid, gid, user_name, group_name, atime, crtime) based on flags.
     fn read_metadata<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -314,11 +344,52 @@ impl FileListReader {
             }
         }
 
+        // Determine content_dir for directories (protocol 30+)
+        // XMIT_NO_CONTENT_DIR shares bit with XMIT_SAME_RDEV_MAJOR but only applies to directories
+        let is_dir = (mode & 0o170000) == 0o040000;
+        let content_dir = if is_dir && self.protocol.as_u8() >= 30 {
+            // If XMIT_NO_CONTENT_DIR is NOT set, directory has content
+            (flags.extended & XMIT_NO_CONTENT_DIR) == 0
+        } else {
+            // Non-directories or older protocols: default to true
+            true
+        };
+
+        // Read atime if preserving atimes and not same as previous (non-directories only)
+        let atime = if self.preserve_atimes && !is_dir {
+            if flags.same_atime() {
+                Some(self.state.prev_atime)
+            } else {
+                let atime = crate::read_varlong(reader, 4)?;
+                self.state.update_atime(atime);
+                Some(atime)
+            }
+        } else {
+            None
+        };
+
+        // Read crtime if preserving crtimes
+        let crtime = if self.preserve_crtimes {
+            if flags.crtime_eq_mtime() {
+                // Creation time equals mtime
+                Some(mtime)
+            } else {
+                // Read crtime from wire
+                let crtime = crate::read_varlong(reader, 4)?;
+                Some(crtime)
+            }
+        } else {
+            None
+        };
+
         Ok(MetadataResult {
             mtime,
             mode,
             user_name,
             group_name,
+            atime,
+            crtime,
+            content_dir,
         })
     }
 
@@ -501,6 +572,9 @@ impl FileListReader {
                     mode: 0,
                     user_name: None,
                     group_name: None,
+                    atime: None,
+                    crtime: None,
+                    content_dir: true,
                 },
                 None,
                 None,
@@ -554,6 +628,21 @@ impl FileListReader {
         // Step 14: Set group name if present
         if let Some(name) = metadata.group_name {
             entry.set_group_name(name);
+        }
+
+        // Step 15: Set atime if present
+        if let Some(atime) = metadata.atime {
+            entry.set_atime(atime);
+        }
+
+        // Step 16: Set crtime if present
+        if let Some(crtime) = metadata.crtime {
+            entry.set_crtime(crtime);
+        }
+
+        // Step 17: Set content_dir for directories
+        if entry.is_dir() {
+            entry.set_content_dir(metadata.content_dir);
         }
 
         Ok(Some(entry))
@@ -906,5 +995,221 @@ mod tests {
         // Follower (HLINKED only, no HLINK_FIRST)
         let flags_follower = FileFlags::new(0, XMIT_HLINKED);
         assert!(reader.is_hardlink_follower(flags_follower));
+    }
+
+    #[test]
+    fn read_write_round_trip_with_atime() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+        let mut writer =
+            FileListWriter::with_compat_flags(protocol, flags).with_preserve_atimes(true);
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o100644);
+        entry.set_mtime(1700000000, 0);
+        entry.set_atime(1700001000);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader =
+            FileListReader::with_compat_flags(protocol, flags).with_preserve_atimes(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "test.txt");
+        assert_eq!(read_entry.atime(), 1700001000);
+    }
+
+    #[test]
+    fn read_write_round_trip_with_same_atime() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+        let mut writer =
+            FileListWriter::with_compat_flags(protocol, flags).with_preserve_atimes(true);
+
+        // First file with atime
+        let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o100644);
+        entry1.set_mtime(1700000000, 0);
+        entry1.set_atime(1700001000);
+
+        // Second file with same atime (should use XMIT_SAME_ATIME flag)
+        let mut entry2 = FileEntry::new_file("file2.txt".into(), 200, 0o100644);
+        entry2.set_mtime(1700000000, 0);
+        entry2.set_atime(1700001000);
+
+        writer.write_entry(&mut data, &entry1).unwrap();
+        writer.write_entry(&mut data, &entry2).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader =
+            FileListReader::with_compat_flags(protocol, flags).with_preserve_atimes(true);
+
+        let read_entry1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry1.atime(), 1700001000);
+
+        let read_entry2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry2.atime(), 1700001000);
+    }
+
+    #[test]
+    fn read_write_round_trip_with_crtime() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+        let mut writer =
+            FileListWriter::with_compat_flags(protocol, flags).with_preserve_crtimes(true);
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o100644);
+        entry.set_mtime(1700000000, 0);
+        entry.set_crtime(1699999000); // Different from mtime
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader =
+            FileListReader::with_compat_flags(protocol, flags).with_preserve_crtimes(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "test.txt");
+        assert_eq!(read_entry.crtime(), 1699999000);
+    }
+
+    #[test]
+    fn read_write_round_trip_with_crtime_eq_mtime() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+        let mut writer =
+            FileListWriter::with_compat_flags(protocol, flags).with_preserve_crtimes(true);
+
+        // crtime equals mtime - should use XMIT_CRTIME_EQ_MTIME flag
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o100644);
+        entry.set_mtime(1700000000, 0);
+        entry.set_crtime(1700000000); // Same as mtime
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader =
+            FileListReader::with_compat_flags(protocol, flags).with_preserve_crtimes(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.crtime(), 1700000000);
+        assert_eq!(read_entry.crtime(), read_entry.mtime());
+    }
+
+    #[test]
+    fn read_write_round_trip_directory_with_content() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::with_compat_flags(protocol, flags);
+
+        // Directory with content
+        let mut entry = FileEntry::new_directory("mydir".into(), 0o040755);
+        entry.set_mtime(1700000000, 0);
+        entry.set_content_dir(true);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "mydir");
+        assert!(read_entry.is_dir());
+        assert!(read_entry.content_dir());
+    }
+
+    #[test]
+    fn read_write_round_trip_directory_without_content() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::with_compat_flags(protocol, flags);
+
+        // Directory without content (implied directory)
+        let mut entry = FileEntry::new_directory("implied_dir".into(), 0o040755);
+        entry.set_mtime(1700000000, 0);
+        entry.set_content_dir(false);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "implied_dir");
+        assert!(read_entry.is_dir());
+        assert!(!read_entry.content_dir());
+    }
+
+    #[test]
+    fn read_write_round_trip_with_all_times() {
+        use super::super::write::FileListWriter;
+        use crate::CompatibilityFlags;
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::with_compat_flags(protocol, flags)
+            .with_preserve_atimes(true)
+            .with_preserve_crtimes(true);
+
+        let mut entry = FileEntry::new_file("complete.txt".into(), 500, 0o100644);
+        entry.set_mtime(1700000000, 0);
+        entry.set_atime(1700001000);
+        entry.set_crtime(1699990000);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(protocol, flags)
+            .with_preserve_atimes(true)
+            .with_preserve_crtimes(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "complete.txt");
+        assert_eq!(read_entry.mtime(), 1700000000);
+        assert_eq!(read_entry.atime(), 1700001000);
+        assert_eq!(read_entry.crtime(), 1699990000);
+    }
+
+    #[test]
+    fn preserve_atimes_builder() {
+        let reader = FileListReader::new(test_protocol()).with_preserve_atimes(true);
+        assert!(reader.preserve_atimes);
+    }
+
+    #[test]
+    fn preserve_crtimes_builder() {
+        let reader = FileListReader::new(test_protocol()).with_preserve_crtimes(true);
+        assert!(reader.preserve_crtimes);
     }
 }
