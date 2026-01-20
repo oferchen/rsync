@@ -285,3 +285,59 @@ fn parse_remote_shell_handles_multiple_spaces() {
     assert_eq!(args[1].to_string_lossy(), "-p");
     assert_eq!(args[2].to_string_lossy(), "2222");
 }
+
+#[cfg(unix)]
+#[test]
+fn split_connection_provides_separate_read_write_halves() {
+    let connection = spawn_echo_process();
+
+    let (mut reader, mut writer, child_handle) = connection.split().expect("split succeeds");
+
+    // Write to stdin via writer
+    writer.write_all(b"test").expect("write");
+    writer.close().expect("close writer");
+
+    // Read from stdout via reader
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer).expect("read");
+    assert_eq!(&buffer, b"test");
+
+    // Wait for child via handle
+    let status = child_handle.wait().expect("wait");
+    assert!(status.success());
+}
+
+#[cfg(unix)]
+#[test]
+fn split_fails_after_stdin_closed() {
+    let mut connection = spawn_echo_process();
+    connection.close_stdin().expect("close stdin");
+
+    let result = connection.split();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+}
+
+#[cfg(unix)]
+#[test]
+fn try_wait_returns_none_while_running() {
+    let mut connection = spawn_echo_process();
+
+    let result = connection.try_wait().expect("try_wait");
+    assert!(result.is_none(), "process should still be running");
+
+    connection.close_stdin().expect("close stdin");
+    let _ = connection.wait();
+}
+
+#[cfg(unix)]
+#[test]
+fn wait_returns_success_after_split() {
+    let connection = spawn_echo_process();
+    let (_reader, writer, handle) = connection.split().expect("split");
+
+    writer.close().expect("close writer");
+    let status = handle.wait().expect("wait via handle");
+    assert!(status.success());
+}
