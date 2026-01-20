@@ -1,3 +1,30 @@
+//! ARM NEON SIMD-accelerated rolling checksum implementation.
+//!
+//! This module provides NEON (Advanced SIMD) implementation of the rolling checksum
+//! accumulation used for rsync's delta transfer algorithm on aarch64 platforms.
+//!
+//! # Safety
+//!
+//! This module contains `unsafe` code for SIMD operations. Safety is ensured by:
+//!
+//! - **Runtime CPU feature detection**: NEON availability is checked via
+//!   `std::arch::is_aarch64_feature_detected!("neon")` and cached in a `OnceLock`.
+//!   SIMD functions are only called after confirming CPU support.
+//!
+//! - **Memory alignment**: SIMD load operations (`vld1q_u8`, `vld1q_u16`) do not
+//!   require aligned memory on ARM, so no alignment constraints are imposed.
+//!
+//! - **Bounds checking**: The loop condition (`chunk.len() >= BLOCK_LEN`) ensures
+//!   sufficient data exists before SIMD processing. Remaining bytes use scalar fallback.
+//!
+//! - **No data races**: All operations work on local variables or immutable slice references.
+//!   The `OnceLock` provides thread-safe lazy initialization of feature detection.
+//!
+//! # Performance
+//!
+//! NEON processes 16 bytes per iteration using vector multiply-accumulate operations.
+//! The weighted sum computation uses `vmulq_u16` and `vaddvq_u16` for efficient reduction.
+
 #![allow(unsafe_code)]
 #![allow(unsafe_op_in_unsafe_fn)]
 

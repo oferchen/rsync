@@ -1,3 +1,30 @@
+//! x86/x86_64 SIMD-accelerated rolling checksum implementation.
+//!
+//! This module provides AVX2 and SSE2 implementations of the rolling checksum
+//! accumulation used for rsync's delta transfer algorithm.
+//!
+//! # Safety
+//!
+//! This module contains `unsafe` code for SIMD operations. Safety is ensured by:
+//!
+//! - **Runtime CPU feature detection**: All SIMD paths are guarded by
+//!   `std::arch::is_x86_feature_detected!` checks cached in a `OnceLock`. The
+//!   AVX2 and SSE2 functions are only called after confirming CPU support.
+//!
+//! - **Memory alignment**: SIMD load operations (`_mm_loadu_si128`, `_mm256_loadu_si256`)
+//!   use unaligned variants, so no alignment requirements are imposed on input data.
+//!
+//! - **Bounds checking**: All slice accesses are bounds-checked before SIMD processing.
+//!   The loop conditions (`chunk.len() >= AVX2_BLOCK_LEN`) ensure sufficient data exists.
+//!
+//! - **No data races**: All operations work on local variables or immutable slice references.
+//!   The `OnceLock` for feature detection provides thread-safe initialization.
+//!
+//! # Performance
+//!
+//! AVX2 processes 32 bytes per iteration, SSE2 processes 16 bytes. Remaining bytes
+//! fall back to the scalar implementation to ensure correctness for all input sizes.
+
 #![allow(unsafe_code)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
