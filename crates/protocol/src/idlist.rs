@@ -6,13 +6,23 @@
 //!
 //! # Wire Format
 //!
-//! ID lists are transmitted as sequences of `(varint id, byte name_len, name_bytes)`
-//! tuples, terminated by `varint 0`. With the `ID0_NAMES` compat flag, an additional
-//! name for id=0 follows the terminator.
+//! The wire format is protocol version dependent (`varint30` pattern):
+//!
+//! **Protocol < 30 (legacy):**
+//! - ID lists use fixed 4-byte little-endian integers
+//! - `(int32 id, byte name_len, name_bytes)` tuples, terminated by `int32 0`
+//!
+//! **Protocol >= 30 (modern):**
+//! - ID lists use variable-length integers
+//! - `(varint id, byte name_len, name_bytes)` tuples, terminated by `varint 0`
+//!
+//! With the `ID0_NAMES` compat flag (protocol 30+), an additional name for id=0
+//! follows the terminator.
 //!
 //! # Upstream Reference
 //!
 //! - `uidlist.c` - UID/GID list management
+//! - `io.h:21-43` - `read_varint30()`/`write_varint30()` inline functions
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -119,12 +129,17 @@ impl IdList {
     ///
     /// # Wire Format
     ///
-    /// For each ID with a name:
+    /// For protocol < 30 (varint30 fallback):
+    /// - `int32 id` - The numeric ID as 4-byte little-endian
+    /// - `byte len` - Name length (0-255)
+    /// - `bytes[len]` - The name
+    ///
+    /// For protocol >= 30:
     /// - `varint id` - The numeric ID
     /// - `byte len` - Name length (0-255)
     /// - `bytes[len]` - The name
     ///
-    /// Terminated by `varint 0`.
+    /// Terminated by id=0 (encoded per protocol version).
     ///
     /// If `id0_names` is true, also sends the name for id=0 after the terminator.
     ///
@@ -132,7 +147,18 @@ impl IdList {
     ///
     /// * `writer` - The destination for encoded data
     /// * `id0_names` - Whether to send id=0's name (ID0_NAMES compat flag)
-    pub fn write<W: Write>(&self, writer: &mut W, id0_names: bool) -> io::Result<()> {
+    /// * `protocol_version` - The negotiated protocol version (affects encoding)
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `uidlist.c:382` - `send_user_name()` uses `write_varint30()`
+    /// - `io.h:37` - `write_varint30()` switches between int and varint at protocol 30
+    pub fn write<W: Write>(
+        &self,
+        writer: &mut W,
+        id0_names: bool,
+        protocol_version: u8,
+    ) -> io::Result<()> {
         // Send (id, name) pairs for non-zero IDs with names
         for &id in &self.order {
             if id == 0 {
@@ -141,8 +167,8 @@ impl IdList {
             if let Some(entry) = self.entries.get(&id) {
                 if let Some(ref name) = entry.name {
                     let len = name.len().min(255) as u8;
-                    // IDs are sent as signed varints (upstream uses varint30)
-                    crate::write_varint(writer, id as i32)?;
+                    // Use varint30 encoding (int for proto < 30, varint for proto >= 30)
+                    crate::write_varint30_int(writer, id as i32, protocol_version)?;
                     writer.write_all(&[len])?;
                     if len > 0 {
                         writer.write_all(&name[..len as usize])?;
@@ -152,7 +178,7 @@ impl IdList {
         }
 
         // Terminate with id=0
-        crate::write_varint(writer, 0)?;
+        crate::write_varint30_int(writer, 0, protocol_version)?;
 
         // With ID0_NAMES, send id=0's name
         if id0_names {
@@ -180,11 +206,18 @@ impl IdList {
     ///
     /// * `reader` - The source of encoded data
     /// * `id0_names` - Whether to read id=0's name (ID0_NAMES compat flag)
+    /// * `protocol_version` - The negotiated protocol version (affects decoding)
     /// * `name_to_id` - Function to resolve a name to a local ID
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `uidlist.c:467` - `recv_id_list()` uses `read_varint30()`
+    /// - `io.h:21` - `read_varint30()` switches between int and varint at protocol 30
     pub fn read<R: Read + ?Sized, F>(
         &mut self,
         reader: &mut R,
         id0_names: bool,
+        protocol_version: u8,
         name_to_id: F,
     ) -> io::Result<()>
     where
@@ -192,7 +225,8 @@ impl IdList {
     {
         // Read (id, name) pairs until id=0
         loop {
-            let id_signed = crate::read_varint(reader)?;
+            // Use varint30 decoding (int for proto < 30, varint for proto >= 30)
+            let id_signed = crate::read_varint30_int(reader, protocol_version)?;
             if id_signed == 0 {
                 break;
             }
@@ -290,22 +324,41 @@ mod tests {
     }
 
     #[test]
-    fn write_empty_list() {
+    fn write_empty_list_proto30() {
         let list = IdList::new();
         let mut buf = Vec::new();
-        list.write(&mut buf, false).unwrap();
+        list.write(&mut buf, false, 30).unwrap();
         // Should just be the terminator (varint 0)
         assert_eq!(buf, vec![0]);
     }
 
     #[test]
-    fn write_single_id() {
+    fn write_empty_list_proto29() {
+        let list = IdList::new();
+        let mut buf = Vec::new();
+        list.write(&mut buf, false, 29).unwrap();
+        // Should be 4-byte int terminator for protocol < 30
+        assert_eq!(buf, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn write_single_id_proto30() {
         let mut list = IdList::new();
         list.add_id(1, Some(b"root".to_vec()));
         let mut buf = Vec::new();
-        list.write(&mut buf, false).unwrap();
+        list.write(&mut buf, false, 30).unwrap();
         // varint(1), len(4), "root", varint(0)
         assert_eq!(buf, vec![1, 4, b'r', b'o', b'o', b't', 0]);
+    }
+
+    #[test]
+    fn write_single_id_proto29() {
+        let mut list = IdList::new();
+        list.add_id(1, Some(b"root".to_vec()));
+        let mut buf = Vec::new();
+        list.write(&mut buf, false, 29).unwrap();
+        // int32(1), len(4), "root", int32(0)
+        assert_eq!(buf, vec![1, 0, 0, 0, 4, b'r', b'o', b'o', b't', 0, 0, 0, 0]);
     }
 
     #[test]
@@ -313,25 +366,48 @@ mod tests {
         let mut list = IdList::new();
         list.add_id(0, Some(b"root".to_vec()));
         let mut buf = Vec::new();
-        list.write(&mut buf, true).unwrap();
+        list.write(&mut buf, true, 30).unwrap();
         // varint(0) terminator, len(4), "root"
         assert_eq!(buf, vec![0, 4, b'r', b'o', b'o', b't']);
     }
 
     #[test]
-    fn read_empty_list() {
-        let data = vec![0u8]; // Just terminator
+    fn read_empty_list_proto30() {
+        let data = vec![0u8]; // Just terminator (varint)
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, |_| None).unwrap();
+        list.read(&mut data.as_slice(), false, 30, |_| None)
+            .unwrap();
         assert!(list.is_empty());
     }
 
     #[test]
-    fn read_single_id() {
+    fn read_empty_list_proto29() {
+        let data = vec![0u8, 0, 0, 0]; // Just terminator (4-byte int)
+        let mut list = IdList::new();
+        list.read(&mut data.as_slice(), false, 29, |_| None)
+            .unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn read_single_id_proto30() {
         // varint(1), len(4), "root", varint(0)
         let data = vec![1, 4, b'r', b'o', b'o', b't', 0];
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, |_| Some(0)).unwrap();
+        list.read(&mut data.as_slice(), false, 30, |_| Some(0))
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        // Name resolved to 0
+        assert_eq!(list.match_id(1), 0);
+    }
+
+    #[test]
+    fn read_single_id_proto29() {
+        // int32(1), len(4), "root", int32(0)
+        let data = vec![1, 0, 0, 0, 4, b'r', b'o', b'o', b't', 0, 0, 0, 0];
+        let mut list = IdList::new();
+        list.read(&mut data.as_slice(), false, 29, |_| Some(0))
+            .unwrap();
         assert_eq!(list.len(), 1);
         // Name resolved to 0
         assert_eq!(list.match_id(1), 0);
@@ -342,14 +418,15 @@ mod tests {
         // varint(0) terminator, len(4), "root"
         let data = vec![0, 4, b'r', b'o', b'o', b't'];
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), true, |_| Some(0)).unwrap();
+        list.read(&mut data.as_slice(), true, 30, |_| Some(0))
+            .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list.match_id(0), 0);
     }
 
     #[test]
     fn read_unresolved_name_uses_remote_id() {
-        // Create encoded data using the actual encoder
+        // Create encoded data using the actual encoder for protocol 30
         let mut data = Vec::new();
         crate::write_varint(&mut data, 50).unwrap(); // Use a simpler ID
         data.push(7); // len
@@ -357,23 +434,46 @@ mod tests {
         crate::write_varint(&mut data, 0).unwrap(); // terminator
 
         let mut list = IdList::new();
-        list.read(&mut data.as_slice(), false, |_| None).unwrap();
+        list.read(&mut data.as_slice(), false, 30, |_| None)
+            .unwrap();
         // Name not resolved, falls back to remote ID
         assert_eq!(list.match_id(50), 50);
     }
 
     #[test]
-    fn write_read_roundtrip() {
+    fn write_read_roundtrip_proto30() {
         let mut sender = IdList::new();
         sender.add_id(1, Some(b"root".to_vec()));
         sender.add_id(1000, Some(b"user".to_vec()));
 
         let mut buf = Vec::new();
-        sender.write(&mut buf, false).unwrap();
+        sender.write(&mut buf, false, 30).unwrap();
 
         let mut receiver = IdList::new();
         receiver
-            .read(&mut buf.as_slice(), false, |name| match name {
+            .read(&mut buf.as_slice(), false, 30, |name| match name {
+                b"root" => Some(0),
+                b"user" => Some(500),
+                _ => None,
+            })
+            .unwrap();
+
+        assert_eq!(receiver.match_id(1), 0);
+        assert_eq!(receiver.match_id(1000), 500);
+    }
+
+    #[test]
+    fn write_read_roundtrip_proto29() {
+        let mut sender = IdList::new();
+        sender.add_id(1, Some(b"root".to_vec()));
+        sender.add_id(1000, Some(b"user".to_vec()));
+
+        let mut buf = Vec::new();
+        sender.write(&mut buf, false, 29).unwrap();
+
+        let mut receiver = IdList::new();
+        receiver
+            .read(&mut buf.as_slice(), false, 29, |name| match name {
                 b"root" => Some(0),
                 b"user" => Some(500),
                 _ => None,
@@ -402,7 +502,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         // Without a name, nothing is written for this ID
         let mut buf = Vec::new();
-        list.write(&mut buf, false).unwrap();
+        list.write(&mut buf, false, 30).unwrap();
         assert_eq!(buf, vec![0]); // Just terminator
     }
 }
