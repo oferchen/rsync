@@ -272,6 +272,66 @@ pub fn read_varlong30<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Re
     read_varlong(reader, min_bytes)
 }
 
+/// Writes a 32-bit integer using rsync's fixed 4-byte little-endian format.
+///
+/// This mirrors upstream's `write_int()` from io.c. Used for protocol versions < 30.
+pub fn write_int<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
+    writer.write_all(&value.to_le_bytes())
+}
+
+/// Reads a 32-bit integer using rsync's fixed 4-byte little-endian format.
+///
+/// This mirrors upstream's `read_int()` from io.c. Used for protocol versions < 30.
+pub fn read_int<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf)?;
+    Ok(i32::from_le_bytes(buf))
+}
+
+/// Writes a 32-bit integer using the protocol 30+ varint30 encoding.
+///
+/// This mirrors upstream's `write_varint30()` inline function from io.h:
+/// - Protocol < 30: uses fixed 4-byte little-endian format
+/// - Protocol >= 30: uses variable-length encoding
+///
+/// # Arguments
+///
+/// * `writer` - Destination for the encoded bytes
+/// * `value` - The 32-bit value to encode
+/// * `protocol_version` - The negotiated protocol version
+pub fn write_varint30_int<W: Write + ?Sized>(
+    writer: &mut W,
+    value: i32,
+    protocol_version: u8,
+) -> io::Result<()> {
+    if protocol_version < 30 {
+        write_int(writer, value)
+    } else {
+        write_varint(writer, value)
+    }
+}
+
+/// Reads a 32-bit integer using the protocol 30+ varint30 encoding.
+///
+/// This mirrors upstream's `read_varint30()` inline function from io.h:
+/// - Protocol < 30: reads fixed 4-byte little-endian format
+/// - Protocol >= 30: reads variable-length encoding
+///
+/// # Arguments
+///
+/// * `reader` - Source of the encoded bytes
+/// * `protocol_version` - The negotiated protocol version
+pub fn read_varint30_int<R: Read + ?Sized>(
+    reader: &mut R,
+    protocol_version: u8,
+) -> io::Result<i32> {
+    if protocol_version < 30 {
+        read_int(reader)
+    } else {
+        read_varint(reader)
+    }
+}
+
 /// Encodes `value` into `out` using rsync's variable-length integer format.
 ///
 /// The helper mirrors [`write_varint`] but appends the encoded bytes to a
@@ -856,5 +916,119 @@ mod tests {
         // Larger values need more bytes
         let (len, _) = encode_bytes(65536);
         assert!(len >= 3);
+    }
+
+    // ==== Fixed int (write_int/read_int) tests ====
+
+    #[test]
+    fn write_int_produces_4_bytes() {
+        let mut output = Vec::new();
+        write_int(&mut output, 42).expect("write succeeds");
+        assert_eq!(output.len(), 4);
+        assert_eq!(output, vec![42, 0, 0, 0]);
+    }
+
+    #[test]
+    fn read_int_parses_4_bytes() {
+        let data = [42u8, 0, 0, 0];
+        let mut cursor = Cursor::new(&data[..]);
+        let value = read_int(&mut cursor).expect("read succeeds");
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn write_read_int_roundtrip() {
+        let test_values = [0, 1, 127, 128, 255, 256, 65536, i32::MAX, i32::MIN, -1];
+        for value in test_values {
+            let mut buf = Vec::new();
+            write_int(&mut buf, value).expect("write succeeds");
+            assert_eq!(buf.len(), 4);
+            let mut cursor = Cursor::new(&buf[..]);
+            let read_back = read_int(&mut cursor).expect("read succeeds");
+            assert_eq!(read_back, value, "roundtrip failed for {value}");
+        }
+    }
+
+    #[test]
+    fn read_int_insufficient_data() {
+        let data = [42u8, 0, 0]; // Only 3 bytes
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_int(&mut cursor).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    // ==== varint30_int tests ====
+
+    #[test]
+    fn write_varint30_int_proto29_uses_fixed_int() {
+        let mut output = Vec::new();
+        write_varint30_int(&mut output, 42, 29).expect("write succeeds");
+        assert_eq!(output.len(), 4); // Fixed 4-byte int
+        assert_eq!(output, vec![42, 0, 0, 0]);
+    }
+
+    #[test]
+    fn write_varint30_int_proto30_uses_varint() {
+        let mut output = Vec::new();
+        write_varint30_int(&mut output, 42, 30).expect("write succeeds");
+        assert_eq!(output.len(), 1); // Single-byte varint for small values
+        assert_eq!(output, vec![42]);
+    }
+
+    #[test]
+    fn read_varint30_int_proto29_reads_fixed_int() {
+        let data = [42u8, 0, 0, 0];
+        let mut cursor = Cursor::new(&data[..]);
+        let value = read_varint30_int(&mut cursor, 29).expect("read succeeds");
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn read_varint30_int_proto30_reads_varint() {
+        let data = [42u8];
+        let mut cursor = Cursor::new(&data[..]);
+        let value = read_varint30_int(&mut cursor, 30).expect("read succeeds");
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn varint30_int_roundtrip_proto29() {
+        let test_values = [0, 1, 127, 128, 1000, i32::MAX, -1];
+        for value in test_values {
+            let mut buf = Vec::new();
+            write_varint30_int(&mut buf, value, 29).expect("write succeeds");
+            let mut cursor = Cursor::new(&buf[..]);
+            let read_back = read_varint30_int(&mut cursor, 29).expect("read succeeds");
+            assert_eq!(read_back, value, "proto29 roundtrip failed for {value}");
+        }
+    }
+
+    #[test]
+    fn varint30_int_roundtrip_proto30() {
+        let test_values = [0, 1, 127, 128, 1000, i32::MAX, -1];
+        for value in test_values {
+            let mut buf = Vec::new();
+            write_varint30_int(&mut buf, value, 30).expect("write succeeds");
+            let mut cursor = Cursor::new(&buf[..]);
+            let read_back = read_varint30_int(&mut cursor, 30).expect("read succeeds");
+            assert_eq!(read_back, value, "proto30 roundtrip failed for {value}");
+        }
+    }
+
+    #[test]
+    fn varint30_int_proto_boundary_at_30() {
+        // Protocol 29 and below should use fixed int
+        for proto in [28u8, 29] {
+            let mut buf = Vec::new();
+            write_varint30_int(&mut buf, 1000, proto).expect("write succeeds");
+            assert_eq!(buf.len(), 4, "proto {proto} should use 4-byte int");
+        }
+
+        // Protocol 30 and above should use varint
+        for proto in [30u8, 31, 32] {
+            let mut buf = Vec::new();
+            write_varint30_int(&mut buf, 1000, proto).expect("write succeeds");
+            assert!(buf.len() < 4, "proto {proto} should use varint (< 4 bytes)");
+        }
     }
 }

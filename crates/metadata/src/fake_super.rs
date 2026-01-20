@@ -239,9 +239,17 @@ fn minor(rdev: u64) -> u32 {
     (rdev & 0xffffff) as u32
 }
 
-/// Stores metadata as fake-super xattr on a file (stub for non-Unix/no-xattr).
+/// Stores metadata as fake-super xattr on a file (non-Unix/no-xattr platforms).
 ///
-/// Returns an error since xattr support is required.
+/// # Platform Behavior
+///
+/// On platforms without xattr support, fake-super mode cannot function because
+/// it relies on storing ownership/mode information in extended attributes.
+/// This returns an error to inform the user that the feature is unavailable.
+///
+/// # Upstream Reference
+///
+/// - `xattrs.c` - Fake-super requires `SUPPORT_XATTRS` to be defined
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn store_fake_super(_path: &Path, _stat: &FakeSuperStat) -> io::Result<()> {
     Err(io::Error::new(
@@ -250,17 +258,23 @@ pub fn store_fake_super(_path: &Path, _stat: &FakeSuperStat) -> io::Result<()> {
     ))
 }
 
-/// Retrieves fake-super metadata from a file's xattr (stub for non-Unix/no-xattr).
+/// Retrieves fake-super metadata from a file's xattr (non-Unix/no-xattr platforms).
 ///
-/// Always returns `None` since xattr support is not available.
+/// # Platform Behavior
+///
+/// Always returns `None` on platforms without xattr support since there is no
+/// way to store fake-super metadata without extended attributes.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn load_fake_super(_path: &Path) -> io::Result<Option<FakeSuperStat>> {
     Ok(None)
 }
 
-/// Removes fake-super metadata from a file (stub for non-Unix/no-xattr).
+/// Removes fake-super metadata from a file (non-Unix/no-xattr platforms).
 ///
-/// No-op since xattr support is not available.
+/// # Platform Behavior
+///
+/// No-op on platforms without xattr support since no fake-super metadata
+/// can exist to remove.
 #[cfg(not(all(unix, feature = "xattr")))]
 pub fn remove_fake_super(_path: &Path) -> io::Result<()> {
     Ok(())
