@@ -104,7 +104,7 @@ impl From<walkdir::Error> for WalkError {
             Self::Io {
                 action: "traverse",
                 path,
-                source: io::Error::new(io::ErrorKind::Other, "unknown walkdir error"),
+                source: io::Error::other("unknown walkdir error"),
             }
         }
     }

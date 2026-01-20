@@ -29,8 +29,6 @@ pub const FILE_IO_EXIT_CODE: i32 = ExitCode::FileIo.as_i32();
 pub const IPC_EXIT_CODE: i32 = ExitCode::Ipc.as_i32();
 /// Exit code used when a copy partially or wholly fails.
 pub const PARTIAL_TRANSFER_EXIT_CODE: i32 = ExitCode::PartialTransfer.as_i32();
-/// Exit code returned when the `--max-delete` limit stops deletions.
-pub(crate) const MAX_DELETE_EXIT_CODE: i32 = ExitCode::DeleteLimit.as_i32();
 /// Exit code returned when remote command is not found.
 pub const REMOTE_COMMAND_NOT_FOUND_EXIT_CODE: i32 = ExitCode::CommandNotFound.as_i32();
 
@@ -124,6 +122,7 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
 
 /// Creates an invalid argument error with a typed exit code.
 #[cold]
+#[allow(dead_code)]
 pub(crate) fn invalid_argument_error_typed(text: &str, exit_code: ExitCode) -> ClientError {
     let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(Role::Client);
     ClientError::with_code(exit_code, message)
@@ -223,6 +222,7 @@ pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientErr
 
 /// Creates a daemon error with a typed exit code.
 #[cold]
+#[allow(dead_code)]
 pub(crate) fn daemon_error_typed(text: impl Into<String>, exit_code: ExitCode) -> ClientError {
     let message = rsync_error!(exit_code.as_i32(), "{}", text.into()).with_role(Role::Client);
     ClientError::with_code(exit_code, message)
@@ -317,7 +317,7 @@ mod tests {
             assert_eq!(FILE_IO_EXIT_CODE, 11);
             assert_eq!(IPC_EXIT_CODE, 14);
             assert_eq!(PARTIAL_TRANSFER_EXIT_CODE, 23);
-            assert_eq!(MAX_DELETE_EXIT_CODE, 25);
+            assert_eq!(ExitCode::DeleteLimit.as_i32(), 25);
             assert_eq!(REMOTE_COMMAND_NOT_FOUND_EXIT_CODE, 127);
         }
     }
