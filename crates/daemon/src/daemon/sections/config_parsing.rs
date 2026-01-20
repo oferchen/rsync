@@ -1,6 +1,16 @@
+// Daemon configuration file parsing.
+//
+// This section parses `rsyncd.conf` files into structured module definitions
+// and global settings. It supports the full upstream rsyncd.conf syntax including:
+// module sections, global directives, include directives with recursive detection,
+// and per-module settings.
+
+/// Tracks the source location of a configuration directive for error reporting.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ConfigDirectiveOrigin {
+    /// Path to the configuration file containing this directive.
     path: PathBuf,
+    /// Line number (1-indexed) where the directive appears.
     line: usize,
 }
 

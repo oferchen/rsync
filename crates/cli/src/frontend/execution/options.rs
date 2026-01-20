@@ -1,3 +1,27 @@
+//! Command-line argument parsing utilities for rsync options.
+//!
+//! This module provides validation and parsing functions for command-line arguments
+//! that require special handling beyond simple string conversion. Each parser produces
+//! user-friendly error messages that mirror upstream rsync's diagnostic style.
+//!
+//! # Functions
+//!
+//! - [`parse_protocol_version_arg`] - Parses `--protocol` version numbers
+//! - [`parse_timeout_argument`] - Parses `--timeout` values in seconds
+//! - [`parse_human_readable_level`] - Parses `--human-readable` format levels
+//! - [`parse_max_delete_argument`] - Parses `--max-delete` limits
+//! - [`parse_checksum_seed_argument`] - Parses `--checksum-seed` values
+//! - [`parse_block_size_argument`] - Parses `--block-size` values with unit suffixes
+//! - [`parse_bwlimit_argument`] - Parses `--bwlimit` bandwidth limits
+//! - [`parse_iconv_argument`] - Parses `--iconv` charset specifications
+//!
+//! # Error Handling
+//!
+//! Parsers return [`core::message::Message`] errors with appropriate exit codes
+//! matching upstream rsync behavior:
+//! - Exit code 1 for syntax errors (invalid format)
+//! - Exit code 2 for protocol incompatibility (valid format, unsupported value)
+
 use std::ffi::OsStr;
 use std::num::{IntErrorKind, NonZeroU32, NonZeroU64};
 use std::str::FromStr;
