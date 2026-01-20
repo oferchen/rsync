@@ -12,21 +12,23 @@
 #[derive(Debug, Clone, Default)]
 pub struct FileListCompressionState {
     /// Previous entry's path bytes (for name prefix compression).
-    pub prev_name: Vec<u8>,
+    prev_name: Vec<u8>,
     /// Previous entry's file mode.
-    pub prev_mode: u32,
+    prev_mode: u32,
     /// Previous entry's modification time.
-    pub prev_mtime: i64,
+    prev_mtime: i64,
     /// Previous entry's access time (for XMIT_SAME_ATIME).
-    pub prev_atime: i64,
+    prev_atime: i64,
     /// Previous entry's user ID.
-    pub prev_uid: u32,
+    prev_uid: u32,
     /// Previous entry's group ID.
-    pub prev_gid: u32,
+    prev_gid: u32,
     /// Previous entry's device major number (for XMIT_SAME_RDEV_MAJOR).
-    pub prev_rdev_major: u32,
+    prev_rdev_major: u32,
+    /// Previous entry's device number (for XMIT_SAME_RDEV_pre28, protocols < 28).
+    prev_rdev: u64,
     /// Previous hardlink device number (for XMIT_SAME_DEV_pre30, protocols 26-29).
-    pub prev_hardlink_dev: i64,
+    prev_hardlink_dev: i64,
 }
 
 /// Statistics collected during file list transmission/reception.
@@ -44,6 +46,10 @@ pub struct FileListStats {
     pub num_devices: u64,
     /// Number of special files processed (FIFOs, sockets).
     pub num_specials: u64,
+    /// Number of entries with ACLs.
+    pub num_acls: u64,
+    /// Number of entries with extended attributes.
+    pub num_xattrs: u64,
     /// Total size of all regular files and symlinks in bytes.
     pub total_size: u64,
 }
@@ -53,6 +59,60 @@ impl FileListCompressionState {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns the previous entry's name bytes.
+    #[must_use]
+    pub fn prev_name(&self) -> &[u8] {
+        &self.prev_name
+    }
+
+    /// Returns the previous entry's mode.
+    #[must_use]
+    pub const fn prev_mode(&self) -> u32 {
+        self.prev_mode
+    }
+
+    /// Returns the previous entry's mtime.
+    #[must_use]
+    pub const fn prev_mtime(&self) -> i64 {
+        self.prev_mtime
+    }
+
+    /// Returns the previous entry's atime.
+    #[must_use]
+    pub const fn prev_atime(&self) -> i64 {
+        self.prev_atime
+    }
+
+    /// Returns the previous entry's uid.
+    #[must_use]
+    pub const fn prev_uid(&self) -> u32 {
+        self.prev_uid
+    }
+
+    /// Returns the previous entry's gid.
+    #[must_use]
+    pub const fn prev_gid(&self) -> u32 {
+        self.prev_gid
+    }
+
+    /// Returns the previous entry's rdev_major.
+    #[must_use]
+    pub const fn prev_rdev_major(&self) -> u32 {
+        self.prev_rdev_major
+    }
+
+    /// Returns the previous entry's rdev (protocol < 28).
+    #[must_use]
+    pub const fn prev_rdev(&self) -> u64 {
+        self.prev_rdev
+    }
+
+    /// Returns the previous hardlink device number.
+    #[must_use]
+    pub const fn prev_hardlink_dev(&self) -> i64 {
+        self.prev_hardlink_dev
     }
 
     /// Calculates the common prefix length between the previous name and a new name.
@@ -80,6 +140,34 @@ impl FileListCompressionState {
         self.prev_mtime = mtime;
         self.prev_uid = uid;
         self.prev_gid = gid;
+    }
+
+    /// Updates the compression state with all fields from a processed entry.
+    ///
+    /// This is the comprehensive update method for entries with extended fields.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_all(
+        &mut self,
+        name: &[u8],
+        mode: u32,
+        mtime: i64,
+        atime: i64,
+        uid: u32,
+        gid: u32,
+        rdev_major: u32,
+        rdev: u64,
+        hardlink_dev: i64,
+    ) {
+        self.prev_name.clear();
+        self.prev_name.extend_from_slice(name);
+        self.prev_mode = mode;
+        self.prev_mtime = mtime;
+        self.prev_atime = atime;
+        self.prev_uid = uid;
+        self.prev_gid = gid;
+        self.prev_rdev_major = rdev_major;
+        self.prev_rdev = rdev;
+        self.prev_hardlink_dev = hardlink_dev;
     }
 
     /// Updates only the name portion of the state.
@@ -114,6 +202,11 @@ impl FileListCompressionState {
         self.prev_rdev_major = rdev_major;
     }
 
+    /// Updates only the rdev portion of the state (protocol < 28).
+    pub const fn update_rdev(&mut self, rdev: u64) {
+        self.prev_rdev = rdev;
+    }
+
     /// Updates only the atime portion of the state.
     pub const fn update_atime(&mut self, atime: i64) {
         self.prev_atime = atime;
@@ -137,14 +230,15 @@ mod tests {
     #[test]
     fn new_state_has_default_values() {
         let state = FileListCompressionState::new();
-        assert!(state.prev_name.is_empty());
-        assert_eq!(state.prev_mode, 0);
-        assert_eq!(state.prev_mtime, 0);
-        assert_eq!(state.prev_atime, 0);
-        assert_eq!(state.prev_uid, 0);
-        assert_eq!(state.prev_gid, 0);
-        assert_eq!(state.prev_rdev_major, 0);
-        assert_eq!(state.prev_hardlink_dev, 0);
+        assert!(state.prev_name().is_empty());
+        assert_eq!(state.prev_mode(), 0);
+        assert_eq!(state.prev_mtime(), 0);
+        assert_eq!(state.prev_atime(), 0);
+        assert_eq!(state.prev_uid(), 0);
+        assert_eq!(state.prev_gid(), 0);
+        assert_eq!(state.prev_rdev_major(), 0);
+        assert_eq!(state.prev_rdev(), 0);
+        assert_eq!(state.prev_hardlink_dev(), 0);
     }
 
     #[test]
@@ -156,7 +250,7 @@ mod tests {
     #[test]
     fn calculate_name_prefix_len_with_prefix() {
         let mut state = FileListCompressionState::new();
-        state.prev_name = b"dir/file1.txt".to_vec();
+        state.update_name(b"dir/file1.txt");
 
         // "dir/file1.txt" vs "dir/file2.txt" - differs at position 8 ('1' vs '2')
         assert_eq!(state.calculate_name_prefix_len(b"dir/file2.txt"), 8); // "dir/file"
@@ -167,7 +261,7 @@ mod tests {
     #[test]
     fn calculate_name_prefix_len_caps_at_255() {
         let mut state = FileListCompressionState::new();
-        state.prev_name = vec![b'a'; 300];
+        state.update_name(&vec![b'a'; 300]);
 
         let name = vec![b'a'; 300];
         assert_eq!(state.calculate_name_prefix_len(&name), 255);
@@ -176,7 +270,7 @@ mod tests {
     #[test]
     fn calculate_name_prefix_len_full_match() {
         let mut state = FileListCompressionState::new();
-        state.prev_name = b"exact_match".to_vec();
+        state.update_name(b"exact_match");
 
         assert_eq!(state.calculate_name_prefix_len(b"exact_match"), 11);
     }
@@ -186,11 +280,11 @@ mod tests {
         let mut state = FileListCompressionState::new();
         state.update(b"test.txt", 0o644, 1700000000, 1000, 1000);
 
-        assert_eq!(state.prev_name, b"test.txt");
-        assert_eq!(state.prev_mode, 0o644);
-        assert_eq!(state.prev_mtime, 1700000000);
-        assert_eq!(state.prev_uid, 1000);
-        assert_eq!(state.prev_gid, 1000);
+        assert_eq!(state.prev_name(), b"test.txt");
+        assert_eq!(state.prev_mode(), 0o644);
+        assert_eq!(state.prev_mtime(), 1700000000);
+        assert_eq!(state.prev_uid(), 1000);
+        assert_eq!(state.prev_gid(), 1000);
     }
 
     #[test]
@@ -198,22 +292,25 @@ mod tests {
         let mut state = FileListCompressionState::new();
 
         state.update_name(b"file.txt");
-        assert_eq!(state.prev_name, b"file.txt");
+        assert_eq!(state.prev_name(), b"file.txt");
 
         state.update_mode(0o755);
-        assert_eq!(state.prev_mode, 0o755);
+        assert_eq!(state.prev_mode(), 0o755);
 
         state.update_mtime(1234567890);
-        assert_eq!(state.prev_mtime, 1234567890);
+        assert_eq!(state.prev_mtime(), 1234567890);
 
         state.update_uid(500);
-        assert_eq!(state.prev_uid, 500);
+        assert_eq!(state.prev_uid(), 500);
 
         state.update_gid(600);
-        assert_eq!(state.prev_gid, 600);
+        assert_eq!(state.prev_gid(), 600);
 
         state.update_rdev_major(8);
-        assert_eq!(state.prev_rdev_major, 8);
+        assert_eq!(state.prev_rdev_major(), 8);
+
+        state.update_rdev(0x1234);
+        assert_eq!(state.prev_rdev(), 0x1234);
     }
 
     #[test]
@@ -221,31 +318,59 @@ mod tests {
         let mut state = FileListCompressionState::new();
         state.update(b"test.txt", 0o644, 1700000000, 1000, 1000);
         state.update_hardlink_dev(12345);
+        state.update_rdev(0x5678);
 
         state.reset();
 
-        assert!(state.prev_name.is_empty());
-        assert_eq!(state.prev_mode, 0);
-        assert_eq!(state.prev_mtime, 0);
-        assert_eq!(state.prev_atime, 0);
-        assert_eq!(state.prev_uid, 0);
-        assert_eq!(state.prev_gid, 0);
-        assert_eq!(state.prev_rdev_major, 0);
-        assert_eq!(state.prev_hardlink_dev, 0);
+        assert!(state.prev_name().is_empty());
+        assert_eq!(state.prev_mode(), 0);
+        assert_eq!(state.prev_mtime(), 0);
+        assert_eq!(state.prev_atime(), 0);
+        assert_eq!(state.prev_uid(), 0);
+        assert_eq!(state.prev_gid(), 0);
+        assert_eq!(state.prev_rdev_major(), 0);
+        assert_eq!(state.prev_rdev(), 0);
+        assert_eq!(state.prev_hardlink_dev(), 0);
     }
 
     #[test]
     fn update_atime() {
         let mut state = FileListCompressionState::new();
         state.update_atime(1700000000);
-        assert_eq!(state.prev_atime, 1700000000);
+        assert_eq!(state.prev_atime(), 1700000000);
     }
 
     #[test]
     fn update_hardlink_dev() {
         let mut state = FileListCompressionState::new();
         state.update_hardlink_dev(0x1234_5678_9ABC);
-        assert_eq!(state.prev_hardlink_dev, 0x1234_5678_9ABC);
+        assert_eq!(state.prev_hardlink_dev(), 0x1234_5678_9ABC);
+    }
+
+    #[test]
+    fn update_all_sets_all_fields() {
+        let mut state = FileListCompressionState::new();
+        state.update_all(
+            b"test.txt",
+            0o644,
+            1700000000,
+            1700000001,
+            1000,
+            1001,
+            8,
+            0x1234,
+            12345,
+        );
+
+        assert_eq!(state.prev_name(), b"test.txt");
+        assert_eq!(state.prev_mode(), 0o644);
+        assert_eq!(state.prev_mtime(), 1700000000);
+        assert_eq!(state.prev_atime(), 1700000001);
+        assert_eq!(state.prev_uid(), 1000);
+        assert_eq!(state.prev_gid(), 1001);
+        assert_eq!(state.prev_rdev_major(), 8);
+        assert_eq!(state.prev_rdev(), 0x1234);
+        assert_eq!(state.prev_hardlink_dev(), 12345);
     }
 
     #[test]
@@ -256,6 +381,8 @@ mod tests {
         assert_eq!(stats.num_symlinks, 0);
         assert_eq!(stats.num_devices, 0);
         assert_eq!(stats.num_specials, 0);
+        assert_eq!(stats.num_acls, 0);
+        assert_eq!(stats.num_xattrs, 0);
         assert_eq!(stats.total_size, 0);
     }
 
