@@ -21,6 +21,8 @@ pub struct FileListCompressionState {
     pub prev_uid: u32,
     /// Previous entry's group ID.
     pub prev_gid: u32,
+    /// Previous entry's device major number (for XMIT_SAME_RDEV_MAJOR).
+    pub prev_rdev_major: u32,
 }
 
 impl FileListCompressionState {
@@ -84,6 +86,11 @@ impl FileListCompressionState {
         self.prev_gid = gid;
     }
 
+    /// Updates only the rdev_major portion of the state.
+    pub const fn update_rdev_major(&mut self, rdev_major: u32) {
+        self.prev_rdev_major = rdev_major;
+    }
+
     /// Resets the compression state to initial values.
     pub fn reset(&mut self) {
         *self = Self::default();
@@ -102,6 +109,7 @@ mod tests {
         assert_eq!(state.prev_mtime, 0);
         assert_eq!(state.prev_uid, 0);
         assert_eq!(state.prev_gid, 0);
+        assert_eq!(state.prev_rdev_major, 0);
     }
 
     #[test]
@@ -168,6 +176,9 @@ mod tests {
 
         state.update_gid(600);
         assert_eq!(state.prev_gid, 600);
+
+        state.update_rdev_major(8);
+        assert_eq!(state.prev_rdev_major, 8);
     }
 
     #[test]
@@ -182,5 +193,6 @@ mod tests {
         assert_eq!(state.prev_mtime, 0);
         assert_eq!(state.prev_uid, 0);
         assert_eq!(state.prev_gid, 0);
+        assert_eq!(state.prev_rdev_major, 0);
     }
 }
