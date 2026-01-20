@@ -31,14 +31,18 @@
 
 mod entry;
 mod flags;
+mod hardlink;
 mod read;
 mod sort;
 mod state;
 mod write;
 
 pub use entry::{FileEntry, FileType};
-pub use flags::FileFlags;
+pub use flags::{FileFlags, XMIT_SAME_RDEV_PRE28};
+pub use hardlink::{DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable};
 pub use read::{FileListReader, read_file_entry};
-pub use sort::{compare_file_entries, sort_file_list};
+pub use sort::{
+    CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
+};
 pub use state::{FileListCompressionState, FileListStats};
 pub use write::{FileListWriter, write_file_entry};
