@@ -52,6 +52,10 @@ pub struct FileListWriter {
     preserve_crtimes: bool,
     /// Whether to send checksums for all files (--checksum / -c mode).
     always_checksum: bool,
+    /// Whether to preserve (and thus write) ACLs to the wire.
+    preserve_acls: bool,
+    /// Whether to preserve (and thus write) extended attributes to the wire.
+    preserve_xattrs: bool,
     /// Length of checksum to write (depends on protocol and checksum algorithm).
     flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
@@ -79,6 +83,8 @@ impl FileListWriter {
             preserve_atimes: false,
             preserve_crtimes: false,
             always_checksum: false,
+            preserve_acls: false,
+            preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
             use_varint_flags: false,
@@ -102,6 +108,8 @@ impl FileListWriter {
             preserve_atimes: false,
             preserve_crtimes: false,
             always_checksum: false,
+            preserve_acls: false,
+            preserve_xattrs: false,
             flist_csum_len: 0,
             iconv: None,
             use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
@@ -159,6 +167,26 @@ impl FileListWriter {
         self
     }
 
+    /// Sets whether ACLs should be written to the wire.
+    ///
+    /// When enabled, ACL indices are written after other metadata.
+    /// Note: ACL data itself is sent in a separate exchange.
+    #[must_use]
+    pub const fn with_preserve_acls(mut self, preserve: bool) -> Self {
+        self.preserve_acls = preserve;
+        self
+    }
+
+    /// Sets whether extended attributes should be written to the wire.
+    ///
+    /// When enabled, xattr indices are written after ACL indices.
+    /// Note: Xattr data itself is sent in a separate exchange.
+    #[must_use]
+    pub const fn with_preserve_xattrs(mut self, preserve: bool) -> Self {
+        self.preserve_xattrs = preserve;
+        self
+    }
+
     /// Enables checksum mode (--checksum / -c) with the given checksum length.
     ///
     /// When enabled, checksums are written for regular files. For protocol < 28,
@@ -195,7 +223,57 @@ impl FileListWriter {
         self.use_safe_file_list
     }
 
-    /// Calculates xflags for an entry based on comparison with previous entry.
+    /// Calculates transmission flags (xflags) for an entry based on comparison with previous entry.
+    ///
+    /// The xflags are a compressed representation of which fields differ from the previous entry
+    /// and control what data is transmitted on the wire. This enables delta compression of the
+    /// file list by omitting unchanged fields.
+    ///
+    /// # Wire Format
+    ///
+    /// The xflags are divided into three bytes:
+    /// - **Byte 0 (bits 0-7)**: Basic flags, always present
+    /// - **Byte 1 (bits 8-15)**: Extended flags, present when `XMIT_EXTENDED_FLAGS` is set
+    /// - **Byte 2 (bits 16-23)**: Extra flags, used in varint mode for creation time
+    ///
+    /// # Basic Flags (byte 0)
+    ///
+    /// | Flag | Bit | Meaning |
+    /// |------|-----|---------|
+    /// | `XMIT_TOP_DIR` | 0 | Entry is a command-line argument directory |
+    /// | `XMIT_SAME_MODE` | 1 | Mode unchanged from previous entry |
+    /// | `XMIT_SAME_RDEV_PRE28` | 2 | Same rdev (protocol < 28 only) |
+    /// | `XMIT_SAME_UID` | 3 | UID unchanged from previous entry |
+    /// | `XMIT_SAME_GID` | 4 | GID unchanged from previous entry |
+    /// | `XMIT_SAME_NAME` | 5 | Name shares prefix with previous entry |
+    /// | `XMIT_LONG_NAME` | 6 | Name suffix > 255 bytes |
+    /// | `XMIT_SAME_TIME` | 7 | Mtime unchanged from previous entry |
+    ///
+    /// # Extended Flags (byte 1, when `XMIT_EXTENDED_FLAGS` set)
+    ///
+    /// | Flag | Bit | Meaning |
+    /// |------|-----|---------|
+    /// | `XMIT_SAME_RDEV_MAJOR` | 8 | Same rdev major (protocol 28+, devices/specials) |
+    /// | `XMIT_NO_CONTENT_DIR` | 8 | Directory has no content (protocol 30+, directories) |
+    /// | `XMIT_HLINKED` | 9 | Entry is a hardlink (protocol 30+) |
+    /// | `XMIT_SAME_DEV_PRE30` | 10 | Same hardlink device (protocol 28-29) |
+    /// | `XMIT_RDEV_MINOR_8_PRE30` | 10 | Rdev minor fits in byte (protocol 28-29) |
+    /// | `XMIT_USER_NAME_FOLLOWS` | 11 | User name follows UID (protocol 30+) |
+    /// | `XMIT_HLINK_FIRST` | 12 | First occurrence of hardlink (protocol 30+) |
+    /// | `XMIT_IO_ERROR_ENDLIST` | 12 | End marker with I/O error (protocol 31+) |
+    /// | `XMIT_GROUP_NAME_FOLLOWS` | 13 | Group name follows GID (protocol 30+) |
+    /// | `XMIT_MOD_NSEC` | 14 | Mtime has nanoseconds (protocol 31+) |
+    /// | `XMIT_SAME_ATIME` | 15 | Atime unchanged (when preserving atimes) |
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - The file entry to calculate flags for
+    /// * `same_len` - Number of bytes shared with previous entry's name (prefix compression)
+    /// * `suffix_len` - Length of the name suffix (portion not shared with previous)
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `flist.c:send_file_entry()` lines 475-550 for the xflags calculation logic.
     fn calculate_xflags(&self, entry: &FileEntry, same_len: usize, suffix_len: usize) -> u32 {
         let mut xflags: u32 = 0;
 
@@ -205,24 +283,24 @@ impl FileListWriter {
         }
 
         // Mode comparison
-        if entry.mode() == self.state.prev_mode {
+        if entry.mode() == self.state.prev_mode() {
             xflags |= XMIT_SAME_MODE as u32;
         }
 
         // Time comparison
-        if entry.mtime() == self.state.prev_mtime {
+        if entry.mtime() == self.state.prev_mtime() {
             xflags |= XMIT_SAME_TIME as u32;
         }
 
         // UID comparison
         let entry_uid = entry.uid().unwrap_or(0);
-        if self.preserve_uid && entry_uid == self.state.prev_uid {
+        if self.preserve_uid && entry_uid == self.state.prev_uid() {
             xflags |= XMIT_SAME_UID as u32;
         }
 
         // GID comparison
         let entry_gid = entry.gid().unwrap_or(0);
-        if self.preserve_gid && entry_gid == self.state.prev_gid {
+        if self.preserve_gid && entry_gid == self.state.prev_gid() {
             xflags |= XMIT_SAME_GID as u32;
         }
 
@@ -247,7 +325,7 @@ impl FileListWriter {
                 0 // Dummy rdev for special files
             };
 
-            if major == self.state.prev_rdev_major {
+            if major == self.state.prev_rdev_major() {
                 xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
             }
 
@@ -277,7 +355,7 @@ impl FileListWriter {
             } else if self.protocol.as_u8() >= 28 {
                 // Protocol 28-29: Use XMIT_SAME_DEV_PRE30 for hardlink dev compression
                 if let Some(dev) = entry.hardlink_dev() {
-                    if dev == self.state.prev_hardlink_dev {
+                    if dev == self.state.prev_hardlink_dev() {
                         xflags |= (XMIT_SAME_DEV_PRE30 as u32) << 8;
                     }
                 }
@@ -309,7 +387,7 @@ impl FileListWriter {
         }
 
         // Same atime flag (non-directories only, when preserving atimes)
-        if self.preserve_atimes && !entry.is_dir() && entry.atime() == self.state.prev_atime {
+        if self.preserve_atimes && !entry.is_dir() && entry.atime() == self.state.prev_atime() {
             xflags |= (XMIT_SAME_ATIME as u32) << 8;
         }
 
@@ -691,6 +769,10 @@ impl FileListWriter {
     /// 11. GID (if preserving, not XMIT_SAME_GID) + group name
     /// 12. Device numbers (if device/special file)
     /// 13. Symlink target (if symlink)
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `flist.c:send_file_entry()` lines 470-750 for the complete wire encoding.
     pub fn write_entry<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -1921,5 +2003,216 @@ mod tests {
         let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
         assert_eq!(read_entry.name(), "fifo");
         assert!(read_entry.is_special());
+    }
+
+    // Protocol boundary tests
+
+    #[test]
+    fn protocol_28_is_oldest_supported() {
+        // Protocol 28 is the oldest supported version
+        let protocol = ProtocolVersion::try_from(28u8).unwrap();
+        assert!(
+            protocol.supports_extended_flags(),
+            "protocol 28 should support extended flags"
+        );
+    }
+
+    #[test]
+    fn protocol_boundary_28_round_trip() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        // Protocol 28 - oldest supported, has extended flags
+        let protocol28 = ProtocolVersion::try_from(28u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol28)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
+        entry.set_uid(1000);
+        entry.set_gid(1000);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        // Verify protocol 28 round-trip
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol28)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "test.txt");
+        assert_eq!(read_entry.size(), 1024);
+        assert_eq!(read_entry.uid(), Some(1000));
+        assert_eq!(read_entry.gid(), Some(1000));
+    }
+
+    #[test]
+    fn protocol_boundary_29_30_user_names() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        // Protocol 30 adds user/group name support
+        let protocol30 = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol30)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
+        entry.set_uid(1000);
+        entry.set_gid(1000);
+        entry.set_user_name("testuser".to_string());
+        entry.set_group_name("testgroup".to_string());
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol30)
+            .with_preserve_uid(true)
+            .with_preserve_gid(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "test.txt");
+        assert_eq!(read_entry.user_name(), Some("testuser"));
+        assert_eq!(read_entry.group_name(), Some("testgroup"));
+    }
+
+    #[test]
+    fn protocol_boundary_30_31_nanoseconds() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        // Protocol 31 adds nanosecond mtime support
+        let protocol31 = ProtocolVersion::try_from(31u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol31);
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
+        entry.set_mtime(1700000000, 123456789); // With nanoseconds
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol31);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.mtime(), 1700000000);
+        assert_eq!(read_entry.mtime_nsec(), 123456789);
+    }
+
+    #[test]
+    fn very_long_path_name_round_trip() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = test_protocol();
+
+        // Create a path longer than 255 characters (requires XMIT_LONG_NAME)
+        let long_component = "a".repeat(100);
+        let long_path = format!(
+            "{long_component}/{long_component}/{long_component}/{long_component}/{long_component}"
+        );
+        assert!(long_path.len() > 255, "path should be longer than 255");
+
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        let entry = FileEntry::new_file(long_path.clone().into(), 1024, 0o644);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), long_path);
+    }
+
+    #[test]
+    fn very_long_path_name_with_compression() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = test_protocol();
+
+        // Create two entries with long shared prefix
+        let prefix = "a".repeat(200);
+        let path1 = format!("{prefix}/file1.txt");
+        let path2 = format!("{prefix}/file2.txt");
+
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        let entry1 = FileEntry::new_file(path1.clone().into(), 1024, 0o644);
+        let entry2 = FileEntry::new_file(path2.clone().into(), 2048, 0o644);
+
+        writer.write_entry(&mut buf, &entry1).unwrap();
+        let len_after_first = buf.len();
+        writer.write_entry(&mut buf, &entry2).unwrap();
+        let len_after_second = buf.len();
+
+        // Second entry should be smaller due to prefix compression
+        let second_entry_len = len_after_second - len_after_first;
+        assert!(
+            second_entry_len < len_after_first,
+            "second entry should be compressed due to shared prefix"
+        );
+
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol);
+
+        let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        assert_eq!(read1.name(), path1);
+        assert_eq!(read2.name(), path2);
+    }
+
+    #[test]
+    fn extreme_mtime_values() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = test_protocol();
+
+        // Test extreme mtime values (only non-negative, as negative
+        // timestamps are encoded as unsigned in the wire format)
+        let test_cases = [
+            0i64,                 // Unix epoch
+            1,                    // Just after epoch
+            i32::MAX as i64,      // Max 32-bit timestamp (2038-01-19)
+            i32::MAX as i64 + 1,  // Beyond 32-bit (2038-01-19)
+            1_000_000_000_000i64, // Far future (year ~33658)
+        ];
+
+        for &mtime in &test_cases {
+            let mut buf = Vec::new();
+            let mut writer = FileListWriter::new(protocol);
+
+            let mut entry = FileEntry::new_file("test.txt".into(), 1024, 0o644);
+            entry.set_mtime(mtime, 0);
+
+            writer.write_entry(&mut buf, &entry).unwrap();
+            writer.write_end(&mut buf, None).unwrap();
+
+            let mut cursor = Cursor::new(&buf[..]);
+            let mut reader = FileListReader::new(protocol);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(
+                read_entry.mtime(),
+                mtime,
+                "mtime {mtime} should round-trip correctly"
+            );
+        }
     }
 }

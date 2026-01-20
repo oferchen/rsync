@@ -119,6 +119,108 @@ pub fn sort_file_list(file_list: &mut [FileEntry]) {
     file_list.sort_by(compare_file_entries);
 }
 
+/// Result of cleaning a file list.
+#[derive(Debug, Clone, Default)]
+pub struct CleanResult {
+    /// Number of duplicate entries removed.
+    pub duplicates_removed: usize,
+    /// Number of directory flags merged.
+    pub flags_merged: usize,
+}
+
+/// Cleans a sorted file list by removing duplicates and merging directory flags.
+///
+/// This mirrors upstream's duplicate removal logic from `flist_sort_and_clean()`.
+///
+/// # Duplicate Handling Rules
+///
+/// When duplicate paths are found:
+/// 1. If one is a directory and the other isn't, keep the directory
+///    (it may have contents in the list)
+/// 2. If both are directories, keep the first and merge flags
+/// 3. Otherwise, keep the first entry
+///
+/// # Arguments
+///
+/// * `file_list` - A sorted file list (call `sort_file_list` first)
+///
+/// # Returns
+///
+/// A tuple of `(cleaned_list, CleanResult)` where `cleaned_list` contains
+/// deduplicated entries and `CleanResult` has statistics.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:flist_sort_and_clean()` lines 2979-3069
+#[must_use]
+pub fn flist_clean(file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
+    if file_list.is_empty() {
+        return (file_list, CleanResult::default());
+    }
+
+    let mut result = Vec::with_capacity(file_list.len());
+    let mut stats = CleanResult::default();
+    let mut iter = file_list.into_iter().peekable();
+
+    while let Some(mut current) = iter.next() {
+        // Check if next entry is a duplicate
+        while let Some(next) = iter.peek() {
+            if current.name() != next.name() {
+                break;
+            }
+
+            // Duplicate found - decide which to keep
+            let current_is_dir = current.is_dir();
+            let next_is_dir = next.is_dir();
+
+            match (current_is_dir, next_is_dir) {
+                (false, true) => {
+                    // Keep the directory (next), drop current
+                    stats.duplicates_removed += 1;
+                    current = iter.next().expect("peeked entry should exist");
+                }
+                (true, false) => {
+                    // Keep current (directory), drop next
+                    stats.duplicates_removed += 1;
+                    let _ = iter.next();
+                }
+                (true, true) => {
+                    // Both are directories - merge flags and keep current
+                    // Upstream merges FLAG_TOP_DIR, FLAG_CONTENT_DIR flags
+                    let next_entry = iter.next().expect("peeked entry should exist");
+                    if next_entry.content_dir() {
+                        current.set_content_dir(true);
+                    }
+                    stats.duplicates_removed += 1;
+                    stats.flags_merged += 1;
+                }
+                (false, false) => {
+                    // Both are files - keep first (current)
+                    stats.duplicates_removed += 1;
+                    let _ = iter.next();
+                }
+            }
+        }
+
+        result.push(current);
+    }
+
+    (result, stats)
+}
+
+/// Sorts and cleans a file list in one operation.
+///
+/// Combines `sort_file_list` and `flist_clean` for convenience.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:flist_sort_and_clean()` - The combined operation
+#[must_use]
+pub fn sort_and_clean_file_list(mut file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
+    file_list.sort_by(compare_file_entries);
+    flist_clean(file_list)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,5 +307,97 @@ mod tests {
         let names: Vec<_> = entries.iter().map(|e| e.name()).collect();
         // z.txt is a file at root, so it comes before the 'a' directory
         assert_eq!(names, vec!["z.txt", "a", "a/nested.txt"]);
+    }
+
+    // flist_clean tests
+
+    #[test]
+    fn flist_clean_empty_list() {
+        let entries: Vec<FileEntry> = vec![];
+        let (cleaned, stats) = flist_clean(entries);
+        assert!(cleaned.is_empty());
+        assert_eq!(stats.duplicates_removed, 0);
+        assert_eq!(stats.flags_merged, 0);
+    }
+
+    #[test]
+    fn flist_clean_no_duplicates() {
+        let entries = vec![make_file("a.txt"), make_file("b.txt"), make_dir("c")];
+        let (cleaned, stats) = flist_clean(entries);
+        assert_eq!(cleaned.len(), 3);
+        assert_eq!(stats.duplicates_removed, 0);
+    }
+
+    #[test]
+    fn flist_clean_removes_file_duplicates() {
+        // Two files with same name - keep first
+        let entries = vec![make_file("a.txt"), make_file("a.txt"), make_file("b.txt")];
+        let (cleaned, stats) = flist_clean(entries);
+        assert_eq!(cleaned.len(), 2);
+        assert_eq!(stats.duplicates_removed, 1);
+        let names: Vec<_> = cleaned.iter().map(|e| e.name()).collect();
+        assert_eq!(names, vec!["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn flist_clean_keeps_dir_over_file() {
+        // Directory vs file with same name - keep directory
+        let entries = vec![make_file("item"), make_dir("item")];
+        let (cleaned, stats) = flist_clean(entries);
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(stats.duplicates_removed, 1);
+        assert!(cleaned[0].is_dir());
+    }
+
+    #[test]
+    fn flist_clean_keeps_dir_over_file_reverse_order() {
+        // Directory first, then file with same name - still keep directory
+        let entries = vec![make_dir("item"), make_file("item")];
+        let (cleaned, stats) = flist_clean(entries);
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(stats.duplicates_removed, 1);
+        assert!(cleaned[0].is_dir());
+    }
+
+    #[test]
+    fn flist_clean_merges_directory_flags() {
+        // Two directories with same name - merge flags, keep first
+        let mut dir1 = make_dir("subdir");
+        dir1.set_content_dir(false);
+        let dir2 = make_dir("subdir"); // content_dir is true by default
+        let entries = vec![dir1, dir2];
+        let (cleaned, stats) = flist_clean(entries);
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(stats.duplicates_removed, 1);
+        assert_eq!(stats.flags_merged, 1);
+        // Flag should be merged (content_dir should be true since dir2 had it)
+        assert!(cleaned[0].content_dir());
+    }
+
+    #[test]
+    fn flist_clean_multiple_duplicates() {
+        let entries = vec![
+            make_file("a.txt"),
+            make_file("a.txt"),
+            make_file("a.txt"),
+            make_file("b.txt"),
+        ];
+        let (cleaned, stats) = flist_clean(entries);
+        assert_eq!(cleaned.len(), 2);
+        assert_eq!(stats.duplicates_removed, 2);
+    }
+
+    #[test]
+    fn sort_and_clean_combined() {
+        let entries = vec![
+            make_file("z.txt"),
+            make_dir("a"),
+            make_file("a.txt"),
+            make_file("a.txt"), // duplicate
+        ];
+        let (cleaned, stats) = sort_and_clean_file_list(entries);
+        assert_eq!(stats.duplicates_removed, 1);
+        let names: Vec<_> = cleaned.iter().map(|e| e.name()).collect();
+        assert_eq!(names, vec!["a.txt", "z.txt", "a"]);
     }
 }
