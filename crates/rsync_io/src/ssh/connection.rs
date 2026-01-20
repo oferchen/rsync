@@ -1,14 +1,19 @@
 //! SSH connection management with split read/write support.
-
-#![allow(unsafe_code)]
+//!
+//! This module provides [`SshConnection`] for managing SSH subprocess I/O,
+//! with support for splitting into separate read/write halves for bidirectional
+//! protocol communication.
 
 use std::io::{self, Read, Write};
-use std::mem::ManuallyDrop;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, ExitStatus};
 
 /// Owns an active SSH subprocess and exposes its stdio handles.
+///
+/// The connection can be used directly via the [`Read`] and [`Write`] traits,
+/// or split into separate [`SshReader`] and [`SshWriter`] halves using [`split`](Self::split).
 pub struct SshConnection {
-    child: Child,
+    /// Child process handle. Option allows safe extraction in split() without unsafe code.
+    child: Option<Child>,
     stdin: Option<ChildStdin>,
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
@@ -23,7 +28,7 @@ impl SshConnection {
         stderr: Option<ChildStderr>,
     ) -> Self {
         Self {
-            child,
+            child: Some(child),
             stdin,
             stdout: Some(stdout),
             stderr,
@@ -58,12 +63,24 @@ impl SshConnection {
     /// Waits for the subprocess to exit, consuming the connection.
     pub fn wait(mut self) -> io::Result<ExitStatus> {
         let _ = self.close_stdin();
-        self.child.wait()
+        match self.child.take() {
+            Some(mut child) => child.wait(),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "child process already taken",
+            )),
+        }
     }
 
     /// Attempts to retrieve the subprocess exit status without blocking.
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-        self.child.try_wait()
+        match self.child.as_mut() {
+            Some(child) => child.try_wait(),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "child process already taken",
+            )),
+        }
     }
 
     /// Splits the connection into separate read and write halves for bidirectional I/O.
@@ -76,24 +93,21 @@ impl SshConnection {
     /// # Returns
     ///
     /// Returns `(reader, writer, child_handle)` on success.
-    /// Returns an error if stdin or stdout has already been taken.
-    pub fn split(self) -> io::Result<(SshReader, SshWriter, SshChildHandle)> {
-        // Use ManuallyDrop to prevent Drop from running - we're moving fields out
-        let mut this = ManuallyDrop::new(self);
-
-        let stdin = this.stdin.take().ok_or_else(|| {
+    /// Returns an error if stdin, stdout, or the child process has already been taken.
+    pub fn split(mut self) -> io::Result<(SshReader, SshWriter, SshChildHandle)> {
+        let stdin = self.stdin.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "stdin has already been closed")
         })?;
 
-        let stdout = this.stdout.take().ok_or_else(|| {
+        let stdout = self.stdout.take().ok_or_else(|| {
             io::Error::new(io::ErrorKind::BrokenPipe, "stdout has already been taken")
         })?;
 
-        // SAFETY: We've wrapped self in ManuallyDrop, so these moves are safe.
-        // We take ownership of child and stderr using ptr::read since we can't
-        // move out of a ManuallyDrop directly.
-        let child = unsafe { std::ptr::read(&this.child) };
-        let stderr = this.stderr.take();
+        let child = self.child.take().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "child process already taken")
+        })?;
+
+        let stderr = self.stderr.take();
 
         Ok((
             SshReader { stdout },
@@ -107,6 +121,7 @@ impl SshConnection {
 }
 
 /// Read half of an SSH connection (subprocess stdout).
+#[derive(Debug)]
 pub struct SshReader {
     stdout: ChildStdout,
 }
@@ -118,6 +133,7 @@ impl Read for SshReader {
 }
 
 /// Write half of an SSH connection (subprocess stdin).
+#[derive(Debug)]
 pub struct SshWriter {
     stdin: ChildStdin,
 }
@@ -140,6 +156,7 @@ impl SshWriter {
 }
 
 /// Handle to wait for SSH subprocess completion.
+#[derive(Debug)]
 pub struct SshChildHandle {
     child: Child,
     _stderr: Option<ChildStderr>,
@@ -187,10 +204,11 @@ impl Drop for SshConnection {
     fn drop(&mut self) {
         let _ = self.close_stdin();
 
-        if let Ok(None) = self.child.try_wait() {
-            let _ = self.child.kill();
+        if let Some(ref mut child) = self.child {
+            if let Ok(None) = child.try_wait() {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
         }
-
-        let _ = self.child.wait();
     }
 }

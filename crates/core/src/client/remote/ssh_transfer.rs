@@ -1,17 +1,13 @@
-//! crates/core/src/client/remote/ssh_transfer.rs
-//!
 //! SSH transfer orchestration.
 //!
 //! This module coordinates SSH-based remote transfers by spawning SSH connections,
 //! negotiating the rsync protocol, and executing transfers using the server
 //! infrastructure.
-
-// Note: This module uses separate stdin/stdout handles for the SSH subprocess.
-// Future refactoring: Unify run_server_stdio to accept a single bidirectional
-// Read+Write stream, which would simplify the interface and reduce code duplication
-// between SSH and daemon transports. See crates/core/src/server/mod.rs
-// Currently we need unsafe code to split the borrow for stdin/stdout
-#![allow(unsafe_code)]
+//!
+//! # Architecture
+//!
+//! Transfers use the [`SshConnection::split`] method to obtain separate read/write
+//! halves, which are then passed to the server infrastructure for protocol handling.
 
 use std::ffi::{OsStr, OsString};
 
@@ -238,9 +234,8 @@ fn run_pull_transfer(
     // In a pull, we receive files from remote, so we're the receiver
     let server_config = build_server_config_for_receiver(config, local_paths)?;
 
-    // We need to pass connection as both Read and Write to run_server_stdio.
-    // Since we can't create two mutable borrows, we use a small wrapper function.
-    let server_stats = run_server_over_connection(server_config, &mut connection)?;
+    // Split connection into separate read/write halves and run server
+    let server_stats = run_server_over_ssh_connection(server_config, connection)?;
 
     // Convert server stats to client summary
     Ok(convert_server_stats_to_summary(server_stats))
@@ -252,7 +247,7 @@ fn run_pull_transfer(
 /// remote side acts as the receiver. We reuse the server generator infrastructure.
 fn run_push_transfer(
     config: &ClientConfig,
-    mut connection: SshConnection,
+    connection: SshConnection,
     local_paths: &[String],
     _observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
@@ -260,9 +255,8 @@ fn run_push_transfer(
     // In a push, we send files to remote, so we're the generator
     let server_config = build_server_config_for_generator(config, local_paths)?;
 
-    // We need to pass connection as both Read and Write to run_server_stdio.
-    // Since we can't create two mutable borrows, we use a small wrapper function.
-    let server_stats = run_server_over_connection(server_config, &mut connection)?;
+    // Split connection into separate read/write halves and run server
+    let server_stats = run_server_over_ssh_connection(server_config, connection)?;
 
     // Convert server stats to client summary
     Ok(convert_server_stats_to_summary(server_stats))
@@ -319,37 +313,20 @@ fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientS
     ClientSummary::from_summary(summary)
 }
 
-/// Helper function to run server over a connection that implements both Read and Write.
+/// Runs server over an SSH connection using split read/write halves.
 ///
-/// This wrapper exists to work around the borrow checker - we need to pass the same
-/// connection as both stdin and stdout.
-///
-/// # Safety
-///
-/// This uses unsafe code to create two mutable references to the same connection.
-/// This is safe because:
-/// - SshConnection internally manages separate stdin/stdout file handles
-/// - The Read and Write traits access different underlying resources
-/// - run_server_stdio doesn't create aliasing issues between the two parameters
-fn run_server_over_connection<T>(
+/// This uses [`SshConnection::split`] to obtain separate reader and writer handles,
+/// avoiding the need for unsafe aliased mutable references.
+fn run_server_over_ssh_connection(
     config: ServerConfig,
-    connection: &mut T,
-) -> Result<crate::server::ServerStats, ClientError>
-where
-    T: std::io::Read + std::io::Write,
-{
-    use std::io::{Read, Write};
+    connection: SshConnection,
+) -> Result<crate::server::ServerStats, ClientError> {
+    let (mut reader, mut writer, _child_handle) = connection.split().map_err(|e| {
+        invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23)
+    })?;
 
-    // SAFETY: We create two mutable references to the same connection, which is safe
-    // because SshConnection manages separate stdin/stdout streams internally.
-    let conn_ptr = connection as *mut T;
-    let result = unsafe {
-        let stdin: &mut dyn Read = &mut *conn_ptr;
-        let stdout: &mut dyn Write = &mut *conn_ptr;
-        crate::server::run_server_stdio(config, stdin, stdout)
-    };
-
-    result.map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
+    crate::server::run_server_stdio(config, &mut reader, &mut writer)
+        .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
 
 /// Builds server configuration for receiver role (pull transfer).
