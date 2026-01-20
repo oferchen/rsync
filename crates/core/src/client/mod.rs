@@ -126,7 +126,7 @@ use std::time::Duration;
 
 #[allow(unused_imports)]
 pub(crate) use self::error::{
-    MAX_DELETE_EXIT_CODE, daemon_access_denied_error, daemon_authentication_failed_error,
+    daemon_access_denied_error, daemon_authentication_failed_error,
     daemon_authentication_required_error, daemon_error, daemon_listing_unavailable_error,
     daemon_protocol_error, socket_error,
 };
