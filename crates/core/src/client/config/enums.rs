@@ -211,7 +211,12 @@ impl StrongChecksumChoice {
         }
 
         let mut parts = trimmed.splitn(2, ',');
-        let transfer = Self::parse_single(parts.next().unwrap())?;
+        // SAFETY: splitn on non-empty string always yields at least one element
+        let transfer = Self::parse_single(
+            parts
+                .next()
+                .expect("splitn on non-empty string yields at least one element"),
+        )?;
         let file = match parts.next() {
             Some(part) => Self::parse_single(part)?,
             None => transfer,
