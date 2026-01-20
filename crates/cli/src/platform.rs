@@ -1,7 +1,7 @@
 //! Platform-specific helpers for user and group identity lookups.
 
 #[cfg(unix)]
-use users::{
+use uzers::{
     get_group_by_gid, get_group_by_name, get_user_by_name, get_user_by_uid, gid_t as UsersGid,
     uid_t as UsersUid,
 };
@@ -97,7 +97,7 @@ mod tests {
     use super::*;
 
     #[cfg(unix)]
-    use users::{get_current_gid, get_current_uid, get_group_by_gid, get_user_by_uid};
+    use uzers::{get_current_gid, get_current_uid, get_group_by_gid, get_user_by_uid};
 
     #[test]
     fn support_flags_match_platform() {
