@@ -28,6 +28,7 @@ thiserror = "2.0"
 rayon = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 globset = "0.4"
+walkdir = "2.5"
 rustix = { version = "0.38", features = ["fs", "process"] }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 md5 = { version = "0.7", optional = true }

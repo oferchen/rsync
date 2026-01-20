@@ -12,12 +12,23 @@ use super::rules::{DirMergeRule, ExcludeIfPresentRule};
 use super::segments::{FilterContext, FilterInstruction, FilterOutcome, FilterSegment};
 
 /// Exit code returned when operand validation fails.
+///
+/// Maps to upstream rsync's `RERR_PARTIAL` (23) and `core::exit_code::ExitCode::PartialTransfer`.
 pub(crate) const INVALID_OPERAND_EXIT_CODE: i32 = 23;
+
 /// Exit code returned when no transfer operands are supplied.
+///
+/// Maps to upstream rsync's `RERR_SYNTAX` (1) and `core::exit_code::ExitCode::Syntax`.
 pub(crate) const MISSING_OPERANDS_EXIT_CODE: i32 = 1;
+
 /// Exit code returned when the transfer exceeds the configured timeout.
+///
+/// Maps to upstream rsync's `RERR_TIMEOUT` (30) and `core::exit_code::ExitCode::Timeout`.
 pub(crate) const TIMEOUT_EXIT_CODE: i32 = 30;
+
 /// Exit code returned when the `--max-delete` limit stops deletions.
+///
+/// Maps to upstream rsync's `RERR_DEL_LIMIT` (25) and `core::exit_code::ExitCode::DeleteLimit`.
 pub(crate) const MAX_DELETE_EXIT_CODE: i32 = 25;
 
 /// Ordered list of filter rules and per-directory merge directives.
