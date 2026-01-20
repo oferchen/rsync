@@ -321,9 +321,9 @@ fn run_server_over_ssh_connection(
     config: ServerConfig,
     connection: SshConnection,
 ) -> Result<crate::server::ServerStats, ClientError> {
-    let (mut reader, mut writer, _child_handle) = connection.split().map_err(|e| {
-        invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23)
-    })?;
+    let (mut reader, mut writer, _child_handle) = connection
+        .split()
+        .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
 
     crate::server::run_server_stdio(config, &mut reader, &mut writer)
         .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
