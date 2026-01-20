@@ -10,7 +10,7 @@ use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
 use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
-use crate::varint::read_varint;
+use crate::varint::{read_varint, read_varint30_int};
 
 use super::entry::FileEntry;
 use super::flags::{FileFlags, XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};
@@ -46,6 +46,8 @@ pub struct FileListReader {
     preserve_uid: bool,
     /// Whether to preserve (and thus read) GID values from the wire.
     preserve_gid: bool,
+    /// Whether to preserve (and thus read) symlink targets from the wire.
+    preserve_links: bool,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
 }
@@ -62,6 +64,7 @@ impl FileListReader {
             state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
+            preserve_links: false,
             iconv: None,
         }
     }
@@ -77,6 +80,7 @@ impl FileListReader {
             state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
+            preserve_links: false,
             iconv: None,
         }
     }
@@ -92,6 +96,13 @@ impl FileListReader {
     #[must_use]
     pub const fn with_preserve_gid(mut self, preserve: bool) -> Self {
         self.preserve_gid = preserve;
+        self
+    }
+
+    /// Sets whether symlink targets should be read from the wire.
+    #[must_use]
+    pub const fn with_preserve_links(mut self, preserve: bool) -> Self {
+        self.preserve_links = preserve;
         self
     }
 
@@ -250,6 +261,44 @@ impl FileListReader {
         Ok((mtime, 0, mode))
     }
 
+    /// Reads symlink target if preserving links and mode indicates a symlink.
+    ///
+    /// Wire format: varint30(len) + raw bytes
+    fn read_symlink_target<R: Read + ?Sized>(
+        &self,
+        reader: &mut R,
+        mode: u32,
+    ) -> io::Result<Option<PathBuf>> {
+        // S_IFLNK check: mode & 0o170000 == 0o120000
+        let is_symlink = mode & 0o170000 == 0o120000;
+
+        if !self.preserve_links || !is_symlink {
+            return Ok(None);
+        }
+
+        let len = read_varint30_int(reader, self.protocol.as_u8())? as usize;
+        if len == 0 {
+            return Ok(None);
+        }
+
+        let mut target_bytes = vec![0u8; len];
+        reader.read_exact(&mut target_bytes)?;
+
+        // Convert bytes to PathBuf (platform-specific handling)
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let target = std::ffi::OsStr::from_bytes(&target_bytes);
+            Ok(Some(PathBuf::from(target)))
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-Unix, attempt UTF-8 conversion
+            let target_str = String::from_utf8_lossy(&target_bytes);
+            Ok(Some(PathBuf::from(target_str.into_owned())))
+        }
+    }
+
     /// Applies iconv encoding conversion to a filename.
     fn apply_encoding_conversion(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
         if let Some(ref converter) = self.iconv {
@@ -294,12 +343,20 @@ impl FileListReader {
         // Step 4: Read metadata fields
         let (mtime, _nsec, mode) = self.read_metadata(reader, flags)?;
 
-        // Step 5: Apply encoding conversion
+        // Step 5: Read symlink target (if applicable)
+        let link_target = self.read_symlink_target(reader, mode)?;
+
+        // Step 6: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
-        // Step 6: Construct entry
+        // Step 7: Construct entry
         let path = PathBuf::from(String::from_utf8_lossy(&converted_name).into_owned());
-        let entry = FileEntry::from_raw(path, size, mode, mtime, 0, flags);
+        let mut entry = FileEntry::from_raw(path, size, mode, mtime, 0, flags);
+
+        // Step 8: Set symlink target if present
+        if let Some(target) = link_target {
+            entry.set_link_target(target);
+        }
 
         Ok(Some(entry))
     }

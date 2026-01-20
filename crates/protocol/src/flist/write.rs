@@ -9,7 +9,7 @@ use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
 use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
 use crate::iconv::FilenameConverter;
-use crate::varint::write_varint;
+use crate::varint::{write_varint, write_varint30_int};
 
 use super::entry::FileEntry;
 use super::flags::{
@@ -35,6 +35,8 @@ pub struct FileListWriter {
     preserve_uid: bool,
     /// Whether to preserve (and thus write) GID values to the wire.
     preserve_gid: bool,
+    /// Whether to preserve (and thus write) symlink targets to the wire.
+    preserve_links: bool,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
     /// Cached: whether varint flag encoding is enabled (computed once at construction).
@@ -53,6 +55,7 @@ impl FileListWriter {
             state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
+            preserve_links: false,
             iconv: None,
             use_varint_flags: false,
             use_safe_file_list: protocol.safe_file_list_always_enabled(),
@@ -68,6 +71,7 @@ impl FileListWriter {
             state: FileListCompressionState::new(),
             preserve_uid: false,
             preserve_gid: false,
+            preserve_links: false,
             iconv: None,
             use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
             use_safe_file_list: compat_flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
@@ -86,6 +90,13 @@ impl FileListWriter {
     #[must_use]
     pub const fn with_preserve_gid(mut self, preserve: bool) -> Self {
         self.preserve_gid = preserve;
+        self
+    }
+
+    /// Sets whether symlink targets should be written to the wire.
+    #[must_use]
+    pub const fn with_preserve_links(mut self, preserve: bool) -> Self {
+        self.preserve_links = preserve;
         self
     }
 
@@ -262,6 +273,28 @@ impl FileListWriter {
         Ok(())
     }
 
+    /// Writes symlink target if preserving links and entry is a symlink.
+    ///
+    /// Wire format: varint30(len) + raw bytes (no null terminator)
+    fn write_symlink_target<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> io::Result<()> {
+        if !self.preserve_links || !entry.is_symlink() {
+            return Ok(());
+        }
+
+        if let Some(target) = entry.link_target() {
+            let target_bytes = target.as_os_str().as_encoded_bytes();
+            let len = target_bytes.len();
+            write_varint30_int(writer, len as i32, self.protocol.as_u8())?;
+            writer.write_all(target_bytes)?;
+        }
+
+        Ok(())
+    }
+
     /// Applies iconv encoding conversion to a filename.
     fn apply_encoding_conversion<'a>(
         &self,
@@ -306,7 +339,10 @@ impl FileListWriter {
         // Step 6: Write metadata
         self.write_metadata(writer, entry, xflags)?;
 
-        // Step 7: Update state
+        // Step 7: Write symlink target (if applicable)
+        self.write_symlink_target(writer, entry)?;
+
+        // Step 8: Update state
         self.state.update(
             &name,
             entry.mode(),
@@ -551,5 +587,115 @@ mod tests {
 
         let writer31 = FileListWriter::new(ProtocolVersion::try_from(31u8).unwrap());
         assert!(writer31.use_safe_file_list());
+    }
+
+    #[test]
+    fn write_symlink_entry_with_preserve_links() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = test_protocol();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
+
+        let entry = FileEntry::new_symlink("link".into(), "/target/path".into());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_links(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "link");
+        assert!(read_entry.is_symlink());
+        assert_eq!(
+            read_entry
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
+            Some("/target/path".to_string())
+        );
+    }
+
+    #[test]
+    fn write_symlink_entry_without_preserve_links_omits_target() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = test_protocol();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol); // preserve_links = false
+
+        let entry = FileEntry::new_symlink("link".into(), "/target/path".into());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol); // preserve_links = false
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "link");
+        assert!(read_entry.is_symlink());
+        // Target should NOT be present since preserve_links was false
+        assert!(read_entry.link_target().is_none());
+    }
+
+    #[test]
+    fn write_symlink_round_trip_protocol_30_varint() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        // Protocol 30+ uses varint30
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
+
+        let entry = FileEntry::new_symlink("mylink".into(), "../relative/path".into());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_links(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "mylink");
+        assert!(read_entry.is_symlink());
+        assert_eq!(
+            read_entry
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
+            Some("../relative/path".to_string())
+        );
+    }
+
+    #[test]
+    fn write_symlink_round_trip_protocol_29_fixed_int() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        // Protocol 29 uses fixed 4-byte int
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
+
+        let entry = FileEntry::new_symlink("oldlink".into(), "/old/target".into());
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_links(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "oldlink");
+        assert!(read_entry.is_symlink());
+        assert_eq!(
+            read_entry
+                .link_target()
+                .map(|p| p.to_string_lossy().into_owned()),
+            Some("/old/target".to_string())
+        );
     }
 }
