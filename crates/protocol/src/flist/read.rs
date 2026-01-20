@@ -13,7 +13,9 @@ use crate::iconv::FilenameConverter;
 use crate::varint::{read_varint, read_varint30_int};
 
 use super::entry::FileEntry;
-use super::flags::{FileFlags, XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST};
+use super::flags::{
+    FileFlags, XMIT_EXTENDED_FLAGS, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST,
+};
 use super::state::FileListCompressionState;
 
 /// Result of reading flags from the wire.
@@ -48,6 +50,10 @@ pub struct FileListReader {
     preserve_gid: bool,
     /// Whether to preserve (and thus read) symlink targets from the wire.
     preserve_links: bool,
+    /// Whether to preserve (and thus read) device numbers from the wire.
+    preserve_devices: bool,
+    /// Whether to preserve (and thus read) hardlink indices from the wire.
+    preserve_hard_links: bool,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
 }
@@ -65,6 +71,8 @@ impl FileListReader {
             preserve_uid: false,
             preserve_gid: false,
             preserve_links: false,
+            preserve_devices: false,
+            preserve_hard_links: false,
             iconv: None,
         }
     }
@@ -81,6 +89,8 @@ impl FileListReader {
             preserve_uid: false,
             preserve_gid: false,
             preserve_links: false,
+            preserve_devices: false,
+            preserve_hard_links: false,
             iconv: None,
         }
     }
@@ -103,6 +113,20 @@ impl FileListReader {
     #[must_use]
     pub const fn with_preserve_links(mut self, preserve: bool) -> Self {
         self.preserve_links = preserve;
+        self
+    }
+
+    /// Sets whether device numbers should be read from the wire.
+    #[must_use]
+    pub const fn with_preserve_devices(mut self, preserve: bool) -> Self {
+        self.preserve_devices = preserve;
+        self
+    }
+
+    /// Sets whether hardlink indices should be read from the wire.
+    #[must_use]
+    pub const fn with_preserve_hard_links(mut self, preserve: bool) -> Self {
+        self.preserve_hard_links = preserve;
         self
     }
 
@@ -299,6 +323,87 @@ impl FileListReader {
         }
     }
 
+    /// Reads device numbers if preserving devices and mode indicates a device.
+    ///
+    /// Wire format (protocol 28+):
+    /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
+    /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
+    fn read_rdev<R: Read + ?Sized>(
+        &mut self,
+        reader: &mut R,
+        mode: u32,
+        flags: FileFlags,
+    ) -> io::Result<Option<(u32, u32)>> {
+        // S_ISBLK (0o060000) or S_ISCHR (0o020000)
+        let type_bits = mode & 0o170000;
+        let is_device = type_bits == 0o060000 || type_bits == 0o020000;
+
+        if !self.preserve_devices || !is_device {
+            return Ok(None);
+        }
+
+        // Read major if not same as previous
+        let major = if flags.same_rdev_major() {
+            self.state.prev_rdev_major
+        } else {
+            let m = read_varint30_int(reader, self.protocol.as_u8())? as u32;
+            self.state.update_rdev_major(m);
+            m
+        };
+
+        // Read minor
+        let minor = if self.protocol.as_u8() >= 30 {
+            read_varint(reader)? as u32
+        } else {
+            // Protocol 28-29: read byte or int based on XMIT_RDEV_MINOR_8_pre30
+            // For simplicity, we check if extended flag bit 3 (0x08) is set
+            // This corresponds to XMIT_RDEV_MINOR_8_pre30 in the extended byte
+            let minor_is_byte = (flags.extended & 0x08) != 0;
+            if minor_is_byte {
+                let mut buf = [0u8; 1];
+                reader.read_exact(&mut buf)?;
+                buf[0] as u32
+            } else {
+                let mut buf = [0u8; 4];
+                reader.read_exact(&mut buf)?;
+                i32::from_le_bytes(buf) as u32
+            }
+        };
+
+        Ok(Some((major, minor)))
+    }
+
+    /// Reads hardlink index if preserving hardlinks and flags indicate it.
+    ///
+    /// Wire format (protocol 30+):
+    /// - If XMIT_HLINKED is set but not XMIT_HLINK_FIRST: read varint index
+    /// - If XMIT_HLINK_FIRST is also set: return u32::MAX (this is the first/leader)
+    fn read_hardlink_idx<R: Read + ?Sized>(
+        &self,
+        reader: &mut R,
+        flags: FileFlags,
+    ) -> io::Result<Option<u32>> {
+        if !self.preserve_hard_links || self.protocol.as_u8() < 30 {
+            return Ok(None);
+        }
+
+        // Check hardlink flags in extended byte
+        let hlinked = (flags.extended & XMIT_HLINKED) != 0;
+        if !hlinked {
+            return Ok(None);
+        }
+
+        let hlink_first = (flags.extended & XMIT_HLINK_FIRST) != 0;
+        if hlink_first {
+            // This is the first/leader of the hardlink group
+            return Ok(Some(u32::MAX));
+        }
+
+        // Read the index pointing to the leader
+        let idx = read_varint(reader)? as u32;
+        Ok(Some(idx))
+    }
+
     /// Applies iconv encoding conversion to a filename.
     fn apply_encoding_conversion(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
         if let Some(ref converter) = self.iconv {
@@ -346,16 +451,32 @@ impl FileListReader {
         // Step 5: Read symlink target (if applicable)
         let link_target = self.read_symlink_target(reader, mode)?;
 
-        // Step 6: Apply encoding conversion
+        // Step 6: Read device numbers (if applicable)
+        let rdev = self.read_rdev(reader, mode, flags)?;
+
+        // Step 7: Read hardlink index (if applicable)
+        let hardlink_idx = self.read_hardlink_idx(reader, flags)?;
+
+        // Step 8: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
-        // Step 7: Construct entry
+        // Step 9: Construct entry
         let path = PathBuf::from(String::from_utf8_lossy(&converted_name).into_owned());
         let mut entry = FileEntry::from_raw(path, size, mode, mtime, 0, flags);
 
-        // Step 8: Set symlink target if present
+        // Step 10: Set symlink target if present
         if let Some(target) = link_target {
             entry.set_link_target(target);
+        }
+
+        // Step 11: Set device numbers if present
+        if let Some((major, minor)) = rdev {
+            entry.set_rdev(major, minor);
+        }
+
+        // Step 12: Set hardlink index if present
+        if let Some(idx) = hardlink_idx {
+            entry.set_hardlink_idx(idx);
         }
 
         Ok(Some(entry))
