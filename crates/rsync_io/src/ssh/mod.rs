@@ -60,7 +60,7 @@ mod operand;
 mod parse;
 
 pub use builder::SshCommand;
-pub use connection::SshConnection;
+pub use connection::{SshChildHandle, SshConnection, SshReader, SshWriter};
 pub use operand::{RemoteOperand, RemoteOperandParseError, parse_ssh_operand};
 pub use parse::{RemoteShellParseError, parse_remote_shell};
 
