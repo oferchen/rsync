@@ -209,27 +209,45 @@ impl ReceiverContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
 
+        let protocol_version = self.protocol.as_u8();
+
         // Read UID list if preserving ownership
         if self.config.flags.owner {
-            self.uid_list.read(reader, id0_names, |name| {
-                lookup_user_by_name(name).ok().flatten()
-            })?;
+            self.uid_list
+                .read(reader, id0_names, protocol_version, |name| {
+                    lookup_user_by_name(name).ok().flatten()
+                })?;
         }
 
         // Read GID list if preserving group
         if self.config.flags.group {
-            self.gid_list.read(reader, id0_names, |name| {
-                lookup_group_by_name(name).ok().flatten()
-            })?;
+            self.gid_list
+                .read(reader, id0_names, protocol_version, |name| {
+                    lookup_group_by_name(name).ok().flatten()
+                })?;
         }
 
         Ok(())
     }
 
-    /// Reads UID/GID name-to-ID mapping lists from the sender (non-Unix stub).
+    /// Reads UID/GID name-to-ID mapping lists from the sender (non-Unix platforms).
+    ///
+    /// On non-Unix platforms (e.g., Windows), this reads the ID lists from the wire
+    /// but does not resolve user/group names to local IDs since the platform lacks
+    /// the POSIX user database. All name lookups return `None`, causing ownership
+    /// to fall back to numeric IDs.
+    ///
+    /// # Platform Behavior
+    ///
+    /// This matches upstream rsync behavior where platforms without user/group
+    /// databases effectively operate as if `--numeric-ids` was specified.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `uidlist.c:460-479` - `recv_id_list()`
+    /// - Condition: `(preserve_uid || preserve_acls) && numeric_ids <= 0`
     #[cfg(not(unix))]
     pub(crate) fn receive_id_lists<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<()> {
-        // Skip ID lists when numeric_ids is set (upstream: numeric_ids <= 0)
         if self.config.flags.numeric_ids {
             return Ok(());
         }
@@ -238,14 +256,16 @@ impl ReceiverContext {
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
 
-        // Read UID list (but don't resolve names on non-Unix)
+        let protocol_version = self.protocol.as_u8();
+
         if self.config.flags.owner {
-            self.uid_list.read(reader, id0_names, |_| None)?;
+            self.uid_list
+                .read(reader, id0_names, protocol_version, |_| None)?;
         }
 
-        // Read GID list (but don't resolve names on non-Unix)
         if self.config.flags.group {
-            self.gid_list.read(reader, id0_names, |_| None)?;
+            self.gid_list
+                .read(reader, id0_names, protocol_version, |_| None)?;
         }
 
         Ok(())
