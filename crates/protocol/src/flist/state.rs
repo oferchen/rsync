@@ -17,6 +17,8 @@ pub struct FileListCompressionState {
     pub prev_mode: u32,
     /// Previous entry's modification time.
     pub prev_mtime: i64,
+    /// Previous entry's access time (for XMIT_SAME_ATIME).
+    pub prev_atime: i64,
     /// Previous entry's user ID.
     pub prev_uid: u32,
     /// Previous entry's group ID.
@@ -91,6 +93,11 @@ impl FileListCompressionState {
         self.prev_rdev_major = rdev_major;
     }
 
+    /// Updates only the atime portion of the state.
+    pub const fn update_atime(&mut self, atime: i64) {
+        self.prev_atime = atime;
+    }
+
     /// Resets the compression state to initial values.
     pub fn reset(&mut self) {
         *self = Self::default();
@@ -107,6 +114,7 @@ mod tests {
         assert!(state.prev_name.is_empty());
         assert_eq!(state.prev_mode, 0);
         assert_eq!(state.prev_mtime, 0);
+        assert_eq!(state.prev_atime, 0);
         assert_eq!(state.prev_uid, 0);
         assert_eq!(state.prev_gid, 0);
         assert_eq!(state.prev_rdev_major, 0);
@@ -191,8 +199,16 @@ mod tests {
         assert!(state.prev_name.is_empty());
         assert_eq!(state.prev_mode, 0);
         assert_eq!(state.prev_mtime, 0);
+        assert_eq!(state.prev_atime, 0);
         assert_eq!(state.prev_uid, 0);
         assert_eq!(state.prev_gid, 0);
         assert_eq!(state.prev_rdev_major, 0);
+    }
+
+    #[test]
+    fn update_atime() {
+        let mut state = FileListCompressionState::new();
+        state.update_atime(1700000000);
+        assert_eq!(state.prev_atime, 1700000000);
     }
 }

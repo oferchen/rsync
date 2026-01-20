@@ -65,20 +65,42 @@ pub const XMIT_SAME_TIME: u8 = 1 << 7;
 // When stored as a separate byte, these are bits 0-7 of that byte.
 // When encoded as a varint with VARINT_FLIST_FLAGS, they occupy bits 8-15.
 
-/// Extended flag: same rdev major as previous (bit 8).
+/// Extended flag: same rdev major as previous (bit 8, devices only).
 ///
 /// Upstream: `XMIT_SAME_RDEV_MAJOR (1<<8)` for protocol 28+ devices
 pub const XMIT_SAME_RDEV_MAJOR: u8 = 1 << 0;
+
+/// Extended flag: directory has no content to transfer (bit 8, directories only).
+///
+/// Used to mark implied directories or directories without content.
+/// Shares bit position with XMIT_SAME_RDEV_MAJOR (directories vs devices).
+/// Upstream: `XMIT_NO_CONTENT_DIR (1<<8)` for protocol 30+ directories
+pub const XMIT_NO_CONTENT_DIR: u8 = 1 << 0;
 
 /// Extended flag: entry has hardlink information (bit 9).
 ///
 /// Upstream: `XMIT_HLINKED (1<<9)` for protocol 28+ non-directories
 pub const XMIT_HLINKED: u8 = 1 << 1;
 
+/// Extended flag: same device number as previous (bit 10, protocols 28-29).
+///
+/// Used for hardlink dev/ino encoding in protocols before 30.
+/// Shares bit position with XMIT_USER_NAME_FOLLOWS (proto 28-29 vs 30+).
+/// Upstream: `XMIT_SAME_DEV_pre30 (1<<10)` for protocols 28-29
+pub const XMIT_SAME_DEV_PRE30: u8 = 1 << 2;
+
 /// Extended flag: user name follows (bit 10, protocol 30+).
 ///
 /// Upstream: `XMIT_USER_NAME_FOLLOWS (1<<10)`
 pub const XMIT_USER_NAME_FOLLOWS: u8 = 1 << 2;
+
+/// Extended flag: rdev minor fits in 8 bits (bit 11, protocols 28-29).
+///
+/// When set, minor device number is encoded as a single byte.
+/// When clear, minor is encoded as a 4-byte int.
+/// Shares bit position with XMIT_GROUP_NAME_FOLLOWS (proto 28-29 vs 30+).
+/// Upstream: `XMIT_RDEV_MINOR_8_pre30 (1<<11)` for protocols 28-29
+pub const XMIT_RDEV_MINOR_8_PRE30: u8 = 1 << 3;
 
 /// Extended flag: group name follows (bit 11, protocol 30+).
 ///
@@ -97,15 +119,33 @@ pub const XMIT_IO_ERROR_ENDLIST: u8 = 1 << 4;
 /// Upstream: `XMIT_MOD_NSEC (1<<13)`
 pub const XMIT_MOD_NSEC: u8 = 1 << 5;
 
-/// Extended flag: same ACL as previous entry (bit 14).
+/// Extended flag: same atime as previous entry (bit 14).
 ///
-/// Upstream: `XMIT_SAME_ACL (1<<14)` (restricted feature)
-pub const XMIT_SAME_ACL: u8 = 1 << 6;
+/// Used when `--atimes` is enabled. Restricted by command-line option.
+/// Upstream: `XMIT_SAME_ATIME (1<<14)`
+pub const XMIT_SAME_ATIME: u8 = 1 << 6;
 
-/// Extended flag: same xattr as previous entry (bit 15).
+/// Extended flag: unused (bit 15).
 ///
-/// Upstream: `XMIT_SAME_XATTR (1<<15)` (restricted feature)
-pub const XMIT_SAME_XATTR: u8 = 1 << 7;
+/// Reserved for future use.
+/// Upstream: `XMIT_UNUSED_15 (1<<15)`
+pub const XMIT_UNUSED_15: u8 = 1 << 7;
+
+// Third byte of extended flags (bits 16-23 in varint mode)
+//
+// These flags are only available with VARINT_FLIST_FLAGS encoding.
+
+/// Extended flag: reserved for fileflags (bit 16).
+///
+/// Upstream: `XMIT_RESERVED_16 (1<<16)`
+pub const XMIT_RESERVED_16: u8 = 1 << 0;
+
+/// Extended flag: creation time equals mtime (bit 17).
+///
+/// Used when `--crtimes` is enabled. If set, crtime equals mtime and is not
+/// transmitted separately. Restricted by command-line option.
+/// Upstream: `XMIT_CRTIME_EQ_MTIME (1<<17)`
+pub const XMIT_CRTIME_EQ_MTIME: u8 = 1 << 1;
 
 // Legacy alias for backward compatibility
 #[allow(dead_code)]
@@ -114,17 +154,49 @@ pub const XMIT_SAME_HIGH_RDEV: u8 = XMIT_SAME_RDEV_MAJOR;
 /// Parsed file entry flags from the wire format.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct FileFlags {
-    /// First byte of flags.
+    /// First byte of flags (bits 0-7).
     pub primary: u8,
-    /// Second byte of flags (protocol 28+).
+    /// Second byte of flags (bits 8-15, protocol 28+).
     pub extended: u8,
+    /// Third byte of flags (bits 16-23, varint mode only).
+    pub extended16: u8,
 }
 
 impl FileFlags {
     /// Creates flags from the raw bytes.
     #[must_use]
     pub const fn new(primary: u8, extended: u8) -> Self {
-        Self { primary, extended }
+        Self {
+            primary,
+            extended,
+            extended16: 0,
+        }
+    }
+
+    /// Creates flags from three raw bytes (for varint mode).
+    #[must_use]
+    pub const fn new_with_extended16(primary: u8, extended: u8, extended16: u8) -> Self {
+        Self {
+            primary,
+            extended,
+            extended16,
+        }
+    }
+
+    /// Creates flags from a u32 value (as decoded from varint).
+    #[must_use]
+    pub const fn from_u32(value: u32) -> Self {
+        Self {
+            primary: value as u8,
+            extended: (value >> 8) as u8,
+            extended16: (value >> 16) as u8,
+        }
+    }
+
+    /// Converts flags to a u32 value (for varint encoding).
+    #[must_use]
+    pub const fn to_u32(&self) -> u32 {
+        (self.primary as u32) | ((self.extended as u32) << 8) | ((self.extended16 as u32) << 16)
     }
 
     /// Returns true if extended flags are present.
@@ -238,6 +310,43 @@ impl FileFlags {
     pub const fn group_name_follows(&self) -> bool {
         self.extended & XMIT_GROUP_NAME_FOLLOWS != 0
     }
+
+    /// Returns true if this directory has no content to transfer.
+    ///
+    /// Only valid for directories. Shares bit position with `same_rdev_major()`.
+    #[inline]
+    #[must_use]
+    pub const fn no_content_dir(&self) -> bool {
+        self.extended & XMIT_NO_CONTENT_DIR != 0
+    }
+
+    /// Returns true if the entry shares atime with the previous entry.
+    #[inline]
+    #[must_use]
+    pub const fn same_atime(&self) -> bool {
+        self.extended & XMIT_SAME_ATIME != 0
+    }
+
+    /// Returns true if same device number as previous (protocols 28-29).
+    #[inline]
+    #[must_use]
+    pub const fn same_dev_pre30(&self) -> bool {
+        self.extended & XMIT_SAME_DEV_PRE30 != 0
+    }
+
+    /// Returns true if rdev minor fits in 8 bits (protocols 28-29).
+    #[inline]
+    #[must_use]
+    pub const fn rdev_minor_8_pre30(&self) -> bool {
+        self.extended & XMIT_RDEV_MINOR_8_PRE30 != 0
+    }
+
+    /// Returns true if creation time equals mtime (bits 16+, varint mode).
+    #[inline]
+    #[must_use]
+    pub const fn crtime_eq_mtime(&self) -> bool {
+        self.extended16 & XMIT_CRTIME_EQ_MTIME != 0
+    }
 }
 
 #[cfg(test)]
@@ -249,6 +358,7 @@ mod tests {
         let flags = FileFlags::default();
         assert_eq!(flags.primary, 0);
         assert_eq!(flags.extended, 0);
+        assert_eq!(flags.extended16, 0);
     }
 
     #[test]
@@ -343,13 +453,22 @@ mod tests {
     #[test]
     fn extended_constants_have_expected_values() {
         assert_eq!(XMIT_SAME_RDEV_MAJOR, 0b0000_0001);
+        assert_eq!(XMIT_NO_CONTENT_DIR, 0b0000_0001); // Same bit, different context
         assert_eq!(XMIT_HLINKED, 0b0000_0010);
-        assert_eq!(XMIT_USER_NAME_FOLLOWS, 0b0000_0100);
-        assert_eq!(XMIT_GROUP_NAME_FOLLOWS, 0b0000_1000);
+        assert_eq!(XMIT_SAME_DEV_PRE30, 0b0000_0100); // Protocols 28-29
+        assert_eq!(XMIT_USER_NAME_FOLLOWS, 0b0000_0100); // Protocol 30+
+        assert_eq!(XMIT_RDEV_MINOR_8_PRE30, 0b0000_1000); // Protocols 28-29
+        assert_eq!(XMIT_GROUP_NAME_FOLLOWS, 0b0000_1000); // Protocol 30+
         assert_eq!(XMIT_HLINK_FIRST, 0b0001_0000);
         assert_eq!(XMIT_MOD_NSEC, 0b0010_0000);
-        assert_eq!(XMIT_SAME_ACL, 0b0100_0000);
-        assert_eq!(XMIT_SAME_XATTR, 0b1000_0000);
+        assert_eq!(XMIT_SAME_ATIME, 0b0100_0000);
+        assert_eq!(XMIT_UNUSED_15, 0b1000_0000);
+    }
+
+    #[test]
+    fn extended16_constants_have_expected_values() {
+        assert_eq!(XMIT_RESERVED_16, 0b0000_0001);
+        assert_eq!(XMIT_CRTIME_EQ_MTIME, 0b0000_0010);
     }
 
     #[test]
@@ -393,5 +512,60 @@ mod tests {
         assert!(flags.hlink_first());
         assert!(flags.user_name_follows());
         assert!(flags.group_name_follows());
+    }
+
+    #[test]
+    fn flags_no_content_dir() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_NO_CONTENT_DIR);
+        assert!(flags.no_content_dir());
+    }
+
+    #[test]
+    fn flags_same_atime() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_SAME_ATIME);
+        assert!(flags.same_atime());
+    }
+
+    #[test]
+    fn flags_same_dev_pre30() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_SAME_DEV_PRE30);
+        assert!(flags.same_dev_pre30());
+    }
+
+    #[test]
+    fn flags_rdev_minor_8_pre30() {
+        let flags = FileFlags::new(XMIT_EXTENDED_FLAGS, XMIT_RDEV_MINOR_8_PRE30);
+        assert!(flags.rdev_minor_8_pre30());
+    }
+
+    #[test]
+    fn flags_crtime_eq_mtime() {
+        let flags = FileFlags::new_with_extended16(0, 0, XMIT_CRTIME_EQ_MTIME);
+        assert!(flags.crtime_eq_mtime());
+    }
+
+    #[test]
+    fn flags_from_u32() {
+        // Test with all three bytes
+        let value: u32 = 0x020103; // extended16=0x02, extended=0x01, primary=0x03
+        let flags = FileFlags::from_u32(value);
+        assert_eq!(flags.primary, 0x03);
+        assert_eq!(flags.extended, 0x01);
+        assert_eq!(flags.extended16, 0x02);
+    }
+
+    #[test]
+    fn flags_to_u32() {
+        let flags = FileFlags::new_with_extended16(0x03, 0x01, 0x02);
+        let value = flags.to_u32();
+        assert_eq!(value, 0x020103);
+    }
+
+    #[test]
+    fn flags_from_to_u32_round_trip() {
+        let original: u32 = 0x1F3C7A;
+        let flags = FileFlags::from_u32(original);
+        let round_tripped = flags.to_u32();
+        assert_eq!(original, round_tripped);
     }
 }

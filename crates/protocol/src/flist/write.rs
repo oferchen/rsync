@@ -13,8 +13,9 @@ use crate::varint::{write_varint, write_varint30_int};
 
 use super::entry::FileEntry;
 use super::flags::{
-    XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS, XMIT_HLINK_FIRST, XMIT_HLINKED,
-    XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_SAME_GID, XMIT_SAME_MODE, XMIT_SAME_NAME,
+    XMIT_CRTIME_EQ_MTIME, XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS, XMIT_HLINK_FIRST,
+    XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_NO_CONTENT_DIR,
+    XMIT_RDEV_MINOR_8_PRE30, XMIT_SAME_ATIME, XMIT_SAME_GID, XMIT_SAME_MODE, XMIT_SAME_NAME,
     XMIT_SAME_RDEV_MAJOR, XMIT_SAME_TIME, XMIT_SAME_UID, XMIT_TOP_DIR, XMIT_USER_NAME_FOLLOWS,
 };
 use super::state::FileListCompressionState;
@@ -42,6 +43,10 @@ pub struct FileListWriter {
     preserve_devices: bool,
     /// Whether to preserve (and thus write) hardlink indices to the wire.
     preserve_hard_links: bool,
+    /// Whether to preserve (and thus write) access times to the wire.
+    preserve_atimes: bool,
+    /// Whether to preserve (and thus write) creation times to the wire.
+    preserve_crtimes: bool,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
     /// Cached: whether varint flag encoding is enabled (computed once at construction).
@@ -63,6 +68,8 @@ impl FileListWriter {
             preserve_links: false,
             preserve_devices: false,
             preserve_hard_links: false,
+            preserve_atimes: false,
+            preserve_crtimes: false,
             iconv: None,
             use_varint_flags: false,
             use_safe_file_list: protocol.safe_file_list_always_enabled(),
@@ -81,6 +88,8 @@ impl FileListWriter {
             preserve_links: false,
             preserve_devices: false,
             preserve_hard_links: false,
+            preserve_atimes: false,
+            preserve_crtimes: false,
             iconv: None,
             use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
             use_safe_file_list: compat_flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
@@ -120,6 +129,20 @@ impl FileListWriter {
     #[must_use]
     pub const fn with_preserve_hard_links(mut self, preserve: bool) -> Self {
         self.preserve_hard_links = preserve;
+        self
+    }
+
+    /// Sets whether access times should be written to the wire.
+    #[must_use]
+    pub const fn with_preserve_atimes(mut self, preserve: bool) -> Self {
+        self.preserve_atimes = preserve;
+        self
+    }
+
+    /// Sets whether creation times should be written to the wire.
+    #[must_use]
+    pub const fn with_preserve_crtimes(mut self, preserve: bool) -> Self {
+        self.preserve_crtimes = preserve;
         self
     }
 
@@ -189,6 +212,14 @@ impl FileListWriter {
                     xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
                 }
             }
+            // Set XMIT_RDEV_MINOR_8_PRE30 flag if minor fits in byte (protocol 28-29)
+            if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
+                if let Some(minor) = entry.rdev_minor() {
+                    if minor <= 0xFF {
+                        xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
+                    }
+                }
+            }
         }
 
         // Hardlink flags (protocol 30+, non-directories only)
@@ -221,6 +252,22 @@ impl FileListWriter {
             && (xflags & (XMIT_SAME_GID as u32)) == 0
         {
             xflags |= (XMIT_GROUP_NAME_FOLLOWS as u32) << 8;
+        }
+
+        // No content directory flag (protocol 30+, directories only)
+        // Note: shares bit position with XMIT_SAME_RDEV_MAJOR (devices vs dirs)
+        if entry.is_dir() && self.protocol.as_u8() >= 30 && !entry.content_dir() {
+            xflags |= (XMIT_NO_CONTENT_DIR as u32) << 8;
+        }
+
+        // Same atime flag (non-directories only, when preserving atimes)
+        if self.preserve_atimes && !entry.is_dir() && entry.atime() == self.state.prev_atime {
+            xflags |= (XMIT_SAME_ATIME as u32) << 8;
+        }
+
+        // Creation time equals mtime flag (bit 17, varint mode only)
+        if self.preserve_crtimes && entry.crtime() == entry.mtime() {
+            xflags |= (XMIT_CRTIME_EQ_MTIME as u32) << 16;
         }
 
         xflags
@@ -310,6 +357,20 @@ impl FileListWriter {
         if xflags & (XMIT_SAME_MODE as u32) == 0 {
             let wire_mode = entry.mode() as i32;
             writer.write_all(&wire_mode.to_le_bytes())?;
+        }
+
+        // Write atime if preserving and different (non-directories only)
+        if self.preserve_atimes
+            && !entry.is_dir()
+            && (xflags & ((XMIT_SAME_ATIME as u32) << 8)) == 0
+        {
+            crate::write_varlong(writer, entry.atime(), 4)?;
+            self.state.update_atime(entry.atime());
+        }
+
+        // Write crtime if preserving and different from mtime
+        if self.preserve_crtimes && (xflags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16)) == 0 {
+            crate::write_varlong(writer, entry.crtime(), 4)?;
         }
 
         // Write UID if preserving and different
@@ -404,8 +465,9 @@ impl FileListWriter {
         if self.protocol.as_u8() >= 30 {
             write_varint(writer, minor as i32)?;
         } else {
-            // Protocol 28-29: use byte if fits, otherwise int
-            if minor <= 0xFF {
+            // Protocol 28-29: check XMIT_RDEV_MINOR_8_PRE30 flag
+            let minor_8_bit = (xflags & ((XMIT_RDEV_MINOR_8_PRE30 as u32) << 8)) != 0;
+            if minor_8_bit {
                 writer.write_all(&[minor as u8])?;
             } else {
                 writer.write_all(&(minor as i32).to_le_bytes())?;

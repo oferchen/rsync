@@ -107,6 +107,10 @@ pub struct FileEntry {
     size: u64,
     /// Modification time as seconds since Unix epoch.
     mtime: i64,
+    /// Access time as seconds since Unix epoch (protocol 30+, --atimes).
+    atime: i64,
+    /// Creation time as seconds since Unix epoch (protocol 30+, --crtimes).
+    crtime: i64,
     /// User ID (None if not preserving ownership).
     uid: Option<u32>,
     /// Group ID (None if not preserving ownership).
@@ -127,6 +131,12 @@ pub struct FileEntry {
     // 2-byte aligned fields
     /// Entry flags from wire format.
     flags: super::flags::FileFlags,
+
+    // 1-byte aligned fields
+    /// Whether this directory has content to transfer (protocol 30+).
+    ///
+    /// False indicates XMIT_NO_CONTENT_DIR - an implied or content-less directory.
+    content_dir: bool,
 }
 
 impl FileEntry {
@@ -149,6 +159,8 @@ impl FileEntry {
             group_name: None,
             size,
             mtime: 0,
+            atime: 0,
+            crtime: 0,
             uid: None,
             gid: None,
             rdev_major: None,
@@ -157,6 +169,7 @@ impl FileEntry {
             mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime_nsec: 0,
             flags: super::flags::FileFlags::default(),
+            content_dir: true, // Directories have content by default
         }
     }
 
@@ -211,6 +224,8 @@ impl FileEntry {
             group_name: None,
             size,
             mtime,
+            atime: 0,
+            crtime: 0,
             uid: None,
             gid: None,
             rdev_major: None,
@@ -219,6 +234,7 @@ impl FileEntry {
             mode,
             mtime_nsec,
             flags,
+            content_dir: true, // Default to having content
         }
     }
 
@@ -392,6 +408,46 @@ impl FileEntry {
     /// Sets the hardlink index for this entry.
     pub const fn set_hardlink_idx(&mut self, idx: u32) {
         self.hardlink_idx = Some(idx);
+    }
+
+    /// Returns the access time as seconds since Unix epoch.
+    #[inline]
+    #[must_use]
+    pub const fn atime(&self) -> i64 {
+        self.atime
+    }
+
+    /// Sets the access time.
+    pub const fn set_atime(&mut self, secs: i64) {
+        self.atime = secs;
+    }
+
+    /// Returns the creation time as seconds since Unix epoch.
+    #[inline]
+    #[must_use]
+    pub const fn crtime(&self) -> i64 {
+        self.crtime
+    }
+
+    /// Sets the creation time.
+    pub const fn set_crtime(&mut self, secs: i64) {
+        self.crtime = secs;
+    }
+
+    /// Returns whether this directory has content to transfer.
+    ///
+    /// Only meaningful for directories. Returns true for non-directories.
+    #[inline]
+    #[must_use]
+    pub const fn content_dir(&self) -> bool {
+        self.content_dir
+    }
+
+    /// Sets whether this directory has content to transfer.
+    ///
+    /// When false, XMIT_NO_CONTENT_DIR flag is set on wire.
+    pub const fn set_content_dir(&mut self, has_content: bool) {
+        self.content_dir = has_content;
     }
 
     /// Returns true if this entry is a block or character device.
