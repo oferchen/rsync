@@ -15,10 +15,11 @@ use super::entry::FileEntry;
 use super::flags::{
     XMIT_CRTIME_EQ_MTIME, XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS, XMIT_HLINK_FIRST,
     XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_MOD_NSEC, XMIT_NO_CONTENT_DIR,
-    XMIT_RDEV_MINOR_8_PRE30, XMIT_SAME_ATIME, XMIT_SAME_GID, XMIT_SAME_MODE, XMIT_SAME_NAME,
-    XMIT_SAME_RDEV_MAJOR, XMIT_SAME_TIME, XMIT_SAME_UID, XMIT_TOP_DIR, XMIT_USER_NAME_FOLLOWS,
+    XMIT_RDEV_MINOR_8_PRE30, XMIT_SAME_ATIME, XMIT_SAME_DEV_PRE30, XMIT_SAME_GID, XMIT_SAME_MODE,
+    XMIT_SAME_NAME, XMIT_SAME_RDEV_MAJOR, XMIT_SAME_TIME, XMIT_SAME_UID, XMIT_TOP_DIR,
+    XMIT_USER_NAME_FOLLOWS,
 };
-use super::state::FileListCompressionState;
+use super::state::{FileListCompressionState, FileListStats};
 
 /// State maintained while writing a file list.
 ///
@@ -33,6 +34,8 @@ pub struct FileListWriter {
     codec: ProtocolCodecEnum,
     /// Compression state for cross-entry field sharing.
     state: FileListCompressionState,
+    /// Statistics collected during file list writing.
+    stats: FileListStats,
     /// Whether to preserve (and thus write) UID values to the wire.
     preserve_uid: bool,
     /// Whether to preserve (and thus write) GID values to the wire.
@@ -47,6 +50,10 @@ pub struct FileListWriter {
     preserve_atimes: bool,
     /// Whether to preserve (and thus write) creation times to the wire.
     preserve_crtimes: bool,
+    /// Whether to send checksums for all files (--checksum / -c mode).
+    always_checksum: bool,
+    /// Length of checksum to write (depends on protocol and checksum algorithm).
+    flist_csum_len: usize,
     /// Optional filename encoding converter (for --iconv support).
     iconv: Option<FilenameConverter>,
     /// Cached: whether varint flag encoding is enabled (computed once at construction).
@@ -63,6 +70,7 @@ impl FileListWriter {
             protocol,
             codec: create_protocol_codec(protocol.as_u8()),
             state: FileListCompressionState::new(),
+            stats: FileListStats::default(),
             preserve_uid: false,
             preserve_gid: false,
             preserve_links: false,
@@ -70,6 +78,8 @@ impl FileListWriter {
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
+            always_checksum: false,
+            flist_csum_len: 0,
             iconv: None,
             use_varint_flags: false,
             use_safe_file_list: protocol.safe_file_list_always_enabled(),
@@ -83,6 +93,7 @@ impl FileListWriter {
             protocol,
             codec: create_protocol_codec(protocol.as_u8()),
             state: FileListCompressionState::new(),
+            stats: FileListStats::default(),
             preserve_uid: false,
             preserve_gid: false,
             preserve_links: false,
@@ -90,6 +101,8 @@ impl FileListWriter {
             preserve_hard_links: false,
             preserve_atimes: false,
             preserve_crtimes: false,
+            always_checksum: false,
+            flist_csum_len: 0,
             iconv: None,
             use_varint_flags: compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
             use_safe_file_list: compat_flags.contains(CompatibilityFlags::SAFE_FILE_LIST)
@@ -146,11 +159,28 @@ impl FileListWriter {
         self
     }
 
+    /// Enables checksum mode (--checksum / -c) with the given checksum length.
+    ///
+    /// When enabled, checksums are written for regular files. For protocol < 28,
+    /// checksums are also written for non-regular files (using empty_sum).
+    #[must_use]
+    pub const fn with_always_checksum(mut self, csum_len: usize) -> Self {
+        self.always_checksum = true;
+        self.flist_csum_len = csum_len;
+        self
+    }
+
     /// Sets the filename encoding converter for iconv support.
     #[must_use]
     pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
         self
+    }
+
+    /// Returns the statistics collected during file list writing.
+    #[must_use]
+    pub const fn stats(&self) -> &FileListStats {
+        &self.stats
     }
 
     /// Returns whether varint flag encoding is enabled.
@@ -205,33 +235,51 @@ impl FileListWriter {
             xflags |= XMIT_LONG_NAME as u32;
         }
 
-        // Device major comparison (protocol 28+)
-        if self.preserve_devices && entry.is_device() {
-            if let Some(major) = entry.rdev_major() {
-                if major == self.state.prev_rdev_major {
-                    xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
-                }
+        // Device/special file rdev major comparison (protocol 28+)
+        // Devices always, special files only for protocol < 31
+        let needs_rdev = self.preserve_devices
+            && (entry.is_device() || (entry.is_special() && self.protocol.as_u8() < 31));
+
+        if needs_rdev {
+            let major = if entry.is_device() {
+                entry.rdev_major().unwrap_or(0)
+            } else {
+                0 // Dummy rdev for special files
+            };
+
+            if major == self.state.prev_rdev_major {
+                xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
             }
+
             // Set XMIT_RDEV_MINOR_8_PRE30 flag if minor fits in byte (protocol 28-29)
             if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
-                if let Some(minor) = entry.rdev_minor() {
-                    if minor <= 0xFF {
-                        xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
-                    }
+                let minor = if entry.is_device() {
+                    entry.rdev_minor().unwrap_or(0)
+                } else {
+                    0
+                };
+                if minor <= 0xFF {
+                    xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
                 }
             }
         }
 
-        // Hardlink flags (protocol 30+, non-directories only)
-        if self.preserve_hard_links && !entry.is_dir() && self.protocol.as_u8() >= 30 {
-            if let Some(idx) = entry.hardlink_idx() {
-                // XMIT_HLINKED indicates this file is part of a hardlink group
-                xflags |= (XMIT_HLINKED as u32) << 8;
-                // XMIT_HLINK_FIRST indicates this is the first/leader of the group
-                // We determine this by checking if idx points to a "future" entry
-                // For simplicity, if hardlink_idx equals u32::MAX, treat as first
-                if idx == u32::MAX {
-                    xflags |= (XMIT_HLINK_FIRST as u32) << 8;
+        // Hardlink flags (protocol 28+, non-directories only)
+        if self.preserve_hard_links && !entry.is_dir() {
+            if self.protocol.as_u8() >= 30 {
+                // Protocol 30+: Use XMIT_HLINKED / XMIT_HLINK_FIRST
+                if let Some(idx) = entry.hardlink_idx() {
+                    xflags |= (XMIT_HLINKED as u32) << 8;
+                    if idx == u32::MAX {
+                        xflags |= (XMIT_HLINK_FIRST as u32) << 8;
+                    }
+                }
+            } else if self.protocol.as_u8() >= 28 {
+                // Protocol 28-29: Use XMIT_SAME_DEV_PRE30 for hardlink dev compression
+                if let Some(dev) = entry.hardlink_dev() {
+                    if dev == self.state.prev_hardlink_dev {
+                        xflags |= (XMIT_SAME_DEV_PRE30 as u32) << 8;
+                    }
                 }
             }
         }
@@ -460,6 +508,8 @@ impl FileListWriter {
 
     /// Writes device numbers if preserving devices and entry is a device.
     ///
+    /// Also writes dummy rdev (0, 0) for special files (FIFOs, sockets) in protocol < 31.
+    ///
     /// Wire format (protocol 28+):
     /// - Major: varint30 (omitted if XMIT_SAME_RDEV_MAJOR set)
     /// - Minor: varint (protocol 30+) or byte/int (protocol 28-29)
@@ -469,12 +519,33 @@ impl FileListWriter {
         entry: &FileEntry,
         xflags: u32,
     ) -> io::Result<()> {
-        if !self.preserve_devices || !entry.is_device() {
+        let is_device = entry.is_device();
+        let is_special = entry.is_special();
+
+        // Devices: write actual rdev if preserve_devices
+        // Special files (proto < 31): write dummy rdev (0, 0) if preserve_devices
+        if !self.preserve_devices {
             return Ok(());
         }
 
-        let major = entry.rdev_major().unwrap_or(0);
-        let minor = entry.rdev_minor().unwrap_or(0);
+        if !is_device && !is_special {
+            return Ok(());
+        }
+
+        // Special files only get rdev in protocol < 31
+        if is_special && self.protocol.as_u8() >= 31 {
+            return Ok(());
+        }
+
+        let (major, minor) = if is_device {
+            (
+                entry.rdev_major().unwrap_or(0),
+                entry.rdev_minor().unwrap_or(0),
+            )
+        } else {
+            // Special file: dummy rdev (0, 0)
+            (0, 0)
+        };
 
         // Write major if not same as previous
         if xflags & ((XMIT_SAME_RDEV_MAJOR as u32) << 8) == 0 {
@@ -524,6 +595,52 @@ impl FileListWriter {
                 write_varint(writer, idx as i32)?;
             }
         }
+
+        Ok(())
+    }
+
+    /// Writes hardlink device and inode for protocol 28-29.
+    ///
+    /// In protocols before 30, hardlinks are identified by (dev, ino) pairs
+    /// rather than indices. This writes the dev/ino after the symlink target.
+    ///
+    /// Wire format:
+    /// - If not XMIT_SAME_DEV_PRE30: write longint(dev + 1)
+    /// - Always write longint(ino)
+    fn write_hardlink_dev_ino<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+        xflags: u32,
+    ) -> io::Result<()> {
+        // Only for protocol 28-29, non-directories with hardlink info
+        if !self.preserve_hard_links
+            || self.protocol.as_u8() >= 30
+            || self.protocol.as_u8() < 28
+            || entry.is_dir()
+        {
+            return Ok(());
+        }
+
+        let dev = match entry.hardlink_dev() {
+            Some(d) => d,
+            None => return Ok(()),
+        };
+
+        let ino = entry.hardlink_ino().unwrap_or(0);
+
+        // Write dev if not same as previous
+        let same_dev = (xflags & ((XMIT_SAME_DEV_PRE30 as u32) << 8)) != 0;
+        if !same_dev {
+            // Write dev + 1 (upstream convention)
+            crate::write_longint(writer, dev + 1)?;
+        }
+
+        // Always write ino
+        crate::write_longint(writer, ino)?;
+
+        // Update compression state
+        self.state.update_hardlink_dev(dev);
 
         Ok(())
     }
@@ -609,13 +726,23 @@ impl FileListWriter {
             self.write_metadata(writer, entry, xflags)?;
 
             // Step 8: Write device numbers (if applicable)
+            // Also write dummy rdev for special files (FIFOs, sockets) in protocol < 31
             self.write_rdev(writer, entry, xflags)?;
 
             // Step 9: Write symlink target (if applicable)
             self.write_symlink_target(writer, entry)?;
+
+            // Step 10: Write hardlink dev/ino for protocol < 30
+            self.write_hardlink_dev_ino(writer, entry, xflags)?;
         }
 
-        // Step 10: Update state
+        // Step 10: Write checksum if always_checksum mode is enabled
+        // Upstream: always_checksum && (S_ISREG(mode) || protocol_version < 28)
+        if !self.is_hardlink_follower(xflags) {
+            self.write_checksum(writer, entry)?;
+        }
+
+        // Step 11: Update state
         self.state.update(
             &name,
             entry.mode(),
@@ -624,7 +751,76 @@ impl FileListWriter {
             entry.gid().unwrap_or(0),
         );
 
+        // Step 12: Update statistics
+        self.update_stats(entry);
+
         Ok(())
+    }
+
+    /// Writes checksum if always_checksum mode is enabled.
+    ///
+    /// Wire format: raw bytes of length flist_csum_len
+    /// - For regular files: actual checksum from entry
+    /// - For non-regular files (proto < 28 only): empty_sum (all zeros)
+    fn write_checksum<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> io::Result<()> {
+        if !self.always_checksum || self.flist_csum_len == 0 {
+            return Ok(());
+        }
+
+        let is_regular = entry.is_file();
+
+        // For protocol < 28, non-regular files also get a checksum (empty_sum)
+        // For protocol >= 28, only regular files get checksums
+        if !is_regular && self.protocol.as_u8() >= 28 {
+            return Ok(());
+        }
+
+        if is_regular {
+            // Write actual checksum from entry, or zeros if not set
+            if let Some(sum) = entry.checksum() {
+                let len = sum.len().min(self.flist_csum_len);
+                writer.write_all(&sum[..len])?;
+                // Pad with zeros if checksum is shorter than expected
+                if len < self.flist_csum_len {
+                    let padding = vec![0u8; self.flist_csum_len - len];
+                    writer.write_all(&padding)?;
+                }
+            } else {
+                // No checksum set, write zeros
+                let zeros = vec![0u8; self.flist_csum_len];
+                writer.write_all(&zeros)?;
+            }
+        } else {
+            // Non-regular file (proto < 28): write empty_sum (all zeros)
+            let zeros = vec![0u8; self.flist_csum_len];
+            writer.write_all(&zeros)?;
+        }
+
+        Ok(())
+    }
+
+    /// Updates file list statistics based on the entry type.
+    fn update_stats(&mut self, entry: &FileEntry) {
+        if entry.is_dir() {
+            self.stats.num_dirs += 1;
+        } else if entry.is_file() {
+            self.stats.num_files += 1;
+            self.stats.total_size += entry.size();
+        } else if entry.is_symlink() {
+            self.stats.num_symlinks += 1;
+            // Symlinks contribute their target length to total_size in rsync
+            if let Some(target) = entry.link_target() {
+                self.stats.total_size += target.as_os_str().len() as u64;
+            }
+        } else if entry.is_device() {
+            self.stats.num_devices += 1;
+        } else if entry.is_special() {
+            self.stats.num_specials += 1;
+        }
     }
 
     /// Writes the end-of-list marker.
@@ -1520,5 +1716,210 @@ mod tests {
         // Follower (HLINKED only)
         let xflags_follower = (XMIT_HLINKED as u32) << 8;
         assert!(writer.is_hardlink_follower(xflags_follower));
+    }
+
+    #[test]
+    fn checksum_round_trip() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = test_protocol();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_always_checksum(16);
+
+        let mut entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        entry.set_mtime(1700000000, 0);
+        entry.set_checksum(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_always_checksum(16);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "test.txt");
+        assert_eq!(
+            read_entry.checksum(),
+            Some(&vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16][..])
+        );
+    }
+
+    #[test]
+    fn stats_tracking() {
+        let protocol = test_protocol();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_links(true)
+            .with_preserve_devices(true);
+
+        // Write various entry types
+        let file1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
+        let file2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
+        let dir = FileEntry::new_directory("mydir".into(), 0o755);
+        let link = FileEntry::new_symlink("mylink".into(), "/target".into());
+        let dev = FileEntry::new_block_device("sda".into(), 0o660, 8, 0);
+
+        writer.write_entry(&mut buf, &file1).unwrap();
+        writer.write_entry(&mut buf, &file2).unwrap();
+        writer.write_entry(&mut buf, &dir).unwrap();
+        writer.write_entry(&mut buf, &link).unwrap();
+        writer.write_entry(&mut buf, &dev).unwrap();
+
+        let stats = writer.stats();
+        assert_eq!(stats.num_files, 2);
+        assert_eq!(stats.num_dirs, 1);
+        assert_eq!(stats.num_symlinks, 1);
+        assert_eq!(stats.num_devices, 1);
+        assert_eq!(stats.total_size, 300 + 7); // 100 + 200 + len("/target")
+    }
+
+    #[test]
+    fn hardlink_dev_ino_round_trip_protocol_29() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+        let mut entry = FileEntry::new_file("hardlink.txt".into(), 100, 0o644);
+        entry.set_mtime(1700000000, 0);
+        entry.set_hardlink_dev(12345);
+        entry.set_hardlink_ino(67890);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "hardlink.txt");
+        assert_eq!(read_entry.hardlink_dev(), Some(12345));
+        assert_eq!(read_entry.hardlink_ino(), Some(67890));
+    }
+
+    #[test]
+    fn hardlink_dev_compression_protocol_29() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+
+        // Two entries with same dev should use XMIT_SAME_DEV_PRE30
+        let mut entry1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
+        entry1.set_mtime(1700000000, 0);
+        entry1.set_hardlink_dev(12345);
+        entry1.set_hardlink_ino(1);
+
+        let mut entry2 = FileEntry::new_file("file2.txt".into(), 100, 0o644);
+        entry2.set_mtime(1700000000, 0);
+        entry2.set_hardlink_dev(12345);
+        entry2.set_hardlink_ino(2);
+
+        writer.write_entry(&mut buf, &entry1).unwrap();
+        let first_len = buf.len();
+        writer.write_entry(&mut buf, &entry2).unwrap();
+        let second_len = buf.len() - first_len;
+        writer.write_end(&mut buf, None).unwrap();
+
+        // Second entry should be smaller due to dev compression
+        assert!(
+            second_len < first_len,
+            "second entry should use dev compression"
+        );
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+
+        let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        assert_eq!(read1.hardlink_dev(), Some(12345));
+        assert_eq!(read1.hardlink_ino(), Some(1));
+        assert_eq!(read2.hardlink_dev(), Some(12345));
+        assert_eq!(read2.hardlink_ino(), Some(2));
+    }
+
+    #[test]
+    fn special_file_fifo_round_trip_protocol_30() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+        let entry = FileEntry::new_fifo("myfifo".into(), 0o644);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "myfifo");
+        assert!(read_entry.is_special());
+        // rdev should NOT be set (dummy was read and discarded)
+        assert!(read_entry.rdev_major().is_none());
+    }
+
+    #[test]
+    fn special_file_socket_round_trip_protocol_30() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+        let entry = FileEntry::new_socket("mysocket".into(), 0o755);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "mysocket");
+        assert!(read_entry.is_special());
+    }
+
+    #[test]
+    fn special_file_no_rdev_in_protocol_31() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        let protocol = ProtocolVersion::try_from(31u8).unwrap();
+        let mut buf_30 = Vec::new();
+        let mut buf_31 = Vec::new();
+
+        // Protocol 30: FIFOs get dummy rdev
+        let mut writer30 = FileListWriter::new(ProtocolVersion::try_from(30u8).unwrap())
+            .with_preserve_devices(true);
+        let entry = FileEntry::new_fifo("fifo".into(), 0o644);
+        writer30.write_entry(&mut buf_30, &entry).unwrap();
+
+        // Protocol 31: FIFOs don't get rdev
+        let mut writer31 = FileListWriter::new(protocol).with_preserve_devices(true);
+        writer31.write_entry(&mut buf_31, &entry).unwrap();
+
+        // Protocol 31 entry should be smaller (no rdev)
+        assert!(
+            buf_31.len() < buf_30.len(),
+            "protocol 31 should not write rdev for FIFOs"
+        );
+
+        // Verify round-trip
+        let mut cursor = Cursor::new(&buf_31[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "fifo");
+        assert!(read_entry.is_special());
     }
 }
