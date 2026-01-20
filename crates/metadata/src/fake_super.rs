@@ -9,15 +9,15 @@
 //!
 //! # Wire Format
 //!
-//! The `user.rsync.%stat` xattr stores metadata in the format:
+//! The `user.rsync.%stat` xattr stores metadata in the format matching upstream:
 //! ```text
-//! <mode_octal> <uid>,<gid>[ <rdev>]
+//! <mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>
 //! ```
 //!
 //! Examples:
-//! - Regular file: `100644 1000,1000`
-//! - Device file: `60660 0,6 8,0` (block device major 8, minor 0)
-//! - Symlink: `120777 1000,1000`
+//! - Regular file: `100644 0,0 1000:1000`
+//! - Device file: `60660 8,0 0:6` (block device major 8, minor 0)
+//! - Symlink: `120777 0,0 1000:1000`
 
 use std::fs::Metadata;
 use std::io;
@@ -65,21 +65,19 @@ impl FakeSuperStat {
 
     /// Encodes the stat to the wire format used in xattrs.
     ///
-    /// Format: `<mode_octal> <uid>,<gid>[ <rdev_major>,<rdev_minor>]`
+    /// Format: `<mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>`
+    ///
+    /// This matches upstream rsync's `set_stat_xattr()` in `xattrs.c`.
     pub fn encode(&self) -> String {
-        use std::fmt::Write;
-
-        let mut result = format!("{:o} {},{}", self.mode, self.uid, self.gid);
-
-        if let Some((major, minor)) = self.rdev {
-            // write! to String is infallible
-            let _ = write!(result, " {major},{minor}");
-        }
-
-        result
+        let (major, minor) = self.rdev.unwrap_or((0, 0));
+        format!("{:o} {},{} {}:{}", self.mode, major, minor, self.uid, self.gid)
     }
 
     /// Decodes the stat from the wire format.
+    ///
+    /// Format: `<mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>`
+    ///
+    /// This matches upstream rsync's `get_stat_xattr()` in `xattrs.c`.
     ///
     /// # Errors
     ///
@@ -87,11 +85,11 @@ impl FakeSuperStat {
     pub fn decode(s: &str) -> io::Result<Self> {
         let parts: Vec<&str> = s.split_whitespace().collect();
 
-        if parts.len() < 2 {
+        if parts.len() != 3 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "invalid fake-super format: expected at least 2 parts, got {}",
+                    "invalid fake-super format: expected 3 parts, got {}",
                     parts.len()
                 ),
             ));
@@ -105,12 +103,42 @@ impl FakeSuperStat {
             )
         })?;
 
-        // Parse uid,gid
-        let uid_gid: Vec<&str> = parts[1].split(',').collect();
+        // Parse rdev (major,minor)
+        let rdev_parts: Vec<&str> = parts[1].split(',').collect();
+        if rdev_parts.len() != 2 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid rdev format: '{}'", parts[1]),
+            ));
+        }
+
+        let major: u32 = rdev_parts[0].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid rdev major '{}': {}", rdev_parts[0], e),
+            )
+        })?;
+
+        let minor: u32 = rdev_parts[1].parse().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid rdev minor '{}': {}", rdev_parts[1], e),
+            )
+        })?;
+
+        // rdev of (0,0) means no device - store as None for non-device files
+        let rdev = if major == 0 && minor == 0 {
+            None
+        } else {
+            Some((major, minor))
+        };
+
+        // Parse uid:gid (colon-separated)
+        let uid_gid: Vec<&str> = parts[2].split(':').collect();
         if uid_gid.len() != 2 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("invalid uid,gid format: '{}'", parts[1]),
+                format!("invalid uid:gid format: '{}'", parts[2]),
             ));
         }
 
@@ -127,35 +155,6 @@ impl FakeSuperStat {
                 format!("invalid gid '{}': {}", uid_gid[1], e),
             )
         })?;
-
-        // Parse optional rdev (major,minor)
-        let rdev = if parts.len() >= 3 {
-            let rdev_parts: Vec<&str> = parts[2].split(',').collect();
-            if rdev_parts.len() != 2 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid rdev format: '{}'", parts[2]),
-                ));
-            }
-
-            let major: u32 = rdev_parts[0].parse().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid rdev major '{}': {}", rdev_parts[0], e),
-                )
-            })?;
-
-            let minor: u32 = rdev_parts[1].parse().map_err(|e| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid rdev minor '{}': {}", rdev_parts[1], e),
-                )
-            })?;
-
-            Some((major, minor))
-        } else {
-            None
-        };
 
         Ok(Self {
             mode,
@@ -292,7 +291,8 @@ mod tests {
             gid: 1000,
             rdev: None,
         };
-        assert_eq!(stat.encode(), "100644 1000,1000");
+        // Upstream format: mode rdev uid:gid
+        assert_eq!(stat.encode(), "100644 0,0 1000:1000");
     }
 
     #[test]
@@ -303,7 +303,7 @@ mod tests {
             gid: 0,
             rdev: None,
         };
-        assert_eq!(stat.encode(), "40755 0,0");
+        assert_eq!(stat.encode(), "40755 0,0 0:0");
     }
 
     #[test]
@@ -314,7 +314,8 @@ mod tests {
             gid: 6,
             rdev: Some((8, 0)),
         };
-        assert_eq!(stat.encode(), "60660 0,6 8,0");
+        // Upstream format: mode rdev uid:gid
+        assert_eq!(stat.encode(), "60660 8,0 0:6");
     }
 
     #[test]
@@ -325,7 +326,7 @@ mod tests {
             gid: 0,
             rdev: Some((1, 3)),
         };
-        assert_eq!(stat.encode(), "20666 0,0 1,3");
+        assert_eq!(stat.encode(), "20666 1,3 0:0");
     }
 
     #[test]
@@ -336,12 +337,12 @@ mod tests {
             gid: 1000,
             rdev: None,
         };
-        assert_eq!(stat.encode(), "120777 1000,1000");
+        assert_eq!(stat.encode(), "120777 0,0 1000:1000");
     }
 
     #[test]
     fn test_decode_regular_file() {
-        let stat = FakeSuperStat::decode("100644 1000,1000").unwrap();
+        let stat = FakeSuperStat::decode("100644 0,0 1000:1000").unwrap();
         assert_eq!(stat.mode, 0o100644);
         assert_eq!(stat.uid, 1000);
         assert_eq!(stat.gid, 1000);
@@ -350,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_decode_block_device() {
-        let stat = FakeSuperStat::decode("60660 0,6 8,0").unwrap();
+        let stat = FakeSuperStat::decode("60660 8,0 0:6").unwrap();
         assert_eq!(stat.mode, 0o60660);
         assert_eq!(stat.uid, 0);
         assert_eq!(stat.gid, 6);
@@ -389,9 +390,11 @@ mod tests {
     fn test_decode_invalid_format() {
         assert!(FakeSuperStat::decode("").is_err());
         assert!(FakeSuperStat::decode("100644").is_err());
-        assert!(FakeSuperStat::decode("invalid 1000,1000").is_err());
-        assert!(FakeSuperStat::decode("100644 invalid").is_err());
-        assert!(FakeSuperStat::decode("100644 1000").is_err());
+        assert!(FakeSuperStat::decode("100644 0,0").is_err()); // Missing uid:gid
+        assert!(FakeSuperStat::decode("invalid 0,0 1000:1000").is_err());
+        assert!(FakeSuperStat::decode("100644 invalid 1000:1000").is_err());
+        assert!(FakeSuperStat::decode("100644 0,0 invalid").is_err());
+        assert!(FakeSuperStat::decode("100644 0,0 1000,1000").is_err()); // Wrong separator for uid/gid
     }
 
     #[test]
