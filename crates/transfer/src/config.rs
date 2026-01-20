@@ -81,6 +81,15 @@ pub struct ServerConfig {
     /// during file list transmission. This is used when the local and remote systems
     /// use different filename encodings.
     pub iconv: Option<FilenameConverter>,
+    /// Delete files even if there are I/O errors (`--ignore-errors`).
+    ///
+    /// When true, the io_error flag is sent as 0 to the receiver regardless of
+    /// actual I/O errors encountered during file list generation.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2518`: `write_int(f, ignore_errors ? 0 : io_error);`
+    pub ignore_errors: bool,
 }
 
 impl ServerConfig {
@@ -116,6 +125,7 @@ impl ServerConfig {
             filter_rules: Vec::new(),
             reference_directories: Vec::new(),
             iconv: None,
+            ignore_errors: false,
         })
     }
 }

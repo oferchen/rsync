@@ -102,6 +102,7 @@ where
     // Parse role from --sender/--receiver flags
     let is_sender = args.iter().any(|a| a == "--sender");
     let is_receiver = args.iter().any(|a| a == "--receiver");
+    let ignore_errors = args.iter().any(|a| a == "--ignore-errors");
 
     let role = if is_sender {
         ServerRole::Generator // Server sends files to client (generator role)
@@ -124,8 +125,12 @@ where
     for arg in args.iter().skip(1) {
         let arg_str = arg.to_string_lossy();
 
-        // Skip --server, --sender, --receiver
-        if arg_str == "--server" || arg_str == "--sender" || arg_str == "--receiver" {
+        // Skip --server, --sender, --receiver, --ignore-errors
+        if arg_str == "--server"
+            || arg_str == "--sender"
+            || arg_str == "--receiver"
+            || arg_str == "--ignore-errors"
+        {
             continue;
         }
 
@@ -148,17 +153,21 @@ where
     }
 
     // Build server configuration
-    let config = match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            write_server_error(
-                stderr,
-                program_brand,
-                format!("invalid server arguments: {e}"),
-            );
-            return 1;
-        }
-    };
+    let mut config =
+        match ServerConfig::from_flag_string_and_args(role, flag_string, positional_args) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                write_server_error(
+                    stderr,
+                    program_brand,
+                    format!("invalid server arguments: {e}"),
+                );
+                return 1;
+            }
+        };
+
+    // Apply additional flags parsed from full arguments
+    config.ignore_errors = ignore_errors;
 
     // Run native server with stdio
     let mut stdin = io::stdin().lock();
