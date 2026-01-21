@@ -4,7 +4,7 @@ struct ModuleDefinitionBuilder {
     comment: Option<String>,
     hosts_allow: Option<Vec<HostPattern>>,
     hosts_deny: Option<Vec<HostPattern>>,
-    auth_users: Option<Vec<String>>,
+    auth_users: Option<Vec<AuthUser>>,
     secrets_file: Option<PathBuf>,
     declaration_line: usize,
     bandwidth_limit: Option<NonZeroU64>,
@@ -24,6 +24,7 @@ struct ModuleDefinitionBuilder {
     max_connections: Option<Option<NonZeroU32>>,
     incoming_chmod: Option<Option<String>>,
     outgoing_chmod: Option<Option<String>>,
+    fake_super: Option<bool>,
 }
 
 impl ModuleDefinitionBuilder {
@@ -54,6 +55,7 @@ impl ModuleDefinitionBuilder {
             max_connections: None,
             incoming_chmod: None,
             outgoing_chmod: None,
+            fake_super: None,
         }
     }
 
@@ -134,7 +136,7 @@ impl ModuleDefinitionBuilder {
 
     fn set_auth_users(
         &mut self,
-        users: Vec<String>,
+        users: Vec<AuthUser>,
         config_path: &Path,
         line: usize,
     ) -> Result<(), DaemonError> {
@@ -439,6 +441,24 @@ impl ModuleDefinitionBuilder {
         Ok(())
     }
 
+    fn set_fake_super(
+        &mut self,
+        fake_super: bool,
+        config_path: &Path,
+        line: usize,
+    ) -> Result<(), DaemonError> {
+        if self.fake_super.is_some() {
+            return Err(config_parse_error(
+                config_path,
+                line,
+                format!("duplicate 'fake super' directive in module '{}'", self.name),
+            ));
+        }
+
+        self.fake_super = Some(fake_super);
+        Ok(())
+    }
+
     fn finish(
         self,
         config_path: &Path,
@@ -528,6 +548,7 @@ impl ModuleDefinitionBuilder {
             outgoing_chmod: self
                 .outgoing_chmod
                 .unwrap_or_else(|| default_outgoing_chmod.map(str::to_string)),
+            fake_super: self.fake_super.unwrap_or(false),
         })
     }
 }
@@ -661,7 +682,10 @@ mod module_definition_builder_tests {
     #[test]
     fn set_auth_users_stores_users() {
         let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-        let users = vec!["alice".to_owned(), "bob".to_owned()];
+        let users = vec![
+            AuthUser::new("alice".to_owned()),
+            AuthUser::new("bob".to_owned()),
+        ];
         let result = builder.set_auth_users(users.clone(), &test_config_path(), 5);
         assert!(result.is_ok());
         assert_eq!(builder.auth_users, Some(users));
@@ -677,8 +701,8 @@ mod module_definition_builder_tests {
     #[test]
     fn set_auth_users_rejects_duplicate() {
         let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-        builder.set_auth_users(vec!["alice".to_owned()], &test_config_path(), 5).unwrap();
-        let result = builder.set_auth_users(vec!["bob".to_owned()], &test_config_path(), 10);
+        builder.set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 5).unwrap();
+        let result = builder.set_auth_users(vec![AuthUser::new("bob".to_owned())], &test_config_path(), 10);
         assert!(result.is_err());
     }
 
@@ -933,6 +957,30 @@ mod module_definition_builder_tests {
         assert!(result.is_err());
     }
 
+    // ==================== set_fake_super tests ====================
+
+    #[test]
+    fn set_fake_super_stores_value() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_fake_super(true, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.fake_super, Some(true));
+    }
+
+    #[test]
+    fn set_fake_super_stores_false() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_fake_super(false, &test_config_path(), 5).unwrap();
+        assert_eq!(builder.fake_super, Some(false));
+    }
+
+    #[test]
+    fn set_fake_super_rejects_duplicate() {
+        let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
+        builder.set_fake_super(true, &test_config_path(), 5).unwrap();
+        let result = builder.set_fake_super(false, &test_config_path(), 10);
+        assert!(result.is_err());
+    }
+
     // ==================== finish() tests ====================
 
     #[test]
@@ -979,7 +1027,7 @@ mod module_definition_builder_tests {
     fn finish_applies_default_secrets_for_auth_users() {
         let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
-        builder.set_auth_users(vec!["alice".to_owned()], &test_config_path(), 3).unwrap();
+        builder.set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 3).unwrap();
         let default_secrets = PathBuf::from("/etc/secrets");
         let result = builder.finish(&test_config_path(), Some(&default_secrets), None, None);
         assert!(result.is_ok());
@@ -991,7 +1039,7 @@ mod module_definition_builder_tests {
     fn finish_fails_auth_users_without_secrets() {
         let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
         builder.set_path(PathBuf::from("/data"), &test_config_path(), 2).unwrap();
-        builder.set_auth_users(vec!["alice".to_owned()], &test_config_path(), 3).unwrap();
+        builder.set_auth_users(vec![AuthUser::new("alice".to_owned())], &test_config_path(), 3).unwrap();
         let result = builder.finish(&test_config_path(), None, None, None);
         assert!(result.is_err());
     }
@@ -1099,5 +1147,18 @@ mod module_definition_builder_tests {
         assert!(def.bandwidth_limit.is_none());
         assert!(!def.bandwidth_limit_specified);
         assert!(!def.bandwidth_limit_configured);
+        assert!(!def.fake_super); // default false
+    }
+
+    #[test]
+    fn finish_preserves_fake_super_when_set() {
+        let mut builder = ModuleDefinitionBuilder::new("fakesupermod".to_owned(), 1);
+        builder.set_path(PathBuf::from("/backup"), &test_config_path(), 2).unwrap();
+        builder.set_fake_super(true, &test_config_path(), 3).unwrap();
+
+        let result = builder.finish(&test_config_path(), None, None, None);
+        assert!(result.is_ok());
+        let def = result.unwrap();
+        assert!(def.fake_super);
     }
 }

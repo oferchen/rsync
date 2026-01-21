@@ -47,6 +47,7 @@ pub(super) fn base_module(name: &str) -> ModuleDefinition {
         max_connections: None,
         incoming_chmod: None,
         outgoing_chmod: None,
+        fake_super: false,
     }
 }
 
@@ -82,6 +83,7 @@ pub(super) fn module_with_host_patterns(allow: &[&str], deny: &[&str]) -> Module
         max_connections: None,
         incoming_chmod: None,
         outgoing_chmod: None,
+        fake_super: false,
     }
 }
 

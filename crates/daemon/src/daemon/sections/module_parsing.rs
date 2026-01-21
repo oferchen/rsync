@@ -135,6 +135,7 @@ fn parse_module_definition(
         max_connections: None,
         incoming_chmod: None,
         outgoing_chmod: None,
+        fake_super: false,
     };
 
     if let Some(options_text) = options_part {

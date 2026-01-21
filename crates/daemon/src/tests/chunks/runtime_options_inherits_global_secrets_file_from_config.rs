@@ -33,7 +33,8 @@ fn runtime_options_inherits_global_secrets_file_from_config() {
     let modules = options.modules();
     assert_eq!(modules.len(), 1);
     let module = &modules[0];
-    assert_eq!(module.auth_users(), &[String::from("alice")]);
+    assert_eq!(module.auth_users().len(), 1);
+    assert_eq!(module.auth_users()[0].username, "alice");
     assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
 }
 

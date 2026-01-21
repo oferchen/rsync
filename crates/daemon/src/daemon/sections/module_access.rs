@@ -385,12 +385,21 @@ fn perform_module_authentication(
         return Ok(AuthenticationStatus::Denied);
     }
 
-    if !module.auth_users.iter().any(|user| user == username) {
+    let auth_user = match module.get_auth_user(username) {
+        Some(user) => user,
+        None => {
+            deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
+            return Ok(AuthenticationStatus::Denied);
+        }
+    };
+
+    if !verify_secret_response(module, username, &challenge, digest)? {
         deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
-    if !verify_secret_response(module, username, &challenge, digest)? {
+    // Check for explicit deny access level
+    if auth_user.access_level == UserAccessLevel::Deny {
         deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     }

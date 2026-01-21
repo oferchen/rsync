@@ -1,3 +1,56 @@
+/// Per-user access level override for rsync daemon authentication.
+///
+/// When a username in `auth users` includes a suffix (`:ro`, `:rw`, or `:deny`),
+/// the access level overrides the module's default read_only/write_only settings.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum UserAccessLevel {
+    /// Use module's default access (read_only/write_only settings).
+    #[default]
+    Default,
+    /// Read-only access regardless of module settings.
+    ReadOnly,
+    /// Read-write access regardless of module settings.
+    ReadWrite,
+    /// Deny access (authentication succeeds but access is blocked).
+    Deny,
+}
+
+/// An authorized user with optional access level override.
+///
+/// Represents a user entry from the `auth users` directive in rsyncd.conf.
+/// The access level defaults to `Default` (use module settings) unless
+/// explicitly specified with a suffix.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AuthUser {
+    /// The username for authentication.
+    pub(crate) username: String,
+    /// Access level override for this user.
+    pub(crate) access_level: UserAccessLevel,
+}
+
+impl AuthUser {
+    /// Creates a new AuthUser with default access level.
+    #[allow(dead_code)] // Used in tests and for future use
+    pub(crate) fn new(username: String) -> Self {
+        Self {
+            username,
+            access_level: UserAccessLevel::Default,
+        }
+    }
+
+    /// Creates a new AuthUser with a specific access level.
+    pub(crate) fn with_access(username: String, access_level: UserAccessLevel) -> Self {
+        Self {
+            username,
+            access_level,
+        }
+    }
+}
+
+/// Configuration for a single rsync module.
+///
+/// A module represents a named filesystem path that can be accessed via rsync daemon.
+/// Each module has its own access controls, bandwidth limits, and metadata handling options.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ModuleDefinition {
     pub(crate) name: String,
@@ -5,7 +58,7 @@ pub(crate) struct ModuleDefinition {
     pub(crate) comment: Option<String>,
     pub(crate) hosts_allow: Vec<HostPattern>,
     pub(crate) hosts_deny: Vec<HostPattern>,
-    pub(crate) auth_users: Vec<String>,
+    pub(crate) auth_users: Vec<AuthUser>,
     pub(crate) secrets_file: Option<PathBuf>,
     pub(crate) bandwidth_limit: Option<NonZeroU64>,
     pub(crate) bandwidth_limit_specified: bool,
@@ -24,6 +77,12 @@ pub(crate) struct ModuleDefinition {
     pub(crate) max_connections: Option<NonZeroU32>,
     pub(crate) incoming_chmod: Option<String>,
     pub(crate) outgoing_chmod: Option<String>,
+    /// When true, stores privileged metadata (uid/gid, devices) in xattrs instead of applying.
+    ///
+    /// This mirrors upstream rsync's `fake super` directive from `rsyncd.conf(5)`.
+    /// Enables backup/restore operations without root privileges by storing ownership
+    /// and special file metadata in the `user.rsync.%stat` extended attribute.
+    pub(crate) fake_super: bool,
 }
 
 impl ModuleDefinition {
@@ -55,8 +114,15 @@ impl ModuleDefinition {
             .any(HostPattern::requires_hostname)
     }
 
-    const fn requires_authentication(&self) -> bool {
+    fn requires_authentication(&self) -> bool {
         !self.auth_users.is_empty()
+    }
+
+    /// Returns the AuthUser if the username is authorized for this module.
+    pub(crate) fn get_auth_user(&self, username: &str) -> Option<&AuthUser> {
+        self.auth_users
+            .iter()
+            .find(|auth| auth.username == username)
     }
 
     pub(crate) const fn max_connections(&self) -> Option<NonZeroU32> {
@@ -105,7 +171,7 @@ impl ModuleDefinition {
 #[cfg(test)]
 #[allow(dead_code)]
 impl ModuleDefinition {
-    pub(super) fn auth_users(&self) -> &[String] {
+    pub(super) fn auth_users(&self) -> &[AuthUser] {
         &self.auth_users
     }
 
@@ -159,6 +225,10 @@ impl ModuleDefinition {
 
     pub(super) fn outgoing_chmod(&self) -> Option<&str> {
         self.outgoing_chmod.as_deref()
+    }
+
+    pub(super) fn fake_super(&self) -> bool {
+        self.fake_super
     }
 }
 
@@ -590,7 +660,7 @@ mod module_state_tests {
     #[test]
     fn module_definition_requires_authentication_when_auth_users_set() {
         let def = ModuleDefinition {
-            auth_users: vec!["alice".to_owned()],
+            auth_users: vec![AuthUser::new("alice".to_owned())],
             ..Default::default()
         };
         assert!(def.requires_authentication());
@@ -695,7 +765,7 @@ mod module_state_tests {
     #[test]
     fn module_runtime_requires_authentication() {
         let def = ModuleDefinition {
-            auth_users: vec!["user".to_owned()],
+            auth_users: vec![AuthUser::new("user".to_owned())],
             ..Default::default()
         };
         let runtime: ModuleRuntime = def.into();

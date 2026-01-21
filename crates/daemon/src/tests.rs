@@ -16,6 +16,8 @@ use tempfile::{NamedTempFile, tempdir};
 // These are all included directly into the daemon module via include!()
 use crate::daemon::{
     AddressFamily,
+    // From module_state.rs
+    AuthUser,
     // Constants from daemon.rs
     BRANDED_CONFIG_ENV,
     ConnectionLimiter,
@@ -23,7 +25,6 @@ use crate::daemon::{
     HostPattern,
     LEGACY_CONFIG_ENV,
     ModuleConnectionError,
-    // From module_state.rs
     ModuleDefinition,
     ModuleRuntime,
     // From sections/cli_args.rs

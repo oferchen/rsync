@@ -31,10 +31,9 @@ fn runtime_options_parse_auth_users_and_secrets_file() {
     let modules = options.modules();
     assert_eq!(modules.len(), 1);
     let module = &modules[0];
-    assert_eq!(
-        module.auth_users(),
-        &[String::from("alice"), String::from("bob")]
-    );
+    assert_eq!(module.auth_users().len(), 2);
+    assert_eq!(module.auth_users()[0].username, "alice");
+    assert_eq!(module.auth_users()[1].username, "bob");
     assert_eq!(module.secrets_file(), Some(secrets_path.as_path()));
 }
 
