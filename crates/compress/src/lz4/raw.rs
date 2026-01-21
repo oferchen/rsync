@@ -633,4 +633,81 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("exceeds maximum"));
     }
+
+    #[test]
+    fn compressed_size_from_header_helper() {
+        // Direct test of the public helper function
+        let header = encode_header(1234);
+        assert_eq!(compressed_size_from_header(header), Some(1234));
+
+        // Invalid header returns None
+        assert_eq!(compressed_size_from_header([0x00, 0x00]), None);
+        assert_eq!(compressed_size_from_header([0x80, 0x00]), None);
+    }
+
+    #[test]
+    fn compress_incompressible_data_near_max() {
+        // Generate pseudo-random incompressible data using a simple pattern
+        // that LZ4 cannot compress well. This tests the expansion case.
+        let mut input = Vec::with_capacity(MAX_BLOCK_SIZE);
+        let mut state: u32 = 0xDEAD_BEEF;
+        for _ in 0..MAX_BLOCK_SIZE {
+            // Simple LCG-like scramble to generate non-compressible bytes
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            input.push((state >> 24) as u8);
+        }
+
+        // This data may expand slightly but should still fit
+        let result = compress_block_to_vec(&input);
+        // Either succeeds or fails with CompressedTooLarge - both are valid outcomes
+        // depending on how the random data compresses
+        match result {
+            Ok(compressed) => {
+                // Verify roundtrip works
+                let decompressed =
+                    decompress_block_to_vec(&compressed, MAX_BLOCK_SIZE).expect("decompress");
+                assert_eq!(decompressed, input);
+            }
+            Err(RawLz4Error::CompressedTooLarge(size)) => {
+                // Valid failure - compressed size exceeded MAX_BLOCK_SIZE
+                assert!(size > MAX_BLOCK_SIZE);
+            }
+            Err(e) => panic!("Unexpected error: {e}"),
+        }
+    }
+
+    #[test]
+    fn compressed_too_large_error_message() {
+        let err = RawLz4Error::CompressedTooLarge(20000);
+        let msg = err.to_string();
+        assert!(msg.contains("20000"));
+        assert!(msg.contains("exceeds"));
+        assert!(msg.contains("maximum block size"));
+    }
+
+    #[test]
+    fn decompress_block_header_only_input() {
+        // Input is exactly HEADER_SIZE but indicates non-zero compressed length
+        let header = encode_header(50);
+        let result = decompress_block(&header, &mut [0u8; 1000]);
+        assert!(matches!(result, Err(RawLz4Error::BufferTooSmall { .. })));
+        if let Err(RawLz4Error::BufferTooSmall { needed, available }) = result {
+            assert_eq!(needed, HEADER_SIZE + 50);
+            assert_eq!(available, HEADER_SIZE);
+        }
+    }
+
+    #[test]
+    fn compress_block_exact_buffer_fit() {
+        // Test compression into a buffer that's exactly the right size
+        let input = b"some test data for compression";
+        let max_size = HEADER_SIZE + get_maximum_output_size(input.len());
+        let mut output = vec![0u8; max_size];
+
+        let result = compress_block(input, &mut output);
+        assert!(result.is_ok());
+        let compressed_len = result.unwrap();
+        assert!(compressed_len <= max_size);
+        assert!(compressed_len >= HEADER_SIZE);
+    }
 }

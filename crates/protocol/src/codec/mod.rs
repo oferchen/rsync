@@ -1,5 +1,3 @@
-//! crates/protocol/src/codec/mod.rs
-//!
 //! Protocol version-aware encoding/decoding using the Strategy pattern.
 //!
 //! This module provides codec implementations that encapsulate wire format
@@ -10,8 +8,8 @@
 //!
 //! # Module Structure
 //!
-//! - [`ProtocolCodec`](crate::codec::ProtocolCodec) trait for general wire encoding (file sizes, mtimes, etc.)
-//! - [`NdxCodec`](crate::codec::NdxCodec) trait for file-list index (NDX) encoding
+//! - [`ProtocolCodec`] trait for general wire encoding (file sizes, mtimes, etc.)
+//! - [`NdxCodec`] trait for file-list index (NDX) encoding
 //!
 //! # Strategy Pattern
 //!
@@ -28,8 +26,8 @@
 //!
 //! # Example
 //!
-//! ```ignore
-//! use protocol::codec::{create_protocol_codec, create_ndx_codec};
+//! ```
+//! use protocol::codec::{create_protocol_codec, create_ndx_codec, ProtocolCodec, NdxCodec};
 //!
 //! // Create codecs for protocol 32
 //! let wire_codec = create_protocol_codec(32);
@@ -70,13 +68,17 @@ pub use ndx::{
 /// # Motivation
 ///
 /// Previously, code needed to call two factory functions to get both codecs:
-/// ```ignore
+/// ```
+/// # use protocol::codec::{create_protocol_codec, create_ndx_codec};
+/// let version = 32;
 /// let wire_codec = create_protocol_codec(version);
 /// let ndx_codec = create_ndx_codec(version);
 /// ```
 ///
 /// With `ProtocolCodecs`, you create both at once:
-/// ```ignore
+/// ```
+/// # use protocol::codec::ProtocolCodecs;
+/// let version = 32;
 /// let codecs = ProtocolCodecs::for_version(version);
 /// // Use codecs.wire for file sizes, mtimes, etc.
 /// // Use codecs.ndx for file-list indices
@@ -84,8 +86,8 @@ pub use ndx::{
 ///
 /// # Example
 ///
-/// ```ignore
-/// use protocol::codec::ProtocolCodecs;
+/// ```
+/// use protocol::codec::{ProtocolCodecs, ProtocolCodec, NdxCodec};
 ///
 /// let mut codecs = ProtocolCodecs::for_version(32);
 ///
@@ -113,16 +115,16 @@ impl ProtocolCodecs {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```
     /// use protocol::codec::ProtocolCodecs;
     ///
     /// // Protocol 29: both codecs use legacy format
     /// let codecs = ProtocolCodecs::for_version(29);
-    /// assert!(codecs.wire.is_legacy());
+    /// assert!(codecs.is_legacy());
     ///
     /// // Protocol 32: both codecs use modern format
     /// let codecs = ProtocolCodecs::for_version(32);
-    /// assert!(!codecs.wire.is_legacy());
+    /// assert!(!codecs.is_legacy());
     /// ```
     #[must_use]
     pub fn for_version(version: u8) -> Self {

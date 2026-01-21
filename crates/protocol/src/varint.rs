@@ -163,7 +163,6 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
 /// Propagates any error returned by `writer` while writing the encoded bytes.
 pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result<()> {
     let (len, bytes) = encode_bytes(value);
-    // Debug logging removed - eprintln! crashes when stderr unavailable in daemon threads
     writer.write_all(&bytes[..len])
 }
 

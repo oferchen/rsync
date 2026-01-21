@@ -1,5 +1,3 @@
-//! crates/match/src/ring_buffer.rs
-//!
 //! Fixed-capacity ring buffer optimized for rsync's sliding window.
 //!
 //! This implementation is specifically designed for delta generation where:
@@ -16,6 +14,22 @@
 ///
 /// The buffer maintains a contiguous view when full, eliminating the need for
 /// scratch buffer copies during strong checksum computation.
+///
+/// # Example
+///
+/// ```ignore
+/// let mut buf = RingBuffer::with_capacity(3);
+///
+/// // Fill the buffer
+/// assert_eq!(buf.push_back(1), None);  // No overflow
+/// assert_eq!(buf.push_back(2), None);
+/// assert_eq!(buf.push_back(3), None);
+/// assert!(buf.is_full());
+///
+/// // Sliding window: new bytes push out old ones
+/// assert_eq!(buf.push_back(4), Some(1));  // 1 is pushed out
+/// assert_eq!(buf.push_back(5), Some(2));  // 2 is pushed out
+/// ```
 #[derive(Clone, Debug)]
 pub struct RingBuffer {
     /// The backing storage, always exactly `capacity` bytes.
@@ -415,5 +429,51 @@ mod tests {
         // Now only [3] at position 2, head=2, len=1
         // This is contiguous in the middle
         assert_eq!(buf.as_slice(), &[3]);
+    }
+
+    // ==== Capacity Edge Case Tests ====
+
+    #[test]
+    fn capacity_one_buffer() {
+        // Edge case: buffer with capacity 1
+        let mut buf = RingBuffer::with_capacity(1);
+        assert!(buf.is_empty());
+        assert_eq!(buf.capacity(), 1);
+
+        // Push first byte
+        assert_eq!(buf.push_back(42), None);
+        assert!(buf.is_full());
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.as_slice(), &[42]);
+
+        // Push second byte - should evict first
+        assert_eq!(buf.push_back(99), Some(42));
+        assert!(buf.is_full());
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf.as_slice(), &[99]);
+
+        // Pop should return the byte
+        assert_eq!(buf.pop_front(), Some(99));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "ring buffer capacity must be non-zero")]
+    fn capacity_zero_panics() {
+        // Edge case: capacity 0 should panic
+        let _ = RingBuffer::with_capacity(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "destination too small")]
+    fn copy_to_slice_insufficient_capacity_panics() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+
+        // Destination is too small (2 bytes for 3 bytes of data)
+        let mut dest = [0u8; 2];
+        buf.copy_to_slice(&mut dest);
     }
 }
