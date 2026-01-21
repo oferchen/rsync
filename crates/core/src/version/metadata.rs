@@ -15,11 +15,7 @@ use super::constants::{
 /// Returns a description of the build target platform.
 #[must_use]
 fn target_description() -> String {
-    format!(
-        "{}-{}",
-        std::env::consts::ARCH,
-        std::env::consts::OS
-    )
+    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS)
 }
 
 /// Static metadata describing the standard version banner rendered by `oc-rsync`.
