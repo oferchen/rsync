@@ -68,14 +68,12 @@
 //! - `core::client` integrates these helpers for local filesystem copies.
 //! - [`filetime`] for lower-level timestamp manipulation utilities.
 
+#[cfg(all(feature = "acl", target_os = "macos"))]
+mod acl_macos;
+
 #[cfg(all(
     feature = "acl",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-    )
+    any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 mod acl_stub;
 
@@ -120,14 +118,12 @@ pub mod nfsv4_acl;
 #[cfg(unix)]
 pub mod fake_super;
 
+#[cfg(all(feature = "acl", target_os = "macos"))]
+pub use acl_macos::sync_acls;
+
 #[cfg(all(
     feature = "acl",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-    )
+    any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 pub use acl_stub::sync_acls;
 
