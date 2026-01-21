@@ -1,11 +1,6 @@
 #![cfg(all(
     feature = "acl",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-    )
+    any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 
 use crate::MetadataError;
@@ -23,11 +18,11 @@ fn warn_acl_unsupported() {
     });
 }
 
-/// Stub ACL synchronisation for Apple platforms.
+/// Stub ACL synchronisation for iOS/tvOS/watchOS platforms.
 ///
-/// Apple's libSystem lacks the Linux-specific `acl_from_mode` helper, so the
-/// ACL preservation feature is effectively unavailable. The stub mirrors the
+/// These Apple platforms lack full POSIX ACL support. The stub mirrors the
 /// behaviour of builds compiled without ACL support by performing no work.
+/// macOS has a separate implementation in `acl_macos.rs`.
 ///
 /// # Upstream Reference
 ///
