@@ -22,7 +22,7 @@ cargo fmt --all -- --check \
 | Protocol Constants | 100% | All MSG_*, XMIT_*, NDX_*, CF_* match |
 | Varint Encoding | 100% | INT_BYTE_EXTRA lookup table identical |
 | File List Encoding | 100% | Wire format byte-compatible |
-| Delta Algorithm | 100%* | CHAR_OFFSET omitted (no effect on wire) |
+| Delta Algorithm | 100% | CHAR_OFFSET = 0 in upstream (verified rsync.h:43) |
 | Compression Tokens | 100% | END_FLAG, TOKEN_*, DEFLATED_DATA identical |
 | ACL/Xattr Wire Format | 100% | ACCESS_SHIFT, prefix handling correct |
 | Filter Rules | 100% | All prefixes including `:` (dir-merge) |
@@ -32,7 +32,7 @@ cargo fmt --all -- --check \
 
 **Overall Wire Protocol: FULLY COMPATIBLE**
 
-*Rolling checksum omits CHAR_OFFSET but this doesn't affect interoperability since checksums are computed locally.
+Rolling checksum algorithm is identical - upstream rsync 3.4.1 sets `CHAR_OFFSET = 0` (rsync.h line 43) for protocol compatibility.
 
 ---
 
@@ -280,22 +280,34 @@ The wire encoding uses the same token format as upstream with:
 | s2 accumulator | Weighted prefix sum | Weighted prefix sum | ✅ |
 | Modulus | 0xFFFF (truncation) | 0xFFFF (truncation) | ✅ |
 | Final value | `(s2 << 16) \| s1` | `(s2 << 16) \| s1` | ✅ |
-| CHAR_OFFSET | +31 bias on each byte | **Not used** | ⚠️ |
-| SIMD optimization | None | AVX2/SSE2/NEON | Enhanced |
+| CHAR_OFFSET | 0 (defined in rsync.h:43) | 0 (not used) | ✅ |
+| SIMD optimization | SSE2/AVX2 (simd-checksum-x86_64.cpp) | AVX2/SSE2/NEON | ✅ |
 
-### CHAR_OFFSET Analysis
+### CHAR_OFFSET Verification
 
-Upstream rsync adds `CHAR_OFFSET (31)` to each byte before accumulation:
+**Upstream rsync.h line 43:**
 ```c
-s1 += (buf[i] + CHAR_OFFSET);
+/* a non-zero CHAR_OFFSET makes the rolling sum stronger, but is
+ * incompatible with the original protocol */
+#define CHAR_OFFSET 0
 ```
 
-The Rust implementation omits this bias. **This does not affect protocol compatibility** because:
+The upstream comment explicitly documents that CHAR_OFFSET is kept at 0 for protocol compatibility with older rsync versions. The Rust implementation is therefore **100% compatible** with upstream.
 
-1. Rolling checksums are computed independently on sender and receiver
-2. They're used only for local block matching, not transmitted for comparison
-3. Both sides will find the same matching blocks
-4. The strong checksum (MD4/MD5/XXH3) verifies actual block identity
+**Upstream checksum.c get_checksum1() (lines 285-299):**
+```c
+s1 = s2 = 0;
+for (i = 0; i < (len-4); i+=4) {
+    s2 += 4*(s1 + buf[i]) + 3*buf[i+1] + 2*buf[i+2] + buf[i+3] + 10*CHAR_OFFSET;
+    s1 += (buf[i+0] + buf[i+1] + buf[i+2] + buf[i+3] + 4*CHAR_OFFSET);
+}
+for (; i < len; i++) {
+    s1 += (buf[i]+CHAR_OFFSET); s2 += s1;
+}
+return (s1 & 0xffff) + (s2 << 16);
+```
+
+With CHAR_OFFSET=0, this simplifies to the identical algorithm in Rust.
 
 **Source:** `crates/checksums/src/rolling/checksum/mod.rs`
 
@@ -575,12 +587,14 @@ The Rust rsync implementation achieves **full wire protocol compatibility** with
 9. **Strong checksums** produce identical output (MD4, MD5, XXH3)
 10. **Compression** uses correct wire formats (raw deflate, not framed)
 
-### Intentional Deviations
+### Implementation Differences (Performance Only)
 
-| Deviation | Impact | Reason |
+| Difference | Impact | Reason |
 |-----------|--------|--------|
-| Rolling checksum omits CHAR_OFFSET | None | Checksums computed locally, not compared over wire |
-| SIMD optimization | Performance only | Produces identical results to scalar |
+| SIMD optimization (AVX2/SSE2/NEON) | Performance only | Produces identical results to scalar |
+| Pure Rust implementations | No C dependencies | Uses RustCrypto ecosystem for MD4/MD5 |
+
+Note: There are no wire protocol deviations. The rolling checksum algorithm is identical (upstream uses CHAR_OFFSET=0 for protocol compatibility).
 
 ### Why Custom Implementations?
 
@@ -593,3 +607,125 @@ The following areas use custom code rather than external crates due to rsync-spe
 5. **Filter rules:** rsync syntax differs from gitignore
 
 These custom implementations are necessary for byte-level wire protocol compatibility with upstream rsync 3.4.1.
+
+---
+
+## Appendix: Source Code Verification Evidence
+
+This section documents the specific line numbers in upstream rsync 3.4.1 source code that were verified against the Rust implementation.
+
+### Varint Encoding (io.c)
+
+| Function | Upstream Lines | Verified Behavior |
+|----------|---------------|-------------------|
+| `int_byte_extra[]` | io.c:120-125 | Identical lookup table to varint.rs:45-50 |
+| `read_varint()` | io.c:1795-1825 | Matches `read_varint()` in varint.rs |
+| `write_varint()` | io.c:2089-2109 | Matches `write_varint()` in varint.rs |
+| `read_varlong()` | io.c:1827-1866 | Matches `read_varlong()` in varint.rs |
+| `write_varlong()` | io.c:2111-2140 | Matches `write_varlong()` in varint.rs |
+
+### Compatibility Flags (compat.c)
+
+| Flag | Upstream Lines | Verified |
+|------|---------------|----------|
+| CF_INC_RECURSE | compat.c:117 | `(1<<0)` ✅ |
+| CF_SYMLINK_TIMES | compat.c:118 | `(1<<1)` ✅ |
+| CF_SYMLINK_ICONV | compat.c:119 | `(1<<2)` ✅ |
+| CF_SAFE_FLIST | compat.c:120 | `(1<<3)` ✅ |
+| CF_AVOID_XATTR_OPTIM | compat.c:121 | `(1<<4)` ✅ |
+| CF_CHKSUM_SEED_FIX | compat.c:122 | `(1<<5)` ✅ |
+| CF_INPLACE_PARTIAL_DIR | compat.c:123 | `(1<<6)` ✅ |
+| CF_VARINT_FLIST_FLAGS | compat.c:124 | `(1<<7)` ✅ |
+| CF_ID0_NAMES | compat.c:125 | `(1<<8)` ✅ |
+
+### Message Codes (rsync.h)
+
+| Code | Upstream Lines | Value |
+|------|---------------|-------|
+| MSG_DATA | rsync.h:264 | 0 ✅ |
+| MSG_ERROR_XFER | rsync.h:265 | 1 ✅ |
+| MSG_INFO | rsync.h:265 | 2 ✅ |
+| MSG_ERROR | rsync.h:266 | 3 ✅ |
+| MSG_WARNING | rsync.h:266 | 4 ✅ |
+| MSG_REDO | rsync.h:270 | 9 ✅ |
+| MSG_STATS | rsync.h:271 | 10 ✅ |
+| MSG_IO_ERROR | rsync.h:272 | 22 ✅ |
+| MSG_IO_TIMEOUT | rsync.h:273 | 33 ✅ |
+| MSG_NOOP | rsync.h:274 | 42 ✅ |
+| MSG_ERROR_EXIT | rsync.h:275 | 86 ✅ |
+| MSG_SUCCESS | rsync.h:276 | 100 ✅ |
+| MSG_DELETED | rsync.h:277 | 101 ✅ |
+| MSG_NO_SEND | rsync.h:278 | 102 ✅ |
+| MPLEX_BASE | rsync.h:180 | 7 ✅ |
+
+### XMIT Flags (rsync.h)
+
+| Flag | Upstream Lines | Bit Position |
+|------|---------------|--------------|
+| XMIT_TOP_DIR | rsync.h:47 | `(1<<0)` ✅ |
+| XMIT_SAME_MODE | rsync.h:48 | `(1<<1)` ✅ |
+| XMIT_EXTENDED_FLAGS | rsync.h:50 | `(1<<2)` ✅ |
+| XMIT_SAME_UID | rsync.h:51 | `(1<<3)` ✅ |
+| XMIT_SAME_GID | rsync.h:52 | `(1<<4)` ✅ |
+| XMIT_SAME_NAME | rsync.h:53 | `(1<<5)` ✅ |
+| XMIT_LONG_NAME | rsync.h:54 | `(1<<6)` ✅ |
+| XMIT_SAME_TIME | rsync.h:55 | `(1<<7)` ✅ |
+| XMIT_SAME_RDEV_MAJOR | rsync.h:57 | `(1<<8)` ✅ |
+| XMIT_NO_CONTENT_DIR | rsync.h:58 | `(1<<8)` ✅ |
+| XMIT_HLINKED | rsync.h:59 | `(1<<9)` ✅ |
+| XMIT_USER_NAME_FOLLOWS | rsync.h:61 | `(1<<10)` ✅ |
+| XMIT_GROUP_NAME_FOLLOWS | rsync.h:63 | `(1<<11)` ✅ |
+| XMIT_HLINK_FIRST | rsync.h:64 | `(1<<12)` ✅ |
+| XMIT_MOD_NSEC | rsync.h:66 | `(1<<13)` ✅ |
+| XMIT_SAME_ATIME | rsync.h:67 | `(1<<14)` ✅ |
+| XMIT_CRTIME_EQ_MTIME | rsync.h:73 | `(1<<17)` ✅ |
+
+### Compression Token Flags (token.c)
+
+| Constant | Upstream Lines | Value |
+|----------|---------------|-------|
+| END_FLAG | token.c:322 | 0x00 ✅ |
+| TOKEN_LONG | token.c:323 | 0x20 ✅ |
+| TOKENRUN_LONG | token.c:324 | 0x21 ✅ |
+| DEFLATED_DATA | token.c:325 | 0x40 ✅ |
+| TOKEN_REL | token.c:326 | 0x80 ✅ |
+| TOKENRUN_REL | token.c:327 | 0xC0 ✅ |
+| MAX_DATA_COUNT | token.c:329 | 16383 ✅ |
+
+### ACL Constants (acls.c)
+
+| Constant | Upstream Lines | Value |
+|----------|---------------|-------|
+| XMIT_USER_OBJ | acls.c:38 | `(1<<0)` ✅ |
+| XMIT_GROUP_OBJ | acls.c:39 | `(1<<1)` ✅ |
+| XMIT_MASK_OBJ | acls.c:40 | `(1<<2)` ✅ |
+| XMIT_OTHER_OBJ | acls.c:41 | `(1<<3)` ✅ |
+| XMIT_NAME_LIST | acls.c:42 | `(1<<4)` ✅ |
+| NO_ENTRY | acls.c:44 | 0x80 ✅ |
+| XFLAG_NAME_FOLLOWS | acls.c:52 | 0x0001 ✅ |
+| XFLAG_NAME_IS_USER | acls.c:53 | 0x0002 ✅ |
+
+### Filter Rule Flags (rsync.h)
+
+| Flag | Upstream Lines | Verified |
+|------|---------------|----------|
+| FILTRULE_INCLUDE | rsync.h:997 | `(1<<5)` ✅ |
+| FILTRULE_NO_INHERIT | rsync.h:1000 | `(1<<8)` ✅ |
+| FILTRULE_NEGATE | rsync.h:1006 | `(1<<14)` ✅ |
+| FILTRULE_SENDER_SIDE | rsync.h:1008 | `(1<<16)` ✅ |
+| FILTRULE_RECEIVER_SIDE | rsync.h:1009 | `(1<<17)` ✅ |
+| FILTRULE_CLEAR_LIST | rsync.h:1010 | `(1<<18)` ✅ |
+| FILTRULE_PERISHABLE | rsync.h:1011 | `(1<<19)` ✅ |
+| FILTRULE_XATTR | rsync.h:1012 | `(1<<20)` ✅ |
+
+### Rolling Checksum (checksum.c)
+
+| Aspect | Upstream Lines | Verified |
+|--------|---------------|----------|
+| CHAR_OFFSET | rsync.h:43 | `#define CHAR_OFFSET 0` ✅ |
+| get_checksum1() | checksum.c:285-299 | Algorithm identical ✅ |
+| SIMD checksum | simd-checksum-x86_64.cpp | Same algorithm ✅ |
+
+---
+
+**Verification methodology:** Each constant and algorithm was verified by reading the actual upstream rsync 3.4.1 source code at `target/interop/upstream-src/rsync-3.4.1/` and comparing against the corresponding Rust implementation.

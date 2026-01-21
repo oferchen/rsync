@@ -4,6 +4,50 @@
 //! version and compile-time feature set. This module exposes streaming wrappers
 //! for MD4, MD5, XXH64, XXH3/64, and XXH3/128 so higher layers can compose the
 //! desired strategy without reimplementing the hashing primitives.
+//!
+//! # Algorithm Examples
+//!
+//! ## Cryptographic Hashes (MD4, MD5, SHA family)
+//!
+//! ```
+//! use checksums::strong::{Md4, Md5, Sha1, Sha256, StrongDigest};
+//!
+//! // MD4 - legacy algorithm for rsync protocol compatibility
+//! let md4 = Md4::digest(b"data");
+//! assert_eq!(md4.as_ref().len(), 16);
+//!
+//! // MD5 - common for protocol versions < 30
+//! let md5 = Md5::digest(b"data");
+//! assert_eq!(md5.as_ref().len(), 16);
+//!
+//! // SHA-1 and SHA-256 for higher security
+//! let sha1 = Sha1::digest(b"data");
+//! assert_eq!(sha1.as_ref().len(), 20);
+//!
+//! let sha256 = Sha256::digest(b"data");
+//! assert_eq!(sha256.as_ref().len(), 32);
+//! ```
+//!
+//! ## XXHash (Fast Non-Cryptographic)
+//!
+//! XXHash variants support seeding for protocol-specific initialization:
+//!
+//! ```
+//! use checksums::strong::{Xxh64, Xxh3, Xxh3_128, StrongDigest};
+//!
+//! // XXH64 with seed (used by rsync protocol >= 30)
+//! let seed: u64 = 0x12345678;
+//! let xxh64 = Xxh64::digest_with_seed(seed, b"data");
+//! assert_eq!(xxh64.as_ref().len(), 8);
+//!
+//! // XXH3 64-bit - faster on modern CPUs
+//! let xxh3 = Xxh3::digest_with_seed(seed, b"data");
+//! assert_eq!(xxh3.as_ref().len(), 8);
+//!
+//! // XXH3 128-bit for higher collision resistance
+//! let xxh3_128 = Xxh3_128::digest_with_seed(seed, b"data");
+//! assert_eq!(xxh3_128.as_ref().len(), 16);
+//! ```
 
 mod md4;
 mod md5;
