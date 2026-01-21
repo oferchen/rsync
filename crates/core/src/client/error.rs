@@ -122,7 +122,7 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
 
 /// Creates an invalid argument error with a typed exit code.
 #[cold]
-#[allow(dead_code)]
+#[allow(dead_code)] // Reserved for future use
 pub(crate) fn invalid_argument_error_typed(text: &str, exit_code: ExitCode) -> ClientError {
     let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(Role::Client);
     ClientError::with_code(exit_code, message)
@@ -222,7 +222,7 @@ pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientErr
 
 /// Creates a daemon error with a typed exit code.
 #[cold]
-#[allow(dead_code)]
+#[allow(dead_code)] // Reserved for future use
 pub(crate) fn daemon_error_typed(text: impl Into<String>, exit_code: ExitCode) -> ClientError {
     let message = rsync_error!(exit_code.as_i32(), "{}", text.into()).with_role(Role::Client);
     ClientError::with_code(exit_code, message)

@@ -252,16 +252,12 @@ impl AsyncFileCopier {
         let start = Instant::now();
 
         // Get source metadata
-        let metadata = fs::metadata(source)
-            .await
-            .with_path(source)?;
+        let metadata = fs::metadata(source).await.with_path(source)?;
 
         let total_bytes = metadata.len();
 
         // Open source file
-        let src_file = File::open(source)
-            .await
-            .with_path(source)?;
+        let src_file = File::open(source).await.with_path(source)?;
 
         let mut reader = BufReader::with_capacity(self.buffer_size, src_file);
 
@@ -282,10 +278,7 @@ impl AsyncFileCopier {
         let mut last_progress = Instant::now();
 
         loop {
-            let n = reader
-                .read(&mut buffer)
-                .await
-                .with_path(source)?;
+            let n = reader.read(&mut buffer).await.with_path(source)?;
 
             if n == 0 {
                 break;
@@ -300,10 +293,7 @@ impl AsyncFileCopier {
                     .await
                     .with_path(destination)?;
             } else {
-                writer
-                    .write_all(chunk)
-                    .await
-                    .with_path(destination)?;
+                writer.write_all(chunk).await.with_path(destination)?;
             }
 
             bytes_copied += n as u64;
@@ -322,17 +312,10 @@ impl AsyncFileCopier {
         }
 
         // Flush and optionally sync
-        writer
-            .flush()
-            .await
-            .with_path(destination)?;
+        writer.flush().await.with_path(destination)?;
 
         if self.fsync {
-            writer
-                .get_mut()
-                .sync_all()
-                .await
-                .with_path(destination)?;
+            writer.get_mut().sync_all().await.with_path(destination)?;
         }
 
         // Preserve metadata
@@ -492,14 +475,9 @@ impl AsyncFileReader {
         buffer_size: usize,
     ) -> Result<Self, AsyncIoError> {
         let path = path.as_ref();
-        let file = File::open(path)
-            .await
-            .with_path(path)?;
+        let file = File::open(path).await.with_path(path)?;
 
-        let metadata = file
-            .metadata()
-            .await
-            .with_path(path)?;
+        let metadata = file.metadata().await.with_path(path)?;
 
         Ok(Self {
             reader: BufReader::with_capacity(buffer_size, file),
@@ -539,11 +517,7 @@ impl AsyncFileReader {
     ///
     /// Returns an error if reading fails.
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, AsyncIoError> {
-        let n = self
-            .reader
-            .read(buf)
-            .await
-            .with_path(&self.path)?;
+        let n = self.reader.read(buf).await.with_path(&self.path)?;
         self.position += n as u64;
         Ok(n)
     }
@@ -554,11 +528,7 @@ impl AsyncFileReader {
     ///
     /// Returns an error if seeking fails.
     pub async fn seek(&mut self, pos: SeekFrom) -> Result<u64, AsyncIoError> {
-        let new_pos = self
-            .reader
-            .seek(pos)
-            .await
-            .with_path(&self.path)?;
+        let new_pos = self.reader.seek(pos).await.with_path(&self.path)?;
         self.position = new_pos;
         Ok(new_pos)
     }
@@ -607,9 +577,7 @@ impl AsyncFileWriter {
         buffer_size: usize,
     ) -> Result<Self, AsyncIoError> {
         let path = path.as_ref();
-        let file = File::create(path)
-            .await
-            .with_path(path)?;
+        let file = File::create(path).await.with_path(path)?;
 
         Ok(Self {
             writer: BufWriter::with_capacity(buffer_size, file),
@@ -657,11 +625,7 @@ impl AsyncFileWriter {
     ///
     /// Returns an error if writing fails.
     pub async fn write(&mut self, buf: &[u8]) -> Result<usize, AsyncIoError> {
-        let n = self
-            .writer
-            .write(buf)
-            .await
-            .with_path(&self.path)?;
+        let n = self.writer.write(buf).await.with_path(&self.path)?;
         self.bytes_written += n as u64;
         Ok(n)
     }
@@ -672,10 +636,7 @@ impl AsyncFileWriter {
     ///
     /// Returns an error if writing fails.
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<(), AsyncIoError> {
-        self.writer
-            .write_all(buf)
-            .await
-            .with_path(&self.path)?;
+        self.writer.write_all(buf).await.with_path(&self.path)?;
         self.bytes_written += buf.len() as u64;
         Ok(())
     }
@@ -686,10 +647,7 @@ impl AsyncFileWriter {
     ///
     /// Returns an error if flushing fails.
     pub async fn flush(&mut self) -> Result<(), AsyncIoError> {
-        self.writer
-            .flush()
-            .await
-            .with_path(&self.path)
+        self.writer.flush().await.with_path(&self.path)
     }
 
     /// Syncs data to disk.
@@ -699,11 +657,7 @@ impl AsyncFileWriter {
     /// Returns an error if syncing fails.
     pub async fn sync_all(&mut self) -> Result<(), AsyncIoError> {
         self.flush().await?;
-        self.writer
-            .get_mut()
-            .sync_all()
-            .await
-            .with_path(&self.path)
+        self.writer.get_mut().sync_all().await.with_path(&self.path)
     }
 
     /// Seeks to a position in the file.
@@ -713,10 +667,7 @@ impl AsyncFileWriter {
     /// Returns an error if seeking fails.
     pub async fn seek(&mut self, pos: SeekFrom) -> Result<u64, AsyncIoError> {
         self.flush().await?;
-        self.writer
-            .seek(pos)
-            .await
-            .with_path(&self.path)
+        self.writer.seek(pos).await.with_path(&self.path)
     }
 }
 
@@ -743,9 +694,7 @@ pub async fn compute_file_checksum(
         let mut hasher = algorithm.new_hasher();
 
         loop {
-            let n = file
-                .read(&mut buffer)
-                .with_path(&path)?;
+            let n = file.read(&mut buffer).with_path(&path)?;
             if n == 0 {
                 break;
             }
