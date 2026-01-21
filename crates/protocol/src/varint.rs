@@ -1200,14 +1200,14 @@ mod tests {
         // 3-byte: 16384-2097151 (0x4000-0x1FFFFF)
         // etc.
         let boundary_values = [
-            (0, 1),           // min 1-byte
-            (127, 1),         // max 1-byte
-            (128, 2),         // min 2-byte
-            (16383, 2),       // near max 2-byte
-            (16384, 3),       // min 3-byte
-            (2097151, 3),     // near max 3-byte
-            (0x200000, 4),    // 4-byte territory
-            (0x10000000, 5),  // 5-byte territory
+            (0, 1),          // min 1-byte
+            (127, 1),        // max 1-byte
+            (128, 2),        // min 2-byte
+            (16383, 2),      // near max 2-byte
+            (16384, 3),      // min 3-byte
+            (2097151, 3),    // near max 3-byte
+            (0x200000, 4),   // 4-byte territory
+            (0x10000000, 5), // 5-byte territory
         ];
 
         for (value, expected_min_len) in boundary_values {
