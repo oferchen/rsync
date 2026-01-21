@@ -7,6 +7,18 @@ use logging::debug_log;
 
 use crate::{FilterAction, FilterError, FilterRule};
 
+/// A compiled filter rule with pre-built glob matchers for efficient matching.
+///
+/// This struct holds the compiled representation of a [`FilterRule`], with
+/// glob patterns pre-compiled into matchers for fast path evaluation.
+///
+/// # Negation
+///
+/// When `negate` is true, the match result is inverted. This mirrors upstream
+/// rsync's `!` modifier behavior from `exclude.c` line 906:
+/// ```c
+/// int ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1;
+/// ```
 #[derive(Debug)]
 pub(crate) struct CompiledRule {
     pub(crate) action: FilterAction,
@@ -16,6 +28,7 @@ pub(crate) struct CompiledRule {
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
+    pub(crate) negate: bool,
 }
 
 impl CompiledRule {
@@ -27,6 +40,7 @@ impl CompiledRule {
             applies_to_receiver,
             perishable,
             xattr_only,
+            negate,
         } = rule;
         debug_assert!(
             !xattr_only,
@@ -63,10 +77,36 @@ impl CompiledRule {
             applies_to_sender,
             applies_to_receiver,
             perishable,
+            negate,
         })
     }
 
+    /// Tests whether a path matches this rule's pattern.
+    ///
+    /// When `negate` is true, the match result is inverted: returns true when
+    /// the pattern does NOT match. This mirrors upstream rsync's `!` modifier
+    /// behavior from `exclude.c` line 906.
     pub(crate) fn matches(&self, path: &Path, is_dir: bool) -> bool {
+        let pattern_matched = self.pattern_matches_impl(path, is_dir);
+
+        // Upstream rsync: ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1;
+        // When negated, invert the match result
+        if self.negate {
+            debug_log!(
+                Filter,
+                2,
+                "negated rule: pattern_matched={}, returning {}",
+                pattern_matched,
+                !pattern_matched
+            );
+            !pattern_matched
+        } else {
+            pattern_matched
+        }
+    }
+
+    /// Internal pattern matching without negate logic.
+    fn pattern_matches_impl(&self, path: &Path, is_dir: bool) -> bool {
         for matcher in &self.direct_matchers {
             if matcher.is_match(path) && (!self.directory_only || is_dir) {
                 debug_log!(Filter, 2, "direct pattern matched: {:?}", path);
@@ -237,6 +277,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Exclude);
@@ -254,6 +295,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -268,6 +310,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("file.bak"), false));
@@ -284,6 +327,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build"), false));
@@ -300,6 +344,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         // Directory-only patterns should match directories
@@ -317,6 +362,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         // Should match the directory itself
@@ -335,6 +381,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, false);
@@ -352,6 +399,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(false, true);
@@ -369,6 +417,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, true);
@@ -393,6 +442,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, false, false);
@@ -408,6 +458,7 @@ mod tests {
             applies_to_receiver: false,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, true, false);
@@ -424,6 +475,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Protect);
@@ -439,6 +491,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Risk);
@@ -453,6 +506,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -468,6 +522,7 @@ mod tests {
             applies_to_receiver: true,
             perishable: true,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.perishable);
@@ -482,9 +537,119 @@ mod tests {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build/main.o"), false));
         assert!(compiled.matches(Path::new("src/lib/util.o"), false));
+    }
+
+    #[test]
+    fn compiled_rule_negate_inverts_match() {
+        // Non-negated rule: matches files with *.txt extension
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "*.txt".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+        assert!(compiled.matches(Path::new("file.txt"), false));
+        assert!(!compiled.matches(Path::new("file.log"), false));
+
+        // Negated rule: matches files that do NOT have *.txt extension
+        let rule_negated = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "*.txt".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: true,
+        };
+        let compiled_negated = CompiledRule::new(rule_negated).unwrap();
+        // Pattern matches file.txt, but negate inverts: returns false
+        assert!(!compiled_negated.matches(Path::new("file.txt"), false));
+        // Pattern doesn't match file.log, negate inverts: returns true
+        assert!(compiled_negated.matches(Path::new("file.log"), false));
+    }
+
+    #[test]
+    fn compiled_rule_negate_with_directory_only() {
+        // Negated directory-only rule
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "cache/".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: true,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // Directory "cache" matches the pattern, negate inverts: false
+        assert!(!compiled.matches(Path::new("cache"), true));
+
+        // Directory "build" doesn't match, negate inverts: true
+        assert!(compiled.matches(Path::new("build"), true));
+
+        // File "cache" (not dir) - directory_only means it shouldn't match anyway
+        // Pattern doesn't match a file named cache, negate inverts: true
+        assert!(compiled.matches(Path::new("cache"), false));
+    }
+
+    #[test]
+    fn compiled_rule_negate_with_anchored() {
+        // Negated anchored pattern
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "/important".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: true,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // "important" at root matches, negate inverts: false
+        assert!(!compiled.matches(Path::new("important"), false));
+
+        // "other" doesn't match, negate inverts: true
+        assert!(compiled.matches(Path::new("other"), false));
+
+        // "dir/important" doesn't match anchored pattern, negate inverts: true
+        assert!(compiled.matches(Path::new("dir/important"), false));
+    }
+
+    #[test]
+    fn compiled_rule_negate_flag_preserved() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "*.tmp".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: true,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+        assert!(compiled.negate);
+
+        let rule2 = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "*.tmp".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+        };
+        let compiled2 = CompiledRule::new(rule2).unwrap();
+        assert!(!compiled2.negate);
     }
 }
