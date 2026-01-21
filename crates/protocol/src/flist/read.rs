@@ -1572,4 +1572,105 @@ mod tests {
         let reader = FileListReader::new(test_protocol()).with_preserve_crtimes(true);
         assert!(reader.preserve_crtimes);
     }
+
+    // Protocol 28/29 specific tests for rdev handling
+
+    #[test]
+    fn read_device_entry_protocol_29_byte_minor() {
+        use super::super::write::FileListWriter;
+
+        // Protocol 29 uses different minor encoding based on XMIT_RDEV_MINOR_8_pre30 flag
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+        // Block device with small minor (fits in byte)
+        let mut entry = FileEntry::new_block_device("dev/sda".into(), 0o644, 8, 0);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "dev/sda");
+        assert_eq!(read_entry.rdev_major(), Some(8));
+        assert_eq!(read_entry.rdev_minor(), Some(0));
+    }
+
+    #[test]
+    fn read_device_entry_protocol_29_int_minor() {
+        use super::super::write::FileListWriter;
+
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+        // Block device with large minor (needs 4-byte int)
+        let mut entry = FileEntry::new_block_device("dev/nvme0n1".into(), 0o644, 259, 65536);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "dev/nvme0n1");
+        assert_eq!(read_entry.rdev_major(), Some(259));
+        assert_eq!(read_entry.rdev_minor(), Some(65536));
+    }
+
+    #[test]
+    fn read_device_entry_protocol_28_same_major_optimization() {
+        use super::super::write::FileListWriter;
+
+        let protocol = ProtocolVersion::try_from(28u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+        // Two devices with same major - tests XMIT_SAME_RDEV_MAJOR flag
+        let mut entry1 = FileEntry::new_block_device("dev/sda1".into(), 0o644, 8, 1);
+        entry1.set_mtime(1700000000, 0);
+
+        let mut entry2 = FileEntry::new_block_device("dev/sda2".into(), 0o644, 8, 2);
+        entry2.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry1).unwrap();
+        writer.write_entry(&mut data, &entry2).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+        let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read1.rdev_major(), Some(8));
+        assert_eq!(read1.rdev_minor(), Some(1));
+
+        let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read2.rdev_major(), Some(8));
+        assert_eq!(read2.rdev_minor(), Some(2));
+    }
+
+    #[test]
+    fn read_device_entry_protocol_30_uses_varint_minor() {
+        use super::super::write::FileListWriter;
+
+        // Protocol 30+ uses varint for minor
+        let protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+        let mut entry = FileEntry::new_block_device("dev/loop0".into(), 0o644, 7, 12345);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.rdev_major(), Some(7));
+        assert_eq!(read_entry.rdev_minor(), Some(12345));
+    }
 }
