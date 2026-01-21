@@ -9,13 +9,18 @@ use checksums::RollingDigest;
 use signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
 /// Index over a file signature that accelerates delta matching.
+///
+/// Uses a `HashMap` keyed by `(sum1, sum2)` rolling checksum components for O(1)
+/// block lookup. The block length is stored separately since all indexed blocks
+/// have the same canonical length.
 #[derive(Clone, Debug)]
 pub struct DeltaSignatureIndex {
     block_length: usize,
     strong_length: usize,
     algorithm: SignatureAlgorithm,
     blocks: Vec<SignatureBlock>,
-    lookup: HashMap<(u16, u16, usize), Vec<usize>>,
+    /// Lookup table keyed by (sum1, sum2) - block length is constant for all entries.
+    lookup: HashMap<(u16, u16), Vec<usize>>,
 }
 
 impl DeltaSignatureIndex {
@@ -34,8 +39,7 @@ impl DeltaSignatureIndex {
         let strong_length = usize::from(signature.layout().strong_sum_length().get());
         let blocks: Vec<SignatureBlock> = signature.blocks().to_vec();
 
-        let mut lookup: HashMap<(u16, u16, usize), Vec<usize>> =
-            HashMap::with_capacity(blocks.len());
+        let mut lookup: HashMap<(u16, u16), Vec<usize>> = HashMap::with_capacity(blocks.len());
         let mut has_full_blocks = false;
 
         for (index, block) in blocks.iter().enumerate() {
@@ -45,8 +49,9 @@ impl DeltaSignatureIndex {
 
             has_full_blocks = true;
             let digest = block.rolling();
+            // Key is (sum1, sum2) only - all indexed blocks have block_length
             lookup
-                .entry((digest.sum1(), digest.sum2(), block.len()))
+                .entry((digest.sum1(), digest.sum2()))
                 .or_default()
                 .push(index);
         }
@@ -84,18 +89,19 @@ impl DeltaSignatureIndex {
     }
 
     /// Attempts to locate a matching block for a contiguous byte slice.
+    #[inline]
     pub fn find_match_bytes(&self, digest: RollingDigest, window: &[u8]) -> Option<usize> {
         if window.len() != self.block_length {
             return None;
         }
 
-        let key = (digest.sum1(), digest.sum2(), window.len());
+        // Key is (sum1, sum2) - all candidates have block_length
+        let key = (digest.sum1(), digest.sum2());
         let candidates = self.lookup.get(&key)?;
         for &index in candidates {
             let block = &self.blocks[index];
-            if block.len() != window.len() {
-                continue;
-            }
+            // All indexed blocks have block_length, skip redundant check
+            debug_assert_eq!(block.len(), self.block_length);
             let strong = self.algorithm.compute_truncated(window, self.strong_length);
             if strong.as_slice() == block.strong() {
                 return Some(index);

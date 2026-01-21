@@ -1,7 +1,12 @@
 //! File list writing (encoding) to the rsync wire format.
 //!
 //! This module implements the sender side of file list exchange, encoding
-//! file entries for transmission to the receiver.
+//! file entries for transmission to the receiver. The writer maintains compression
+//! state to omit fields that match the previous entry, reducing wire traffic.
+//!
+//! # Upstream Reference
+//!
+//! See `flist.c:send_file_entry()` for the canonical wire format encoding.
 
 use std::io::{self, Write};
 
@@ -119,6 +124,7 @@ impl FileListWriter {
     }
 
     /// Sets whether UID values should be written to the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_uid(mut self, preserve: bool) -> Self {
         self.preserve_uid = preserve;
@@ -126,6 +132,7 @@ impl FileListWriter {
     }
 
     /// Sets whether GID values should be written to the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_gid(mut self, preserve: bool) -> Self {
         self.preserve_gid = preserve;
@@ -133,6 +140,7 @@ impl FileListWriter {
     }
 
     /// Sets whether symlink targets should be written to the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_links(mut self, preserve: bool) -> Self {
         self.preserve_links = preserve;
@@ -140,6 +148,7 @@ impl FileListWriter {
     }
 
     /// Sets whether device numbers should be written to the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_devices(mut self, preserve: bool) -> Self {
         self.preserve_devices = preserve;
@@ -147,6 +156,7 @@ impl FileListWriter {
     }
 
     /// Sets whether hardlink indices should be written to the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_hard_links(mut self, preserve: bool) -> Self {
         self.preserve_hard_links = preserve;
@@ -154,6 +164,7 @@ impl FileListWriter {
     }
 
     /// Sets whether access times should be written to the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_atimes(mut self, preserve: bool) -> Self {
         self.preserve_atimes = preserve;
@@ -161,6 +172,7 @@ impl FileListWriter {
     }
 
     /// Sets whether creation times should be written to the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_crtimes(mut self, preserve: bool) -> Self {
         self.preserve_crtimes = preserve;
@@ -171,6 +183,7 @@ impl FileListWriter {
     ///
     /// When enabled, ACL indices are written after other metadata.
     /// Note: ACL data itself is sent in a separate exchange.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_acls(mut self, preserve: bool) -> Self {
         self.preserve_acls = preserve;
@@ -181,6 +194,7 @@ impl FileListWriter {
     ///
     /// When enabled, xattr indices are written after ACL indices.
     /// Note: Xattr data itself is sent in a separate exchange.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_xattrs(mut self, preserve: bool) -> Self {
         self.preserve_xattrs = preserve;
@@ -191,6 +205,7 @@ impl FileListWriter {
     ///
     /// When enabled, checksums are written for regular files. For protocol < 28,
     /// checksums are also written for non-regular files (using empty_sum).
+    #[inline]
     #[must_use]
     pub const fn with_always_checksum(mut self, csum_len: usize) -> Self {
         self.always_checksum = true;
@@ -199,6 +214,7 @@ impl FileListWriter {
     }
 
     /// Sets the filename encoding converter for iconv support.
+    #[inline]
     #[must_use]
     pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
