@@ -408,4 +408,115 @@ mod tests {
 
         assert_eq!(&decompressed[..decompressed_len], input.as_slice());
     }
+
+    // Additional error variant tests for comprehensive coverage
+
+    #[test]
+    fn decompress_truncated_input() {
+        // Valid header but missing compressed data
+        let header = encode_header(100);
+        let result = decompress_block(&header, &mut [0u8; 1000]);
+        assert!(matches!(result, Err(RawLz4Error::BufferTooSmall { .. })));
+    }
+
+    #[test]
+    fn decompress_invalid_header_token_rel() {
+        // TOKEN_REL flag (0x80) should fail
+        let input = [0x80, 0x00, 0x00, 0x00];
+        let result = decompress_block(&input, &mut [0u8; 100]);
+        assert!(matches!(result, Err(RawLz4Error::InvalidHeader(0x80))));
+    }
+
+    #[test]
+    fn decompress_invalid_header_end_flag() {
+        // END_FLAG (0x00) should fail
+        let input = [0x00, 0x00, 0x00, 0x00];
+        let result = decompress_block(&input, &mut [0u8; 100]);
+        assert!(matches!(result, Err(RawLz4Error::InvalidHeader(0x00))));
+    }
+
+    #[test]
+    fn decompress_corrupted_data() {
+        // Valid header but corrupted compressed data
+        let header = encode_header(10);
+        let mut input = Vec::from(header);
+        input.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+
+        let result = decompress_block(&input, &mut [0u8; 1000]);
+        assert!(matches!(result, Err(RawLz4Error::DecompressFailed(_))));
+    }
+
+    #[test]
+    fn compress_buffer_too_small() {
+        let input = b"test data that needs compression space";
+        let mut output = [0u8; 5]; // Way too small
+
+        let result = compress_block(input, &mut output);
+        assert!(matches!(result, Err(RawLz4Error::BufferTooSmall { .. })));
+    }
+
+    #[test]
+    fn error_to_io_error_conversion() {
+        // Test that RawLz4Error converts to io::Error correctly
+        let err = RawLz4Error::InputTooLarge(20000);
+        let io_err: std::io::Error = err.into();
+        assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn error_display_messages() {
+        // Verify error messages are descriptive
+        let err = RawLz4Error::InputTooLarge(20000);
+        let msg = err.to_string();
+        assert!(msg.contains("20000"));
+        assert!(msg.contains("exceeds"));
+
+        let err = RawLz4Error::BufferTooSmall {
+            needed: 100,
+            available: 50,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("100"));
+        assert!(msg.contains("50"));
+
+        let err = RawLz4Error::InvalidHeader(0x80);
+        let msg = err.to_string();
+        assert!(msg.contains("0x80"));
+    }
+
+    #[test]
+    fn compress_at_exact_max_size() {
+        // Test compressing exactly MAX_BLOCK_SIZE bytes
+        let input = vec![b'x'; MAX_BLOCK_SIZE];
+        let result = compress_block_to_vec(&input);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn header_max_size_encoding() {
+        // Test header encoding for maximum size
+        let header = encode_header(MAX_BLOCK_SIZE);
+        let decoded = decode_header(header).expect("valid header");
+        assert_eq!(decoded, MAX_BLOCK_SIZE);
+    }
+
+    #[test]
+    fn read_compressed_block_io_error() {
+        // Test I/O error propagation
+        use std::io::Cursor;
+
+        let mut cursor = Cursor::new(vec![0x40, 0x10]); // Header for 16 bytes but no data
+        let result = read_compressed_block(&mut cursor, 1000);
+        assert!(matches!(result, Err(RawLz4Error::Io(_))));
+    }
+
+    #[test]
+    fn is_deflated_data_helper() {
+        assert!(is_deflated_data(0x40));
+        assert!(is_deflated_data(0x41));
+        assert!(is_deflated_data(0x7F));
+        assert!(!is_deflated_data(0x00)); // END_FLAG
+        assert!(!is_deflated_data(0x80)); // TOKEN_REL
+        assert!(!is_deflated_data(0xC0)); // TOKENRUN_REL
+    }
 }
