@@ -53,6 +53,9 @@ pub(crate) fn apply_dir_merge_rule_defaults(
 pub(crate) struct DirMergeEntries {
     pub(crate) rules: Vec<FilterRule>,
     pub(crate) exclude_if_present: Vec<ExcludeIfPresentRule>,
+    /// Indicates a clear directive was encountered, meaning inherited rules
+    /// from parent directories should also be cleared.
+    pub(crate) clear_inherited: bool,
 }
 
 impl DirMergeEntries {
@@ -65,6 +68,12 @@ impl DirMergeEntries {
     }
 
     fn extend(&mut self, mut other: DirMergeEntries) {
+        // If nested file had a clear directive, it affects us too
+        if other.clear_inherited {
+            self.rules.clear();
+            self.exclude_if_present.clear();
+            self.clear_inherited = true;
+        }
         self.rules.append(&mut other.rules);
         self.exclude_if_present
             .append(&mut other.exclude_if_present);
@@ -120,6 +129,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     if options.list_clear_allowed() {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
+                        entries.clear_inherited = true;
                         continue;
                     }
                     let directive = if token == "!" { "!" } else { token };
@@ -165,6 +175,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
+                        entries.clear_inherited = true;
                     }
                     Ok(Some(ParsedFilterDirective::Merge {
                         path: merge_path,
@@ -213,6 +224,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     if options.list_clear_allowed() {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
+                        entries.clear_inherited = true;
                         continue;
                     }
                     return Err(map_error(FilterParseError::new(format!(
@@ -262,6 +274,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
+                        entries.clear_inherited = true;
                     }
                     Ok(None) => {}
                     Err(error) => return Err(map_error(error)),
@@ -392,5 +405,52 @@ mod tests {
         entries.extend(populated);
 
         assert_eq!(entries.rules.len(), 1);
+    }
+
+    // ==================== clear_inherited tests ====================
+
+    #[test]
+    fn dir_merge_entries_default_clear_inherited_is_false() {
+        let entries = DirMergeEntries::default();
+        assert!(!entries.clear_inherited);
+    }
+
+    #[test]
+    fn dir_merge_entries_extend_with_clear_inherited_clears_parent() {
+        // Simulate parent directory rules
+        let mut parent_entries = DirMergeEntries::default();
+        parent_entries.push_rule(FilterRule::exclude("*.tmp".to_owned()));
+        parent_entries.push_rule(FilterRule::exclude("*.bak".to_owned()));
+        parent_entries.push_exclude_if_present(ExcludeIfPresentRule::new(".nobackup".to_owned()));
+
+        // Child directory has a clear directive followed by new rules
+        let mut child_entries = DirMergeEntries::default();
+        child_entries.clear_inherited = true;
+        child_entries.push_rule(FilterRule::include("important.tmp".to_owned()));
+
+        // Extend should clear parent rules due to clear_inherited flag
+        parent_entries.extend(child_entries);
+
+        // Should only have the child's rule, parent rules cleared
+        assert_eq!(parent_entries.rules.len(), 1);
+        assert_eq!(parent_entries.exclude_if_present.len(), 0);
+        assert!(parent_entries.clear_inherited);
+    }
+
+    #[test]
+    fn dir_merge_entries_extend_without_clear_preserves_parent() {
+        // Simulate parent directory rules
+        let mut parent_entries = DirMergeEntries::default();
+        parent_entries.push_rule(FilterRule::exclude("*.tmp".to_owned()));
+
+        // Child directory without clear directive
+        let mut child_entries = DirMergeEntries::default();
+        child_entries.push_rule(FilterRule::include("*.rs".to_owned()));
+
+        parent_entries.extend(child_entries);
+
+        // Should have both parent and child rules
+        assert_eq!(parent_entries.rules.len(), 2);
+        assert!(!parent_entries.clear_inherited);
     }
 }
