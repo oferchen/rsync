@@ -118,29 +118,60 @@ impl RingBuffer {
 
     /// Returns a contiguous slice view of the buffer contents.
     ///
-    /// When the buffer is full and `head == 0`, this returns a direct slice
-    /// with no copying. Otherwise, it rotates the internal buffer to make
-    /// the contents contiguous starting at index 0.
+    /// When the buffer hasn't wrapped (head == 0), this returns a direct slice
+    /// with no copying (O(1)). Otherwise, it rotates the internal buffer to make
+    /// the contents contiguous (O(n)).
     ///
-    /// This operation has O(1) complexity when the buffer hasn't wrapped,
-    /// and O(n) complexity otherwise (but this is rare in practice since
-    /// we typically call this when the buffer was just cleared and refilled).
+    /// # Performance Note
+    ///
+    /// For hot paths where rotation overhead matters, use [`Self::as_slices`]
+    /// or [`Self::copy_to_slice`] to avoid mutation.
     #[must_use]
     pub fn as_slice(&mut self) -> &[u8] {
         if self.len == 0 {
             return &[];
         }
 
-        // If head is 0, data is already contiguous from start
+        // Fast path: already contiguous
         if self.head == 0 {
             return &self.buffer[..self.len];
         }
 
-        // Need to rotate to make contiguous
-        // This happens when we've wrapped around
+        // Check if data is contiguous even with non-zero head
+        let end = self.head + self.len;
+        if end <= self.buffer.len() {
+            // Data is contiguous in the middle of the buffer
+            return &self.buffer[self.head..end];
+        }
+
+        // Slow path: need to rotate to make contiguous
         self.buffer.rotate_left(self.head);
         self.head = 0;
         &self.buffer[..self.len]
+    }
+
+    /// Returns a contiguous slice if available, without mutation.
+    ///
+    /// Returns `Some(slice)` if the buffer contents are already contiguous,
+    /// or `None` if the buffer has wrapped and rotation would be needed.
+    ///
+    /// This is useful in hot paths where avoiding mutation is critical.
+    #[inline]
+    #[must_use]
+    #[allow(dead_code)] // API method for callers needing zero-copy access
+    pub fn try_as_slice(&self) -> Option<&[u8]> {
+        if self.len == 0 {
+            return Some(&[]);
+        }
+
+        let end = self.head + self.len;
+        if end <= self.buffer.len() {
+            // Data is contiguous
+            Some(&self.buffer[self.head..end])
+        } else {
+            // Wrapped, would need rotation
+            None
+        }
     }
 
     /// Returns a contiguous slice if possible without rotation, or two slices if wrapped.
@@ -340,5 +371,49 @@ mod tests {
         assert_eq!(buf.as_slice(), b"orld");
         // Outgoing bytes are "hello w" (first 7 bytes)
         assert_eq!(outgoing_bytes, b"hello w");
+    }
+
+    #[test]
+    fn try_as_slice_no_wrap() {
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+
+        // Not wrapped, should return slice
+        assert_eq!(buf.try_as_slice(), Some(&[1u8, 2, 3][..]));
+    }
+
+    #[test]
+    fn try_as_slice_wrapped() {
+        let mut buf = RingBuffer::with_capacity(3);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        buf.push_back(4); // Overwrites 1, buffer wraps
+
+        // Wrapped, should return None
+        assert_eq!(buf.try_as_slice(), None);
+    }
+
+    #[test]
+    fn try_as_slice_empty() {
+        let buf = RingBuffer::with_capacity(5);
+        assert_eq!(buf.try_as_slice(), Some(&[][..]));
+    }
+
+    #[test]
+    fn as_slice_contiguous_middle() {
+        // Test the new optimization: contiguous data in the middle
+        let mut buf = RingBuffer::with_capacity(5);
+        buf.push_back(1);
+        buf.push_back(2);
+        buf.push_back(3);
+        buf.pop_front(); // head moves to 1
+        buf.pop_front(); // head moves to 2
+
+        // Now only [3] at position 2, head=2, len=1
+        // This is contiguous in the middle
+        assert_eq!(buf.as_slice(), &[3]);
     }
 }

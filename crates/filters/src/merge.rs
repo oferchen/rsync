@@ -8,7 +8,7 @@
 //! - `P PATTERN` or `protect PATTERN` - protect from deletion
 //! - `R PATTERN` or `risk PATTERN` - remove protection
 //! - `. FILE` or `merge FILE` - read additional rules from FILE
-//! - `, FILE` or `dir-merge FILE` - read rules per-directory
+//! - `: FILE` or `dir-merge FILE` - read rules per-directory
 //! - `!` or `clear` - clear previously defined rules
 //! - `H PATTERN` or `hide PATTERN` - sender-only exclude
 //! - `S PATTERN` or `show PATTERN` - sender-only include
@@ -375,11 +375,12 @@ fn parse_rule_line(
             return Ok(FilterRule::merge(pattern));
         }
     }
-    if let Some(rest) = line.strip_prefix(',') {
-        // Dir-merge rules don't support negation modifier (upstream restriction)
-        let (_, pattern) = parse_modifiers(rest);
+    if let Some(rest) = line.strip_prefix(':') {
+        // Dir-merge rules use ':' prefix (upstream rsync exclude.c).
+        // Don't support negation modifier (upstream restriction).
+        let (mods, pattern) = parse_modifiers(rest);
         if !pattern.is_empty() {
-            return Ok(FilterRule::dir_merge(pattern));
+            return Ok(mods.apply(FilterRule::dir_merge(pattern)));
         }
     }
     if let Some(rest) = line.strip_prefix('H') {
@@ -488,7 +489,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_short() {
-        let rules = parse_rules(", .rsync-filter", Path::new("test")).unwrap();
+        let rules = parse_rules(": .rsync-filter", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::DirMerge);
         assert_eq!(rules[0].pattern(), ".rsync-filter");
@@ -638,7 +639,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         let rules_path = dir.path().join("rules.txt");
-        fs::write(&rules_path, ", .rsync-filter\n+ *.txt\n").unwrap();
+        fs::write(&rules_path, ": .rsync-filter\n+ *.txt\n").unwrap();
 
         let rules = read_rules_recursive(&rules_path, 10).unwrap();
         assert_eq!(rules.len(), 2);
@@ -899,5 +900,248 @@ mod tests {
         let (mods, pattern) = parse_modifiers("C pattern");
         assert!(mods.cvs_mode);
         assert_eq!(pattern, "pattern");
+    }
+
+    // =========================================================================
+    // Recursive Depth Limit Tests
+    // =========================================================================
+
+    #[test]
+    fn read_rules_recursive_depth_zero_no_merge() {
+        // Depth 0 should still work if there are no merge directives
+        let dir = TempDir::new().unwrap();
+        let rules_path = dir.path().join("rules.txt");
+        fs::write(&rules_path, "+ *.txt\n- *.bak\n").unwrap();
+
+        let rules = read_rules_recursive(&rules_path, 0).unwrap();
+        assert_eq!(rules.len(), 2);
+    }
+
+    #[test]
+    fn read_rules_recursive_depth_zero_with_merge_fails() {
+        // Depth 0 should fail when a merge is attempted
+        let dir = TempDir::new().unwrap();
+
+        let nested_path = dir.path().join("nested.rules");
+        fs::write(&nested_path, "- *.tmp\n").unwrap();
+
+        let main_path = dir.path().join("main.rules");
+        fs::write(
+            &main_path,
+            format!(". {}\n", nested_path.display()),
+        )
+        .unwrap();
+
+        let result = read_rules_recursive(&main_path, 0);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("depth"));
+        assert!(err.message.contains("0"));
+    }
+
+    #[test]
+    fn read_rules_recursive_depth_one_single_merge() {
+        // Depth 1 should allow exactly one level of nesting
+        let dir = TempDir::new().unwrap();
+
+        let nested_path = dir.path().join("nested.rules");
+        fs::write(&nested_path, "- *.tmp\n").unwrap();
+
+        let main_path = dir.path().join("main.rules");
+        fs::write(
+            &main_path,
+            format!("+ *.txt\n. {}\n", nested_path.display()),
+        )
+        .unwrap();
+
+        let rules = read_rules_recursive(&main_path, 1).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "*.txt");
+        assert_eq!(rules[1].pattern(), "*.tmp");
+    }
+
+    #[test]
+    fn read_rules_recursive_depth_one_two_levels_fails() {
+        // Depth 1 should fail with two levels of nesting
+        let dir = TempDir::new().unwrap();
+
+        let deep_path = dir.path().join("deep.rules");
+        fs::write(&deep_path, "- *.deep\n").unwrap();
+
+        let nested_path = dir.path().join("nested.rules");
+        fs::write(
+            &nested_path,
+            format!(". {}\n", deep_path.display()),
+        )
+        .unwrap();
+
+        let main_path = dir.path().join("main.rules");
+        fs::write(
+            &main_path,
+            format!(". {}\n", nested_path.display()),
+        )
+        .unwrap();
+
+        let result = read_rules_recursive(&main_path, 1);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("depth"));
+    }
+
+    #[test]
+    fn read_rules_recursive_exact_depth_succeeds() {
+        // Test that exact depth limit is respected
+        let dir = TempDir::new().unwrap();
+
+        // Create chain: main -> level1 -> level2 -> level3
+        let level3_path = dir.path().join("level3.rules");
+        fs::write(&level3_path, "- *.level3\n").unwrap();
+
+        let level2_path = dir.path().join("level2.rules");
+        fs::write(
+            &level2_path,
+            format!("- *.level2\n. {}\n", level3_path.display()),
+        )
+        .unwrap();
+
+        let level1_path = dir.path().join("level1.rules");
+        fs::write(
+            &level1_path,
+            format!("- *.level1\n. {}\n", level2_path.display()),
+        )
+        .unwrap();
+
+        let main_path = dir.path().join("main.rules");
+        fs::write(
+            &main_path,
+            format!("- *.main\n. {}\n", level1_path.display()),
+        )
+        .unwrap();
+
+        // Depth 3 should succeed (main -> 1 -> 2 -> 3)
+        let rules = read_rules_recursive(&main_path, 3).unwrap();
+        assert_eq!(rules.len(), 4);
+        assert_eq!(rules[0].pattern(), "*.main");
+        assert_eq!(rules[1].pattern(), "*.level1");
+        assert_eq!(rules[2].pattern(), "*.level2");
+        assert_eq!(rules[3].pattern(), "*.level3");
+
+        // Depth 2 should fail
+        let result = read_rules_recursive(&main_path, 2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_rules_recursive_error_includes_path() {
+        // Error should include the path that caused the overflow
+        let dir = TempDir::new().unwrap();
+
+        let self_ref_path = dir.path().join("selfref.rules");
+        fs::write(
+            &self_ref_path,
+            format!(". {}\n", self_ref_path.display()),
+        )
+        .unwrap();
+
+        let result = read_rules_recursive(&self_ref_path, 5);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        // Error path should be the file that exceeded the limit
+        assert!(err.path.contains("selfref.rules"));
+    }
+
+    #[test]
+    fn read_rules_recursive_multiple_merges_same_level() {
+        // Multiple merge directives at the same level should all be processed
+        let dir = TempDir::new().unwrap();
+
+        let file_a = dir.path().join("a.rules");
+        fs::write(&file_a, "- *.a\n").unwrap();
+
+        let file_b = dir.path().join("b.rules");
+        fs::write(&file_b, "- *.b\n").unwrap();
+
+        let main_path = dir.path().join("main.rules");
+        fs::write(
+            &main_path,
+            format!(". {}\n. {}\n", file_a.display(), file_b.display()),
+        )
+        .unwrap();
+
+        let rules = read_rules_recursive(&main_path, 1).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "*.a");
+        assert_eq!(rules[1].pattern(), "*.b");
+    }
+
+    #[test]
+    fn read_rules_recursive_diamond_pattern() {
+        // Test diamond-shaped dependencies (A -> B, A -> C, B -> D, C -> D)
+        // This should work since we don't track visited files
+        let dir = TempDir::new().unwrap();
+
+        let file_d = dir.path().join("d.rules");
+        fs::write(&file_d, "- *.d\n").unwrap();
+
+        let file_b = dir.path().join("b.rules");
+        fs::write(
+            &file_b,
+            format!("- *.b\n. {}\n", file_d.display()),
+        )
+        .unwrap();
+
+        let file_c = dir.path().join("c.rules");
+        fs::write(
+            &file_c,
+            format!("- *.c\n. {}\n", file_d.display()),
+        )
+        .unwrap();
+
+        let main_path = dir.path().join("main.rules");
+        fs::write(
+            &main_path,
+            format!(". {}\n. {}\n", file_b.display(), file_c.display()),
+        )
+        .unwrap();
+
+        let rules = read_rules_recursive(&main_path, 3).unwrap();
+        // Should have: *.b, *.d (from b), *.c, *.d (from c)
+        assert_eq!(rules.len(), 4);
+    }
+
+    #[test]
+    fn read_rules_recursive_relative_path_merge() {
+        // Test merge with relative path (resolved from parent directory)
+        let dir = TempDir::new().unwrap();
+
+        let nested_path = dir.path().join("nested.rules");
+        fs::write(&nested_path, "- *.nested\n").unwrap();
+
+        let main_path = dir.path().join("main.rules");
+        // Use relative path
+        fs::write(&main_path, ". nested.rules\n").unwrap();
+
+        let rules = read_rules_recursive(&main_path, 2).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern(), "*.nested");
+    }
+
+    #[test]
+    fn read_rules_recursive_mixed_with_dir_merge() {
+        // DirMerge rules should not count towards depth (they're not expanded)
+        let dir = TempDir::new().unwrap();
+
+        let rules_path = dir.path().join("rules.txt");
+        fs::write(
+            &rules_path,
+            ": .rsync-filter\n+ *.txt\n",
+        )
+        .unwrap();
+
+        // Should work even with depth 0 since DirMerge isn't expanded
+        let rules = read_rules_recursive(&rules_path, 0).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].action(), FilterAction::DirMerge);
+        assert_eq!(rules[1].action(), FilterAction::Include);
     }
 }
