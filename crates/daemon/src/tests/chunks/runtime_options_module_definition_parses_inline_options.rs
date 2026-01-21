@@ -22,10 +22,9 @@ fn runtime_options_module_definition_parses_inline_options() {
         IpAddr::V4(Ipv4Addr::new(192, 0, 2, 42)),
         Some("host.example")
     ));
-    assert_eq!(
-        module.auth_users(),
-        &[String::from("alice"), String::from("bob")]
-    );
+    assert_eq!(module.auth_users().len(), 2);
+    assert_eq!(module.auth_users()[0].username, "alice");
+    assert_eq!(module.auth_users()[1].username, "bob");
     assert_eq!(
         module
             .secrets_file()
