@@ -165,11 +165,7 @@ mod tests {
     fn abbreviated_tracking() {
         let mut list = XattrList::new();
         list.push(XattrEntry::new("user.full", b"small".to_vec()));
-        list.push(XattrEntry::abbreviated(
-            "user.abbrev",
-            vec![0u8; 16],
-            100,
-        ));
+        list.push(XattrEntry::abbreviated("user.abbrev", vec![0u8; 16], 100));
 
         assert!(list.has_abbreviated());
         assert_eq!(list.abbreviated_indices(), vec![1]);

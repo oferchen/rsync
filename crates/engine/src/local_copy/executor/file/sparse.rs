@@ -117,8 +117,9 @@ fn write_zeros_fallback(
 
     while len > 0 {
         let chunk_size = len.min(ZERO_WRITE_BUFFER_SIZE as u64) as usize;
-        file.write_all(&zeros[..chunk_size])
-            .map_err(|e| LocalCopyError::io("write zeros for sparse hole", path.to_path_buf(), e))?;
+        file.write_all(&zeros[..chunk_size]).map_err(|e| {
+            LocalCopyError::io("write zeros for sparse hole", path.to_path_buf(), e)
+        })?;
         len -= chunk_size as u64;
     }
 
@@ -609,9 +610,7 @@ mod tests {
         file.as_file_mut()
             .write_all(b"test data")
             .expect("write data");
-        file.as_file_mut()
-            .seek(SeekFrom::Start(0))
-            .expect("rewind");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         // Punching a zero-length hole should succeed without changing anything
         punch_hole(file.as_file_mut(), &path, 0, 0).expect("punch zero-length hole");
@@ -635,9 +634,7 @@ mod tests {
         punch_hole(file.as_file_mut(), &path, 1024, 2048).expect("punch hole");
 
         // Read back and verify the hole contains zeros
-        file.as_file_mut()
-            .seek(SeekFrom::Start(0))
-            .expect("rewind");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
         let mut buffer = vec![0u8; 4096];
         file.as_file_mut().read_exact(&mut buffer).expect("read");
 
@@ -656,9 +653,7 @@ mod tests {
 
         // Pre-allocate file
         file.as_file_mut().set_len(8192).expect("set length");
-        file.as_file_mut()
-            .seek(SeekFrom::Start(0))
-            .expect("rewind");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         // Punch a hole starting at position 1000
         punch_hole(file.as_file_mut(), &path, 1000, 500).expect("punch hole");
@@ -681,9 +676,7 @@ mod tests {
         assert_eq!(metadata.len(), 1234);
 
         // Verify all bytes are zero
-        file.as_file_mut()
-            .seek(SeekFrom::Start(0))
-            .expect("rewind");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
         let mut buffer = vec![1u8; 1234];
         file.as_file_mut().read_exact(&mut buffer).expect("read");
         assert!(buffer.iter().all(|&b| b == 0));
@@ -712,9 +705,7 @@ mod tests {
         // Pre-allocate with non-zero data
         let data = vec![0xBBu8; 8192];
         file.as_file_mut().write_all(&data).expect("write");
-        file.as_file_mut()
-            .seek(SeekFrom::Start(0))
-            .expect("rewind");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut state = SparseWriteState::default();
         state.set_zero_run_start(1000);
@@ -725,9 +716,7 @@ mod tests {
             .expect("flush with punch");
 
         // Verify the hole was punched
-        file.as_file_mut()
-            .seek(SeekFrom::Start(0))
-            .expect("rewind");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
         let mut buffer = vec![0u8; 8192];
         file.as_file_mut().read_exact(&mut buffer).expect("read");
 

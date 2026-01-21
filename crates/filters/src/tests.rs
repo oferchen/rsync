@@ -325,7 +325,7 @@ mod negate_tests {
     fn negated_rules_combine_with_regular_rules() {
         // Mix negated and regular rules
         let rules = [
-            FilterRule::exclude("*.tmp"),            // Regular: exclude .tmp
+            FilterRule::exclude("*.tmp"),                   // Regular: exclude .tmp
             FilterRule::exclude("*.txt").with_negate(true), // Negated: exclude non-.txt
         ];
         let set = FilterSet::from_rules(rules).expect("compiled");
