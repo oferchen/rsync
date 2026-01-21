@@ -26,5 +26,5 @@ zlib-sys = ["flate2/zlib"]
 # Enable zlib-sys feature for system zlib performance
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 zstd = { version = "0.13", optional = true }
-lz4_flex = { version = "0.11", optional = true, default-features = false, features = ["frame"] }
+lz4_flex = { version = "0.11", optional = true, default-features = false, features = ["frame", "safe-encode", "safe-decode"] }
 thiserror = "2.0"
