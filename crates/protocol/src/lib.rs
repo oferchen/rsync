@@ -4,6 +4,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc = include_str!("../README.md")]
 
+/// ACL (Access Control List) wire protocol encoding and decoding.
+pub mod acl;
 /// Protocol version-aware encoding/decoding using the Strategy pattern.
 ///
 /// This module includes both `ProtocolCodec` for general wire encoding and
