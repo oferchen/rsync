@@ -111,7 +111,20 @@ impl<'a> CopyContext<'a> {
 
             let has_segment = !segment.is_empty();
             let markers = entries.exclude_if_present;
-            if !has_segment && markers.is_empty() {
+            let clear_inherited = entries.clear_inherited;
+
+            // If the filter file had a clear directive, we should clear inherited rules
+            // from parent directories before adding any new rules from this directory.
+            if clear_inherited && rule.options().inherit_rules() {
+                layers[index].clear();
+                marker_layers[index].clear();
+                // Remove any indices we may have added for parent directories
+                // in this same traversal (shouldn't happen normally, but be safe)
+                added_indices.retain(|&i| i != index);
+                marker_counts.retain(|(i, _)| *i != index);
+            }
+
+            if !has_segment && markers.is_empty() && !clear_inherited {
                 continue;
             }
 
