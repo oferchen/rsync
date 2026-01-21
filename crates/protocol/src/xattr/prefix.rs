@@ -20,7 +20,9 @@
 //! - `xattrs.c` lines 509-528: `send_xattr_name()` logic
 //! - `xattrs.c` lines 821-850: `receive_xattr()` name handling
 
-use super::{RSYNC_PREFIX, SYSTEM_PREFIX, USER_PREFIX};
+#[cfg(target_os = "linux")]
+use super::USER_PREFIX;
+use super::{RSYNC_PREFIX, SYSTEM_PREFIX};
 
 /// Translates an xattr name from local format to wire format.
 ///
