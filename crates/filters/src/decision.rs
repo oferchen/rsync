@@ -99,6 +99,21 @@ impl FilterSetInner {
 ///
 /// This matches upstream rsync's `check_filter()` in exclude.c which iterates
 /// from the head of the filter list and returns on the first match.
+///
+/// # Arguments
+///
+/// * `rules` - Compiled rules to search, evaluated in order
+/// * `path` - File path to match against rule patterns
+/// * `is_dir` - Whether the path is a directory (affects trailing-slash patterns)
+/// * `applies` - Predicate filtering which rules are considered (e.g., sender-only rules)
+/// * `include_perishable` - Whether to consider perishable rules (marked with `p` modifier)
+///
+/// # Returns
+///
+/// The first rule where all conditions are met:
+/// 1. `include_perishable` is true OR the rule is not perishable
+/// 2. `applies(rule)` returns true
+/// 3. The rule's pattern matches `path` considering `is_dir`
 fn first_matching_rule<'a, F>(
     rules: &'a [CompiledRule],
     path: &Path,

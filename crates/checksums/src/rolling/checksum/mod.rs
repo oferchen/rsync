@@ -550,6 +550,18 @@ fn accumulate_chunk_scalar_raw(
     (s1, s2, len.saturating_add(chunk.len()))
 }
 
+/// Flushes accumulated bytes from the scratch buffer into the checksum state.
+///
+/// During vectored I/O processing, small chunks are collected into a stack-allocated
+/// scratch buffer to improve cache locality. This function processes the buffered
+/// bytes when the buffer is full or at the end of processing.
+///
+/// # Arguments
+///
+/// * `s1`, `s2` - Rolling checksum accumulators (modified in place)
+/// * `len` - Total bytes processed counter (modified in place)
+/// * `scratch` - Stack buffer holding pending bytes
+/// * `scratch_len` - Number of valid bytes in scratch (reset to 0 after flush)
 #[inline]
 fn flush_vectored_scratch(
     s1: &mut u32,

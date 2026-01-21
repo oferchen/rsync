@@ -129,6 +129,21 @@ impl CompiledRule {
         false
     }
 
+    /// Clears applicability flags for this rule based on context.
+    ///
+    /// When a `!` (clear) rule is processed, it removes matching rules from
+    /// either the sender side, receiver side, or both. This method handles
+    /// the flag clearing and returns whether the rule should be retained.
+    ///
+    /// # Arguments
+    ///
+    /// * `sender` - If true, clear the sender applicability flag
+    /// * `receiver` - If true, clear the receiver applicability flag
+    ///
+    /// # Returns
+    ///
+    /// `true` if the rule still applies to at least one side (should be kept),
+    /// `false` if the rule no longer applies to any side (should be removed).
     pub(crate) const fn clear_sides(&mut self, sender: bool, receiver: bool) -> bool {
         if sender {
             self.applies_to_sender = false;
