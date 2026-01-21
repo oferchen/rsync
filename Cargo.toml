@@ -81,7 +81,7 @@ edition = "2024"
 rust-version = "1.88"
 authors = ["Ofer Chen <skewers.irises.3b@icloud.com>"]
 license = "GPL-3.0-or-later"
-version = "0.5.2"
+version = "0.5.3"
 repository = "https://github.com/oferchen/rsync"
 
 [workspace.dependencies]
@@ -108,7 +108,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [workspace.metadata.oc_rsync]
 brand = "oc"
 upstream_version = "3.4.1"
-rust_version = "0.5.2"
+rust_version = "0.5.3"
 protocol = 32
 client_bin = "oc-rsync"
 daemon_bin = "oc-rsync"
