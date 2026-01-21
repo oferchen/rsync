@@ -424,8 +424,10 @@ mod tests {
         parent_entries.push_exclude_if_present(ExcludeIfPresentRule::new(".nobackup".to_owned()));
 
         // Child directory has a clear directive followed by new rules
-        let mut child_entries = DirMergeEntries::default();
-        child_entries.clear_inherited = true;
+        let mut child_entries = DirMergeEntries {
+            clear_inherited: true,
+            ..Default::default()
+        };
         child_entries.push_rule(FilterRule::include("important.tmp".to_owned()));
 
         // Extend should clear parent rules due to clear_inherited flag

@@ -1450,7 +1450,8 @@ fn generate_whole_file_delta(mut source: fs::File) -> io::Result<DeltaScript> {
     // Log warning for very large files
     if file_size > LARGE_FILE_WARNING_THRESHOLD {
         debug_log!(
-            Send, 1,
+            Send,
+            1,
             "Large whole-file transfer: {} bytes ({:.2} GB). Consider using delta mode.",
             file_size,
             file_size as f64 / (1024.0 * 1024.0 * 1024.0)

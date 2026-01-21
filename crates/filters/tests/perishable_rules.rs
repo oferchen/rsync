@@ -150,9 +150,9 @@ fn perishable_exclude_before_include() {
 fn non_perishable_exclude_before_perishable_include() {
     // With first-match-wins, specific excludes come first
     let rules = [
-        FilterRule::exclude("secret.txt"),                      // Specific exclude first
-        FilterRule::include("*.txt").with_perishable(true),     // Perishable include
-        FilterRule::exclude("*"),                                // Catch-all exclude
+        FilterRule::exclude("secret.txt"), // Specific exclude first
+        FilterRule::include("*.txt").with_perishable(true), // Perishable include
+        FilterRule::exclude("*"),          // Catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -233,8 +233,8 @@ fn perishable_with_risk() {
     // With first-match-wins, risk comes before protect
     let rules = [
         FilterRule::exclude("archive/").with_perishable(true),
-        FilterRule::risk("archive/old/"),  // Risk first
-        FilterRule::protect("archive/"),   // Protect second
+        FilterRule::risk("archive/old/"), // Risk first
+        FilterRule::protect("archive/"),  // Protect second
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -384,9 +384,9 @@ fn complex_perishable_scenario() {
     // With first-match-wins, more specific rules come first
     let rules = [
         FilterRule::exclude("src/**/*.tmp").with_perishable(true), // Most specific
-        FilterRule::include("src/**"),                              // Then src include
-        FilterRule::include("cache/**").with_perishable(true),      // Then cache include
-        FilterRule::exclude("*"),                                    // Catch-all exclude
+        FilterRule::include("src/**"),                             // Then src include
+        FilterRule::include("cache/**").with_perishable(true),     // Then cache include
+        FilterRule::exclude("*"),                                  // Catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 

@@ -335,10 +335,10 @@ fn first_matching_rule_wins() {
 fn complex_rule_ordering() {
     // With first-match-wins, most specific rules come first
     let rules = [
-        FilterRule::include("test_utils.rs"),  // Most specific first
-        FilterRule::exclude("test_*.rs"),      // Then test pattern
-        FilterRule::include("*.rs"),           // Then general .rs include
-        FilterRule::exclude("*"),              // Finally catch-all exclude
+        FilterRule::include("test_utils.rs"), // Most specific first
+        FilterRule::exclude("test_*.rs"),     // Then test pattern
+        FilterRule::include("*.rs"),          // Then general .rs include
+        FilterRule::exclude("*"),             // Finally catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -361,8 +361,8 @@ fn complex_rule_ordering() {
 fn include_creates_exception_for_excluded_directory() {
     // With first-match-wins, include must come before exclude
     let rules = [
-        FilterRule::include("target/doc/**"),  // Include doc contents first
-        FilterRule::exclude("target/"),        // Then exclude target
+        FilterRule::include("target/doc/**"), // Include doc contents first
+        FilterRule::exclude("target/"),       // Then exclude target
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 

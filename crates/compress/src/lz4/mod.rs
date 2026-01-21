@@ -41,9 +41,7 @@ pub mod frame;
 pub mod raw;
 
 // Re-export commonly used frame types at module level for backward compatibility
-pub use frame::{
-    compress_to_vec, decompress_to_vec, CountingLz4Decoder, CountingLz4Encoder,
-};
+pub use frame::{CountingLz4Decoder, CountingLz4Encoder, compress_to_vec, decompress_to_vec};
 
 use crate::algorithm::CompressionAlgorithm;
 

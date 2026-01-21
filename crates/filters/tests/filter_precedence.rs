@@ -81,9 +81,9 @@ fn alternating_rules() {
 #[test]
 fn specific_pattern_first() {
     let rules = [
-        FilterRule::exclude("test_*.rs"),  // Most specific first
-        FilterRule::include("*.rs"),        // Then general include
-        FilterRule::exclude("*"),           // Finally catch-all exclude
+        FilterRule::exclude("test_*.rs"), // Most specific first
+        FilterRule::include("*.rs"),      // Then general include
+        FilterRule::exclude("*"),         // Finally catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -137,8 +137,8 @@ fn complex_chain() {
     let rules = [
         FilterRule::include("src/**/test/fixtures/**"), // Most specific: fixtures
         FilterRule::exclude("src/**/test/**"),          // Then: exclude test dirs
-        FilterRule::include("src/**"),                   // Then: include src
-        FilterRule::exclude("*"),                        // Finally: exclude all
+        FilterRule::include("src/**"),                  // Then: include src
+        FilterRule::exclude("*"),                       // Finally: exclude all
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -161,9 +161,9 @@ fn multiple_wildcard_patterns() {
     // With first-match-wins, most specific rules come first
     let rules = [
         FilterRule::include("**/old/critical.log"), // Most specific: critical log
-        FilterRule::exclude("**/old/*.log"),         // Then: exclude old logs
-        FilterRule::include("**/important.log"),     // Then: include important
-        FilterRule::exclude("**/*.log"),             // Finally: exclude all logs
+        FilterRule::exclude("**/old/*.log"),        // Then: exclude old logs
+        FilterRule::include("**/important.log"),    // Then: include important
+        FilterRule::exclude("**/*.log"),            // Finally: exclude all logs
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -240,8 +240,8 @@ fn protect_and_exclude_same_file() {
 fn risk_overrides_protect() {
     // With first-match-wins, risk must come before protect
     let rules = [
-        FilterRule::risk("data/temp/**"),   // Risk for temp first
-        FilterRule::protect("data/**"),     // Protect data second
+        FilterRule::risk("data/temp/**"), // Risk for temp first
+        FilterRule::protect("data/**"),   // Protect data second
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -327,7 +327,7 @@ fn new_precedence_after_clear() {
         FilterRule::exclude("*"),
         FilterRule::clear(),
         FilterRule::include("important.bak"), // Include specific first
-        FilterRule::exclude("*.bak"),          // Then exclude pattern
+        FilterRule::exclude("*.bak"),         // Then exclude pattern
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 

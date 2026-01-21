@@ -313,10 +313,10 @@ fn risk_without_protect_no_effect() {
 fn nested_protect_risk_patterns() {
     // Most specific to least specific
     let rules = [
-        FilterRule::risk("data/cache/important/temp/"),    // Most specific: temp deletable
-        FilterRule::protect("data/cache/important/"),      // Then: important protected
-        FilterRule::risk("data/cache/"),                   // Then: cache deletable
-        FilterRule::protect("data/"),                      // Finally: data protected
+        FilterRule::risk("data/cache/important/temp/"), // Most specific: temp deletable
+        FilterRule::protect("data/cache/important/"),   // Then: important protected
+        FilterRule::risk("data/cache/"),                // Then: cache deletable
+        FilterRule::protect("data/"),                   // Finally: data protected
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 

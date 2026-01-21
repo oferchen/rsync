@@ -229,7 +229,10 @@ pub fn decompress_block_to_vec(
 /// # Errors
 ///
 /// Returns an error if compression fails or writing fails.
-pub fn write_compressed_block<W: Write>(input: &[u8], writer: &mut W) -> Result<usize, RawLz4Error> {
+pub fn write_compressed_block<W: Write>(
+    input: &[u8],
+    writer: &mut W,
+) -> Result<usize, RawLz4Error> {
     let compressed = compress_block_to_vec(input)?;
     writer.write_all(&compressed)?;
     Ok(compressed.len())
@@ -253,8 +256,7 @@ pub fn read_compressed_block<R: Read>(
     let mut header = [0u8; HEADER_SIZE];
     reader.read_exact(&mut header)?;
 
-    let compressed_size =
-        decode_header(header).ok_or(RawLz4Error::InvalidHeader(header[0]))?;
+    let compressed_size = decode_header(header).ok_or(RawLz4Error::InvalidHeader(header[0]))?;
 
     // Read compressed data
     let mut compressed = vec![0u8; compressed_size];
@@ -335,8 +337,7 @@ mod tests {
         assert!(is_deflated_data(compressed[0]));
 
         // Decompress
-        let decompressed =
-            decompress_block_to_vec(&compressed, input.len()).expect("decompress");
+        let decompressed = decompress_block_to_vec(&compressed, input.len()).expect("decompress");
         assert_eq!(decompressed, input);
     }
 
@@ -345,8 +346,7 @@ mod tests {
         // Test near max block size
         let input = vec![b'x'; 16000];
         let compressed = compress_block_to_vec(&input).expect("compress");
-        let decompressed =
-            decompress_block_to_vec(&compressed, input.len()).expect("decompress");
+        let decompressed = decompress_block_to_vec(&compressed, input.len()).expect("decompress");
         assert_eq!(decompressed, input);
     }
 
@@ -362,8 +362,7 @@ mod tests {
             "zeros should compress significantly"
         );
 
-        let decompressed =
-            decompress_block_to_vec(&compressed, input.len()).expect("decompress");
+        let decompressed = decompress_block_to_vec(&compressed, input.len()).expect("decompress");
         assert_eq!(decompressed, input);
     }
 
@@ -382,8 +381,7 @@ mod tests {
         write_compressed_block(input, &mut buffer).expect("write");
 
         let mut cursor = std::io::Cursor::new(buffer);
-        let decompressed =
-            read_compressed_block(&mut cursor, input.len()).expect("read");
+        let decompressed = read_compressed_block(&mut cursor, input.len()).expect("read");
 
         assert_eq!(decompressed, input);
     }

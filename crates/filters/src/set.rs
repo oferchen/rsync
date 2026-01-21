@@ -243,7 +243,8 @@ fn expand_merge_rules(
         match rule.action() {
             FilterAction::Merge => {
                 let merge_path = Path::new(rule.pattern());
-                let nested = read_rules_recursive(merge_path, max_depth.saturating_sub(current_depth))?;
+                let nested =
+                    read_rules_recursive(merge_path, max_depth.saturating_sub(current_depth))?;
                 let nested_expanded = expand_merge_rules(nested, max_depth, current_depth + 1)?;
                 expanded.extend(nested_expanded);
             }

@@ -17,7 +17,7 @@
 //!
 //! # Abbreviation Protocol
 //!
-//! For xattr values larger than [`MAX_FULL_DATUM`] (32 bytes):
+//! For xattr values larger than `MAX_FULL_DATUM` (32 bytes):
 //!
 //! - Sender transmits only the MD5 checksum (16 bytes) instead of full value
 //! - Receiver marks these as `XSTATE_ABBREV` (needs data)
