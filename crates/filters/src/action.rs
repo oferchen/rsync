@@ -13,6 +13,16 @@ pub enum FilterAction {
     Risk,
     /// Clear previously defined filter rules for the affected transfer sides.
     Clear,
+    /// Read additional filter rules from a file (`.` prefix in rsync).
+    ///
+    /// The pattern field contains the file path to read. Rules are read once
+    /// when the filter set is compiled.
+    Merge,
+    /// Read filter rules per-directory during traversal (`,` prefix in rsync).
+    ///
+    /// The pattern field contains the filename to look for in each directory.
+    /// Rules from the file are applied relative to that directory.
+    DirMerge,
 }
 
 impl fmt::Display for FilterAction {
@@ -23,6 +33,8 @@ impl fmt::Display for FilterAction {
             Self::Protect => f.write_str("protect"),
             Self::Risk => f.write_str("risk"),
             Self::Clear => f.write_str("clear"),
+            Self::Merge => f.write_str("merge"),
+            Self::DirMerge => f.write_str("dir-merge"),
         }
     }
 }
@@ -39,6 +51,8 @@ mod tests {
             (FilterAction::Protect, "protect"),
             (FilterAction::Risk, "risk"),
             (FilterAction::Clear, "clear"),
+            (FilterAction::Merge, "merge"),
+            (FilterAction::DirMerge, "dir-merge"),
         ];
 
         for (action, expected) in cases {
