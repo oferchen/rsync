@@ -26,6 +26,10 @@ impl FilterSegment {
                     "clear directives should be converted into FilterProgramEntry::Clear before compilation",
                 );
             }
+            FilterAction::Merge | FilterAction::DirMerge => {
+                // Merge and DirMerge are handled separately during filter program
+                // construction, not pushed as regular rules to segments.
+            }
         }
         Ok(())
     }
@@ -84,6 +88,10 @@ impl FilterSegment {
                             false,
                             "clear directives should be converted into FilterProgramEntry::Clear before compilation",
                         ),
+                        FilterAction::Merge | FilterAction::DirMerge => {
+                            // Merge and DirMerge rules should never appear in compiled
+                            // protect_risk rules; they're processed during construction.
+                        }
                     }
                 }
             }

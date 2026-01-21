@@ -227,7 +227,13 @@ impl FilterProgram {
         match decision {
             Some(FilterAction::Exclude) => false,
             Some(FilterAction::Include) | None => true,
-            Some(FilterAction::Protect | FilterAction::Risk | FilterAction::Clear) => true,
+            Some(
+                FilterAction::Protect
+                | FilterAction::Risk
+                | FilterAction::Clear
+                | FilterAction::Merge
+                | FilterAction::DirMerge,
+            ) => true,
         }
     }
 }
