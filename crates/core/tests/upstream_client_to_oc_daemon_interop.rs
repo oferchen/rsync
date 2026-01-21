@@ -1064,7 +1064,14 @@ fn test_pull_with_compression() {
         .status()
         .expect("run upstream client with compression");
 
-    assert!(status.success(), "compressed transfer should succeed");
+    if !status.success() {
+        eprintln!("=== Daemon log ===");
+        if let Ok(log) = daemon.log_contents() {
+            eprintln!("{log}");
+        }
+        eprintln!("=== End daemon log ===");
+        panic!("compressed transfer should succeed");
+    }
 
     let transferred = fs::read(dest_dir.path().join("compress.txt")).expect("read file");
     assert_eq!(
