@@ -49,13 +49,107 @@ where
 /// Parses a comma/whitespace-separated list of usernames with deduplication.
 ///
 /// Usernames are case-preserved but deduplicated case-insensitively.
-pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<String>, String> {
-    parse_dedup_list(
-        value,
-        |s| s.to_ascii_lowercase(),
-        |s| s.to_owned(),
-        "must specify at least one username",
-    )
+/// Group references using `@group` syntax are expanded to their member usernames.
+///
+/// # Access Level Suffixes
+///
+/// Entries may include an access level suffix:
+/// - `:ro` - Read-only access (overrides module's read_only setting)
+/// - `:rw` - Read-write access (overrides module's read_only setting)
+/// - `:deny` - Deny access (authentication succeeds but access is blocked)
+///
+/// # Group Expansion
+///
+/// Entries starting with `@` are treated as system group names. The `@` prefix
+/// is stripped and the group's members are looked up via `getgrnam_r`. All
+/// members are added with the same access level as the @group entry.
+/// Unknown groups are silently skipped (matching upstream rsync behavior).
+///
+/// # Examples
+///
+/// ```text
+/// auth users = alice:rw, @staff:ro, bob:deny, charlie
+/// ```
+///
+/// - alice has read-write access
+/// - all members of @staff have read-only access
+/// - bob is denied access
+/// - charlie has default access (uses module settings)
+pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<AuthUser>, String> {
+    // First, split the value into individual entries
+    let mut raw_entries = Vec::new();
+    for segment in value.split(',') {
+        for token in segment.split_whitespace() {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() {
+                raw_entries.push(trimmed.to_owned());
+            }
+        }
+    }
+
+    if raw_entries.is_empty() {
+        return Err("must specify at least one username".to_owned());
+    }
+
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+
+    for entry in raw_entries {
+        // Parse access level suffix
+        let (name_part, access_level) = parse_access_suffix(&entry);
+
+        if name_part.is_empty() {
+            continue;
+        }
+
+        // Check for @group reference
+        if let Some(group_name) = name_part.strip_prefix('@') {
+            if group_name.is_empty() {
+                continue;
+            }
+            // Expand group members with the same access level
+            match lookup_group_members(group_name) {
+                Ok(Some(members)) => {
+                    for member in members {
+                        let key = member.to_ascii_lowercase();
+                        if seen.insert(key) {
+                            result.push(AuthUser::with_access(member, access_level));
+                        }
+                    }
+                }
+                Ok(None) | Err(_) => {
+                    // Group not found - silently skip (upstream behavior)
+                }
+            }
+        } else {
+            // Regular username
+            let key = name_part.to_ascii_lowercase();
+            if seen.insert(key) {
+                result.push(AuthUser::with_access(name_part.to_owned(), access_level));
+            }
+        }
+    }
+
+    if result.is_empty() {
+        return Err("must specify at least one username".to_owned());
+    }
+
+    Ok(result)
+}
+
+/// Parses the access level suffix from a username entry.
+///
+/// Returns the username (without suffix) and the corresponding access level.
+fn parse_access_suffix(entry: &str) -> (&str, UserAccessLevel) {
+    if let Some(name) = entry.strip_suffix(":ro") {
+        (name, UserAccessLevel::ReadOnly)
+    } else if let Some(name) = entry.strip_suffix(":rw") {
+        (name, UserAccessLevel::ReadWrite)
+    } else if let Some(name) = entry.strip_suffix(":deny") {
+        (name, UserAccessLevel::Deny)
+    } else {
+        (entry, UserAccessLevel::Default)
+    }
 }
 
 /// Parses a comma/whitespace-separated list of refused options with deduplication.
@@ -517,28 +611,34 @@ mod config_helpers_tests {
 
     // --- parse_auth_user_list tests ---
 
+    /// Helper to extract usernames from AuthUser list for test comparisons.
+    fn usernames(users: &[AuthUser]) -> Vec<&str> {
+        users.iter().map(|u| u.username.as_str()).collect()
+    }
+
     #[test]
     fn parse_auth_user_list_single() {
         let result = parse_auth_user_list("alice").unwrap();
-        assert_eq!(result, vec!["alice"]);
+        assert_eq!(usernames(&result), vec!["alice"]);
+        assert_eq!(result[0].access_level, UserAccessLevel::Default);
     }
 
     #[test]
     fn parse_auth_user_list_multiple_comma() {
         let result = parse_auth_user_list("alice, bob, charlie").unwrap();
-        assert_eq!(result, vec!["alice", "bob", "charlie"]);
+        assert_eq!(usernames(&result), vec!["alice", "bob", "charlie"]);
     }
 
     #[test]
     fn parse_auth_user_list_multiple_whitespace() {
         let result = parse_auth_user_list("alice bob charlie").unwrap();
-        assert_eq!(result, vec!["alice", "bob", "charlie"]);
+        assert_eq!(usernames(&result), vec!["alice", "bob", "charlie"]);
     }
 
     #[test]
     fn parse_auth_user_list_deduplicates() {
         let result = parse_auth_user_list("alice, ALICE, bob").unwrap();
-        assert_eq!(result, vec!["alice", "bob"]);
+        assert_eq!(usernames(&result), vec!["alice", "bob"]);
     }
 
     #[test]
@@ -551,6 +651,37 @@ mod config_helpers_tests {
     fn parse_auth_user_list_whitespace_only() {
         let result = parse_auth_user_list("   ");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_auth_user_list_with_ro_suffix() {
+        let result = parse_auth_user_list("alice:ro").unwrap();
+        assert_eq!(usernames(&result), vec!["alice"]);
+        assert_eq!(result[0].access_level, UserAccessLevel::ReadOnly);
+    }
+
+    #[test]
+    fn parse_auth_user_list_with_rw_suffix() {
+        let result = parse_auth_user_list("alice:rw").unwrap();
+        assert_eq!(usernames(&result), vec!["alice"]);
+        assert_eq!(result[0].access_level, UserAccessLevel::ReadWrite);
+    }
+
+    #[test]
+    fn parse_auth_user_list_with_deny_suffix() {
+        let result = parse_auth_user_list("alice:deny").unwrap();
+        assert_eq!(usernames(&result), vec!["alice"]);
+        assert_eq!(result[0].access_level, UserAccessLevel::Deny);
+    }
+
+    #[test]
+    fn parse_auth_user_list_mixed_access_levels() {
+        let result = parse_auth_user_list("alice:rw, bob:ro, charlie:deny, dave").unwrap();
+        assert_eq!(usernames(&result), vec!["alice", "bob", "charlie", "dave"]);
+        assert_eq!(result[0].access_level, UserAccessLevel::ReadWrite);
+        assert_eq!(result[1].access_level, UserAccessLevel::ReadOnly);
+        assert_eq!(result[2].access_level, UserAccessLevel::Deny);
+        assert_eq!(result[3].access_level, UserAccessLevel::Default);
     }
 
     // --- parse_refuse_option_list tests ---

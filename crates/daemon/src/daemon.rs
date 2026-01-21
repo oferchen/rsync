@@ -143,6 +143,8 @@ include!("daemon/sections/module_definition.rs");
 
 include!("daemon/sections/config_helpers.rs");
 
+include!("daemon/sections/group_expansion.rs");
+
 /// Runs the daemon orchestration using the provided configuration.
 ///
 /// The helper binds a TCP listener (defaulting to `0.0.0.0:873`), accepts a

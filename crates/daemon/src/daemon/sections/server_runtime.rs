@@ -69,8 +69,29 @@ fn join_list_if_nonempty(items: &[String], delimiter: &str) -> Option<String> {
 }
 
 /// Renders auth users as a comma-separated list for config output.
-fn render_auth_users(users: &[String]) -> Option<String> {
-    join_list_if_nonempty(users, ",")
+///
+/// Access level suffixes are included for non-default access levels:
+/// - `:ro` for ReadOnly
+/// - `:rw` for ReadWrite
+/// - `:deny` for Deny
+fn render_auth_users(users: &[AuthUser]) -> Option<String> {
+    if users.is_empty() {
+        return None;
+    }
+
+    let rendered: Vec<String> = users
+        .iter()
+        .map(|user| {
+            match user.access_level {
+                UserAccessLevel::Default => user.username.clone(),
+                UserAccessLevel::ReadOnly => format!("{}:ro", user.username),
+                UserAccessLevel::ReadWrite => format!("{}:rw", user.username),
+                UserAccessLevel::Deny => format!("{}:deny", user.username),
+            }
+        })
+        .collect();
+
+    Some(rendered.join(","))
 }
 
 /// Renders refused options as a space-separated list for config output.
@@ -188,6 +209,10 @@ fn generate_fallback_config(
 
         if let Some(chmod) = render_chmod(module.outgoing_chmod.as_deref()) {
             writeln!(config, "    outgoing chmod = {chmod}")?;
+        }
+
+        if module.fake_super {
+            writeln!(config, "    fake super = yes")?;
         }
 
         writeln!(config)?;
@@ -773,8 +798,25 @@ mod server_runtime_tests {
 
     #[test]
     fn render_auth_users_comma_separated() {
-        let users = vec!["alice".to_owned(), "bob".to_owned()];
+        let users = vec![
+            AuthUser::new("alice".to_owned()),
+            AuthUser::new("bob".to_owned()),
+        ];
         assert_eq!(render_auth_users(&users), Some("alice,bob".to_owned()));
+    }
+
+    #[test]
+    fn render_auth_users_with_access_suffixes() {
+        let users = vec![
+            AuthUser::with_access("alice".to_owned(), UserAccessLevel::ReadWrite),
+            AuthUser::with_access("bob".to_owned(), UserAccessLevel::ReadOnly),
+            AuthUser::with_access("charlie".to_owned(), UserAccessLevel::Deny),
+            AuthUser::new("dave".to_owned()),
+        ];
+        assert_eq!(
+            render_auth_users(&users),
+            Some("alice:rw,bob:ro,charlie:deny,dave".to_owned())
+        );
     }
 
     // Tests for render_refused_options
@@ -1028,7 +1070,7 @@ mod server_runtime_tests {
         let modules = vec![ModuleDefinition {
             name: "secure".to_owned(),
             path: PathBuf::from("/secure"),
-            auth_users: vec!["alice".to_owned(), "bob".to_owned()],
+            auth_users: vec![AuthUser::new("alice".to_owned()), AuthUser::new("bob".to_owned())],
             ..Default::default()
         }];
         let result = generate_fallback_config(&modules, &[]).unwrap();
@@ -1140,6 +1182,34 @@ mod server_runtime_tests {
         let config = result.unwrap();
         let content = std::fs::read_to_string(config.config_path()).unwrap();
         assert!(content.contains("refuse options = delete delete-after"));
+    }
+
+    #[test]
+    fn generated_fallback_config_includes_fake_super_when_enabled() {
+        let modules = vec![ModuleDefinition {
+            name: "fakesuper".to_owned(),
+            path: PathBuf::from("/fakesuper"),
+            fake_super: true,
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(content.contains("fake super = yes"));
+    }
+
+    #[test]
+    fn generated_fallback_config_omits_fake_super_when_disabled() {
+        let modules = vec![ModuleDefinition {
+            name: "normal".to_owned(),
+            path: PathBuf::from("/normal"),
+            fake_super: false,
+            ..Default::default()
+        }];
+        let result = generate_fallback_config(&modules, &[]).unwrap();
+        let config = result.unwrap();
+        let content = std::fs::read_to_string(config.config_path()).unwrap();
+        assert!(!content.contains("fake super"));
     }
 }
 

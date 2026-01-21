@@ -251,6 +251,16 @@ fn parse_config_modules_inner(
                         })?;
                         builder.set_listable(parsed, path, line_number)?;
                     }
+                    "fake super" => {
+                        let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                            config_parse_error(
+                                path,
+                                line_number,
+                                format!("invalid boolean value '{value}' for 'fake super'"),
+                            )
+                        })?;
+                        builder.set_fake_super(parsed, path, line_number)?;
+                    }
                     "uid" => {
                         let uid = parse_numeric_identifier(value).ok_or_else(|| {
                             config_parse_error(path, line_number, format!("invalid uid '{value}'"))
@@ -1031,6 +1041,30 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(!result.modules[0].listable);
+    }
+
+    #[test]
+    fn parse_module_fake_super() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\nfake super = yes\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].fake_super);
+    }
+
+    #[test]
+    fn parse_module_fake_super_default_false() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(!result.modules[0].fake_super);
     }
 
     #[test]
