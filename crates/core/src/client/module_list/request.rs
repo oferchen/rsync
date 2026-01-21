@@ -81,7 +81,7 @@ impl ModuleListRequest {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Test utility constructor
     pub(crate) const fn from_components(
         address: DaemonAddress,
         username: Option<String>,
