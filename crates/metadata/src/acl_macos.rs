@@ -93,8 +93,8 @@ mod sys {
         /// See upstream rsync `lib/sysacls.c` lines 2607-2617.
         pub fn acl_get_entry(acl: acl_t, entry_id: c_int, entry_p: *mut acl_entry_t) -> c_int;
 
-        /// Deletes extended ACL from a file.
-        pub fn acl_delete_file(path_p: *const c_char, ty: acl_type_t) -> c_int;
+        /// Creates an empty ACL with capacity for the given number of entries.
+        pub fn acl_init(count: c_int) -> acl_t;
     }
 }
 
@@ -295,8 +295,19 @@ fn set_acl(path: &Path, acl: MacOsAcl) -> io::Result<()> {
 /// pattern, adapted here for access ACLs on macOS.
 fn reset_access_acl(path: &Path) -> io::Result<()> {
     let c_path = CString::new(path.as_os_str().as_bytes())?;
-    // SAFETY: Path is valid and null-terminated.
-    let result = unsafe { sys::acl_delete_file(c_path.as_ptr(), sys::ACL_TYPE_EXTENDED) };
+
+    // macOS doesn't have acl_delete_file - instead we set an empty ACL
+    // SAFETY: acl_init(0) creates an empty ACL, which is safe.
+    let empty_acl = unsafe { sys::acl_init(0) };
+    if empty_acl.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+
+    // SAFETY: Path is valid and null-terminated, empty_acl is valid.
+    let result = unsafe { sys::acl_set_file(c_path.as_ptr(), sys::ACL_TYPE_EXTENDED, empty_acl) };
+
+    // SAFETY: empty_acl was allocated by acl_init and must be freed.
+    unsafe { sys::acl_free(empty_acl as *mut std::ffi::c_void) };
 
     if result == 0 {
         return Ok(());
