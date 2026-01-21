@@ -65,7 +65,7 @@
 //! # See also
 //!
 //! - [`zlib`] for the zlib encoder/decoder implementation and API surface.
-//! - [`lz4`] for the LZ4 frame encoder/decoder implementation.
+//! - [`lz4`] for LZ4 compression (frame format and raw wire protocol blocks).
 //! - [`zstd`] for the Zstandard encoder/decoder implementation.
 //! - `engine` for the transfer pipeline that integrates these helpers.
 
