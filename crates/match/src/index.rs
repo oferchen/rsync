@@ -371,4 +371,63 @@ mod tests {
                 .is_none()
         );
     }
+
+    /// Tests that rolling checksum collisions are resolved by strong checksum.
+    ///
+    /// Creates a file with multiple blocks that could have rolling checksum
+    /// collisions in the hash table, verifying the strong checksum disambiguates.
+    #[test]
+    fn find_match_bytes_uses_strong_checksum_for_collision() {
+        // Create data with two identical-content blocks - they'll have same rolling checksum
+        // but the lookup should still work correctly.
+        let block_size = 700usize;
+        let mut data = vec![0u8; block_size * 3];
+
+        // Block 0: pattern A
+        for (i, byte) in data[..block_size].iter_mut().enumerate() {
+            *byte = (i % 256) as u8;
+        }
+        // Block 1: pattern B (different from A)
+        for (i, byte) in data[block_size..2 * block_size].iter_mut().enumerate() {
+            *byte = ((i + 128) % 256) as u8;
+        }
+        // Block 2: pattern A again (same as block 0)
+        for (i, byte) in data[2 * block_size..].iter_mut().enumerate() {
+            *byte = (i % 256) as u8;
+        }
+
+        let params = SignatureLayoutParams::new(
+            data.len() as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        );
+        let layout = calculate_signature_layout(params).expect("layout");
+        let signature = generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+            .expect("signature");
+        let index = DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4)
+            .expect("index");
+
+        // Verify block 0 matches with its own content
+        let block0_digest = index.block(0).rolling();
+        let block0_window: Vec<u8> = data[..index.block_length()].to_vec();
+        let found0 = index.find_match_bytes(block0_digest, &block0_window);
+        assert!(found0.is_some(), "block 0 should match");
+
+        // Verify block 1 matches with its own content
+        let block1_digest = index.block(1).rolling();
+        let block1_start = index.block_length();
+        let block1_window: Vec<u8> =
+            data[block1_start..block1_start + index.block_length()].to_vec();
+        let found1 = index.find_match_bytes(block1_digest, &block1_window);
+        assert!(found1.is_some(), "block 1 should match");
+
+        // Use block 0's digest with block 1's content - should not match
+        // (same rolling checksum lookup, but strong checksum differs)
+        let no_match = index.find_match_bytes(block0_digest, &block1_window);
+        assert!(
+            no_match.is_none(),
+            "wrong content should not match despite same digest key"
+        );
+    }
 }
