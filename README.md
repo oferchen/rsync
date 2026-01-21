@@ -108,12 +108,13 @@ The native Rust server (`--server` mode) fully implements rsync's delta transfer
 - ✅ **Error handling** - RAII cleanup, error categorization, ENOSPC detection
 
 **Test Coverage**:
-- 8,900+ tests passing (100% pass rate)
+- 10,285+ tests passing (100% pass rate)
 - Comprehensive integration tests for delta transfer
 - Error scenario tests (cleanup, categorization, edge cases)
 - Protocol version interoperability validated (protocols 28-32)
 - Content integrity and metadata preservation validated
 - Edge cases covered (empty files, large files, size mismatches, binary data)
+- Wire protocol compatibility verified against upstream rsync 3.4.1
 
 **Production Readiness**:
 - ✅ Core delta transfer: Production-ready
