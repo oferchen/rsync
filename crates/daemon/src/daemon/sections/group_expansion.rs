@@ -56,6 +56,11 @@ pub(crate) fn lookup_group_members(group_name: &str) -> Result<Option<Vec<String
     loop {
         let mut grp = MaybeUninit::<libc::group>::zeroed();
         let mut result: *mut libc::group = ptr::null_mut();
+        // SAFETY: All arguments are valid pointers with sufficient lifetimes:
+        // - `c_name` is a valid CString
+        // - `grp` is uninitialized but will be written by getgrnam_r
+        // - `buffer` provides scratch space owned by this function
+        // - `result` receives the output pointer
         let errno = unsafe {
             libc::getgrnam_r(
                 c_name.as_ptr(),
@@ -71,6 +76,7 @@ pub(crate) fn lookup_group_members(group_name: &str) -> Result<Option<Vec<String
                 return Ok(None);
             }
 
+            // SAFETY: `result` is non-null, so getgrnam_r successfully initialized `grp`.
             let grp = unsafe { grp.assume_init() };
             let members = extract_group_members(grp.gr_mem);
             return Ok(Some(members));
@@ -101,6 +107,9 @@ fn extract_group_members(gr_mem: *mut *mut libc::c_char) -> Vec<String> {
     }
 
     let mut ptr = gr_mem;
+    // SAFETY: `gr_mem` is a valid null-terminated array of C strings from libc.
+    // The array and its strings remain valid for the duration of iteration
+    // since the buffer backing them is owned by our caller.
     unsafe {
         while !(*ptr).is_null() {
             if let Ok(name) = CStr::from_ptr(*ptr).to_str() {
