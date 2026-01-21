@@ -54,6 +54,10 @@ impl<W> CountingWriter<W> {
         (self.inner, self.bytes)
     }
 
+    /// Adds `written` bytes to the counter using saturating arithmetic.
+    ///
+    /// Saturation prevents overflow if the counter exceeds `u64::MAX` (unlikely
+    /// in practice but provides a safety guarantee for very long-running streams).
     #[inline]
     pub(crate) const fn saturating_add_bytes(&mut self, written: usize) {
         self.bytes = self.bytes.saturating_add(written as u64);

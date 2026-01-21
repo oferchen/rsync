@@ -79,7 +79,20 @@ pub enum RawLz4Error {
 
 /// Encodes the 2-byte rsync header for a compressed block.
 ///
-/// The header format is: `[DEFLATED_DATA + (size >> 8)] [size & 0xFF]`
+/// # Wire Format
+///
+/// The header encodes compressed size into 2 bytes:
+/// ```text
+/// Byte 0: [DEFLATED_DATA (0x40)] | [high 6 bits of size]
+/// Byte 1: [low 8 bits of size]
+/// ```
+///
+/// This gives a 14-bit size field (6+8 bits), supporting blocks up to 16383 bytes.
+/// The high 2 bits of byte 0 are the flag indicator (0x40 = compressed data).
+///
+/// # Upstream Reference
+///
+/// See `token.c:send_deflated_token()` for the wire format definition.
 #[inline]
 pub const fn encode_header(compressed_size: usize) -> [u8; 2] {
     [
@@ -90,7 +103,19 @@ pub const fn encode_header(compressed_size: usize) -> [u8; 2] {
 
 /// Decodes the compressed size from a 2-byte rsync header.
 ///
-/// Returns `None` if the header doesn't have the DEFLATED_DATA flag set.
+/// # Returns
+///
+/// - `Some(size)` if the header has the `DEFLATED_DATA` flag (0x40) in the high bits
+/// - `None` if the header indicates uncompressed data or an invalid flag
+///
+/// # Bit Extraction
+///
+/// ```text
+/// size = ((header[0] & 0x3F) << 8) | header[1]
+/// ```
+///
+/// The mask 0x3F extracts the low 6 bits from byte 0, then shifts them to form
+/// the high portion of the 14-bit size value.
 #[inline]
 pub const fn decode_header(header: [u8; 2]) -> Option<usize> {
     if (header[0] & 0xC0) != DEFLATED_DATA {

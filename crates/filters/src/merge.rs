@@ -127,7 +127,7 @@ fn read_rules_recursive_impl(
         return Err(MergeFileError {
             path: path.display().to_string(),
             line: None,
-            message: format!("maximum merge depth ({max_depth}) exceeded"),
+            message: format!("maximum merge depth ({max_depth}) exceeded at depth {current_depth}"),
         });
     }
 
@@ -332,8 +332,10 @@ fn parse_modifiers(s: &str) -> (RuleModifiers, &str) {
             'w' => mods.word_split = true,
             'C' => mods.cvs_mode = true,
             ' ' | '_' => {
-                // Space or underscore ends modifiers, rest is pattern
-                // Skip past the separator and any additional whitespace
+                // Space or underscore separates modifiers from pattern.
+                // Underscore is useful when the pattern starts with a space or
+                // when embedding rules in shell commands where spaces need quoting.
+                // Example: `-r_*.tmp` is equivalent to `-r *.tmp`
                 let remainder = &s[idx + ch.len_utf8()..];
                 return (mods, remainder.trim_start());
             }
