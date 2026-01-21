@@ -485,13 +485,14 @@ fn rust_project_patterns() {
 /// Verifies JavaScript project patterns.
 #[test]
 fn javascript_project_patterns() {
+    // With first-match-wins, specific include must come before general exclude
     let rules = [
         FilterRule::exclude("node_modules/"),
         FilterRule::exclude("dist/"),
         FilterRule::exclude("*.min.js"),
         FilterRule::exclude("*.min.css"),
-        FilterRule::exclude(".env*"),
-        FilterRule::include(".env.example"),
+        FilterRule::include(".env.example"), // Include first
+        FilterRule::exclude(".env*"),        // Then exclude pattern
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 

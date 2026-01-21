@@ -1,6 +1,11 @@
 use super::common::*;
 use super::*;
 
+/// Tests that include-from patterns work correctly when placed before exclude.
+///
+/// With first-match-wins semantics, includes must come before excludes to
+/// create exceptions. This test verifies that `--include-from` followed by
+/// `--exclude "*"` correctly includes only the specified patterns.
 #[test]
 fn transfer_request_with_include_from_reinstate_patterns() {
     use tempfile::tempdir;
@@ -17,14 +22,15 @@ fn transfer_request_with_include_from_reinstate_patterns() {
     let include_file = tmp.path().join("includes.txt");
     std::fs::write(&include_file, "keep/\nkeep/**\n").expect("write include file");
 
+    // With first-match-wins, includes must come before excludes
     let mut expected_rules = Vec::new();
-    expected_rules.push(FilterRuleSpec::exclude("*".to_owned()));
     append_filter_rules_from_files(
         &mut expected_rules,
         &[include_file.as_os_str().to_os_string()],
         FilterRuleKind::Include,
     )
     .expect("load include patterns");
+    expected_rules.push(FilterRuleSpec::exclude("*".to_owned()));
 
     let engine_rules = expected_rules.iter().filter_map(|rule| match rule.kind() {
         FilterRuleKind::Include => Some(EngineFilterRule::include(rule.pattern())),
@@ -43,12 +49,13 @@ fn transfer_request_with_include_from_reinstate_patterns() {
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
 
+    // With first-match-wins, --include-from must come before --exclude
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        OsString::from("--exclude"),
-        OsString::from("*"),
         OsString::from("--include-from"),
         include_file.as_os_str().to_os_string(),
+        OsString::from("--exclude"),
+        OsString::from("*"),
         source_operand,
         dest_root.clone().into_os_string(),
     ]);
