@@ -160,7 +160,10 @@ mod tests {
     fn default_patterns_no_empty_entries() {
         for pattern in default_patterns() {
             assert!(!pattern.is_empty(), "found empty pattern");
-            assert!(!pattern.contains(' '), "pattern contains space: {pattern:?}");
+            assert!(
+                !pattern.contains(' '),
+                "pattern contains space: {pattern:?}"
+            );
         }
     }
 

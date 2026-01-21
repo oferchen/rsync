@@ -360,9 +360,12 @@ mod tests {
         fn compress_round_trip_lz4() {
             let data = b"test data that should be compressed with lz4";
             let mut buf = Vec::new();
-            let mut writer =
-                CompressedWriter::new(&mut buf, CompressionAlgorithm::Lz4, CompressionLevel::Default)
-                    .unwrap();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Lz4,
+                CompressionLevel::Default,
+            )
+            .unwrap();
 
             writer.write_all(data).unwrap();
             writer.finish().unwrap();
@@ -380,9 +383,12 @@ mod tests {
             let data3 = b" third chunk";
 
             let mut buf = Vec::new();
-            let mut writer =
-                CompressedWriter::new(&mut buf, CompressionAlgorithm::Lz4, CompressionLevel::Default)
-                    .unwrap();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Lz4,
+                CompressionLevel::Default,
+            )
+            .unwrap();
 
             writer.write_all(data1).unwrap();
             writer.write_all(data2).unwrap();
@@ -400,9 +406,12 @@ mod tests {
 
             let mut buf = Vec::new();
             {
-                let mut writer =
-                    CompressedWriter::new(&mut buf, CompressionAlgorithm::Lz4, CompressionLevel::Fast)
-                        .unwrap();
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Lz4,
+                    CompressionLevel::Fast,
+                )
+                .unwrap();
 
                 writer.write_all(&data).unwrap();
                 writer.finish().unwrap();
@@ -443,9 +452,12 @@ mod tests {
         fn compress_round_trip_zstd() {
             let data = b"test data that should be compressed with zstd";
             let mut buf = Vec::new();
-            let mut writer =
-                CompressedWriter::new(&mut buf, CompressionAlgorithm::Zstd, CompressionLevel::Default)
-                    .unwrap();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Zstd,
+                CompressionLevel::Default,
+            )
+            .unwrap();
 
             writer.write_all(data).unwrap();
             writer.finish().unwrap();
@@ -463,9 +475,12 @@ mod tests {
             let data3 = b" third chunk";
 
             let mut buf = Vec::new();
-            let mut writer =
-                CompressedWriter::new(&mut buf, CompressionAlgorithm::Zstd, CompressionLevel::Default)
-                    .unwrap();
+            let mut writer = CompressedWriter::new(
+                &mut buf,
+                CompressionAlgorithm::Zstd,
+                CompressionLevel::Default,
+            )
+            .unwrap();
 
             writer.write_all(data1).unwrap();
             writer.write_all(data2).unwrap();
@@ -483,9 +498,12 @@ mod tests {
 
             let mut buf = Vec::new();
             {
-                let mut writer =
-                    CompressedWriter::new(&mut buf, CompressionAlgorithm::Zstd, CompressionLevel::Fast)
-                        .unwrap();
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Zstd,
+                    CompressionLevel::Fast,
+                )
+                .unwrap();
 
                 writer.write_all(&data).unwrap();
                 writer.finish().unwrap();
