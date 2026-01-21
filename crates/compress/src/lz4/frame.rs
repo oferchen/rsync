@@ -1,16 +1,16 @@
 #![allow(clippy::module_name_repetitions)]
 
-//! Streaming LZ4 helpers shared across the workspace.
+//! LZ4 frame format compression.
 //!
-//! The interface mirrors the zlib and Zstandard helpers so higher layers can
-//! switch algorithms without rewriting their plumbing. Encoders implement
-//! [`std::io::Write`] while tracking the number of bytes produced, allowing the
-//! engine to reuse the same bandwidth accounting paths across compression
-//! strategies.
+//! This module provides streaming LZ4 compression using the standard LZ4 frame
+//! format. The frame format includes magic bytes, checksums, and supports
+//! streaming across multiple blocks.
+//!
+//! **Note**: This format is NOT compatible with upstream rsync's wire protocol.
+//! For wire protocol compatibility, use the [`super::raw`] module instead.
 
 use std::io::{self, BufReader, IoSliceMut, Read, Write};
 
-use crate::algorithm::CompressionAlgorithm;
 use crate::common::{CountingSink, CountingWriter};
 use crate::zlib::CompressionLevel;
 use lz4_flex::frame::{BlockMode, BlockSize, FrameDecoder, FrameEncoder, FrameInfo};
@@ -151,7 +151,7 @@ where
     }
 }
 
-/// Compresses `input` into a new [`Vec`].
+/// Compresses `input` into a new [`Vec`] using LZ4 frame format.
 pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<u8>> {
     let frame_info = frame_info_for_level(level);
     let mut encoder = FrameEncoder::with_frame_info(frame_info, Vec::new());
@@ -159,18 +159,12 @@ pub fn compress_to_vec(input: &[u8], level: CompressionLevel) -> io::Result<Vec<
     encoder.finish().map_err(io::Error::other)
 }
 
-/// Decompresses `input` into a new [`Vec`].
+/// Decompresses `input` from LZ4 frame format into a new [`Vec`].
 pub fn decompress_to_vec(input: &[u8]) -> io::Result<Vec<u8>> {
     let mut decoder = FrameDecoder::new(input);
     let mut output = Vec::new();
     io::copy(&mut decoder, &mut output)?;
     Ok(output)
-}
-
-/// Returns the preferred compression algorithm when callers do not provide one explicitly.
-#[must_use]
-pub const fn default_algorithm() -> CompressionAlgorithm {
-    CompressionAlgorithm::Lz4
 }
 
 fn frame_info_for_level(level: CompressionLevel) -> FrameInfo {
