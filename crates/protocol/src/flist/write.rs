@@ -291,6 +291,20 @@ impl FileListWriter {
     ///
     /// See `flist.c:send_file_entry()` lines 475-550 for the xflags calculation logic.
     fn calculate_xflags(&self, entry: &FileEntry, same_len: usize, suffix_len: usize) -> u32 {
+        let mut xflags = self.calculate_basic_flags(entry, same_len, suffix_len);
+        xflags |= self.calculate_device_flags(entry);
+        xflags |= self.calculate_hardlink_flags(entry);
+        xflags |= self.calculate_owner_name_flags(entry, xflags);
+        xflags |= self.calculate_time_flags(entry);
+        xflags |= self.calculate_directory_flags(entry);
+        xflags
+    }
+
+    /// Calculates basic transmission flags for mode, time, uid, gid, and name compression.
+    ///
+    /// These flags occupy byte 0 of the xflags field and are common across all protocol versions.
+    #[inline]
+    fn calculate_basic_flags(&self, entry: &FileEntry, same_len: usize, suffix_len: usize) -> u32 {
         let mut xflags: u32 = 0;
 
         // Directory with top_dir flag
@@ -329,78 +343,120 @@ impl FileListWriter {
             xflags |= XMIT_LONG_NAME as u32;
         }
 
+        xflags
+    }
+
+    /// Calculates device-related flags for block/character devices and special files.
+    ///
+    /// Handles XMIT_SAME_RDEV_MAJOR and XMIT_RDEV_MINOR_8_PRE30 flags.
+    /// These flags occupy byte 1 (shifted by 8 bits).
+    #[inline]
+    fn calculate_device_flags(&self, entry: &FileEntry) -> u32 {
+        let mut xflags: u32 = 0;
+
         // Device/special file rdev major comparison (protocol 28+)
         // Devices always, special files only for protocol < 31
         let needs_rdev = self.preserve_devices
             && (entry.is_device() || (entry.is_special() && self.protocol.as_u8() < 31));
 
-        if needs_rdev {
-            let major = if entry.is_device() {
-                entry.rdev_major().unwrap_or(0)
+        if !needs_rdev {
+            return xflags;
+        }
+
+        let major = if entry.is_device() {
+            entry.rdev_major().unwrap_or(0)
+        } else {
+            0 // Dummy rdev for special files
+        };
+
+        if major == self.state.prev_rdev_major() {
+            xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
+        }
+
+        // Set XMIT_RDEV_MINOR_8_PRE30 flag if minor fits in byte (protocol 28-29)
+        if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
+            let minor = if entry.is_device() {
+                entry.rdev_minor().unwrap_or(0)
             } else {
-                0 // Dummy rdev for special files
+                0
             };
-
-            if major == self.state.prev_rdev_major() {
-                xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
+            if minor <= 0xFF {
+                xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
             }
+        }
 
-            // Set XMIT_RDEV_MINOR_8_PRE30 flag if minor fits in byte (protocol 28-29)
-            if self.protocol.as_u8() >= 28 && self.protocol.as_u8() < 30 {
-                let minor = if entry.is_device() {
-                    entry.rdev_minor().unwrap_or(0)
-                } else {
-                    0
-                };
-                if minor <= 0xFF {
-                    xflags |= (XMIT_RDEV_MINOR_8_PRE30 as u32) << 8;
+        xflags
+    }
+
+    /// Calculates hardlink-related flags for protocol 28+.
+    ///
+    /// Handles XMIT_HLINKED, XMIT_HLINK_FIRST (protocol 30+) and
+    /// XMIT_SAME_DEV_PRE30 (protocol 28-29).
+    #[inline]
+    fn calculate_hardlink_flags(&self, entry: &FileEntry) -> u32 {
+        let mut xflags: u32 = 0;
+
+        if !self.preserve_hard_links || entry.is_dir() {
+            return xflags;
+        }
+
+        if self.protocol.as_u8() >= 30 {
+            // Protocol 30+: Use XMIT_HLINKED / XMIT_HLINK_FIRST
+            if let Some(idx) = entry.hardlink_idx() {
+                xflags |= (XMIT_HLINKED as u32) << 8;
+                if idx == u32::MAX {
+                    xflags |= (XMIT_HLINK_FIRST as u32) << 8;
+                }
+            }
+        } else if self.protocol.as_u8() >= 28 {
+            // Protocol 28-29: Use XMIT_SAME_DEV_PRE30 for hardlink dev compression
+            if let Some(dev) = entry.hardlink_dev() {
+                if dev == self.state.prev_hardlink_dev() {
+                    xflags |= (XMIT_SAME_DEV_PRE30 as u32) << 8;
                 }
             }
         }
 
-        // Hardlink flags (protocol 28+, non-directories only)
-        if self.preserve_hard_links && !entry.is_dir() {
-            if self.protocol.as_u8() >= 30 {
-                // Protocol 30+: Use XMIT_HLINKED / XMIT_HLINK_FIRST
-                if let Some(idx) = entry.hardlink_idx() {
-                    xflags |= (XMIT_HLINKED as u32) << 8;
-                    if idx == u32::MAX {
-                        xflags |= (XMIT_HLINK_FIRST as u32) << 8;
-                    }
-                }
-            } else if self.protocol.as_u8() >= 28 {
-                // Protocol 28-29: Use XMIT_SAME_DEV_PRE30 for hardlink dev compression
-                if let Some(dev) = entry.hardlink_dev() {
-                    if dev == self.state.prev_hardlink_dev() {
-                        xflags |= (XMIT_SAME_DEV_PRE30 as u32) << 8;
-                    }
-                }
-            }
+        xflags
+    }
+
+    /// Calculates user/group name flags for protocol 30+.
+    ///
+    /// Handles XMIT_USER_NAME_FOLLOWS and XMIT_GROUP_NAME_FOLLOWS.
+    /// These require the corresponding SAME_UID/SAME_GID flags to NOT be set.
+    #[inline]
+    fn calculate_owner_name_flags(&self, entry: &FileEntry, current_flags: u32) -> u32 {
+        let mut xflags: u32 = 0;
+
+        if self.protocol.as_u8() < 30 {
+            return xflags;
         }
 
-        // User name follows flag (protocol 30+)
+        // User name follows flag
         if self.preserve_uid
-            && self.protocol.as_u8() >= 30
             && entry.user_name().is_some()
-            && (xflags & (XMIT_SAME_UID as u32)) == 0
+            && (current_flags & (XMIT_SAME_UID as u32)) == 0
         {
             xflags |= (XMIT_USER_NAME_FOLLOWS as u32) << 8;
         }
 
-        // Group name follows flag (protocol 30+)
+        // Group name follows flag
         if self.preserve_gid
-            && self.protocol.as_u8() >= 30
             && entry.group_name().is_some()
-            && (xflags & (XMIT_SAME_GID as u32)) == 0
+            && (current_flags & (XMIT_SAME_GID as u32)) == 0
         {
             xflags |= (XMIT_GROUP_NAME_FOLLOWS as u32) << 8;
         }
 
-        // No content directory flag (protocol 30+, directories only)
-        // Note: shares bit position with XMIT_SAME_RDEV_MAJOR (devices vs dirs)
-        if entry.is_dir() && self.protocol.as_u8() >= 30 && !entry.content_dir() {
-            xflags |= (XMIT_NO_CONTENT_DIR as u32) << 8;
-        }
+        xflags
+    }
+
+    /// Calculates time-related flags including atime, crtime, and mtime nanoseconds.
+    ///
+    /// Handles XMIT_SAME_ATIME, XMIT_CRTIME_EQ_MTIME, and XMIT_MOD_NSEC.
+    #[inline]
+    fn calculate_time_flags(&self, entry: &FileEntry) -> u32 {
+        let mut xflags: u32 = 0;
 
         // Same atime flag (non-directories only, when preserving atimes)
         if self.preserve_atimes && !entry.is_dir() && entry.atime() == self.state.prev_atime() {
@@ -415,6 +471,23 @@ impl FileListWriter {
         // Modification time nanoseconds flag (protocol 31+)
         if self.protocol.as_u8() >= 31 && entry.mtime_nsec() != 0 {
             xflags |= (XMIT_MOD_NSEC as u32) << 8;
+        }
+
+        xflags
+    }
+
+    /// Calculates directory-specific flags for protocol 30+.
+    ///
+    /// Handles XMIT_NO_CONTENT_DIR flag which indicates a directory
+    /// whose contents should not be transferred.
+    #[inline]
+    fn calculate_directory_flags(&self, entry: &FileEntry) -> u32 {
+        let mut xflags: u32 = 0;
+
+        // No content directory flag (protocol 30+, directories only)
+        // Note: shares bit position with XMIT_SAME_RDEV_MAJOR (devices vs dirs)
+        if entry.is_dir() && self.protocol.as_u8() >= 30 && !entry.content_dir() {
+            xflags |= (XMIT_NO_CONTENT_DIR as u32) << 8;
         }
 
         xflags
@@ -503,31 +576,74 @@ impl FileListWriter {
         entry: &FileEntry,
         xflags: u32,
     ) -> io::Result<()> {
-        // 1. Write file size
-        self.codec.write_file_size(writer, entry.size() as i64)?;
+        self.write_size(writer, entry)?;
+        self.write_time_fields(writer, entry, xflags)?;
+        self.write_mode(writer, entry, xflags)?;
+        self.write_atime(writer, entry, xflags)?;
+        self.write_uid_field(writer, entry, xflags)?;
+        self.write_gid_field(writer, entry, xflags)?;
+        Ok(())
+    }
 
-        // 2. Write mtime if different
+    /// Writes file size using protocol-appropriate encoding.
+    #[inline]
+    fn write_size<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        entry: &FileEntry,
+    ) -> io::Result<()> {
+        self.codec.write_file_size(writer, entry.size() as i64)
+    }
+
+    /// Writes time-related fields: mtime, nsec, and crtime.
+    #[inline]
+    fn write_time_fields<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        entry: &FileEntry,
+        xflags: u32,
+    ) -> io::Result<()> {
+        // Write mtime if different
         if xflags & (XMIT_SAME_TIME as u32) == 0 {
             self.codec.write_mtime(writer, entry.mtime())?;
         }
 
-        // 3. Write nsec if flag set (protocol 31+)
+        // Write nsec if flag set (protocol 31+)
         if (xflags & ((XMIT_MOD_NSEC as u32) << 8)) != 0 {
             write_varint(writer, entry.mtime_nsec() as i32)?;
         }
 
-        // 4. Write crtime if preserving and different from mtime
+        // Write crtime if preserving and different from mtime
         if self.preserve_crtimes && (xflags & ((XMIT_CRTIME_EQ_MTIME as u32) << 16)) == 0 {
             crate::write_varlong(writer, entry.crtime(), 4)?;
         }
 
-        // 5. Write mode if different
+        Ok(())
+    }
+
+    /// Writes mode field if different from previous entry.
+    #[inline]
+    fn write_mode<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        entry: &FileEntry,
+        xflags: u32,
+    ) -> io::Result<()> {
         if xflags & (XMIT_SAME_MODE as u32) == 0 {
             let wire_mode = entry.mode() as i32;
             writer.write_all(&wire_mode.to_le_bytes())?;
         }
+        Ok(())
+    }
 
-        // 6. Write atime if preserving and different (non-directories only)
+    /// Writes atime field if preserving and different (non-directories only).
+    #[inline]
+    fn write_atime<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+        xflags: u32,
+    ) -> io::Result<()> {
         if self.preserve_atimes
             && !entry.is_dir()
             && (xflags & ((XMIT_SAME_ATIME as u32) << 8)) == 0
@@ -535,47 +651,74 @@ impl FileListWriter {
             crate::write_varlong(writer, entry.atime(), 4)?;
             self.state.update_atime(entry.atime());
         }
+        Ok(())
+    }
 
-        // 7. Write UID if preserving and different
+    /// Writes UID and optional user name if preserving and different.
+    #[inline]
+    fn write_uid_field<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+        xflags: u32,
+    ) -> io::Result<()> {
         let entry_uid = entry.uid().unwrap_or(0);
-        if self.preserve_uid && (xflags & (XMIT_SAME_UID as u32)) == 0 {
-            if self.protocol.uses_fixed_encoding() {
-                writer.write_all(&(entry_uid as i32).to_le_bytes())?;
-            } else {
-                write_varint(writer, entry_uid as i32)?;
-                // User name follows UID (protocol 30+)
-                if (xflags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0 {
-                    if let Some(name) = entry.user_name() {
-                        let name_bytes = name.as_bytes();
-                        let len = name_bytes.len().min(255) as u8;
-                        writer.write_all(&[len])?;
-                        writer.write_all(&name_bytes[..len as usize])?;
-                    }
-                }
-            }
-            self.state.update_uid(entry_uid);
+        if !self.preserve_uid || (xflags & (XMIT_SAME_UID as u32)) != 0 {
+            return Ok(());
         }
 
-        // 8. Write GID if preserving and different
+        if self.protocol.uses_fixed_encoding() {
+            writer.write_all(&(entry_uid as i32).to_le_bytes())?;
+        } else {
+            write_varint(writer, entry_uid as i32)?;
+            // User name follows UID (protocol 30+)
+            if (xflags & ((XMIT_USER_NAME_FOLLOWS as u32) << 8)) != 0 {
+                self.write_owner_name(writer, entry.user_name())?;
+            }
+        }
+        self.state.update_uid(entry_uid);
+        Ok(())
+    }
+
+    /// Writes GID and optional group name if preserving and different.
+    #[inline]
+    fn write_gid_field<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        entry: &FileEntry,
+        xflags: u32,
+    ) -> io::Result<()> {
         let entry_gid = entry.gid().unwrap_or(0);
-        if self.preserve_gid && (xflags & (XMIT_SAME_GID as u32)) == 0 {
-            if self.protocol.uses_fixed_encoding() {
-                writer.write_all(&(entry_gid as i32).to_le_bytes())?;
-            } else {
-                write_varint(writer, entry_gid as i32)?;
-                // Group name follows GID (protocol 30+)
-                if (xflags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
-                    if let Some(name) = entry.group_name() {
-                        let name_bytes = name.as_bytes();
-                        let len = name_bytes.len().min(255) as u8;
-                        writer.write_all(&[len])?;
-                        writer.write_all(&name_bytes[..len as usize])?;
-                    }
-                }
-            }
-            self.state.update_gid(entry_gid);
+        if !self.preserve_gid || (xflags & (XMIT_SAME_GID as u32)) != 0 {
+            return Ok(());
         }
 
+        if self.protocol.uses_fixed_encoding() {
+            writer.write_all(&(entry_gid as i32).to_le_bytes())?;
+        } else {
+            write_varint(writer, entry_gid as i32)?;
+            // Group name follows GID (protocol 30+)
+            if (xflags & ((XMIT_GROUP_NAME_FOLLOWS as u32) << 8)) != 0 {
+                self.write_owner_name(writer, entry.group_name())?;
+            }
+        }
+        self.state.update_gid(entry_gid);
+        Ok(())
+    }
+
+    /// Writes a user or group name (truncated to 255 bytes).
+    #[inline]
+    fn write_owner_name<W: Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        name: Option<&str>,
+    ) -> io::Result<()> {
+        if let Some(name) = name {
+            let name_bytes = name.as_bytes();
+            let len = name_bytes.len().min(255) as u8;
+            writer.write_all(&[len])?;
+            writer.write_all(&name_bytes[..len as usize])?;
+        }
         Ok(())
     }
 
