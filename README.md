@@ -1,4 +1,6 @@
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
+[![Build-cross](https://github.com/oferchen/rsync/actions/workflows/release-cross.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/release-cross.yml)
+[![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync – Classic rsync implementation in pure Rust
@@ -28,6 +30,7 @@ Classic `rsync` re-implementation in **pure Rust**, targeting wire-compatible **
   - [Interop & compliance harness](#interop--compliance-harness)
   - [XTask & docs validation](#xtask--docs-validation)
   - [Release & packaging](#release--packaging)
+  - [CI/CD Workflows](#cicd-workflows)
 - [Configuration & environment](#configuration--environment)
 - [Feature Flags](#feature-flags)
 - [Logging](#logging)
@@ -433,6 +436,79 @@ CI publishes artifacts across:
 * Linux (`x86_64` / `aarch64`) musl static tarballs (portable, no glibc dependency)
 * macOS (`x86_64` / `aarch64`) tarballs
 * Windows (`x86_64`) tarballs
+
+### CI/CD Workflows
+
+The project uses three GitHub Actions workflows for continuous integration, interoperability validation, and release management:
+
+#### CI Workflow (`ci.yml`)
+
+[![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
+
+Runs on every push and pull request to validate code quality:
+
+| Job | Description |
+|-----|-------------|
+| **lint-and-test** | Format check, Clippy lints, and full test suite via nextest |
+| **feature-flags** | Validates all feature flag combinations compile correctly |
+
+```bash
+# Equivalent local validation
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+cargo nextest run --workspace --all-features
+```
+
+#### Interop Validation (`interop-validation.yml`)
+
+Validates behavioral compatibility with upstream rsync:
+
+| Job | Description |
+|-----|-------------|
+| **Exit Code Validation** | Verifies exit codes match upstream rsync for all error scenarios |
+| **Message Format Validation** | Ensures error/warning messages match upstream format |
+| **Regenerate Goldens** | Manual workflow to update golden files when upstream behavior changes |
+
+Runs on:
+- Every push to master/main
+- Pull requests
+- Nightly schedule (catches upstream drift)
+- Manual dispatch
+
+```bash
+# Run locally
+cargo xtask interop exit-codes --verbose
+cargo xtask interop messages --verbose
+
+# Regenerate golden files after intentional changes
+cargo xtask interop exit-codes --regenerate
+cargo xtask interop messages --regenerate
+```
+
+#### Build-cross (`release-cross.yml`)
+
+Cross-platform release workflow triggered by version tags (`vX.Y.Z`):
+
+| Job | Description |
+|-----|-------------|
+| **validate-version** | Ensures tag matches `Cargo.toml` version (fail-fast gate) |
+| **linux** | Builds x86_64 and aarch64 `.deb` and `.rpm` packages |
+| **linux-musl** | Builds static musl binaries for maximum portability |
+| **macos** | Builds universal binaries for Intel and Apple Silicon |
+| **windows** | Builds Windows x86_64 executables |
+| **release-artifacts** | Uploads all artifacts to GitHub Releases |
+| **brew-formula** | Auto-generates Homebrew formula and creates PR |
+
+```bash
+# Trigger a release (after updating Cargo.toml version)
+git tag v0.5.3
+git push origin v0.5.3
+```
+
+**Release artifacts produced:**
+- Linux: `.deb` (amd64/arm64), `.rpm` (x86_64/aarch64), musl static tarballs
+- macOS: Universal tarballs (x86_64/aarch64)
+- Windows: `.tar.gz` and `.zip` archives
 
 ---
 
