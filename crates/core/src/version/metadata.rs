@@ -5,11 +5,22 @@ use std::string::String;
 
 use super::constants::build_revision;
 use super::constants::{
-    COPYRIGHT_NOTICE, RUST_VERSION, SOURCE_URL, SUBPROTOCOL_VERSION, UPSTREAM_BASE_VERSION,
+    BUILD_TOOLCHAIN, COPYRIGHT_NOTICE, RUST_VERSION, SOURCE_URL, SUBPROTOCOL_VERSION,
+    UPSTREAM_BASE_VERSION,
 };
 use super::constants::{
     DAEMON_PROGRAM_NAME, OC_DAEMON_PROGRAM_NAME, OC_PROGRAM_NAME, PROGRAM_NAME,
 };
+
+/// Returns a description of the build target platform.
+#[must_use]
+fn target_description() -> String {
+    format!(
+        "{}-{}",
+        std::env::consts::ARCH,
+        std::env::consts::OS
+    )
+}
 
 /// Static metadata describing the standard version banner rendered by `oc-rsync`.
 ///
@@ -45,6 +56,7 @@ pub struct VersionMetadata {
     subprotocol_version: u8,
     copyright_notice: &'static str,
     source_url: &'static str,
+    build_toolchain: &'static str,
 }
 
 impl VersionMetadata {
@@ -90,6 +102,12 @@ impl VersionMetadata {
         self.source_url
     }
 
+    /// Returns the build toolchain description (e.g., "Built in Rust 2024").
+    #[must_use]
+    pub const fn build_toolchain(&self) -> &'static str {
+        self.build_toolchain
+    }
+
     /// Writes the standard textual banner into the provided [`fmt::Write`] sink.
     pub fn write_standard_banner<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         write!(
@@ -106,6 +124,22 @@ impl VersionMetadata {
         }
 
         writer.write_char('\n')?;
+
+        // Upstream compatibility line
+        writeln!(
+            writer,
+            "Compatible with rsync {} wire protocol",
+            self.upstream_version()
+        )?;
+
+        // Build information
+        writeln!(
+            writer,
+            "{} for {}",
+            self.build_toolchain(),
+            target_description()
+        )?;
+
         writer.write_str("Copyright ")?;
         writer.write_str(self.copyright_notice())?;
         writer.write_char('\n')?;
@@ -178,6 +212,7 @@ pub const fn version_metadata_for_program(program_name: &'static str) -> Version
         subprotocol_version: SUBPROTOCOL_VERSION,
         copyright_notice: COPYRIGHT_NOTICE,
         source_url: SOURCE_URL,
+        build_toolchain: BUILD_TOOLCHAIN,
     }
 }
 
@@ -305,6 +340,13 @@ mod tests {
         let _ = meta.subprotocol_version(); // Just verify it's accessible
     }
 
+    #[test]
+    fn build_toolchain_accessor_returns_correct_value() {
+        let meta = version_metadata();
+        assert_eq!(meta.build_toolchain(), BUILD_TOOLCHAIN);
+        assert!(!meta.build_toolchain().is_empty());
+    }
+
     // Tests for write_standard_banner
     #[test]
     fn write_standard_banner_includes_program_name() {
@@ -348,6 +390,34 @@ mod tests {
         meta.write_standard_banner(&mut output).unwrap();
         assert!(output.contains("Source:"));
         assert!(output.contains(meta.source_url()));
+    }
+
+    #[test]
+    fn write_standard_banner_includes_upstream_compatibility() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.contains("Compatible with rsync"));
+        assert!(output.contains(meta.upstream_version()));
+        assert!(output.contains("wire protocol"));
+    }
+
+    #[test]
+    fn write_standard_banner_includes_build_toolchain() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        assert!(output.contains(meta.build_toolchain()));
+    }
+
+    #[test]
+    fn write_standard_banner_includes_target_platform() {
+        let meta = version_metadata();
+        let mut output = String::new();
+        meta.write_standard_banner(&mut output).unwrap();
+        // Should contain the arch and OS
+        assert!(output.contains(std::env::consts::ARCH));
+        assert!(output.contains(std::env::consts::OS));
     }
 
     #[test]
