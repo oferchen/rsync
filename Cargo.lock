@@ -541,6 +541,7 @@ dependencies = [
  "dashmap",
  "dns-lookup",
  "fs2",
+ "libc",
  "logging-sink",
  "protocol",
  "sd-notify",
@@ -695,6 +696,7 @@ dependencies = [
  "globset",
  "logging",
  "proptest",
+ "tempfile",
  "thiserror 2.0.17",
 ]
 
