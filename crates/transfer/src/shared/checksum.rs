@@ -1,5 +1,3 @@
-//! crates/core/src/server/shared/checksum.rs
-//!
 //! Checksum factory for creating signature algorithms from negotiated parameters.
 //!
 //! This module provides [`ChecksumFactory`] which centralizes the logic for

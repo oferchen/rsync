@@ -1673,4 +1673,71 @@ mod tests {
         assert_eq!(read_entry.rdev_major(), Some(7));
         assert_eq!(read_entry.rdev_minor(), Some(12345));
     }
+
+    #[test]
+    fn read_name_rejects_invalid_prefix_length() {
+        use crate::CompatibilityFlags;
+        use crate::flist::flags::XMIT_SAME_NAME;
+        use crate::varint::encode_varint_to_vec;
+
+        // This tests the error path at read_name() lines 1025-1034
+        // where same_len > prev_name.len() causes an error.
+
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        // Craft data with XMIT_SAME_NAME flag set but with same_len > prev_name.len()
+        // Since prev_name starts empty (len=0), any same_len > 0 will trigger the error.
+        let mut data = Vec::new();
+
+        // Flags: XMIT_SAME_NAME (0x20) - indicates name compression
+        let xmit_flags = XMIT_SAME_NAME;
+        encode_varint_to_vec(xmit_flags as i32, &mut data);
+
+        // same_len byte: 5 (but prev_name is empty, so this is invalid)
+        data.push(5u8);
+
+        // suffix_len byte: 4 (name = "test")
+        data.push(4u8);
+
+        // suffix data: "test"
+        data.extend_from_slice(b"test");
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
+
+        let result = reader.read_entry(&mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("exceeds previous name length"));
+    }
+
+    #[test]
+    fn read_entry_truncated_name_fails() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Test truncated name data (suffix_len claims more bytes than available)
+        let protocol = test_protocol();
+        let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+        let mut data = Vec::new();
+
+        // Flags: 0x01 (minimal valid flag that isn't end-of-list)
+        encode_varint_to_vec(0x01, &mut data);
+
+        // suffix_len byte: 100 (but we only provide 4 bytes)
+        data.push(100u8);
+
+        // suffix data: only "test" (4 bytes, not 100)
+        data.extend_from_slice(b"test");
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(protocol, flags);
+
+        let result = reader.read_entry(&mut cursor);
+        // Error can be UnexpectedEof or InvalidData depending on where truncation is detected
+        assert!(result.is_err(), "Expected error for truncated name data");
+    }
 }

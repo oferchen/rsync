@@ -484,4 +484,301 @@ mod wire_tests {
         assert!(default_result.is_some());
         assert!(matches!(default_result.unwrap(), RecvAclResult::Literal(_)));
     }
+
+    // =========================================================================
+    // Encoding Edge Cases
+    // =========================================================================
+
+    #[test]
+    fn encode_access_all_permission_bits() {
+        // Test all permission combinations
+        for perms in 0..=7 {
+            let encoded = encode_access(perms, false);
+            let (decoded, _) = decode_access(encoded, true);
+            assert_eq!(
+                decoded & !NAME_IS_USER,
+                perms,
+                "Perms 0x{perms:02X} roundtrip failed"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_access_name_is_user_flag() {
+        let access = 0x05 | NAME_IS_USER;
+        let encoded = encode_access(access, true);
+
+        // Encoded value should have both flags set
+        assert!(encoded & XFLAG_NAME_FOLLOWS != 0);
+        assert!(encoded & XFLAG_NAME_IS_USER != 0);
+
+        let (decoded, name_follows) = decode_access(encoded, true);
+        assert!(name_follows);
+        assert!(decoded & NAME_IS_USER != 0);
+        assert_eq!(decoded & !NAME_IS_USER, 0x05);
+    }
+
+    #[test]
+    fn decode_access_non_name_entry() {
+        // Non-name entries return the raw value without flag interpretation
+        let value = 0x1234;
+        let (decoded, name_follows) = decode_access(value, false);
+        assert_eq!(decoded, value);
+        assert!(!name_follows);
+    }
+
+    #[test]
+    fn encode_access_shifts_correctly() {
+        // Verify ACCESS_SHIFT is applied correctly
+        let perms = 0x07; // rwx
+        let encoded = encode_access(perms, false);
+
+        // Perms should be shifted left by ACCESS_SHIFT (2)
+        assert_eq!(encoded >> ACCESS_SHIFT, perms);
+        // Lower 2 bits should be clear (no flags)
+        assert_eq!(encoded & 0x03, 0);
+    }
+
+    // =========================================================================
+    // Error Path Tests - EOF Conditions
+    // =========================================================================
+
+    #[test]
+    fn recv_ida_entries_eof_reading_count() {
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let result = recv_ida_entries(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn recv_ida_entries_eof_reading_id() {
+        // Count says 1 entry but no id follows
+        let data = vec![0x01]; // count = 1
+        let mut cursor = Cursor::new(data);
+        let result = recv_ida_entries(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn recv_ida_entries_eof_reading_access() {
+        // Count says 1 entry, id present, but no access
+        let data = vec![0x01, 0x64]; // count = 1, id = 100
+        let mut cursor = Cursor::new(data);
+        let result = recv_ida_entries(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn recv_rsync_acl_eof_reading_ndx() {
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let result = recv_rsync_acl(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn recv_rsync_acl_eof_reading_flags() {
+        // ndx = 0 (literal) but no flags byte
+        let data = vec![0x00]; // ndx + 1 = 0, so ndx = -1
+        let mut cursor = Cursor::new(data);
+        let result = recv_rsync_acl(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn recv_rsync_acl_eof_reading_user_obj() {
+        // ndx = 0 (literal), flags indicate user_obj, but no data
+        let data = vec![0x00, XMIT_USER_OBJ]; // ndx = -1, flags = XMIT_USER_OBJ
+        let mut cursor = Cursor::new(data);
+        let result = recv_rsync_acl(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn recv_rsync_acl_eof_reading_group_obj() {
+        // flags indicate group_obj, but no data after user_obj
+        let data = vec![0x00, XMIT_USER_OBJ | XMIT_GROUP_OBJ, 0x07]; // user_obj = 7
+        let mut cursor = Cursor::new(data);
+        let result = recv_rsync_acl(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // RecvAclResult Tests
+    // =========================================================================
+
+    #[test]
+    fn recv_acl_result_debug_format() {
+        let cache_hit = RecvAclResult::CacheHit(42);
+        let debug = format!("{cache_hit:?}");
+        assert!(debug.contains("CacheHit"));
+        assert!(debug.contains("42"));
+
+        let literal = RecvAclResult::Literal(RsyncAcl::new());
+        let debug = format!("{literal:?}");
+        assert!(debug.contains("Literal"));
+    }
+
+    #[test]
+    fn acl_type_equality_and_copy() {
+        let a = AclType::Access;
+        let b = AclType::Access;
+        let c = AclType::Default;
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        // Test Clone/Copy
+        let d = a;
+        assert_eq!(a, d);
+    }
+
+    #[test]
+    fn acl_type_debug_format() {
+        let access = AclType::Access;
+        let default = AclType::Default;
+
+        assert!(format!("{access:?}").contains("Access"));
+        assert!(format!("{default:?}").contains("Default"));
+    }
+
+    // =========================================================================
+    // Name Following Tests
+    // =========================================================================
+
+    #[test]
+    fn recv_ida_entries_with_name_follows() {
+        use crate::varint::write_varint;
+
+        let mut data = Vec::new();
+        // count = 1
+        write_varint(&mut data, 1).unwrap();
+        // id = 1000
+        write_varint(&mut data, 1000).unwrap();
+        // access with XFLAG_NAME_FOLLOWS set: perms=7, flags=1 (name follows)
+        let encoded = (0x07 << ACCESS_SHIFT) | XFLAG_NAME_FOLLOWS;
+        write_varint(&mut data, encoded as i32).unwrap();
+        // name length = 4
+        data.push(4);
+        // name = "test"
+        data.extend_from_slice(b"test");
+
+        let mut cursor = Cursor::new(data);
+        let (entries, mask) = recv_ida_entries(&mut cursor).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries.iter().next().unwrap().id, 1000);
+        assert_eq!(mask, 0x07);
+    }
+
+    #[test]
+    fn recv_ida_entries_name_follows_eof_in_length() {
+        use crate::varint::write_varint;
+
+        let mut data = Vec::new();
+        write_varint(&mut data, 1).unwrap(); // count
+        write_varint(&mut data, 1000).unwrap(); // id
+        let encoded = (0x07 << ACCESS_SHIFT) | XFLAG_NAME_FOLLOWS;
+        write_varint(&mut data, encoded as i32).unwrap();
+        // Missing name length byte
+
+        let mut cursor = Cursor::new(data);
+        let result = recv_ida_entries(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn recv_ida_entries_name_follows_eof_in_name() {
+        use crate::varint::write_varint;
+
+        let mut data = Vec::new();
+        write_varint(&mut data, 1).unwrap(); // count
+        write_varint(&mut data, 1000).unwrap(); // id
+        let encoded = (0x07 << ACCESS_SHIFT) | XFLAG_NAME_FOLLOWS;
+        write_varint(&mut data, encoded as i32).unwrap();
+        data.push(10); // name length = 10
+        data.extend_from_slice(b"abc"); // Only 3 bytes instead of 10
+
+        let mut cursor = Cursor::new(data);
+        let result = recv_ida_entries(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Cache Behavior Tests
+    // =========================================================================
+
+    #[test]
+    fn separate_caches_for_access_and_default() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+
+        let mut cache = AclCache::new();
+
+        // Send as access ACL first
+        let mut buf1 = Vec::new();
+        send_rsync_acl(&mut buf1, &acl, AclType::Access, &mut cache, false).unwrap();
+
+        // Send same ACL as default - should NOT hit cache (different type)
+        let mut buf2 = Vec::new();
+        send_rsync_acl(&mut buf2, &acl, AclType::Default, &mut cache, false).unwrap();
+
+        // Both should be full literals (not cache hits)
+        let mut cursor1 = Cursor::new(buf1);
+        let result1 = recv_rsync_acl(&mut cursor1).unwrap();
+        assert!(matches!(result1, RecvAclResult::Literal(_)));
+
+        let mut cursor2 = Cursor::new(buf2);
+        let result2 = recv_rsync_acl(&mut cursor2).unwrap();
+        assert!(matches!(result2, RecvAclResult::Literal(_)));
+    }
+
+    #[test]
+    fn send_recv_file_acl_no_default() {
+        let access_acl = {
+            let mut acl = RsyncAcl::new();
+            acl.user_obj = 0x06;
+            acl.group_obj = 0x04;
+            acl.other_obj = 0x04;
+            acl
+        };
+
+        let mut cache = AclCache::new();
+        let mut buf = Vec::new();
+
+        // File (not directory) - no default ACL sent
+        send_acl(&mut buf, &access_acl, None, false, &mut cache).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let (access_result, default_result) = recv_acl(&mut cursor, false).unwrap();
+
+        assert!(matches!(access_result, RecvAclResult::Literal(_)));
+        assert!(default_result.is_none());
+    }
+
+    #[test]
+    fn send_recv_acl_with_mask_obj() {
+        let mut acl = RsyncAcl::new();
+        acl.user_obj = 0x07;
+        acl.group_obj = 0x07;
+        acl.mask_obj = 0x05; // Effective permissions masked to r-x
+        acl.other_obj = 0x04;
+
+        let mut cache = AclCache::new();
+        let mut buf = Vec::new();
+
+        send_rsync_acl(&mut buf, &acl, AclType::Access, &mut cache, false).unwrap();
+
+        let mut cursor = Cursor::new(buf);
+        let result = recv_rsync_acl(&mut cursor).unwrap();
+
+        match result {
+            RecvAclResult::Literal(received) => {
+                assert_eq!(received.user_obj, 0x07);
+                assert_eq!(received.group_obj, 0x07);
+                assert_eq!(received.mask_obj, 0x05);
+                assert_eq!(received.other_obj, 0x04);
+            }
+            RecvAclResult::CacheHit(_) => panic!("Expected literal ACL"),
+        }
+    }
 }
