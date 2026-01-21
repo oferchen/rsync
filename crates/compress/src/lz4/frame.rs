@@ -227,4 +227,57 @@ mod tests {
         let restored = decompress_to_vec(&compressed).expect("decompress");
         assert_eq!(restored, payload);
     }
+
+    #[test]
+    fn decompress_detects_corrupted_frame() {
+        let payload = b"test data for checksum verification";
+        let mut compressed = compress_to_vec(payload, CompressionLevel::Default).expect("compress");
+
+        // Corrupt a byte in the middle of the frame (after the header)
+        // LZ4 frames have: magic (4) + frame descriptor (2-15) + blocks + checksum (4)
+        if compressed.len() > 10 {
+            compressed[8] ^= 0xFF;
+        }
+
+        // Decompression should fail due to corruption
+        let result = decompress_to_vec(&compressed);
+        assert!(result.is_err(), "corrupted frame should fail decompression");
+    }
+
+    #[test]
+    fn decompress_detects_truncated_checksum() {
+        let payload = b"sufficient data for a complete frame with checksum";
+        let compressed = compress_to_vec(payload, CompressionLevel::Default).expect("compress");
+
+        // Truncate only the last byte of the checksum
+        // The frame has content_checksum(true), so it needs the 4-byte checksum at the end
+        if compressed.len() > 5 {
+            let truncated = &compressed[..compressed.len() - 1];
+            let result = decompress_to_vec(truncated);
+            // Either error or wrong data - truncated checksums should fail validation
+            if let Ok(decoded) = result {
+                assert_ne!(decoded, payload, "truncated checksum should not match");
+            }
+        }
+    }
+
+    #[test]
+    fn decompress_invalid_magic_returns_error() {
+        // LZ4 frame magic is 0x184D2204
+        let invalid_frame = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let result = decompress_to_vec(&invalid_frame);
+        assert!(result.is_err(), "invalid magic should fail");
+    }
+
+    #[test]
+    fn compress_empty_input_produces_valid_frame() {
+        let compressed = compress_to_vec(&[], CompressionLevel::Default).expect("compress empty");
+        // Valid LZ4 frame for empty input still has magic + descriptor + end marker
+        assert!(
+            !compressed.is_empty(),
+            "empty input should produce frame header"
+        );
+        let restored = decompress_to_vec(&compressed).expect("decompress");
+        assert!(restored.is_empty(), "empty input should round-trip");
+    }
 }
