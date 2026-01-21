@@ -32,6 +32,11 @@ pub const DEFLATED_DATA: u8 = 0x40;
 /// Maximum compressed block size in bytes (14-bit field, upstream MAX_DATA_COUNT).
 pub const MAX_BLOCK_SIZE: usize = 16383;
 
+/// Maximum decompressed size to prevent memory exhaustion attacks.
+/// Set to 64 MiB which is larger than any reasonable rsync block.
+/// Upstream rsync uses 128KB blocks max, but we allow for larger custom configs.
+pub const MAX_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
+
 /// Minimum header size for a compressed block.
 pub const HEADER_SIZE: usize = 2;
 
@@ -45,6 +50,10 @@ pub enum RawLz4Error {
     /// Compressed output exceeds maximum block size.
     #[error("compressed size {0} exceeds maximum block size {MAX_BLOCK_SIZE}")]
     CompressedTooLarge(usize),
+
+    /// Requested decompressed size exceeds safety limit.
+    #[error("requested decompressed size {0} exceeds maximum {MAX_DECOMPRESSED_SIZE}")]
+    DecompressedSizeTooLarge(usize),
 
     /// Output buffer is too small.
     #[error("output buffer too small: need {needed}, have {available}")]
@@ -209,15 +218,19 @@ pub fn decompress_block(input: &[u8], output: &mut [u8]) -> Result<usize, RawLz4
 /// # Arguments
 ///
 /// * `input` - Buffer starting with the 2-byte header
-/// * `max_decompressed_size` - Maximum expected decompressed size
+/// * `max_decompressed_size` - Maximum expected decompressed size (must not exceed [`MAX_DECOMPRESSED_SIZE`])
 ///
 /// # Errors
 ///
-/// Returns an error if decompression fails or the header is invalid.
+/// Returns an error if decompression fails, the header is invalid, or
+/// `max_decompressed_size` exceeds [`MAX_DECOMPRESSED_SIZE`].
 pub fn decompress_block_to_vec(
     input: &[u8],
     max_decompressed_size: usize,
 ) -> Result<Vec<u8>, RawLz4Error> {
+    if max_decompressed_size > MAX_DECOMPRESSED_SIZE {
+        return Err(RawLz4Error::DecompressedSizeTooLarge(max_decompressed_size));
+    }
     let mut output = vec![0u8; max_decompressed_size];
     let size = decompress_block(input, &mut output)?;
     output.truncate(size);
@@ -243,15 +256,20 @@ pub fn write_compressed_block<W: Write>(
 /// # Arguments
 ///
 /// * `reader` - Source to read compressed data from
-/// * `max_decompressed_size` - Maximum expected decompressed size
+/// * `max_decompressed_size` - Maximum expected decompressed size (must not exceed [`MAX_DECOMPRESSED_SIZE`])
 ///
 /// # Errors
 ///
-/// Returns an error if reading fails, the header is invalid, or decompression fails.
+/// Returns an error if reading fails, the header is invalid, decompression fails,
+/// or `max_decompressed_size` exceeds [`MAX_DECOMPRESSED_SIZE`].
 pub fn read_compressed_block<R: Read>(
     reader: &mut R,
     max_decompressed_size: usize,
 ) -> Result<Vec<u8>, RawLz4Error> {
+    if max_decompressed_size > MAX_DECOMPRESSED_SIZE {
+        return Err(RawLz4Error::DecompressedSizeTooLarge(max_decompressed_size));
+    }
+
     // Read header
     let mut header = [0u8; HEADER_SIZE];
     reader.read_exact(&mut header)?;
@@ -518,5 +536,76 @@ mod tests {
         assert!(!is_deflated_data(0x00)); // END_FLAG
         assert!(!is_deflated_data(0x80)); // TOKEN_REL
         assert!(!is_deflated_data(0xC0)); // TOKENRUN_REL
+    }
+
+    #[test]
+    fn read_compressed_block_eof_in_header() {
+        use std::io::Cursor;
+
+        // Only one byte when header needs two
+        let mut cursor = Cursor::new(vec![0x40]);
+        let result = read_compressed_block(&mut cursor, 1000);
+        assert!(matches!(result, Err(RawLz4Error::Io(_))));
+        if let Err(RawLz4Error::Io(e)) = result {
+            assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+        }
+    }
+
+    #[test]
+    fn read_compressed_block_eof_in_data() {
+        use std::io::Cursor;
+
+        // Header says 100 bytes but only 5 present
+        let header = encode_header(100);
+        let mut data = Vec::from(header);
+        data.extend_from_slice(&[0x00, 0x01, 0x02, 0x03, 0x04]); // Only 5 bytes
+        let mut cursor = Cursor::new(data);
+        let result = read_compressed_block(&mut cursor, 1000);
+        assert!(matches!(result, Err(RawLz4Error::Io(_))));
+    }
+
+    #[test]
+    fn read_compressed_block_empty_reader() {
+        use std::io::Cursor;
+
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let result = read_compressed_block(&mut cursor, 1000);
+        assert!(matches!(result, Err(RawLz4Error::Io(_))));
+    }
+
+    #[test]
+    fn decompress_block_to_vec_max_size_exceeded() {
+        // Test that decompression rejects sizes exceeding MAX_DECOMPRESSED_SIZE
+        let input = b"test";
+        let compressed = compress_block_to_vec(input).expect("compress");
+
+        let result = decompress_block_to_vec(&compressed, MAX_DECOMPRESSED_SIZE + 1);
+        assert!(matches!(
+            result,
+            Err(RawLz4Error::DecompressedSizeTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn read_compressed_block_max_size_exceeded() {
+        use std::io::Cursor;
+
+        let input = b"test";
+        let mut buffer = Vec::new();
+        write_compressed_block(input, &mut buffer).expect("write");
+
+        let mut cursor = Cursor::new(buffer);
+        let result = read_compressed_block(&mut cursor, MAX_DECOMPRESSED_SIZE + 1);
+        assert!(matches!(
+            result,
+            Err(RawLz4Error::DecompressedSizeTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn decompressed_size_too_large_error_message() {
+        let err = RawLz4Error::DecompressedSizeTooLarge(MAX_DECOMPRESSED_SIZE + 100);
+        let msg = err.to_string();
+        assert!(msg.contains("exceeds maximum"));
     }
 }

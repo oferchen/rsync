@@ -659,17 +659,23 @@ impl ReceiverContext {
                     // Verify checksum matches computed hash
                     // Upstream receiver.c:440-457 - verification after delta application
                     let computed = checksum_verifier.finalize();
-                    // Compare only up to the minimum of computed and received lengths
-                    // (some algorithms may have truncated checksums)
-                    let cmp_len = std::cmp::min(computed.len(), file_checksum.len());
-                    if computed[..cmp_len] != file_checksum[..cmp_len] {
+                    // Require exact length match for security - truncated checksums are invalid
+                    if computed.len() != file_checksum.len() {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!(
-                                "checksum verification failed for {:?}: expected {:02x?}, got {:02x?}",
+                                "checksum length mismatch for {:?}: expected {} bytes, got {} bytes",
                                 file_path,
-                                &file_checksum[..cmp_len],
-                                &computed[..cmp_len]
+                                checksum_len,
+                                computed.len()
+                            ),
+                        ));
+                    }
+                    if computed != file_checksum {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "checksum verification failed for {file_path:?}: expected {file_checksum:02x?}, got {computed:02x?}"
                             ),
                         ));
                     }
@@ -695,12 +701,23 @@ impl ReceiverContext {
                         // We have a basis file - copy the block
                         // Mirrors upstream receiver.c receive_data() block copy logic
                         let layout = sig.layout();
+                        let block_count = layout.block_count() as usize;
+
+                        // Validate block index bounds (upstream receiver.c doesn't send invalid indices)
+                        if block_idx >= block_count {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "block index {block_idx} out of bounds (file has {block_count} blocks)"
+                                ),
+                            ));
+                        }
+
                         let block_len = layout.block_length().get() as u64;
                         let offset = block_idx as u64 * block_len;
 
                         // Calculate actual bytes to copy for this block
                         // Last block may be shorter (remainder)
-                        let block_count = layout.block_count() as usize;
                         let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
                             // Last block uses remainder size
                             let remainder = layout.remainder();
@@ -750,7 +767,18 @@ impl ReceiverContext {
             // Finalize sparse writing if active
             // This ensures trailing zeros are handled (extends file to correct size)
             if let Some(ref mut sparse) = sparse_state {
-                sparse.finish(&mut output)?;
+                let final_pos = sparse.finish(&mut output)?;
+                // Validate file size matches expected size from sender
+                let expected_size = file_entry.size();
+                if final_pos != expected_size {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "sparse file size mismatch for {file_path:?}: \
+                             expected {expected_size} bytes, got {final_pos} bytes"
+                        ),
+                    ));
+                }
             }
 
             // Sync the output file

@@ -244,7 +244,28 @@ fn parse_rule_line_expanded(
 
 /// Modifiers parsed from a rule prefix.
 ///
-/// These mirror upstream rsync's rule modifiers from `exclude.c`.
+/// These mirror upstream rsync's rule modifiers from `exclude.c` (lines 1220-1288).
+/// Modifiers appear between the action character and the pattern, e.g., `-!ps pattern`.
+///
+/// # Modifier Characters
+///
+/// | Char | Field | Description |
+/// |------|-------|-------------|
+/// | `!` | `negate` | Invert match result |
+/// | `p` | `perishable` | Can be overridden by include rules |
+/// | `s` | `sender_only` | Apply on sender side only |
+/// | `r` | `receiver_only` | Apply on receiver side only |
+/// | `x` | `xattr_only` | Match xattr names only |
+/// | `e` | `exclude_only` | Force rule to exclude |
+/// | `n` | `no_inherit` | Don't inherit parent rules (merge) |
+/// | `w` | `word_split` | Split pattern on whitespace |
+/// | `C` | `cvs_mode` | Add CVS exclusion patterns |
+///
+/// # Examples
+///
+/// - `-!s *.tmp` - Exclude files NOT matching `*.tmp`, sender-only
+/// - `+p important.txt` - Perishable include rule
+/// - `-sw *.o *.obj` - Sender-only exclude, word-split into two rules
 #[derive(Clone, Copy, Debug, Default)]
 struct RuleModifiers {
     /// Negate the match result (`!` modifier).
