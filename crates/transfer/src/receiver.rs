@@ -2227,4 +2227,211 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(cursor.position(), 0);
     }
+
+    // ============================================================================
+    // Delta apply edge case tests
+    // ============================================================================
+
+    #[test]
+    fn apply_whole_file_delta_handles_empty_literals() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("output.txt");
+
+        // Empty delta script (no tokens)
+        let script = DeltaScript::new(vec![], 0, 0);
+
+        apply_whole_file_delta(&output_path, &script).unwrap();
+
+        let result = std::fs::read(&output_path).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn apply_whole_file_delta_handles_large_literal() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("output.txt");
+
+        // Large literal (64KB)
+        let large_data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
+        let tokens = vec![DeltaToken::Literal(large_data.clone())];
+        let script = DeltaScript::new(tokens, 65536, 65536);
+
+        apply_whole_file_delta(&output_path, &script).unwrap();
+
+        let result = std::fs::read(&output_path).unwrap();
+        assert_eq!(result, large_data);
+    }
+
+    #[test]
+    fn apply_whole_file_delta_concatenates_multiple_literals() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let output_path = temp_dir.path().join("output.txt");
+
+        // Multiple small literals
+        let tokens = vec![
+            DeltaToken::Literal(b"part1_".to_vec()),
+            DeltaToken::Literal(b"part2_".to_vec()),
+            DeltaToken::Literal(b"part3".to_vec()),
+        ];
+        let script = DeltaScript::new(tokens, 17, 17);
+
+        apply_whole_file_delta(&output_path, &script).unwrap();
+
+        let result = std::fs::read(&output_path).unwrap();
+        assert_eq!(result, b"part1_part2_part3");
+    }
+
+    #[test]
+    fn wire_delta_to_script_handles_empty_input() {
+        let wire_ops: Vec<protocol::wire::DeltaOp> = vec![];
+        let script = wire_delta_to_script(wire_ops);
+
+        assert!(script.is_empty());
+        assert_eq!(script.total_bytes(), 0);
+        assert_eq!(script.literal_bytes(), 0);
+    }
+
+    #[test]
+    fn wire_delta_to_script_handles_zero_length_literal() {
+        use protocol::wire::DeltaOp;
+
+        let wire_ops = vec![DeltaOp::Literal(vec![])];
+        let script = wire_delta_to_script(wire_ops);
+
+        assert_eq!(script.tokens().len(), 1);
+        assert_eq!(script.total_bytes(), 0);
+    }
+
+    #[test]
+    fn wire_delta_to_script_handles_zero_length_copy() {
+        use protocol::wire::DeltaOp;
+
+        let wire_ops = vec![DeltaOp::Copy {
+            block_index: 0,
+            length: 0,
+        }];
+        let script = wire_delta_to_script(wire_ops);
+
+        assert_eq!(script.tokens().len(), 1);
+        assert_eq!(script.total_bytes(), 0);
+        assert_eq!(script.copy_bytes(), 0);
+    }
+
+    #[test]
+    fn wire_delta_to_script_mixed_operations() {
+        use protocol::wire::DeltaOp;
+
+        // Simulate typical rsync delta: copy unchanged block, insert literal, copy another block
+        let wire_ops = vec![
+            DeltaOp::Copy {
+                block_index: 0,
+                length: 1024,
+            },
+            DeltaOp::Literal(vec![0xAB; 128]),
+            DeltaOp::Copy {
+                block_index: 2,
+                length: 512,
+            },
+            DeltaOp::Literal(vec![0xCD; 64]),
+        ];
+
+        let script = wire_delta_to_script(wire_ops);
+
+        assert_eq!(script.tokens().len(), 4);
+        assert_eq!(script.total_bytes(), 1024 + 128 + 512 + 64);
+        assert_eq!(script.literal_bytes(), 128 + 64);
+        assert_eq!(script.copy_bytes(), 1024 + 512);
+    }
+
+    #[test]
+    fn checksum_verifier_empty_data_produces_valid_digest() {
+        let protocol = ProtocolVersion::try_from(28u8).unwrap();
+        let verifier = ChecksumVerifier::new(None, protocol, 0, None);
+
+        // No updates, just finalize
+        let digest = verifier.finalize();
+
+        // MD4 produces 16 bytes even for empty input
+        assert_eq!(digest.len(), 16);
+    }
+
+    #[test]
+    fn checksum_verifier_digest_len_returns_correct_size() {
+        use protocol::CompressionAlgorithm;
+
+        // MD4 (protocol < 30)
+        let protocol28 = ProtocolVersion::try_from(28u8).unwrap();
+        let verifier28 = ChecksumVerifier::new(None, protocol28, 0, None);
+        assert_eq!(verifier28.digest_len(), 16);
+
+        // MD5 (protocol >= 30)
+        let protocol32 = ProtocolVersion::try_from(32u8).unwrap();
+        let verifier32 = ChecksumVerifier::new(None, protocol32, 0, None);
+        assert_eq!(verifier32.digest_len(), 16);
+
+        // XXH3 (negotiated)
+        let negotiated = NegotiationResult {
+            checksum: ChecksumAlgorithm::XXH3,
+            compression: CompressionAlgorithm::None,
+        };
+        let verifier_xxh3 = ChecksumVerifier::new(Some(&negotiated), protocol32, 0, None);
+        assert_eq!(verifier_xxh3.digest_len(), 8);
+
+        // SHA1 (negotiated)
+        let negotiated_sha1 = NegotiationResult {
+            checksum: ChecksumAlgorithm::SHA1,
+            compression: CompressionAlgorithm::None,
+        };
+        let verifier_sha1 = ChecksumVerifier::new(Some(&negotiated_sha1), protocol32, 0, None);
+        assert_eq!(verifier_sha1.digest_len(), 20);
+    }
+
+    #[test]
+    fn sparse_write_state_multiple_zero_runs_accumulate() {
+        let mut sparse = SparseWriteState::default();
+
+        // Accumulate multiple zero runs
+        sparse.accumulate(100);
+        sparse.accumulate(200);
+        sparse.accumulate(300);
+
+        assert_eq!(sparse.pending(), 600);
+    }
+
+    #[test]
+    fn sparse_write_state_write_flushes_pending_zeros() {
+        let mut output = Cursor::new(Vec::new());
+        let mut sparse = SparseWriteState::default();
+
+        // Accumulate zeros then write data
+        sparse.accumulate(1024);
+        sparse.write(&mut output, b"data").unwrap();
+        sparse.finish(&mut output).unwrap();
+
+        let result = output.into_inner();
+        // File should be 1024 zeros + "data"
+        assert_eq!(result.len(), 1028);
+        assert_eq!(&result[1024..], b"data");
+    }
+
+    #[test]
+    fn sparse_write_state_finish_handles_only_zeros() {
+        let mut output = Cursor::new(Vec::new());
+        let mut sparse = SparseWriteState::default();
+
+        // Only zeros, no data
+        sparse.accumulate(4096);
+        sparse.finish(&mut output).unwrap();
+
+        let result = output.into_inner();
+        // File should extend to 4096 bytes of zeros
+        assert_eq!(result.len(), 4096);
+        assert!(result.iter().all(|&b| b == 0));
+    }
 }
