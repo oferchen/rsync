@@ -41,6 +41,8 @@ impl CompiledRule {
             perishable,
             xattr_only,
             negate,
+            exclude_only: _,
+            no_inherit: _,
         } = rule;
         debug_assert!(
             !xattr_only,
@@ -278,6 +280,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Exclude);
@@ -296,6 +300,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -311,6 +317,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("file.bak"), false));
@@ -328,6 +336,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build"), false));
@@ -345,6 +355,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         // Directory-only patterns should match directories
@@ -363,6 +375,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         // Should match the directory itself
@@ -382,6 +396,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, false);
@@ -400,6 +416,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(false, true);
@@ -418,6 +436,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, true);
@@ -443,6 +463,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, false, false);
@@ -459,6 +481,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, true, false);
@@ -476,6 +500,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Protect);
@@ -492,6 +518,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Risk);
@@ -507,6 +535,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -523,6 +553,8 @@ mod tests {
             perishable: true,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.perishable);
@@ -538,6 +570,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build/main.o"), false));
@@ -555,6 +589,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("file.txt"), false));
@@ -569,6 +605,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: true,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled_negated = CompiledRule::new(rule_negated).unwrap();
         // Pattern matches file.txt, but negate inverts: returns false
@@ -588,6 +626,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: true,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -613,6 +653,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: true,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -636,6 +678,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: true,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.negate);
@@ -648,6 +692,8 @@ mod tests {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         };
         let compiled2 = CompiledRule::new(rule2).unwrap();
         assert!(!compiled2.negate);

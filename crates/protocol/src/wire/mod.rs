@@ -8,9 +8,14 @@
 //! For file list encoding/decoding, see the [`crate::flist`] module which
 //! provides the full-featured implementation used in production.
 
+pub mod compressed_token;
 pub mod delta;
 pub mod signature;
 
+pub use self::compressed_token::{
+    CompressedToken, CompressedTokenDecoder, CompressedTokenEncoder, DEFLATED_DATA, END_FLAG,
+    MAX_DATA_COUNT, TOKENRUN_LONG, TOKENRUN_REL, TOKEN_LONG, TOKEN_REL,
+};
 pub use self::delta::{
     // Upstream wire format
     CHUNK_SIZE,

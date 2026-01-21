@@ -22,8 +22,13 @@
 //! - `s` - Sender-side only
 //! - `r` - Receiver-side only
 //! - `x` - Xattr filtering only
+//! - `e` - Exclude-only (forces rule to act as exclude)
+//! - `n` - No-inherit (for merge rules, don't inherit parent rules)
+//! - `w` - Word-split (split pattern on whitespace into multiple rules)
+//! - `C` - CVS mode (add CVS exclusion patterns)
 //!
 //! Example: `-!p *.tmp` excludes files NOT matching `*.tmp`, marked perishable.
+//! Example: `-w foo bar baz` creates three exclude rules for "foo", "bar", "baz".
 //!
 //! Lines starting with `#` or `;` are comments. Empty lines are ignored.
 
@@ -164,11 +169,77 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
             continue;
         }
 
-        let rule = parse_rule_line(line, source_path, line_num)?;
-        rules.push(rule);
+        let line_rules = parse_rule_line_expanded(line, source_path, line_num)?;
+        rules.extend(line_rules);
     }
 
     Ok(rules)
+}
+
+/// Parses a single filter rule line, potentially expanding into multiple rules.
+///
+/// The `w` (word-split) modifier causes the pattern to be split on whitespace,
+/// creating multiple rules with the same action and modifiers.
+fn parse_rule_line_expanded(
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<Vec<FilterRule>, MergeFileError> {
+    // First, detect if we have word_split modifier
+    let (action_char, rest) = if let Some(rest) = line.strip_prefix('+') {
+        ('+', rest)
+    } else if let Some(rest) = line.strip_prefix('-') {
+        ('-', rest)
+    } else if let Some(rest) = line.strip_prefix('P') {
+        ('P', rest)
+    } else if let Some(rest) = line.strip_prefix('R') {
+        ('R', rest)
+    } else if let Some(rest) = line.strip_prefix('H') {
+        ('H', rest)
+    } else if let Some(rest) = line.strip_prefix('S') {
+        ('S', rest)
+    } else {
+        // Not a short-form rule that supports word_split, or not detectable
+        return Ok(vec![parse_rule_line(line, source_path, line_num)?]);
+    };
+
+    let (mods, pattern) = parse_modifiers(rest);
+
+    // If word_split is set, split pattern on whitespace and create multiple rules
+    if mods.word_split && !pattern.is_empty() {
+        let patterns: Vec<&str> = pattern.split_whitespace().collect();
+        if patterns.is_empty() {
+            return Err(MergeFileError::parse_error(
+                source_path,
+                line_num,
+                "word-split pattern is empty",
+            ));
+        }
+
+        // Create modifiers without word_split for the expanded rules
+        let mods_for_expanded = RuleModifiers {
+            word_split: false,
+            ..mods
+        };
+
+        let mut rules = Vec::with_capacity(patterns.len());
+        for pat in patterns {
+            let base_rule = match action_char {
+                '+' => FilterRule::include(pat),
+                '-' => FilterRule::exclude(pat),
+                'P' => FilterRule::protect(pat),
+                'R' => FilterRule::risk(pat),
+                'H' => FilterRule::hide(pat),
+                'S' => FilterRule::show(pat),
+                _ => unreachable!(),
+            };
+            rules.push(mods_for_expanded.apply(base_rule));
+        }
+        return Ok(rules);
+    }
+
+    // Not word_split, parse normally
+    Ok(vec![parse_rule_line(line, source_path, line_num)?])
 }
 
 /// Modifiers parsed from a rule prefix.
@@ -186,6 +257,15 @@ struct RuleModifiers {
     receiver_only: bool,
     /// Apply to xattr names only (`x` modifier).
     xattr_only: bool,
+    /// Exclude-only - forces the rule to be an exclude (`e` modifier).
+    /// When set, the rule cannot be used as an include even if the action is Include.
+    exclude_only: bool,
+    /// No inherit - for merge rules, don't inherit parent rules (`n` modifier).
+    no_inherit: bool,
+    /// Word split - split the pattern on whitespace (`w` modifier).
+    word_split: bool,
+    /// CVS mode - add CVS exclusion patterns (`C` modifier).
+    cvs_mode: bool,
 }
 
 impl RuleModifiers {
@@ -194,7 +274,9 @@ impl RuleModifiers {
         let mut rule = rule
             .with_negate(self.negate)
             .with_perishable(self.perishable)
-            .with_xattr_only(self.xattr_only);
+            .with_xattr_only(self.xattr_only)
+            .with_exclude_only(self.exclude_only)
+            .with_no_inherit(self.no_inherit);
 
         // Handle side modifiers - if specified, they override the defaults
         if self.sender_only && !self.receiver_only {
@@ -224,6 +306,10 @@ fn parse_modifiers(s: &str) -> (RuleModifiers, &str) {
             's' => mods.sender_only = true,
             'r' => mods.receiver_only = true,
             'x' => mods.xattr_only = true,
+            'e' => mods.exclude_only = true,
+            'n' => mods.no_inherit = true,
+            'w' => mods.word_split = true,
+            'C' => mods.cvs_mode = true,
             ' ' | '_' => {
                 // Space or underscore ends modifiers, rest is pattern
                 // Skip past the separator and any additional whitespace
@@ -743,12 +829,75 @@ mod tests {
 
     #[test]
     fn parse_modifiers_all_flags() {
-        let (mods, pattern) = parse_modifiers("!psrx pattern");
+        let (mods, pattern) = parse_modifiers("!psrxenC pattern");
         assert!(mods.negate);
         assert!(mods.perishable);
         assert!(mods.sender_only);
         assert!(mods.receiver_only);
         assert!(mods.xattr_only);
+        assert!(mods.exclude_only);
+        assert!(mods.no_inherit);
+        assert!(mods.cvs_mode);
+        assert_eq!(pattern, "pattern");
+    }
+
+    #[test]
+    fn parse_exclude_only_modifier() {
+        let rules = parse_rules("-e *.bak", Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].action(), FilterAction::Exclude);
+        assert!(rules[0].is_exclude_only());
+    }
+
+    #[test]
+    fn parse_no_inherit_modifier() {
+        let rules = parse_rules("-n *.tmp", Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].is_no_inherit());
+    }
+
+    #[test]
+    fn parse_word_split_modifier() {
+        // Word split expands a single rule into multiple rules
+        let rules = parse_rules("-w foo bar baz", Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern(), "foo");
+        assert_eq!(rules[1].pattern(), "bar");
+        assert_eq!(rules[2].pattern(), "baz");
+        // All should be excludes
+        for rule in &rules {
+            assert_eq!(rule.action(), FilterAction::Exclude);
+        }
+    }
+
+    #[test]
+    fn parse_word_split_with_other_modifiers() {
+        // Word split combined with other modifiers
+        let rules = parse_rules("-!pw one two", Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern(), "one");
+        assert_eq!(rules[1].pattern(), "two");
+        // Both should have negate and perishable flags
+        for rule in &rules {
+            assert!(rule.is_negated());
+            assert!(rule.is_perishable());
+        }
+    }
+
+    #[test]
+    fn parse_word_split_include() {
+        let rules = parse_rules("+w *.rs *.toml", Path::new("test")).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].action(), FilterAction::Include);
+        assert_eq!(rules[1].action(), FilterAction::Include);
+        assert_eq!(rules[0].pattern(), "*.rs");
+        assert_eq!(rules[1].pattern(), "*.toml");
+    }
+
+    #[test]
+    fn parse_cvs_mode_modifier() {
+        let (mods, pattern) = parse_modifiers("C pattern");
+        assert!(mods.cvs_mode);
         assert_eq!(pattern, "pattern");
     }
 }

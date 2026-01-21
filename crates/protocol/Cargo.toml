@@ -29,6 +29,7 @@ serde = ["dep:serde"]
 bytes = { version = "1.9", optional = true }
 compress = { path = "../compress" }
 encoding_rs = { version = "0.8", optional = true }
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 logging = { path = "../logging" }
 md-5 = { version = "0.10", default-features = false, features = ["std"] }
 memchr = "2.7"

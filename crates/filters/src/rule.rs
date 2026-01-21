@@ -20,6 +20,10 @@ pub struct FilterRule {
     pub(crate) perishable: bool,
     pub(crate) xattr_only: bool,
     pub(crate) negate: bool,
+    /// Exclude-only flag (`e` modifier) - forces rule to act as exclude.
+    pub(crate) exclude_only: bool,
+    /// No-inherit flag (`n` modifier) - for merge rules, don't inherit parent rules.
+    pub(crate) no_inherit: bool,
 }
 
 impl FilterRule {
@@ -34,6 +38,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -48,6 +54,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -62,6 +70,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -76,6 +86,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -91,6 +103,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -113,6 +127,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -135,6 +151,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -161,6 +179,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -187,6 +207,8 @@ impl FilterRule {
             perishable: false,
             xattr_only: false,
             negate: false,
+            exclude_only: false,
+            no_inherit: false,
         }
     }
 
@@ -279,6 +301,40 @@ impl FilterRule {
     #[must_use]
     pub const fn with_negate(mut self, negate: bool) -> Self {
         self.negate = negate;
+        self
+    }
+
+    /// Returns whether the rule is exclude-only (`e` modifier).
+    ///
+    /// When true, the rule always acts as an exclude regardless of action.
+    #[must_use]
+    pub const fn is_exclude_only(&self) -> bool {
+        self.exclude_only
+    }
+
+    /// Marks the rule as exclude-only (`e` modifier).
+    ///
+    /// Forces the rule to act as an exclude even if the action is Include.
+    #[must_use]
+    pub const fn with_exclude_only(mut self, exclude_only: bool) -> Self {
+        self.exclude_only = exclude_only;
+        self
+    }
+
+    /// Returns whether the rule has no-inherit set (`n` modifier).
+    ///
+    /// When true on merge rules, child rules don't inherit parent rules.
+    #[must_use]
+    pub const fn is_no_inherit(&self) -> bool {
+        self.no_inherit
+    }
+
+    /// Marks the rule with no-inherit (`n` modifier).
+    ///
+    /// For merge rules, this prevents child rules from inheriting parent rules.
+    #[must_use]
+    pub const fn with_no_inherit(mut self, no_inherit: bool) -> Self {
+        self.no_inherit = no_inherit;
         self
     }
 

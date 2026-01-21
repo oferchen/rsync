@@ -44,8 +44,10 @@ use protocol::codec::{ProtocolCodec, create_protocol_codec};
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
 use protocol::idlist::IdList;
-use protocol::wire::{DeltaOp, SignatureBlock, write_token_stream};
-use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
+use protocol::wire::{CompressedTokenEncoder, DeltaOp, SignatureBlock, write_token_stream};
+use protocol::{
+    ChecksumAlgorithm, CompressionAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion,
+};
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
 
@@ -580,7 +582,8 @@ impl GeneratorContext {
 
             // Send delta tokens (consumes delta_script to avoid clones)
             let wire_ops = script_to_wire_delta(delta_script);
-            write_token_stream(&mut &mut *writer, &wire_ops)?;
+            let compression = self.negotiated_algorithms.map(|n| n.compression);
+            write_delta_with_compression(&mut *writer, &wire_ops, compression)?;
 
             // Send file transfer checksum
             writer.write_all(&file_checksum)?;
@@ -980,19 +983,9 @@ impl GeneratorContext {
             })?;
         }
 
-        // Step 1b: Activate compression on reader if negotiated (Protocol 30+ with compression algorithm)
-        // This mirrors upstream io.c:io_start_buffering_in()
-        // Compression is activated AFTER multiplex, wrapping the multiplexed stream
-        if let Some(ref negotiated) = self.negotiated_algorithms
-            && let Some(compress_alg) = negotiated.compression.to_compress_algorithm()?
-        {
-            reader = reader.activate_compression(compress_alg).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("failed to activate INPUT compression: {e}"),
-                )
-            })?;
-        }
+        // NOTE: Compression is NOT applied at the stream level.
+        // Upstream rsync uses token-level compression (send_deflated_token/recv_deflated_token)
+        // only during the delta transfer phase. The filter list and file list are plain data.
 
         // Step 2: Receive filter list from client (server mode only)
         self.receive_filter_list_if_server(&mut reader)?;
@@ -1541,6 +1534,45 @@ fn script_to_wire_delta(script: DeltaScript) -> Vec<DeltaOp> {
             },
         })
         .collect()
+}
+
+/// Writes delta tokens to the wire, using compression if enabled.
+///
+/// When compression is None or CompressionAlgorithm::None, uses the plain
+/// token format (write_token_stream). Otherwise, uses the compressed token
+/// format with DEFLATED_DATA headers as expected by upstream rsync.
+///
+/// # Upstream Reference
+///
+/// - `token.c:send_token()` - switches between simple and deflated token sending
+/// - `token.c:send_deflated_token()` - compressed token format
+fn write_delta_with_compression<W: Write>(
+    writer: &mut W,
+    ops: &[DeltaOp],
+    compression: Option<CompressionAlgorithm>,
+) -> io::Result<()> {
+    match compression {
+        Some(CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX) => {
+            // Use compressed token format
+            let mut encoder = CompressedTokenEncoder::default();
+
+            for op in ops {
+                match op {
+                    DeltaOp::Literal(data) => {
+                        encoder.send_literal(writer, data)?;
+                    }
+                    DeltaOp::Copy { block_index, .. } => {
+                        encoder.send_block_match(writer, *block_index)?;
+                    }
+                }
+            }
+
+            encoder.finish(writer)?;
+            Ok(())
+        }
+        // No compression or unsupported algorithm - use plain format
+        _ => write_token_stream(writer, ops),
+    }
 }
 
 /// Applies a source-based permutation to two slices in-place using cycle-following.
