@@ -56,6 +56,9 @@ pub(super) fn accumulate_chunk(s1: u32, s2: u32, len: usize, chunk: &[u8]) -> (u
         return accumulate_chunk_scalar_raw(s1, s2, len, chunk);
     }
 
+    // SAFETY: NEON is available (checked above). The `accumulate_chunk_neon_impl`
+    // function safely handles any chunk length by processing aligned blocks and
+    // falling back to scalar for remainders.
     unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
 }
 

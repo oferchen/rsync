@@ -418,7 +418,12 @@ impl AsyncBatchCopier {
                 let dst = dst.as_ref().to_path_buf();
 
                 tokio::spawn(async move {
-                    let _permit = permit.acquire().await.unwrap();
+                    // The semaphore is created locally and only dropped after all tasks complete,
+                    // so `acquire()` can only fail if the semaphore is closed, which cannot happen.
+                    let _permit = permit
+                        .acquire()
+                        .await
+                        .expect("semaphore closed unexpectedly");
                     copier.copy_file(&src, &dst).await
                 })
             })
