@@ -1024,11 +1024,40 @@ pub struct BasisFileResult {
 }
 
 impl BasisFileResult {
+    /// Empty result when no basis file is found.
+    const EMPTY: Self = Self {
+        signature: None,
+        basis_path: None,
+    };
+
     /// Returns true if no basis file was found.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.signature.is_none()
     }
+}
+
+/// Configuration for basis file search and signature generation.
+#[derive(Debug)]
+pub struct BasisFileConfig<'a> {
+    /// Target file path in destination.
+    pub file_path: &'a std::path::Path,
+    /// Destination directory base.
+    pub dest_dir: &'a std::path::Path,
+    /// Relative path from destination root.
+    pub relative_path: &'a std::path::Path,
+    /// Expected size of the target file.
+    pub target_size: u64,
+    /// Whether to try fuzzy matching.
+    pub fuzzy_enabled: bool,
+    /// List of reference directories to check.
+    pub reference_directories: &'a [ReferenceDirectory],
+    /// Protocol version for signature generation.
+    pub protocol: ProtocolVersion,
+    /// Checksum truncation length.
+    pub checksum_length: NonZeroU8,
+    /// Algorithm for strong checksums.
+    pub checksum_algorithm: engine::signature::SignatureAlgorithm,
 }
 
 /// Tries to find a basis file in the reference directories.
@@ -1054,6 +1083,94 @@ fn try_reference_directories(
         }
     }
     None
+}
+
+/// Opens a file and returns it with metadata.
+///
+/// Returns the file handle, size, and path if successful.
+fn try_open_file(path: &std::path::Path) -> Option<(fs::File, u64, PathBuf)> {
+    let file = fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    Some((file, size, path.to_path_buf()))
+}
+
+/// Attempts fuzzy matching to find a similar basis file.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
+fn try_fuzzy_match(
+    relative_path: &std::path::Path,
+    dest_dir: &std::path::Path,
+    target_size: u64,
+) -> Option<(fs::File, u64, PathBuf)> {
+    let target_name = relative_path.file_name()?;
+    let fuzzy_matcher = FuzzyMatcher::new();
+    let fuzzy_match = fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)?;
+    try_open_file(&fuzzy_match.path)
+}
+
+/// Generates a signature for the given basis file.
+fn generate_basis_signature(
+    basis_file: fs::File,
+    basis_size: u64,
+    basis_path: PathBuf,
+    protocol: ProtocolVersion,
+    checksum_length: NonZeroU8,
+    checksum_algorithm: engine::signature::SignatureAlgorithm,
+) -> BasisFileResult {
+    let params = SignatureLayoutParams::new(basis_size, None, protocol, checksum_length);
+
+    let layout = match calculate_signature_layout(params) {
+        Ok(layout) => layout,
+        Err(_) => return BasisFileResult::EMPTY,
+    };
+
+    match generate_file_signature(basis_file, layout, checksum_algorithm) {
+        Ok(sig) => BasisFileResult {
+            signature: Some(sig),
+            basis_path: Some(basis_path),
+        },
+        Err(_) => BasisFileResult::EMPTY,
+    }
+}
+
+/// Finds a basis file for delta transfer using the provided configuration.
+///
+/// Search order:
+/// 1. Exact file at destination path
+/// 2. Reference directories (in order provided)
+/// 3. Fuzzy matching in destination directory (if enabled)
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1450` - Basis file selection in `recv_generator()`
+/// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
+/// - `generator.c:1400` - Reference directory checking
+pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileResult {
+    // Try sources in priority order: exact match → reference dirs → fuzzy
+    let basis = try_open_file(config.file_path)
+        .or_else(|| try_reference_directories(config.relative_path, config.reference_directories))
+        .or_else(|| {
+            if config.fuzzy_enabled {
+                try_fuzzy_match(config.relative_path, config.dest_dir, config.target_size)
+            } else {
+                None
+            }
+        });
+
+    let Some((file, size, path)) = basis else {
+        return BasisFileResult::EMPTY;
+    };
+
+    generate_basis_signature(
+        file,
+        size,
+        path,
+        config.protocol,
+        config.checksum_length,
+        config.checksum_algorithm,
+    )
 }
 
 /// Finds a basis file for delta transfer.
@@ -1092,103 +1209,18 @@ pub fn find_basis_file(
     checksum_length: NonZeroU8,
     checksum_algorithm: engine::signature::SignatureAlgorithm,
 ) -> BasisFileResult {
-    // Try to open the exact file first
-    let (basis_file, basis_size, basis_path) = if let Ok(f) = fs::File::open(file_path) {
-        let size = match f.metadata() {
-            Ok(meta) => meta.len(),
-            Err(_) => {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
-            }
-        };
-        (f, size, file_path.to_path_buf())
-    } else {
-        // Exact file not found - try reference directories first
-        let ref_result = try_reference_directories(relative_path, reference_directories);
-        if let Some((file, size, path)) = ref_result {
-            (file, size, path)
-        } else {
-            // Reference directories didn't yield a basis - try fuzzy matching if enabled
-            if !fuzzy_enabled {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
-            }
-
-            // Use FuzzyMatcher to find a similar file in dest_dir
-            let fuzzy_matcher = FuzzyMatcher::new();
-            let Some(target_name) = relative_path.file_name() else {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
-            };
-
-            let Some(fuzzy_match) =
-                fuzzy_matcher.find_fuzzy_basis(target_name, dest_dir, target_size)
-            else {
-                return BasisFileResult {
-                    signature: None,
-                    basis_path: None,
-                };
-            };
-
-            // Open the fuzzy-matched file as basis
-            let fuzzy_path = fuzzy_match.path;
-            let fuzzy_file = match fs::File::open(&fuzzy_path) {
-                Ok(f) => f,
-                Err(_) => {
-                    return BasisFileResult {
-                        signature: None,
-                        basis_path: None,
-                    };
-                }
-            };
-            let fuzzy_size = match fuzzy_file.metadata() {
-                Ok(meta) => meta.len(),
-                Err(_) => {
-                    return BasisFileResult {
-                        signature: None,
-                        basis_path: None,
-                    };
-                }
-            };
-            (fuzzy_file, fuzzy_size, fuzzy_path)
-        }
-    };
-
-    // Calculate signature layout
-    let params = SignatureLayoutParams::new(
-        basis_size,
-        None, // Use default block size heuristic
+    let config = BasisFileConfig {
+        file_path,
+        dest_dir,
+        relative_path,
+        target_size,
+        fuzzy_enabled,
+        reference_directories,
         protocol,
         checksum_length,
-    );
-
-    let layout = match calculate_signature_layout(params) {
-        Ok(layout) => layout,
-        Err(_) => {
-            return BasisFileResult {
-                signature: None,
-                basis_path: None,
-            };
-        }
+        checksum_algorithm,
     };
-
-    // Generate signature
-    match generate_file_signature(basis_file, layout, checksum_algorithm) {
-        Ok(sig) => BasisFileResult {
-            signature: Some(sig),
-            basis_path: Some(basis_path),
-        },
-        Err(_) => BasisFileResult {
-            signature: None,
-            basis_path: None,
-        },
-    }
+    find_basis_file_with_config(&config)
 }
 
 /// Writes signature blocks to the wire.

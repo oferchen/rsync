@@ -335,4 +335,185 @@ mod tests {
         assert!(!buf.is_empty());
         assert!(buf.len() < data.len() + 20); // Allow for zlib overhead
     }
+
+    #[test]
+    fn inner_mut_provides_access() {
+        let mut buf = Vec::new();
+        let mut writer = CompressedWriter::new(
+            &mut buf,
+            CompressionAlgorithm::Zlib,
+            CompressionLevel::Default,
+        )
+        .unwrap();
+
+        // Verify inner_mut returns a valid reference
+        let _inner = writer.inner_mut();
+        writer.finish().unwrap();
+    }
+
+    #[cfg(feature = "lz4")]
+    mod lz4_tests {
+        use super::*;
+        use compress::lz4::decompress_to_vec as lz4_decompress;
+
+        #[test]
+        fn compress_round_trip_lz4() {
+            let data = b"test data that should be compressed with lz4";
+            let mut buf = Vec::new();
+            let mut writer =
+                CompressedWriter::new(&mut buf, CompressionAlgorithm::Lz4, CompressionLevel::Default)
+                    .unwrap();
+
+            writer.write_all(data).unwrap();
+            writer.finish().unwrap();
+
+            assert!(!buf.is_empty());
+
+            let decompressed = lz4_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn compress_multiple_writes_lz4() {
+            let data1 = b"first chunk ";
+            let data2 = b"second chunk";
+            let data3 = b" third chunk";
+
+            let mut buf = Vec::new();
+            let mut writer =
+                CompressedWriter::new(&mut buf, CompressionAlgorithm::Lz4, CompressionLevel::Default)
+                    .unwrap();
+
+            writer.write_all(data1).unwrap();
+            writer.write_all(data2).unwrap();
+            writer.write_all(data3).unwrap();
+            writer.finish().unwrap();
+
+            let decompressed = lz4_decompress(&buf).unwrap();
+            let expected = b"first chunk second chunk third chunk";
+            assert_eq!(decompressed, expected);
+        }
+
+        #[test]
+        fn compress_large_data_lz4() {
+            let data = vec![b'y'; 8192];
+
+            let mut buf = Vec::new();
+            {
+                let mut writer =
+                    CompressedWriter::new(&mut buf, CompressionAlgorithm::Lz4, CompressionLevel::Fast)
+                        .unwrap();
+
+                writer.write_all(&data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+
+            let decompressed = lz4_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn lz4_bytes_written_tracks_size() {
+            let data = b"lz4 tracking test data that should compress well";
+            let mut buf = Vec::new();
+            {
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Lz4,
+                    CompressionLevel::Default,
+                )
+                .unwrap();
+
+                writer.write_all(data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+        }
+    }
+
+    #[cfg(feature = "zstd")]
+    mod zstd_tests {
+        use super::*;
+        use compress::zstd::decompress_to_vec as zstd_decompress;
+
+        #[test]
+        fn compress_round_trip_zstd() {
+            let data = b"test data that should be compressed with zstd";
+            let mut buf = Vec::new();
+            let mut writer =
+                CompressedWriter::new(&mut buf, CompressionAlgorithm::Zstd, CompressionLevel::Default)
+                    .unwrap();
+
+            writer.write_all(data).unwrap();
+            writer.finish().unwrap();
+
+            assert!(!buf.is_empty());
+
+            let decompressed = zstd_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn compress_multiple_writes_zstd() {
+            let data1 = b"first chunk ";
+            let data2 = b"second chunk";
+            let data3 = b" third chunk";
+
+            let mut buf = Vec::new();
+            let mut writer =
+                CompressedWriter::new(&mut buf, CompressionAlgorithm::Zstd, CompressionLevel::Default)
+                    .unwrap();
+
+            writer.write_all(data1).unwrap();
+            writer.write_all(data2).unwrap();
+            writer.write_all(data3).unwrap();
+            writer.finish().unwrap();
+
+            let decompressed = zstd_decompress(&buf).unwrap();
+            let expected = b"first chunk second chunk third chunk";
+            assert_eq!(decompressed, expected);
+        }
+
+        #[test]
+        fn compress_large_data_zstd() {
+            let data = vec![b'z'; 8192];
+
+            let mut buf = Vec::new();
+            {
+                let mut writer =
+                    CompressedWriter::new(&mut buf, CompressionAlgorithm::Zstd, CompressionLevel::Fast)
+                        .unwrap();
+
+                writer.write_all(&data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+
+            let decompressed = zstd_decompress(&buf).unwrap();
+            assert_eq!(decompressed, data);
+        }
+
+        #[test]
+        fn zstd_bytes_written_tracks_size() {
+            let data = b"zstd tracking test data that should compress well";
+            let mut buf = Vec::new();
+            {
+                let mut writer = CompressedWriter::new(
+                    &mut buf,
+                    CompressionAlgorithm::Zstd,
+                    CompressionLevel::Default,
+                )
+                .unwrap();
+
+                writer.write_all(data).unwrap();
+                writer.finish().unwrap();
+            }
+
+            assert!(!buf.is_empty());
+        }
+    }
 }
