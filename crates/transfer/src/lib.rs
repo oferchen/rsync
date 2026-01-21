@@ -375,23 +375,17 @@ pub fn run_server_with_handshake<W: Write>(
         writer.flush()?;
     }
 
-    // Activate compression on writer if negotiated (Protocol 30+ with compression algorithm)
-    // This mirrors upstream io.c:io_start_buffering_out()
-    // Compression is activated AFTER multiplex, wrapping the multiplexed stream
-    // Note: Reader compression is activated later in role contexts after INPUT multiplex
-    if let Some(ref negotiated) = handshake.negotiated_algorithms
-        && let Some(compress_alg) = negotiated.compression.to_compress_algorithm()?
-    {
-        // Use configured compression level or default to level 6 (upstream default)
-        // Compression level comes from:
-        // - Daemon configuration (rsyncd.conf compress-level setting)
-        // - Environment or other server-side configuration
-        let level = config
-            .compression_level
-            .unwrap_or(compress::zlib::CompressionLevel::Default);
-
-        writer = writer.activate_compression(compress_alg, level)?;
-    }
+    // NOTE: Compression is NOT applied at the stream level.
+    //
+    // Upstream rsync applies compression at the TOKEN level during delta transfer only:
+    // - token.c:send_token() calls send_deflated_token() when compression is enabled
+    // - token.c:recv_token() calls recv_deflated_token() to decompress
+    //
+    // The file list and other protocol data are sent as PLAIN data.
+    // Stream-level compression would corrupt the protocol.
+    //
+    // Token-level compression is handled in the delta transfer code via
+    // protocol::wire::compressed_token module.
 
     // Send MSG_IO_TIMEOUT for daemon mode with configured timeout (main.c:1249-1250)
     // This tells the client about the server's I/O timeout value
