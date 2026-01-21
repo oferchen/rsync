@@ -1483,3 +1483,108 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
 }
+
+// ===========================================================================
+// PROPERTY-BASED TESTS
+// ===========================================================================
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::io::Cursor;
+
+    proptest! {
+        /// Property: varint encode/decode roundtrip preserves all i32 values.
+        #[test]
+        fn varint_roundtrip_all_i32(value: i32) {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            prop_assert_eq!(decoded, value);
+            prop_assert!(remainder.is_empty());
+        }
+
+        /// Property: varint stream encode/decode roundtrip via Read/Write traits.
+        #[test]
+        fn varint_stream_roundtrip(value: i32) {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, value).expect("write succeeds");
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            prop_assert_eq!(decoded, value);
+        }
+
+        /// Property: fixed int (4-byte) roundtrip preserves all i32 values.
+        #[test]
+        fn fixed_int_roundtrip(value: i32) {
+            let mut buf = Vec::new();
+            write_int(&mut buf, value).expect("write succeeds");
+            prop_assert_eq!(buf.len(), 4);
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_int(&mut cursor).expect("read succeeds");
+            prop_assert_eq!(decoded, value);
+        }
+
+        /// Property: varlong roundtrip preserves non-negative i64 values with min_bytes=8.
+        /// Note: varlong is designed for unsigned values (file sizes, timestamps).
+        #[test]
+        fn varlong_roundtrip_full_range(value in 0i64..=i64::MAX) {
+            let mut buf = Vec::new();
+            write_varlong(&mut buf, value, 8).expect("write succeeds");
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varlong(&mut cursor, 8).expect("read succeeds");
+            prop_assert_eq!(decoded, value);
+        }
+
+        /// Property: varlong roundtrip preserves small values for various min_bytes.
+        #[test]
+        fn varlong_roundtrip_small_values(value in 0i64..=0xFF_FFFF, min_bytes in 1u8..=8) {
+            let mut buf = Vec::new();
+            write_varlong(&mut buf, value, min_bytes).expect("write succeeds");
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
+            prop_assert_eq!(decoded, value);
+        }
+
+        /// Property: varint30_int roundtrip works for protocol versions.
+        #[test]
+        fn varint30_int_roundtrip_proptest(value: i32, proto in 28u8..=32) {
+            let mut buf = Vec::new();
+            write_varint30_int(&mut buf, value, proto).expect("write succeeds");
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varint30_int(&mut cursor, proto).expect("read succeeds");
+            prop_assert_eq!(decoded, value);
+        }
+
+        /// Property: longint roundtrip preserves i64 values in 32-bit range.
+        #[test]
+        fn longint_roundtrip_32bit(value: i32) {
+            let value64 = i64::from(value);
+            let mut buf = Vec::new();
+            write_longint(&mut buf, value64).expect("write succeeds");
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_longint(&mut cursor).expect("read succeeds");
+            prop_assert_eq!(decoded, value64);
+        }
+
+        /// Property: encoding length increases monotonically with value magnitude.
+        #[test]
+        fn varint_encoding_length_monotonic(a: u16, b: u16) {
+            let smaller = i32::from(a.min(b));
+            let larger = i32::from(a.max(b));
+            let (len_small, _) = encode_bytes(smaller);
+            let (len_large, _) = encode_bytes(larger);
+            prop_assert!(len_small <= len_large,
+                "smaller value {} (len {}) should not encode longer than {} (len {})",
+                smaller, len_small, larger, len_large);
+        }
+
+        /// Property: varint encoding uses at most 5 bytes for any i32.
+        #[test]
+        fn varint_max_encoding_length(value: i32) {
+            let (len, _) = encode_bytes(value);
+            prop_assert!(len <= 5, "varint encoding should use at most 5 bytes, got {}", len);
+        }
+    }
+}

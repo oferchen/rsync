@@ -76,6 +76,10 @@ pub fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
     loop {
         let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
         let mut result: *mut libc::passwd = ptr::null_mut();
+        // SAFETY: All arguments are valid pointers with sufficient lifetimes:
+        // - `pwd` is uninitialized but will be written by getpwuid_r
+        // - `buffer` provides scratch space owned by this function
+        // - `result` receives the output pointer
         let errno = unsafe {
             libc::getpwuid_r(
                 uid as libc::uid_t,
@@ -91,7 +95,9 @@ pub fn lookup_user_name(uid: RawUid) -> Result<Option<Vec<u8>>, io::Error> {
                 return Ok(None);
             }
 
+            // SAFETY: `result` is non-null, so getpwuid_r successfully initialized `pwd`.
             let pwd = unsafe { pwd.assume_init() };
+            // SAFETY: `pw_name` is a valid C string set by getpwuid_r, backed by `buffer`.
             let name = unsafe { CStr::from_ptr(pwd.pw_name) };
             return Ok(Some(name.to_bytes().to_vec()));
         }
@@ -118,6 +124,11 @@ pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
     loop {
         let mut pwd = MaybeUninit::<libc::passwd>::zeroed();
         let mut result: *mut libc::passwd = ptr::null_mut();
+        // SAFETY: All arguments are valid pointers with sufficient lifetimes:
+        // - `c_name` is a valid CString
+        // - `pwd` is uninitialized but will be written by getpwnam_r
+        // - `buffer` provides scratch space owned by this function
+        // - `result` receives the output pointer
         let errno = unsafe {
             libc::getpwnam_r(
                 c_name.as_ptr(),
@@ -133,6 +144,7 @@ pub fn lookup_user_by_name(name: &[u8]) -> Result<Option<RawUid>, io::Error> {
                 return Ok(None);
             }
 
+            // SAFETY: `result` is non-null, so getpwnam_r successfully initialized `pwd`.
             let pwd = unsafe { pwd.assume_init() };
             return Ok(Some(pwd.pw_uid as RawUid));
         }
@@ -155,6 +167,10 @@ pub fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
     loop {
         let mut grp = MaybeUninit::<libc::group>::zeroed();
         let mut result: *mut libc::group = ptr::null_mut();
+        // SAFETY: All arguments are valid pointers with sufficient lifetimes:
+        // - `grp` is uninitialized but will be written by getgrgid_r
+        // - `buffer` provides scratch space owned by this function
+        // - `result` receives the output pointer
         let errno = unsafe {
             libc::getgrgid_r(
                 gid as libc::gid_t,
@@ -170,7 +186,9 @@ pub fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
                 return Ok(None);
             }
 
+            // SAFETY: `result` is non-null, so getgrgid_r successfully initialized `grp`.
             let grp = unsafe { grp.assume_init() };
+            // SAFETY: `gr_name` is a valid C string set by getgrgid_r, backed by `buffer`.
             let name = unsafe { CStr::from_ptr(grp.gr_name) };
             return Ok(Some(name.to_bytes().to_vec()));
         }
@@ -197,6 +215,11 @@ pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
     loop {
         let mut grp = MaybeUninit::<libc::group>::zeroed();
         let mut result: *mut libc::group = ptr::null_mut();
+        // SAFETY: All arguments are valid pointers with sufficient lifetimes:
+        // - `c_name` is a valid CString
+        // - `grp` is uninitialized but will be written by getgrnam_r
+        // - `buffer` provides scratch space owned by this function
+        // - `result` receives the output pointer
         let errno = unsafe {
             libc::getgrnam_r(
                 c_name.as_ptr(),
@@ -212,6 +235,7 @@ pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
                 return Ok(None);
             }
 
+            // SAFETY: `result` is non-null, so getgrnam_r successfully initialized `grp`.
             let grp = unsafe { grp.assume_init() };
             return Ok(Some(grp.gr_gid as RawGid));
         }
