@@ -93,7 +93,6 @@ fn version_info_report_allows_custom_lists() {
     assert!(!rendered.contains("Build info:"));
 }
 
-
 #[test]
 fn version_info_report_with_client_brand_updates_banner() {
     let report = VersionInfoReport::new(VersionInfoConfig::default()).with_client_brand(Brand::Oc);
