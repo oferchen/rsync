@@ -2498,6 +2498,93 @@ mod tests {
     }
 
     #[test]
+    fn special_file_fifo_round_trip_protocol_28_29() {
+        // Protocol 28-29 uses XMIT_RDEV_MINOR_8_PRE30 flag for rdev encoding
+        // This test verifies FIFOs write and read correctly with dummy rdev
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        for proto_ver in [28u8, 29u8] {
+            let protocol = ProtocolVersion::try_from(proto_ver).unwrap();
+            let mut buf = Vec::new();
+            let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+            let entry = FileEntry::new_fifo("myfifo".into(), 0o644);
+
+            writer.write_entry(&mut buf, &entry).unwrap();
+            writer.write_end(&mut buf, None).unwrap();
+
+            let mut cursor = Cursor::new(&buf[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(
+                read_entry.name(),
+                "myfifo",
+                "protocol {proto_ver} FIFO name mismatch"
+            );
+            assert!(
+                read_entry.is_special(),
+                "protocol {proto_ver} should recognize FIFO as special"
+            );
+            // rdev should NOT be set (dummy was read and discarded)
+            assert!(
+                read_entry.rdev_major().is_none(),
+                "protocol {proto_ver} FIFO should not have rdev"
+            );
+        }
+    }
+
+    #[test]
+    fn device_round_trip_protocol_28_29() {
+        // Protocol 28-29 uses XMIT_RDEV_MINOR_8_PRE30 flag for 8-bit minors
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        for proto_ver in [28u8, 29u8] {
+            let protocol = ProtocolVersion::try_from(proto_ver).unwrap();
+            let mut buf = Vec::new();
+            let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+            // Block device with minor fitting in 8 bits
+            let dev_small_minor = FileEntry::new_block_device("sda".into(), 0o660, 8, 0);
+            // Block device with minor requiring more than 8 bits
+            let dev_large_minor = FileEntry::new_block_device("sdb".into(), 0o660, 8, 300);
+
+            writer.write_entry(&mut buf, &dev_small_minor).unwrap();
+            writer.write_entry(&mut buf, &dev_large_minor).unwrap();
+            writer.write_end(&mut buf, None).unwrap();
+
+            let mut cursor = Cursor::new(&buf[..]);
+            let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+            let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+            let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+            assert_eq!(
+                read1.rdev_major(),
+                Some(8),
+                "proto {proto_ver} dev1 major"
+            );
+            assert_eq!(
+                read1.rdev_minor(),
+                Some(0),
+                "proto {proto_ver} dev1 minor"
+            );
+            assert_eq!(
+                read2.rdev_major(),
+                Some(8),
+                "proto {proto_ver} dev2 major"
+            );
+            assert_eq!(
+                read2.rdev_minor(),
+                Some(300),
+                "proto {proto_ver} dev2 minor (>255)"
+            );
+        }
+    }
+
+    #[test]
     fn directory_content_dir_flag_round_trip() {
         use super::super::read::FileListReader;
         use std::io::Cursor;
