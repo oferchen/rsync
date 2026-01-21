@@ -93,21 +93,6 @@ fn version_info_report_allows_custom_lists() {
     assert!(!rendered.contains("Build info:"));
 }
 
-// #[test]
-// fn version_info_report_with_program_name_updates_banner() {
-//     let report = VersionInfoReport::new(VersionInfoConfig::default())
-//         .with_program_name(LEGACY_DAEMON_PROGRAM_NAME);
-//     let banner = report.metadata().standard_banner();
-
-//     assert!(banner.starts_with("rsyncd  version"));
-
-//     let oc_banner = VersionInfoReport::new(VersionInfoConfig::default())
-//         .with_program_name(DAEMON_PROGRAM_NAME)
-//         .metadata()
-//         .standard_banner();
-
-//     assert!(oc_banner.starts_with(&format!("{DAEMON_PROGRAM_NAME}  version")));
-// }
 
 #[test]
 fn version_info_report_with_client_brand_updates_banner() {
