@@ -930,7 +930,9 @@ mod tests {
 
         // Use the encoder
         let mut output = Vec::new();
-        encoder.send_literal(&mut output, b"first file data").unwrap();
+        encoder
+            .send_literal(&mut output, b"first file data")
+            .unwrap();
         encoder.send_block_match(&mut output, 5).unwrap();
         encoder.finish(&mut output).unwrap();
 
@@ -938,7 +940,9 @@ mod tests {
         encoder.reset();
 
         let mut output2 = Vec::new();
-        encoder.send_literal(&mut output2, b"second file data").unwrap();
+        encoder
+            .send_literal(&mut output2, b"second file data")
+            .unwrap();
         encoder.finish(&mut output2).unwrap();
 
         // Both outputs should be valid and decodable
