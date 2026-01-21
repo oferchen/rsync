@@ -926,11 +926,7 @@ mod tests {
         fs::write(&nested_path, "- *.tmp\n").unwrap();
 
         let main_path = dir.path().join("main.rules");
-        fs::write(
-            &main_path,
-            format!(". {}\n", nested_path.display()),
-        )
-        .unwrap();
+        fs::write(&main_path, format!(". {}\n", nested_path.display())).unwrap();
 
         let result = read_rules_recursive(&main_path, 0);
         assert!(result.is_err());
@@ -969,18 +965,10 @@ mod tests {
         fs::write(&deep_path, "- *.deep\n").unwrap();
 
         let nested_path = dir.path().join("nested.rules");
-        fs::write(
-            &nested_path,
-            format!(". {}\n", deep_path.display()),
-        )
-        .unwrap();
+        fs::write(&nested_path, format!(". {}\n", deep_path.display())).unwrap();
 
         let main_path = dir.path().join("main.rules");
-        fs::write(
-            &main_path,
-            format!(". {}\n", nested_path.display()),
-        )
-        .unwrap();
+        fs::write(&main_path, format!(". {}\n", nested_path.display())).unwrap();
 
         let result = read_rules_recursive(&main_path, 1);
         assert!(result.is_err());
@@ -1037,11 +1025,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         let self_ref_path = dir.path().join("selfref.rules");
-        fs::write(
-            &self_ref_path,
-            format!(". {}\n", self_ref_path.display()),
-        )
-        .unwrap();
+        fs::write(&self_ref_path, format!(". {}\n", self_ref_path.display())).unwrap();
 
         let result = read_rules_recursive(&self_ref_path, 5);
         assert!(result.is_err());
@@ -1084,18 +1068,10 @@ mod tests {
         fs::write(&file_d, "- *.d\n").unwrap();
 
         let file_b = dir.path().join("b.rules");
-        fs::write(
-            &file_b,
-            format!("- *.b\n. {}\n", file_d.display()),
-        )
-        .unwrap();
+        fs::write(&file_b, format!("- *.b\n. {}\n", file_d.display())).unwrap();
 
         let file_c = dir.path().join("c.rules");
-        fs::write(
-            &file_c,
-            format!("- *.c\n. {}\n", file_d.display()),
-        )
-        .unwrap();
+        fs::write(&file_c, format!("- *.c\n. {}\n", file_d.display())).unwrap();
 
         let main_path = dir.path().join("main.rules");
         fs::write(
@@ -1132,11 +1108,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         let rules_path = dir.path().join("rules.txt");
-        fs::write(
-            &rules_path,
-            ": .rsync-filter\n+ *.txt\n",
-        )
-        .unwrap();
+        fs::write(&rules_path, ": .rsync-filter\n+ *.txt\n").unwrap();
 
         // Should work even with depth 0 since DirMerge isn't expanded
         let rules = read_rules_recursive(&rules_path, 0).unwrap();
