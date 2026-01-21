@@ -1437,6 +1437,7 @@ dependencies = [
  "compress",
  "encoding_rs",
  "logging",
+ "md-5",
  "memchr",
  "proptest",
  "serde",
