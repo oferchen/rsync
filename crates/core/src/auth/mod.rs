@@ -8,7 +8,7 @@
 //! # Security
 //!
 //! Authentication verification uses constant-time comparison to prevent timing attacks.
-//! See [`verify_daemon_auth_response`] for details.
+//! See `verify_daemon_auth_response` for details.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
@@ -318,6 +318,10 @@ mod tests {
         let challenge = "challenge";
         // Response length doesn't match any known digest
         assert!(!verify_daemon_auth_response(secret, challenge, "tooshort"));
-        assert!(!verify_daemon_auth_response(secret, challenge, &"A".repeat(100)));
+        assert!(!verify_daemon_auth_response(
+            secret,
+            challenge,
+            &"A".repeat(100)
+        ));
     }
 }

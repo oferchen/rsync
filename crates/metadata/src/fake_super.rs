@@ -70,7 +70,10 @@ impl FakeSuperStat {
     /// This matches upstream rsync's `set_stat_xattr()` in `xattrs.c`.
     pub fn encode(&self) -> String {
         let (major, minor) = self.rdev.unwrap_or((0, 0));
-        format!("{:o} {},{} {}:{}", self.mode, major, minor, self.uid, self.gid)
+        format!(
+            "{:o} {},{} {}:{}",
+            self.mode, major, minor, self.uid, self.gid
+        )
     }
 
     /// Decodes the stat from the wire format.

@@ -106,7 +106,10 @@ pub fn read_rules(path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
 /// # Errors
 ///
 /// Returns an error if any file cannot be read or contains invalid syntax.
-pub fn read_rules_recursive(path: &Path, max_depth: usize) -> Result<Vec<FilterRule>, MergeFileError> {
+pub fn read_rules_recursive(
+    path: &Path,
+    max_depth: usize,
+) -> Result<Vec<FilterRule>, MergeFileError> {
     read_rules_recursive_impl(path, max_depth, 0)
 }
 
@@ -243,7 +246,11 @@ fn parse_modifiers(s: &str) -> (RuleModifiers, &str) {
 /// Supports both short form (`+ pattern`, `-! pattern`) and long form
 /// (`include pattern`, `exclude pattern`). Modifiers like `!`, `p`, `s`, `r`
 /// can appear between the action and pattern.
-fn parse_rule_line(line: &str, source_path: &Path, line_num: usize) -> Result<FilterRule, MergeFileError> {
+fn parse_rule_line(
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<FilterRule, MergeFileError> {
     // Handle clear rule (just `!` or `clear`)
     if line == "!" || line.eq_ignore_ascii_case("clear") {
         return Ok(FilterRule::clear());
@@ -514,7 +521,11 @@ mod tests {
 
         // Create main rules file with merge directive
         let main_path = dir.path().join("main.rules");
-        fs::write(&main_path, format!("+ *.txt\n. {}\n- *.bak\n", nested_path.display())).unwrap();
+        fs::write(
+            &main_path,
+            format!("+ *.txt\n. {}\n- *.bak\n", nested_path.display()),
+        )
+        .unwrap();
 
         let rules = read_rules_recursive(&main_path, 10).unwrap();
         assert_eq!(rules.len(), 3);

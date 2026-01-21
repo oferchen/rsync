@@ -7,7 +7,7 @@ use std::io::{self, Read, Write};
 use md5::{Digest, Md5};
 
 use crate::varint::{read_varint, write_varint};
-use crate::xattr::{XattrEntry, XattrList, MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN};
+use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrEntry, XattrList};
 
 /// Sends xattr data to the wire.
 ///
@@ -244,7 +244,10 @@ mod tests {
     #[test]
     fn round_trip_small_xattrs() {
         let mut list = XattrList::new();
-        list.push(XattrEntry::new(b"user.test".to_vec(), b"small value".to_vec()));
+        list.push(XattrEntry::new(
+            b"user.test".to_vec(),
+            b"small value".to_vec(),
+        ));
         list.push(XattrEntry::new(b"user.other".to_vec(), b"another".to_vec()));
 
         let mut buf = Vec::new();
@@ -282,7 +285,10 @@ mod tests {
                 assert!(received.entries()[0].is_abbreviated());
                 assert_eq!(received.entries()[0].datum_len(), 100);
                 // Checksum should match
-                assert!(checksum_matches(received.entries()[0].datum(), &large_value));
+                assert!(checksum_matches(
+                    received.entries()[0].datum(),
+                    &large_value
+                ));
             }
             _ => panic!("Expected literal data"),
         }

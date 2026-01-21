@@ -259,8 +259,8 @@ mod tests {
     #[cfg(feature = "zstd")]
     mod zstd_tests {
         use super::*;
-        use compress::zstd::compress_to_vec as zstd_compress;
         use compress::zlib::CompressionLevel;
+        use compress::zstd::compress_to_vec as zstd_compress;
 
         #[test]
         fn decompress_round_trip_zstd() {
