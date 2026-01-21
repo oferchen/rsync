@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use rustix::{
     fd::AsFd,
     fs::{FallocateFlags, fallocate},
@@ -35,7 +35,7 @@ const ZERO_WRITE_BUFFER_SIZE: usize = 4096;
 /// * `path` - Path for error reporting
 /// * `pos` - Starting position for the hole
 /// * `len` - Length of the hole in bytes
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[allow(dead_code)]
 pub(crate) fn punch_hole(
     file: &mut fs::File,
@@ -91,8 +91,10 @@ pub(crate) fn punch_hole(
     write_zeros_fallback(file, path, len)
 }
 
-/// Non-Unix platforms fall back to writing zeros directly.
-#[cfg(not(unix))]
+/// Non-Linux platforms fall back to writing zeros directly.
+/// This includes macOS, BSD, and Windows which don't support Linux's
+/// fallocate PUNCH_HOLE/ZERO_RANGE flags.
+#[cfg(not(target_os = "linux"))]
 #[allow(dead_code)]
 pub(crate) fn punch_hole(
     file: &mut fs::File,
