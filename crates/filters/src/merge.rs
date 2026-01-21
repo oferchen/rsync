@@ -350,11 +350,111 @@ fn parse_modifiers(s: &str) -> (RuleModifiers, &str) {
     (mods, "")
 }
 
+/// Short-form rule action types.
+#[derive(Clone, Copy)]
+enum ShortFormAction {
+    Include,
+    Exclude,
+    Protect,
+    Risk,
+    Merge,
+    DirMerge,
+    Hide,
+    Show,
+}
+
+impl ShortFormAction {
+    /// Creates a FilterRule from the action and pattern.
+    fn to_rule(self, pattern: &str) -> FilterRule {
+        match self {
+            Self::Include => FilterRule::include(pattern),
+            Self::Exclude => FilterRule::exclude(pattern),
+            Self::Protect => FilterRule::protect(pattern),
+            Self::Risk => FilterRule::risk(pattern),
+            Self::Merge => FilterRule::merge(pattern),
+            Self::DirMerge => FilterRule::dir_merge(pattern),
+            Self::Hide => FilterRule::hide(pattern),
+            Self::Show => FilterRule::show(pattern),
+        }
+    }
+
+    /// Whether this action supports modifiers.
+    const fn supports_mods(self) -> bool {
+        !matches!(self, Self::Merge)
+    }
+}
+
+/// Tries to parse a short-form rule (single character prefix like `+`, `-`, `P`).
+///
+/// Returns `Some(rule)` if the line matches a short-form pattern, `None` otherwise.
+fn try_parse_short_form(line: &str) -> Option<FilterRule> {
+    // Map prefix characters to actions
+    let (rest, action) = if let Some(r) = line.strip_prefix('+') {
+        (r, ShortFormAction::Include)
+    } else if let Some(r) = line.strip_prefix('-') {
+        (r, ShortFormAction::Exclude)
+    } else if let Some(r) = line.strip_prefix('P') {
+        (r, ShortFormAction::Protect)
+    } else if let Some(r) = line.strip_prefix('R') {
+        (r, ShortFormAction::Risk)
+    } else if let Some(r) = line.strip_prefix('.') {
+        (r, ShortFormAction::Merge)
+    } else if let Some(r) = line.strip_prefix(':') {
+        (r, ShortFormAction::DirMerge)
+    } else if let Some(r) = line.strip_prefix('H') {
+        (r, ShortFormAction::Hide)
+    } else if let Some(r) = line.strip_prefix('S') {
+        (r, ShortFormAction::Show)
+    } else {
+        return None;
+    };
+
+    let (mods, pattern) = parse_modifiers(rest);
+    if pattern.is_empty() {
+        return None;
+    }
+
+    let rule = action.to_rule(pattern);
+    Some(if action.supports_mods() {
+        mods.apply(rule)
+    } else {
+        rule
+    })
+}
+
+/// Tries to parse a long-form rule (keyword prefix like `include`, `exclude`).
+///
+/// Returns `Some(rule)` if the line matches a long-form pattern, `None` otherwise.
+fn try_parse_long_form(line: &str) -> Option<FilterRule> {
+    let lower = line.to_ascii_lowercase();
+
+    // Long-form keywords with their lengths and corresponding actions
+    let keywords: &[(&str, usize, ShortFormAction)] = &[
+        ("include ", 8, ShortFormAction::Include),
+        ("exclude ", 8, ShortFormAction::Exclude),
+        ("protect ", 8, ShortFormAction::Protect),
+        ("risk ", 5, ShortFormAction::Risk),
+        ("merge ", 6, ShortFormAction::Merge),
+        ("dir-merge ", 10, ShortFormAction::DirMerge),
+        ("hide ", 5, ShortFormAction::Hide),
+        ("show ", 5, ShortFormAction::Show),
+    ];
+
+    for &(keyword, len, action) in keywords {
+        if lower.starts_with(keyword) {
+            let pattern = line[len..].trim();
+            return Some(action.to_rule(pattern));
+        }
+    }
+
+    None
+}
+
 /// Parses a single filter rule line.
 ///
 /// Supports both short form (`+ pattern`, `-! pattern`) and long form
 /// (`include pattern`, `exclude pattern`). Modifiers like `!`, `p`, `s`, `r`
-/// can appear between the action and pattern.
+/// can appear between the action and pattern in short form.
 fn parse_rule_line(
     line: &str,
     source_path: &Path,
@@ -366,94 +466,13 @@ fn parse_rule_line(
     }
 
     // Try short form first: `+ pattern`, `- pattern`, `-! pattern`, etc.
-    // The action character is followed by optional modifiers, then space/pattern
-    if let Some(rest) = line.strip_prefix('+') {
-        let (mods, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(mods.apply(FilterRule::include(pattern)));
-        }
-    }
-    if let Some(rest) = line.strip_prefix('-') {
-        let (mods, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(mods.apply(FilterRule::exclude(pattern)));
-        }
-    }
-    if let Some(rest) = line.strip_prefix('P') {
-        let (mods, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(mods.apply(FilterRule::protect(pattern)));
-        }
-    }
-    if let Some(rest) = line.strip_prefix('R') {
-        let (mods, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(mods.apply(FilterRule::risk(pattern)));
-        }
-    }
-    if let Some(rest) = line.strip_prefix('.') {
-        // Merge rules don't support negation modifier (upstream restriction)
-        let (_, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(FilterRule::merge(pattern));
-        }
-    }
-    if let Some(rest) = line.strip_prefix(':') {
-        // Dir-merge rules use ':' prefix (upstream rsync exclude.c).
-        // Don't support negation modifier (upstream restriction).
-        let (mods, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(mods.apply(FilterRule::dir_merge(pattern)));
-        }
-    }
-    if let Some(rest) = line.strip_prefix('H') {
-        let (mods, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(mods.apply(FilterRule::hide(pattern)));
-        }
-    }
-    if let Some(rest) = line.strip_prefix('S') {
-        let (mods, pattern) = parse_modifiers(rest);
-        if !pattern.is_empty() {
-            return Ok(mods.apply(FilterRule::show(pattern)));
-        }
+    if let Some(rule) = try_parse_short_form(line) {
+        return Ok(rule);
     }
 
     // Try long form: `include pattern`, `exclude pattern`, etc.
-    // We check the lowercase version but extract the pattern from the original
-    // line to preserve case.
-    let lower = line.to_ascii_lowercase();
-    if lower.starts_with("include ") {
-        let pattern = &line[8..]; // Preserve original case
-        return Ok(FilterRule::include(pattern.trim()));
-    }
-    if lower.starts_with("exclude ") {
-        let pattern = &line[8..];
-        return Ok(FilterRule::exclude(pattern.trim()));
-    }
-    if lower.starts_with("protect ") {
-        let pattern = &line[8..];
-        return Ok(FilterRule::protect(pattern.trim()));
-    }
-    if lower.starts_with("risk ") {
-        let pattern = &line[5..];
-        return Ok(FilterRule::risk(pattern.trim()));
-    }
-    if lower.starts_with("merge ") {
-        let pattern = &line[6..];
-        return Ok(FilterRule::merge(pattern.trim()));
-    }
-    if lower.starts_with("dir-merge ") {
-        let pattern = &line[10..];
-        return Ok(FilterRule::dir_merge(pattern.trim()));
-    }
-    if lower.starts_with("hide ") {
-        let pattern = &line[5..];
-        return Ok(FilterRule::hide(pattern.trim()));
-    }
-    if lower.starts_with("show ") {
-        let pattern = &line[5..];
-        return Ok(FilterRule::show(pattern.trim()));
+    if let Some(rule) = try_parse_long_form(line) {
+        return Ok(rule);
     }
 
     // Unrecognized rule
