@@ -46,7 +46,7 @@ use protocol::flist::{FileEntry, FileListWriter, compare_file_entries};
 use protocol::idlist::IdList;
 use protocol::wire::{CompressedTokenEncoder, DeltaOp, SignatureBlock, write_token_stream};
 use protocol::{
-    ChecksumAlgorithm, CompressionAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion,
+    ChecksumAlgorithm, CompatibilityFlags, CompressionAlgorithm, NegotiationResult, ProtocolVersion,
 };
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};

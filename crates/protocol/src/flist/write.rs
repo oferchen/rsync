@@ -587,11 +587,7 @@ impl FileListWriter {
 
     /// Writes file size using protocol-appropriate encoding.
     #[inline]
-    fn write_size<W: Write + ?Sized>(
-        &self,
-        writer: &mut W,
-        entry: &FileEntry,
-    ) -> io::Result<()> {
+    fn write_size<W: Write + ?Sized>(&self, writer: &mut W, entry: &FileEntry) -> io::Result<()> {
         self.codec.write_file_size(writer, entry.size() as i64)
     }
 
@@ -2720,21 +2716,9 @@ mod tests {
             let read1 = reader.read_entry(&mut cursor).unwrap().unwrap();
             let read2 = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-            assert_eq!(
-                read1.rdev_major(),
-                Some(8),
-                "proto {proto_ver} dev1 major"
-            );
-            assert_eq!(
-                read1.rdev_minor(),
-                Some(0),
-                "proto {proto_ver} dev1 minor"
-            );
-            assert_eq!(
-                read2.rdev_major(),
-                Some(8),
-                "proto {proto_ver} dev2 major"
-            );
+            assert_eq!(read1.rdev_major(), Some(8), "proto {proto_ver} dev1 major");
+            assert_eq!(read1.rdev_minor(), Some(0), "proto {proto_ver} dev1 minor");
+            assert_eq!(read2.rdev_major(), Some(8), "proto {proto_ver} dev2 major");
             assert_eq!(
                 read2.rdev_minor(),
                 Some(300),
