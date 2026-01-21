@@ -20,14 +20,14 @@ impl FilterSetInner {
         let mut decision = FilterDecision::default();
 
         let transfer_rule = match context {
-            DecisionContext::Transfer => last_matching_rule(
+            DecisionContext::Transfer => first_matching_rule(
                 &self.include_exclude,
                 path,
                 is_dir,
                 |rule| rule.applies_to_sender,
                 true,
             ),
-            DecisionContext::Deletion => last_matching_rule(
+            DecisionContext::Deletion => first_matching_rule(
                 &self.include_exclude,
                 path,
                 is_dir,
@@ -37,7 +37,7 @@ impl FilterSetInner {
         };
 
         if matches!(context, DecisionContext::Deletion)
-            && let Some(rule) = last_matching_rule(
+            && let Some(rule) = first_matching_rule(
                 &self.include_exclude,
                 path,
                 is_dir,
@@ -60,14 +60,14 @@ impl FilterSetInner {
         }
 
         let protection_rule = match context {
-            DecisionContext::Transfer => last_matching_rule(
+            DecisionContext::Transfer => first_matching_rule(
                 &self.protect_risk,
                 path,
                 is_dir,
                 |rule| rule.applies_to_sender,
                 true,
             ),
-            DecisionContext::Deletion => last_matching_rule(
+            DecisionContext::Deletion => first_matching_rule(
                 &self.protect_risk,
                 path,
                 is_dir,
@@ -80,7 +80,14 @@ impl FilterSetInner {
             match rule.action {
                 FilterAction::Protect => decision.protect(),
                 FilterAction::Risk => decision.unprotect(),
-                FilterAction::Include | FilterAction::Exclude | FilterAction::Clear => {}
+                // Include/Exclude/Clear/Merge/DirMerge are not protection actions.
+                // Merge and DirMerge are expanded before compilation, so they
+                // should never appear in compiled rules.
+                FilterAction::Include
+                | FilterAction::Exclude
+                | FilterAction::Clear
+                | FilterAction::Merge
+                | FilterAction::DirMerge => {}
             }
         }
 
@@ -88,7 +95,11 @@ impl FilterSetInner {
     }
 }
 
-fn last_matching_rule<'a, F>(
+/// Finds the first matching rule in the list (first-match-wins semantics).
+///
+/// This matches upstream rsync's `check_filter()` in exclude.c which iterates
+/// from the head of the filter list and returns on the first match.
+fn first_matching_rule<'a, F>(
     rules: &'a [CompiledRule],
     path: &Path,
     is_dir: bool,
@@ -98,7 +109,7 @@ fn last_matching_rule<'a, F>(
 where
     F: FnMut(&CompiledRule) -> bool,
 {
-    rules.iter().rev().find(|rule| {
+    rules.iter().find(|rule| {
         (include_perishable || !rule.perishable) && applies(rule) && rule.matches(path, is_dir)
     })
 }

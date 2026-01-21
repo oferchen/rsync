@@ -206,13 +206,14 @@ fn clear_before_new_protect() {
 /// Verifies complex clear scenario with mixed rules.
 #[test]
 fn complex_clear_scenario() {
+    // rsync uses first-match-wins: risk must come before protect to override
     let rules = [
         FilterRule::exclude("*.log"),
         FilterRule::protect("important.log"),
         FilterRule::clear(),
         FilterRule::exclude("*.tmp"),
+        FilterRule::risk("important.tmp"), // Check risk first to override protect
         FilterRule::protect("important.tmp"),
-        FilterRule::risk("important.tmp"), // Undoes protection
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -222,7 +223,7 @@ fn complex_clear_scenario() {
     // New tmp rule active
     assert!(!set.allows(Path::new("scratch.tmp"), false));
 
-    // important.tmp is excluded and not protected (risk undid protect)
+    // important.tmp is excluded and not protected (risk matched first)
     // However, allows_deletion requires transfer_allowed to be true,
     // so excluded files are never deletable via allows_deletion
     assert!(!set.allows(Path::new("important.tmp"), false));

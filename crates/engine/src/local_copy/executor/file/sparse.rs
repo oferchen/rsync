@@ -2,20 +2,151 @@ use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
+#[cfg(unix)]
+use rustix::{
+    fd::AsFd,
+    fs::{FallocateFlags, fallocate},
+    io::Errno,
+};
+
 use crate::local_copy::LocalCopyError;
 
 const SPARSE_WRITE_SIZE: usize = 1024;
 
-#[derive(Default)]
-pub(crate) struct SparseWriteState {
-    pending_zero_run: u64,
+/// Buffer size for writing zeros when fallocate is not supported.
+/// Matches upstream rsync's do_punch_hole fallback buffer size.
+#[allow(dead_code)]
+const ZERO_WRITE_BUFFER_SIZE: usize = 4096;
+
+/// Punches a hole in the file at the specified position for the given length.
+///
+/// Mirrors upstream rsync's `do_punch_hole()` function (syscall.c) with a
+/// three-tier fallback strategy:
+///
+/// 1. Try `FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE` - creates actual hole
+/// 2. Fall back to `FALLOC_FL_ZERO_RANGE` - zeroes range without allocation
+/// 3. Final fallback: write zeros - universal but dense
+///
+/// After a successful call, the file position will be at `pos + len`.
+///
+/// # Arguments
+///
+/// * `file` - The file to punch holes in
+/// * `path` - Path for error reporting
+/// * `pos` - Starting position for the hole
+/// * `len` - Length of the hole in bytes
+#[cfg(unix)]
+#[allow(dead_code)]
+pub(crate) fn punch_hole(
+    file: &mut fs::File,
+    path: &Path,
+    pos: u64,
+    len: u64,
+) -> Result<(), LocalCopyError> {
+    if len == 0 {
+        return Ok(());
+    }
+
+    // Ensure position doesn't exceed i64::MAX for fallocate
+    if pos > i64::MAX as u64 || len > i64::MAX as u64 {
+        return write_zeros_fallback(file, path, len);
+    }
+
+    let fd = file.as_fd();
+
+    // Strategy 1: Try PUNCH_HOLE | KEEP_SIZE (creates actual filesystem hole)
+    let punch_flags = FallocateFlags::PUNCH_HOLE | FallocateFlags::KEEP_SIZE;
+    match fallocate(fd, punch_flags, pos, len) {
+        Ok(()) => {
+            // Seek to pos + len after successful hole punch
+            file.seek(SeekFrom::Start(pos + len))
+                .map_err(|e| LocalCopyError::io("seek after hole punch", path.to_path_buf(), e))?;
+            return Ok(());
+        }
+        Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
+            // PUNCH_HOLE not supported, try ZERO_RANGE
+        }
+        Err(_errno) => {
+            // Unexpected error, fall through to ZERO_RANGE fallback
+        }
+    }
+
+    // Strategy 2: Try ZERO_RANGE (zeroes range without allocation on some systems)
+    match fallocate(fd, FallocateFlags::ZERO_RANGE, pos, len) {
+        Ok(()) => {
+            // Seek to pos + len after successful zero range
+            file.seek(SeekFrom::Start(pos + len))
+                .map_err(|e| LocalCopyError::io("seek after zero range", path.to_path_buf(), e))?;
+            return Ok(());
+        }
+        Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
+            // ZERO_RANGE not supported, fall back to writing zeros
+        }
+        Err(_errno) => {
+            // Unexpected error, fall through to write zeros
+        }
+    }
+
+    // Strategy 3: Write zeros (universal but allocates space)
+    write_zeros_fallback(file, path, len)
 }
 
+/// Non-Unix platforms fall back to writing zeros directly.
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub(crate) fn punch_hole(
+    file: &mut fs::File,
+    path: &Path,
+    _pos: u64,
+    len: u64,
+) -> Result<(), LocalCopyError> {
+    write_zeros_fallback(file, path, len)
+}
+
+/// Writes zeros to fill the specified length.
+///
+/// This is the final fallback when fallocate-based hole punching is not
+/// available. Unlike hole punching, this allocates disk space.
+#[allow(dead_code)]
+fn write_zeros_fallback(
+    file: &mut fs::File,
+    path: &Path,
+    mut len: u64,
+) -> Result<(), LocalCopyError> {
+    let zeros = [0u8; ZERO_WRITE_BUFFER_SIZE];
+
+    while len > 0 {
+        let chunk_size = len.min(ZERO_WRITE_BUFFER_SIZE as u64) as usize;
+        file.write_all(&zeros[..chunk_size])
+            .map_err(|e| LocalCopyError::io("write zeros for sparse hole", path.to_path_buf(), e))?;
+        len -= chunk_size as u64;
+    }
+
+    Ok(())
+}
+
+/// Tracks pending zero runs during sparse file writing.
+///
+/// This struct accumulates consecutive zero bytes and flushes them either
+/// by seeking (for new files) or by punching holes (for in-place updates).
+#[derive(Default)]
+#[allow(dead_code)]
+pub(crate) struct SparseWriteState {
+    pending_zero_run: u64,
+    /// Position where the pending zero run starts
+    zero_run_start_pos: u64,
+}
+
+#[allow(dead_code)]
 impl SparseWriteState {
     const fn accumulate(&mut self, additional: usize) {
         self.pending_zero_run = self.pending_zero_run.saturating_add(additional as u64);
     }
 
+    /// Flushes pending zeros by seeking forward.
+    ///
+    /// This is the default strategy for new files where the filesystem
+    /// automatically creates sparse regions when seeking past end of file.
     fn flush(&mut self, writer: &mut fs::File, destination: &Path) -> Result<(), LocalCopyError> {
         if self.pending_zero_run == 0 {
             return Ok(());
@@ -36,16 +167,66 @@ impl SparseWriteState {
         Ok(())
     }
 
+    /// Flushes pending zeros by punching a hole in the file.
+    ///
+    /// This is used for in-place updates where we need to deallocate
+    /// disk blocks. Falls back to writing zeros if hole punching is
+    /// not supported.
+    pub(crate) fn flush_with_punch_hole(
+        &mut self,
+        writer: &mut fs::File,
+        destination: &Path,
+    ) -> Result<(), LocalCopyError> {
+        if self.pending_zero_run == 0 {
+            return Ok(());
+        }
+
+        let pos = self.zero_run_start_pos;
+        let len = self.pending_zero_run;
+
+        punch_hole(writer, destination, pos, len)?;
+
+        self.pending_zero_run = 0;
+        Ok(())
+    }
+
     const fn replace(&mut self, next_run: usize) {
         self.pending_zero_run = next_run as u64;
     }
 
+    /// Updates the starting position for the next zero run.
+    pub(crate) fn set_zero_run_start(&mut self, pos: u64) {
+        self.zero_run_start_pos = pos;
+    }
+
+    /// Returns the pending zero run length.
+    pub(crate) const fn pending_zeros(&self) -> u64 {
+        self.pending_zero_run
+    }
+
+    /// Finishes sparse writing by flushing any remaining zeros via seeking.
     pub(crate) fn finish(
         &mut self,
         writer: &mut fs::File,
         destination: &Path,
     ) -> Result<u64, LocalCopyError> {
         self.flush(writer, destination)?;
+
+        writer.stream_position().map_err(|error| {
+            LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
+        })
+    }
+
+    /// Finishes sparse writing by punching holes for any remaining zeros.
+    ///
+    /// Use this variant when updating files in-place to deallocate disk
+    /// blocks for zero regions.
+    pub(crate) fn finish_with_punch_hole(
+        &mut self,
+        writer: &mut fs::File,
+        destination: &Path,
+    ) -> Result<u64, LocalCopyError> {
+        self.flush_with_punch_hole(writer, destination)?;
 
         writer.stream_position().map_err(|error| {
             LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
@@ -151,10 +332,10 @@ fn trailing_zero_run_scalar(bytes: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        SparseWriteState, leading_zero_run, leading_zero_run_scalar, trailing_zero_run,
-        trailing_zero_run_scalar, write_sparse_chunk,
+        SparseWriteState, leading_zero_run, leading_zero_run_scalar, punch_hole, trailing_zero_run,
+        trailing_zero_run_scalar, write_sparse_chunk, write_zeros_fallback,
     };
-    use std::io::{Read, Seek, SeekFrom};
+    use std::io::{Read, Seek, SeekFrom, Write};
     use tempfile::NamedTempFile;
 
     #[test]
@@ -415,5 +596,178 @@ mod tests {
 
         let metadata = file.as_file_mut().metadata().expect("metadata");
         assert_eq!(metadata.len(), final_offset);
+    }
+
+    // ==================== punch_hole tests ====================
+
+    #[test]
+    fn punch_hole_zero_length_is_noop() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        // Write some data first
+        file.as_file_mut()
+            .write_all(b"test data")
+            .expect("write data");
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind");
+
+        // Punching a zero-length hole should succeed without changing anything
+        punch_hole(file.as_file_mut(), &path, 0, 0).expect("punch zero-length hole");
+
+        // File should be unchanged
+        let mut buffer = vec![0u8; 9];
+        file.as_file_mut().read_exact(&mut buffer).expect("read");
+        assert_eq!(&buffer, b"test data");
+    }
+
+    #[test]
+    fn punch_hole_creates_zeros_in_file() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        // Write some non-zero data
+        let data = vec![0xAAu8; 4096];
+        file.as_file_mut().write_all(&data).expect("write data");
+
+        // Punch a hole in the middle
+        punch_hole(file.as_file_mut(), &path, 1024, 2048).expect("punch hole");
+
+        // Read back and verify the hole contains zeros
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind");
+        let mut buffer = vec![0u8; 4096];
+        file.as_file_mut().read_exact(&mut buffer).expect("read");
+
+        // First 1024 bytes should be unchanged
+        assert!(buffer[..1024].iter().all(|&b| b == 0xAA));
+        // Middle 2048 bytes should be zeros (the hole)
+        assert!(buffer[1024..3072].iter().all(|&b| b == 0));
+        // Last 1024 bytes should be unchanged
+        assert!(buffer[3072..].iter().all(|&b| b == 0xAA));
+    }
+
+    #[test]
+    fn punch_hole_advances_file_position() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        // Pre-allocate file
+        file.as_file_mut().set_len(8192).expect("set length");
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind");
+
+        // Punch a hole starting at position 1000
+        punch_hole(file.as_file_mut(), &path, 1000, 500).expect("punch hole");
+
+        // File position should now be at 1500
+        let pos = file.as_file_mut().stream_position().expect("position");
+        assert_eq!(pos, 1500);
+    }
+
+    // ==================== write_zeros_fallback tests ====================
+
+    #[test]
+    fn write_zeros_fallback_writes_exact_length() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        write_zeros_fallback(file.as_file_mut(), &path, 1234).expect("write zeros");
+
+        let metadata = file.as_file_mut().metadata().expect("metadata");
+        assert_eq!(metadata.len(), 1234);
+
+        // Verify all bytes are zero
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind");
+        let mut buffer = vec![1u8; 1234];
+        file.as_file_mut().read_exact(&mut buffer).expect("read");
+        assert!(buffer.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn write_zeros_fallback_handles_large_length() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        // Write more than one buffer's worth of zeros
+        let len = super::ZERO_WRITE_BUFFER_SIZE as u64 * 3 + 123;
+        write_zeros_fallback(file.as_file_mut(), &path, len).expect("write zeros");
+
+        let metadata = file.as_file_mut().metadata().expect("metadata");
+        assert_eq!(metadata.len(), len);
+    }
+
+    // ==================== SparseWriteState hole punching tests ====================
+
+    #[test]
+    fn sparse_state_flush_with_punch_hole() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        // Pre-allocate with non-zero data
+        let data = vec![0xBBu8; 8192];
+        file.as_file_mut().write_all(&data).expect("write");
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind");
+
+        let mut state = SparseWriteState::default();
+        state.set_zero_run_start(1000);
+        state.accumulate(2000);
+
+        state
+            .flush_with_punch_hole(file.as_file_mut(), &path)
+            .expect("flush with punch");
+
+        // Verify the hole was punched
+        file.as_file_mut()
+            .seek(SeekFrom::Start(0))
+            .expect("rewind");
+        let mut buffer = vec![0u8; 8192];
+        file.as_file_mut().read_exact(&mut buffer).expect("read");
+
+        // Before the hole: unchanged
+        assert!(buffer[..1000].iter().all(|&b| b == 0xBB));
+        // The hole: zeros
+        assert!(buffer[1000..3000].iter().all(|&b| b == 0));
+        // After the hole: unchanged
+        assert!(buffer[3000..].iter().all(|&b| b == 0xBB));
+    }
+
+    #[test]
+    fn sparse_state_finish_with_punch_hole() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        // Pre-allocate
+        file.as_file_mut().set_len(4096).expect("set length");
+
+        let mut state = SparseWriteState::default();
+        state.set_zero_run_start(500);
+        state.accumulate(1000);
+
+        let final_pos = state
+            .finish_with_punch_hole(file.as_file_mut(), &path)
+            .expect("finish with punch");
+
+        // Position should be at end of punched hole
+        assert_eq!(final_pos, 1500);
+    }
+
+    #[test]
+    fn sparse_state_pending_zeros_tracks_accumulation() {
+        let mut state = SparseWriteState::default();
+        assert_eq!(state.pending_zeros(), 0);
+
+        state.accumulate(100);
+        assert_eq!(state.pending_zeros(), 100);
+
+        state.accumulate(200);
+        assert_eq!(state.pending_zeros(), 300);
     }
 }

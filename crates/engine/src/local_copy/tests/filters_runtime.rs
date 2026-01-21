@@ -124,9 +124,10 @@ fn execute_respects_include_filter_override() {
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // With first-match-wins, specific include must come before general exclude
     let filters = FilterSet::from_rules([
-        filters::FilterRule::exclude("*.tmp"),
         filters::FilterRule::include("keep.tmp"),
+        filters::FilterRule::exclude("*.tmp"),
     ])
     .expect("compile filters");
     let options = LocalCopyOptions::default().filters(Some(filters));

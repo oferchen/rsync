@@ -59,13 +59,14 @@ fn perishable_flag_tracked() {
 /// Verifies perishable include is ignored during deletion.
 #[test]
 fn perishable_include_ignored_during_deletion() {
+    // With first-match-wins, include comes before exclude
     let rules = [
-        FilterRule::exclude("*"),
         FilterRule::include("keep/**").with_perishable(true),
+        FilterRule::exclude("*"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Transfer includes keep/** (perishable include applies)
+    // Transfer includes keep/** (perishable include applies first)
     assert!(set.allows(Path::new("keep/file.txt"), false));
 
     // Deletion: perishable include is ignored, so exclude * applies
@@ -76,10 +77,11 @@ fn perishable_include_ignored_during_deletion() {
 /// Verifies perishable and non-perishable includes interact correctly.
 #[test]
 fn perishable_and_non_perishable_includes() {
+    // With first-match-wins, includes come before exclude
     let rules = [
-        FilterRule::exclude("*"),
-        FilterRule::include("permanent/**"), // Non-perishable
+        FilterRule::include("permanent/**"), // Non-perishable (first)
         FilterRule::include("temporary/**").with_perishable(true), // Perishable
+        FilterRule::exclude("*"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -87,8 +89,7 @@ fn perishable_and_non_perishable_includes() {
     assert!(set.allows(Path::new("permanent/file.txt"), false));
     assert!(set.allows(Path::new("temporary/file.txt"), false));
 
-    // For deletion: perishable include for temporary is skipped
-    // permanent/** still matches (non-perishable), so transfer_allowed=true, deletable
+    // For deletion: permanent/** matches (non-perishable), deletable
     assert!(set.allows_deletion(Path::new("permanent/file.txt"), false));
 
     // For temporary: perishable include is skipped, exclude * matches, transfer_allowed=false
@@ -123,45 +124,46 @@ fn non_perishable_delete_excluded() {
 // Perishable with Rule Ordering
 // ============================================================================
 
-/// Verifies perishable exclude after non-perishable include.
+/// Verifies perishable exclude before non-perishable include.
 #[test]
-fn perishable_exclude_after_include() {
+fn perishable_exclude_before_include() {
+    // With first-match-wins, perishable exclude comes before general include
     let rules = [
-        FilterRule::include("*.txt"),
         FilterRule::exclude("temp_*.txt").with_perishable(true),
+        FilterRule::include("*.txt"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Regular txt files included in transfer
-    assert!(set.allows(Path::new("document.txt"), false));
-    // For deletion: perishable exclude is skipped, include *.txt matches, deletable
-    assert!(set.allows_deletion(Path::new("document.txt"), false));
-
-    // Temp txt files excluded from transfer (perishable applies on sender)
+    // Temp txt files excluded from transfer (perishable applies on sender first)
     assert!(!set.allows(Path::new("temp_scratch.txt"), false));
     // For deletion: perishable exclude skipped, include *.txt matches, deletable
     assert!(set.allows_deletion(Path::new("temp_scratch.txt"), false));
+
+    // Regular txt files included in transfer (second rule)
+    assert!(set.allows(Path::new("document.txt"), false));
+    // For deletion: perishable exclude doesn't match, include *.txt matches, deletable
+    assert!(set.allows_deletion(Path::new("document.txt"), false));
 }
 
-/// Verifies non-perishable exclude after perishable include.
+/// Verifies non-perishable exclude before perishable include.
 #[test]
-fn non_perishable_exclude_after_perishable_include() {
+fn non_perishable_exclude_before_perishable_include() {
+    // With first-match-wins, specific excludes come first
     let rules = [
-        FilterRule::exclude("*"),
-        FilterRule::include("*.txt").with_perishable(true),
-        FilterRule::exclude("secret.txt"),
+        FilterRule::exclude("secret.txt"),                      // Specific exclude first
+        FilterRule::include("*.txt").with_perishable(true),     // Perishable include
+        FilterRule::exclude("*"),                                // Catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Regular txt files included in transfer
+    // Secret is excluded from transfer (first rule)
+    assert!(!set.allows(Path::new("secret.txt"), false));
+
+    // Regular txt files included in transfer (second rule)
     assert!(set.allows(Path::new("document.txt"), false));
 
     // But deletion: perishable include is ignored, so exclude * applies
-    // However, non-perishable exclude also applies
     assert!(!set.allows_deletion(Path::new("document.txt"), false));
-
-    // Secret is excluded from transfer
-    assert!(!set.allows(Path::new("secret.txt"), false));
 }
 
 // ============================================================================
@@ -228,20 +230,21 @@ fn perishable_with_protect() {
 /// Verifies perishable interacts correctly with risk.
 #[test]
 fn perishable_with_risk() {
+    // With first-match-wins, risk comes before protect
     let rules = [
         FilterRule::exclude("archive/").with_perishable(true),
-        FilterRule::protect("archive/"),
-        FilterRule::risk("archive/old/"),
+        FilterRule::risk("archive/old/"),  // Risk first
+        FilterRule::protect("archive/"),   // Protect second
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // All excluded from transfer
+    // All excluded from transfer (perishable exclude applies on sender)
     assert!(!set.allows(Path::new("archive/current/file"), false));
     assert!(!set.allows(Path::new("archive/old/file"), false));
 
-    // Current is protected, old is at risk
-    assert!(!set.allows_deletion(Path::new("archive/current/file"), false));
+    // Old is at risk (first protection rule matched), current is protected (second)
     assert!(set.allows_deletion(Path::new("archive/old/file"), false));
+    assert!(!set.allows_deletion(Path::new("archive/current/file"), false));
 }
 
 // ============================================================================
@@ -335,14 +338,16 @@ fn only_perishable_rule() {
 /// Verifies all rules can be perishable.
 #[test]
 fn all_perishable_rules() {
+    // With first-match-wins, include comes before exclude
     let rules = [
-        FilterRule::exclude("*.tmp").with_perishable(true),
         FilterRule::include("important.tmp").with_perishable(true),
+        FilterRule::exclude("*.tmp").with_perishable(true),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Transfer: important.tmp is included
+    // Transfer: important.tmp is included (first rule)
     assert!(set.allows(Path::new("important.tmp"), false));
+    // Transfer: scratch.tmp is excluded (second rule)
     assert!(!set.allows(Path::new("scratch.tmp"), false));
 
     // Deletion: all perishable rules ignored, defaults to allow
@@ -376,25 +381,26 @@ fn perishable_toggle() {
 /// Verifies complex scenario with multiple perishable rules.
 #[test]
 fn complex_perishable_scenario() {
+    // With first-match-wins, more specific rules come first
     let rules = [
-        FilterRule::exclude("*"),
-        FilterRule::include("src/**"),
-        FilterRule::include("cache/**").with_perishable(true),
-        FilterRule::exclude("src/**/*.tmp").with_perishable(true),
+        FilterRule::exclude("src/**/*.tmp").with_perishable(true), // Most specific
+        FilterRule::include("src/**"),                              // Then src include
+        FilterRule::include("cache/**").with_perishable(true),      // Then cache include
+        FilterRule::exclude("*"),                                    // Catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // src files included in transfer
-    assert!(set.allows(Path::new("src/main.rs"), false));
-    // For deletion: perishable exclude skipped, include src/** matches, deletable
-    assert!(set.allows_deletion(Path::new("src/main.rs"), false));
-
-    // src tmp files excluded from transfer (perishable applies on sender)
+    // src tmp files excluded from transfer (first rule, perishable applies on sender)
     assert!(!set.allows(Path::new("src/scratch.tmp"), false));
     // For deletion: perishable exclude skipped, include src/** matches, deletable
     assert!(set.allows_deletion(Path::new("src/scratch.tmp"), false));
 
-    // cache files included in transfer
+    // src files included in transfer (second rule)
+    assert!(set.allows(Path::new("src/main.rs"), false));
+    // For deletion: include src/** matches (non-perishable), deletable
+    assert!(set.allows_deletion(Path::new("src/main.rs"), false));
+
+    // cache files included in transfer (third rule)
     assert!(set.allows(Path::new("cache/data.bin"), false));
 
     // cache deletion: perishable include ignored, exclude * applies

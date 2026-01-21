@@ -91,54 +91,63 @@ fn protect_rule_anchored_matches_only_at_root() {
 /// From rsync man page: "The R is equivalent to -r, which makes the rule
 /// apply to the receiving side and means the matching files/dirs can be
 /// deleted (unprotected)."
+///
+/// With first-match-wins, specific risk rule must come before general protect.
 #[test]
 fn risk_rule_undoes_protection() {
+    // Risk for specific path comes first, then protect for parent
     let rules = [
-        FilterRule::protect("archive/"),
         FilterRule::risk("archive/tmp/"),
+        FilterRule::protect("archive/"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Main archive is protected
+    // Main archive is protected (protect matches)
     assert!(!set.allows_deletion(Path::new("archive/data.zip"), false));
 
-    // But tmp subdirectory is not protected (risk undoes protect)
+    // But tmp subdirectory is not protected (risk matches first)
     assert!(set.allows_deletion(Path::new("archive/tmp/scratch.txt"), false));
 }
 
 /// Verifies risk rule applies to directory descendants.
+///
+/// With first-match-wins, specific risk rule must come before general protect.
 #[test]
 fn risk_rule_applies_to_descendants() {
+    // Risk for specific path comes first, then protect for parent
     let rules = [
-        FilterRule::protect("backups/"),
         FilterRule::risk("backups/daily/"),
+        FilterRule::protect("backups/"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Daily backups can be deleted
+    // Daily backups can be deleted (risk matches first)
     assert!(set.allows_deletion(Path::new("backups/daily/old.tar.gz"), false));
 
-    // Other backups are still protected
+    // Other backups are still protected (protect matches)
     assert!(!set.allows_deletion(Path::new("backups/weekly/archive.tar.gz"), false));
 }
 
 /// Verifies multiple protect/risk rules interact correctly.
+///
+/// With first-match-wins, most specific rules come first.
 #[test]
 fn multiple_protect_risk_interactions() {
+    // Most specific first: protect keep, then risk temp, then protect all
     let rules = [
-        FilterRule::protect("*"),          // Protect everything
-        FilterRule::risk("temp/"),         // Allow deletion of temp
-        FilterRule::protect("temp/keep/"), // But protect keep within temp
+        FilterRule::protect("temp/keep/"), // Most specific: protect keep within temp
+        FilterRule::risk("temp/"),         // Then: allow deletion of temp
+        FilterRule::protect("*"),          // Finally: protect everything else
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Regular files protected
+    // Regular files protected (protect * matches)
     assert!(!set.allows_deletion(Path::new("important.doc"), false));
 
-    // Temp files can be deleted
+    // Temp files can be deleted (risk temp/ matches first)
     assert!(set.allows_deletion(Path::new("temp/scratch.txt"), false));
 
-    // But keep subdirectory is protected
+    // But keep subdirectory is protected (protect temp/keep/ matches first)
     assert!(!set.allows_deletion(Path::new("temp/keep/important.dat"), false));
 }
 
@@ -180,16 +189,19 @@ fn excluded_protected_file() {
 }
 
 /// Verifies that include and protection can work together.
+///
+/// With first-match-wins, specific include must come before general exclude.
 #[test]
 fn included_protected_file() {
+    // Include specific file first, then exclude all
     let rules = [
-        FilterRule::exclude("*"),
         FilterRule::include("config.yaml"),
+        FilterRule::exclude("*"),
         FilterRule::protect("config.yaml"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // File is included for transfer
+    // File is included for transfer (include matches first)
     assert!(set.allows(Path::new("config.yaml"), false));
 
     // And protected from deletion
@@ -295,26 +307,29 @@ fn risk_without_protect_no_effect() {
 }
 
 /// Verifies complex nested protect/risk patterns.
+///
+/// With first-match-wins, most specific rules come first.
 #[test]
 fn nested_protect_risk_patterns() {
+    // Most specific to least specific
     let rules = [
-        FilterRule::protect("data/"),
-        FilterRule::risk("data/cache/"),
-        FilterRule::protect("data/cache/important/"),
-        FilterRule::risk("data/cache/important/temp/"),
+        FilterRule::risk("data/cache/important/temp/"),    // Most specific: temp deletable
+        FilterRule::protect("data/cache/important/"),      // Then: important protected
+        FilterRule::risk("data/cache/"),                   // Then: cache deletable
+        FilterRule::protect("data/"),                      // Finally: data protected
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Top level data protected
+    // Top level data protected (protect data/ matches)
     assert!(!set.allows_deletion(Path::new("data/file.dat"), false));
 
-    // Cache can be deleted
+    // Cache can be deleted (risk data/cache/ matches first)
     assert!(set.allows_deletion(Path::new("data/cache/item"), false));
 
-    // Important within cache is protected
+    // Important within cache is protected (protect data/cache/important/ matches first)
     assert!(!set.allows_deletion(Path::new("data/cache/important/file"), false));
 
-    // Temp within important can be deleted
+    // Temp within important can be deleted (risk data/cache/important/temp/ matches first)
     assert!(set.allows_deletion(Path::new("data/cache/important/temp/scratch"), false));
 }
 
@@ -339,17 +354,19 @@ fn protect_with_double_star() {
 }
 
 /// Verifies protect rule order determines outcome.
+///
+/// With first-match-wins, the first matching rule determines the outcome.
 #[test]
 fn protect_risk_order_matters() {
-    // Risk then protect
+    // Risk then protect - risk wins (first match)
     let rules1 = [FilterRule::risk("file"), FilterRule::protect("file")];
     let set1 = FilterSet::from_rules(rules1).unwrap();
-    assert!(!set1.allows_deletion(Path::new("file"), false)); // Protected (last wins)
+    assert!(set1.allows_deletion(Path::new("file"), false)); // Not protected (first wins)
 
-    // Protect then risk
+    // Protect then risk - protect wins (first match)
     let rules2 = [FilterRule::protect("file"), FilterRule::risk("file")];
     let set2 = FilterSet::from_rules(rules2).unwrap();
-    assert!(set2.allows_deletion(Path::new("file"), false)); // Not protected (last wins)
+    assert!(!set2.allows_deletion(Path::new("file"), false)); // Protected (first wins)
 }
 
 // ============================================================================
