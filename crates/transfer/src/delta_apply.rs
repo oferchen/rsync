@@ -1,4 +1,4 @@
-//! crates/core/src/server/delta_apply.rs
+//! Delta application for file transfer.
 //!
 //! Delta application for file transfer.
 //!
