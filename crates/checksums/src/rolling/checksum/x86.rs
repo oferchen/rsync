@@ -83,10 +83,12 @@ pub(super) fn try_accumulate_chunk(
     let features = cpu_features();
 
     if chunk.len() >= AVX2_BLOCK_LEN && features.avx2 {
+        // SAFETY: AVX2 is available (checked above) and chunk.len() >= AVX2_BLOCK_LEN.
         return Some(unsafe { accumulate_chunk_avx2(s1, s2, len, chunk) });
     }
 
     if chunk.len() >= SSE2_BLOCK_LEN && features.sse2 {
+        // SAFETY: SSE2 is available (checked above) and chunk.len() >= SSE2_BLOCK_LEN.
         return Some(unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) });
     }
 

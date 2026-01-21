@@ -288,7 +288,8 @@ fn leading_zero_run(bytes: &[u8]) -> usize {
     let mut iter = bytes.chunks_exact(16);
 
     for chunk in &mut iter {
-        let chunk: &[u8; 16] = chunk.try_into().expect("chunked to 16 bytes");
+        // SAFETY: chunks_exact(16) guarantees exactly 16-byte slices, so try_into cannot fail.
+        let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
             continue;
@@ -312,7 +313,8 @@ fn trailing_zero_run(bytes: &[u8]) -> usize {
     let mut iter = bytes.rchunks_exact(16);
 
     for chunk in &mut iter {
-        let chunk: &[u8; 16] = chunk.try_into().expect("chunked to 16 bytes");
+        // SAFETY: rchunks_exact(16) guarantees exactly 16-byte slices, so try_into cannot fail.
+        let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
             continue;
