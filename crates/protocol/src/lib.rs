@@ -30,6 +30,8 @@ pub mod stats;
 mod varint;
 mod version;
 pub mod wire;
+/// Extended attribute wire protocol encoding and decoding.
+pub mod xattr;
 
 pub use compatibility::{
     CompatibilityFlags, KnownCompatibilityFlag, KnownCompatibilityFlagsIter,
