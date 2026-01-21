@@ -8,8 +8,8 @@
 pub mod acl;
 /// Protocol version-aware encoding/decoding using the Strategy pattern.
 ///
-/// This module includes both `ProtocolCodec` for general wire encoding and
-/// `NdxCodec` for file-list index encoding. See [`codec`] for details.
+/// This module includes both [`codec::ProtocolCodec`] for general wire encoding and
+/// [`codec::NdxCodec`] for file-list index encoding. See [`codec`] for details.
 pub mod codec;
 mod compatibility;
 /// Debug tracing system for protocol analysis

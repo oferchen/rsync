@@ -144,7 +144,12 @@ pub fn perform_legacy_handshake(
 
     let version_str = trimmed
         .strip_prefix("@RSYNCD:")
-        .unwrap()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "expected @RSYNCD: prefix in greeting",
+            )
+        })?
         .split_whitespace()
         .next()
         .ok_or_else(|| {
