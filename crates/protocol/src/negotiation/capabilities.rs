@@ -44,11 +44,24 @@ use crate::ProtocolVersion;
 /// Upstream order: xxh128 xxh3 xxh64 md5 md4 sha1 none
 const SUPPORTED_CHECKSUMS: &[&str] = &["xxh128", "xxh3", "xxh64", "md5", "md4", "sha1", "none"];
 
-/// Supported compression algorithms in preference order.
+/// Returns supported compression algorithms in preference order.
 ///
-/// This list matches upstream rsync 3.4.1's default order.
+/// This list is based on upstream rsync 3.4.1's default order, but only includes
+/// algorithms that are actually available in this build (feature-gated).
 /// The client will select the first algorithm in this list that it also supports.
-const SUPPORTED_COMPRESSIONS: &[&str] = &["zstd", "lz4", "zlibx", "zlib", "none"];
+#[allow(clippy::vec_init_then_push)] // Feature-gated pushes require incremental building
+fn supported_compressions() -> Vec<&'static str> {
+    let mut list = Vec::new();
+    #[cfg(feature = "zstd")]
+    list.push("zstd");
+    #[cfg(feature = "lz4")]
+    list.push("lz4");
+    // zlibx and zlib are always available (via flate2/miniz_oxide)
+    list.push("zlibx");
+    list.push("zlib");
+    list.push("none");
+    list
+}
 
 /// Checksum algorithm choices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,7 +331,7 @@ pub fn negotiate_capabilities(
 
     // Send compression list only if compression is enabled
     if send_compression {
-        let compression_list = SUPPORTED_COMPRESSIONS.join(" ");
+        let compression_list = supported_compressions().join(" ");
         debug_log!(Proto, 2, "sending compression list: {}", compression_list);
         write_vstring(stdout, &compression_list)?;
     }
@@ -387,11 +400,12 @@ fn choose_checksum_algorithm(client_list: &str) -> io::Result<ChecksumAlgorithm>
 ///
 /// Selects the first algorithm in the client's list that we also support.
 fn choose_compression_algorithm(client_list: &str) -> io::Result<CompressionAlgorithm> {
+    let supported = supported_compressions();
     for algo in client_list.split_whitespace() {
         // Try to parse each algorithm the client supports
         if let Ok(compression) = CompressionAlgorithm::parse(algo) {
-            // Check if we support it
-            if SUPPORTED_COMPRESSIONS.contains(&algo) {
+            // Check if we support it (both parse AND have feature enabled)
+            if supported.contains(&algo) {
                 return Ok(compression);
             }
         }
@@ -563,6 +577,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "zstd")]
     fn test_negotiate_proto32_zstd() {
         let protocol = ProtocolVersion::try_from(32).unwrap();
 
@@ -578,6 +593,25 @@ mod tests {
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
         assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    #[cfg(not(feature = "zstd"))]
+    fn test_negotiate_proto32_zlib() {
+        let protocol = ProtocolVersion::try_from(32).unwrap();
+
+        // Simulate remote choosing md5 and zlib (zstd not available in this build)
+        // Format: vstring(len) + string, so len byte + "md5" + len byte + "zlib"
+        let client_response = b"\x03md5\x04zlib";
+        let mut stdin = &client_response[..];
+        let mut stdout = Vec::new();
+
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
     }
 
     #[test]
@@ -763,7 +797,8 @@ mod tests {
     }
 
     #[test]
-    fn test_negotiate_ssh_mode() {
+    #[cfg(feature = "zstd")]
+    fn test_negotiate_ssh_mode_zstd() {
         // SSH mode (is_daemon_mode=false) - bidirectional exchange
         let protocol = ProtocolVersion::try_from(31).unwrap();
         let client_response = b"\x06xxh128\x04zstd";
@@ -783,6 +818,31 @@ mod tests {
 
         assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
         assert_eq!(result.compression, CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    #[cfg(not(feature = "zstd"))]
+    fn test_negotiate_ssh_mode_zlib() {
+        // SSH mode (is_daemon_mode=false) - bidirectional exchange
+        // Without zstd feature, remote's zstd preference is ignored, falls back to zlib
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let client_response = b"\x06xxh128\x04zlib";
+        let mut stdin = &client_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            true,  // send_compression
+            false, // is_daemon_mode = false (SSH mode)
+            true,  // is_server
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::XXH128);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
     }
 
     #[test]
@@ -811,10 +871,29 @@ mod tests {
     }
 
     #[test]
-    fn test_choose_compression_first_match_wins() {
+    #[cfg(feature = "zstd")]
+    fn test_choose_compression_first_match_wins_zstd() {
         let client_list = "zstd lz4 zlib none";
         let result = choose_compression_algorithm(client_list).unwrap();
         assert_eq!(result, CompressionAlgorithm::Zstd);
+    }
+
+    #[test]
+    #[cfg(all(not(feature = "zstd"), feature = "lz4"))]
+    fn test_choose_compression_first_match_wins_lz4() {
+        // Without zstd, first match should be lz4
+        let client_list = "zstd lz4 zlib none";
+        let result = choose_compression_algorithm(client_list).unwrap();
+        assert_eq!(result, CompressionAlgorithm::Lz4);
+    }
+
+    #[test]
+    #[cfg(all(not(feature = "zstd"), not(feature = "lz4")))]
+    fn test_choose_compression_first_match_wins_zlib() {
+        // Without zstd or lz4, first match should be zlibx (always available)
+        let client_list = "zstd lz4 zlibx zlib none";
+        let result = choose_compression_algorithm(client_list).unwrap();
+        assert_eq!(result, CompressionAlgorithm::ZlibX);
     }
 
     #[test]

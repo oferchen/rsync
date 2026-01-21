@@ -1436,6 +1436,7 @@ dependencies = [
  "bytes",
  "compress",
  "encoding_rs",
+ "flate2",
  "logging",
  "md-5",
  "memchr",

@@ -483,19 +483,9 @@ impl ReceiverContext {
             })?;
         }
 
-        // Activate compression on reader if negotiated (Protocol 30+ with compression algorithm)
-        // This mirrors upstream io.c:io_start_buffering_in()
-        // Compression is activated AFTER multiplex, wrapping the multiplexed stream
-        if let Some(ref negotiated) = self.negotiated_algorithms
-            && let Some(compress_alg) = negotiated.compression.to_compress_algorithm()?
-        {
-            reader = reader.activate_compression(compress_alg).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("failed to activate INPUT compression: {e}"),
-                )
-            })?;
-        }
+        // NOTE: Compression is NOT applied at the stream level.
+        // Upstream rsync uses token-level compression (send_deflated_token/recv_deflated_token)
+        // only during the delta transfer phase. Filter list and file list are plain data.
 
         // Read filter list from sender if appropriate
         if self.should_read_filter_list() {
