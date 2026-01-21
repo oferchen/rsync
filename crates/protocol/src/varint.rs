@@ -56,33 +56,62 @@ fn invalid_data(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
+/// Encodes an i32 into rsync's variable-length format.
+///
+/// The encoding uses a first-byte indicator scheme where high bits signal
+/// how many extra bytes follow:
+///
+/// | First byte pattern | Extra bytes | Total | Range |
+/// |-------------------|-------------|-------|-------|
+/// | `0xxx_xxxx` | 0 | 1 | 0..127 |
+/// | `10xx_xxxx` | 1 | 2 | 0..16383 |
+/// | `110x_xxxx` | 2 | 3 | 0..2097151 |
+/// | `1110_xxxx` | 3 | 4 | 0..268435455 |
+/// | `1111_0xxx` | 4 | 5 | any i32 |
+///
+/// Returns (byte_count, bytes_array) where bytes_array[0..byte_count] is the encoded data.
 fn encode_bytes(value: i32) -> (usize, [u8; 5]) {
     let mut bytes = [0u8; 5];
+    // Store value in little-endian at bytes[1..5], leaving bytes[0] for the header
     bytes[1..5].copy_from_slice(&value.to_le_bytes());
 
+    // Find the minimum number of bytes needed (trim trailing zeros)
     let mut count = 4usize;
     while count > 1 && bytes[count] == 0 {
         count -= 1;
     }
 
+    // Calculate the bit position that indicates this byte count
+    // shift=7 for 1 byte, shift=6 for 2 bytes, etc.
     let shift = 7 - ((count - 1) as u32);
     let bit = 1u8 << shift;
     let current = bytes[count];
 
+    // Determine the first byte based on whether the value fits in the available bits
     if current >= bit {
+        // Value too large - need one more byte, set all indicator bits
         count += 1;
         bytes[0] = !(bit - 1);
     } else if count > 1 {
+        // Multi-byte: merge indicator bits with the highest byte
         let double_bit = bit << 1;
         let mask = !(double_bit - 1);
         bytes[0] = current | mask;
     } else {
+        // Single byte: value fits directly
         bytes[0] = bytes[1];
     }
 
     (count, bytes)
 }
 
+/// Decodes an i32 from rsync's variable-length format.
+///
+/// Uses the `INT_BYTE_EXTRA` lookup table to determine how many extra bytes
+/// follow the first byte. The table is indexed by `first_byte / 4` (6 bits),
+/// producing values 0-6 indicating extra bytes needed.
+///
+/// Returns (decoded_value, bytes_consumed) on success.
 fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
     if bytes.is_empty() {
         return Err(io::Error::new(
@@ -92,6 +121,7 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
     }
 
     let first = bytes[0];
+    // Lookup extra bytes needed using the high 6 bits of the first byte
     let extra = INT_BYTE_EXTRA[(first / 4) as usize] as usize;
     if extra > MAX_EXTRA_BYTES {
         return Err(invalid_data("overflow in read_varint"));
@@ -104,12 +134,15 @@ fn decode_bytes(bytes: &[u8]) -> io::Result<(i32, usize)> {
         ));
     }
 
+    // Reconstruct the value from the encoded bytes
     let mut buf = [0u8; 5];
     if extra > 0 {
+        // Copy extra bytes and mask out the indicator bits from first byte
         buf[..extra].copy_from_slice(&bytes[1..1 + extra]);
         let bit = 1u8 << (8 - extra as u32);
         buf[extra] = first & (bit - 1);
     } else {
+        // Single byte encoding - value is the first byte directly
         buf[0] = first;
     }
 
