@@ -1383,4 +1383,192 @@ mod tests {
 
         assert_eq!(original, cloned);
     }
+
+    // =========================================================================
+    // Error Path Tests
+    // =========================================================================
+
+    #[test]
+    fn recv_token_eof_reading_flag_byte() {
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new()); // Empty stream
+
+        let result = decoder.recv_token(&mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_token_eof_reading_token_long() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // TOKEN_LONG needs 4 bytes after flag, but we only provide 2
+        let data = [TOKEN_LONG, 0x01, 0x02];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let result = decoder.recv_token(&mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_token_eof_reading_tokenrun_long_count() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // TOKENRUN_LONG needs 4 bytes for token + 2 bytes for run count
+        // We provide the 4-byte token but only 1 byte for run count
+        let data = [TOKENRUN_LONG, 0x00, 0x00, 0x00, 0x00, 0x05]; // Missing second run byte
+        let mut cursor = Cursor::new(&data[..]);
+
+        let result = decoder.recv_token(&mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_token_eof_reading_tokenrun_rel_count() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // TOKENRUN_REL (0xC0 + rel) needs 2 bytes for run count
+        // We only provide 1 byte
+        let data = [TOKENRUN_REL, 0x05]; // Missing second run byte
+        let mut cursor = Cursor::new(&data[..]);
+
+        let result = decoder.recv_token(&mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_token_eof_reading_deflated_length() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // DEFLATED_DATA flag but no second length byte
+        let data = [DEFLATED_DATA | 0x01]; // Says length needs second byte
+        let mut cursor = Cursor::new(&data[..]);
+
+        let result = decoder.recv_token(&mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_token_eof_reading_deflated_data() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // DEFLATED_DATA header says 100 bytes but we only provide 5
+        let data = [DEFLATED_DATA, 100, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let result = decoder.recv_token(&mut cursor);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn recv_token_invalid_flag_variants() {
+        // Test invalid flag patterns in range 0x01-0x1F
+        // These are the only truly invalid flags (reach the _ arm in recv_token)
+        // 0x00 = END_FLAG
+        // 0x20-0x3F = TOKEN_LONG/TOKENRUN_LONG area (reads more bytes)
+        // 0x40-0x7F = DEFLATED_DATA
+        // 0x80-0xBF = TOKEN_REL
+        // 0xC0-0xFF = TOKENRUN_REL
+        let invalid_flags = [0x01, 0x02, 0x0F, 0x10, 0x15, 0x1F];
+
+        for flag in invalid_flags {
+            let mut decoder = CompressedTokenDecoder::new();
+            let data = [flag];
+            let mut cursor = Cursor::new(&data[..]);
+
+            let result = decoder.recv_token(&mut cursor);
+            assert!(
+                result.is_err(),
+                "Expected error for flag 0x{flag:02X}, got {result:?}"
+            );
+            let err = result.unwrap_err();
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::InvalidData,
+                "Expected InvalidData for flag 0x{flag:02X}, got {:?}",
+                err.kind()
+            );
+            assert!(err.to_string().contains(&format!("0x{flag:02X}")));
+        }
+    }
+
+    #[test]
+    fn recv_token_token_long_valid() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // TOKEN_LONG with token index 0x12345678
+        let data = [TOKEN_LONG, 0x78, 0x56, 0x34, 0x12, END_FLAG];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let token = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(token, CompressedToken::BlockMatch(0x12345678)));
+
+        let end = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(end, CompressedToken::End));
+    }
+
+    #[test]
+    fn recv_token_tokenrun_long_valid() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // TOKENRUN_LONG with token 100 and run count 3 (4 total tokens: 100, 101, 102, 103)
+        let data = [TOKENRUN_LONG, 100, 0, 0, 0, 3, 0, END_FLAG];
+        let mut cursor = Cursor::new(&data[..]);
+
+        // First token
+        let t1 = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(t1, CompressedToken::BlockMatch(100)));
+
+        // Run tokens
+        let t2 = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(t2, CompressedToken::BlockMatch(101)));
+
+        let t3 = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(t3, CompressedToken::BlockMatch(102)));
+
+        let t4 = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(t4, CompressedToken::BlockMatch(103)));
+
+        // End
+        let end = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(end, CompressedToken::End));
+    }
+
+    #[test]
+    fn recv_token_token_rel_valid() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // TOKEN_REL with relative offset 5 (rx_token starts at 0, so 0+5=5)
+        let data = [TOKEN_REL | 5, END_FLAG];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let token = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(token, CompressedToken::BlockMatch(5)));
+
+        let end = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(end, CompressedToken::End));
+    }
+
+    #[test]
+    fn recv_token_tokenrun_rel_valid() {
+        let mut decoder = CompressedTokenDecoder::new();
+        // TOKENRUN_REL with relative offset 10 and run count 2 (3 total: 10, 11, 12)
+        let data = [TOKENRUN_REL | 10, 2, 0, END_FLAG];
+        let mut cursor = Cursor::new(&data[..]);
+
+        let t1 = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(t1, CompressedToken::BlockMatch(10)));
+
+        let t2 = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(t2, CompressedToken::BlockMatch(11)));
+
+        let t3 = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(t3, CompressedToken::BlockMatch(12)));
+
+        let end = decoder.recv_token(&mut cursor).unwrap();
+        assert!(matches!(end, CompressedToken::End));
+    }
 }

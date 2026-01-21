@@ -1,5 +1,3 @@
-//! crates/core/src/server/shared/mod.rs
-//!
 //! Shared abstractions used by generator and receiver roles.
 //!
 //! This module contains common code extracted from generator.rs and receiver.rs

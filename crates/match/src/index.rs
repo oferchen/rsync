@@ -1,6 +1,8 @@
-//! crates/match/src/index.rs
-//!
 //! Signature index for fast delta block lookup.
+//!
+//! This module provides [`DeltaSignatureIndex`] for O(1) block lookups during
+//! delta generation. It indexes signature blocks by their rolling checksum
+//! components `(sum1, sum2)` for efficient matching.
 
 use std::collections::{HashMap, VecDeque};
 
