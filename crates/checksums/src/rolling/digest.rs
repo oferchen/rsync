@@ -591,3 +591,73 @@ mod tests {
         assert_ne!(digest1, digest2);
     }
 }
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::io::Cursor;
+
+    proptest! {
+        /// Property: from_bytes produces deterministic digests.
+        #[test]
+        fn from_bytes_deterministic(data: Vec<u8>) {
+            let digest1 = RollingDigest::from_bytes(&data);
+            let digest2 = RollingDigest::from_bytes(&data);
+            prop_assert_eq!(digest1, digest2);
+        }
+
+        /// Property: to_le_bytes/from_le_bytes roundtrip preserves value.
+        #[test]
+        fn le_bytes_roundtrip(s1: u16, s2: u16, len in 0usize..1_000_000) {
+            let original = RollingDigest::new(s1, s2, len);
+            let bytes = original.to_le_bytes();
+            let reconstructed = RollingDigest::from_le_bytes(bytes, len);
+            prop_assert_eq!(original, reconstructed);
+        }
+
+        /// Property: value() produces consistent packed u32.
+        #[test]
+        fn value_consistent(s1: u16, s2: u16, len in 0usize..1_000_000) {
+            let digest = RollingDigest::new(s1, s2, len);
+            let value = digest.value();
+            let reconstructed = RollingDigest::from_value(value, len);
+            prop_assert_eq!(digest, reconstructed);
+        }
+
+        /// Property: write_le_to/read_le_from roundtrip preserves digest.
+        #[test]
+        fn write_read_roundtrip(s1: u16, s2: u16, len in 0usize..1_000_000) {
+            let original = RollingDigest::new(s1, s2, len);
+            let mut buffer = Vec::new();
+            original.write_le_to(&mut buffer).expect("write succeeds");
+            let mut reader = Cursor::new(buffer);
+            let reconstructed = RollingDigest::read_le_from(&mut reader, len).expect("read succeeds");
+            prop_assert_eq!(original, reconstructed);
+        }
+
+        /// Property: digest length equals input length.
+        #[test]
+        fn len_matches_input(data: Vec<u8>) {
+            let digest = RollingDigest::from_bytes(&data);
+            prop_assert_eq!(digest.len(), data.len());
+        }
+
+        /// Property: Into<u32> and Into<[u8; 4]> are consistent.
+        #[test]
+        fn into_conversions_consistent(s1: u16, s2: u16, len in 0usize..100) {
+            let digest = RollingDigest::new(s1, s2, len);
+            let value: u32 = digest.into();
+            let bytes: [u8; 4] = digest.into();
+            let value_from_bytes = u32::from_le_bytes(bytes);
+            prop_assert_eq!(value, value_from_bytes);
+        }
+
+        /// Property: empty digest is correctly identified.
+        #[test]
+        fn is_empty_correct(s1: u16, s2: u16, len: usize) {
+            let digest = RollingDigest::new(s1, s2, len);
+            prop_assert_eq!(digest.is_empty(), len == 0);
+        }
+    }
+}

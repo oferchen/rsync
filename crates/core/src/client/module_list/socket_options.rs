@@ -436,6 +436,9 @@ fn set_socket_option_int(
     use std::os::fd::AsRawFd;
 
     let raw = stream.as_raw_fd();
+    // SAFETY: `raw` is a valid file descriptor from the TcpStream.
+    // `value` is a local variable with a valid address for the duration of the call.
+    // The size parameter matches the actual size of the value.
     let ret = unsafe {
         libc::setsockopt(
             raw,
@@ -464,6 +467,9 @@ fn set_socket_option_int(
     use std::os::windows::io::AsRawSocket;
 
     let raw = stream.as_raw_socket();
+    // SAFETY: `raw` is a valid socket handle from the TcpStream.
+    // `value` is a local variable with a valid address for the duration of the call.
+    // The size parameter matches the actual size of the value.
     let ret = unsafe {
         libc::setsockopt(
             raw as libc::SOCKET,
