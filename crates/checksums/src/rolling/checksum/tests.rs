@@ -627,3 +627,156 @@ fn x86_cpu_feature_detection_is_cached() {
     x86::load_cpu_features_for_tests();
     assert!(x86::cpu_features_cached_for_tests());
 }
+
+// ==== Inter-architecture compatibility golden tests ====
+//
+// These tests verify the checksum algorithm produces identical results across all
+// supported architectures (x86 SSE2/AVX2, ARM NEON, scalar fallback). The expected
+// values are computed once and hardcoded, ensuring any SIMD optimization changes
+// don't break compatibility.
+
+#[test]
+fn golden_test_empty_input() {
+    let mut checksum = RollingChecksum::new();
+    checksum.update(b"");
+    assert_eq!(checksum.value(), 0x0000_0000);
+    assert_eq!(checksum.len(), 0);
+}
+
+#[test]
+fn golden_test_single_byte() {
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&[0x42]); // 'B' = 66
+    // s1 = 66, s2 = 66, value = (66 << 16) | 66 = 0x0042_0042
+    assert_eq!(checksum.value(), 0x0042_0042);
+    assert_eq!(checksum.digest().sum1(), 66);
+    assert_eq!(checksum.digest().sum2(), 66);
+}
+
+#[test]
+fn golden_test_known_string() {
+    // "rsync" = [0x72, 0x73, 0x79, 0x6e, 0x63]
+    let mut checksum = RollingChecksum::new();
+    checksum.update(b"rsync");
+    // s1 = 0x72 + 0x73 + 0x79 + 0x6e + 0x63 = 114 + 115 + 121 + 110 + 99 = 559 = 0x022f
+    // s2 = 114 + 229 + 350 + 460 + 559 = 1712 = 0x06b0
+    // value = (s2 << 16) | s1 = 0x06b0_022f
+    assert_eq!(checksum.value(), 0x06b0_022f);
+}
+
+#[test]
+fn golden_test_all_zeros() {
+    // 16 zero bytes
+    let data = [0u8; 16];
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&data);
+    // All zeros: s1 = 0, s2 = 0
+    assert_eq!(checksum.value(), 0x0000_0000);
+}
+
+#[test]
+fn golden_test_all_ones() {
+    // 16 bytes of 0x01
+    let data = [1u8; 16];
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&data);
+    // s1 = 16 * 1 = 16 = 0x0010
+    // s2 = 1 + 2 + 3 + ... + 16 = 16*17/2 = 136 = 0x0088
+    // value = (136 << 16) | 16 = 0x0088_0010
+    assert_eq!(checksum.value(), 0x0088_0010);
+}
+
+#[test]
+fn golden_test_all_ff() {
+    // 16 bytes of 0xFF
+    let data = [0xFFu8; 16];
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&data);
+    // s1 = 16 * 255 = 4080 = 0x0ff0
+    // s2 = 255*1 + 255*2 + ... + 255*16 = 255 * (16*17/2) = 255 * 136 = 34680 = 0x8778
+    // value = (s2 << 16) | s1 = 0x8778_0ff0
+    assert_eq!(checksum.value(), 0x8778_0ff0);
+}
+
+#[test]
+fn golden_test_ascending_bytes() {
+    // [0, 1, 2, ..., 15]
+    let data: Vec<u8> = (0..16).collect();
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&data);
+    // s1 = 0 + 1 + 2 + ... + 15 = 15*16/2 = 120 = 0x0078
+    // s2 = 0*1 + 1*2 + 2*3 + ... - weighted by position
+    // Using the formula: sum_{i=0}^{n-1} i*(n-i) = n*(n-1)*(n+1)/6
+    // For n=16: s2 = sum of prefix sums
+    // Prefix sums: 0, 1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 66, 78, 91, 105, 120
+    // s2 = 680 = 0x02a8
+    // value = (680 << 16) | 120 = 0x02a8_0078
+    assert_eq!(checksum.value(), 0x02a8_0078);
+}
+
+#[test]
+fn golden_test_block_length_700() {
+    // rsync commonly uses 700-byte blocks for small files
+    // Create deterministic data pattern
+    let mut data = vec![0u8; 700];
+    for (i, byte) in data.iter_mut().enumerate() {
+        *byte = ((i * 31) % 256) as u8;
+    }
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&data);
+    // Pre-computed golden value (architecture-independent)
+    // This value was verified against the scalar implementation
+    assert_eq!(checksum.value(), 0xe2ea_5c96);
+    assert_eq!(checksum.len(), 700);
+}
+
+#[test]
+fn golden_test_block_length_4096() {
+    // 4KB block size
+    let mut data = vec![0u8; 4096];
+    for (i, byte) in data.iter_mut().enumerate() {
+        *byte = ((i * 17 + 7) % 256) as u8;
+    }
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&data);
+    // Pre-computed golden value (architecture-independent)
+    assert_eq!(checksum.value(), 0x2000_f800);
+    assert_eq!(checksum.len(), 4096);
+}
+
+#[test]
+fn golden_test_incremental_matches_full() {
+    // Verify incremental updates produce same result as full update
+    let data = b"The quick brown fox jumps over the lazy dog";
+
+    let mut full = RollingChecksum::new();
+    full.update(data);
+
+    let mut incremental = RollingChecksum::new();
+    incremental.update(&data[..10]);
+    incremental.update(&data[10..25]);
+    incremental.update(&data[25..]);
+
+    assert_eq!(full.value(), incremental.value());
+    assert_eq!(full.value(), 0x5ba2_0fd9);
+}
+
+#[test]
+fn golden_test_roll_produces_expected_value() {
+    // Verify rolling produces correct checksum after shift
+    let data = b"ABCDEFGH";
+    let mut checksum = RollingChecksum::new();
+    checksum.update(&data[0..4]); // "ABCD"
+
+    // Verify initial value
+    assert_eq!(checksum.value(), 0x0294_010a);
+
+    // Roll: remove 'A', add 'E'
+    checksum.roll(b'A', b'E').unwrap();
+
+    // Should match fresh computation of "BCDE"
+    let mut fresh = RollingChecksum::new();
+    fresh.update(&data[1..5]);
+    assert_eq!(checksum.value(), fresh.value());
+    assert_eq!(checksum.value(), 0x029e_010e);
+}
