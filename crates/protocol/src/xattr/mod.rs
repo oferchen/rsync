@@ -33,10 +33,12 @@
 
 mod entry;
 mod list;
+mod prefix;
 mod wire;
 
 pub use entry::{XattrEntry, XattrState};
 pub use list::XattrList;
+pub use prefix::{local_to_wire, wire_to_local};
 pub use wire::{
     RecvXattrResult, checksum_matches, recv_xattr, recv_xattr_request, recv_xattr_values,
     send_xattr, send_xattr_request, send_xattr_values,
