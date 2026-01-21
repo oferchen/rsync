@@ -183,19 +183,22 @@ fn rule_ordering_with_sides() {
     assert!(!set.allows_deletion(Path::new("readme.txt"), false));
 }
 
-/// Verifies sender-only include after sender-only exclude.
+/// Verifies sender-only include before sender-only exclude.
+///
+/// With first-match-wins, specific include must come before general exclude.
 #[test]
 fn sender_only_include_after_sender_only_exclude() {
+    // Specific include first, then general exclude
     let rules = [
-        FilterRule::exclude("*.log").with_sides(true, false),
         FilterRule::include("important.log").with_sides(true, false),
+        FilterRule::exclude("*.log").with_sides(true, false),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // General .log files excluded
+    // General .log files excluded (exclude matches)
     assert!(!set.allows(Path::new("debug.log"), false));
 
-    // Important log included
+    // Important log included (include matches first)
     assert!(set.allows(Path::new("important.log"), false));
 }
 
@@ -204,34 +207,40 @@ fn sender_only_include_after_sender_only_exclude() {
 // ============================================================================
 
 /// Verifies show rule interacts with exclude rule.
+///
+/// With first-match-wins, show must come before exclude.
 #[test]
 fn show_with_exclude_interaction() {
+    // Show specific first, then exclude all
     let rules = [
-        FilterRule::exclude("*"),         // Exclude everything
-        FilterRule::show("important/**"), // But show important on sender
+        FilterRule::show("important/**"), // Show important on sender first
+        FilterRule::exclude("*"),         // Then exclude everything else
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Important files are shown (included on sender)
+    // Important files are shown (show matches first)
     assert!(set.allows(Path::new("important/file.txt"), false));
 
-    // Other files are still excluded
+    // Other files are still excluded (exclude matches)
     assert!(!set.allows(Path::new("other/file.txt"), false));
 }
 
 /// Verifies hide rule interacts with include rule.
+///
+/// With first-match-wins, hide must come before include.
 #[test]
 fn hide_with_include_interaction() {
+    // Hide specific first, then include all
     let rules = [
-        FilterRule::include("*"),      // Include everything
-        FilterRule::hide("secret/**"), // But hide secret on sender
+        FilterRule::hide("secret/**"), // Hide secret on sender first
+        FilterRule::include("*"),      // Then include everything else
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Secret files are hidden (excluded on sender)
+    // Secret files are hidden (hide matches first)
     assert!(!set.allows(Path::new("secret/data.txt"), false));
 
-    // Other files are still included
+    // Other files are still included (include matches)
     assert!(set.allows(Path::new("public/data.txt"), false));
 }
 

@@ -1,9 +1,12 @@
 //! Integration tests for filter rule precedence and merging.
 //!
 //! These tests verify that filter rules are evaluated in the correct order
-//! and that the "last matching rule wins" semantics are correctly implemented.
-//! This matches rsync's behavior where rules are checked in order and the
-//! first matching rule determines the outcome.
+//! using rsync's **first-match-wins** semantics. Rules are checked in order
+//! from first to last, and the first matching rule determines the outcome.
+//!
+//! This means:
+//! - Specific exceptions must come BEFORE general rules
+//! - To include a specific file while excluding a pattern, put the include first
 //!
 //! Reference: rsync 3.4.1 exclude.c lines 1043-1065 for check_filter.
 
@@ -14,59 +17,59 @@ use std::path::Path;
 // Basic Precedence Tests
 // ============================================================================
 
-/// Verifies that later rules override earlier rules.
+/// Verifies first-match-wins: specific includes must come before general excludes.
 ///
 /// From rsync man page: "The include/exclude rules are checked in the
 /// order of definition. The first matching rule is used."
 #[test]
-fn last_matching_rule_wins() {
+fn first_matching_rule_wins() {
     let rules = [
-        FilterRule::exclude("*.txt"),
         FilterRule::include("important.txt"),
+        FilterRule::exclude("*.txt"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Later include overrides earlier exclude
+    // Earlier include takes precedence
     assert!(set.allows(Path::new("important.txt"), false));
 
-    // Non-matching include doesn't affect other .txt files
+    // Other .txt files excluded by second rule
     assert!(!set.allows(Path::new("other.txt"), false));
 }
 
-/// Verifies exclude after include.
+/// Verifies exclude before include for exceptions.
 #[test]
-fn exclude_after_include() {
+fn exclude_before_include() {
     let rules = [
-        FilterRule::include("*.txt"),
         FilterRule::exclude("secret.txt"),
+        FilterRule::include("*.txt"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Most .txt files included
-    assert!(set.allows(Path::new("readme.txt"), false));
-
-    // But secret.txt excluded by later rule
+    // secret.txt excluded by first rule
     assert!(!set.allows(Path::new("secret.txt"), false));
+
+    // Other .txt files included by second rule
+    assert!(set.allows(Path::new("readme.txt"), false));
 }
 
-/// Verifies multiple alternating rules.
+/// Verifies multiple rules with first-match-wins.
 #[test]
 fn alternating_rules() {
+    // With first-match-wins, order specific rules before general ones
     let rules = [
-        FilterRule::exclude("*"),        // Exclude everything
-        FilterRule::include("*.txt"),    // Include .txt
-        FilterRule::exclude("temp.txt"), // Exclude temp.txt
-        FilterRule::include("temp.txt"), // Include temp.txt again
+        FilterRule::include("temp.txt"), // Most specific: include temp.txt
+        FilterRule::include("*.txt"),    // Include other .txt files
+        FilterRule::exclude("*"),        // Exclude everything else
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // temp.txt is included by last matching rule
+    // temp.txt is included by first rule
     assert!(set.allows(Path::new("temp.txt"), false));
 
-    // Other .txt files included
+    // Other .txt files included by second rule
     assert!(set.allows(Path::new("readme.txt"), false));
 
-    // Non-.txt files excluded
+    // Non-.txt files excluded by third rule
     assert!(!set.allows(Path::new("image.png"), false));
 }
 
@@ -74,36 +77,36 @@ fn alternating_rules() {
 // Specificity Tests
 // ============================================================================
 
-/// Verifies that more specific patterns take precedence when last.
+/// Verifies that more specific patterns take precedence when first.
 #[test]
-fn specific_pattern_last() {
+fn specific_pattern_first() {
     let rules = [
-        FilterRule::exclude("*"),
-        FilterRule::include("*.rs"),
-        FilterRule::exclude("test_*.rs"),
+        FilterRule::exclude("test_*.rs"),  // Most specific first
+        FilterRule::include("*.rs"),        // Then general include
+        FilterRule::exclude("*"),           // Finally catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Regular .rs files included
-    assert!(set.allows(Path::new("main.rs"), false));
-
-    // test_*.rs files excluded
+    // test_*.rs files excluded by first rule
     assert!(!set.allows(Path::new("test_main.rs"), false));
 
-    // Non-.rs files excluded
+    // Regular .rs files included by second rule
+    assert!(set.allows(Path::new("main.rs"), false));
+
+    // Non-.rs files excluded by third rule
     assert!(!set.allows(Path::new("Cargo.toml"), false));
 }
 
-/// Verifies that less specific patterns can override more specific ones.
+/// Verifies that specific patterns must come before general ones.
 #[test]
-fn general_pattern_after_specific() {
+fn general_pattern_before_specific() {
     let rules = [
-        FilterRule::exclude("important.txt"), // Specific
-        FilterRule::include("*.txt"),         // General (comes last)
+        FilterRule::include("*.txt"),         // General (comes first)
+        FilterRule::exclude("important.txt"), // Specific (comes second, but won't match)
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Important.txt is included because *.txt comes last
+    // Important.txt is included because *.txt matches first
     assert!(set.allows(Path::new("important.txt"), false));
 }
 
@@ -111,15 +114,15 @@ fn general_pattern_after_specific() {
 #[test]
 fn directory_vs_file_pattern() {
     let rules = [
-        FilterRule::exclude("build"),  // Matches file or directory named build
-        FilterRule::include("build/"), // Matches only directory named build
+        FilterRule::include("build/"), // Directory pattern first
+        FilterRule::exclude("build"),  // Then file/directory pattern
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Directory named build is included (last matching rule)
+    // Directory named build is included (first rule matches)
     assert!(set.allows(Path::new("build"), true));
 
-    // File named build is excluded (first rule matches, second doesn't)
+    // File named build is excluded (first rule doesn't match file, second does)
     assert!(!set.allows(Path::new("build"), false));
 }
 
@@ -130,65 +133,67 @@ fn directory_vs_file_pattern() {
 /// Verifies complex exclude/include chain.
 #[test]
 fn complex_chain() {
+    // With first-match-wins, most specific rules come first
     let rules = [
-        FilterRule::exclude("*"),
-        FilterRule::include("src/**"),
-        FilterRule::exclude("src/**/test/**"),
-        FilterRule::include("src/**/test/fixtures/**"),
+        FilterRule::include("src/**/test/fixtures/**"), // Most specific: fixtures
+        FilterRule::exclude("src/**/test/**"),          // Then: exclude test dirs
+        FilterRule::include("src/**"),                   // Then: include src
+        FilterRule::exclude("*"),                        // Finally: exclude all
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Root files excluded
-    assert!(!set.allows(Path::new("Cargo.toml"), false));
+    // fixtures within test included (first rule)
+    assert!(set.allows(Path::new("src/lib/test/fixtures/data.json"), false));
 
-    // src files included
-    assert!(set.allows(Path::new("src/main.rs"), false));
-
-    // test directories excluded
+    // test directories excluded (second rule)
     assert!(!set.allows(Path::new("src/lib/test/unit.rs"), false));
 
-    // But fixtures within test included
-    assert!(set.allows(Path::new("src/lib/test/fixtures/data.json"), false));
+    // src files included (third rule)
+    assert!(set.allows(Path::new("src/main.rs"), false));
+
+    // Root files excluded (fourth rule)
+    assert!(!set.allows(Path::new("Cargo.toml"), false));
 }
 
 /// Verifies multiple wildcard patterns interact correctly.
 #[test]
 fn multiple_wildcard_patterns() {
+    // With first-match-wins, most specific rules come first
     let rules = [
-        FilterRule::exclude("**/*.log"),
-        FilterRule::include("**/important.log"),
-        FilterRule::exclude("**/old/*.log"),
-        FilterRule::include("**/old/critical.log"),
+        FilterRule::include("**/old/critical.log"), // Most specific: critical log
+        FilterRule::exclude("**/old/*.log"),         // Then: exclude old logs
+        FilterRule::include("**/important.log"),     // Then: include important
+        FilterRule::exclude("**/*.log"),             // Finally: exclude all logs
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Regular logs excluded
-    assert!(!set.allows(Path::new("app.log"), false));
-    assert!(!set.allows(Path::new("debug/trace.log"), false));
+    // Critical old log included (first rule)
+    assert!(set.allows(Path::new("old/critical.log"), false));
 
-    // Important log included
-    assert!(set.allows(Path::new("important.log"), false));
-
-    // Old logs excluded
+    // Other old logs excluded (second rule)
     assert!(!set.allows(Path::new("old/archive.log"), false));
 
-    // Critical old log included
-    assert!(set.allows(Path::new("old/critical.log"), false));
+    // Important log included (third rule)
+    assert!(set.allows(Path::new("important.log"), false));
+
+    // Regular logs excluded (fourth rule)
+    assert!(!set.allows(Path::new("app.log"), false));
+    assert!(!set.allows(Path::new("debug/trace.log"), false));
 }
 
 /// Verifies anchored vs unanchored precedence.
 #[test]
 fn anchored_vs_unanchored() {
     let rules = [
-        FilterRule::exclude("build"),  // Unanchored - matches anywhere
-        FilterRule::include("/build"), // Anchored - only at root
+        FilterRule::include("/build"), // Anchored - only at root (first)
+        FilterRule::exclude("build"),  // Unanchored - matches anywhere (second)
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Root build is included (anchored rule matches and comes last)
+    // Root build is included (anchored rule matches first)
     assert!(set.allows(Path::new("build"), false));
 
-    // Nested build is excluded (only unanchored rule matches)
+    // Nested build is excluded (anchored rule doesn't match, unanchored does)
     assert!(!set.allows(Path::new("src/build"), false));
 }
 
@@ -230,20 +235,21 @@ fn protect_and_exclude_same_file() {
     assert!(!set.allows_deletion(Path::new("other.bak"), false));
 }
 
-/// Verifies risk undoes protect.
+/// Verifies risk overrides protect with first-match-wins.
 #[test]
-fn risk_undoes_protect() {
+fn risk_overrides_protect() {
+    // With first-match-wins, risk must come before protect
     let rules = [
-        FilterRule::protect("data/**"),
-        FilterRule::risk("data/temp/**"),
+        FilterRule::risk("data/temp/**"),   // Risk for temp first
+        FilterRule::protect("data/**"),     // Protect data second
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Data is protected
-    assert!(!set.allows_deletion(Path::new("data/important.dat"), false));
-
-    // But temp within data is not
+    // temp within data is not protected (risk matches first)
     assert!(set.allows_deletion(Path::new("data/temp/scratch.dat"), false));
+
+    // Other data is protected (protect matches)
+    assert!(!set.allows_deletion(Path::new("data/important.dat"), false));
 }
 
 // ============================================================================
@@ -274,10 +280,11 @@ fn sender_receiver_independence() {
 /// Verifies show/hide vs include/exclude precedence.
 #[test]
 fn show_hide_vs_include_exclude() {
+    // With first-match-wins, includes/shows come before exclude
     let rules = [
-        FilterRule::exclude("*"),         // Exclude all
         FilterRule::show("visible/**"),   // Show visible (sender-only)
         FilterRule::include("always/**"), // Include always (both sides)
+        FilterRule::exclude("*"),         // Exclude all
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -315,21 +322,22 @@ fn clear_resets_precedence() {
 /// Verifies rules after clear establish new precedence.
 #[test]
 fn new_precedence_after_clear() {
+    // With first-match-wins, include must come before exclude
     let rules = [
         FilterRule::exclude("*"),
         FilterRule::clear(),
-        FilterRule::exclude("*.bak"),
-        FilterRule::include("important.bak"),
+        FilterRule::include("important.bak"), // Include specific first
+        FilterRule::exclude("*.bak"),          // Then exclude pattern
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Old exclude * is cleared
     assert!(set.allows(Path::new("file.txt"), false));
 
-    // New precedence: important.bak included
+    // New precedence: important.bak included (first rule after clear)
     assert!(set.allows(Path::new("important.bak"), false));
 
-    // Other .bak excluded
+    // Other .bak excluded (second rule after clear)
     assert!(!set.allows(Path::new("backup.bak"), false));
 }
 
@@ -340,52 +348,57 @@ fn new_precedence_after_clear() {
 /// Verifies duplicate rules are handled.
 #[test]
 fn duplicate_rules() {
+    // With first-match-wins, include must come first
     let rules = [
-        FilterRule::exclude("*.tmp"),
-        FilterRule::exclude("*.tmp"), // Duplicate
         FilterRule::include("keep.tmp"),
+        FilterRule::exclude("*.tmp"),
+        FilterRule::exclude("*.tmp"), // Duplicate (harmless)
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Behavior is same as without duplicate
-    assert!(!set.allows(Path::new("scratch.tmp"), false));
+    // keep.tmp included by first rule
     assert!(set.allows(Path::new("keep.tmp"), false));
+
+    // Other .tmp excluded
+    assert!(!set.allows(Path::new("scratch.tmp"), false));
 }
 
 /// Verifies overlapping patterns.
 #[test]
 fn overlapping_patterns() {
+    // With first-match-wins, specific include must come first
     let rules = [
+        FilterRule::include("readme.txt"),
         FilterRule::exclude("*.txt"),
         FilterRule::exclude("readme.*"),
-        FilterRule::include("readme.txt"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // readme.txt matches multiple exclude patterns but include comes last
+    // readme.txt included by first rule
     assert!(set.allows(Path::new("readme.txt"), false));
-
-    // Other readme files excluded
-    assert!(!set.allows(Path::new("readme.md"), false));
 
     // Other txt files excluded
     assert!(!set.allows(Path::new("notes.txt"), false));
+
+    // Other readme files excluded
+    assert!(!set.allows(Path::new("readme.md"), false));
 }
 
 /// Verifies subset patterns.
 #[test]
 fn subset_patterns() {
+    // With first-match-wins, more specific (include) comes first
     let rules = [
-        FilterRule::exclude("**/*.rs"),     // All .rs files
-        FilterRule::include("src/**/*.rs"), // But include src .rs files
+        FilterRule::include("src/**/*.rs"), // Include src .rs files first
+        FilterRule::exclude("**/*.rs"),     // Then exclude all .rs files
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // src .rs files included
+    // src .rs files included (first rule matches)
     assert!(set.allows(Path::new("src/main.rs"), false));
     assert!(set.allows(Path::new("src/lib/util.rs"), false));
 
-    // Other .rs files excluded
+    // Other .rs files excluded (second rule matches)
     assert!(!set.allows(Path::new("tests/test.rs"), false));
     assert!(!set.allows(Path::new("main.rs"), false));
 }
@@ -454,21 +467,20 @@ fn all_exclude_rules() {
 /// Verifies perishable rules in precedence chain.
 #[test]
 fn perishable_in_precedence() {
+    // With first-match-wins, include comes first
     let rules = [
-        FilterRule::exclude("*").with_perishable(true),
         FilterRule::include("keep/**"),
+        FilterRule::exclude("*").with_perishable(true),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Transfer: include overrides perishable exclude
+    // Transfer: keep/** matches first, so included
     assert!(set.allows(Path::new("keep/file.txt"), false));
 
-    // Deletion: perishable exclude is skipped during deletion checks,
-    // so keep/** still matches and file is included (transfer_allowed = true).
-    // Since it's included and not protected, it IS deletable.
+    // Deletion: keep/** matches first (perishable doesn't affect include rules)
     assert!(set.allows_deletion(Path::new("keep/file.txt"), false));
 
-    // Other files: excluded from transfer (perishable applies on sender)
+    // Other files: excluded from transfer (perishable exclude matches)
     assert!(!set.allows(Path::new("other.txt"), false));
 
     // For deletion: perishable exclude is skipped, so no rule matches,

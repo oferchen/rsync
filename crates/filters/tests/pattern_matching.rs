@@ -309,22 +309,23 @@ fn nested_directory_pattern() {
 // Rule Ordering and Precedence Tests
 // ============================================================================
 
-/// Verifies that later rules override earlier rules.
+/// Verifies that first matching rule wins.
 ///
 /// From rsync man page: "the include/exclude rules are checked in order
 /// and the first matching rule is used."
 #[test]
-fn last_matching_rule_wins() {
+fn first_matching_rule_wins() {
+    // With first-match-wins, specific include must come before general exclude
     let rules = [
-        FilterRule::exclude("*.txt"),
         FilterRule::include("important.txt"),
+        FilterRule::exclude("*.txt"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Specifically included file is allowed
+    // Specifically included file is allowed (first rule)
     assert!(set.allows(Path::new("important.txt"), false));
 
-    // Other .txt files are excluded
+    // Other .txt files are excluded (second rule)
     assert!(!set.allows(Path::new("other.txt"), false));
     assert!(!set.allows(Path::new("readme.txt"), false));
 }
@@ -332,42 +333,43 @@ fn last_matching_rule_wins() {
 /// Verifies multiple include/exclude interactions.
 #[test]
 fn complex_rule_ordering() {
+    // With first-match-wins, most specific rules come first
     let rules = [
-        FilterRule::exclude("*"),
-        FilterRule::include("*.rs"),
-        FilterRule::exclude("test_*.rs"),
-        FilterRule::include("test_utils.rs"),
+        FilterRule::include("test_utils.rs"),  // Most specific first
+        FilterRule::exclude("test_*.rs"),      // Then test pattern
+        FilterRule::include("*.rs"),           // Then general .rs include
+        FilterRule::exclude("*"),              // Finally catch-all exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // test_utils.rs is specifically included
+    // test_utils.rs is specifically included (rule 1)
     assert!(set.allows(Path::new("test_utils.rs"), false));
 
-    // Other test_*.rs files excluded by rule 3
+    // Other test_*.rs files excluded (rule 2)
     assert!(!set.allows(Path::new("test_main.rs"), false));
 
-    // Regular .rs files allowed by rule 2
+    // Regular .rs files allowed (rule 3)
     assert!(set.allows(Path::new("main.rs"), false));
     assert!(set.allows(Path::new("lib.rs"), false));
 
-    // Non-.rs files excluded by rule 1
+    // Non-.rs files excluded (rule 4)
     assert!(!set.allows(Path::new("Cargo.toml"), false));
 }
 
-/// Verifies that include can restore a directory after exclusion.
+/// Verifies that include can create exception for directory exclusion.
 #[test]
-fn include_restores_excluded_directory() {
+fn include_creates_exception_for_excluded_directory() {
+    // With first-match-wins, include must come before exclude
     let rules = [
-        FilterRule::exclude("target/"),
-        FilterRule::include("target/doc/"),
+        FilterRule::include("target/doc/**"),  // Include doc contents first
+        FilterRule::exclude("target/"),        // Then exclude target
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // target/doc is specifically included
-    assert!(set.allows(Path::new("target/doc"), true));
+    // target/doc contents are specifically included (rule 1)
     assert!(set.allows(Path::new("target/doc/index.html"), false));
 
-    // Other target contents excluded
+    // Other target contents excluded (rule 2)
     assert!(!set.allows(Path::new("target/debug"), true));
     assert!(!set.allows(Path::new("target/release/binary"), false));
 }
