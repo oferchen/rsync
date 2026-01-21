@@ -2,15 +2,23 @@
 
 //! # Overview
 //!
-//! Zlib compression helpers shared across the workspace. The module currently
-//! exposes streaming encoder/decoder utilities that mirror upstream rsync's
-//! compression pipeline. [`CountingZlibEncoder`] accepts incremental input while
-//! tracking the number of bytes produced by the compressor so higher layers can
-//! report accurate compressed sizes without buffering the resulting payload in
-//! memory. The complementary [`CountingZlibDecoder`] wraps a reader that
-//! produces decompressed bytes while recording how much output has been yielded
-//! so far, keeping the counter accurate for both scalar and vectored reads so
-//! downstream bandwidth accounting mirrors upstream behaviour.
+//! Raw deflate compression helpers for rsync wire protocol compatibility.
+//!
+//! This module uses raw deflate format (no zlib header/trailer) to match
+//! upstream rsync's compression wire format. [`CountingZlibEncoder`] accepts
+//! incremental input while tracking the number of bytes produced by the
+//! compressor so higher layers can report accurate compressed sizes without
+//! buffering the resulting payload in memory. The complementary
+//! [`CountingZlibDecoder`] wraps a reader that produces decompressed bytes
+//! while recording how much output has been yielded so far, keeping the
+//! counter accurate for both scalar and vectored reads so downstream bandwidth
+//! accounting mirrors upstream behaviour.
+//!
+//! # Wire Format
+//!
+//! Raw deflate produces a bare DEFLATE stream without the 2-byte zlib header
+//! or 4-byte Adler-32 checksum trailer. This matches rsync's `deflateInit2()`
+//! call with `windowBits = -MAX_WBITS` (negative value indicates raw deflate).
 //!
 //! # Examples
 //!
@@ -71,8 +79,8 @@ use thiserror::Error;
 use crate::common::{CountingSink, CountingWriter};
 use flate2::{
     Compression,
-    read::{ZlibDecoder as FlateDecoder, ZlibDecoder},
-    write::ZlibEncoder as FlateEncoder,
+    read::{DeflateDecoder, DeflateDecoder as FlateDecoder},
+    write::DeflateEncoder as FlateEncoder,
 };
 
 /// Compression levels recognised by the zlib encoder.
@@ -252,7 +260,7 @@ where
 
 /// Streaming decoder that records the number of decompressed bytes produced.
 pub struct CountingZlibDecoder<R> {
-    inner: ZlibDecoder<R>,
+    inner: DeflateDecoder<R>,
     bytes: u64,
 }
 
@@ -264,7 +272,7 @@ where
     #[must_use]
     pub fn new(reader: R) -> Self {
         Self {
-            inner: ZlibDecoder::new(reader),
+            inner: DeflateDecoder::new(reader),
             bytes: 0,
         }
     }
