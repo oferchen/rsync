@@ -76,15 +76,19 @@
 
 mod action;
 mod compiled;
+pub mod cvs;
 mod decision;
 mod error;
+pub mod merge;
 mod rule;
 mod set;
 
 pub use action::FilterAction;
+pub use cvs::{DEFAULT_CVSIGNORE, default_patterns as cvs_default_patterns};
 pub use error::FilterError;
+pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
 pub use rule::FilterRule;
-pub use set::FilterSet;
+pub use set::{FilterSet, FilterSetError, cvs_exclusion_rules};
 
 #[cfg(test)]
 mod tests;

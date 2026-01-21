@@ -1,6 +1,16 @@
 use crate::FilterAction;
 
 /// User-visible filter rule consisting of an action and pattern.
+///
+/// Filter rules control which files are included or excluded during rsync transfers.
+/// Each rule specifies an action (include, exclude, protect, risk, clear) and a
+/// glob pattern to match against file paths.
+///
+/// # Negation
+///
+/// When `negate` is true, the rule's match result is inverted. A negated exclude
+/// rule excludes files that do NOT match the pattern, matching upstream rsync's
+/// `!` modifier behavior (see `exclude.c` line 906: `ret_match = negate ? 0 : 1`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FilterRule {
     pub(crate) action: FilterAction,
@@ -9,6 +19,7 @@ pub struct FilterRule {
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
     pub(crate) xattr_only: bool,
+    pub(crate) negate: bool,
 }
 
 impl FilterRule {
@@ -22,6 +33,7 @@ impl FilterRule {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -35,6 +47,7 @@ impl FilterRule {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -48,6 +61,7 @@ impl FilterRule {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -61,6 +75,7 @@ impl FilterRule {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -75,6 +90,7 @@ impl FilterRule {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -96,6 +112,7 @@ impl FilterRule {
             applies_to_receiver: false,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -117,6 +134,59 @@ impl FilterRule {
             applies_to_receiver: false,
             perishable: false,
             xattr_only: false,
+            negate: false,
+        }
+    }
+
+    /// Creates a merge rule that reads additional filter rules from a file.
+    ///
+    /// The pattern field contains the file path to read. Rules are read once
+    /// when the filter set is compiled. This corresponds to rsync's `.` prefix
+    /// in filter rules (e.g., `. /path/to/rules`).
+    ///
+    /// # Examples
+    /// ```
+    /// use filters::{FilterRule, FilterAction};
+    /// let rule = FilterRule::merge("/etc/rsync/global.rules");
+    /// assert_eq!(rule.action(), FilterAction::Merge);
+    /// assert_eq!(rule.pattern(), "/etc/rsync/global.rules");
+    /// ```
+    #[must_use]
+    pub fn merge(file_path: impl Into<String>) -> Self {
+        Self {
+            action: FilterAction::Merge,
+            pattern: file_path.into(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+        }
+    }
+
+    /// Creates a dir-merge rule that reads filter rules per-directory during traversal.
+    ///
+    /// The pattern field contains the filename to look for in each directory
+    /// (e.g., `.rsync-filter`). Rules from the file are applied relative to
+    /// that directory. This corresponds to rsync's `,` prefix in filter rules.
+    ///
+    /// # Examples
+    /// ```
+    /// use filters::{FilterRule, FilterAction};
+    /// let rule = FilterRule::dir_merge(".rsync-filter");
+    /// assert_eq!(rule.action(), FilterAction::DirMerge);
+    /// assert_eq!(rule.pattern(), ".rsync-filter");
+    /// ```
+    #[must_use]
+    pub fn dir_merge(filename: impl Into<String>) -> Self {
+        Self {
+            action: FilterAction::DirMerge,
+            pattern: filename.into(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
         }
     }
 
@@ -190,6 +260,26 @@ impl FilterRule {
     #[must_use]
     pub const fn is_xattr_only(&self) -> bool {
         self.xattr_only
+    }
+
+    /// Returns whether the rule's match result should be inverted.
+    ///
+    /// When true, the rule matches files that do NOT match the pattern.
+    /// This mirrors upstream rsync's `!` modifier behavior.
+    #[must_use]
+    pub const fn is_negated(&self) -> bool {
+        self.negate
+    }
+
+    /// Marks the rule as negated, inverting match behavior.
+    ///
+    /// A negated rule matches files that do NOT match the pattern.
+    /// This mirrors upstream rsync's `!` modifier (e.g., `- ! *.txt`
+    /// excludes all files except those matching `*.txt`).
+    #[must_use]
+    pub const fn with_negate(mut self, negate: bool) -> Self {
+        self.negate = negate;
+        self
     }
 
     /// Anchors the pattern to the root of the transfer if it is not already.
@@ -271,6 +361,28 @@ mod tests {
         }
 
         #[test]
+        fn merge_rule() {
+            let rule = FilterRule::merge("/etc/rsync/global.rules");
+            assert_eq!(rule.action(), FilterAction::Merge);
+            assert_eq!(rule.pattern(), "/etc/rsync/global.rules");
+            assert!(rule.applies_to_sender());
+            assert!(rule.applies_to_receiver());
+            assert!(!rule.is_perishable());
+            assert!(!rule.is_xattr_only());
+        }
+
+        #[test]
+        fn dir_merge_rule() {
+            let rule = FilterRule::dir_merge(".rsync-filter");
+            assert_eq!(rule.action(), FilterAction::DirMerge);
+            assert_eq!(rule.pattern(), ".rsync-filter");
+            assert!(rule.applies_to_sender());
+            assert!(rule.applies_to_receiver());
+            assert!(!rule.is_perishable());
+            assert!(!rule.is_xattr_only());
+        }
+
+        #[test]
         fn with_sender() {
             let rule = FilterRule::include("*").with_sender(false);
             assert!(!rule.applies_to_sender());
@@ -299,6 +411,44 @@ mod tests {
         fn with_xattr_only() {
             let rule = FilterRule::include("*").with_xattr_only(true);
             assert!(rule.is_xattr_only());
+        }
+
+        #[test]
+        fn with_negate() {
+            let rule = FilterRule::exclude("*.txt").with_negate(true);
+            assert!(rule.is_negated());
+
+            let rule2 = FilterRule::exclude("*.txt").with_negate(false);
+            assert!(!rule2.is_negated());
+        }
+
+        #[test]
+        fn negate_default_false() {
+            // All constructors should have negate=false by default
+            assert!(!FilterRule::include("*").is_negated());
+            assert!(!FilterRule::exclude("*").is_negated());
+            assert!(!FilterRule::protect("*").is_negated());
+            assert!(!FilterRule::risk("*").is_negated());
+            assert!(!FilterRule::clear().is_negated());
+            assert!(!FilterRule::show("*").is_negated());
+            assert!(!FilterRule::hide("*").is_negated());
+            assert!(!FilterRule::merge("file").is_negated());
+            assert!(!FilterRule::dir_merge("file").is_negated());
+        }
+
+        #[test]
+        fn negate_included_in_equality() {
+            let rule1 = FilterRule::exclude("*.txt");
+            let rule2 = FilterRule::exclude("*.txt").with_negate(true);
+            // Rules should not be equal since negate differs
+            assert_ne!(rule1, rule2);
+        }
+
+        #[test]
+        fn negate_included_in_debug() {
+            let rule = FilterRule::exclude("*.txt").with_negate(true);
+            let debug = format!("{rule:?}");
+            assert!(debug.contains("negate"));
         }
 
         #[test]
