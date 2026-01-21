@@ -521,4 +521,107 @@ mod tests {
         assert_eq!(result.literal_bytes, 0);
         assert_eq!(result.matched_bytes, 0);
     }
+
+    // Additional edge case tests for error paths
+
+    #[test]
+    fn sparse_state_write_empty_data() {
+        let mut state = SparseWriteState::new();
+        let mut cursor = Cursor::new(Vec::new());
+        let result = state.write(&mut cursor, &[]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[test]
+    fn sparse_state_write_mixed_data() {
+        let mut state = SparseWriteState::new();
+        let mut cursor = Cursor::new(vec![0u8; 200]);
+        // Write data with leading zeros, non-zero content, trailing zeros
+        let data = [0, 0, 0, 1, 2, 3, 0, 0];
+        let result = state.write(&mut cursor, &data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 8);
+    }
+
+    #[test]
+    fn sparse_state_accumulate_overflow_protection() {
+        let mut state = SparseWriteState::new();
+        // accumulate uses saturating_add to prevent overflow
+        state.accumulate(usize::MAX);
+        state.accumulate(1);
+        // Should not overflow
+        assert!(state.pending() > 0);
+    }
+
+    #[test]
+    fn verifier_for_algorithm_none_defaults_to_md4() {
+        let v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::None);
+        assert_eq!(v.digest_len(), 16); // MD4 length
+    }
+
+    #[test]
+    fn verifier_update_empty_data() {
+        let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
+        v.update(&[]);
+        let digest = v.finalize();
+        // Should still produce valid MD5 (of empty string)
+        assert_eq!(digest.len(), 16);
+    }
+
+    #[test]
+    fn verifier_xxh64_produces_correct_length() {
+        let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH64);
+        v.update(b"test");
+        let digest = v.finalize();
+        assert_eq!(digest.len(), 8);
+    }
+
+    #[test]
+    fn verifier_xxh3_produces_correct_length() {
+        let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH3);
+        v.update(b"test");
+        let digest = v.finalize();
+        assert_eq!(digest.len(), 8);
+    }
+
+    #[test]
+    fn verifier_xxh128_produces_correct_length() {
+        let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::XXH128);
+        v.update(b"test");
+        let digest = v.finalize();
+        assert_eq!(digest.len(), 16);
+    }
+
+    #[test]
+    fn verifier_sha1_produces_correct_length() {
+        let mut v = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::SHA1);
+        v.update(b"test");
+        let digest = v.finalize();
+        assert_eq!(digest.len(), 20);
+    }
+
+    #[test]
+    fn delta_apply_config_sparse_enabled() {
+        let config = DeltaApplyConfig { sparse: true };
+        assert!(config.sparse);
+    }
+
+    #[test]
+    fn sparse_state_finish_with_no_pending() {
+        let mut state = SparseWriteState::new();
+        let mut cursor = Cursor::new(vec![0u8; 100]);
+        let pos = state.finish(&mut cursor).unwrap();
+        assert_eq!(pos, 0); // No movement when no pending zeros
+    }
+
+    #[test]
+    fn sparse_state_large_pending_zeros() {
+        let mut state = SparseWriteState::new();
+        state.accumulate(1000);
+        let mut cursor = Cursor::new(vec![0u8; 2000]);
+        // finish should seek to position 999, write one byte
+        let pos = state.finish(&mut cursor).unwrap();
+        assert_eq!(pos, 1000);
+    }
 }
