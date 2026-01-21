@@ -326,6 +326,23 @@ impl GeneratorContext {
         self.io_error |= flag;
     }
 
+    /// Records an I/O error, distinguishing between vanished files and general errors.
+    ///
+    /// This is a convenience wrapper around [`Self::add_io_error`] that maps
+    /// `NotFound` errors to `IOERR_VANISHED` and all other errors to `IOERR_GENERAL`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors upstream rsync's error handling where ENOENT indicates a vanished
+    /// file (race condition during scan) vs other I/O errors.
+    fn record_io_error(&mut self, error: &io::Error) {
+        if error.kind() == io::ErrorKind::NotFound {
+            self.add_io_error(io_error_flags::IOERR_VANISHED);
+        } else {
+            self.add_io_error(io_error_flags::IOERR_GENERAL);
+        }
+    }
+
     /// Returns the current I/O error flags.
     #[must_use]
     pub const fn io_error(&self) -> i32 {
@@ -752,12 +769,7 @@ impl GeneratorContext {
             Ok(m) => m,
             Err(e) => {
                 // Record error and continue (upstream rsync behavior)
-                // ENOENT = vanished, other errors = general I/O error
-                if e.kind() == io::ErrorKind::NotFound {
-                    self.add_io_error(io_error_flags::IOERR_VANISHED);
-                } else {
-                    self.add_io_error(io_error_flags::IOERR_GENERAL);
-                }
+                self.record_io_error(&e);
                 return Ok(());
             }
         };
@@ -778,21 +790,13 @@ impl GeneratorContext {
                             }
                             Err(e) => {
                                 // Entry vanished or unreadable during iteration
-                                if e.kind() == io::ErrorKind::NotFound {
-                                    self.add_io_error(io_error_flags::IOERR_VANISHED);
-                                } else {
-                                    self.add_io_error(io_error_flags::IOERR_GENERAL);
-                                }
+                                self.record_io_error(&e);
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    if e.kind() == io::ErrorKind::NotFound {
-                        self.add_io_error(io_error_flags::IOERR_VANISHED);
-                    } else {
-                        self.add_io_error(io_error_flags::IOERR_GENERAL);
-                    }
+                    self.record_io_error(&e);
                 }
             }
             return Ok(());
@@ -829,21 +833,13 @@ impl GeneratorContext {
                                 self.walk_path(base, &dir_entry.path())?;
                             }
                             Err(e) => {
-                                if e.kind() == io::ErrorKind::NotFound {
-                                    self.add_io_error(io_error_flags::IOERR_VANISHED);
-                                } else {
-                                    self.add_io_error(io_error_flags::IOERR_GENERAL);
-                                }
+                                self.record_io_error(&e);
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    if e.kind() == io::ErrorKind::NotFound {
-                        self.add_io_error(io_error_flags::IOERR_VANISHED);
-                    } else {
-                        self.add_io_error(io_error_flags::IOERR_GENERAL);
-                    }
+                    self.record_io_error(&e);
                 }
             }
         }
