@@ -48,9 +48,10 @@ fn delete_risk_rule_overrides_protection() {
         dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // With first-match-wins, risk must come before protect to override
     let filters = FilterSet::from_rules([
-        filters::FilterRule::protect("keep.txt"),
         filters::FilterRule::risk("keep.txt"),
+        filters::FilterRule::protect("keep.txt"),
     ])
     .expect("compile filters");
     let options = LocalCopyOptions::default()

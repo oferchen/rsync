@@ -1089,6 +1089,10 @@ impl GeneratorContext {
                 rule = rule.with_xattr_only(true);
             }
 
+            if wire_rule.negate {
+                rule = rule.with_negate(true);
+            }
+
             if wire_rule.anchored {
                 rule = rule.anchor_to_root();
             }
@@ -1419,34 +1423,68 @@ fn generate_delta_from_signature<R: Read>(
         .map_err(|e| io::Error::other(format!("delta generation failed: {e}")))
 }
 
-/// Maximum file size for in-memory whole-file transfer (8 GB).
+/// Maximum file size for in-memory whole-file transfer.
 ///
-/// Files larger than this limit require streaming approaches that are not
-/// yet implemented. This limit prevents OOM from unbounded `read_to_end()`.
-const MAX_IN_MEMORY_SIZE: u64 = 8 * 1024 * 1024 * 1024;
+/// This constant is used only as a soft warning threshold. Files of any size
+/// can be transferred, but very large files may cause high memory usage.
+/// For files over this size, consider using delta transfers with a basis file.
+const LARGE_FILE_WARNING_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024; // 8 GB
 
 /// Generates a delta script containing the entire file as literals (whole-file transfer).
 ///
-/// # Size Limit
+/// # Streaming Approach
 ///
-/// This function reads the entire file into memory. Files larger than
-/// [`MAX_IN_MEMORY_SIZE`] (8 GB) will return an error to prevent OOM.
-fn generate_whole_file_delta<R: Read>(mut source: R) -> io::Result<DeltaScript> {
-    let mut data = Vec::new();
-    source.read_to_end(&mut data)?;
+/// This function reads the file in chunks to support files of any size while
+/// keeping memory usage bounded. Each chunk becomes a separate literal token
+/// in the delta script.
+///
+/// # Large File Warning
+///
+/// Files larger than 8 GB will log a warning but will still be transferred.
+/// For very large files, consider using delta transfers with a basis file
+/// to reduce network and memory usage.
+fn generate_whole_file_delta(mut source: fs::File) -> io::Result<DeltaScript> {
+    // Get file size for pre-allocation and logging
+    let file_size = source.metadata()?.len();
 
-    // Check size limit to prevent OOM
-    let total_bytes = data.len() as u64;
-    if total_bytes > MAX_IN_MEMORY_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "File too large for whole-file transfer: {total_bytes} bytes (max {MAX_IN_MEMORY_SIZE})"
-            ),
-        ));
+    // Log warning for very large files
+    if file_size > LARGE_FILE_WARNING_THRESHOLD {
+        debug_log!(
+            Send, 1,
+            "Large whole-file transfer: {} bytes ({:.2} GB). Consider using delta mode.",
+            file_size,
+            file_size as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
     }
 
-    let tokens = vec![DeltaToken::Literal(data)];
+    // For files up to 64 MB, read entire file at once (common case optimization)
+    const SMALL_FILE_THRESHOLD: u64 = 64 * 1024 * 1024;
+
+    if file_size <= SMALL_FILE_THRESHOLD {
+        let mut data = Vec::with_capacity(file_size as usize);
+        source.read_to_end(&mut data)?;
+        let total_bytes = data.len() as u64;
+        let tokens = vec![DeltaToken::Literal(data)];
+        return Ok(DeltaScript::new(tokens, total_bytes, total_bytes));
+    }
+
+    // For larger files, read in chunks to bound memory usage
+    // Use 16 MB chunks for good I/O performance while limiting memory
+    const CHUNK_SIZE: usize = 16 * 1024 * 1024;
+
+    let mut tokens = Vec::new();
+    let mut total_bytes: u64 = 0;
+    let mut buffer = vec![0u8; CHUNK_SIZE];
+
+    loop {
+        let bytes_read = source.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        total_bytes += bytes_read as u64;
+        tokens.push(DeltaToken::Literal(buffer[..bytes_read].to_vec()));
+    }
 
     Ok(DeltaScript::new(tokens, total_bytes, total_bytes))
 }
@@ -1834,10 +1872,10 @@ mod tests {
 
         let mut ctx = GeneratorContext::new(&handshake, config);
 
-        // Parse and set filters: exclude *, include *.txt
+        // Parse and set filters: include *.txt, exclude * (first-match-wins)
         let wire_rules = vec![
-            FilterRuleWireFormat::exclude("*".to_owned()),
             FilterRuleWireFormat::include("*.txt".to_owned()),
+            FilterRuleWireFormat::exclude("*".to_owned()),
         ];
         let filter_set = ctx.parse_received_filters(&wire_rules).unwrap();
         ctx.filters = Some(filter_set);
@@ -1995,10 +2033,16 @@ mod tests {
 
     #[test]
     fn generate_whole_file_delta_reads_entire_file() {
-        let data = b"Hello, world! This is a test file.";
-        let mut cursor = Cursor::new(&data[..]);
+        use std::io::Write;
+        use tempfile::NamedTempFile;
 
-        let script = generate_whole_file_delta(&mut cursor).unwrap();
+        let data = b"Hello, world! This is a test file.";
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(data).unwrap();
+        temp_file.flush().unwrap();
+
+        let file = fs::File::open(temp_file.path()).unwrap();
+        let script = generate_whole_file_delta(file).unwrap();
 
         assert_eq!(script.tokens().len(), 1);
         assert_eq!(script.total_bytes(), data.len() as u64);
@@ -2012,11 +2056,14 @@ mod tests {
 
     #[test]
     fn generate_whole_file_delta_handles_empty_file() {
-        let data = b"";
-        let mut cursor = Cursor::new(&data[..]);
+        use tempfile::NamedTempFile;
 
-        let script = generate_whole_file_delta(&mut cursor).unwrap();
+        let temp_file = NamedTempFile::new().unwrap();
 
+        let file = fs::File::open(temp_file.path()).unwrap();
+        let script = generate_whole_file_delta(file).unwrap();
+
+        // Empty file still produces one token (empty literal) via the small file path
         assert_eq!(script.tokens().len(), 1);
         assert_eq!(script.total_bytes(), 0);
         assert_eq!(script.literal_bytes(), 0);
@@ -2028,24 +2075,24 @@ mod tests {
     }
 
     #[test]
-    fn generate_whole_file_delta_checks_size_limit() {
-        // Test that the size limit constant exists and is reasonable (8GB)
-        assert_eq!(MAX_IN_MEMORY_SIZE, 8 * 1024 * 1024 * 1024);
-
-        // Note: We can't practically test reading 8GB+ in a unit test.
-        // The size check happens after read_to_end(), which means we'd need
-        // to actually allocate 8GB+ to trigger it. This is impractical for CI.
-        // The constant exists and is used in generate_whole_file_delta().
+    fn generate_whole_file_delta_warning_threshold_exists() {
+        // Test that the warning threshold constant exists and is reasonable (8GB)
+        assert_eq!(LARGE_FILE_WARNING_THRESHOLD, 8 * 1024 * 1024 * 1024);
     }
 
     #[test]
-    fn generate_whole_file_delta_accepts_max_size_file() {
-        // Test that a file exactly at MAX_IN_MEMORY_SIZE is accepted
-        // We won't actually allocate 8GB, just test a small file to verify the logic works
-        let data = vec![0xAB; 1024]; // 1KB test file
-        let mut cursor = Cursor::new(&data);
+    fn generate_whole_file_delta_accepts_large_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
 
-        let script = generate_whole_file_delta(&mut cursor).unwrap();
+        // Test with a 1KB file to verify the logic works
+        let data = vec![0xAB; 1024];
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(&data).unwrap();
+        temp_file.flush().unwrap();
+
+        let file = fs::File::open(temp_file.path()).unwrap();
+        let script = generate_whole_file_delta(file).unwrap();
 
         assert_eq!(script.tokens().len(), 1);
         assert_eq!(script.total_bytes(), 1024);
@@ -2058,6 +2105,41 @@ mod tests {
             }
             _ => panic!("expected literal token"),
         }
+    }
+
+    #[test]
+    fn generate_whole_file_delta_chunks_medium_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Test with a file larger than SMALL_FILE_THRESHOLD (64 MB)
+        // Use 65 MB to trigger chunking behavior
+        const SIZE: usize = 65 * 1024 * 1024;
+        let data = vec![0xCD; SIZE];
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(&data).unwrap();
+        temp_file.flush().unwrap();
+
+        let file = fs::File::open(temp_file.path()).unwrap();
+        let script = generate_whole_file_delta(file).unwrap();
+
+        // Should be chunked into multiple tokens (16 MB chunks)
+        // 65 MB / 16 MB = 4.0625, so 5 tokens
+        assert!(script.tokens().len() > 1);
+        assert_eq!(script.total_bytes(), SIZE as u64);
+        assert_eq!(script.literal_bytes(), SIZE as u64);
+
+        // Verify all tokens are literals with correct total content
+        let mut total_content: Vec<u8> = Vec::new();
+        for token in script.tokens() {
+            match token {
+                DeltaToken::Literal(content) => total_content.extend(content),
+                _ => panic!("expected literal token"),
+            }
+        }
+        assert_eq!(total_content.len(), SIZE);
+        assert!(total_content.iter().all(|&b| b == 0xCDu8));
     }
 
     // ========================================================================

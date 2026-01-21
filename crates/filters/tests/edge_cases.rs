@@ -436,21 +436,22 @@ fn filter_error_access() {
 /// Verifies complex nested patterns.
 #[test]
 fn complex_nested_patterns() {
+    // rsync uses first-match-wins: specific includes/excludes must come before general ones
     let rules = [
-        FilterRule::exclude("**/node_modules/"),
-        FilterRule::include("**/node_modules/.cache/"),
-        FilterRule::exclude("**/node_modules/.cache/*.tmp"),
+        FilterRule::exclude("**/node_modules/.cache/*.tmp"), // Most specific: exclude .tmp files
+        FilterRule::include("**/node_modules/.cache/**"),    // Include .cache contents
+        FilterRule::exclude("**/node_modules/"),             // General: exclude node_modules
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // node_modules excluded
+    // node_modules excluded (third rule matches)
     assert!(!set.allows(Path::new("node_modules/lodash"), false));
     assert!(!set.allows(Path::new("packages/app/node_modules/react"), false));
 
-    // .cache within node_modules included
+    // .cache within node_modules included (second rule matches)
     assert!(set.allows(Path::new("node_modules/.cache/data"), false));
 
-    // But .tmp within .cache excluded
+    // But .tmp within .cache excluded (first rule matches)
     assert!(!set.allows(Path::new("node_modules/.cache/scratch.tmp"), false));
 }
 

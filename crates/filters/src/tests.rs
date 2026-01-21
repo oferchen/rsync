@@ -24,10 +24,12 @@ fn exclude_rule_blocks_match() {
 }
 
 #[test]
-fn include_after_exclude_reinstates_path() {
+fn include_before_exclude_reinstates_path() {
+    // rsync uses first-match-wins semantics, so includes must come BEFORE
+    // excludes to create exceptions
     let rules = [
-        FilterRule::exclude("foo"),
         FilterRule::include("foo/bar.txt"),
+        FilterRule::exclude("foo"),
     ];
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(set.allows(Path::new("foo/bar.txt"), false));
@@ -101,9 +103,10 @@ fn glob_escape_sequences_supported() {
 
 #[test]
 fn ordering_respected() {
+    // rsync uses first-match-wins: include must come before exclude for exceptions
     let rules = [
-        FilterRule::exclude("*.tmp"),
         FilterRule::include("special.tmp"),
+        FilterRule::exclude("*.tmp"),
     ];
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(set.allows(Path::new("special.tmp"), false));
@@ -126,9 +129,10 @@ fn allows_checks_respect_directory_flag() {
 
 #[test]
 fn include_rule_for_directory_restores_descendants() {
+    // rsync uses first-match-wins: include must come before exclude for exceptions
     let rules = [
-        FilterRule::exclude("cache/"),
         FilterRule::include("cache/preserved/**"),
+        FilterRule::exclude("cache/"),
     ];
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(set.allows(Path::new("cache/preserved/data"), false));
@@ -171,10 +175,11 @@ fn protect_rule_applies_to_directory_descendants() {
 }
 
 #[test]
-fn risk_rule_allows_deletion_after_protection() {
+fn risk_rule_allows_deletion_before_protection() {
+    // rsync uses first-match-wins: risk must come before protect to override
     let rules = [
-        FilterRule::protect("archive/"),
         FilterRule::risk("archive/"),
+        FilterRule::protect("archive/"),
     ];
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(set.allows_deletion(Path::new("archive/file.bin"), false));
@@ -182,7 +187,8 @@ fn risk_rule_allows_deletion_after_protection() {
 
 #[test]
 fn risk_rule_applies_to_descendants() {
-    let rules = [FilterRule::protect("backup/"), FilterRule::risk("backup/")];
+    // rsync uses first-match-wins: risk must come before protect to override
+    let rules = [FilterRule::risk("backup/"), FilterRule::protect("backup/")];
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(set.allows_deletion(Path::new("backup/snap/info"), false));
     assert!(set.allows_deletion(Path::new("sub/backup/snap"), true));
@@ -244,6 +250,123 @@ fn sender_only_risk_does_not_clear_receiver_protection() {
     ];
     let set = FilterSet::from_rules(rules).expect("compiled");
     assert!(!set.allows_deletion(Path::new("keep/item.txt"), false));
+}
+
+// Tests for negated pattern matching (upstream rsync `!` modifier)
+mod negate_tests {
+    use super::*;
+
+    #[test]
+    fn negated_exclude_excludes_non_matching_files() {
+        // A negated exclude rule excludes files that do NOT match the pattern
+        // e.g., `- ! *.txt` excludes everything except .txt files
+        let rules = [FilterRule::exclude("*.txt").with_negate(true)];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+
+        // Files that match *.txt should be allowed (negate inverts the match)
+        assert!(set.allows(Path::new("file.txt"), false));
+        assert!(set.allows(Path::new("dir/file.txt"), false));
+
+        // Files that don't match *.txt should be excluded
+        assert!(!set.allows(Path::new("file.log"), false));
+        assert!(!set.allows(Path::new("file.bak"), false));
+        assert!(!set.allows(Path::new("dir/file.log"), false));
+    }
+
+    #[test]
+    fn negated_include_includes_non_matching_files() {
+        // A negated include rule includes files that do NOT match the pattern
+        // e.g., `+ ! *.bak` includes everything except .bak files
+        // rsync uses first-match-wins: include must come before exclude
+        let rules = [
+            FilterRule::include("*.bak").with_negate(true),
+            FilterRule::exclude("*"),
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+
+        // Files that don't match *.bak should be included (negated include matches)
+        assert!(set.allows(Path::new("file.txt"), false));
+        assert!(set.allows(Path::new("file.log"), false));
+
+        // Files that match *.bak should be excluded (negated include doesn't match,
+        // falls through to exclude("*"))
+        assert!(!set.allows(Path::new("file.bak"), false));
+    }
+
+    #[test]
+    fn negated_pattern_with_directory() {
+        // Negated directory-only pattern
+        let rules = [FilterRule::exclude("cache/").with_negate(true)];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+
+        // Directories named "cache" should be allowed (pattern matches, negated)
+        assert!(set.allows(Path::new("cache"), true));
+
+        // Other directories should be excluded (pattern doesn't match, negated)
+        assert!(!set.allows(Path::new("temp"), true));
+        assert!(!set.allows(Path::new("build"), true));
+    }
+
+    #[test]
+    fn negated_pattern_with_anchored() {
+        // Negated anchored pattern: excludes anything not at /important
+        let rules = [FilterRule::exclude("/important").with_negate(true)];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+
+        // /important should be allowed (pattern matches, negated)
+        assert!(set.allows(Path::new("important"), false));
+
+        // Other paths should be excluded (pattern doesn't match, negated)
+        assert!(!set.allows(Path::new("other"), false));
+        assert!(!set.allows(Path::new("dir/important"), false)); // Not anchored match
+    }
+
+    #[test]
+    fn negated_rules_combine_with_regular_rules() {
+        // Mix negated and regular rules
+        let rules = [
+            FilterRule::exclude("*.tmp"),            // Regular: exclude .tmp
+            FilterRule::exclude("*.txt").with_negate(true), // Negated: exclude non-.txt
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+
+        // .txt files excluded by negated rule (they match, so NOT excluded by negated)
+        // Actually wait - the negated rule excludes non-.txt files
+        // So .txt files should be allowed by the negated rule, but we need to check ordering
+        // First rule excludes .tmp, second (negated) excludes non-.txt
+        // For file.txt: first rule doesn't match, second rule matches .txt so doesn't exclude
+        assert!(set.allows(Path::new("file.txt"), false));
+
+        // For file.tmp: first rule matches and excludes
+        assert!(!set.allows(Path::new("file.tmp"), false));
+
+        // For file.log: first rule doesn't match, second rule doesn't match *.txt
+        // so negated exclude applies
+        assert!(!set.allows(Path::new("file.log"), false));
+    }
+
+    #[test]
+    fn negate_flag_accessor_works() {
+        let rule = FilterRule::exclude("*.txt").with_negate(true);
+        assert!(rule.is_negated());
+
+        let rule2 = FilterRule::exclude("*.txt");
+        assert!(!rule2.is_negated());
+    }
+
+    #[test]
+    fn negate_flag_chaining() {
+        // Test that with_negate can be chained with other modifiers
+        let rule = FilterRule::exclude("*.tmp")
+            .with_perishable(true)
+            .with_negate(true)
+            .with_sides(true, false);
+
+        assert!(rule.is_negated());
+        assert!(rule.is_perishable());
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
 }
 
 mod properties {
