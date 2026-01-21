@@ -103,6 +103,9 @@ pub(super) fn cpu_features_cached_for_tests() -> bool {
     FEATURES.get().is_some()
 }
 
+/// Accumulates rolling checksum using SSE2 SIMD instructions.
+///
+/// Processes 16 bytes at a time using vectorized prefix sum calculation.
 #[target_feature(enable = "sse2")]
 unsafe fn accumulate_chunk_sse2(
     mut s1: u32,
@@ -111,6 +114,10 @@ unsafe fn accumulate_chunk_sse2(
     mut chunk: &[u8],
 ) -> (u32, u32, usize) {
     let zero = _mm_setzero_si128();
+    // Weights for prefix sum: byte i contributes (16-i) times to s2.
+    // high_weights covers bytes 0-7 (weights 16,15,14,...,9)
+    // low_weights covers bytes 8-15 (weights 8,7,6,...,1)
+    // Note: _mm_set_epi16 takes arguments in reverse order (last element first).
     let high_weights = _mm_set_epi16(9, 10, 11, 12, 13, 14, 15, 16);
     let low_weights = _mm_set_epi16(1, 2, 3, 4, 5, 6, 7, 8);
 

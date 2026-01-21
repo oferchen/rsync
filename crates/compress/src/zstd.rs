@@ -24,6 +24,17 @@ where
 
 impl CountingZstdEncoder<CountingSink> {
     /// Creates a new encoder that discards the compressed output while tracking its length.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use compress::zstd::CountingZstdEncoder;
+    /// use compress::zlib::CompressionLevel;
+    ///
+    /// let mut encoder = CountingZstdEncoder::new(CompressionLevel::Default).unwrap();
+    /// encoder.write(b"data to compress").unwrap();
+    /// let compressed_bytes = encoder.finish().unwrap();
+    /// ```
     pub fn new(level: CompressionLevel) -> io::Result<Self> {
         Self::with_sink(CountingSink, level)
     }
@@ -40,6 +51,19 @@ where
     W: Write,
 {
     /// Creates a new encoder that writes compressed bytes into `sink`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use compress::zstd::CountingZstdEncoder;
+    /// use compress::zlib::CompressionLevel;
+    ///
+    /// let mut output = Vec::new();
+    /// let mut encoder = CountingZstdEncoder::with_sink(&mut output, CompressionLevel::Fast).unwrap();
+    /// encoder.write(b"payload").unwrap();
+    /// let (_, bytes_written) = encoder.finish_into_inner().unwrap();
+    /// assert!(bytes_written > 0);
+    /// ```
     pub fn with_sink(sink: W, level: CompressionLevel) -> io::Result<Self> {
         let writer = CountingWriter::new(sink);
         let encoder = ZstdEncoder::new(writer, zstd_level(level)).map_err(io::Error::other)?;

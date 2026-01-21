@@ -1009,6 +1009,14 @@ impl SenderAttrs {
             } else {
                 len_byte[0] as usize
             };
+            // Upstream MAXPATHLEN is typically 4096; reject excessively long names
+            const MAX_XNAME_LEN: usize = 4096;
+            if xname_len > MAX_XNAME_LEN {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("xname length {xname_len} exceeds maximum {MAX_XNAME_LEN}"),
+                ));
+            }
             if xname_len > 0 {
                 let mut xname_buf = vec![0u8; xname_len];
                 reader.read_exact(&mut xname_buf)?;
