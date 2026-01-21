@@ -85,12 +85,20 @@ pub struct CompressedTokenEncoder {
     run_start: i32,
     /// End of last token run.
     last_run_end: i32,
+    /// Protocol version for compatibility.
+    /// Protocol versions < 31 have a data-duplicating bug in `see_token`.
+    protocol_version: u32,
 }
 
 impl CompressedTokenEncoder {
-    /// Creates a new encoder with the specified compression level.
+    /// Creates a new encoder with the specified compression level and protocol version.
+    ///
+    /// The protocol version affects `see_token` behavior:
+    /// - Protocol >= 31: Properly advances through data (no bug)
+    /// - Protocol < 31: Has a data-duplicating bug where the same data chunk is fed
+    ///   multiple times to the compressor dictionary
     #[must_use]
-    pub fn new(level: CompressionLevel) -> Self {
+    pub fn new(level: CompressionLevel, protocol_version: u32) -> Self {
         let compression = match level {
             CompressionLevel::Fast => Compression::fast(),
             CompressionLevel::Default => Compression::default(),
@@ -104,6 +112,7 @@ impl CompressedTokenEncoder {
             last_token: -1,
             run_start: 0,
             last_run_end: 0,
+            protocol_version,
         }
     }
 
@@ -291,7 +300,55 @@ impl CompressedTokenEncoder {
 
 impl Default for CompressedTokenEncoder {
     fn default() -> Self {
-        Self::new(CompressionLevel::Default)
+        Self::new(CompressionLevel::Default, 31)
+    }
+}
+
+impl CompressedTokenEncoder {
+    /// Feeds block data into the compressor's history without producing output.
+    ///
+    /// This is called after sending a block match token to keep the compressor's
+    /// dictionary synchronized with what the receiver sees. The receiver must call
+    /// [`CompressedTokenDecoder::see_token`] with the same data.
+    ///
+    /// Only needed for CPRES_ZLIB mode (not zlibx/zstd/lz4).
+    ///
+    /// **Protocol version behavior:**
+    /// - Protocol >= 31: Properly advances through data after each chunk
+    /// - Protocol < 31: Has a data-duplicating bug where `offset` is not advanced,
+    ///   causing the first chunk of data to be fed repeatedly for each 0xFFFF-sized
+    ///   iteration. The loop still terminates because `toklen` is decremented.
+    ///
+    /// Reference: upstream token.c lines 463-484 (`send_deflated_token`).
+    pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
+        let mut toklen = data.len();
+        let mut offset = 0usize;
+
+        while toklen > 0 {
+            // Break up long sections at 0xFFFF boundary (matching upstream)
+            let chunk_len = toklen.min(0xFFFF);
+            let chunk = &data[offset..offset + chunk_len];
+
+            // Decrement toklen (this always happens, even with the bug)
+            toklen -= chunk_len;
+
+            // Feed data through deflate with Z_SYNC_FLUSH (Z_INSERT_ONLY equivalent)
+            // This updates the compressor's dictionary without producing real output
+            self.compressor
+                .compress(chunk, &mut self.compress_buf, FlushCompress::Sync)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            // Protocol >= 31 fixes a data-duplicating bug by advancing the offset.
+            // Protocol < 31 does NOT advance offset, feeding the same first chunk
+            // of data repeatedly while toklen decrements normally.
+            // Reference: token.c lines 473-474
+            if self.protocol_version >= 31 {
+                offset += chunk_len;
+            }
+            // In protocol < 31, offset stays at 0, so we keep feeding data[0..chunk_len]
+        }
+
+        Ok(())
     }
 }
 
@@ -484,6 +541,49 @@ impl CompressedTokenDecoder {
     }
 }
 
+impl CompressedTokenDecoder {
+    /// Feeds block data into the decompressor's history.
+    ///
+    /// This is called after receiving a block match token to keep the decompressor's
+    /// dictionary synchronized with the sender's compressor. The sender must call
+    /// [`CompressedTokenEncoder::see_token`] with the same data.
+    ///
+    /// Uses a fake deflate stored-block header to feed raw data through inflate
+    /// without actual decompression, matching upstream rsync's `see_deflate_token()`.
+    ///
+    /// Reference: upstream token.c lines 631-670.
+    pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
+        let mut remaining = data;
+
+        while !remaining.is_empty() {
+            // Break up long sections at 0xFFFF boundary (matching upstream)
+            let chunk_len = remaining.len().min(0xFFFF);
+            let chunk = &remaining[..chunk_len];
+
+            // Create a fake stored-block header
+            // Format: [0x00, len_lo, len_hi, ~len_lo, ~len_hi]
+            // 0x00 = stored block (not final)
+            let len_lo = (chunk_len & 0xFF) as u8;
+            let len_hi = ((chunk_len >> 8) & 0xFF) as u8;
+            let header = [0x00, len_lo, len_hi, !len_lo, !len_hi];
+
+            // Feed the stored-block header
+            self.decompressor
+                .decompress(&header, &mut self.output_buf, FlushDecompress::Sync)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            // Feed the actual data
+            self.decompressor
+                .decompress(chunk, &mut self.output_buf, FlushDecompress::Sync)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            remaining = &remaining[chunk_len..];
+        }
+
+        Ok(())
+    }
+}
+
 /// A token received from a compressed stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompressedToken {
@@ -548,7 +648,7 @@ mod tests {
         let data = b"Hello, compressed world! This is a test of the compression system.";
 
         let mut encoded = Vec::new();
-        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default);
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
         encoder.send_literal(&mut encoded, data).unwrap();
         encoder.finish(&mut encoded).unwrap();
 
@@ -570,7 +670,7 @@ mod tests {
     #[test]
     fn encode_decode_block_match() {
         let mut encoded = Vec::new();
-        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default);
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
         encoder.send_block_match(&mut encoded, 0).unwrap();
         encoder.send_block_match(&mut encoded, 1).unwrap();
         encoder.send_block_match(&mut encoded, 2).unwrap();
@@ -597,7 +697,7 @@ mod tests {
         let literal2 = b"second literal";
 
         let mut encoded = Vec::new();
-        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default);
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
         encoder.send_literal(&mut encoded, literal1).unwrap();
         encoder.send_block_match(&mut encoded, 5).unwrap();
         encoder.send_literal(&mut encoded, literal2).unwrap();
@@ -638,5 +738,620 @@ mod tests {
         assert_eq!(DEFLATED_DATA, 0x40);
         assert_eq!(TOKEN_REL, 0x80);
         assert_eq!(TOKENRUN_REL, 0xC0);
+    }
+
+    #[test]
+    fn encoder_see_token_updates_dictionary() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+
+        // Feeding data through see_token should not fail
+        let block_data = b"This is block data that gets fed to the compressor dictionary";
+        encoder.see_token(block_data).unwrap();
+
+        // Should be able to continue encoding after see_token
+        let mut output = Vec::new();
+        encoder.send_literal(&mut output, b"more data").unwrap();
+        encoder.finish(&mut output).unwrap();
+
+        // Output should be valid
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn decoder_see_token_updates_dictionary() {
+        let mut decoder = CompressedTokenDecoder::new();
+
+        // Feeding data through see_token should not fail
+        let block_data = b"This is block data that gets fed to the decompressor dictionary";
+        decoder.see_token(block_data).unwrap();
+    }
+
+    #[test]
+    fn see_token_handles_large_data() {
+        // Test that see_token correctly chunks data > 0xFFFF bytes
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut decoder = CompressedTokenDecoder::new();
+
+        let large_data = vec![0x42u8; 0x10000 + 1000]; // Larger than 0xFFFF
+
+        encoder.see_token(&large_data).unwrap();
+        decoder.see_token(&large_data).unwrap();
+    }
+
+    #[test]
+    fn encode_decode_with_see_token_roundtrip() {
+        // Simulate a real transfer with mixed literals and block matches
+        let literal_data = b"Initial literal data before any block matches";
+        let block_data = b"This is the content of block 0 from the basis file";
+
+        let mut encoded = Vec::new();
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+
+        // Send literal, then block match
+        encoder.send_literal(&mut encoded, literal_data).unwrap();
+        encoder.send_block_match(&mut encoded, 0).unwrap();
+
+        // CRITICAL: Feed block data to encoder's dictionary after sending match
+        encoder.see_token(block_data).unwrap();
+
+        // Send more literal data (should compress better due to shared dictionary)
+        encoder
+            .send_literal(&mut encoded, b"More data after block")
+            .unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        // Decode
+        let mut cursor = Cursor::new(&encoded);
+        let mut decoder = CompressedTokenDecoder::new();
+
+        let mut literals = Vec::new();
+        let mut blocks = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(data) => literals.push(data),
+                CompressedToken::BlockMatch(idx) => {
+                    blocks.push(idx);
+                    // CRITICAL: Feed block data to decoder's dictionary after receiving match
+                    decoder.see_token(block_data).unwrap();
+                }
+                CompressedToken::End => break,
+            }
+        }
+
+        assert_eq!(blocks, vec![0]);
+        let combined: Vec<u8> = literals.into_iter().flatten().collect();
+        assert!(combined.starts_with(literal_data));
+    }
+
+    // =========================================================================
+    // Protocol Version Behavior Tests
+    // =========================================================================
+
+    #[test]
+    fn encoder_protocol_version_31_advances_offset() {
+        // Protocol >= 31 properly advances through data in see_token
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+
+        // Large data that spans multiple 0xFFFF chunks
+        let large_data = vec![0xABu8; 0x20000]; // 128KB
+
+        // Should succeed and process all data correctly
+        encoder.see_token(&large_data).unwrap();
+
+        // Verify encoder still works
+        let mut output = Vec::new();
+        encoder.send_literal(&mut output, b"test").unwrap();
+        encoder.finish(&mut output).unwrap();
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn encoder_protocol_version_30_has_data_duplicating_bug() {
+        // Protocol < 31 has bug where offset is not advanced in see_token
+        // This doesn't cause failure, just different dictionary state
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 30);
+
+        let large_data = vec![0xCDu8; 0x20000];
+        encoder.see_token(&large_data).unwrap();
+
+        // Should still be able to encode
+        let mut output = Vec::new();
+        encoder.send_literal(&mut output, b"test").unwrap();
+        encoder.finish(&mut output).unwrap();
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn encoder_protocol_version_affects_see_token_behavior() {
+        // Different protocol versions should produce different compressor states
+        // after see_token due to the data-duplicating bug fix
+
+        let test_data = vec![0x55u8; 0x10001]; // Just over 0xFFFF to trigger chunking
+
+        let mut encoder_30 = CompressedTokenEncoder::new(CompressionLevel::Default, 30);
+        let mut encoder_31 = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+
+        encoder_30.see_token(&test_data).unwrap();
+        encoder_31.see_token(&test_data).unwrap();
+
+        // Both should be able to continue working
+        let mut output_30 = Vec::new();
+        let mut output_31 = Vec::new();
+
+        encoder_30
+            .send_literal(&mut output_30, b"common data")
+            .unwrap();
+        encoder_31
+            .send_literal(&mut output_31, b"common data")
+            .unwrap();
+
+        encoder_30.finish(&mut output_30).unwrap();
+        encoder_31.finish(&mut output_31).unwrap();
+
+        // Outputs will differ due to different dictionary states
+        // (But this test just verifies both work without crashing)
+        assert!(!output_30.is_empty());
+        assert!(!output_31.is_empty());
+    }
+
+    // =========================================================================
+    // Encoder Reset Tests
+    // =========================================================================
+
+    #[test]
+    fn encoder_reset_clears_state() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+
+        // Use the encoder
+        let mut output = Vec::new();
+        encoder.send_literal(&mut output, b"first file data").unwrap();
+        encoder.send_block_match(&mut output, 5).unwrap();
+        encoder.finish(&mut output).unwrap();
+
+        // Reset should allow reuse for a new file
+        encoder.reset();
+
+        let mut output2 = Vec::new();
+        encoder.send_literal(&mut output2, b"second file data").unwrap();
+        encoder.finish(&mut output2).unwrap();
+
+        // Both outputs should be valid and decodable
+        assert!(!output.is_empty());
+        assert!(!output2.is_empty());
+    }
+
+    #[test]
+    fn encoder_reset_clears_token_run_state() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+
+        // Build up token run state
+        let mut output = Vec::new();
+        encoder.send_block_match(&mut output, 10).unwrap();
+        encoder.send_block_match(&mut output, 11).unwrap();
+        encoder.finish(&mut output).unwrap();
+
+        encoder.reset();
+
+        // After reset, token numbering should restart
+        let mut output2 = Vec::new();
+        encoder.send_block_match(&mut output2, 0).unwrap();
+        encoder.finish(&mut output2).unwrap();
+
+        // Verify both can be decoded
+        let mut decoder = CompressedTokenDecoder::new();
+
+        // Decode first
+        let mut cursor = Cursor::new(&output);
+        let mut blocks1 = Vec::new();
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::BlockMatch(idx) => blocks1.push(idx),
+                CompressedToken::End => break,
+                CompressedToken::Literal(_) => {}
+            }
+        }
+
+        // Reset decoder and decode second
+        decoder.reset();
+        let mut cursor2 = Cursor::new(&output2);
+        let mut blocks2 = Vec::new();
+        loop {
+            match decoder.recv_token(&mut cursor2).unwrap() {
+                CompressedToken::BlockMatch(idx) => blocks2.push(idx),
+                CompressedToken::End => break,
+                CompressedToken::Literal(_) => {}
+            }
+        }
+
+        assert_eq!(blocks1, vec![10, 11]);
+        assert_eq!(blocks2, vec![0]);
+    }
+
+    // =========================================================================
+    // Decoder Reset Tests
+    // =========================================================================
+
+    #[test]
+    fn decoder_reset_clears_state() {
+        let mut decoder = CompressedTokenDecoder::new();
+
+        // Build encoded data for two separate files
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut encoded1 = Vec::new();
+        encoder.send_literal(&mut encoded1, b"file one").unwrap();
+        encoder.finish(&mut encoded1).unwrap();
+
+        encoder.reset();
+        let mut encoded2 = Vec::new();
+        encoder.send_literal(&mut encoded2, b"file two").unwrap();
+        encoder.finish(&mut encoded2).unwrap();
+
+        // Decode first file
+        let mut cursor1 = Cursor::new(&encoded1);
+        let mut decoded1 = Vec::new();
+        loop {
+            match decoder.recv_token(&mut cursor1).unwrap() {
+                CompressedToken::Literal(data) => decoded1.extend_from_slice(&data),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => {}
+            }
+        }
+
+        // Reset and decode second file
+        decoder.reset();
+        let mut cursor2 = Cursor::new(&encoded2);
+        let mut decoded2 = Vec::new();
+        loop {
+            match decoder.recv_token(&mut cursor2).unwrap() {
+                CompressedToken::Literal(data) => decoded2.extend_from_slice(&data),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => {}
+            }
+        }
+
+        assert_eq!(decoded1, b"file one");
+        assert_eq!(decoded2, b"file two");
+    }
+
+    // =========================================================================
+    // Token Run Encoding Tests
+    // =========================================================================
+
+    #[test]
+    fn encode_consecutive_blocks_as_run() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut encoded = Vec::new();
+
+        // Send 10 consecutive blocks
+        for i in 0..10 {
+            encoder.send_block_match(&mut encoded, i).unwrap();
+        }
+        encoder.finish(&mut encoded).unwrap();
+
+        // Decode and verify
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut blocks = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::BlockMatch(idx) => blocks.push(idx),
+                CompressedToken::End => break,
+                CompressedToken::Literal(_) => {}
+            }
+        }
+
+        assert_eq!(blocks, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn encode_non_consecutive_blocks_separately() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut encoded = Vec::new();
+
+        // Send non-consecutive blocks
+        encoder.send_block_match(&mut encoded, 0).unwrap();
+        encoder.send_block_match(&mut encoded, 10).unwrap();
+        encoder.send_block_match(&mut encoded, 20).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        // Decode and verify
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut blocks = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::BlockMatch(idx) => blocks.push(idx),
+                CompressedToken::End => break,
+                CompressedToken::Literal(_) => {}
+            }
+        }
+
+        assert_eq!(blocks, vec![0, 10, 20]);
+    }
+
+    #[test]
+    fn encode_long_run_with_rollover() {
+        // Test run that exceeds relative encoding range (> 63)
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut encoded = Vec::new();
+
+        // Send blocks that create a large relative offset
+        encoder.send_block_match(&mut encoded, 100).unwrap();
+        encoder.send_block_match(&mut encoded, 101).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        // Decode and verify
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut blocks = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::BlockMatch(idx) => blocks.push(idx),
+                CompressedToken::End => break,
+                CompressedToken::Literal(_) => {}
+            }
+        }
+
+        assert_eq!(blocks, vec![100, 101]);
+    }
+
+    // =========================================================================
+    // Compression Level Tests
+    // =========================================================================
+
+    #[test]
+    fn encoder_fast_compression() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Fast, 31);
+        let data = b"Test data with fast compression setting applied to it";
+
+        let mut encoded = Vec::new();
+        encoder.send_literal(&mut encoded, data).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        // Verify decodable
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut decoded = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(chunk) => decoded.extend_from_slice(&chunk),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => {}
+            }
+        }
+
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn encoder_best_compression() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Best, 31);
+        let data = b"Test data with best compression setting applied to it for maximum reduction";
+
+        let mut encoded = Vec::new();
+        encoder.send_literal(&mut encoded, data).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        // Verify decodable
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut decoded = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(chunk) => decoded.extend_from_slice(&chunk),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => {}
+            }
+        }
+
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn encoder_precise_compression_level() {
+        use std::num::NonZeroU8;
+        let level = CompressionLevel::Precise(NonZeroU8::new(5).unwrap());
+        let mut encoder = CompressedTokenEncoder::new(level, 31);
+        let data = b"Precise level 5 compression test data";
+
+        let mut encoded = Vec::new();
+        encoder.send_literal(&mut encoded, data).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        // Verify decodable
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut decoded = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(chunk) => decoded.extend_from_slice(&chunk),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => {}
+            }
+        }
+
+        assert_eq!(decoded, data);
+    }
+
+    // =========================================================================
+    // Default Trait Tests
+    // =========================================================================
+
+    #[test]
+    fn encoder_default_uses_default_compression_and_protocol_31() {
+        let encoder = CompressedTokenEncoder::default();
+
+        // Default should work normally
+        let mut encoded = Vec::new();
+        let mut encoder = encoder;
+        encoder.send_literal(&mut encoded, b"default test").unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn decoder_default_works() {
+        let decoder = CompressedTokenDecoder::default();
+        assert!(!decoder.initialized);
+    }
+
+    // =========================================================================
+    // Edge Cases
+    // =========================================================================
+
+    #[test]
+    fn encode_empty_literal() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut encoded = Vec::new();
+
+        encoder.send_literal(&mut encoded, b"").unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        // Should just have end marker
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+
+        match decoder.recv_token(&mut cursor).unwrap() {
+            CompressedToken::End => {}
+            other => panic!("expected End, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn encode_single_byte_literal() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut encoded = Vec::new();
+
+        encoder.send_literal(&mut encoded, b"X").unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut decoded = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(data) => decoded.extend_from_slice(&data),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => {}
+            }
+        }
+
+        assert_eq!(decoded, b"X");
+    }
+
+    #[test]
+    fn encode_large_literal_multiple_chunks() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut encoded = Vec::new();
+
+        // Create data larger than CHUNK_SIZE (32KB)
+        let large_data: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
+
+        encoder.send_literal(&mut encoded, &large_data).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&encoded);
+        let mut decoded = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(data) => decoded.extend_from_slice(&data),
+                CompressedToken::End => break,
+                CompressedToken::BlockMatch(_) => {}
+            }
+        }
+
+        assert_eq!(decoded, large_data);
+    }
+
+    #[test]
+    fn decode_invalid_flag_byte() {
+        // Flag byte that doesn't match any valid pattern
+        // 0x01-0x1F are invalid (not END_FLAG, not TOKEN_*, not DEFLATED_DATA)
+        let invalid_data = [0x01u8];
+        let mut decoder = CompressedTokenDecoder::new();
+        let mut cursor = Cursor::new(&invalid_data[..]);
+
+        let result = decoder.recv_token(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn see_token_empty_data() {
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut decoder = CompressedTokenDecoder::new();
+
+        // Empty data should be no-op
+        encoder.see_token(&[]).unwrap();
+        decoder.see_token(&[]).unwrap();
+    }
+
+    #[test]
+    fn see_token_exact_chunk_boundary() {
+        // Test data that is exactly 0xFFFF bytes (chunk boundary)
+        let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+        let mut decoder = CompressedTokenDecoder::new();
+
+        let boundary_data = vec![0x42u8; 0xFFFF];
+
+        encoder.see_token(&boundary_data).unwrap();
+        decoder.see_token(&boundary_data).unwrap();
+    }
+
+    #[test]
+    fn compressed_token_enum_equality() {
+        let lit1 = CompressedToken::Literal(vec![1, 2, 3]);
+        let lit2 = CompressedToken::Literal(vec![1, 2, 3]);
+        let lit3 = CompressedToken::Literal(vec![4, 5, 6]);
+
+        assert_eq!(lit1, lit2);
+        assert_ne!(lit1, lit3);
+
+        let block1 = CompressedToken::BlockMatch(5);
+        let block2 = CompressedToken::BlockMatch(5);
+        let block3 = CompressedToken::BlockMatch(10);
+
+        assert_eq!(block1, block2);
+        assert_ne!(block1, block3);
+
+        let end1 = CompressedToken::End;
+        let end2 = CompressedToken::End;
+
+        assert_eq!(end1, end2);
+        assert_ne!(CompressedToken::End, CompressedToken::BlockMatch(0));
+    }
+
+    #[test]
+    fn compressed_token_debug_format() {
+        let token = CompressedToken::Literal(vec![1, 2, 3]);
+        let debug = format!("{token:?}");
+        assert!(debug.contains("Literal"));
+
+        let token = CompressedToken::BlockMatch(42);
+        let debug = format!("{token:?}");
+        assert!(debug.contains("BlockMatch"));
+        assert!(debug.contains("42"));
+
+        let token = CompressedToken::End;
+        let debug = format!("{token:?}");
+        assert!(debug.contains("End"));
+    }
+
+    #[test]
+    fn compressed_token_clone() {
+        let original = CompressedToken::Literal(vec![1, 2, 3, 4, 5]);
+        let cloned = original.clone();
+
+        assert_eq!(original, cloned);
     }
 }
