@@ -1053,4 +1053,400 @@ mod tests {
             assert!(buf.len() < 4, "proto {proto} should use varint (< 4 bytes)");
         }
     }
+
+    // ===========================================================================
+    // BOUNDARY CONDITION TESTS
+    // ===========================================================================
+
+    // ---- i32 boundary tests ----
+
+    #[test]
+    fn varint_i32_max_roundtrip() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(i32::MAX, &mut encoded);
+        let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, i32::MAX);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn varint_i32_min_roundtrip() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(i32::MIN, &mut encoded);
+        let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, i32::MIN);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn varint_i32_max_minus_one() {
+        let value = i32::MAX - 1;
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(value, &mut encoded);
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn varint_i32_min_plus_one() {
+        let value = i32::MIN + 1;
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(value, &mut encoded);
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    // ---- i64 boundary tests ----
+
+    #[test]
+    fn varlong_i64_max_roundtrip() {
+        let mut encoded = Vec::new();
+        write_varlong(&mut encoded, i64::MAX, 8).expect("write succeeds");
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varlong(&mut cursor, 8).expect("read succeeds");
+        assert_eq!(decoded, i64::MAX);
+    }
+
+    #[test]
+    fn varlong_i64_zero_roundtrip() {
+        // Test zero with various min_bytes
+        for min_bytes in 1u8..=8 {
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, 0i64, min_bytes).expect("write succeeds");
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
+            assert_eq!(decoded, 0i64, "zero failed for min_bytes={min_bytes}");
+        }
+    }
+
+    #[test]
+    fn longint_i64_max_roundtrip() {
+        let mut encoded = Vec::new();
+        write_longint(&mut encoded, i64::MAX).expect("write succeeds");
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_longint(&mut cursor).expect("read succeeds");
+        assert_eq!(decoded, i64::MAX);
+    }
+
+    #[test]
+    fn longint_i64_min_roundtrip() {
+        let mut encoded = Vec::new();
+        write_longint(&mut encoded, i64::MIN).expect("write succeeds");
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_longint(&mut cursor).expect("read succeeds");
+        assert_eq!(decoded, i64::MIN);
+    }
+
+    // ---- u32/u64 equivalent boundary tests (as signed) ----
+
+    #[test]
+    fn varint_u32_max_as_i32_roundtrip() {
+        // u32::MAX interpreted as i32 is -1
+        let value = u32::MAX as i32;
+        assert_eq!(value, -1);
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(value, &mut encoded);
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn varlong_large_positive_value_roundtrip() {
+        // Varlong is designed for positive values (file sizes, timestamps).
+        // Test with a large positive value that fits in i64::MAX.
+        let value = i64::MAX / 2; // Large positive value
+        let mut encoded = Vec::new();
+        write_varlong(&mut encoded, value, 8).expect("write succeeds");
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varlong(&mut cursor, 8).expect("read succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    // ---- Overflow edge cases ----
+
+    #[test]
+    fn decode_varint_overflow_tag_byte() {
+        // Leading bytes 0xFC-0xFF (indices 63) in INT_BYTE_EXTRA table
+        // indicate 5 or 6 extra bytes, which should trigger overflow error
+        // 0xFC (252) / 4 = 63, which maps to 5 extra bytes
+        // 0xFD (253) / 4 = 63, which maps to 5 extra bytes
+        // 0xFE (254) / 4 = 63, which maps to 5 extra bytes
+        // 0xFF (255) / 4 = 63, which maps to 6 extra bytes
+        let data = [0xFCu8, 0, 0, 0, 0, 0]; // 5 extra bytes
+        let err = decode_varint(&data).expect_err("overflow tag should fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("overflow"));
+
+        let data = [0xFFu8, 0, 0, 0, 0, 0, 0]; // 6 extra bytes
+        let err = decode_varint(&data).expect_err("overflow tag should fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn read_varint_overflow_tag_byte() {
+        let data = [0xFCu8, 0, 0, 0, 0, 0];
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_varint(&mut cursor).expect_err("overflow tag should fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    // ---- Encoding/decoding round-trip for boundary values ----
+
+    #[test]
+    fn varint_encoding_length_boundaries() {
+        // Test values at encoding length boundaries
+        // 1-byte: 0-127 (0x00-0x7F)
+        // 2-byte: 128-16383 (0x80-0x3FFF)
+        // 3-byte: 16384-2097151 (0x4000-0x1FFFFF)
+        // etc.
+        let boundary_values = [
+            (0, 1),           // min 1-byte
+            (127, 1),         // max 1-byte
+            (128, 2),         // min 2-byte
+            (16383, 2),       // near max 2-byte
+            (16384, 3),       // min 3-byte
+            (2097151, 3),     // near max 3-byte
+            (0x200000, 4),    // 4-byte territory
+            (0x10000000, 5),  // 5-byte territory
+        ];
+
+        for (value, expected_min_len) in boundary_values {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            assert!(
+                encoded.len() >= expected_min_len,
+                "value {value} expected at least {expected_min_len} bytes, got {}",
+                encoded.len()
+            );
+            let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "roundtrip failed for {value}");
+        }
+    }
+
+    // ---- Zero and negative number handling ----
+
+    #[test]
+    fn varint_zero_encoding() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(0, &mut encoded);
+        assert_eq!(encoded, vec![0x00]);
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 0);
+    }
+
+    #[test]
+    fn varint_negative_one_encoding() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(-1, &mut encoded);
+        // -1 as i32 is 0xFFFFFFFF, which requires 5 bytes in varint format
+        assert_eq!(encoded.len(), 5);
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, -1);
+    }
+
+    #[test]
+    fn varint_all_powers_of_two_positive() {
+        for shift in 0..31 {
+            let value: i32 = 1 << shift;
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "failed for 2^{shift}");
+        }
+    }
+
+    #[test]
+    fn varint_all_powers_of_two_negative() {
+        for shift in 0..31 {
+            let value: i32 = -(1 << shift);
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "failed for -(2^{shift})");
+        }
+    }
+
+    // ---- INT_BYTE_EXTRA lookup table edge cases ----
+
+    #[test]
+    fn int_byte_extra_first_index() {
+        // Index 0: byte values 0-3
+        assert_eq!(INT_BYTE_EXTRA[0], 0);
+    }
+
+    #[test]
+    fn int_byte_extra_last_index() {
+        // Index 63: byte values 252-255
+        assert_eq!(INT_BYTE_EXTRA[63], 6);
+    }
+
+    #[test]
+    fn int_byte_extra_transition_points() {
+        // Verify transition points in the table
+        // 0x00-0x7F (0-127): 0 extra bytes -> indices 0-31
+        assert_eq!(INT_BYTE_EXTRA[31], 0); // byte 0x7C-0x7F
+        // 0x80-0xBF (128-191): 1 extra byte -> indices 32-47
+        assert_eq!(INT_BYTE_EXTRA[32], 1); // byte 0x80-0x83
+        assert_eq!(INT_BYTE_EXTRA[47], 1); // byte 0xBC-0xBF
+        // 0xC0-0xDF (192-223): 2 extra bytes -> indices 48-55
+        assert_eq!(INT_BYTE_EXTRA[48], 2); // byte 0xC0-0xC3
+        assert_eq!(INT_BYTE_EXTRA[55], 2); // byte 0xDC-0xDF
+        // 0xE0-0xEF (224-239): 3 extra bytes -> indices 56-59
+        assert_eq!(INT_BYTE_EXTRA[56], 3); // byte 0xE0-0xE3
+        assert_eq!(INT_BYTE_EXTRA[59], 3); // byte 0xEC-0xEF
+        // 0xF0-0xF7 (240-247): 4 extra bytes -> indices 60-61
+        assert_eq!(INT_BYTE_EXTRA[60], 4); // byte 0xF0-0xF3
+        assert_eq!(INT_BYTE_EXTRA[61], 4); // byte 0xF4-0xF7
+        // 0xF8-0xFB (248-251): 5 extra bytes -> index 62
+        assert_eq!(INT_BYTE_EXTRA[62], 5); // byte 0xF8-0xFB
+        // 0xFC-0xFF (252-255): 6 extra bytes -> index 63
+        assert_eq!(INT_BYTE_EXTRA[63], 6); // byte 0xFC-0xFF
+    }
+
+    #[test]
+    fn int_byte_extra_decode_with_each_extra_count() {
+        // Test decoding with each valid extra byte count (0, 1, 2, 3, 4)
+        // 0 extra: leading byte 0x00-0x7F
+        let (val, consumed) = decode_bytes(&[0x42]).unwrap();
+        assert_eq!(val, 0x42);
+        assert_eq!(consumed, 1);
+
+        // 1 extra: leading byte 0x80-0xBF
+        let (val, consumed) = decode_bytes(&[0x80, 0x42]).unwrap();
+        assert_eq!(consumed, 2);
+        assert_eq!(val, 0x42);
+
+        // 2 extra: leading byte 0xC0-0xDF
+        let (val, consumed) = decode_bytes(&[0xC0, 0x42, 0x00]).unwrap();
+        assert_eq!(consumed, 3);
+        assert_eq!(val, 0x42);
+
+        // 3 extra: leading byte 0xE0-0xEF
+        let (val, consumed) = decode_bytes(&[0xE0, 0x42, 0x00, 0x00]).unwrap();
+        assert_eq!(consumed, 4);
+        assert_eq!(val, 0x42);
+
+        // 4 extra: leading byte 0xF0-0xF7
+        let (val, consumed) = decode_bytes(&[0xF0, 0x42, 0x00, 0x00, 0x00]).unwrap();
+        assert_eq!(consumed, 5);
+        assert_eq!(val, 0x42);
+    }
+
+    // ---- Longint boundary tests ----
+
+    #[test]
+    fn longint_boundary_at_0x7fffffff() {
+        // 0x7FFFFFFF is the maximum value that fits in 4 bytes
+        let max_inline = 0x7FFF_FFFF_i64;
+        let mut encoded = Vec::new();
+        write_longint(&mut encoded, max_inline).expect("write succeeds");
+        assert_eq!(encoded.len(), 4);
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_longint(&mut cursor).expect("read succeeds");
+        assert_eq!(decoded, max_inline);
+    }
+
+    #[test]
+    fn longint_boundary_at_0x80000000() {
+        // 0x80000000 requires 12 bytes (marker + 8-byte value)
+        let min_extended = 0x8000_0000_i64;
+        let mut encoded = Vec::new();
+        write_longint(&mut encoded, min_extended).expect("write succeeds");
+        assert_eq!(encoded.len(), 12);
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_longint(&mut cursor).expect("read succeeds");
+        assert_eq!(decoded, min_extended);
+    }
+
+    #[test]
+    fn longint_negative_uses_extended_format() {
+        // Negative values always use extended 12-byte format
+        let negative = -1i64;
+        let mut encoded = Vec::new();
+        write_longint(&mut encoded, negative).expect("write succeeds");
+        assert_eq!(encoded.len(), 12);
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_longint(&mut cursor).expect("read succeeds");
+        assert_eq!(decoded, negative);
+    }
+
+    // ---- Varlong boundary tests ----
+
+    #[test]
+    fn varlong_min_bytes_boundary_values() {
+        // Test with min_bytes at each extreme
+        for min_bytes in [1u8, 2, 3, 4, 5, 6, 7, 8] {
+            let value = 0xFFi64; // 255
+            let mut encoded = Vec::new();
+            write_varlong(&mut encoded, value, min_bytes).expect("write succeeds");
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_varlong(&mut cursor, min_bytes).expect("read succeeds");
+            assert_eq!(decoded, value, "failed for min_bytes={min_bytes}");
+        }
+    }
+
+    #[test]
+    fn varlong_encodes_minimum_bytes() {
+        // A value that fits in 3 bytes with min_bytes=3 should use 3 bytes
+        let value = 0x1234i64;
+        let mut encoded = Vec::new();
+        write_varlong(&mut encoded, value, 3).expect("write succeeds");
+        // Leading byte + (min_bytes - 1) = 3 bytes minimum
+        assert!(encoded.len() >= 3, "expected at least 3 bytes");
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = read_varlong(&mut cursor, 3).expect("read succeeds");
+        assert_eq!(decoded, value);
+    }
+
+    // ---- Additional truncation tests ----
+
+    #[test]
+    fn decode_varint_truncated_2_byte() {
+        // 0x80 indicates 1 extra byte is needed
+        let data = [0x80u8];
+        let err = decode_varint(&data).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn decode_varint_truncated_3_byte() {
+        // 0xC0 indicates 2 extra bytes are needed
+        let data = [0xC0u8, 0x00];
+        let err = decode_varint(&data).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn decode_varint_truncated_4_byte() {
+        // 0xE0 indicates 3 extra bytes are needed
+        let data = [0xE0u8, 0x00, 0x00];
+        let err = decode_varint(&data).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn decode_varint_truncated_5_byte() {
+        // 0xF0 indicates 4 extra bytes are needed
+        let data = [0xF0u8, 0x00, 0x00, 0x00];
+        let err = decode_varint(&data).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_longint_truncated_marker() {
+        // Only 2 bytes when 4 are needed
+        let data = [0xFFu8, 0xFF];
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_longint(&mut cursor).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn read_longint_truncated_extended() {
+        // Marker present but extended value truncated
+        let data = [0xFFu8, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00]; // Only 7 bytes after marker
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_longint(&mut cursor).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
 }

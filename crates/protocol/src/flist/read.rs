@@ -1,7 +1,12 @@
 //! File list reading (decoding) from the rsync wire format.
 //!
 //! This module implements the receiver side of file list exchange, decoding
-//! file entries as they arrive from the sender.
+//! file entries as they arrive from the sender. The reader maintains compression
+//! state to handle fields that are omitted when they match the previous entry.
+//!
+//! # Upstream Reference
+//!
+//! See `flist.c:recv_file_entry()` for the canonical wire format decoding.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -74,16 +79,30 @@ pub struct FileListReader {
 }
 
 /// Result from reading metadata fields.
+///
+/// Contains all metadata decoded from the wire format for a single file entry.
+/// Fields are `Option` when they may be conditionally present based on
+/// protocol options (preserve_uid, preserve_gid, preserve_atimes, etc.).
 struct MetadataResult {
+    /// Modification time in seconds since Unix epoch.
     mtime: i64,
+    /// Nanosecond component of modification time (protocol 31+).
     nsec: u32,
+    /// Unix mode bits (file type and permissions).
     mode: u32,
+    /// User ID (when preserve_uid is enabled).
     uid: Option<u32>,
+    /// Group ID (when preserve_gid is enabled).
     gid: Option<u32>,
+    /// User name for UID mapping (protocol 30+).
     user_name: Option<String>,
+    /// Group name for GID mapping (protocol 30+).
     group_name: Option<String>,
+    /// Access time (when preserve_atimes is enabled, non-directories only).
     atime: Option<i64>,
+    /// Creation time (when preserve_crtimes is enabled).
     crtime: Option<i64>,
+    /// Whether directory has content to transfer (protocol 30+, directories only).
     content_dir: bool,
 }
 
@@ -139,6 +158,7 @@ impl FileListReader {
     }
 
     /// Sets whether UID values should be read from the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_uid(mut self, preserve: bool) -> Self {
         self.preserve_uid = preserve;
@@ -146,6 +166,7 @@ impl FileListReader {
     }
 
     /// Sets whether GID values should be read from the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_gid(mut self, preserve: bool) -> Self {
         self.preserve_gid = preserve;
@@ -153,6 +174,7 @@ impl FileListReader {
     }
 
     /// Sets whether symlink targets should be read from the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_links(mut self, preserve: bool) -> Self {
         self.preserve_links = preserve;
@@ -160,6 +182,7 @@ impl FileListReader {
     }
 
     /// Sets whether device numbers should be read from the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_devices(mut self, preserve: bool) -> Self {
         self.preserve_devices = preserve;
@@ -167,6 +190,7 @@ impl FileListReader {
     }
 
     /// Sets whether hardlink indices should be read from the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_hard_links(mut self, preserve: bool) -> Self {
         self.preserve_hard_links = preserve;
@@ -174,6 +198,7 @@ impl FileListReader {
     }
 
     /// Sets whether access times should be read from the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_atimes(mut self, preserve: bool) -> Self {
         self.preserve_atimes = preserve;
@@ -181,6 +206,7 @@ impl FileListReader {
     }
 
     /// Sets whether creation times should be read from the wire.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_crtimes(mut self, preserve: bool) -> Self {
         self.preserve_crtimes = preserve;
@@ -191,6 +217,7 @@ impl FileListReader {
     ///
     /// When enabled, ACL indices are read after other metadata.
     /// Note: ACL data itself is received in a separate exchange.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_acls(mut self, preserve: bool) -> Self {
         self.preserve_acls = preserve;
@@ -201,6 +228,7 @@ impl FileListReader {
     ///
     /// When enabled, xattr indices are read after ACL indices.
     /// Note: Xattr data itself is received in a separate exchange.
+    #[inline]
     #[must_use]
     pub const fn with_preserve_xattrs(mut self, preserve: bool) -> Self {
         self.preserve_xattrs = preserve;
@@ -211,6 +239,7 @@ impl FileListReader {
     ///
     /// When enabled, checksums are read for regular files. For protocol < 28,
     /// checksums are also read for non-regular files (empty_sum).
+    #[inline]
     #[must_use]
     pub const fn with_always_checksum(mut self, csum_len: usize) -> Self {
         self.always_checksum = true;
@@ -219,6 +248,7 @@ impl FileListReader {
     }
 
     /// Sets the filename encoding converter for iconv support.
+    #[inline]
     #[must_use]
     pub const fn with_iconv(mut self, converter: FilenameConverter) -> Self {
         self.iconv = Some(converter);
@@ -691,7 +721,10 @@ impl FileListReader {
         Ok(Some(checksum))
     }
 
-    /// Updates file list statistics based on the entry.
+    /// Updates file list statistics based on the entry type.
+    ///
+    /// Tracks counts of files, directories, symlinks, devices, and special files,
+    /// as well as total size for files and symlink targets.
     fn update_stats(&mut self, entry: &FileEntry) {
         if entry.is_dir() {
             self.stats.num_dirs += 1;
@@ -742,6 +775,10 @@ impl FileListReader {
     }
 
     /// Applies iconv encoding conversion to a filename.
+    ///
+    /// When `--iconv` is used, filenames are converted from the remote encoding
+    /// to the local encoding. This enables interoperability between systems
+    /// with different character encodings.
     fn apply_encoding_conversion(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
         if let Some(ref converter) = self.iconv {
             match converter.remote_to_local(&name) {
@@ -950,6 +987,17 @@ impl FileListReader {
     }
 
     /// Reads the file name with path compression.
+    ///
+    /// The rsync wire format compresses file names by sharing a common prefix
+    /// with the previous entry. If `XMIT_SAME_NAME` is set, a `same_len` byte
+    /// indicates how many bytes to reuse from the previous name.
+    ///
+    /// # Wire Format
+    ///
+    /// - If `XMIT_SAME_NAME`: read u8 as `same_len`
+    /// - If `XMIT_LONG_NAME`: read varint as `suffix_len`, else read u8
+    /// - Read `suffix_len` bytes as the name suffix
+    /// - Concatenate: `prev_name[..same_len] + suffix`
     fn read_name<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -1002,6 +1050,10 @@ impl FileListReader {
     }
 
     /// Reads the file size using protocol-appropriate encoding.
+    ///
+    /// The encoding varies by protocol version:
+    /// - Protocol < 30: Fixed 32-bit or 64-bit encoding
+    /// - Protocol 30+: Variable-length encoding (varlong30)
     fn read_size<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<u64> {
         let size = self.codec.read_file_size(reader)?;
         Ok(size as u64)
@@ -1011,7 +1063,14 @@ impl FileListReader {
 /// Reads a single file entry from a reader.
 ///
 /// This is a convenience function for reading individual entries without
-/// maintaining reader state. For reading multiple entries, use [`FileListReader`].
+/// maintaining reader state. For reading multiple entries, use [`FileListReader`]
+/// to benefit from cross-entry compression.
+///
+/// # Returns
+///
+/// - `Ok(Some(entry))` - Successfully read a file entry
+/// - `Ok(None)` - End of file list marker received
+/// - `Err(_)` - I/O or protocol error
 pub fn read_file_entry<R: Read>(
     reader: &mut R,
     protocol: ProtocolVersion,
