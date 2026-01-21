@@ -527,4 +527,24 @@ mod tests {
         writer.saturating_add_bytes(usize::MAX);
         assert_eq!(writer.bytes(), u64::MAX);
     }
+
+    #[test]
+    fn zero_byte_roundtrip() {
+        // Empty input should compress and decompress to empty output
+        let compressed = compress_to_vec(b"", CompressionLevel::Default).expect("compress empty");
+        let decompressed = decompress_to_vec(&compressed).expect("decompress empty");
+        assert!(decompressed.is_empty());
+    }
+
+    #[test]
+    fn zero_byte_streaming_roundtrip() {
+        // Streaming encoder with no writes should produce valid empty stream
+        let encoder = CountingZlibEncoder::with_sink(Vec::new(), CompressionLevel::Default);
+        // Don't write anything
+        let (compressed, bytes) = encoder.finish_into_inner().expect("finish empty stream");
+        assert!(bytes > 0, "deflate stream has framing even when empty");
+
+        let decompressed = decompress_to_vec(&compressed).expect("decompress empty stream");
+        assert!(decompressed.is_empty());
+    }
 }
