@@ -220,22 +220,58 @@ const fn is_device_file(mode: u32) -> bool {
 }
 
 /// Extracts the major device number from a combined rdev value.
+///
+/// # Linux Encoding (GLIBC)
+///
+/// Linux uses a split encoding where major spans non-contiguous bits:
+/// ```text
+/// rdev bits:  63..44  43..32  31..20  19..12  11..8   7..0
+/// meaning:    unused  major   unused  minor   major   minor
+///                     (high)          (high)  (low)   (low)
+/// ```
+///
+/// Formula: `major = bits[11:8] | bits[43:32]`
 #[cfg(target_os = "linux")]
 const fn major(rdev: u64) -> u32 {
     ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32)
 }
 
+/// Extracts the major device number from a combined rdev value.
+///
+/// # BSD/macOS Encoding
+///
+/// Uses a simpler layout with major in the high byte:
+/// ```text
+/// rdev bits:  31..24    23..0
+/// meaning:    major     minor
+/// ```
 #[cfg(not(target_os = "linux"))]
 fn major(rdev: u64) -> u32 {
     (rdev >> 24) as u32
 }
 
 /// Extracts the minor device number from a combined rdev value.
+///
+/// # Linux Encoding (GLIBC)
+///
+/// Minor spans non-contiguous bits:
+/// ```text
+/// rdev bits:  19..12   7..0
+/// meaning:    minor    minor
+///             (high)   (low)
+/// ```
+///
+/// Formula: `minor = bits[7:0] | bits[19:12]`
 #[cfg(target_os = "linux")]
 const fn minor(rdev: u64) -> u32 {
     (rdev & 0xff) as u32 | (((rdev >> 12) & !0xff) as u32)
 }
 
+/// Extracts the minor device number from a combined rdev value.
+///
+/// # BSD/macOS Encoding
+///
+/// Minor occupies the low 24 bits.
 #[cfg(not(target_os = "linux"))]
 fn minor(rdev: u64) -> u32 {
     (rdev & 0xffffff) as u32

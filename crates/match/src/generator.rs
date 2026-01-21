@@ -39,7 +39,29 @@ impl DeltaGenerator {
         self
     }
 
-    /// Generates a [`DeltaScript`] for the provided reader using the supplied signature index.
+    /// Generates a [`DeltaScript`] describing how to reconstruct the input from basis blocks.
+    ///
+    /// This implements rsync's delta generation algorithm:
+    ///
+    /// 1. Slide a window of `block_length` bytes over the input
+    /// 2. At each position, compute the rolling checksum
+    /// 3. If the checksum matches a known block, verify with the strong checksum
+    /// 4. On match: emit a `Copy` token referencing the basis block
+    /// 5. On no match: accumulate the byte as a literal and advance by 1
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - Source data to generate delta for
+    /// * `index` - Pre-built signature index from the basis file
+    ///
+    /// # Returns
+    ///
+    /// A [`DeltaScript`] containing `Copy` and `Literal` tokens that, when applied
+    /// to the basis file, reconstruct the input.
+    ///
+    /// # Upstream Reference
+    ///
+    /// See `match.c:hash_search()` for the matching algorithm.
     pub fn generate<R: Read>(
         &self,
         mut reader: R,
