@@ -351,6 +351,33 @@ mod tests {
     }
 
     #[test]
+    fn categorize_would_block_as_recoverable() {
+        let err = io::Error::from(io::ErrorKind::WouldBlock);
+        let path = Path::new("/tmp/test.txt");
+
+        let categorized = categorize_io_error(err, path, "read");
+
+        assert!(matches!(
+            categorized,
+            DeltaTransferError::Recoverable(DeltaRecoverableError::Io { .. })
+        ));
+    }
+
+    #[test]
+    fn categorize_unknown_error_as_fatal() {
+        // Test that unknown/other errors are categorized as fatal
+        let err = io::Error::from(io::ErrorKind::Other);
+        let path = Path::new("/tmp/test.txt");
+
+        let categorized = categorize_io_error(err, path, "write");
+
+        assert!(matches!(
+            categorized,
+            DeltaTransferError::Fatal(DeltaFatalError::Io(_))
+        ));
+    }
+
+    #[test]
     fn display_disk_full_error() {
         let err = DeltaFatalError::DiskFull {
             path: PathBuf::from("/tmp/test.txt"),

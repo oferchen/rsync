@@ -8,8 +8,8 @@
 //!
 //! # Module Structure
 //!
-//! - [`ProtocolCodec`] trait for general wire encoding (file sizes, mtimes, etc.)
-//! - [`NdxCodec`] trait for file-list index (NDX) encoding
+//! - `ProtocolCodec` trait for general wire encoding (file sizes, mtimes, etc.)
+//! - `NdxCodec` trait for file-list index (NDX) encoding
 //!
 //! # Strategy Pattern
 //!

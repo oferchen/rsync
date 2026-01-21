@@ -299,7 +299,7 @@ pub struct RemoteFallbackArgs {
 }
 
 /// Writer references and arguments required to invoke the fallback binary.
-#[allow(dead_code)]
+#[allow(dead_code)] // Reserved for future fallback implementation
 pub struct RemoteFallbackContext<'a, Out, Err>
 where
     Out: Write + 'a,
@@ -325,7 +325,8 @@ where
         }
     }
 
-    #[allow(dead_code)]
+    /// Splits the context into its component parts.
+    #[allow(dead_code)] // Reserved for future fallback implementation
     pub(crate) fn split(self) -> (&'a mut Out, &'a mut Err, RemoteFallbackArgs) {
         let Self {
             stdout,
