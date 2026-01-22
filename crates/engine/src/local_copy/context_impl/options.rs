@@ -382,7 +382,7 @@ impl<'a> CopyContext<'a> {
     }
 
     #[cfg(unix)]
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     pub(super) const fn xattrs_enabled(&self) -> bool {
         self.options.preserve_xattrs()
     }

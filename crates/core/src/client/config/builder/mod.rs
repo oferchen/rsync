@@ -122,9 +122,9 @@ pub struct ClientConfigBuilder {
     rsync_path: Option<OsString>,
     early_input: Option<PathBuf>,
     batch_config: Option<engine::batch::BatchConfig>,
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     preserve_acls: bool,
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     preserve_xattrs: bool,
 }
 
@@ -239,9 +239,9 @@ impl ClientConfigBuilder {
             rsync_path: self.rsync_path,
             early_input: self.early_input,
             batch_config: self.batch_config,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             preserve_acls: self.preserve_acls,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs: self.preserve_xattrs,
         }
     }

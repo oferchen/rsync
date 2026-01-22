@@ -166,9 +166,9 @@ mod tests {
             write_batch: None,
             only_write_batch: None,
             read_batch: None,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             acls: None,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             xattrs: None,
         }
     }
