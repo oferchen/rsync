@@ -147,8 +147,8 @@ where
     // ACL feature is enabled but not supported on non-Unix platforms
     #[cfg(all(not(unix), feature = "acl"))]
     if preserve_acls {
-        let message =
-            rsync_error!(1, "POSIX ACLs are not supported on this platform").with_role(Role::Client);
+        let message = rsync_error!(1, "POSIX ACLs are not supported on this platform")
+            .with_role(Role::Client);
         let fallback = "POSIX ACLs are not supported on this platform".to_string();
         return Err(fail_with_custom_fallback(message, fallback, stderr));
     }
