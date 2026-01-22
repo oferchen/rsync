@@ -256,13 +256,16 @@ mod tests {
 
     #[test]
     fn with_buffer_reuses_allocation() {
-        let mut buffer = Vec::with_capacity(64);
-        buffer.extend_from_slice(b"existing data");
+        // Use exactly LEGACY_DAEMON_PREFIX_LEN capacity to avoid triggering
+        // shrink_to() in reset_buffer_for_reuse(), which may reallocate on
+        // some platforms (e.g., macOS).
+        let mut buffer = Vec::with_capacity(LEGACY_DAEMON_PREFIX_LEN);
+        buffer.extend_from_slice(b"data");
         let original_ptr = buffer.as_ptr();
         let sniffer = NegotiationPrologueSniffer::with_buffer(buffer);
         // Buffer is cleared but allocation reused
         assert!(sniffer.buffered().is_empty());
-        // Pointer should be the same if capacity was sufficient
+        // Pointer should be the same since capacity wasn't normalized
         assert_eq!(sniffer.buffered_storage().as_ptr(), original_ptr);
     }
 
