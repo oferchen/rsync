@@ -398,14 +398,18 @@ mod tests {
     }
 
     #[test]
-    fn sync_acls_returns_error_for_missing_source() {
+    fn sync_acls_handles_missing_source_gracefully() {
+        // Upstream rsync treats ENOENT as "no ACL" rather than an error.
+        // This allows graceful handling of race conditions where files may be
+        // deleted between listing and ACL synchronization.
+        // See lib/sysacls.c lines 2780-2782.
         let dir = tempdir().expect("tempdir");
         let source = dir.path().join("nonexistent");
         let destination = dir.path().join("dst");
         File::create(&destination).expect("create dst");
 
         let result = sync_acls(&source, &destination, true);
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]
