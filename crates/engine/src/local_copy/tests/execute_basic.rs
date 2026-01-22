@@ -153,7 +153,7 @@ fn execute_with_relative_requires_directory_destination() {
     assert_eq!(fs::read(&destination).expect("read destination"), b"target");
 }
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn execute_copies_file_with_xattrs() {
     let temp = tempdir().expect("tempdir");
@@ -182,7 +182,7 @@ fn execute_copies_file_with_xattrs() {
     assert_eq!(copied, b"value");
 }
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn execute_respects_xattr_filter_rules() {
     let temp = tempdir().expect("tempdir");
