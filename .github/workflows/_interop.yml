@@ -58,6 +58,7 @@ jobs:
         with:
           path: |
             target/interop/upstream-src
+            target/interop/upstream-install
           key: upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
           restore-keys: |
             upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-
