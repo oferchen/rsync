@@ -553,7 +553,8 @@ impl ModuleDefinitionBuilder {
     }
 }
 
-#[cfg(test)]
+// These tests use Unix-style paths like /data and /etc/secrets
+#[cfg(all(test, unix))]
 mod module_definition_builder_tests {
     use super::*;
     use std::path::PathBuf;
