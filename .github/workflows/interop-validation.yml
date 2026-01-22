@@ -67,7 +67,9 @@ jobs:
         id: cache-rsync
         uses: actions/cache@v4
         with:
-          path: target/interop/upstream-src
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
           key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
           restore-keys: |
             upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
@@ -126,7 +128,9 @@ jobs:
         id: cache-rsync
         uses: actions/cache@v4
         with:
-          path: target/interop/upstream-src
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
           key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
           restore-keys: |
             upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
@@ -187,7 +191,9 @@ jobs:
         id: cache-rsync
         uses: actions/cache@v4
         with:
-          path: target/interop/upstream-src
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
           key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
           restore-keys: |
             upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
