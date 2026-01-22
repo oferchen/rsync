@@ -201,7 +201,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn load_password_file_rejects_non_file_paths() {
+        // On Unix, File::open() on a directory succeeds but we check is_file()
+        // and return a "must be a regular file" error. On Windows, File::open()
+        // on a directory fails with "Access denied" before we reach the check.
         let dir = tempdir().expect("temporary directory");
         let error = load_password_file(dir.path()).expect_err("directories rejected");
 
