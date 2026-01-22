@@ -3,7 +3,9 @@ use core::branding::rust_version;
 
 pub(super) const RSYNC: &str = branding::client_program_name();
 pub(super) const OC_RSYNC: &str = branding::oc_client_program_name();
+#[cfg(unix)]
 pub(super) const RSYNCD: &str = branding::daemon_program_name();
+#[cfg(unix)]
 pub(super) const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
 
 pub(super) const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
