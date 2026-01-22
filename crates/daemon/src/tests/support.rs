@@ -1,9 +1,14 @@
+#[allow(unused_imports)]
 use super::*;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+#[cfg(unix)]
+use std::fs;
+use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 

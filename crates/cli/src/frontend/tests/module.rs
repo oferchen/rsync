@@ -21,6 +21,7 @@ fn module_list_username_prefix_is_accepted() {
     handle.join().expect("server thread");
 }
 
+#[cfg(unix)]
 #[test]
 fn module_list_uses_connect_program_option() {
     let _env_lock = ENV_LOCK.lock().expect("env lock");
