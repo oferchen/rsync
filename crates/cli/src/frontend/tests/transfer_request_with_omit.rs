@@ -1,6 +1,8 @@
 use super::common::*;
 use super::*;
 
+// Archive mode includes Unix-specific options (preserve permissions, ownership)
+#[cfg(unix)]
 #[test]
 fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
     use filetime::{FileTime, set_file_times};

@@ -5,7 +5,7 @@ name: Build-cross
 # =============================================================================
 # This workflow handles the complete release process:
 #   1. Validates tag matches Cargo.toml version (fail-fast)
-#   2. Builds release artifacts for all platforms
+#   2. Builds release artifacts for all platforms (parallelized)
 #   3. Uploads artifacts to GitHub Release
 #   4. Updates Homebrew formula and creates PR
 #
@@ -37,6 +37,7 @@ env:
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: "full"
   FORMULA_PATH: Formula/oc-rsync.rb
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
 
 jobs:
   # ===========================================================================
@@ -86,13 +87,26 @@ jobs:
           printf 'tag=%s\n' "${TAG}" >> "${GITHUB_OUTPUT}"
 
   # ===========================================================================
-  # Build Jobs (all depend on version validation)
+  # Linux GNU Builds (matrix: parallel x86_64 and aarch64)
   # ===========================================================================
-  linux:
-    name: linux release artifacts
+  linux-gnu:
+    name: linux-gnu-${{ matrix.arch }}
     runs-on: ubuntu-latest
     needs: validate-version
-    timeout-minutes: 45
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            arch: amd64
+            deb_arch: amd64
+            rpm_arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            arch: arm64
+            deb_arch: arm64
+            rpm_arch: aarch64
 
     steps:
       - name: Checkout
@@ -101,103 +115,102 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+          targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-linux
+          shared-key: release-linux-${{ env.CACHE_VERSION }}
+          key: ${{ matrix.arch }}
 
       - name: Install system dependencies
         shell: bash
         run: |
           set -euo pipefail
-
-          # Enable arm64 multiarch
-          sudo dpkg --add-architecture arm64
-
-          # Discover codename (e.g. noble)
-          . /etc/os-release
-          codename="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
-          printf 'Ubuntu codename: %s\n' "${codename}"
-
-          # If deb822 ubuntu.sources exists (24.04+), make it amd64-only
-          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
-            sudo awk '
-              BEGIN { in_stanza = 0; had_arch = 0 }
-              /^Types:/ { in_stanza = 1; had_arch = 0 }
-              /^$/     { in_stanza = 0; had_arch = 0 }
-              /^Architectures:/ { had_arch = 1 }
-              {
-                print
-                if (in_stanza && /^Components:/ && !had_arch) {
-                  print "Architectures: amd64"
-                  had_arch = 1
-                }
-              }
-            ' /etc/apt/sources.list.d/ubuntu.sources \
-              | sudo tee /etc/apt/sources.list.d/ubuntu.sources.new >/dev/null
-            sudo mv /etc/apt/sources.list.d/ubuntu.sources.new /etc/apt/sources.list.d/ubuntu.sources
-          fi
-
-          # Add ports.ubuntu.com for arm64
-          sudo sh -c '
-            codename="$1"
-            {
-              printf "Types: deb\n"
-              printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
-              printf "Suites: %s %s-updates %s-backports\n" "$codename" "$codename" "$codename"
-              printf "Components: main restricted universe multiverse\n"
-              printf "Architectures: arm64\n"
-              printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
-              printf "\n"
-              printf "Types: deb\n"
-              printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
-              printf "Suites: %s-security\n" "$codename"
-              printf "Components: main restricted universe multiverse\n"
-              printf "Architectures: arm64\n"
-              printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
-            } > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources
-          ' sh "$codename"
-
           export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update
-          sudo apt-get -y install \
-            pkg-config \
-            libssl-dev \
-            libacl1-dev \
-            libattr1-dev \
-            libzstd-dev \
-            zlib1g-dev \
-            libxxhash-dev \
-            gcc-aarch64-linux-gnu \
-            libssl-dev:arm64 \
-            libacl1-dev:arm64 \
-            libattr1-dev:arm64 \
-            libzstd-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libxxhash-dev:arm64
+
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # Enable arm64 multiarch for cross-compilation
+            sudo dpkg --add-architecture arm64
+
+            # Discover codename (e.g. noble)
+            . /etc/os-release
+            codename="${UBUNTU_CODENAME:-${VERSION_CODENAME}}"
+            printf 'Ubuntu codename: %s\n' "${codename}"
+
+            # If deb822 ubuntu.sources exists (24.04+), make it amd64-only
+            if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+              sudo awk '
+                BEGIN { in_stanza = 0; had_arch = 0 }
+                /^Types:/ { in_stanza = 1; had_arch = 0 }
+                /^$/     { in_stanza = 0; had_arch = 0 }
+                /^Architectures:/ { had_arch = 1 }
+                {
+                  print
+                  if (in_stanza && /^Components:/ && !had_arch) {
+                    print "Architectures: amd64"
+                    had_arch = 1
+                  }
+                }
+              ' /etc/apt/sources.list.d/ubuntu.sources \
+                | sudo tee /etc/apt/sources.list.d/ubuntu.sources.new >/dev/null
+              sudo mv /etc/apt/sources.list.d/ubuntu.sources.new /etc/apt/sources.list.d/ubuntu.sources
+            fi
+
+            # Add ports.ubuntu.com for arm64
+            sudo sh -c '
+              codename="$1"
+              {
+                printf "Types: deb\n"
+                printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
+                printf "Suites: %s %s-updates %s-backports\n" "$codename" "$codename" "$codename"
+                printf "Components: main restricted universe multiverse\n"
+                printf "Architectures: arm64\n"
+                printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+                printf "\n"
+                printf "Types: deb\n"
+                printf "URIs: http://ports.ubuntu.com/ubuntu-ports/\n"
+                printf "Suites: %s-security\n" "$codename"
+                printf "Components: main restricted universe multiverse\n"
+                printf "Architectures: arm64\n"
+                printf "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n"
+              } > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources
+            ' sh "$codename"
+
+            sudo apt-get update
+            sudo apt-get -y install \
+              pkg-config \
+              libssl-dev \
+              libacl1-dev \
+              libattr1-dev \
+              libzstd-dev \
+              zlib1g-dev \
+              libxxhash-dev \
+              gcc-aarch64-linux-gnu \
+              libssl-dev:arm64 \
+              libacl1-dev:arm64 \
+              libattr1-dev:arm64 \
+              libzstd-dev:arm64 \
+              zlib1g-dev:arm64 \
+              libxxhash-dev:arm64
+          else
+            sudo apt-get update
+            sudo apt-get -y install \
+              pkg-config \
+              libssl-dev \
+              libacl1-dev \
+              libattr1-dev \
+              libzstd-dev \
+              zlib1g-dev \
+              libxxhash-dev
+          fi
 
       - name: Install cargo-deb and cargo-generate-rpm
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-deb,cargo-generate-rpm
 
-      - name: Build Linux x86_64 packages (deb + rpm)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          printf 'Building x86_64 binary...\n'
-          cargo build --profile dist --target x86_64-unknown-linux-gnu
-
-          printf 'Building x86_64 .deb...\n'
-          cargo deb --target x86_64-unknown-linux-gnu --no-build --profile dist
-
-          printf 'Building x86_64 .rpm...\n'
-          cargo generate-rpm --profile dist --target x86_64-unknown-linux-gnu -o target/dist/
-
-      - name: Build Linux aarch64 packages (deb + rpm)
+      - name: Build binary
         shell: bash
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
@@ -205,29 +218,37 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/pkgconfig
         run: |
           set -euo pipefail
+          printf 'Building %s binary...\n' "${{ matrix.target }}"
+          cargo build --profile dist --target ${{ matrix.target }}
 
-          printf 'Building aarch64 binary...\n'
-          cargo build --profile dist --target aarch64-unknown-linux-gnu
+      - name: Build .deb package
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Building %s .deb...\n' "${{ matrix.target }}"
+          cargo deb --target ${{ matrix.target }} --no-build --profile dist
 
-          printf 'Building aarch64 .deb...\n'
-          cargo deb --target aarch64-unknown-linux-gnu --no-build --profile dist
+      - name: Build .rpm package
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Building %s .rpm...\n' "${{ matrix.target }}"
+          cargo generate-rpm --profile dist --target ${{ matrix.target }} -o target/dist/
 
-          printf 'Building aarch64 .rpm...\n'
-          cargo generate-rpm --profile dist --target aarch64-unknown-linux-gnu -o target/dist/
-
-      - name: Upload Linux artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-linux
+          name: dist-linux-gnu-${{ matrix.arch }}
           retention-days: 7
           path: |
-            target/x86_64-unknown-linux-gnu/debian/oc-rsync_*_amd64.deb
-            target/aarch64-unknown-linux-gnu/debian/oc-rsync_*_arm64.deb
+            target/${{ matrix.target }}/debian/oc-rsync_*_${{ matrix.deb_arch }}.deb
             target/dist/oc-rsync-*.rpm
 
-
+  # ===========================================================================
+  # Linux musl static tarballs (matrix: parallel x86_64 and aarch64)
+  # ===========================================================================
   linux-musl:
-    name: linux musl static tarballs
+    name: linux-musl-${{ matrix.arch }}
     runs-on: ubuntu-latest
     needs: validate-version
     timeout-minutes: 45
@@ -256,7 +277,8 @@ jobs:
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-linux-musl-${{ matrix.arch }}
+          shared-key: release-linux-musl-${{ env.CACHE_VERSION }}
+          key: ${{ matrix.arch }}
 
       - name: Build static musl binary
         run: |
@@ -293,18 +315,30 @@ jobs:
           printf 'Created tarball: %s\n' "${TARBALL_NAME}"
           ls -la "target/dist/${TARBALL_NAME}"
 
-      - name: Upload musl artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dist-linux-musl-${{ matrix.arch }}
           retention-days: 7
           path: target/dist/oc-rsync-*-linux-*-musl.tar.gz
 
+  # ===========================================================================
+  # macOS Builds (matrix: parallel x86_64 and aarch64)
+  # ===========================================================================
   macos:
-    name: macOS release artifacts
+    name: macos-${{ matrix.arch }}
     runs-on: macos-latest
     needs: validate-version
-    timeout-minutes: 40
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            arch: x86_64
+          - target: aarch64-apple-darwin
+            arch: aarch64
 
     steps:
       - name: Checkout
@@ -313,12 +347,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+          targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-macos
+          shared-key: release-macos-${{ env.CACHE_VERSION }}
+          key: ${{ matrix.arch }}
 
       - name: Install OpenSSL
         run: |
@@ -326,21 +361,21 @@ jobs:
           brew install openssl@3 || true
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
-      - name: Build macOS aarch64 tarball
-        run: cargo xtask package --tarball --tarball-target aarch64-apple-darwin --profile dist
+      - name: Build tarball
+        run: cargo xtask package --tarball --tarball-target ${{ matrix.target }} --profile dist
 
-      - name: Build macOS x86_64 tarball
-        run: cargo xtask package --tarball --tarball-target x86_64-apple-darwin --profile dist
-
-      - name: Upload macOS artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist-macos
+          name: dist-macos-${{ matrix.arch }}
           retention-days: 7
           path: target/dist/oc-rsync-*-darwin-*.tar.gz
 
+  # ===========================================================================
+  # Windows Build
+  # ===========================================================================
   windows:
-    name: windows release artifacts
+    name: windows
     runs-on: windows-latest
     needs: validate-version
     timeout-minutes: 35
@@ -357,7 +392,7 @@ jobs:
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          key: build-windows
+          shared-key: release-windows-${{ env.CACHE_VERSION }}
 
       - name: Disable rustc wrapper if configured
         shell: pwsh
@@ -397,7 +432,7 @@ jobs:
           $zipPath = Join-Path $distDir ($tarball.BaseName + ".zip")
           Compress-Archive -Path $binaries.FullName -DestinationPath $zipPath -Force
 
-      - name: Upload Windows artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist-windows
@@ -406,13 +441,16 @@ jobs:
             target/dist/oc-rsync-*-windows-*.tar.gz
             dist/*.zip
 
+  # ===========================================================================
+  # Release Artifacts - Collect and upload to GitHub Release
+  # ===========================================================================
   release-artifacts:
     name: create GitHub Release and upload assets
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs:
       - validate-version
-      - linux
+      - linux-gnu
       - linux-musl
       - macos
       - windows
@@ -421,10 +459,14 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: dist-*
           path: dist
+          merge-multiple: true
 
       - name: List artifacts
-        run: ls -R dist
+        run: |
+          echo "=== All downloaded artifacts ==="
+          find dist -type f | sort
 
       - name: Verify artifacts
         shell: bash
@@ -433,57 +475,59 @@ jobs:
 
           echo "=== Verifying all expected artifacts are present ==="
 
-          # Use flexible patterns to match both x86_64/amd64 naming conventions
-          # Linux musl tarballs: static binaries (x86_64-musl, aarch64-musl)
-          # macOS tarballs: use x86_64, aarch64
-          # Windows tarballs: may use amd64 or x86_64
-          # Debs: use amd64, arm64 (Debian convention)
-          declare -a REQUIRED_PATTERNS=(
-            "dist/**/oc-rsync-*-linux-*-musl.tar.gz"   # Linux musl static (both archs)
-            "dist/**/oc-rsync-*-darwin-*.tar.gz"       # macOS (both archs)
-            "dist/**/oc-rsync-*-windows-*.tar.gz"      # Windows
-            "dist/**/oc-rsync_*_amd64.deb"             # Linux amd64 deb
-            "dist/**/oc-rsync_*_arm64.deb"             # Linux arm64 deb
-          )
+          # Count expected artifacts
+          EXPECTED_DEB=2      # amd64, arm64
+          EXPECTED_RPM=2      # x86_64, aarch64
+          EXPECTED_MUSL=2     # x86_64, aarch64
+          EXPECTED_MACOS=2    # x86_64, aarch64
+          EXPECTED_WINDOWS=1  # x86_64
 
-          MISSING=0
-          for pattern in "${REQUIRED_PATTERNS[@]}"; do
-            files=$(find dist -type f -name "$(basename "$pattern")" 2>/dev/null | head -1)
-            if [ -z "$files" ]; then
-              # Try glob expansion
-              if ! compgen -G "$pattern" > /dev/null 2>&1; then
-                echo "::error::Missing required artifact: $pattern"
-                MISSING=$((MISSING + 1))
-              else
-                echo "✓ Found: $pattern"
-              fi
-            else
-              echo "✓ Found: $pattern"
-            fi
-          done
+          # Count actual artifacts
+          DEB_COUNT=$(find dist -name "*.deb" | wc -l)
+          RPM_COUNT=$(find dist -name "*.rpm" | wc -l)
+          MUSL_COUNT=$(find dist -name "*-musl.tar.gz" | wc -l)
+          MACOS_COUNT=$(find dist -name "*darwin*.tar.gz" | wc -l)
+          WINDOWS_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
 
-          # Additional sanity check: must have at least 2 linux musl tarballs (x86 + arm)
-          LINUX_MUSL_COUNT=$(find dist -name "oc-rsync-*-linux-*-musl.tar.gz" | wc -l)
-          if [ "$LINUX_MUSL_COUNT" -lt 2 ]; then
-            echo "::error::Expected at least 2 Linux musl tarballs, found $LINUX_MUSL_COUNT"
-            MISSING=$((MISSING + 1))
+          ERRORS=0
+
+          if [ "$DEB_COUNT" -lt "$EXPECTED_DEB" ]; then
+            echo "::error::Expected $EXPECTED_DEB .deb files, found $DEB_COUNT"
+            ERRORS=$((ERRORS + 1))
           else
-            echo "✓ Found $LINUX_MUSL_COUNT Linux musl static tarballs"
+            echo "✓ Found $DEB_COUNT .deb packages"
           fi
 
-          # Must have at least 2 macOS tarballs
-          MACOS_COUNT=$(find dist -name "oc-rsync-*-darwin-*.tar.gz" | wc -l)
-          if [ "$MACOS_COUNT" -lt 2 ]; then
-            echo "::error::Expected at least 2 macOS tarballs, found $MACOS_COUNT"
-            MISSING=$((MISSING + 1))
+          if [ "$RPM_COUNT" -lt "$EXPECTED_RPM" ]; then
+            echo "::error::Expected $EXPECTED_RPM .rpm files, found $RPM_COUNT"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✓ Found $RPM_COUNT .rpm packages"
+          fi
+
+          if [ "$MUSL_COUNT" -lt "$EXPECTED_MUSL" ]; then
+            echo "::error::Expected $EXPECTED_MUSL musl tarballs, found $MUSL_COUNT"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✓ Found $MUSL_COUNT musl static tarballs"
+          fi
+
+          if [ "$MACOS_COUNT" -lt "$EXPECTED_MACOS" ]; then
+            echo "::error::Expected $EXPECTED_MACOS macOS tarballs, found $MACOS_COUNT"
+            ERRORS=$((ERRORS + 1))
           else
             echo "✓ Found $MACOS_COUNT macOS tarballs"
           fi
 
-          if [ $MISSING -gt 0 ]; then
-            echo "::error::$MISSING validation checks failed!"
-            echo "=== Actual files found ==="
-            find dist -type f -name "*.tar.gz" -o -name "*.deb" -o -name "*.rpm" | sort
+          if [ "$WINDOWS_COUNT" -lt "$EXPECTED_WINDOWS" ]; then
+            echo "::error::Expected $EXPECTED_WINDOWS Windows tarballs, found $WINDOWS_COUNT"
+            ERRORS=$((ERRORS + 1))
+          else
+            echo "✓ Found $WINDOWS_COUNT Windows tarballs"
+          fi
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "::error::$ERRORS validation checks failed!"
             exit 1
           fi
 
@@ -494,24 +538,23 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            dist/**/oc-rsync-*-windows-*.tar.gz
-            dist/**/oc-rsync-*-darwin-*.tar.gz
-            dist/**/oc-rsync-*-linux-*.tar.gz
-            dist/**/oc-rsync_*_amd64.deb
-            dist/**/oc-rsync_*_arm64.deb
-            dist/**/oc-rsync-*.rpm
+            dist/**/*.tar.gz
+            dist/**/*.deb
+            dist/**/*.rpm
+            dist/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ===========================================================================
+  # Homebrew Formula Update
+  # ===========================================================================
   brew-formula:
     name: update Homebrew formula
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs:
       - validate-version
-      - linux
       - macos
-      - windows
 
     steps:
       - name: Checkout
@@ -520,8 +563,9 @@ jobs:
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist-macos
+          pattern: dist-macos-*
           path: dist-macos
+          merge-multiple: true
 
       - name: Extract branding metadata
         id: branding
@@ -546,7 +590,7 @@ jobs:
 
           mkdir -p Formula
 
-          # Find actual macOS tarballs from artifacts (accepts both x86_64/amd64 and aarch64/arm64)
+          # Find actual macOS tarballs from artifacts
           AMD64_PATH="$(find dist-macos -maxdepth 1 -type f \( -name 'oc-rsync-*darwin*x86_64*.tar.gz' -o -name 'oc-rsync-*darwin*amd64*.tar.gz' \) | sort | head -n1 || true)"
           ARM64_PATH="$(find dist-macos -maxdepth 1 -type f \( -name 'oc-rsync-*darwin*aarch64*.tar.gz' -o -name 'oc-rsync-*darwin*arm64*.tar.gz' \) | sort | head -n1 || true)"
 

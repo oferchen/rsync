@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use super::super::super::{
     parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
 };
-#[cfg(any(not(feature = "acl"), not(feature = "xattr")))]
+// Import needed when acl/xattr features aren't fully supported (non-unix or feature disabled)
+#[cfg(any(not(all(unix, feature = "acl")), not(all(unix, feature = "xattr"))))]
 use super::super::messages::fail_with_custom_fallback;
 use super::super::messages::fail_with_message;
 
@@ -132,8 +133,8 @@ pub(crate) fn validate_feature_support<Err>(
 where
     Err: Write,
 {
-    let _ = stderr;
-    #[cfg(not(feature = "acl"))]
+    // ACL support requires both Unix and the acl feature
+    #[cfg(not(all(unix, feature = "acl")))]
     if preserve_acls {
         let message =
             rsync_error!(1, "POSIX ACLs are not supported on this client").with_role(Role::Client);
@@ -144,16 +145,8 @@ where
     #[cfg(all(unix, feature = "acl"))]
     let _ = preserve_acls;
 
-    // ACL feature is enabled but not supported on non-Unix platforms
-    #[cfg(all(not(unix), feature = "acl"))]
-    if preserve_acls {
-        let message = rsync_error!(1, "POSIX ACLs are not supported on this platform")
-            .with_role(Role::Client);
-        let fallback = "POSIX ACLs are not supported on this platform".to_string();
-        return Err(fail_with_custom_fallback(message, fallback, stderr));
-    }
-
-    #[cfg(not(feature = "xattr"))]
+    // xattr support requires both Unix and the xattr feature
+    #[cfg(not(all(unix, feature = "xattr")))]
     if xattrs.unwrap_or(false) {
         let message = rsync_error!(1, "extended attributes are not supported on this client")
             .with_role(Role::Client);
@@ -164,14 +157,9 @@ where
     #[cfg(all(unix, feature = "xattr"))]
     let _ = xattrs;
 
-    // xattr feature is enabled but not supported on non-Unix platforms
-    #[cfg(all(not(unix), feature = "xattr"))]
-    if xattrs.unwrap_or(false) {
-        let message = rsync_error!(1, "extended attributes are not supported on this platform")
-            .with_role(Role::Client);
-        let fallback = "extended attributes are not supported on this platform".to_string();
-        return Err(fail_with_custom_fallback(message, fallback, stderr));
-    }
+    // Suppress unused warning when both features are enabled on Unix
+    #[cfg(all(unix, feature = "acl", feature = "xattr"))]
+    let _ = stderr;
 
     Ok(())
 }
