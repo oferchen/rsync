@@ -100,7 +100,12 @@ fn directories_and_files_sorted_together() {
 ///
 /// Standard lexicographic sorting is case-sensitive: uppercase letters
 /// come before lowercase in ASCII.
+///
+/// This test is skipped on macOS because the default filesystem (APFS/HFS+)
+/// is case-insensitive, meaning files like "abc", "ABC", "Abc" are treated
+/// as the same file.
 #[test]
+#[cfg_attr(target_os = "macos", ignore)]
 fn case_sensitive_sorting() {
     let temp = tempfile::tempdir().expect("create tempdir");
     let root = temp.path().join("case_sort");
