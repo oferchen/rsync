@@ -135,9 +135,9 @@ pub(crate) struct FallbackArgumentsContext<'a> {
     pub(crate) rsync_path: Option<&'a OsString>,
     pub(crate) remainder: &'a [OsString],
     pub(crate) stop_request: Option<StopRequest>,
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     pub(crate) acls: Option<bool>,
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     pub(crate) xattrs: Option<bool>,
     pub(crate) itemize_changes: bool,
     pub(crate) log_file_path: Option<&'a PathBuf>,
@@ -303,9 +303,9 @@ where
         write_batch: context.write_batch.cloned(),
         only_write_batch: context.only_write_batch.cloned(),
         read_batch: context.read_batch.cloned(),
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         acls: context.acls,
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         xattrs: context.xattrs,
         itemize_changes: context.itemize_changes,
     };
