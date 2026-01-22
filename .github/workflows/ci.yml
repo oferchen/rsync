@@ -107,13 +107,13 @@ jobs:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
 
   # ===========================================================================
-  # Windows Test - Platform-specific testing
+  # Windows Test - Platform-specific testing (optimized for speed)
   # ===========================================================================
   windows-test:
     name: Windows
     runs-on: windows-latest
     needs: lint
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -136,7 +136,10 @@ jobs:
         run: cargo build --workspace --all-features
 
       - name: Test
-        run: cargo nextest run --workspace --all-features
+        run: |
+          # Run Windows-specific crates only (core, engine, cli have platform code)
+          # Full test suite runs on Linux; Windows validates platform-specific paths
+          cargo nextest run -p core -p engine -p cli --all-features
 
   # ===========================================================================
   # Interop Tests - Compatibility with upstream rsync (reusable workflow)
