@@ -194,9 +194,11 @@ fn delta_transfer_preserves_timestamps_nanosecond() {
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     // Create source with specific timestamp (including nanoseconds)
+    // Use a multiple of 100ns for cross-platform compatibility (Windows NTFS
+    // has 100ns resolution, not full nanosecond resolution)
     let src_file = src_dir.join("timed.txt");
     fs::write(&src_file, b"timestamped content").unwrap();
-    let mtime = FileTime::from_unix_time(1700000000, 123456789);
+    let mtime = FileTime::from_unix_time(1700000000, 123456700);
     set_file_times(&src_file, mtime, mtime).unwrap();
 
     // Create basis with different timestamp
