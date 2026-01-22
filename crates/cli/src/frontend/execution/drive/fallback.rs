@@ -147,9 +147,9 @@ pub(crate) struct FallbackInputs {
     pub(crate) address_mode: AddressMode,
     pub(crate) rsync_path: Option<OsString>,
     pub(crate) remainder: Vec<OsString>,
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     pub(crate) acls: Option<bool>,
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     pub(crate) xattrs: Option<bool>,
     pub(crate) itemize_changes: bool,
     pub(crate) write_batch: Option<OsString>,
@@ -361,9 +361,9 @@ where
         write_batch: inputs.write_batch,
         only_write_batch: inputs.only_write_batch,
         read_batch: inputs.read_batch,
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         acls: inputs.acls,
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         xattrs: inputs.xattrs,
         itemize_changes: inputs.itemize_changes,
     };

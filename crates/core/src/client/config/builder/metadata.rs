@@ -9,7 +9,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     /// Enables or disables extended attribute preservation for the transfer.
     #[must_use]
     #[doc(alias = "--xattrs")]
@@ -196,7 +196,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     /// Enables or disables POSIX ACL preservation when applying metadata.
     #[must_use]
     #[doc(alias = "--acls")]
