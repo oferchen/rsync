@@ -167,7 +167,7 @@ fn run_client_internal(
         // Determine preserve_xattrs conditionally based on feature
         #[cfg(feature = "xattr")]
         let preserve_xattrs = config.preserve_xattrs();
-        #[cfg(not(feature = "xattr"))]
+        #[cfg(not(all(unix, feature = "xattr")))]
         let preserve_xattrs = false;
 
         // Write batch header with stream flags before starting transfer
