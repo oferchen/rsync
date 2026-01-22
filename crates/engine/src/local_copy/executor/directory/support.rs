@@ -138,12 +138,12 @@ mod tests {
         assert_eq!(compare_file_names(a, b), Ordering::Equal);
     }
 
+    #[cfg(unix)]
     #[test]
     fn compare_file_names_case_sensitive() {
         let a = OsStr::new("A");
         let b = OsStr::new("a");
         // On Unix, 'A' (65) < 'a' (97) in byte comparison
-        #[cfg(unix)]
         assert_eq!(compare_file_names(a, b), Ordering::Less);
     }
 
