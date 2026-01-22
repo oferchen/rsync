@@ -9,12 +9,12 @@
 
 use std::io;
 
-#[cfg(feature = "sd-notify")]
+#[cfg(all(feature = "sd-notify", target_os = "linux"))]
 use sd_notify::NotifyState;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ServiceNotifier {
-    #[cfg(feature = "sd-notify")]
+    #[cfg(all(feature = "sd-notify", target_os = "linux"))]
     available: bool,
 }
 
@@ -27,13 +27,13 @@ impl ServiceNotifier {
     /// is absent the notifier becomes a no-op.
     #[must_use]
     pub(crate) fn new() -> Self {
-        #[cfg(feature = "sd-notify")]
+        #[cfg(all(feature = "sd-notify", target_os = "linux"))]
         {
             let available = std::env::var_os("NOTIFY_SOCKET").is_some();
             Self { available }
         }
 
-        #[cfg(not(feature = "sd-notify"))]
+        #[cfg(not(all(feature = "sd-notify", target_os = "linux")))]
         {
             Self {}
         }
@@ -41,7 +41,7 @@ impl ServiceNotifier {
 
     /// Reports service readiness to the init system.
     pub(crate) fn ready(&self, status: Option<&str>) -> io::Result<()> {
-        #[cfg(feature = "sd-notify")]
+        #[cfg(all(feature = "sd-notify", target_os = "linux"))]
         {
             if let Some(text) = status {
                 self.send_states(&[NotifyState::Ready, NotifyState::Status(text)])
@@ -50,7 +50,7 @@ impl ServiceNotifier {
             }
         }
 
-        #[cfg(not(feature = "sd-notify"))]
+        #[cfg(not(all(feature = "sd-notify", target_os = "linux")))]
         {
             let _ = status;
             Ok(())
@@ -59,12 +59,12 @@ impl ServiceNotifier {
 
     /// Sends an updated status message.
     pub(crate) fn status(&self, status: &str) -> io::Result<()> {
-        #[cfg(feature = "sd-notify")]
+        #[cfg(all(feature = "sd-notify", target_os = "linux"))]
         {
             self.send_states(&[NotifyState::Status(status)])
         }
 
-        #[cfg(not(feature = "sd-notify"))]
+        #[cfg(not(all(feature = "sd-notify", target_os = "linux")))]
         {
             let _ = status;
             Ok(())
@@ -73,18 +73,18 @@ impl ServiceNotifier {
 
     /// Indicates that the daemon is shutting down.
     pub(crate) fn stopping(&self) -> io::Result<()> {
-        #[cfg(feature = "sd-notify")]
+        #[cfg(all(feature = "sd-notify", target_os = "linux"))]
         {
             self.send_states(&[NotifyState::Stopping])
         }
 
-        #[cfg(not(feature = "sd-notify"))]
+        #[cfg(not(all(feature = "sd-notify", target_os = "linux")))]
         {
             Ok(())
         }
     }
 
-    #[cfg(feature = "sd-notify")]
+    #[cfg(all(feature = "sd-notify", target_os = "linux"))]
     fn send_states(&self, states: &[NotifyState]) -> io::Result<()> {
         if !self.available {
             return Ok(());
