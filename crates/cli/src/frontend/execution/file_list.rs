@@ -543,7 +543,9 @@ mod tests {
 
         resolve_file_list_entries(&mut entries, &operands, false);
 
-        assert_eq!(entries[0], OsString::from("/base/path/subdir/file.txt"));
+        // Path::push uses platform-specific separators
+        let expected = Path::new("/base/path").join("subdir/file.txt");
+        assert_eq!(entries[0], expected.as_os_str());
     }
 
     #[test]
@@ -602,7 +604,9 @@ mod tests {
         resolve_file_list_entries(&mut entries, &operands, false);
 
         assert_eq!(entries[0], "");
-        assert_eq!(entries[1], OsString::from("/base/file.txt"));
+        // Path::push uses platform-specific separators
+        let expected = Path::new("/base").join("file.txt");
+        assert_eq!(entries[1], expected.as_os_str());
     }
 
     // ==================== transfer_requires_remote tests ====================
