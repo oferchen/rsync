@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use super::super::super::{
     parse_bind_address_argument, parse_protocol_version_arg, parse_timeout_argument,
 };
-#[cfg(any(not(feature = "acl"), not(feature = "xattr")))]
+// Import needed when acl/xattr features aren't fully supported (non-unix or feature disabled)
+#[cfg(any(not(all(unix, feature = "acl")), not(all(unix, feature = "xattr"))))]
 use super::super::messages::fail_with_custom_fallback;
 use super::super::messages::fail_with_message;
 
