@@ -160,7 +160,9 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    use tempfile::{NamedTempFile, tempdir};
+    use tempfile::NamedTempFile;
+    #[cfg(unix)]
+    use tempfile::tempdir;
 
     #[test]
     fn trims_trailing_newlines() {
