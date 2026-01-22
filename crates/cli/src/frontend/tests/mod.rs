@@ -9,6 +9,7 @@ use core::{
     branding::manifest,
     client::{ClientEventKind, FilterRuleKind},
 };
+#[cfg(unix)]
 use daemon as daemon_cli;
 use filters::{FilterRule as EngineFilterRule, FilterSet};
 use std::collections::HashSet;
@@ -50,6 +51,7 @@ mod common;
 mod compression_tests;
 #[path = "connect.rs"]
 mod connect_tests;
+#[cfg(unix)]
 #[path = "daemon.rs"]
 mod daemon_tests;
 #[path = "delete.rs"]
