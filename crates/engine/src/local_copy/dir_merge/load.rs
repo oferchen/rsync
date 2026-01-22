@@ -292,7 +292,9 @@ mod tests {
     use super::*;
 
     // ==================== resolve_dir_merge_path tests ====================
+    // These tests use Unix-style absolute paths (starting with /)
 
+    #[cfg(unix)]
     #[test]
     fn resolve_dir_merge_path_relative_pattern() {
         let base = Path::new("/home/user/project");
@@ -301,6 +303,7 @@ mod tests {
         assert_eq!(result, PathBuf::from("/home/user/project/.rsync-filter"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_dir_merge_path_absolute_pattern_strips_root() {
         let base = Path::new("/base");
@@ -310,6 +313,7 @@ mod tests {
         assert_eq!(result, PathBuf::from("/base/subdir/filter"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_dir_merge_path_pattern_with_subdirectory() {
         let base = Path::new("/project");
@@ -318,6 +322,7 @@ mod tests {
         assert_eq!(result, PathBuf::from("/project/config/.filter"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_dir_merge_path_empty_pattern() {
         let base = Path::new("/home");
@@ -326,6 +331,7 @@ mod tests {
         assert_eq!(result, PathBuf::from("/home"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_dir_merge_path_dot_pattern() {
         let base = Path::new("/base");
