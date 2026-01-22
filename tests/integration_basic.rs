@@ -327,6 +327,7 @@ fn preserve_permissions_with_perms_flag() {
 // ============================================================================
 
 #[test]
+#[cfg(unix)]
 fn archive_mode_preserves_attributes() {
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();
@@ -367,6 +368,7 @@ fn archive_mode_preserves_attributes() {
 }
 
 #[test]
+#[cfg(unix)]
 fn archive_mode_recursive_by_default() {
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();
