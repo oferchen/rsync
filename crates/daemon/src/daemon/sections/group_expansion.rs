@@ -132,6 +132,7 @@ pub(crate) fn lookup_group_members(_group_name: &str) -> Result<Option<Vec<Strin
 
 #[cfg(test)]
 mod group_expansion_tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[cfg(unix)]
