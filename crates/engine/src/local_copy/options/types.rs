@@ -113,7 +113,7 @@ pub struct LocalCopyOptions {
     pub(super) owner_override: Option<u32>,
     pub(super) group_override: Option<u32>,
     pub(super) omit_dir_times: bool,
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     pub(super) preserve_acls: bool,
     pub(super) filters: Option<FilterSet>,
     pub(super) filter_program: Option<FilterProgram>,
@@ -150,9 +150,9 @@ pub struct LocalCopyOptions {
     pub(super) prune_empty_dirs: bool,
     pub(super) timeout: Option<Duration>,
     pub(super) stop_at: Option<SystemTime>,
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_xattrs: bool,
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_nfsv4_acls: bool,
     pub(super) backup: bool,
     pub(super) backup_dir: Option<PathBuf>,
@@ -205,7 +205,7 @@ impl LocalCopyOptions {
             group_override: None,
             omit_dir_times: false,
             omit_link_times: false,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             preserve_acls: false,
             filters: None,
             filter_program: None,
@@ -244,9 +244,9 @@ impl LocalCopyOptions {
             prune_empty_dirs: false,
             timeout: None,
             stop_at: None,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_xattrs: false,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             preserve_nfsv4_acls: false,
             backup: false,
             backup_dir: None,

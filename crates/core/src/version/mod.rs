@@ -60,7 +60,7 @@
 //!
 //! assert_eq!(RUST_VERSION, env!("CARGO_PKG_VERSION"));
 //! let features = compiled_features();
-//! #[cfg(feature = "xattr")]
+//! #[cfg(all(unix, feature = "xattr"))]
 //! assert!(features.contains(&CompiledFeature::Xattr));
 //! #[cfg(not(feature = "xattr"))]
 //! assert!(features.is_empty());

@@ -131,7 +131,7 @@ impl ClientConfig {
     }
 
     /// Reports whether POSIX ACLs should be preserved.
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     #[must_use]
     #[doc(alias = "--acls")]
     #[doc(alias = "-A")]
@@ -140,7 +140,7 @@ impl ClientConfig {
     }
 
     /// Reports whether extended attributes should be preserved.
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     #[must_use]
     #[doc(alias = "--xattrs")]
     #[doc(alias = "-X")]

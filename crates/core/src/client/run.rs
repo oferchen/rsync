@@ -410,7 +410,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .with_user_mapping(config.user_mapping().cloned())
             .with_group_mapping(config.group_mapping().cloned());
 
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         {
             options = options.acls(config.preserve_acls());
         }

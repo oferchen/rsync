@@ -48,7 +48,7 @@ fn relative_root_handles_windows_drive_prefix() {
     );
 }
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn local_copy_options_xattrs_round_trip() {
     let options = LocalCopyOptions::default().xattrs(true);
