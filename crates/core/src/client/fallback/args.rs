@@ -291,10 +291,10 @@ pub struct RemoteFallbackArgs {
     /// Optional prefix forwarded via `--read-batch`.
     pub read_batch: Option<OsString>,
     /// Controls ACL forwarding (`--acls`/`--no-acls`).
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     pub acls: Option<bool>,
     /// Controls xattr forwarding (`--xattrs`/`--no-xattrs`).
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     pub xattrs: Option<bool>,
 }
 
@@ -471,9 +471,9 @@ mod tests {
             write_batch: None,
             only_write_batch: None,
             read_batch: None,
-            #[cfg(feature = "acl")]
+            #[cfg(all(unix, feature = "acl"))]
             acls: None,
-            #[cfg(feature = "xattr")]
+            #[cfg(all(unix, feature = "xattr"))]
             xattrs: None,
         }
     }
