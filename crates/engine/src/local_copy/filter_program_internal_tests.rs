@@ -44,7 +44,7 @@ fn filter_program_is_empty_after_clear_entries() {
     assert!(program.is_empty());
 }
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn filter_program_xattr_rules_control_allowance() {
     let program = FilterProgram::new([

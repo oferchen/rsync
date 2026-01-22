@@ -17,7 +17,7 @@ use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 use xattr;
 
 #[cfg(all(
