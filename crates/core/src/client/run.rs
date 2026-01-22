@@ -165,7 +165,7 @@ fn run_client_internal(
     // Attach batch writer to options if in batch write mode
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {
         // Determine preserve_xattrs conditionally based on feature
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         let preserve_xattrs = config.preserve_xattrs();
         #[cfg(not(all(unix, feature = "xattr")))]
         let preserve_xattrs = false;
