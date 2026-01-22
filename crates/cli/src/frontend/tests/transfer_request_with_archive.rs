@@ -1,6 +1,8 @@
 use super::common::*;
 use super::*;
 
+// Archive mode includes Unix-specific options (preserve permissions, ownership)
+#[cfg(unix)]
 #[test]
 fn transfer_request_with_archive_copies_file() {
     use tempfile::tempdir;
