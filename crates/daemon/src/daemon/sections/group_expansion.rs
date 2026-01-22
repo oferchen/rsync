@@ -24,8 +24,11 @@
 // Group expansion uses POSIX `getgrnam_r` and is only available on Unix-like
 // systems. On other platforms, `@group` references are silently ignored.
 
+#[cfg(unix)]
 use std::ffi::{CStr, CString};
+#[cfg(unix)]
 use std::mem::MaybeUninit;
+#[cfg(unix)]
 use std::ptr;
 
 /// Looks up a group by name and returns its member usernames.
