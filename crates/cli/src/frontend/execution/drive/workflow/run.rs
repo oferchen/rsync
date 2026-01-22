@@ -635,9 +635,9 @@ where
         compare_destinations,
         copy_destinations,
         link_destinations,
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         preserve_acls,
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         xattrs: xattrs.unwrap_or(false),
         skip_compress_list,
         itemize_changes,
