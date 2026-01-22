@@ -1,5 +1,8 @@
-use super::{SshCommand, SshConnection};
+use super::SshCommand;
+#[cfg(unix)]
+use super::SshConnection;
 use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
 use std::io::{Read, Write};
 
 fn args_to_strings(args: &[OsString]) -> Vec<String> {
