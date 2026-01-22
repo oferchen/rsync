@@ -358,6 +358,8 @@ mod tests {
     use std::ffi::OsStr;
     use std::path::Path;
 
+    // file!() returns backslashes on Windows but normalize_path uses forward slashes
+    #[cfg(unix)]
     #[test]
     fn source_location_normalises_workspace_paths() {
         let location = SourceLocation::from_parts(env!("CARGO_MANIFEST_DIR"), file!(), 123);
