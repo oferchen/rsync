@@ -312,9 +312,9 @@ fn deferred_updates_flush_commits_pending_files() {
         final_path,
         metadata.file_type(),
         false,
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         context.xattrs_enabled(),
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         context.acls_enabled(),
     );
 
