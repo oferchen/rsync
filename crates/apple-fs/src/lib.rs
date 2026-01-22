@@ -139,8 +139,11 @@ pub fn mknod(_path: &Path, _mode: ModeType, _device: DeviceType) -> io::Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::env;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[cfg(unix)]
