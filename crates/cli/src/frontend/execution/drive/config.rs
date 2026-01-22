@@ -119,9 +119,9 @@ pub(crate) struct ConfigInputs {
     pub(crate) compare_destinations: Vec<OsString>,
     pub(crate) copy_destinations: Vec<OsString>,
     pub(crate) link_destinations: Vec<OsString>,
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     pub(crate) preserve_acls: bool,
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     pub(crate) xattrs: bool,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) itemize_changes: bool,
@@ -290,12 +290,12 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         builder = builder.link_destination(PathBuf::from(path));
     }
 
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     {
         builder = builder.acls(inputs.preserve_acls);
     }
 
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     {
         builder = builder.xattrs(inputs.xattrs);
     }

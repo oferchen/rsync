@@ -141,7 +141,7 @@ where
         return Err(fail_with_custom_fallback(message, fallback, stderr));
     }
 
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     let _ = preserve_acls;
 
     #[cfg(not(feature = "xattr"))]
@@ -152,7 +152,7 @@ where
         return Err(fail_with_custom_fallback(message, fallback, stderr));
     }
 
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     let _ = xattrs;
 
     Ok(())
