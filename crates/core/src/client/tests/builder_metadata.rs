@@ -112,7 +112,7 @@ fn builder_preserves_hard_links_flag() {
     assert!(!ClientConfig::default().preserve_hard_links());
 }
 
-#[cfg(feature = "acl")]
+#[cfg(all(unix, feature = "acl"))]
 #[test]
 fn builder_preserves_acls_flag() {
     let config = ClientConfig::builder()
@@ -124,7 +124,7 @@ fn builder_preserves_acls_flag() {
     assert!(!ClientConfig::default().preserve_acls());
 }
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn builder_preserves_xattrs_flag() {
     let config = ClientConfig::builder()

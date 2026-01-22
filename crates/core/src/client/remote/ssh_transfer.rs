@@ -397,11 +397,11 @@ fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_hard_links() {
         flags.push('H');
     }
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     if config.preserve_acls() {
         flags.push('A');
     }
-    #[cfg(feature = "xattr")]
+    #[cfg(all(unix, feature = "xattr"))]
     if config.preserve_xattrs() {
         flags.push('X');
     }

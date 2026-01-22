@@ -97,7 +97,7 @@ impl LocalCopyOptions {
         self
     }
 
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     /// Requests that POSIX ACLs be preserved when applying metadata.
     #[must_use]
     #[doc(alias = "--acls")]
@@ -186,14 +186,14 @@ impl LocalCopyOptions {
         self.omit_link_times
     }
 
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     /// Returns whether POSIX ACLs should be preserved.
     #[must_use]
     pub const fn preserve_acls(&self) -> bool {
         self.preserve_acls
     }
 
-    #[cfg(feature = "acl")]
+    #[cfg(all(unix, feature = "acl"))]
     /// Reports whether ACL preservation is enabled.
     #[must_use]
     pub const fn acls_enabled(&self) -> bool {
@@ -207,7 +207,7 @@ impl LocalCopyOptions {
     }
 }
 
-#[cfg(feature = "xattr")]
+#[cfg(all(unix, feature = "xattr"))]
 impl LocalCopyOptions {
     /// Requests that extended attributes be preserved when copying entries.
     #[must_use]

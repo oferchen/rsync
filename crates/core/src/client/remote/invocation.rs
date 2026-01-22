@@ -267,11 +267,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.preserve_hard_links() {
             flags.push('H');
         }
-        #[cfg(feature = "acl")]
+        #[cfg(all(unix, feature = "acl"))]
         if self.config.preserve_acls() {
             flags.push('A');
         }
-        #[cfg(feature = "xattr")]
+        #[cfg(all(unix, feature = "xattr"))]
         if self.config.preserve_xattrs() {
             flags.push('X');
         }
