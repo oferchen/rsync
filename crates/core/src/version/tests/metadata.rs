@@ -69,14 +69,20 @@ fn version_metadata_renders_standard_banner() {
         .write_standard_banner(&mut rendered)
         .expect("writing to String cannot fail");
 
+    let target_desc = format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS);
     let expected = format!(
         "{program} v{rust_version} (revision #{build_revision}) protocol version {protocol}\n\
+Compatible with rsync {upstream_version} wire protocol\n\
+{build_toolchain} for {target}\n\
 Copyright {copyright}\n\
 Source: {source_url}\n",
         program = PROGRAM_NAME,
         rust_version = RUST_VERSION,
         build_revision = build_revision(),
         protocol = ProtocolVersion::NEWEST.as_u8(),
+        upstream_version = UPSTREAM_BASE_VERSION,
+        build_toolchain = BUILD_TOOLCHAIN,
+        target = target_desc,
         copyright = COPYRIGHT_NOTICE,
         source_url = SOURCE_URL,
     );
