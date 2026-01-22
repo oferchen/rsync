@@ -8,6 +8,7 @@ use filetime::{FileTime, set_file_mtime, set_file_times};
 use filters::{FilterRule, FilterSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
+#[cfg(unix)]
 use std::io::Read;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::num::{NonZeroU8, NonZeroU64};
