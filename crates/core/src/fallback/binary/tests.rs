@@ -189,6 +189,8 @@ fn fallback_binary_path_resolves_executable() {
     assert_eq!(resolved.as_deref(), Some(temp.path()));
 }
 
+// Windows doesn't recognize files without .exe extension as executable
+#[cfg(unix)]
 #[test]
 fn fallback_binary_path_refreshes_after_negative_cache_ttl() {
     let _lock = env_lock().lock().expect("env lock");
