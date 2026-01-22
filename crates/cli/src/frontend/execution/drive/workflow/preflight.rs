@@ -156,7 +156,8 @@ where
     #[cfg(all(unix, feature = "xattr"))]
     let _ = xattrs;
 
-    // Suppress unused variable warning for stderr when all features are enabled on Unix
+    // Suppress unused warning when both features are enabled on Unix
+    #[cfg(all(unix, feature = "acl", feature = "xattr"))]
     let _ = stderr;
 
     Ok(())
