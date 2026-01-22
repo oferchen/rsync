@@ -355,8 +355,21 @@ fn case_sensitive_pattern_matching() {
     let src_dir = test_dir.mkdir("src").unwrap();
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
+    // Detect case-insensitive filesystem by checking if writing two files with
+    // different cases results in a single file (macOS default APFS, Windows NTFS)
     fs::write(src_dir.join("File.TXT"), b"upper").unwrap();
     fs::write(src_dir.join("file.txt"), b"lower").unwrap();
+
+    // On case-insensitive filesystems, File.TXT and file.txt are the same file
+    let entries: Vec<_> = fs::read_dir(&src_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    if entries.len() == 1 {
+        // Case-insensitive filesystem - skip test
+        println!("Skipping test: filesystem is case-insensitive");
+        return;
+    }
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
