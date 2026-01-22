@@ -1,0 +1,71 @@
+name: Test Feature Combinations
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 45
+
+jobs:
+  feature-flags:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no-default-features
+            args: "--workspace --no-default-features"
+          - name: parallel
+            args: "-p checksums -p flist --features parallel"
+          - name: async
+            args: "-p daemon -p core -p protocol -p engine --features async"
+          - name: concurrent-sessions
+            args: "-p daemon --features concurrent-sessions"
+          - name: tracing
+            args: "-p daemon -p core -p engine --features tracing"
+          - name: serde
+            args: "-p logging -p protocol -p flist --features serde"
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: features-${{ matrix.name }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build (${{ matrix.name }})
+        run: cargo build ${{ matrix.args }}
+
+      - name: Test (${{ matrix.name }})
+        run: cargo nextest run ${{ matrix.args }}
