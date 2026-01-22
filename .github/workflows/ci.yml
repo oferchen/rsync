@@ -77,7 +77,7 @@ jobs:
         include:
           - name: no-default-features
             features: ""
-            args: "--no-default-features"
+            args: "--workspace --no-default-features"
           - name: parallel
             features: "parallel"
             args: "-p checksums -p flist --features parallel"
@@ -110,7 +110,7 @@ jobs:
           key: features-${{ matrix.name }}
 
       - name: Build (${{ matrix.name }})
-        run: cargo build --workspace ${{ matrix.args }}
+        run: cargo build ${{ matrix.args }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -118,7 +118,7 @@ jobs:
           tool: cargo-nextest
 
       - name: Test (${{ matrix.name }})
-        run: cargo nextest run --workspace ${{ matrix.args }}
+        run: cargo nextest run ${{ matrix.args }}
 
   windows-test:
     name: Windows
