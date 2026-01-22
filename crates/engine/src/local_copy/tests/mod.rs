@@ -10,7 +10,9 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 #[cfg(unix)]
 use std::io::Read;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Write};
+#[cfg(unix)]
+use std::io::{Seek, SeekFrom};
 use std::num::{NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::thread;
