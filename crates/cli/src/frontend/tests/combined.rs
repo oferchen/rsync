@@ -1,6 +1,7 @@
 use super::common::*;
 use super::*;
 
+#[cfg(unix)]
 #[test]
 fn combined_archive_and_verbose_flags_are_supported() {
     use tempfile::tempdir;
