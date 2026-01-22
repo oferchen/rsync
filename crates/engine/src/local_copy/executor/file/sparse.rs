@@ -94,14 +94,25 @@ pub(crate) fn punch_hole(
 /// Non-Linux platforms fall back to writing zeros directly.
 /// This includes macOS, BSD, and Windows which don't support Linux's
 /// fallocate PUNCH_HOLE/ZERO_RANGE flags.
+///
+/// After a successful call, the file position will be at `pos + len`,
+/// matching the Linux implementation's behavior.
 #[cfg(not(target_os = "linux"))]
 #[allow(dead_code)]
 pub(crate) fn punch_hole(
     file: &mut fs::File,
     path: &Path,
-    _pos: u64,
+    pos: u64,
     len: u64,
 ) -> Result<(), LocalCopyError> {
+    if len == 0 {
+        return Ok(());
+    }
+
+    // Seek to the starting position before writing zeros
+    file.seek(SeekFrom::Start(pos))
+        .map_err(|e| LocalCopyError::io("seek before writing zeros", path.to_path_buf(), e))?;
+
     write_zeros_fallback(file, path, len)
 }
 
