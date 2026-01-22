@@ -54,6 +54,8 @@ fn transfer_request_with_no_perms_overrides_archive() {
     assert_ne!(metadata.permissions().mode() & 0o777, 0o600);
 }
 
+// Archive mode includes Unix-specific options (preserve permissions, ownership)
+#[cfg(unix)]
 #[test]
 fn transfer_request_with_no_times_overrides_archive() {
     use filetime::{FileTime, set_file_times};
