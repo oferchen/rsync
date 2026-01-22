@@ -705,7 +705,8 @@ impl RuntimeOptions {
     }
 }
 
-#[cfg(test)]
+// Tests use Unix-style paths and daemon functionality designed for Unix
+#[cfg(all(test, unix))]
 mod runtime_options_tests {
     use super::*;
     use std::ffi::OsString;
