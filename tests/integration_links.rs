@@ -4,7 +4,9 @@
 
 mod integration;
 
+#[cfg(unix)]
 use integration::helpers::*;
+#[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
 use std::os::unix;
