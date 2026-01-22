@@ -13,8 +13,9 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-# Default: pure-Rust implementations only (smaller binaries, no C dependencies)
-# Enable openssl-vendored for potentially faster hashing on some platforms
+# Default: pure-Rust implementations with automatic hardware acceleration
+# (SHA-NI on x86_64, crypto extensions on aarch64 via cpufeatures)
+# OpenSSL features below are optional for legacy MD4/MD5 acceleration only
 default = ["xxh3-simd"]
 openssl = ["dep:openssl"]
 openssl-vendored = ["openssl", "openssl/vendored"]

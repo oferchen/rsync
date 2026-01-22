@@ -37,10 +37,6 @@ filetime = "0.2"
 libc = "0.2"
 tempfile = "3.10"
 
-# Windows-wide deps (applies to MSVC and GNU toolchains)
-[target.'cfg(windows)'.dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
-
 # Extra deps only for Windows + GNU
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
 windows-gnu-eh = { path = "crates/windows-gnu-eh" }
