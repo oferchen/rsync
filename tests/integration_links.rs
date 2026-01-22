@@ -6,6 +6,7 @@ mod integration;
 
 use integration::helpers::*;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix;
 
 // ============================================================================
