@@ -61,8 +61,10 @@ tracing = ["dep:tracing"]
 [dev-dependencies]
 filetime = "0.2"
 tempfile = "3.10"
-xattr = "1.3"
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
-libc = "0.2"
 apple-fs = { path = "../apple-fs" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = "1.3"
+libc = "0.2"
