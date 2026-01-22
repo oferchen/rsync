@@ -239,10 +239,15 @@ fn invalid_mode_error(context: &'static str, destination: &Path) -> MetadataErro
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use std::io;
+    #[cfg(unix)]
     use std::path::Path;
+    #[cfg(unix)]
     use tempfile::tempdir;
 
     #[cfg(all(

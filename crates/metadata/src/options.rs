@@ -250,6 +250,7 @@ mod tests {
         assert_eq!(MetadataOptions::default(), options);
     }
 
+    #[cfg(unix)]
     #[test]
     fn builder_methods_apply_requested_flags() {
         let modifiers = ChmodModifiers::parse("u=rw").expect("parse modifiers");
