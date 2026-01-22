@@ -75,6 +75,7 @@ fn list_only_formats_directory_without_trailing_slash() {
     assert!(!directory_line.ends_with('/'));
 }
 
+#[cfg(unix)]
 #[test]
 fn list_only_matches_rsync_format_for_regular_file() {
     use filetime::{FileTime, set_file_times};
@@ -150,6 +151,7 @@ fn list_only_matches_rsync_format_for_regular_file() {
     assert_eq!(human_line, expected_human);
 }
 
+#[cfg(unix)]
 #[test]
 fn list_only_formats_special_permission_bits_like_rsync() {
     use filetime::{FileTime, set_file_times};
