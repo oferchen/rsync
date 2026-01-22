@@ -10,6 +10,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/_test-features.yml'
+      - '.github/workflows/_interop.yml'
   pull_request:
     paths:
       - 'crates/**'
@@ -18,6 +20,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/_test-features.yml'
+      - '.github/workflows/_interop.yml'
   workflow_dispatch:
 
 concurrency:
@@ -31,12 +35,16 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: "full"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
 
 jobs:
-  lint-and-test:
-    name: fmt + clippy + nextest
+  # ===========================================================================
+  # Lint Job - Fast feedback on formatting and clippy issues
+  # ===========================================================================
+  lint:
+    name: fmt + clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -50,49 +58,22 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Format
+      - name: Format check
         run: cargo fmt --all -- --check
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features --no-deps
 
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - name: Nextest
-        run: cargo nextest run --workspace --all-targets --all-features
-
-  feature-flags:
-    name: Feature flag combinations
+  # ===========================================================================
+  # Test Job - Full test suite on Linux
+  # ===========================================================================
+  test:
+    name: nextest
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: no-default-features
-            features: ""
-            args: "--workspace --no-default-features"
-          - name: parallel
-            features: "parallel"
-            args: "-p checksums -p flist --features parallel"
-          - name: async
-            features: "async"
-            args: "-p daemon -p core -p protocol -p engine --features async"
-          - name: concurrent-sessions
-            features: "concurrent-sessions"
-            args: "-p daemon --features concurrent-sessions"
-          - name: tracing
-            features: "tracing"
-            args: "-p daemon -p core -p engine --features tracing"
-          - name: serde
-            features: "serde"
-            args: "-p logging -p protocol -p flist --features serde"
+    needs: lint
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -104,25 +85,34 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          # Use shared key for cache reuse from lint-and-test job
-          shared-key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
-          # Feature-specific suffix for this matrix entry
-          key: features-${{ matrix.name }}
-
-      - name: Build (${{ matrix.name }})
-        run: cargo build ${{ matrix.args }}
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: test
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
 
-      - name: Test (${{ matrix.name }})
-        run: cargo nextest run ${{ matrix.args }}
+      - name: Run tests
+        run: cargo nextest run --workspace --all-targets --all-features
 
+  # ===========================================================================
+  # Feature Flags - Test various feature combinations (reusable workflow)
+  # ===========================================================================
+  feature-flags:
+    name: Feature flag combinations
+    needs: lint
+    uses: ./.github/workflows/_test-features.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+
+  # ===========================================================================
+  # Windows Test - Platform-specific testing
+  # ===========================================================================
   windows-test:
     name: Windows
     runs-on: windows-latest
+    needs: lint
     timeout-minutes: 30
 
     steps:
@@ -135,7 +125,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-cargo-windows-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-windows-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -148,32 +138,13 @@ jobs:
       - name: Test
         run: cargo nextest run --workspace --all-features
 
+  # ===========================================================================
+  # Interop Tests - Compatibility with upstream rsync (reusable workflow)
+  # ===========================================================================
   interop-upstream:
-    name: interop with upstream rsync
-    runs-on: ubuntu-latest
-    needs: lint-and-test
-    timeout-minutes: 60
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          # Use shared key for cache reuse from lint-and-test job
-          shared-key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
-          key: interop
-
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
-          version: 1.0
-
-      - name: Run interop tests
-        run: bash tools/ci/run_interop.sh
-
+    name: interop
+    needs: lint
+    uses: ./.github/workflows/_interop.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.1' }}
