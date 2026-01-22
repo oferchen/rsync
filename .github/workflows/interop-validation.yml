@@ -3,7 +3,23 @@ name: Interop Validation
 on:
   push:
     branches: [ master, main ]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/interop-validation.yml'
   pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/ci/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/interop-validation.yml'
   workflow_dispatch:
   schedule:
     # Run nightly to catch drift in upstream versions
@@ -19,6 +35,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+  UPSTREAM_RSYNC_VERSION: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.1' }}
 
 jobs:
   validate-exit-codes:
@@ -36,16 +54,28 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: interop-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: exit-codes
 
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
-          version: 1.0
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
 
       - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: bash tools/ci/run_interop.sh build-only
 
       - name: Build oc-rsync
@@ -85,16 +115,28 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: interop-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: messages
 
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
-          version: 1.0
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
 
       - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: bash tools/ci/run_interop.sh build-only
 
       - name: Build oc-rsync
@@ -136,16 +178,28 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: interop-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: interop-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: regenerate
 
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
-          version: 1.0
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}-
 
       - name: Build upstream rsync binaries
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: bash tools/ci/run_interop.sh build-only
 
       - name: Regenerate exit code goldens
