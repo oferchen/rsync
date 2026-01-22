@@ -1,9 +1,11 @@
 #[cfg(unix)]
 use core::fallback::CLIENT_FALLBACK_ENV;
 use core::version::{
-    COPYRIGHT_NOTICE, DAEMON_PROGRAM_NAME, HIGHEST_PROTOCOL_VERSION, LEGACY_DAEMON_PROGRAM_NAME,
-    LEGACY_PROGRAM_NAME, PROGRAM_NAME, RUST_VERSION, SOURCE_URL,
+    COPYRIGHT_NOTICE, HIGHEST_PROTOCOL_VERSION, LEGACY_PROGRAM_NAME, PROGRAM_NAME, RUST_VERSION,
+    SOURCE_URL,
 };
+#[cfg(unix)]
+use core::version::{DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME};
 use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::fs;
@@ -27,6 +29,7 @@ fn client_binaries() -> Vec<&'static str> {
     unique_program_names(&[PROGRAM_NAME, LEGACY_PROGRAM_NAME])
 }
 
+#[cfg(unix)]
 fn daemon_binaries() -> Vec<&'static str> {
     unique_program_names(&[DAEMON_PROGRAM_NAME, LEGACY_DAEMON_PROGRAM_NAME])
 }
@@ -102,6 +105,7 @@ fn client_without_operands_shows_usage() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn daemon_help_lists_usage() {
     for binary in daemon_binaries() {
@@ -176,6 +180,7 @@ fn client_version_reports_branding_metadata() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn daemon_version_reports_branding_metadata() {
     for binary in daemon_binaries() {
@@ -219,6 +224,7 @@ fn daemon_version_reports_branding_metadata() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn daemon_rejects_unknown_flag() {
     for binary in daemon_binaries() {
