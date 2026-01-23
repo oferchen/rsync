@@ -35,5 +35,10 @@ rustflags = ["-C", "target-feature=+crt-static"]
 [target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 
+# x86_64 Linux - enable modern CPU features for optimized builds
+# AVX2 provides ~20% faster hashing (xxhash, MD5) via wider SIMD
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]  # AVX2, FMA, BMI1/2
+
 [alias]
 xtask = "run --package xtask --"
