@@ -1229,6 +1229,7 @@ dependencies = [
  "checksums",
  "logging",
  "protocol",
+ "rayon",
  "rustc-hash 2.1.1",
  "signature",
  "tempfile",
