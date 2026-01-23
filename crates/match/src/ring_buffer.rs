@@ -59,7 +59,6 @@ impl RingBuffer {
     /// Returns the maximum capacity of the buffer.
     #[inline]
     #[must_use]
-    #[allow(dead_code)] // Public API used in tests
     pub fn capacity(&self) -> usize {
         self.buffer.len()
     }
@@ -67,7 +66,6 @@ impl RingBuffer {
     /// Returns the number of bytes currently in the buffer.
     #[inline]
     #[must_use]
-    #[allow(dead_code)] // Public API used in tests
     pub fn len(&self) -> usize {
         self.len
     }
@@ -75,7 +73,6 @@ impl RingBuffer {
     /// Returns `true` if the buffer contains no bytes.
     #[inline]
     #[must_use]
-    #[allow(dead_code)] // Public API used in tests
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -172,7 +169,6 @@ impl RingBuffer {
     /// This is useful in hot paths where avoiding mutation is critical.
     #[inline]
     #[must_use]
-    #[allow(dead_code)] // Public API for callers needing zero-copy access
     pub fn try_as_slice(&self) -> Option<&[u8]> {
         if self.len == 0 {
             return Some(&[]);
@@ -192,7 +188,6 @@ impl RingBuffer {
     ///
     /// This is useful when the caller can handle non-contiguous data.
     #[must_use]
-    #[allow(dead_code)] // Public API used in tests and copy_to_slice
     pub fn as_slices(&self) -> (&[u8], &[u8]) {
         if self.len == 0 {
             return (&[], &[]);
@@ -215,7 +210,6 @@ impl RingBuffer {
     /// # Panics
     ///
     /// Panics if `dest.len() < self.len()`.
-    #[allow(dead_code)] // Public API used in tests
     pub fn copy_to_slice(&self, dest: &mut [u8]) {
         assert!(dest.len() >= self.len, "destination too small");
         let (first, second) = self.as_slices();

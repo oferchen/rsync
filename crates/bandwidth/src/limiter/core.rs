@@ -183,7 +183,6 @@ impl BandwidthLimiter {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    #[allow(dead_code)] // Used in test modules
     pub(crate) const fn accumulated_debt_for_testing(&self) -> u128 {
         self.total_written
     }
