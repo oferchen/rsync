@@ -11,7 +11,7 @@ use protocol::filters::FilterRuleWireFormat;
 use super::flags::ParsedServerFlags;
 use super::role::ServerRole;
 
-// Re-export reference directory types from engine for use in remote transfers.
+/// Reference directory types for remote transfers.
 pub use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
 /// Configuration supplied to the server entry point.
