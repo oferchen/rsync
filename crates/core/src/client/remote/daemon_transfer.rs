@@ -172,7 +172,9 @@ pub fn run_daemon_transfer(
     )?;
 
     // Step 4: Perform daemon handshake
-    let protocol = perform_daemon_handshake(&mut stream, &request)?;
+    // Output MOTD unless --no-motd was specified (upstream defaults to true)
+    let output_motd = !config.no_motd();
+    let protocol = perform_daemon_handshake(&mut stream, &request, output_motd)?;
 
     // Step 5: Send arguments to daemon
     // For pull (we receive), the daemon is the sender, so is_sender=true
@@ -269,9 +271,13 @@ fn parse_digest_list_from_greeting(greeting: &str) -> Vec<DaemonAuthDigest> {
 /// 4. Read response lines (MOTD, @RSYNCD: OK/@RSYNCD: AUTHREQD/@ERROR)
 ///
 /// Returns the negotiated protocol version.
+///
+/// When `output_motd` is true, MOTD lines are printed to stdout, mirroring
+/// upstream rsync's behavior controlled by the `output_motd` global variable.
 fn perform_daemon_handshake(
     stream: &mut TcpStream,
     request: &DaemonTransferRequest,
+    output_motd: bool,
 ) -> Result<ProtocolVersion, ClientError> {
     let mut reader = BufReader::new(
         stream
@@ -400,7 +406,10 @@ fn perform_daemon_handshake(
             ));
         }
 
-        // Any other line is MOTD - skip it (upstream outputs if output_motd is set)
+        // Any other line is MOTD - output if enabled (mirrors upstream rprintf(FINFO, "%s\n", line))
+        if output_motd {
+            println!("{trimmed}");
+        }
     }
 
     // Negotiate to minimum of our version and daemon's version

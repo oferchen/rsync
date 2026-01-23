@@ -122,6 +122,7 @@ pub struct ClientConfig {
     pub(super) rsync_path: Option<OsString>,
     pub(super) early_input: Option<PathBuf>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
+    pub(super) no_motd: bool,
     #[cfg(all(unix, feature = "acl"))]
     pub(super) preserve_acls: bool,
     #[cfg(all(unix, feature = "xattr"))]
@@ -237,6 +238,7 @@ impl Default for ClientConfig {
             rsync_path: None,
             early_input: None,
             batch_config: None,
+            no_motd: false,
             #[cfg(all(unix, feature = "acl"))]
             preserve_acls: false,
             #[cfg(all(unix, feature = "xattr"))]

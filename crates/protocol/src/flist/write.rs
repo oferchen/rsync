@@ -17,6 +17,7 @@ use crate::iconv::FilenameConverter;
 use crate::varint::{write_varint, write_varint30_int};
 
 use super::entry::FileEntry;
+use super::macros::impl_preserve_builders;
 use super::flags::{
     XMIT_CRTIME_EQ_MTIME, XMIT_EXTENDED_FLAGS, XMIT_GROUP_NAME_FOLLOWS, XMIT_HLINK_FIRST,
     XMIT_HLINKED, XMIT_IO_ERROR_ENDLIST, XMIT_LONG_NAME, XMIT_MOD_NSEC, XMIT_NO_CONTENT_DIR,

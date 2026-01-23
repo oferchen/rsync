@@ -38,10 +38,7 @@ use std::path::PathBuf;
 ///
 /// This matches upstream rsync's default MD5 digest length and provides
 /// sufficient collision resistance for file integrity verification.
-const DEFAULT_CHECKSUM_LENGTH: NonZeroU8 = match NonZeroU8::new(16) {
-    Some(v) => v,
-    None => panic!("checksum length must be non-zero"),
-};
+const DEFAULT_CHECKSUM_LENGTH: NonZeroU8 = NonZeroU8::new(16).unwrap();
 
 use protocol::codec::{NdxCodec, create_ndx_codec};
 use protocol::filters::read_filter_list;
