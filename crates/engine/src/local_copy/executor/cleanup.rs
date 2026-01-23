@@ -80,7 +80,7 @@ pub(crate) fn delete_extraneous_entries(
         }
 
         context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
-        remove_extraneous_path(path, file_type)?;
+        remove_extraneous_path(&path, file_type)?;
         context.summary_mut().record_deletion();
         context.record(LocalCopyRecord::new(
             entry_relative,
@@ -100,7 +100,7 @@ pub(crate) fn delete_extraneous_entries(
     Ok(())
 }
 
-fn remove_extraneous_path(path: PathBuf, file_type: fs::FileType) -> Result<(), LocalCopyError> {
+fn remove_extraneous_path(path: &Path, file_type: fs::FileType) -> Result<(), LocalCopyError> {
     let context = if file_type.is_dir() {
         "remove extraneous directory"
     } else {
@@ -108,9 +108,9 @@ fn remove_extraneous_path(path: PathBuf, file_type: fs::FileType) -> Result<(), 
     };
 
     let result = if file_type.is_dir() {
-        fs::remove_dir_all(&path)
+        fs::remove_dir_all(path)
     } else {
-        fs::remove_file(&path)
+        fs::remove_file(path)
     };
 
     match result {
