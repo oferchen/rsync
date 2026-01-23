@@ -706,6 +706,9 @@ fn build_server_config_for_receiver(
     server_config.client_mode = true;
     server_config.filter_rules = filter_rules;
 
+    // Set verbose flag for local output (not sent to daemon in server protocol string)
+    server_config.flags.verbose = config.verbosity() > 0;
+
     Ok(server_config)
 }
 
@@ -730,6 +733,9 @@ fn build_server_config_for_generator(
     // (since we'll send it to the daemon after multiplex activation).
     server_config.client_mode = true;
     server_config.filter_rules = filter_rules;
+
+    // Set verbose flag for local output (not sent to daemon in server protocol string)
+    server_config.flags.verbose = config.verbosity() > 0;
 
     Ok(server_config)
 }
@@ -803,6 +809,9 @@ fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.update() {
         flags.push('u');
     }
+    // Note: verbose flag ('v') is not passed to daemon in server flag string.
+    // It's a local output option that doesn't affect protocol behavior.
+    // The ServerConfig.flags.verbose is set separately from server_flag_string parsing.
 
     flags
 }
