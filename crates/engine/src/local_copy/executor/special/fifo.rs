@@ -136,7 +136,7 @@ pub(crate) fn copy_fifo(
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 remove_existing_destination(destination)?;
                 create_hard_link(&link_source, destination).map_err(|link_error| {
-                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
+                    LocalCopyError::io("create hard link", destination, link_error)
                 })?;
             }
             Err(error)
@@ -209,9 +209,8 @@ pub(crate) fn copy_fifo(
         // Windows / non-Unix: no FIFO support in this crate path.
         // Create an empty file so the caller sees a tangible result and the rest of the
         // metadata application doesn’t fail.
-        fs::File::create(destination).map_err(|error| {
-            LocalCopyError::io("create fifo placeholder", destination.to_path_buf(), error)
-        })?;
+        fs::File::create(destination)
+            .map_err(|error| LocalCopyError::io("create fifo placeholder", destination, error))?;
     }
 
     context.register_created_path(

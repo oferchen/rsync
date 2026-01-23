@@ -33,7 +33,7 @@ pub(crate) fn determine_append_mode(
     if existing_len == 0 || existing_len >= file_size {
         reader
             .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         return Ok(AppendMode::Disabled);
     }
 
@@ -41,14 +41,14 @@ pub(crate) fn determine_append_mode(
         let matches = verify_append_prefix(reader, source, destination, existing_len)?;
         reader
             .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         if !matches {
             return Ok(AppendMode::Disabled);
         }
     } else {
         reader
             .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     }
 
     Ok(AppendMode::Append(existing_len))
@@ -65,7 +65,7 @@ fn verify_append_prefix(
 ) -> Result<bool, LocalCopyError> {
     reader
         .seek(SeekFrom::Start(0))
-        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let mut destination_file = fs::File::open(destination).map_err(|error| {
         LocalCopyError::io(
             "read existing destination",
@@ -84,7 +84,7 @@ fn verify_append_prefix(
         let chunk = remaining.min(half_size as u64) as usize;
         let source_read = reader
             .read(&mut source_buffer[..chunk])
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         let destination_read = destination_file
             .read(&mut destination_buffer[..chunk])
             .map_err(|error| {

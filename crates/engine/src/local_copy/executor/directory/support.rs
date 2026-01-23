@@ -16,13 +16,12 @@ pub(crate) fn read_directory_entries_sorted(
     path: &Path,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     let mut entries = Vec::new();
-    let read_dir = fs::read_dir(path)
-        .map_err(|error| LocalCopyError::io("read directory", path.to_path_buf(), error))?;
+    let read_dir =
+        fs::read_dir(path).map_err(|error| LocalCopyError::io("read directory", path, error))?;
 
     for entry in read_dir {
-        let entry = entry.map_err(|error| {
-            LocalCopyError::io("read directory entry", path.to_path_buf(), error)
-        })?;
+        let entry =
+            entry.map_err(|error| LocalCopyError::io("read directory entry", path, error))?;
         let entry_path = entry.path();
         let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
             LocalCopyError::io("inspect directory entry", entry_path.clone(), error)

@@ -108,7 +108,7 @@ pub(crate) fn copy_symlink(
     context.summary_mut().record_symlink_total();
 
     let target = fs::read_link(source)
-        .map_err(|error| LocalCopyError::io("read symbolic link", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("read symbolic link", source, error))?;
 
     let mut destination_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
@@ -349,9 +349,8 @@ pub(crate) fn copy_symlink(
     }
 
     // actually create it
-    create_symlink(&target, source, destination).map_err(|error| {
-        LocalCopyError::io("create symbolic link", destination.to_path_buf(), error)
-    })?;
+    create_symlink(&target, source, destination)
+        .map_err(|error| LocalCopyError::io("create symbolic link", destination, error))?;
 
     context.register_created_path(
         destination,
