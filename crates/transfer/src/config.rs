@@ -2,7 +2,6 @@
 //! Server configuration derived from the compact flag string and trailing arguments.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
 
 use compress::zlib::CompressionLevel;
 use protocol::FilenameConverter;
@@ -12,27 +11,8 @@ use protocol::filters::FilterRuleWireFormat;
 use super::flags::ParsedServerFlags;
 use super::role::ServerRole;
 
-/// Identifies how a reference directory should be used when looking for basis files.
-///
-/// This mirrors the engine crate's `ReferenceDirectoryKind` for use in remote transfers.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReferenceDirectoryKind {
-    /// `--compare-dest`: Skip creating destination when reference matches.
-    Compare,
-    /// `--copy-dest`: Copy from reference when it matches.
-    Copy,
-    /// `--link-dest`: Hard-link to reference when it matches.
-    Link,
-}
-
-/// A reference directory used for basis file lookup during delta transfers.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReferenceDirectory {
-    /// The kind of reference directory operation.
-    pub kind: ReferenceDirectoryKind,
-    /// The path to the reference directory.
-    pub path: PathBuf,
-}
+/// Reference directory types for remote transfers.
+pub use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
 /// Configuration supplied to the server entry point.
 #[derive(Debug, Clone, Eq, PartialEq)]

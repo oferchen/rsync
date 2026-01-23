@@ -27,6 +27,7 @@ use crate::local_copy::sync_xattrs_if_requested;
 
 use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
+#[cfg(not(feature = "optimized-buffers"))]
 use super::super::super::super::COPY_BUFFER_SIZE;
 use super::super::append::{AppendMode, determine_append_mode};
 use super::super::comparison::{
@@ -35,7 +36,41 @@ use super::super::comparison::{
 use super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::preallocate::maybe_preallocate_destination;
 
-#[allow(clippy::too_many_arguments)]
+/// Boolean flags controlling file transfer behavior.
+///
+/// This struct groups the boolean parameters that were previously passed
+/// individually to `execute_transfer`, reducing parameter count and
+/// improving code clarity.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TransferFlags {
+    /// Whether append mode is allowed for existing files.
+    pub append_allowed: bool,
+    /// Whether to verify appended data matches the source.
+    pub append_verify: bool,
+    /// Whether to always transfer the entire file (no delta).
+    pub whole_file_enabled: bool,
+    /// Whether to update the file in place (no temp file).
+    pub inplace_enabled: bool,
+    /// Whether to keep partial transfers on interruption.
+    pub partial_enabled: bool,
+    /// Whether to use sparse writes for zero-filled regions.
+    pub use_sparse_writes: bool,
+    /// Whether to compress data during transfer.
+    pub compress_enabled: bool,
+    /// Whether to compare files by size only.
+    pub size_only_enabled: bool,
+    /// Whether to ignore modification times when comparing.
+    pub ignore_times_enabled: bool,
+    /// Whether to use checksums for comparison.
+    pub checksum_enabled: bool,
+    /// Whether to preserve extended attributes (Unix only).
+    #[cfg(all(unix, feature = "xattr"))]
+    pub preserve_xattrs: bool,
+    /// Whether to preserve ACLs (Unix only).
+    #[cfg(all(unix, feature = "acl"))]
+    pub preserve_acls: bool,
+}
+
 pub(super) fn execute_transfer(
     context: &mut CopyContext,
     source: &Path,
@@ -47,24 +82,31 @@ pub(super) fn execute_transfer(
     destination_previously_existed: bool,
     file_type: fs::FileType,
     relative: Option<&Path>,
-    append_allowed: bool,
-    append_verify: bool,
-    whole_file_enabled: bool,
-    inplace_enabled: bool,
-    partial_enabled: bool,
-    use_sparse_writes: bool,
-    compress_enabled: bool,
-    size_only_enabled: bool,
-    ignore_times_enabled: bool,
-    checksum_enabled: bool,
+    flags: TransferFlags,
     mode: LocalCopyExecution,
-    #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
-    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
     copy_source_override: Option<PathBuf>,
 ) -> Result<(), LocalCopyError> {
     // keep the param used on non-unix builds to avoid warnings
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
+
+    // Unpack flags for easier access in the function body
+    let TransferFlags {
+        append_allowed,
+        append_verify,
+        whole_file_enabled,
+        inplace_enabled,
+        partial_enabled,
+        use_sparse_writes,
+        compress_enabled,
+        size_only_enabled,
+        ignore_times_enabled,
+        checksum_enabled,
+        #[cfg(all(unix, feature = "xattr"))]
+        preserve_xattrs,
+        #[cfg(all(unix, feature = "acl"))]
+        preserve_acls,
+    } = flags;
 
     let file_size = metadata.len();
 
@@ -196,7 +238,7 @@ pub(super) fn execute_transfer(
 
     // regular file copy
     let mut reader = open_source_file(source, context.open_noatime_enabled())
-        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let append_mode = determine_append_mode(
         append_allowed,
         append_verify,
@@ -212,7 +254,7 @@ pub(super) fn execute_transfer(
     };
     reader
         .seek(SeekFrom::Start(append_offset))
-        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
 
     // delta signature if we can
     let delta_signature = if append_offset == 0 && !whole_file_enabled && !inplace_enabled {
@@ -226,14 +268,21 @@ pub(super) fn execute_transfer(
         None
     };
 
-    // re-open in case we’re copying from a reference path
-    let copy_source = copy_source_override.as_deref().unwrap_or(source);
-    let mut reader = open_source_file(copy_source, context.open_noatime_enabled())
-        .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
-    if append_offset > 0 {
+    // Use existing reader or re-open if copying from a reference path
+    let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
+        // Reference path differs from source - need to open the override path
+        let file = open_source_file(override_path, context.open_noatime_enabled())
+            .map_err(|error| LocalCopyError::io("copy file", override_path.clone(), error))?;
+        (file, override_path.as_path())
+    } else {
+        // Same source - reuse the existing reader (already at correct position)
+        (reader, source)
+    };
+    // Seek to append offset if needed (for override path case, or to reset position)
+    if copy_source_override.is_some() && append_offset > 0 {
         reader
             .seek(SeekFrom::Start(append_offset))
-            .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", copy_source, error))?;
     }
 
     // choose write strategy
@@ -246,9 +295,9 @@ pub(super) fn execute_transfer(
             .write(true)
             .truncate(false)
             .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
         file.seek(SeekFrom::Start(append_offset))
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
         file
     } else if inplace_enabled {
         fs::OpenOptions::new()
@@ -256,7 +305,7 @@ pub(super) fn execute_transfer(
             .write(true)
             .truncate(true)
             .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?
     } else {
         let (new_guard, file) = DestinationWriteGuard::new(
             destination,
@@ -280,13 +329,23 @@ pub(super) fn execute_transfer(
         context.preallocate_enabled(),
     )?;
 
+    #[cfg(feature = "optimized-buffers")]
+    let mut buffer_guard =
+        super::super::super::super::BufferPool::acquire_from(context.buffer_pool());
+    #[cfg(feature = "optimized-buffers")]
+    let buffer: &mut [u8] = &mut buffer_guard;
+
+    #[cfg(not(feature = "optimized-buffers"))]
     let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+    #[cfg(not(feature = "optimized-buffers"))]
+    let buffer: &mut [u8] = &mut buffer;
+
     let start = Instant::now();
 
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
-        &mut buffer,
+        buffer,
         use_sparse_writes,
         compress_enabled,
         source,
@@ -298,6 +357,8 @@ pub(super) fn execute_transfer(
         start,
     );
 
+    // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
+    #[cfg(not(feature = "batch-sync"))]
     if copy_result.is_ok() && context.fsync_enabled() {
         sync_destination_file(&mut writer, preallocate_target)?;
     }
@@ -506,7 +567,9 @@ fn copy_special_as_regular_file(
             .write(true)
             .truncate(true)
             .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+        // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
+        #[cfg(not(feature = "batch-sync"))]
         if context.fsync_enabled() {
             sync_destination_file(&mut file, destination)?;
         }
@@ -517,6 +580,8 @@ fn copy_special_as_regular_file(
             context.partial_directory_path(),
             context.temp_directory_path(),
         )?;
+        // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
+        #[cfg(not(feature = "batch-sync"))]
         if context.fsync_enabled() {
             let target = new_guard.staging_path();
             sync_destination_file(&mut file, target)?;
@@ -660,10 +725,11 @@ fn copy_special_as_regular_file(
     Ok(())
 }
 
+#[cfg(any(not(feature = "batch-sync"), test))]
 fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), LocalCopyError> {
     writer
         .sync_all()
-        .map_err(|error| LocalCopyError::io("fsync destination file", path.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("fsync destination file", path, error))?;
     record_fsync_call();
     Ok(())
 }
@@ -673,7 +739,7 @@ fn record_fsync_call() {
     FSYNC_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(feature = "batch-sync")))]
 const fn record_fsync_call() {}
 
 #[cfg(test)]
