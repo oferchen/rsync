@@ -134,7 +134,7 @@ pub(crate) fn copy_device(
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 remove_existing_destination(destination)?;
                 create_hard_link(&link_source, destination).map_err(|link_error| {
-                    LocalCopyError::io("create hard link", destination.to_path_buf(), link_error)
+                    LocalCopyError::io("create hard link", destination, link_error)
                 })?;
             }
             Err(error)

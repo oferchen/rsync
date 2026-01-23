@@ -34,6 +34,15 @@ use std::io::{self, Read, SeekFrom, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
+/// Default checksum length for delta verification (16 bytes = 128 bits).
+///
+/// This matches upstream rsync's default MD5 digest length and provides
+/// sufficient collision resistance for file integrity verification.
+const DEFAULT_CHECKSUM_LENGTH: NonZeroU8 = match NonZeroU8::new(16) {
+    Some(v) => v,
+    None => panic!("checksum length must be non-zero"),
+};
+
 use protocol::codec::{NdxCodec, create_ndx_codec};
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
@@ -516,7 +525,7 @@ impl ReceiverContext {
             self.compat_flags.as_ref(),
         );
         let checksum_algorithm = checksum_factory.signature_algorithm();
-        let checksum_length = NonZeroU8::new(16).expect("checksum length must be non-zero");
+        let checksum_length = DEFAULT_CHECKSUM_LENGTH;
 
         // Build metadata options from server config flags
         let metadata_opts = MetadataOptions::new()
@@ -578,7 +587,8 @@ impl ReceiverContext {
                 const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
                 writer.write_all(&ITEM_TRANSFER.to_le_bytes())?;
             }
-            writer.flush()?;
+            // Note: No flush here - we batch NDX+iflags with sum_head+signature
+            // and flush once after sending the complete request.
 
             // Step 1 & 2: Generate signature if basis file exists
             // Uses find_basis_file() helper to encapsulate exact match, reference directories, and fuzzy logic.
@@ -781,8 +791,11 @@ impl ReceiverContext {
                 }
             }
 
-            // Sync the output file
-            output.sync_all()?;
+            // Note: We don't call sync_all() by default, matching upstream rsync behavior.
+            // Upstream rsync only fsyncs when --fsync flag is explicitly set (do_fsync=0 default).
+            // The atomic rename still provides crash consistency - data is flushed when
+            // the kernel closes the file or needs the buffers.
+            // TODO: Add --fsync flag support for users who need guaranteed durability.
 
             // Atomic rename (crash-safe)
             fs::rename(&temp_path, &file_path)?;
@@ -2023,7 +2036,7 @@ mod tests {
             NonZeroU32::new(512).unwrap(),
             0,
             0,
-            NonZeroU8::new(16).unwrap(),
+            DEFAULT_CHECKSUM_LENGTH,
         );
         let signature = FileSignature::from_raw_parts(layout, vec![], 0);
 

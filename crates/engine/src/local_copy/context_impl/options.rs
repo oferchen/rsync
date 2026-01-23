@@ -177,7 +177,7 @@ impl<'a> CopyContext<'a> {
             let relative = self.parent_relative_to_destination(parent);
             self.force_remove_destination(parent, relative, existing)?;
             fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+                LocalCopyError::io("create parent directory", parent, error)
             })?;
             self.register_progress();
             Ok(())
@@ -272,7 +272,7 @@ impl<'a> CopyContext<'a> {
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     fs::create_dir_all(parent).map_err(|error| {
-                        LocalCopyError::io("create parent directory", parent.to_path_buf(), error)
+                        LocalCopyError::io("create parent directory", parent, error)
                     })?;
                     self.register_progress();
                     Ok(())

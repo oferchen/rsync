@@ -49,8 +49,12 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
+/// Buffer pool for I/O buffer reuse.
+#[cfg(feature = "optimized-buffers")]
+pub mod buffer_pool;
 mod compressor;
 mod context;
+mod deferred_sync;
 mod dir_merge;
 mod error;
 mod executor;
@@ -62,6 +66,11 @@ mod options;
 mod overrides;
 mod plan;
 mod skip_compress;
+
+#[cfg(feature = "optimized-buffers")]
+pub use buffer_pool::{BufferGuard, BufferPool};
+#[cfg(feature = "batch-sync")]
+pub use deferred_sync::{DeferredSync, SyncStrategy};
 
 pub use plan::{
     LocalCopyAction, LocalCopyChangeSet, LocalCopyExecution, LocalCopyFileKind, LocalCopyMetadata,
