@@ -155,7 +155,6 @@ pub const XMIT_RESERVED_16: u8 = 1 << 0;
 pub const XMIT_CRTIME_EQ_MTIME: u8 = 1 << 1;
 
 // Legacy alias for backward compatibility
-#[allow(dead_code)]
 pub const XMIT_SAME_HIGH_RDEV: u8 = XMIT_SAME_RDEV_MAJOR;
 
 /// Parsed file entry flags from the wire format.
