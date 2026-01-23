@@ -99,15 +99,20 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Build
+        run: cargo build --workspace --all-features
+
       - name: Run tests
         run: cargo nextest run --workspace --all-targets --all-features
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.toolchain }}
-          path: target/debug/rsync*
-          if-no-files-found: ignore
+          name: build-linux-${{ matrix.toolchain }}
+          path: |
+            target/debug/oc-rsync
+            target/debug/xtask
+          if-no-files-found: warn
           retention-days: 7
 
   # ===========================================================================
@@ -165,8 +170,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-windows-${{ matrix.toolchain }}
-          path: target/debug/rsync*
-          if-no-files-found: ignore
+          path: |
+            target/debug/oc-rsync.exe
+            target/debug/xtask.exe
+          if-no-files-found: warn
           retention-days: 7
 
   # ===========================================================================
