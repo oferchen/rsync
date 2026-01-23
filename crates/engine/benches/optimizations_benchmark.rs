@@ -4,9 +4,7 @@
 
 use std::sync::Arc;
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "optimized-buffers")]
 use engine::local_copy::buffer_pool::BufferPool;

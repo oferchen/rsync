@@ -224,13 +224,8 @@ mod tests {
     #[test]
     fn test_new_entry_not_resolved() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path.clone(),
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let entry =
+            LazyFileListEntry::new(path.clone(), PathBuf::from("test.txt"), 1, false, false);
         assert!(!entry.is_resolved());
     }
 
@@ -251,39 +246,22 @@ mod tests {
     #[test]
     fn test_full_path() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path.clone(),
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let entry =
+            LazyFileListEntry::new(path.clone(), PathBuf::from("test.txt"), 1, false, false);
         assert_eq!(entry.full_path(), &path);
     }
 
     #[test]
     fn test_relative_path() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path,
-            PathBuf::from("subdir/test.txt"),
-            2,
-            false,
-            false,
-        );
+        let entry = LazyFileListEntry::new(path, PathBuf::from("subdir/test.txt"), 2, false, false);
         assert_eq!(entry.relative_path(), Path::new("subdir/test.txt"));
     }
 
     #[test]
     fn test_file_name() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path,
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
         assert_eq!(entry.file_name(), Some(OsStr::new("test.txt")));
     }
 
@@ -294,7 +272,7 @@ mod tests {
             path,
             PathBuf::new(),
             0,
-            true,  // is_root
+            true, // is_root
             false,
         );
         assert!(entry.file_name().is_none());
@@ -303,13 +281,7 @@ mod tests {
     #[test]
     fn test_depth() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path,
-            PathBuf::from("a/b/test.txt"),
-            3,
-            false,
-            false,
-        );
+        let entry = LazyFileListEntry::new(path, PathBuf::from("a/b/test.txt"), 3, false, false);
         assert_eq!(entry.depth(), 3);
     }
 
@@ -327,13 +299,7 @@ mod tests {
     #[test]
     fn test_metadata_resolves_on_access() {
         let (_dir, path) = create_test_file();
-        let mut entry = LazyFileListEntry::new(
-            path,
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let mut entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
 
         assert!(!entry.is_resolved());
         let result = entry.metadata();
@@ -344,13 +310,7 @@ mod tests {
     #[test]
     fn test_metadata_if_resolved() {
         let (_dir, path) = create_test_file();
-        let mut entry = LazyFileListEntry::new(
-            path,
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let mut entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
 
         // Not resolved yet
         assert!(entry.metadata_if_resolved().is_none());
@@ -365,13 +325,8 @@ mod tests {
     #[test]
     fn test_into_resolved() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path.clone(),
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let entry =
+            LazyFileListEntry::new(path.clone(), PathBuf::from("test.txt"), 1, false, false);
 
         let resolved = entry.into_resolved();
         assert!(resolved.is_ok());
@@ -398,13 +353,7 @@ mod tests {
     #[test]
     fn test_try_into_resolved_not_resolved() {
         let (_dir, path) = create_test_file();
-        let entry = LazyFileListEntry::new(
-            path,
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
 
         // Not resolved, should return None
         assert!(entry.try_into_resolved().is_none());
@@ -414,13 +363,8 @@ mod tests {
     fn test_try_into_resolved_already_resolved() {
         let (_dir, path) = create_test_file();
         let metadata = fs::metadata(&path).unwrap();
-        let entry = LazyFileListEntry::with_metadata(
-            path,
-            PathBuf::from("test.txt"),
-            metadata,
-            1,
-            false,
-        );
+        let entry =
+            LazyFileListEntry::with_metadata(path, PathBuf::from("test.txt"), metadata, 1, false);
 
         // Already resolved, should return Some
         let result = entry.try_into_resolved();
@@ -433,16 +377,12 @@ mod tests {
         let (_dir, path) = create_test_file();
 
         // Create entry
-        let entry = LazyFileListEntry::new(
-            path,
-            PathBuf::from("test.txt"),
-            1,
-            false,
-            false,
-        );
+        let entry = LazyFileListEntry::new(path, PathBuf::from("test.txt"), 1, false, false);
 
         // Filter by extension without fetching metadata
-        let should_process = entry.relative_path().extension()
+        let should_process = entry
+            .relative_path()
+            .extension()
             .map(|ext| ext != "tmp")
             .unwrap_or(true);
 
