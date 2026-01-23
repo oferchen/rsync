@@ -20,6 +20,7 @@ logging = { path = "../logging" }
 rustc-hash = { workspace = true }
 thiserror = "2.0"
 tracing = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
@@ -31,6 +32,8 @@ checksums = { path = "../checksums", default-features = false }
 default = []
 # Structured logging instrumentation for performance analysis
 tracing = ["dep:tracing"]
+# Parallel block matching for large signatures with many collisions
+parallel = ["dep:rayon"]
 
 [dev-dependencies]
 protocol = { path = "../protocol" }
