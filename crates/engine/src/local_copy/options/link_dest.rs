@@ -125,6 +125,8 @@ mod tests {
         assert!(!options.hard_links_enabled());
     }
 
+    // These tests use Unix-style absolute paths (starting with /)
+    #[cfg(unix)]
     #[test]
     fn push_reference_directory() {
         use super::super::types::ReferenceDirectoryKind;
@@ -135,6 +137,7 @@ mod tests {
         assert_eq!(options.reference_directories().len(), 1);
     }
 
+    #[cfg(unix)]
     #[test]
     fn link_dest_entry_new_absolute() {
         let entry = LinkDestEntry::new(PathBuf::from("/absolute/path"));
@@ -147,6 +150,7 @@ mod tests {
         assert!(entry.is_relative);
     }
 
+    #[cfg(unix)]
     #[test]
     fn link_dest_entry_resolve_absolute() {
         let entry = LinkDestEntry::new(PathBuf::from("/absolute/backup"));
@@ -154,6 +158,7 @@ mod tests {
         assert_eq!(resolved, PathBuf::from("/absolute/backup/file.txt"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn link_dest_entry_resolve_relative() {
         let entry = LinkDestEntry::new(PathBuf::from("backup"));
