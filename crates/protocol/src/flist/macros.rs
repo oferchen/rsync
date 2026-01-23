@@ -39,6 +39,7 @@
 ///     self
 /// }
 /// ```
+#[allow(unused_macros)]
 macro_rules! impl_preserve_builders {
     (
         $(
@@ -58,4 +59,5 @@ macro_rules! impl_preserve_builders {
     };
 }
 
+#[allow(unused_imports)]
 pub(crate) use impl_preserve_builders;
