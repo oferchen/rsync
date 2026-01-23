@@ -33,19 +33,38 @@ EXPORT_JSON=false
 EXPORT_MD=false
 SCENARIO="all"
 
-# Parse arguments
+usage() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -w, --warmup N       Number of warmup runs (default: 3)
+  -n, --runs N         Number of benchmark runs (default: 10)
+  -j, --export-json    Export results to JSON file
+  -m, --export-md      Export results to markdown file
+  -s, --scenario S     Run specific scenario: small_files|large_file|mixed_tree|local_copy|all
+  -h, --help           Show this help message
+
+Requirements:
+  - hyperfine: cargo install hyperfine
+  - Upstream rsync built in target/interop/upstream-install/3.4.1/
+  - oc-rsync built with: cargo build --release
+EOF
+    exit "${1:-0}"
+}
+
+# Parse options using getopts for short options, manual for long options
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --warmup) WARMUP="$2"; shift 2 ;;
-        --runs) RUNS="$2"; shift 2 ;;
-        --export-json) EXPORT_JSON=true; shift ;;
-        --export-md) EXPORT_MD=true; shift ;;
-        --scenario) SCENARIO="$2"; shift 2 ;;
-        --help|-h)
-            head -20 "$0" | tail -n +2 | sed 's/^# //' | sed 's/^#//'
-            exit 0
-            ;;
-        *) echo "Unknown option: $1"; exit 1 ;;
+        -w|--warmup) WARMUP="$2"; shift 2 ;;
+        -n|--runs) RUNS="$2"; shift 2 ;;
+        -j|--export-json) EXPORT_JSON=true; shift ;;
+        -m|--export-md) EXPORT_MD=true; shift ;;
+        -s|--scenario) SCENARIO="$2"; shift 2 ;;
+        -h|--help) usage 0 ;;
+        --) shift; break ;;
+        -*) echo "Unknown option: $1"; usage 1 ;;
+        *) break ;;
     esac
 done
 

@@ -34,12 +34,31 @@ OC_RSYNC="${PROJECT_ROOT}/target/release/oc-rsync"
 # Options
 USE_PERF=false
 USE_FLAMEGRAPH=false
+RUNS=5
 
-for arg in "$@"; do
-    case $arg in
-        --perf) USE_PERF=true ;;
-        --flamegraph) USE_FLAMEGRAPH=true ;;
-        *) echo "Unknown option: $arg"; exit 1 ;;
+usage() {
+    cat << EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Options:
+  -p, --perf        Record perf data for oc-rsync runs
+  -f, --flamegraph  Generate flamegraph SVGs for oc-rsync runs
+  -n, --runs N      Number of runs per benchmark (default: 5)
+  -h, --help        Show this help message
+EOF
+    exit "${1:-0}"
+}
+
+# Parse options using getopts for short options, manual for long options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -p|--perf) USE_PERF=true; shift ;;
+        -f|--flamegraph) USE_FLAMEGRAPH=true; shift ;;
+        -n|--runs) RUNS="$2"; shift 2 ;;
+        -h|--help) usage 0 ;;
+        --) shift; break ;;
+        -*) echo "Unknown option: $1"; usage 1 ;;
+        *) break ;;
     esac
 done
 
@@ -231,8 +250,8 @@ main() {
     rm -rf "$module_path"/*
     setup_test_data "$module_path" small_files
 
-    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up")
-    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc")
+    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up" "$RUNS")
+    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc" "$RUNS")
     ratio=$(awk "BEGIN {printf \"%.2f\", $oc_time / $up_time}")
     echo "  Ratio: ${ratio}x"
     echo "small_files_initial,$up_time,$oc_time,$ratio" >> "$results_file"
@@ -240,19 +259,20 @@ main() {
     # Scenario 2: Small files (no change)
     log_section "Scenario 2: 1000 x 1KB files (no change sync)"
 
-    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up")
-    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc")
+    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up" "$RUNS")
+    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc" "$RUNS")
     ratio=$(awk "BEGIN {printf \"%.2f\", $oc_time / $up_time}")
     echo "  Ratio: ${ratio}x"
     echo "small_files_nochange,$up_time,$oc_time,$ratio" >> "$results_file"
 
-    # Scenario 3: Large file
+    # Scenario 3: Large file (fewer runs since it takes longer)
     log_section "Scenario 3: 100MB file (initial sync)"
     rm -rf "$module_path"/* "$dest_up"/* "$dest_oc"/*
     setup_test_data "$module_path" large_file
 
-    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up" 3)
-    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc" 3)
+    local large_runs=$((RUNS < 3 ? RUNS : 3))
+    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up" "$large_runs")
+    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc" "$large_runs")
     ratio=$(awk "BEGIN {printf \"%.2f\", $oc_time / $up_time}")
     echo "  Ratio: ${ratio}x"
     echo "large_file,$up_time,$oc_time,$ratio" >> "$results_file"
@@ -262,8 +282,8 @@ main() {
     rm -rf "$module_path"/* "$dest_up"/* "$dest_oc"/*
     setup_test_data "$module_path" mixed_tree
 
-    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up")
-    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc")
+    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up" "$RUNS")
+    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc" "$RUNS")
     ratio=$(awk "BEGIN {printf \"%.2f\", $oc_time / $up_time}")
     echo "  Ratio: ${ratio}x"
     echo "mixed_tree,$up_time,$oc_time,$ratio" >> "$results_file"
@@ -273,8 +293,8 @@ main() {
     rm -rf "$module_path"/* "$dest_up"/* "$dest_oc"/*
     setup_test_data "$module_path" deep_tree
 
-    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up")
-    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc")
+    up_time=$(run_benchmark "upstream" "$UPSTREAM" "$rsync_url" "$dest_up" "$RUNS")
+    oc_time=$(run_benchmark "oc-rsync" "$OC_RSYNC" "$rsync_url" "$dest_oc" "$RUNS")
     ratio=$(awk "BEGIN {printf \"%.2f\", $oc_time / $up_time}")
     echo "  Ratio: ${ratio}x"
     echo "deep_tree,$up_time,$oc_time,$ratio" >> "$results_file"
