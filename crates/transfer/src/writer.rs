@@ -234,13 +234,15 @@ impl<W: Write> Write for ServerWriter<W> {
 pub(super) struct MultiplexWriter<W> {
     inner: W,
     buffer: Vec<u8>,
-    /// Buffer size matching upstream rsync's IO_BUFFER_SIZE (default 4096)
+    /// Buffer size matching upstream rsync's IO_BUFFER_SIZE (32KB)
     buffer_size: usize,
 }
 
 impl<W: Write> MultiplexWriter<W> {
     fn new(inner: W) -> Self {
-        const DEFAULT_BUFFER_SIZE: usize = 4096;
+        // Match upstream rsync's IO_BUFFER_SIZE (32KB) from rsync.h
+        // Larger buffer reduces multiplex frame overhead for bulk transfers
+        const DEFAULT_BUFFER_SIZE: usize = 32 * 1024;
         Self {
             inner,
             buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
