@@ -3,8 +3,13 @@
 //! This module provides [`DeltaSignatureIndex`] for O(1) block lookups during
 //! delta generation. It indexes signature blocks by their rolling checksum
 //! components `(sum1, sum2)` for efficient matching.
+//!
+//! Uses [`FxHashMap`] for 2-5x faster lookups compared to std HashMap,
+//! optimized for small integer keys like `(u16, u16)`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+
+use rustc_hash::FxHashMap;
 
 use checksums::RollingDigest;
 
@@ -12,7 +17,7 @@ use signature::{FileSignature, SignatureAlgorithm, SignatureBlock};
 
 /// Index over a file signature that accelerates delta matching.
 ///
-/// Uses a `HashMap` keyed by `(sum1, sum2)` rolling checksum components for O(1)
+/// Uses [`FxHashMap`] keyed by `(sum1, sum2)` rolling checksum components for O(1)
 /// block lookup. The block length is stored separately since all indexed blocks
 /// have the same canonical length.
 #[derive(Clone, Debug)]
@@ -22,7 +27,7 @@ pub struct DeltaSignatureIndex {
     algorithm: SignatureAlgorithm,
     blocks: Vec<SignatureBlock>,
     /// Lookup table keyed by (sum1, sum2) - block length is constant for all entries.
-    lookup: HashMap<(u16, u16), Vec<usize>>,
+    lookup: FxHashMap<(u16, u16), Vec<usize>>,
 }
 
 impl DeltaSignatureIndex {
@@ -41,7 +46,8 @@ impl DeltaSignatureIndex {
         let strong_length = usize::from(signature.layout().strong_sum_length().get());
         let blocks: Vec<SignatureBlock> = signature.blocks().to_vec();
 
-        let mut lookup: HashMap<(u16, u16), Vec<usize>> = HashMap::with_capacity(blocks.len());
+        let mut lookup: FxHashMap<(u16, u16), Vec<usize>> =
+            FxHashMap::with_capacity_and_hasher(blocks.len(), Default::default());
         let mut has_full_blocks = false;
 
         for (index, block) in blocks.iter().enumerate() {
