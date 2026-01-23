@@ -249,21 +249,30 @@ jobs:
           TOOLCHAIN="${{ matrix.toolchain }}"
           TARGET="${{ matrix.target }}"
 
-          # Rename .deb package
+          # Stable keeps original naming, beta/nightly get suffix
           DEB_PATH="target/${TARGET}/debian"
           DEB_FILE=$(find "${DEB_PATH}" -name "oc-rsync_*_${DEB_ARCH}.deb" | head -1)
           if [ -n "${DEB_FILE}" ]; then
-            NEW_DEB="${DEB_PATH}/oc-rsync_${VERSION}-1-${TOOLCHAIN}_${DEB_ARCH}.deb"
-            mv "${DEB_FILE}" "${NEW_DEB}"
-            printf 'Renamed .deb to: %s\n' "$(basename "${NEW_DEB}")"
+            if [ "${TOOLCHAIN}" = "stable" ]; then
+              # Keep original name for stable
+              printf 'Keeping .deb name: %s\n' "$(basename "${DEB_FILE}")"
+            else
+              NEW_DEB="${DEB_PATH}/oc-rsync_${VERSION}-1-${TOOLCHAIN}_${DEB_ARCH}.deb"
+              mv "${DEB_FILE}" "${NEW_DEB}"
+              printf 'Renamed .deb to: %s\n' "$(basename "${NEW_DEB}")"
+            fi
           fi
 
-          # Rename .rpm package
           RPM_FILE=$(find target/dist -name "oc-rsync-*.${RPM_ARCH}.rpm" | head -1)
           if [ -n "${RPM_FILE}" ]; then
-            NEW_RPM="target/dist/oc-rsync-${VERSION}-1-${TOOLCHAIN}.${RPM_ARCH}.rpm"
-            mv "${RPM_FILE}" "${NEW_RPM}"
-            printf 'Renamed .rpm to: %s\n' "$(basename "${NEW_RPM}")"
+            if [ "${TOOLCHAIN}" = "stable" ]; then
+              # Keep original name for stable
+              printf 'Keeping .rpm name: %s\n' "$(basename "${RPM_FILE}")"
+            else
+              NEW_RPM="target/dist/oc-rsync-${VERSION}-1-${TOOLCHAIN}.${RPM_ARCH}.rpm"
+              mv "${RPM_FILE}" "${NEW_RPM}"
+              printf 'Renamed .rpm to: %s\n' "$(basename "${NEW_RPM}")"
+            fi
           fi
 
       - name: Upload artifacts
@@ -272,8 +281,8 @@ jobs:
           name: dist-linux-gnu-${{ matrix.arch }}-${{ matrix.toolchain }}
           retention-days: 7
           path: |
-            target/${{ matrix.target }}/debian/oc-rsync_*-${{ matrix.toolchain }}_${{ matrix.deb_arch }}.deb
-            target/dist/oc-rsync-*-${{ matrix.toolchain }}.${{ matrix.rpm_arch }}.rpm
+            target/${{ matrix.target }}/debian/oc-rsync_*_${{ matrix.deb_arch }}.deb
+            target/dist/oc-rsync-*.${{ matrix.rpm_arch }}.rpm
 
   # ===========================================================================
   # Linux musl static tarballs (matrix: parallel x86_64 and aarch64, all toolchains)
@@ -335,8 +344,12 @@ jobs:
           ARCH="${{ matrix.arch }}"
           TOOLCHAIN="${{ matrix.toolchain }}"
 
-          # Determine tarball name with toolchain
-          TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl-${TOOLCHAIN}.tar.gz"
+          # Stable keeps original naming, beta/nightly get suffix
+          if [ "${TOOLCHAIN}" = "stable" ]; then
+            TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl.tar.gz"
+          else
+            TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl-${TOOLCHAIN}.tar.gz"
+          fi
 
           mkdir -p target/dist
           mkdir -p staging/bin
@@ -355,7 +368,7 @@ jobs:
         with:
           name: dist-linux-musl-${{ matrix.arch }}-${{ matrix.toolchain }}
           retention-days: 7
-          path: target/dist/oc-rsync-*-linux-*-musl-*.tar.gz
+          path: target/dist/oc-rsync-*-linux-${{ matrix.arch }}-musl*.tar.gz
 
   # ===========================================================================
   # macOS Builds (matrix: parallel x86_64 and aarch64, all toolchains)
@@ -415,7 +428,12 @@ jobs:
             exit 1
           fi
 
-          NEW_NAME="oc-rsync-${VERSION}-darwin-${ARCH}-${TOOLCHAIN}.tar.gz"
+          # Stable keeps original naming (for Homebrew), beta/nightly get suffix
+          if [ "${TOOLCHAIN}" = "stable" ]; then
+            NEW_NAME="oc-rsync-${VERSION}-darwin-${ARCH}.tar.gz"
+          else
+            NEW_NAME="oc-rsync-${VERSION}-darwin-${ARCH}-${TOOLCHAIN}.tar.gz"
+          fi
           mv "${TARBALL}" "target/dist/${NEW_NAME}"
           echo "Renamed tarball to: ${NEW_NAME}"
 
@@ -424,7 +442,7 @@ jobs:
         with:
           name: dist-macos-${{ matrix.arch }}-${{ matrix.toolchain }}
           retention-days: 7
-          path: target/dist/oc-rsync-*-darwin-*-${{ matrix.toolchain }}.tar.gz
+          path: target/dist/oc-rsync-*-darwin-${{ matrix.arch }}*.tar.gz
 
   # ===========================================================================
   # Windows Builds (matrix: all toolchains)
@@ -483,7 +501,12 @@ jobs:
           if ($null -eq $tarball) {
             throw "expected windows tarball to exist"
           }
-          $newName = "oc-rsync-${version}-windows-x86_64-${toolchain}.tar.gz"
+          # Stable keeps original naming, beta/nightly get suffix
+          if ($toolchain -eq "stable") {
+            $newName = "oc-rsync-${version}-windows-x86_64.tar.gz"
+          } else {
+            $newName = "oc-rsync-${version}-windows-x86_64-${toolchain}.tar.gz"
+          }
           $newPath = Join-Path $tarball.DirectoryName $newName
           Move-Item -Path $tarball.FullName -Destination $newPath -Force
           Write-Host "Renamed tarball to: $newName"
@@ -502,7 +525,12 @@ jobs:
           if ($binaries.Count -eq 0) {
             throw "no Windows binaries found for zip packaging"
           }
-          $zipName = "oc-rsync-${version}-windows-x86_64-${toolchain}.zip"
+          # Stable keeps original naming, beta/nightly get suffix
+          if ($toolchain -eq "stable") {
+            $zipName = "oc-rsync-${version}-windows-x86_64.zip"
+          } else {
+            $zipName = "oc-rsync-${version}-windows-x86_64-${toolchain}.zip"
+          }
           $zipPath = Join-Path $distDir $zipName
           Compress-Archive -Path $binaries.FullName -DestinationPath $zipPath -Force
           Write-Host "Created zip: $zipName"
@@ -513,7 +541,7 @@ jobs:
           name: dist-windows-${{ matrix.toolchain }}
           retention-days: 7
           path: |
-            target/dist/oc-rsync-*-windows-*-${{ matrix.toolchain }}.tar.gz
+            target/dist/oc-rsync-*-windows-x86_64*.tar.gz
             dist/*.zip
 
   # ===========================================================================
@@ -558,10 +586,10 @@ jobs:
           EXPECTED_MACOS=6    # 2 arch (x86_64, aarch64) × 3 toolchains
           EXPECTED_WINDOWS=3  # 1 arch (x86_64) × 3 toolchains
 
-          # Count actual artifacts (musl tarballs now have toolchain suffix)
+          # Count actual artifacts (stable has no suffix, beta/nightly have suffix)
           DEB_COUNT=$(find dist -name "*.deb" | wc -l)
           RPM_COUNT=$(find dist -name "*.rpm" | wc -l)
-          MUSL_COUNT=$(find dist -name "*-musl-*.tar.gz" | wc -l)
+          MUSL_COUNT=$(find dist -name "*-musl*.tar.gz" | wc -l)
           MACOS_COUNT=$(find dist -name "*darwin*.tar.gz" | wc -l)
           WINDOWS_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
 
@@ -667,9 +695,9 @@ jobs:
 
           mkdir -p Formula
 
-          # Find actual macOS tarballs from artifacts (use stable toolchain for Homebrew)
-          AMD64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*darwin*x86_64*stable*.tar.gz' | sort | head -n1 || true)"
-          ARM64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*darwin*aarch64*stable*.tar.gz' | sort | head -n1 || true)"
+          # Find actual macOS tarballs from artifacts (stable builds have no toolchain suffix)
+          AMD64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*-darwin-x86_64.tar.gz' | sort | head -n1 || true)"
+          ARM64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*-darwin-aarch64.tar.gz' | sort | head -n1 || true)"
 
           if [ -z "${AMD64_PATH}" ] || [ -z "${ARM64_PATH}" ]; then
             printf 'Could not locate both macOS amd64 and arm64 tarballs in dist-macos\n' >&2
