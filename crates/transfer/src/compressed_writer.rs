@@ -68,19 +68,23 @@ impl<W: Write> CompressedWriter<W> {
         algorithm: CompressionAlgorithm,
         level: CompressionLevel,
     ) -> io::Result<Self> {
+        // Buffer size matching upstream rsync's IO_BUFFER_SIZE (32KB)
+        // This reduces flush frequency and improves compression ratio
+        const BUFFER_SIZE: usize = 32 * 1024;
+
         let encoder = match algorithm {
             CompressionAlgorithm::Zlib => {
-                let sink = Vec::with_capacity(4096);
+                let sink = Vec::with_capacity(BUFFER_SIZE);
                 EncoderVariant::Zlib(CountingZlibEncoder::with_sink(sink, level))
             }
             #[cfg(feature = "lz4")]
             CompressionAlgorithm::Lz4 => {
-                let sink = Vec::with_capacity(4096);
+                let sink = Vec::with_capacity(BUFFER_SIZE);
                 EncoderVariant::Lz4(CountingLz4Encoder::with_sink(sink, level))
             }
             #[cfg(feature = "zstd")]
             CompressionAlgorithm::Zstd => {
-                let sink = Vec::with_capacity(4096);
+                let sink = Vec::with_capacity(BUFFER_SIZE);
                 EncoderVariant::Zstd(CountingZstdEncoder::with_sink(sink, level)?)
             }
             #[allow(unreachable_patterns)]
@@ -98,7 +102,7 @@ impl<W: Write> CompressedWriter<W> {
         Ok(Self {
             inner,
             encoder,
-            flush_threshold: 4096, // Match upstream IO_BUFFER_SIZE
+            flush_threshold: BUFFER_SIZE,
         })
     }
 
