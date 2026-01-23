@@ -270,6 +270,111 @@ fn parse_bandwidth_rejects_excessive_exponent() {
     assert_eq!(error, BandwidthParseError::TooLarge);
 }
 
+// ==================== Additional edge case tests ====================
+
+#[test]
+fn parse_bandwidth_rejects_empty_string() {
+    let error = parse_bandwidth_argument("").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_bandwidth_rejects_whitespace_only() {
+    for text in [" ", "\t", "\n", "  \t\n  "] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
+    }
+}
+
+#[test]
+fn parse_bandwidth_boundary_minimum_value() {
+    // 512 bytes is the minimum allowed
+    let at_minimum = parse_bandwidth_argument("512b").expect("parse succeeds");
+    assert_eq!(at_minimum, NonZeroU64::new(512));
+
+    // 511 bytes should be rejected
+    let below_minimum = parse_bandwidth_argument("511b").unwrap_err();
+    assert_eq!(below_minimum, BandwidthParseError::TooSmall);
+}
+
+#[test]
+fn parse_bandwidth_boundary_maximum_u64() {
+    // Values near u64::MAX should work or fail gracefully
+    let large = parse_bandwidth_argument("16383P").expect("parse succeeds");
+    assert!(large.is_some());
+
+    // Values that overflow u64 should be rejected
+    let overflow = parse_bandwidth_argument("16384P").unwrap_err();
+    assert_eq!(overflow, BandwidthParseError::TooLarge);
+}
+
+#[test]
+fn parse_bandwidth_accepts_mixed_case_suffix() {
+    // Binary suffixes (case-insensitive for single letter)
+    let lower_k = parse_bandwidth_argument("1k").expect("parse succeeds");
+    let upper_k = parse_bandwidth_argument("1K").expect("parse succeeds");
+    assert_eq!(lower_k, upper_k);
+
+    let lower_m = parse_bandwidth_argument("1m").expect("parse succeeds");
+    let upper_m = parse_bandwidth_argument("1M").expect("parse succeeds");
+    assert_eq!(lower_m, upper_m);
+}
+
+#[test]
+fn parse_bandwidth_accepts_decimal_suffix_case_variations() {
+    // Decimal suffixes: KB, Kb, kB, kb should all be 1000-based
+    let upper = parse_bandwidth_argument("1KB").expect("parse succeeds");
+    let mixed1 = parse_bandwidth_argument("1Kb").expect("parse succeeds");
+    let mixed2 = parse_bandwidth_argument("1kB").expect("parse succeeds");
+    let lower = parse_bandwidth_argument("1kb").expect("parse succeeds");
+
+    // All should equal 1000 bytes
+    let expected = NonZeroU64::new(1000);
+    assert_eq!(upper, expected);
+    assert_eq!(mixed1, expected);
+    assert_eq!(mixed2, expected);
+    assert_eq!(lower, expected);
+}
+
+#[test]
+fn parse_bandwidth_rejects_multiple_decimal_points() {
+    let error = parse_bandwidth_argument("1.2.3M").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_bandwidth_rejects_multiple_commas() {
+    let error = parse_bandwidth_argument("1,2,3M").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_bandwidth_rejects_mixed_decimal_separators() {
+    let error = parse_bandwidth_argument("1.2,3M").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_bandwidth_handles_very_small_fractions() {
+    // Very small fractions: 0.0005M = 524.288 bytes, rounds to 1024 (1K boundary)
+    let tiny = parse_bandwidth_argument("0.0005M").expect("parse succeeds");
+    assert_eq!(tiny, NonZeroU64::new(1024));
+}
+
+#[test]
+fn parse_bandwidth_rejects_only_decimal_point() {
+    let error = parse_bandwidth_argument(".").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_bandwidth_rejects_only_suffix() {
+    for text in ["K", "M", "G", "MB", "KiB"] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid, "input: {text}");
+    }
+}
+
 proptest! {
     #[test]
     fn parse_round_trips_when_limit_is_multiple_of_1024(value in 1u64..1_000_000u64) {
