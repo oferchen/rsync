@@ -1252,7 +1252,6 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
 /// Applies a delta script to create a new file (whole-file transfer, no basis).
 ///
 /// All tokens must be Literal; Copy operations indicate a protocol error.
-#[allow(dead_code)]
 fn apply_whole_file_delta(path: &std::path::Path, script: &DeltaScript) -> io::Result<()> {
     let mut output = fs::File::create(path)?;
 
@@ -1275,7 +1274,6 @@ fn apply_whole_file_delta(path: &std::path::Path, script: &DeltaScript) -> io::R
 }
 
 /// Converts wire protocol delta operations to engine delta script.
-#[allow(dead_code)]
 fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
     let mut tokens = Vec::with_capacity(ops.len());
     let mut total_bytes = 0u64;
