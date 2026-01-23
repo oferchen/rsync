@@ -771,4 +771,353 @@ mod tests {
         state.accumulate(200);
         assert_eq!(state.pending_zeros(), 300);
     }
+
+    // ==================== Boundary Condition Tests ====================
+
+    #[test]
+    fn sparse_writer_exactly_sparse_write_size() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        // Chunk exactly at SPARSE_WRITE_SIZE boundary
+        let mut chunk = vec![0u8; super::SPARSE_WRITE_SIZE];
+        chunk[0] = b'S';
+        chunk[super::SPARSE_WRITE_SIZE - 1] = b'E';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write exactly SPARSE_WRITE_SIZE");
+
+        assert_eq!(written, super::SPARSE_WRITE_SIZE);
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![0u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back");
+
+        assert_eq!(buffer[0], b'S');
+        assert_eq!(buffer[super::SPARSE_WRITE_SIZE - 1], b'E');
+    }
+
+    #[test]
+    fn sparse_writer_just_under_sparse_write_size() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        // One byte under the threshold - should write densely
+        let mut chunk = vec![0u8; super::SPARSE_WRITE_SIZE - 1];
+        chunk[0] = b'A';
+        chunk[super::SPARSE_WRITE_SIZE - 2] = b'Z';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write just under SPARSE_WRITE_SIZE");
+
+        assert_eq!(written, super::SPARSE_WRITE_SIZE - 1);
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![0u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back");
+
+        assert_eq!(buffer[0], b'A');
+        assert_eq!(buffer[super::SPARSE_WRITE_SIZE - 2], b'Z');
+    }
+
+    #[test]
+    fn sparse_writer_just_over_sparse_write_size() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        // One byte over the threshold - should potentially use sparse writes
+        let mut chunk = vec![0u8; super::SPARSE_WRITE_SIZE + 1];
+        chunk[0] = b'X';
+        chunk[super::SPARSE_WRITE_SIZE] = b'Y';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write just over SPARSE_WRITE_SIZE");
+
+        assert_eq!(written, super::SPARSE_WRITE_SIZE + 1);
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![0u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back");
+
+        assert_eq!(buffer[0], b'X');
+        assert_eq!(buffer[super::SPARSE_WRITE_SIZE], b'Y');
+    }
+
+    // ==================== Data Pattern Tests ====================
+
+    #[test]
+    fn sparse_writer_leading_zeros_only() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        // Only leading zeros followed by data at the end
+        let mut chunk = vec![0u8; 2048];
+        chunk[2047] = b'X';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write leading zeros");
+
+        assert_eq!(written, 2048);
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![1u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back");
+
+        assert!(buffer[..2047].iter().all(|&b| b == 0));
+        assert_eq!(buffer[2047], b'X');
+    }
+
+    #[test]
+    fn sparse_writer_trailing_zeros_only() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        // Data at start followed by only trailing zeros
+        let mut chunk = vec![0u8; 2048];
+        chunk[0] = b'Y';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write trailing zeros");
+
+        assert_eq!(written, 2048);
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![1u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back");
+
+        assert_eq!(buffer[0], b'Y');
+        assert!(buffer[1..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn sparse_writer_single_byte_surrounded_by_zeros() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        let mut state = SparseWriteState::default();
+
+        // Single non-zero byte in the middle of zeros
+        let mut chunk = vec![0u8; 4096];
+        chunk[2048] = b'M';
+
+        let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
+            .expect("write single byte");
+
+        assert_eq!(written, 4096);
+
+        state
+            .finish(file.as_file_mut(), path.as_path())
+            .expect("finish");
+
+        file.as_file_mut()
+            .set_len(chunk.len() as u64)
+            .expect("truncate");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut buffer = vec![1u8; chunk.len()];
+        file.as_file_mut()
+            .read_exact(&mut buffer)
+            .expect("read back");
+
+        assert!(buffer[..2048].iter().all(|&b| b == 0));
+        assert_eq!(buffer[2048], b'M');
+        assert!(buffer[2049..].iter().all(|&b| b == 0));
+    }
+
+    // ==================== State Machine Tests ====================
+
+    #[test]
+    fn sparse_state_replace_vs_accumulate() {
+        let mut state = SparseWriteState::default();
+
+        // Accumulate some zeros
+        state.set_zero_run_start(100);
+        state.accumulate(500);
+        assert_eq!(state.pending_zeros(), 500);
+
+        // Replace resets to new value
+        state.replace(200);
+        assert_eq!(state.pending_zeros(), 200);
+
+        // Further accumulation adds to the replacement value
+        state.accumulate(100);
+        assert_eq!(state.pending_zeros(), 300);
+    }
+
+    #[test]
+    fn sparse_state_zero_run_start_tracking() {
+        let mut state = SparseWriteState::default();
+
+        state.set_zero_run_start(1000);
+        state.accumulate(500);
+
+        // Zero run start should be preserved
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+        file.as_file_mut().set_len(8192).expect("set length");
+
+        let final_pos = state
+            .finish_with_punch_hole(file.as_file_mut(), &path)
+            .expect("finish");
+
+        // Final position should be start + accumulated
+        assert_eq!(final_pos, 1500);
+    }
+
+    #[test]
+    fn sparse_state_multiple_flush_cycles() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        let path = file.path().to_path_buf();
+
+        // Pre-allocate
+        let data = vec![0xCCu8; 16384];
+        file.as_file_mut().write_all(&data).expect("write");
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+
+        let mut state = SparseWriteState::default();
+
+        // First flush cycle
+        state.set_zero_run_start(1000);
+        state.accumulate(500);
+        state
+            .flush_with_punch_hole(file.as_file_mut(), &path)
+            .expect("first flush");
+        assert_eq!(state.pending_zeros(), 0);
+
+        // Second flush cycle
+        state.set_zero_run_start(5000);
+        state.accumulate(1000);
+        state
+            .flush_with_punch_hole(file.as_file_mut(), &path)
+            .expect("second flush");
+        assert_eq!(state.pending_zeros(), 0);
+
+        // Verify both holes were punched
+        file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+        let mut buffer = vec![0u8; 16384];
+        file.as_file_mut().read_exact(&mut buffer).expect("read");
+
+        // First hole: 1000-1500
+        assert!(buffer[..1000].iter().all(|&b| b == 0xCC));
+        assert!(buffer[1000..1500].iter().all(|&b| b == 0));
+        assert!(buffer[1500..5000].iter().all(|&b| b == 0xCC));
+        // Second hole: 5000-6000
+        assert!(buffer[5000..6000].iter().all(|&b| b == 0));
+        assert!(buffer[6000..].iter().all(|&b| b == 0xCC));
+    }
+
+    // ==================== Zero-Run Detection Edge Cases ====================
+
+    #[test]
+    fn leading_zero_run_single_byte() {
+        assert_eq!(leading_zero_run(&[0]), 1);
+        assert_eq!(leading_zero_run(&[1]), 0);
+    }
+
+    #[test]
+    fn leading_zero_run_misaligned_16_bytes() {
+        // Test with lengths that don't align to 16-byte SIMD boundaries
+        for len in 1..=20 {
+            let all_zeros = vec![0u8; len];
+            assert_eq!(leading_zero_run(&all_zeros), len);
+
+            let mut with_nonzero = vec![0u8; len];
+            if len > 0 {
+                with_nonzero[len - 1] = 1;
+                assert_eq!(leading_zero_run(&with_nonzero), len - 1);
+            }
+        }
+    }
+
+    #[test]
+    fn trailing_zero_run_single_byte() {
+        assert_eq!(trailing_zero_run(&[0]), 1);
+        assert_eq!(trailing_zero_run(&[1]), 0);
+    }
+
+    #[test]
+    fn trailing_zero_run_misaligned_16_bytes() {
+        // Test with lengths that don't align to 16-byte boundaries
+        for len in 1..=20 {
+            let all_zeros = vec![0u8; len];
+            assert_eq!(trailing_zero_run(&all_zeros), len);
+
+            let mut with_nonzero = vec![0u8; len];
+            if len > 0 {
+                with_nonzero[0] = 1;
+                assert_eq!(trailing_zero_run(&with_nonzero), len - 1);
+            }
+        }
+    }
+
+    #[test]
+    fn zero_run_at_16_byte_boundary() {
+        // Test exactly 16 bytes (SIMD fast path boundary)
+        let zeros_16 = vec![0u8; 16];
+        assert_eq!(leading_zero_run(&zeros_16), 16);
+        assert_eq!(trailing_zero_run(&zeros_16), 16);
+
+        // 17 bytes (16 + 1)
+        let mut data_17 = vec![0u8; 17];
+        data_17[16] = 1;
+        assert_eq!(leading_zero_run(&data_17), 16);
+
+        let mut data_17_trail = vec![0u8; 17];
+        data_17_trail[0] = 1;
+        assert_eq!(trailing_zero_run(&data_17_trail), 16);
+    }
 }
