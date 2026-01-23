@@ -644,6 +644,7 @@ fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientS
                 transfer_stats.files_listed,
                 transfer_stats.files_transferred,
                 transfer_stats.bytes_received,
+                transfer_stats.total_source_bytes,
             )
         }
         ServerStats::Generator(generator_stats) => {
