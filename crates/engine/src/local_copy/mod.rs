@@ -49,7 +49,9 @@
 //! assert_eq!(summary.files_copied(), 1);
 //! ```
 
-mod buffer_pool;
+/// Buffer pool for I/O buffer reuse.
+#[cfg(feature = "optimized-buffers")]
+pub mod buffer_pool;
 mod compressor;
 mod context;
 mod deferred_sync;
