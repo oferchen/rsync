@@ -26,14 +26,12 @@
 //! - Upstream `generator.c::sum_sizes_sqroot()` for the reference C
 //!   implementation mirrored by the signature crate.
 
-// Re-export delta types from the matching crate for backward compatibility.
-// The matching crate is now the source of truth for these types.
+/// Delta generation and application types from the matching crate.
 pub use matching::{
     DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta,
 };
 
-// Re-export layout types from the signature crate for backward compatibility.
-// The signature crate is now the source of truth for these types.
+/// Signature layout types from the signature crate.
 pub use signature::{
     SignatureLayout, SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout,
 };
