@@ -864,4 +864,229 @@ mod tests {
         assert!(buf[1] & 0x80 != 0);
         assert_eq!(buf.len(), 5);
     }
+
+    // ========================================================================
+    // Sign Transition Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_sign_transition_positive_to_negative_to_positive() {
+        // Test: positive sequence, then negative (NDX_DONE), then positive again
+        // This verifies the state tracks prev_positive and prev_negative separately
+        let mut buf = Vec::new();
+        let mut write_state = NdxState::new();
+
+        // Write positive sequence: 0, 1, 2
+        write_state.write_ndx(&mut buf, 0).unwrap();
+        write_state.write_ndx(&mut buf, 1).unwrap();
+        write_state.write_ndx(&mut buf, 2).unwrap();
+
+        // Write NDX_DONE (-1) - should NOT affect prev_positive
+        write_state.write_ndx(&mut buf, NDX_DONE).unwrap();
+
+        // Write positive again: 3, 4 (should continue from prev_positive=2)
+        write_state.write_ndx(&mut buf, 3).unwrap();
+        write_state.write_ndx(&mut buf, 4).unwrap();
+
+        // Read back and verify
+        let mut cursor = Cursor::new(&buf);
+        let mut read_state = NdxState::new();
+
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), 0);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), 1);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), 2);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_DONE);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), 3);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), 4);
+    }
+
+    #[test]
+    fn test_alternating_positive_negative_values() {
+        // Test: alternating between positive and negative values
+        let mut buf = Vec::new();
+        let mut write_state = NdxState::new();
+
+        let sequence = [0, NDX_DONE, 5, NDX_FLIST_EOF, 10, NDX_DEL_STATS, 15];
+
+        for &val in &sequence {
+            write_state.write_ndx(&mut buf, val).unwrap();
+        }
+
+        let mut cursor = Cursor::new(&buf);
+        let mut read_state = NdxState::new();
+
+        for &expected in &sequence {
+            assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_negative_sequence_tracks_prev_negative() {
+        // Test: multiple negative values in sequence use delta encoding
+        let mut buf = Vec::new();
+        let mut write_state = NdxState::new();
+
+        // Write sequence of negative values (other than NDX_DONE)
+        // NDX_FLIST_EOF = -2, NDX_DEL_STATS = -3, NDX_FLIST_OFFSET = -101
+        write_state.write_ndx(&mut buf, NDX_FLIST_EOF).unwrap();
+        write_state.write_ndx(&mut buf, NDX_DEL_STATS).unwrap();
+        write_state.write_ndx(&mut buf, NDX_FLIST_OFFSET).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let mut read_state = NdxState::new();
+
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_FLIST_EOF);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_DEL_STATS);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_FLIST_OFFSET);
+    }
+
+    // ========================================================================
+    // State Isolation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_codec_instances_have_independent_state() {
+        // Test: two codec instances should not share state
+        let mut codec1 = ModernNdxCodec::new(32);
+        let mut codec2 = ModernNdxCodec::new(32);
+
+        let mut buf1 = Vec::new();
+        let mut buf2 = Vec::new();
+
+        // Codec1: writes 0, 1, 2 (prev_positive progresses: -1, 0, 1)
+        codec1.write_ndx(&mut buf1, 0).unwrap();
+        codec1.write_ndx(&mut buf1, 1).unwrap();
+        codec1.write_ndx(&mut buf1, 2).unwrap();
+
+        // Codec2: writes 100, 101 (prev_positive progresses: -1, 100)
+        // This should be independent of codec1's state
+        codec2.write_ndx(&mut buf2, 100).unwrap();
+        codec2.write_ndx(&mut buf2, 101).unwrap();
+
+        // Read back codec1's data
+        let mut cursor1 = Cursor::new(&buf1);
+        let mut read_codec1 = ModernNdxCodec::new(32);
+        assert_eq!(read_codec1.read_ndx(&mut cursor1).unwrap(), 0);
+        assert_eq!(read_codec1.read_ndx(&mut cursor1).unwrap(), 1);
+        assert_eq!(read_codec1.read_ndx(&mut cursor1).unwrap(), 2);
+
+        // Read back codec2's data
+        let mut cursor2 = Cursor::new(&buf2);
+        let mut read_codec2 = ModernNdxCodec::new(32);
+        assert_eq!(read_codec2.read_ndx(&mut cursor2).unwrap(), 100);
+        assert_eq!(read_codec2.read_ndx(&mut cursor2).unwrap(), 101);
+    }
+
+    // ========================================================================
+    // Encoding Boundary Tests
+    // ========================================================================
+
+    #[test]
+    fn test_delta_boundary_at_253() {
+        // Test: diff=253 should use single-byte encoding (max single byte)
+        let mut buf = Vec::new();
+        let mut state = NdxState::new();
+
+        // ndx=252 after prev=-1 means diff=253
+        state.write_ndx(&mut buf, 252).unwrap();
+        assert_eq!(buf.len(), 1, "diff=253 should be single byte");
+        assert_eq!(buf[0], 253);
+    }
+
+    #[test]
+    fn test_delta_boundary_at_254() {
+        // Test: diff=254 should trigger 2-byte encoding
+        let mut buf = Vec::new();
+        let mut state = NdxState::new();
+
+        // ndx=253 after prev=-1 means diff=254
+        state.write_ndx(&mut buf, 253).unwrap();
+        assert_eq!(buf[0], 0xFE, "diff=254 needs 0xFE prefix");
+        assert_eq!(buf.len(), 3, "diff=254 should be 3 bytes (prefix + 2)");
+    }
+
+    #[test]
+    fn test_large_gap_encoding() {
+        // Test: large gap between consecutive values
+        let mut buf = Vec::new();
+        let mut write_state = NdxState::new();
+
+        // First write index 100
+        write_state.write_ndx(&mut buf, 100).unwrap();
+        buf.clear();
+
+        // Now write index 50000 (gap of 49900)
+        write_state.write_ndx(&mut buf, 50000).unwrap();
+
+        // Verify extended encoding is used
+        assert_eq!(buf[0], 0xFE, "large gap needs extended encoding");
+
+        // Roundtrip test
+        let mut write_state2 = NdxState::new();
+        let mut buf2 = Vec::new();
+        write_state2.write_ndx(&mut buf2, 100).unwrap();
+        write_state2.write_ndx(&mut buf2, 50000).unwrap();
+
+        let mut cursor = Cursor::new(&buf2);
+        let mut read_state = NdxState::new();
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), 100);
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), 50000);
+    }
+
+    #[test]
+    fn test_4byte_encoding_for_very_large_diff() {
+        // Test: diff > 32767 requires 4-byte encoding
+        let mut buf = Vec::new();
+        let mut state = NdxState::new();
+
+        // ndx = 40000 after prev=-1 means diff = 40001
+        state.write_ndx(&mut buf, 40000).unwrap();
+
+        assert_eq!(buf[0], 0xFE, "large diff needs 0xFE prefix");
+        // High bit set indicates 4-byte format
+        assert!(buf[1] & 0x80 != 0, "4-byte format should have high bit set");
+        assert_eq!(buf.len(), 5, "4-byte format: prefix + 4 bytes");
+    }
+
+    // ========================================================================
+    // NDX Constants Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_all_negative_constants() {
+        let mut buf = Vec::new();
+        let mut write_state = NdxState::new();
+
+        // Write all defined negative constants
+        let negatives = [NDX_DONE, NDX_FLIST_EOF, NDX_DEL_STATS, NDX_FLIST_OFFSET];
+
+        for &val in &negatives {
+            write_state.write_ndx(&mut buf, val).unwrap();
+        }
+
+        let mut cursor = Cursor::new(&buf);
+        let mut read_state = NdxState::new();
+
+        for &expected in &negatives {
+            assert_eq!(
+                read_state.read_ndx(&mut cursor).unwrap(),
+                expected,
+                "failed for constant {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ndx_flist_offset_roundtrip() {
+        // NDX_FLIST_OFFSET (-101) is used for incremental file lists
+        let mut buf = Vec::new();
+        let mut write_state = NdxState::new();
+
+        write_state.write_ndx(&mut buf, NDX_FLIST_OFFSET).unwrap();
+
+        let mut cursor = Cursor::new(&buf);
+        let mut read_state = NdxState::new();
+
+        assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_FLIST_OFFSET);
+    }
 }

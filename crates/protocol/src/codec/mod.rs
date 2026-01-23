@@ -278,4 +278,116 @@ mod tests {
         );
         assert_eq!(read_codecs.ndx.read_ndx(&mut cursor).unwrap(), 1);
     }
+
+    // ========================================================================
+    // Protocol Version Feature Tests
+    // ========================================================================
+
+    #[test]
+    fn protocol_version_feature_gates_sender_receiver_modifiers() {
+        // Protocol 28: does NOT support sender/receiver modifiers
+        let codecs_28 = ProtocolCodecs::for_version(28);
+        assert!(!codecs_28.wire.supports_sender_receiver_modifiers());
+
+        // Protocol 29: DOES support sender/receiver modifiers
+        let codecs_29 = ProtocolCodecs::for_version(29);
+        assert!(codecs_29.wire.supports_sender_receiver_modifiers());
+
+        // Protocol 30+: continues to support
+        let codecs_30 = ProtocolCodecs::for_version(30);
+        assert!(codecs_30.wire.supports_sender_receiver_modifiers());
+    }
+
+    #[test]
+    fn protocol_version_feature_gates_flist_times() {
+        // Protocol 28: does NOT support flist times
+        let codecs_28 = ProtocolCodecs::for_version(28);
+        assert!(!codecs_28.wire.supports_flist_times());
+
+        // Protocol 29+: DOES support flist times
+        let codecs_29 = ProtocolCodecs::for_version(29);
+        assert!(codecs_29.wire.supports_flist_times());
+
+        let codecs_30 = ProtocolCodecs::for_version(30);
+        assert!(codecs_30.wire.supports_flist_times());
+    }
+
+    #[test]
+    fn protocol_version_feature_gates_perishable_modifier() {
+        // Protocol 28-29: do NOT support perishable modifier
+        let codecs_28 = ProtocolCodecs::for_version(28);
+        assert!(!codecs_28.wire.supports_perishable_modifier());
+
+        let codecs_29 = ProtocolCodecs::for_version(29);
+        assert!(!codecs_29.wire.supports_perishable_modifier());
+
+        // Protocol 30+: DOES support perishable modifier
+        let codecs_30 = ProtocolCodecs::for_version(30);
+        assert!(codecs_30.wire.supports_perishable_modifier());
+
+        let codecs_32 = ProtocolCodecs::for_version(32);
+        assert!(codecs_32.wire.supports_perishable_modifier());
+    }
+
+    #[test]
+    fn protocol_version_feature_gates_old_prefixes() {
+        // Protocol 28: uses old filter prefixes
+        let codecs_28 = ProtocolCodecs::for_version(28);
+        assert!(codecs_28.wire.uses_old_prefixes());
+
+        // Protocol 29+: uses new filter prefixes
+        let codecs_29 = ProtocolCodecs::for_version(29);
+        assert!(!codecs_29.wire.uses_old_prefixes());
+
+        let codecs_30 = ProtocolCodecs::for_version(30);
+        assert!(!codecs_30.wire.uses_old_prefixes());
+    }
+
+    #[test]
+    fn all_supported_versions_create_valid_codecs() {
+        // Test all supported protocol versions (28-32)
+        for version in 28..=32 {
+            let codecs = ProtocolCodecs::for_version(version);
+            assert_eq!(codecs.protocol_version(), version);
+
+            // Wire and NDX should agree on legacy/modern
+            let is_legacy = version < 30;
+            assert_eq!(codecs.is_legacy(), is_legacy);
+
+            // Enum variants should match expected type
+            if is_legacy {
+                assert!(matches!(codecs.wire, ProtocolCodecEnum::Legacy(_)));
+                assert!(matches!(codecs.ndx, NdxCodecEnum::Legacy(_)));
+            } else {
+                assert!(matches!(codecs.wire, ProtocolCodecEnum::Modern(_)));
+                assert!(matches!(codecs.ndx, NdxCodecEnum::Modern(_)));
+            }
+        }
+    }
+
+    #[test]
+    fn encoding_size_differs_between_legacy_and_modern() {
+        use std::io::Cursor;
+
+        // Legacy protocol 29: fixed 4-byte integers
+        let mut codecs_29 = ProtocolCodecs::for_version(29);
+        let mut buf_29 = Vec::new();
+        codecs_29.ndx.write_ndx(&mut buf_29, 0).unwrap();
+        assert_eq!(buf_29.len(), 4, "legacy NDX should be 4 bytes");
+
+        // Modern protocol 30: delta-encoded variable-length
+        let mut codecs_30 = ProtocolCodecs::for_version(30);
+        let mut buf_30 = Vec::new();
+        codecs_30.ndx.write_ndx(&mut buf_30, 0).unwrap();
+        assert_eq!(buf_30.len(), 1, "modern NDX should be 1 byte for first index");
+
+        // Both should decode to the same value
+        let mut cursor_29 = Cursor::new(&buf_29);
+        let mut read_29 = ProtocolCodecs::for_version(29);
+        assert_eq!(read_29.ndx.read_ndx(&mut cursor_29).unwrap(), 0);
+
+        let mut cursor_30 = Cursor::new(&buf_30);
+        let mut read_30 = ProtocolCodecs::for_version(30);
+        assert_eq!(read_30.ndx.read_ndx(&mut cursor_30).unwrap(), 0);
+    }
 }
