@@ -143,13 +143,28 @@ cargo doc --workspace --no-deps --open
 
 ### Prebuilt packages
 
-Prebuilt artifacts are (or will be) published on the GitHub **Releases** page (Deb/RPM packages and tarballs, across multiple platforms/architectures).
+Prebuilt artifacts are published on the GitHub **Releases** page for multiple platforms, architectures, and Rust toolchains.
 
-1. Go to: <https://github.com/oferchen/rsync/releases>  
-2. Download the asset for your OS/arch (e.g., `.deb`, `.rpm`, or `.tar.*`).  
-3. Install it using your platform’s package manager or by extracting the tarball.
+1. Go to: <https://github.com/oferchen/rsync/releases>
+2. Download the asset for your OS/arch (e.g., `.deb`, `.rpm`, or `.tar.*`).
+3. Install it using your platform's package manager or by extracting the tarball.
 
 The packaging pipeline installs `oc-rsync` under dedicated paths so that the system `rsync` can remain installed in parallel.
+
+#### Toolchain Variants
+
+Each release provides artifacts built with three Rust toolchains:
+
+| Toolchain | Naming Convention | Recommended For |
+|-----------|-------------------|-----------------|
+| **stable** | `oc-rsync-VERSION-PLATFORM.EXT` | Production use (default) |
+| **beta** | `oc-rsync-VERSION-PLATFORM-beta.EXT` | Testing upcoming Rust features |
+| **nightly** | `oc-rsync-VERSION-PLATFORM-nightly.EXT` | Experimental/bleeding-edge |
+
+**Examples:**
+- Stable: `oc-rsync_0.5.3-1_amd64.deb`, `oc-rsync-0.5.3-darwin-x86_64.tar.gz`
+- Beta: `oc-rsync_0.5.3-1-beta_amd64.deb`, `oc-rsync-0.5.3-darwin-x86_64-beta.tar.gz`
+- Nightly: `oc-rsync_0.5.3-1-nightly_amd64.deb`, `oc-rsync-0.5.3-darwin-x86_64-nightly.tar.gz`
 
 #### Linux Package Compatibility
 
@@ -209,9 +224,19 @@ You can install `oc-rsync` via Homebrew from the custom tap:
 # Add the tap (one-time)
 brew tap oferchen/rsync https://github.com/oferchen/rsync
 
-# Install oc-rsync
+# Install oc-rsync (stable - recommended)
 brew install oferchen/rsync/oc-rsync
+
+# Or install beta/nightly toolchain builds
+brew install oferchen/rsync/oc-rsync@beta
+brew install oferchen/rsync/oc-rsync@nightly
 ```
+
+| Formula | Toolchain | Description |
+|---------|-----------|-------------|
+| `oc-rsync` | stable | Production-ready, recommended for most users |
+| `oc-rsync@beta` | beta | Latest beta Rust features, good for testing |
+| `oc-rsync@nightly` | nightly | Bleeding-edge, may include experimental optimizations |
 
 To upgrade to the latest released version:
 
@@ -429,12 +454,16 @@ cargo xtask package --release --tarball
 cargo xtask package --release --tarball --tarball-target x86_64-apple-darwin
 ```
 
-CI publishes artifacts across:
+CI publishes artifacts across three Rust toolchains (stable, beta, nightly) for:
 
-* Linux (`x86_64` / `aarch64`) `.deb` and `.rpm` packages
-* Linux (`x86_64` / `aarch64`) musl static tarballs (portable, no glibc dependency)
-* macOS (`x86_64` / `aarch64`) tarballs
-* Windows (`x86_64`) tarballs
+| Platform | Architectures | Formats |
+|----------|---------------|---------|
+| Linux GNU | x86_64, aarch64 | `.deb`, `.rpm` |
+| Linux musl | x86_64, aarch64 | `.tar.gz` (static, portable) |
+| macOS | x86_64, aarch64 | `.tar.gz` |
+| Windows | x86_64 | `.tar.gz`, `.zip` |
+
+**Total artifacts per release:** 30 files (27 unique binaries + 3 Windows zips)
 
 ---
 
