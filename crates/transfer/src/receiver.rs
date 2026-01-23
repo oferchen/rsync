@@ -832,10 +832,14 @@ impl ReceiverContext {
         // Handle goodbye handshake
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
+        // Calculate total source bytes from file list (mirrors upstream stats.total_size)
+        let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
+
         Ok(TransferStats {
             files_listed: file_count,
             files_transferred,
             bytes_received,
+            total_source_bytes,
             metadata_errors,
         })
     }
@@ -850,6 +854,11 @@ pub struct TransferStats {
     pub files_transferred: usize,
     /// Total bytes received.
     pub bytes_received: u64,
+    /// Total size of all source files in the file list.
+    ///
+    /// This is the sum of all file sizes from the received file list,
+    /// used to calculate speedup ratio (total_size / bytes_transferred).
+    pub total_source_bytes: u64,
     /// Metadata errors encountered (path, error message).
     pub metadata_errors: Vec<(PathBuf, String)>,
 }
