@@ -315,6 +315,51 @@ impl<W: Write> Write for MultiplexWriter<W> {
     }
 }
 
+// ============================================================================
+// CountingWriter - Tracks total bytes written
+// ============================================================================
+
+/// A writer wrapper that counts the total bytes written.
+///
+/// This is used to track bytes sent during transfers for statistics.
+/// Mirrors upstream rsync's `stats.total_written` tracking in io.c:859.
+pub struct CountingWriter<W> {
+    inner: W,
+    bytes_written: u64,
+}
+
+impl<W> CountingWriter<W> {
+    /// Creates a new counting writer wrapping the given writer.
+    pub const fn new(inner: W) -> Self {
+        Self {
+            inner,
+            bytes_written: 0,
+        }
+    }
+
+    /// Returns the total number of bytes written through this wrapper.
+    pub const fn bytes_written(&self) -> u64 {
+        self.bytes_written
+    }
+
+    /// Consumes the wrapper, returning the inner writer.
+    pub fn into_inner(self) -> W {
+        self.inner
+    }
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.bytes_written = self.bytes_written.saturating_add(n as u64);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,5 +629,50 @@ mod tests {
             }
             Ok(_) => panic!("expected error"),
         }
+    }
+
+    // Tests for CountingWriter
+
+    #[test]
+    fn counting_writer_tracks_bytes() {
+        let mut buf = Vec::new();
+        let mut writer = CountingWriter::new(&mut buf);
+        assert_eq!(writer.bytes_written(), 0);
+
+        writer.write_all(b"hello").unwrap();
+        assert_eq!(writer.bytes_written(), 5);
+
+        writer.write_all(b" world").unwrap();
+        assert_eq!(writer.bytes_written(), 11);
+    }
+
+    #[test]
+    fn counting_writer_into_inner() {
+        let buf: Vec<u8> = Vec::new();
+        let writer = CountingWriter::new(buf);
+        let inner = writer.into_inner();
+        assert!(inner.is_empty());
+    }
+
+    #[test]
+    fn counting_writer_flush() {
+        let mut buf = Vec::new();
+        let mut writer = CountingWriter::new(&mut buf);
+        writer.write_all(b"test").unwrap();
+        writer.flush().unwrap();
+        assert_eq!(buf, b"test");
+    }
+
+    #[test]
+    fn counting_writer_partial_write() {
+        // Test that partial writes are counted correctly
+        let mut buf = [0u8; 3]; // Small buffer to force partial writes
+        let mut cursor = std::io::Cursor::new(&mut buf[..]);
+        let mut writer = CountingWriter::new(&mut cursor);
+
+        // Write to the buffer
+        let n = writer.write(b"ab").unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(writer.bytes_written(), 2);
     }
 }

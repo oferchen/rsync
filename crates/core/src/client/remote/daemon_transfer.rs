@@ -14,6 +14,7 @@
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -567,12 +568,14 @@ fn run_pull_transfer(
     // Build server config for receiver role with filter rules
     let server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
-    // Run server with pre-negotiated handshake
+    // Run server with pre-negotiated handshake, tracking elapsed time for rate calculation
+    let start = Instant::now();
     let server_stats =
         run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
+    let elapsed = start.elapsed();
 
     // Convert server stats to client summary
-    Ok(convert_server_stats_to_summary(server_stats))
+    Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
 /// Executes a push transfer (local → remote).
@@ -621,19 +624,25 @@ fn run_push_transfer(
     // Build server config for generator (sender) role with filter rules
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
 
-    // Run server with pre-negotiated handshake
+    // Run server with pre-negotiated handshake, tracking elapsed time for rate calculation
+    let start = Instant::now();
     let server_stats =
         run_server_with_handshake_over_stream(server_config, handshake, &mut stream)?;
+    let elapsed = start.elapsed();
 
     // Convert server stats to client summary
-    Ok(convert_server_stats_to_summary(server_stats))
+    Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
 /// Converts server-side statistics to a client summary.
 ///
 /// Maps the statistics returned by the server (receiver or generator) into the
-/// format expected by the client summary.
-fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientSummary {
+/// format expected by the client summary. The elapsed time is used to calculate
+/// the transfer rate (bytes/sec) shown in the summary output.
+fn convert_server_stats_to_summary(
+    stats: crate::server::ServerStats,
+    elapsed: Duration,
+) -> ClientSummary {
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
 
@@ -644,7 +653,9 @@ fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientS
                 transfer_stats.files_listed,
                 transfer_stats.files_transferred,
                 transfer_stats.bytes_received,
+                transfer_stats.bytes_sent,
                 transfer_stats.total_source_bytes,
+                elapsed,
             )
         }
         ServerStats::Generator(generator_stats) => {
@@ -653,6 +664,7 @@ fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientS
                 generator_stats.files_listed,
                 generator_stats.files_transferred,
                 generator_stats.bytes_sent,
+                elapsed,
             )
         }
     };

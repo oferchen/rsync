@@ -231,19 +231,23 @@ impl LocalCopySummary {
     ///
     /// This constructor is used when the local side acted as the receiver in a pull transfer.
     /// It maps the available receiver statistics (files listed, files transferred, bytes received,
-    /// total source bytes) to the corresponding LocalCopySummary fields.
+    /// bytes sent, total source bytes) to the corresponding LocalCopySummary fields.
     #[must_use]
     pub fn from_receiver_stats(
         files_listed: usize,
         files_transferred: usize,
         bytes_received: u64,
+        bytes_sent: u64,
         total_source_bytes: u64,
+        elapsed: Duration,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
             bytes_received,
+            bytes_sent,
             total_source_bytes,
+            total_elapsed: elapsed,
             ..Default::default()
         }
     }
@@ -258,11 +262,13 @@ impl LocalCopySummary {
         files_listed: usize,
         files_transferred: usize,
         bytes_sent: u64,
+        elapsed: Duration,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
             bytes_sent,
+            total_elapsed: elapsed,
             ..Default::default()
         }
     }
@@ -429,19 +435,23 @@ mod tests {
 
     #[test]
     fn from_receiver_stats_sets_fields() {
-        let summary = LocalCopySummary::from_receiver_stats(100, 50, 1024, 8192);
+        let summary =
+            LocalCopySummary::from_receiver_stats(100, 50, 1024, 256, 8192, Duration::from_secs(5));
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
         assert_eq!(summary.bytes_received(), 1024);
+        assert_eq!(summary.bytes_sent(), 256);
         assert_eq!(summary.total_source_bytes(), 8192);
+        assert_eq!(summary.total_elapsed(), Duration::from_secs(5));
     }
 
     #[test]
     fn from_generator_stats_sets_fields() {
-        let summary = LocalCopySummary::from_generator_stats(200, 75, 2048);
+        let summary = LocalCopySummary::from_generator_stats(200, 75, 2048, Duration::from_secs(3));
         assert_eq!(summary.regular_files_total(), 200);
         assert_eq!(summary.files_copied(), 75);
         assert_eq!(summary.bytes_sent(), 2048);
+        assert_eq!(summary.total_elapsed(), Duration::from_secs(3));
     }
 
     #[test]
