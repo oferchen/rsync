@@ -35,9 +35,8 @@ pub(crate) fn delete_extraneous_entries(
 
     for entry in read_dir {
         context.enforce_timeout()?;
-        let entry = entry.map_err(|error| {
-            LocalCopyError::io("read destination entry", destination.to_path_buf(), error)
-        })?;
+        let entry = entry
+            .map_err(|error| LocalCopyError::io("read destination entry", destination, error))?;
         let name = entry.file_name();
 
         if keep.contains(&name) {

@@ -201,7 +201,7 @@ impl<'a> CopyContext<'a> {
             self.deferred_sync
                 .register(destination.to_path_buf())
                 .map_err(|error| {
-                    LocalCopyError::io("register deferred sync", destination.to_path_buf(), error)
+                    LocalCopyError::io("register deferred sync", destination, error)
                 })?;
             self.deferred_sync.flush_if_threshold().map_err(|error| {
                 LocalCopyError::io("flush deferred sync threshold", PathBuf::new(), error)
@@ -324,7 +324,7 @@ impl<'a> CopyContext<'a> {
             && !parent.as_os_str().is_empty()
         {
             fs::create_dir_all(parent).map_err(|error| {
-                LocalCopyError::io("create backup directory", parent.to_path_buf(), error)
+                LocalCopyError::io("create backup directory", parent, error)
             })?;
         }
 

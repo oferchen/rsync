@@ -45,7 +45,7 @@ impl<'a> CopyContext<'a> {
             self.enforce_timeout()?;
             if buffer_pos == buffer_len {
                 buffer_len = reader.read(&mut read_buffer).map_err(|error| {
-                    LocalCopyError::io("copy file", source.to_path_buf(), error)
+                    LocalCopyError::io("copy file", source, error)
                 })?;
                 buffer_pos = 0;
                 if buffer_len == 0 {
@@ -175,7 +175,7 @@ impl<'a> CopyContext<'a> {
 
         let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {
-                LocalCopyError::io("compress file", source.to_path_buf(), error)
+                LocalCopyError::io("compress file", source, error)
             })?;
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
@@ -232,14 +232,14 @@ impl<'a> CopyContext<'a> {
             write_sparse_chunk(writer, state, chunk, destination)?
         } else {
             writer.write_all(chunk).map_err(|error| {
-                LocalCopyError::io("copy file", destination.to_path_buf(), error)
+                LocalCopyError::io("copy file", destination, error)
             })?;
             chunk.len()
         };
 
         if let Some(encoder) = compressor {
             encoder.write(chunk).map_err(|error| {
-                LocalCopyError::io("compress file", source.to_path_buf(), error)
+                LocalCopyError::io("compress file", source, error)
             })?;
             let total = encoder.bytes_written();
             let delta = total.saturating_sub(*compressed_progress);
@@ -332,7 +332,7 @@ impl<'a> CopyContext<'a> {
                     write_sparse_chunk(writer, sparse.state, &buffer[..read], destination)?;
             } else {
                 writer.write_all(&buffer[..read]).map_err(|error| {
-                    LocalCopyError::io("copy file", destination.to_path_buf(), error)
+                    LocalCopyError::io("copy file", destination, error)
                 })?;
             }
 
