@@ -589,18 +589,19 @@ impl ReceiverContext {
             // and flush once after sending the complete request.
 
             // Step 1 & 2: Generate signature if basis file exists
-            // Uses find_basis_file() helper to encapsulate exact match, reference directories, and fuzzy logic.
-            let basis_result = find_basis_file(
-                &file_path,
-                &dest_dir,
+            // Uses find_basis_file_with_config() to encapsulate exact match, reference directories, and fuzzy logic.
+            let basis_config = BasisFileConfig {
+                file_path: &file_path,
+                dest_dir: &dest_dir,
                 relative_path,
-                file_entry.size(),
-                self.config.flags.fuzzy,
-                &self.config.reference_directories,
-                self.protocol,
+                target_size: file_entry.size(),
+                fuzzy_enabled: self.config.flags.fuzzy,
+                reference_directories: &self.config.reference_directories,
+                protocol: self.protocol,
                 checksum_length,
                 checksum_algorithm,
-            );
+            };
+            let basis_result = find_basis_file_with_config(&basis_config);
             let signature_opt = basis_result.signature;
             let basis_path_opt = basis_result.basis_path;
 
@@ -1218,56 +1219,6 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         config.checksum_length,
         config.checksum_algorithm,
     )
-}
-
-/// Finds a basis file for delta transfer.
-///
-/// Search order:
-/// 1. Exact file at destination path
-/// 2. Reference directories (in order provided)
-/// 3. Fuzzy matching in destination directory (if enabled)
-///
-/// # Arguments
-///
-/// * `file_path` - Target file path in destination
-/// * `dest_dir` - Destination directory base
-/// * `relative_path` - Relative path from destination root
-/// * `target_size` - Expected size of the target file
-/// * `fuzzy_enabled` - Whether to try fuzzy matching
-/// * `reference_directories` - List of reference directories to check
-/// * `protocol` - Protocol version for signature generation
-/// * `checksum_length` - Checksum truncation length
-/// * `checksum_algorithm` - Algorithm for strong checksums
-///
-/// # Upstream Reference
-///
-/// - `generator.c:1450` - Basis file selection in `recv_generator()`
-/// - `generator.c:1580` - Fuzzy matching via `find_fuzzy_basis()`
-/// - `generator.c:1400` - Reference directory checking
-#[allow(clippy::too_many_arguments)]
-pub fn find_basis_file(
-    file_path: &std::path::Path,
-    dest_dir: &std::path::Path,
-    relative_path: &std::path::Path,
-    target_size: u64,
-    fuzzy_enabled: bool,
-    reference_directories: &[ReferenceDirectory],
-    protocol: ProtocolVersion,
-    checksum_length: NonZeroU8,
-    checksum_algorithm: engine::signature::SignatureAlgorithm,
-) -> BasisFileResult {
-    let config = BasisFileConfig {
-        file_path,
-        dest_dir,
-        relative_path,
-        target_size,
-        fuzzy_enabled,
-        reference_directories,
-        protocol,
-        checksum_length,
-        checksum_algorithm,
-    };
-    find_basis_file_with_config(&config)
 }
 
 /// Writes signature blocks to the wire.
