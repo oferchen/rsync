@@ -10,6 +10,7 @@
 //! halves, which are then passed to the server infrastructure for protocol handling.
 
 use std::ffi::{OsStr, OsString};
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -238,11 +239,13 @@ fn run_pull_transfer(
     // In a pull, we receive files from remote, so we're the receiver
     let server_config = build_server_config_for_receiver(config, local_paths)?;
 
-    // Split connection into separate read/write halves and run server
+    // Split connection into separate read/write halves and run server, tracking elapsed time
+    let start = Instant::now();
     let server_stats = run_server_over_ssh_connection(server_config, connection)?;
+    let elapsed = start.elapsed();
 
     // Convert server stats to client summary
-    Ok(convert_server_stats_to_summary(server_stats))
+    Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
 /// Executes a push transfer (local → remote).
@@ -259,11 +262,13 @@ fn run_push_transfer(
     // In a push, we send files to remote, so we're the generator
     let server_config = build_server_config_for_generator(config, local_paths)?;
 
-    // Split connection into separate read/write halves and run server
+    // Split connection into separate read/write halves and run server, tracking elapsed time
+    let start = Instant::now();
     let server_stats = run_server_over_ssh_connection(server_config, connection)?;
+    let elapsed = start.elapsed();
 
     // Convert server stats to client summary
-    Ok(convert_server_stats_to_summary(server_stats))
+    Ok(convert_server_stats_to_summary(server_stats, elapsed))
 }
 
 /// Executes a proxy transfer (remote → remote via local).
@@ -290,8 +295,12 @@ fn run_proxy_transfer(
 /// Maps the statistics returned by the server (receiver or generator) into the
 /// format expected by the client summary. Uses the available server statistics
 /// (files listed, files transferred, and bytes sent/received) to create a
-/// LocalCopySummary with the most relevant fields populated.
-fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientSummary {
+/// LocalCopySummary with the most relevant fields populated. The elapsed time
+/// is used to calculate the transfer rate (bytes/sec) shown in the summary output.
+fn convert_server_stats_to_summary(
+    stats: crate::server::ServerStats,
+    elapsed: Duration,
+) -> ClientSummary {
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
 
@@ -302,7 +311,9 @@ fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientS
                 transfer_stats.files_listed,
                 transfer_stats.files_transferred,
                 transfer_stats.bytes_received,
+                transfer_stats.bytes_sent,
                 transfer_stats.total_source_bytes,
+                elapsed,
             )
         }
         ServerStats::Generator(generator_stats) => {
@@ -311,6 +322,7 @@ fn convert_server_stats_to_summary(stats: crate::server::ServerStats) -> ClientS
                 generator_stats.files_listed,
                 generator_stats.files_transferred,
                 generator_stats.bytes_sent,
+                elapsed,
             )
         }
     };

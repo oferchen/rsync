@@ -121,6 +121,7 @@ pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_han
 pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::ChecksumFactory;
+pub use self::writer::CountingWriter;
 
 #[cfg(test)]
 mod tests;
@@ -423,8 +424,12 @@ pub fn run_server_with_handshake<W: Write>(
     match config.role {
         ServerRole::Receiver => {
             let mut ctx = ReceiverContext::new(&handshake, config);
-            // Pass reader by value - ReceiverContext::run now takes ownership and activates multiplex internally
-            let stats = ctx.run(chained_reader, &mut writer)?;
+            // Wrap writer in CountingWriter to track bytes sent back to sender
+            // This mirrors upstream rsync's stats.total_written tracking in io.c:859
+            let mut counting_writer = writer::CountingWriter::new(&mut writer);
+            let mut stats = ctx.run(chained_reader, &mut counting_writer)?;
+            // Record the bytes sent to the sender (signatures, indices, etc.)
+            stats.bytes_sent = counting_writer.bytes_written();
 
             Ok(ServerStats::Receiver(stats))
         }
