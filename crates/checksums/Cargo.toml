@@ -26,7 +26,7 @@ xxh3-simd = ["dep:xxh3"]
 
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
-md-5 = { version = "0.10", default-features = false, features = ["std"] }
+md-5 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 digest = { version = "0.10", default-features = false, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
