@@ -12,6 +12,9 @@ use jwalk::{Parallelism, WalkDir};
 
 use super::{DirectoryWalker, WalkConfig, WalkEntry, WalkError};
 
+/// Type alias for the boxed jwalk iterator to reduce type complexity.
+type JwalkIterator = Box<dyn Iterator<Item = Result<jwalk::DirEntry<((), ())>, jwalk::Error>> + Send>;
+
 /// Directory walker implementation using the `jwalk` crate for parallel traversal.
 ///
 /// Provides efficient, configurable directory traversal with support for:
@@ -53,7 +56,7 @@ use super::{DirectoryWalker, WalkConfig, WalkEntry, WalkError};
 pub struct WalkdirWalker {
     root: PathBuf,
     config: WalkConfig,
-    inner: Box<dyn Iterator<Item = Result<jwalk::DirEntry<((), ())>, jwalk::Error>> + Send>,
+    inner: JwalkIterator,
     #[cfg(unix)]
     root_dev: Option<u64>,
     /// Depth at which to skip subtree entries (entries with depth > this are skipped).

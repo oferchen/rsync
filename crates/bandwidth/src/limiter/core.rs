@@ -182,8 +182,8 @@ impl BandwidthLimiter {
         super::LimiterSleep::new(requested, actual)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) const fn accumulated_debt_for_testing(&self) -> u128 {
+    #[cfg(test)]
+    const fn accumulated_debt_for_testing(&self) -> u128 {
         self.total_written
     }
 }
@@ -517,7 +517,7 @@ mod tests {
         // Without burst, debt should accumulate based on timing/rate
         // (may be clamped by timing calculations but not by burst)
         // This test verifies burst=None doesn't affect debt artificially
-        assert!(debt_before > 0 || debt_before == 0); // Just ensure no panic
+        let _ = debt_before; // Just ensure the call doesn't panic
     }
 
     #[test]
@@ -553,7 +553,6 @@ mod tests {
         let result = calculate_write_max(nz(u64::MAX), None);
         // Should produce a valid usize without overflow
         assert!(result >= MIN_WRITE_MAX);
-        assert!(result <= usize::MAX);
     }
 
     #[test]
