@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn directory_plan_deletion_enabled() {
-        let names = vec![OsString::from("keep_me")];
+        let names = [OsString::from("keep_me")];
         let plan = DirectoryPlan {
             planned_entries: Vec::new(),
             keep_names: names.iter().collect(),
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn directory_plan_multiple_keep_names() {
-        let names = vec![
+        let names = [
             OsString::from("file1.txt"),
             OsString::from("file2.txt"),
             OsString::from("dir"),

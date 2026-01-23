@@ -15,15 +15,14 @@ fn bench_token_allocation(c: &mut Criterion) {
 
         // Per-token Vec allocation (baseline)
         group.bench_with_input(
-            BenchmarkId::new("vec_alloc", format!("{}B", token_size)),
+            BenchmarkId::new("vec_alloc", format!("{token_size}B")),
             &token_size,
             |b, &size| {
                 b.iter(|| {
-                    let mut buf = Vec::with_capacity(size);
-                    buf.resize(size, 0u8);
+                    let mut buf = vec![0u8; size];
                     // Simulate writing data
-                    for i in 0..size.min(64) {
-                        buf[i] = (i % 256) as u8;
+                    for (i, byte) in buf.iter_mut().take(64).enumerate() {
+                        *byte = (i % 256) as u8;
                     }
                     black_box(&buf);
                 });
@@ -33,15 +32,15 @@ fn bench_token_allocation(c: &mut Criterion) {
         // TokenBuffer reuse
         let mut token_buf = TokenBuffer::new();
         group.bench_with_input(
-            BenchmarkId::new("token_buffer", format!("{}B", token_size)),
+            BenchmarkId::new("token_buffer", format!("{token_size}B")),
             &token_size,
             |b, &size| {
                 b.iter(|| {
                     token_buf.resize_for(size);
                     let slice = token_buf.as_mut_slice();
                     // Simulate writing data
-                    for i in 0..size.min(64) {
-                        slice[i] = (i % 256) as u8;
+                    for (i, byte) in slice.iter_mut().take(64).enumerate() {
+                        *byte = (i % 256) as u8;
                     }
                     black_box(token_buf.as_slice());
                 });
@@ -72,13 +71,12 @@ fn bench_sequential_tokens(c: &mut Criterion) {
 
         // Per-token allocation
         group.bench_with_input(
-            BenchmarkId::new("vec_per_token", format!("{}_tokens", token_count)),
+            BenchmarkId::new("vec_per_token", format!("{token_count}_tokens")),
             &token_sizes,
             |b, sizes| {
                 b.iter(|| {
                     for &size in sizes {
-                        let mut buf = Vec::with_capacity(size);
-                        buf.resize(size, 0u8);
+                        let mut buf = vec![0u8; size];
                         buf[0] = 42;
                         black_box(&buf);
                     }
@@ -88,7 +86,7 @@ fn bench_sequential_tokens(c: &mut Criterion) {
 
         // TokenBuffer reuse
         group.bench_with_input(
-            BenchmarkId::new("token_buffer_reuse", format!("{}_tokens", token_count)),
+            BenchmarkId::new("token_buffer_reuse", format!("{token_count}_tokens")),
             &token_sizes,
             |b, sizes| {
                 let mut token_buf = TokenBuffer::new();
@@ -128,8 +126,7 @@ fn bench_varying_sizes(c: &mut Criterion) {
     group.bench_function("vec_varying", |b| {
         b.iter(|| {
             for &size in &sizes {
-                let mut buf = Vec::with_capacity(size);
-                buf.resize(size, 0u8);
+                let mut buf = vec![0u8; size];
                 buf[0] = 42;
                 black_box(&buf);
             }
