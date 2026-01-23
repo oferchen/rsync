@@ -40,7 +40,9 @@ impl<'a> PlannedEntry<'a> {
 
 pub(crate) struct DirectoryPlan<'a> {
     pub(crate) planned_entries: Vec<PlannedEntry<'a>>,
-    pub(crate) keep_names: Vec<OsString>,
+    /// Names of entries to keep when deleting extraneous files.
+    /// References the file_name fields of DirectoryEntry, avoiding allocation.
+    pub(crate) keep_names: Vec<&'a OsString>,
     pub(crate) deletion_enabled: bool,
     pub(crate) delete_timing: Option<DeleteTiming>,
 }
@@ -252,7 +254,7 @@ pub(crate) fn plan_directory_entries<'a>(
             };
 
             if preserve_name {
-                keep_names.push(file_name.clone());
+                keep_names.push(file_name);
             }
         }
 
@@ -366,9 +368,10 @@ mod tests {
 
     #[test]
     fn directory_plan_deletion_enabled() {
+        let names = vec![OsString::from("keep_me")];
         let plan = DirectoryPlan {
             planned_entries: Vec::new(),
-            keep_names: vec![OsString::from("keep_me")],
+            keep_names: names.iter().collect(),
             deletion_enabled: true,
             delete_timing: Some(DeleteTiming::Before),
         };
@@ -390,13 +393,14 @@ mod tests {
 
     #[test]
     fn directory_plan_multiple_keep_names() {
+        let names = vec![
+            OsString::from("file1.txt"),
+            OsString::from("file2.txt"),
+            OsString::from("dir"),
+        ];
         let plan = DirectoryPlan {
             planned_entries: Vec::new(),
-            keep_names: vec![
-                OsString::from("file1.txt"),
-                OsString::from("file2.txt"),
-                OsString::from("dir"),
-            ],
+            keep_names: names.iter().collect(),
             deletion_enabled: true,
             delete_timing: Some(DeleteTiming::During),
         };
