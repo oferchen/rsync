@@ -1,0 +1,6 @@
+scenario,upstream_ms,oc_rsync_ms,ratio
+small_files_initial,133,63,0.47
+small_files_nochange,135,62,0.46
+large_file,288,221,0.77
+mixed_tree,140,60,0.43
+deep_tree,110,8,0.07
