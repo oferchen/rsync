@@ -1,5 +1,8 @@
-// Re-export reference directory types from engine.
-// Engine is the canonical source of these types, used by both local and remote transfers.
+//! Reference directory configuration.
+//!
+//! Re-exports types from the engine crate, which is the canonical source.
+
+/// Reference directory types for local and remote transfers.
 pub use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
 #[cfg(test)]
