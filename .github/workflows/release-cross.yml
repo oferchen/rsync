@@ -87,10 +87,10 @@ jobs:
           printf 'tag=%s\n' "${TAG}" >> "${GITHUB_OUTPUT}"
 
   # ===========================================================================
-  # Linux GNU Builds (matrix: parallel x86_64 and aarch64)
+  # Linux GNU Builds (matrix: parallel x86_64 and aarch64, all toolchains)
   # ===========================================================================
   linux-gnu:
-    name: linux-gnu-${{ matrix.arch }}
+    name: linux-gnu-${{ matrix.arch }}-${{ matrix.toolchain }}
     runs-on: ubuntu-latest
     needs: validate-version
     timeout-minutes: 30
@@ -98,13 +98,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        toolchain: [stable, beta, nightly]
+        arch: [amd64, arm64]
         include:
-          - target: x86_64-unknown-linux-gnu
-            arch: amd64
+          - arch: amd64
+            target: x86_64-unknown-linux-gnu
             deb_arch: amd64
             rpm_arch: x86_64
-          - target: aarch64-unknown-linux-gnu
-            arch: arm64
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
             deb_arch: arm64
             rpm_arch: aarch64
 
@@ -113,14 +115,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-linux-${{ env.CACHE_VERSION }}
+          shared-key: release-linux-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
 
       - name: Install system dependencies
@@ -235,20 +238,48 @@ jobs:
           printf 'Building %s .rpm...\n' "${{ matrix.target }}"
           cargo generate-rpm --profile dist --target ${{ matrix.target }} -o target/dist/
 
+      - name: Rename packages with toolchain suffix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          DEB_ARCH="${{ matrix.deb_arch }}"
+          RPM_ARCH="${{ matrix.rpm_arch }}"
+          TOOLCHAIN="${{ matrix.toolchain }}"
+          TARGET="${{ matrix.target }}"
+
+          # Rename .deb package
+          DEB_PATH="target/${TARGET}/debian"
+          DEB_FILE=$(find "${DEB_PATH}" -name "oc-rsync_*_${DEB_ARCH}.deb" | head -1)
+          if [ -n "${DEB_FILE}" ]; then
+            NEW_DEB="${DEB_PATH}/oc-rsync_${VERSION}-1-${TOOLCHAIN}_${DEB_ARCH}.deb"
+            mv "${DEB_FILE}" "${NEW_DEB}"
+            printf 'Renamed .deb to: %s\n' "$(basename "${NEW_DEB}")"
+          fi
+
+          # Rename .rpm package
+          RPM_FILE=$(find target/dist -name "oc-rsync-*.${RPM_ARCH}.rpm" | head -1)
+          if [ -n "${RPM_FILE}" ]; then
+            NEW_RPM="target/dist/oc-rsync-${VERSION}-1-${TOOLCHAIN}.${RPM_ARCH}.rpm"
+            mv "${RPM_FILE}" "${NEW_RPM}"
+            printf 'Renamed .rpm to: %s\n' "$(basename "${NEW_RPM}")"
+          fi
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-linux-gnu-${{ matrix.arch }}
+          name: dist-linux-gnu-${{ matrix.arch }}-${{ matrix.toolchain }}
           retention-days: 7
           path: |
-            target/${{ matrix.target }}/debian/oc-rsync_*_${{ matrix.deb_arch }}.deb
-            target/dist/oc-rsync-*.rpm
+            target/${{ matrix.target }}/debian/oc-rsync_*-${{ matrix.toolchain }}_${{ matrix.deb_arch }}.deb
+            target/dist/oc-rsync-*-${{ matrix.toolchain }}.${{ matrix.rpm_arch }}.rpm
 
   # ===========================================================================
-  # Linux musl static tarballs (matrix: parallel x86_64 and aarch64)
+  # Linux musl static tarballs (matrix: parallel x86_64 and aarch64, all toolchains)
   # ===========================================================================
   linux-musl:
-    name: linux-musl-${{ matrix.arch }}
+    name: linux-musl-${{ matrix.arch }}-${{ matrix.toolchain }}
     runs-on: ubuntu-latest
     needs: validate-version
     timeout-minutes: 45
@@ -256,19 +287,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        toolchain: [stable, beta, nightly]
+        arch: [x86_64, aarch64]
         include:
-          - target: x86_64-unknown-linux-musl
-            arch: x86_64
-          - target: aarch64-unknown-linux-musl
-            arch: aarch64
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
       - name: Install cross
@@ -277,7 +311,7 @@ jobs:
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-linux-musl-${{ env.CACHE_VERSION }}
+          shared-key: release-linux-musl-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
 
       - name: Build static musl binary
@@ -299,9 +333,10 @@ jobs:
           VERSION="${{ needs.validate-version.outputs.version }}"
           TARGET="${{ matrix.target }}"
           ARCH="${{ matrix.arch }}"
+          TOOLCHAIN="${{ matrix.toolchain }}"
 
-          # Determine tarball name matching xtask convention
-          TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl.tar.gz"
+          # Determine tarball name with toolchain
+          TARBALL_NAME="oc-rsync-${VERSION}-linux-${ARCH}-musl-${TOOLCHAIN}.tar.gz"
 
           mkdir -p target/dist
           mkdir -p staging/bin
@@ -318,15 +353,15 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist-linux-musl-${{ matrix.arch }}
+          name: dist-linux-musl-${{ matrix.arch }}-${{ matrix.toolchain }}
           retention-days: 7
-          path: target/dist/oc-rsync-*-linux-*-musl.tar.gz
+          path: target/dist/oc-rsync-*-linux-*-musl-*.tar.gz
 
   # ===========================================================================
-  # macOS Builds (matrix: parallel x86_64 and aarch64)
+  # macOS Builds (matrix: parallel x86_64 and aarch64, all toolchains)
   # ===========================================================================
   macos:
-    name: macos-${{ matrix.arch }}
+    name: macos-${{ matrix.arch }}-${{ matrix.toolchain }}
     runs-on: macos-latest
     needs: validate-version
     timeout-minutes: 30
@@ -334,25 +369,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        toolchain: [stable, beta, nightly]
+        arch: [x86_64, aarch64]
         include:
-          - target: x86_64-apple-darwin
-            arch: x86_64
-          - target: aarch64-apple-darwin
-            arch: aarch64
+          - arch: x86_64
+            target: x86_64-apple-darwin
+          - arch: aarch64
+            target: aarch64-apple-darwin
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.toolchain }}
           targets: ${{ matrix.target }}
 
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-macos-${{ env.CACHE_VERSION }}
+          shared-key: release-macos-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
           key: ${{ matrix.arch }}
 
       - name: Install OpenSSL
@@ -364,35 +402,58 @@ jobs:
       - name: Build tarball
         run: cargo xtask package --tarball --tarball-target ${{ matrix.target }} --profile dist
 
+      - name: Rename tarball with toolchain
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate-version.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+          TOOLCHAIN="${{ matrix.toolchain }}"
+
+          TARBALL=$(find target/dist -name "oc-rsync-*-darwin-*.tar.gz" | head -1)
+          if [ -z "${TARBALL}" ]; then
+            echo "::error::Expected macOS tarball to exist"
+            exit 1
+          fi
+
+          NEW_NAME="oc-rsync-${VERSION}-darwin-${ARCH}-${TOOLCHAIN}.tar.gz"
+          mv "${TARBALL}" "target/dist/${NEW_NAME}"
+          echo "Renamed tarball to: ${NEW_NAME}"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist-macos-${{ matrix.arch }}
+          name: dist-macos-${{ matrix.arch }}-${{ matrix.toolchain }}
           retention-days: 7
-          path: target/dist/oc-rsync-*-darwin-*.tar.gz
+          path: target/dist/oc-rsync-*-darwin-*-${{ matrix.toolchain }}.tar.gz
 
   # ===========================================================================
-  # Windows Build
+  # Windows Builds (matrix: all toolchains)
   # ===========================================================================
   windows:
-    name: windows
+    name: windows-${{ matrix.toolchain }}
     runs-on: windows-latest
     needs: validate-version
-    timeout-minutes: 35
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.toolchain }}
           targets: x86_64-pc-windows-msvc
 
       - name: Cache cargo builds
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-windows-${{ env.CACHE_VERSION }}
+          shared-key: release-windows-${{ matrix.toolchain }}-${{ env.CACHE_VERSION }}
 
       - name: Disable rustc wrapper if configured
         shell: pwsh
@@ -413,32 +474,46 @@ jobs:
           $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv"
           cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --profile dist
 
+      - name: Rename tarball with toolchain
+        shell: pwsh
+        run: |
+          $version = "${{ needs.validate-version.outputs.version }}"
+          $toolchain = "${{ matrix.toolchain }}"
+          $tarball = Get-ChildItem -Path "target\dist" -Filter "oc-rsync-*-windows-*.tar.gz" | Select-Object -First 1
+          if ($null -eq $tarball) {
+            throw "expected windows tarball to exist"
+          }
+          $newName = "oc-rsync-${version}-windows-x86_64-${toolchain}.tar.gz"
+          $newPath = Join-Path $tarball.DirectoryName $newName
+          Move-Item -Path $tarball.FullName -Destination $newPath -Force
+          Write-Host "Renamed tarball to: $newName"
+
       - name: Create Windows zip archive
         shell: pwsh
         run: |
+          $version = "${{ needs.validate-version.outputs.version }}"
+          $toolchain = "${{ matrix.toolchain }}"
           $distDir = Join-Path (Get-Location) "dist"
           if (-not (Test-Path $distDir)) {
             New-Item -ItemType Directory -Force -Path $distDir | Out-Null
-          }
-          $tarball = Get-ChildItem -Path (Join-Path (Get-Location) "target\dist") -Filter "oc-rsync-*-windows-*.tar.gz" | Select-Object -First 1
-          if ($null -eq $tarball) {
-            throw "expected windows tarball to exist"
           }
           $profileDir = Join-Path (Get-Location) "target\x86_64-pc-windows-msvc\dist"
           $binaries = Get-ChildItem -Path $profileDir -Filter "*.exe" | Where-Object { $_.Name -match '^(oc-rsync|rsync)' }
           if ($binaries.Count -eq 0) {
             throw "no Windows binaries found for zip packaging"
           }
-          $zipPath = Join-Path $distDir ($tarball.BaseName + ".zip")
+          $zipName = "oc-rsync-${version}-windows-x86_64-${toolchain}.zip"
+          $zipPath = Join-Path $distDir $zipName
           Compress-Archive -Path $binaries.FullName -DestinationPath $zipPath -Force
+          Write-Host "Created zip: $zipName"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-windows
+          name: dist-windows-${{ matrix.toolchain }}
           retention-days: 7
           path: |
-            target/dist/oc-rsync-*-windows-*.tar.gz
+            target/dist/oc-rsync-*-windows-*-${{ matrix.toolchain }}.tar.gz
             dist/*.zip
 
   # ===========================================================================
@@ -475,17 +550,18 @@ jobs:
 
           echo "=== Verifying all expected artifacts are present ==="
 
-          # Count expected artifacts
-          EXPECTED_DEB=2      # amd64, arm64
-          EXPECTED_RPM=2      # x86_64, aarch64
-          EXPECTED_MUSL=2     # x86_64, aarch64
-          EXPECTED_MACOS=2    # x86_64, aarch64
-          EXPECTED_WINDOWS=1  # x86_64
+          # Count expected artifacts (3 toolchains: stable, beta, nightly)
+          # Each architecture × 3 toolchains
+          EXPECTED_DEB=6      # 2 arch (amd64, arm64) × 3 toolchains
+          EXPECTED_RPM=6      # 2 arch (x86_64, aarch64) × 3 toolchains
+          EXPECTED_MUSL=6     # 2 arch (x86_64, aarch64) × 3 toolchains
+          EXPECTED_MACOS=6    # 2 arch (x86_64, aarch64) × 3 toolchains
+          EXPECTED_WINDOWS=3  # 1 arch (x86_64) × 3 toolchains
 
-          # Count actual artifacts
+          # Count actual artifacts (musl tarballs now have toolchain suffix)
           DEB_COUNT=$(find dist -name "*.deb" | wc -l)
           RPM_COUNT=$(find dist -name "*.rpm" | wc -l)
-          MUSL_COUNT=$(find dist -name "*-musl.tar.gz" | wc -l)
+          MUSL_COUNT=$(find dist -name "*-musl-*.tar.gz" | wc -l)
           MACOS_COUNT=$(find dist -name "*darwin*.tar.gz" | wc -l)
           WINDOWS_COUNT=$(find dist -name "*windows*.tar.gz" | wc -l)
 
@@ -495,35 +571,35 @@ jobs:
             echo "::error::Expected $EXPECTED_DEB .deb files, found $DEB_COUNT"
             ERRORS=$((ERRORS + 1))
           else
-            echo "✓ Found $DEB_COUNT .deb packages"
+            echo "✓ Found $DEB_COUNT .deb packages (expected $EXPECTED_DEB)"
           fi
 
           if [ "$RPM_COUNT" -lt "$EXPECTED_RPM" ]; then
             echo "::error::Expected $EXPECTED_RPM .rpm files, found $RPM_COUNT"
             ERRORS=$((ERRORS + 1))
           else
-            echo "✓ Found $RPM_COUNT .rpm packages"
+            echo "✓ Found $RPM_COUNT .rpm packages (expected $EXPECTED_RPM)"
           fi
 
           if [ "$MUSL_COUNT" -lt "$EXPECTED_MUSL" ]; then
             echo "::error::Expected $EXPECTED_MUSL musl tarballs, found $MUSL_COUNT"
             ERRORS=$((ERRORS + 1))
           else
-            echo "✓ Found $MUSL_COUNT musl static tarballs"
+            echo "✓ Found $MUSL_COUNT musl static tarballs (expected $EXPECTED_MUSL)"
           fi
 
           if [ "$MACOS_COUNT" -lt "$EXPECTED_MACOS" ]; then
             echo "::error::Expected $EXPECTED_MACOS macOS tarballs, found $MACOS_COUNT"
             ERRORS=$((ERRORS + 1))
           else
-            echo "✓ Found $MACOS_COUNT macOS tarballs"
+            echo "✓ Found $MACOS_COUNT macOS tarballs (expected $EXPECTED_MACOS)"
           fi
 
           if [ "$WINDOWS_COUNT" -lt "$EXPECTED_WINDOWS" ]; then
             echo "::error::Expected $EXPECTED_WINDOWS Windows tarballs, found $WINDOWS_COUNT"
             ERRORS=$((ERRORS + 1))
           else
-            echo "✓ Found $WINDOWS_COUNT Windows tarballs"
+            echo "✓ Found $WINDOWS_COUNT Windows tarballs (expected $EXPECTED_WINDOWS)"
           fi
 
           if [ $ERRORS -gt 0 ]; then
@@ -531,7 +607,7 @@ jobs:
             exit 1
           fi
 
-          echo "=== All required artifacts verified ==="
+          echo "=== All required artifacts verified (27 total: 6 deb + 6 rpm + 6 musl + 6 macos + 3 windows) ==="
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -590,9 +666,9 @@ jobs:
 
           mkdir -p Formula
 
-          # Find actual macOS tarballs from artifacts
-          AMD64_PATH="$(find dist-macos -maxdepth 1 -type f \( -name 'oc-rsync-*darwin*x86_64*.tar.gz' -o -name 'oc-rsync-*darwin*amd64*.tar.gz' \) | sort | head -n1 || true)"
-          ARM64_PATH="$(find dist-macos -maxdepth 1 -type f \( -name 'oc-rsync-*darwin*aarch64*.tar.gz' -o -name 'oc-rsync-*darwin*arm64*.tar.gz' \) | sort | head -n1 || true)"
+          # Find actual macOS tarballs from artifacts (use stable toolchain for Homebrew)
+          AMD64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*darwin*x86_64*stable*.tar.gz' | sort | head -n1 || true)"
+          ARM64_PATH="$(find dist-macos -maxdepth 1 -type f -name 'oc-rsync-*darwin*aarch64*stable*.tar.gz' | sort | head -n1 || true)"
 
           if [ -z "${AMD64_PATH}" ] || [ -z "${ARM64_PATH}" ]; then
             printf 'Could not locate both macOS amd64 and arm64 tarballs in dist-macos\n' >&2
