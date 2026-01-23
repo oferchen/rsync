@@ -21,7 +21,7 @@ use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use engine::signature::FileSignature;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
-use crate::constants::CHUNK_SIZE;
+use crate::constants::{leading_zero_count, trailing_zero_count, CHUNK_SIZE};
 use crate::map_file::{BufferedMap, MapFile};
 use crate::token_buffer::TokenBuffer;
 
@@ -90,7 +90,7 @@ impl SparseWriteState {
             let end = (offset + CHUNK_SIZE).min(data.len());
             let chunk = &data[offset..end];
 
-            let leading_zeros = chunk.iter().take_while(|&&b| b == 0).count();
+            let leading_zeros = leading_zero_count(chunk);
             self.accumulate(leading_zeros);
 
             if leading_zeros == chunk.len() {
@@ -99,7 +99,7 @@ impl SparseWriteState {
             }
 
             let tail = &chunk[leading_zeros..];
-            let trailing_zeros = tail.iter().rev().take_while(|&&b| b == 0).count();
+            let trailing_zeros = trailing_zero_count(tail);
             let data_start = offset + leading_zeros;
             let data_end = end - trailing_zeros;
 
