@@ -357,6 +357,8 @@ pub(super) fn execute_transfer(
         start,
     );
 
+    // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
+    #[cfg(not(feature = "batch-sync"))]
     if copy_result.is_ok() && context.fsync_enabled() {
         sync_destination_file(&mut writer, preallocate_target)?;
     }
@@ -566,6 +568,8 @@ fn copy_special_as_regular_file(
             .truncate(true)
             .open(destination)
             .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+        // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
+        #[cfg(not(feature = "batch-sync"))]
         if context.fsync_enabled() {
             sync_destination_file(&mut file, destination)?;
         }
@@ -576,6 +580,8 @@ fn copy_special_as_regular_file(
             context.partial_directory_path(),
             context.temp_directory_path(),
         )?;
+        // Sync immediately only when batch-sync is disabled; otherwise DeferredSync handles it
+        #[cfg(not(feature = "batch-sync"))]
         if context.fsync_enabled() {
             let target = new_guard.staging_path();
             sync_destination_file(&mut file, target)?;
@@ -719,6 +725,7 @@ fn copy_special_as_regular_file(
     Ok(())
 }
 
+#[cfg(any(not(feature = "batch-sync"), test))]
 fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), LocalCopyError> {
     writer
         .sync_all()
@@ -732,7 +739,7 @@ fn record_fsync_call() {
     FSYNC_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(feature = "batch-sync")))]
 const fn record_fsync_call() {}
 
 #[cfg(test)]
