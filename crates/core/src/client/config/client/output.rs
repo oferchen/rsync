@@ -41,6 +41,13 @@ impl ClientConfig {
     pub const fn collect_events(&self) -> bool {
         self.force_event_collection || self.verbosity > 0 || self.progress || self.list_only
     }
+
+    /// Reports whether daemon MOTD output should be suppressed.
+    #[must_use]
+    #[doc(alias = "--no-motd")]
+    pub const fn no_motd(&self) -> bool {
+        self.no_motd
+    }
 }
 
 #[cfg(test)]

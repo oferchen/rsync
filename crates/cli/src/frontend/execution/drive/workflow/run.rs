@@ -649,6 +649,7 @@ where
         rsync_path: parsed.rsync_path.clone(),
         early_input: early_input.map(PathBuf::from),
         batch_config,
+        no_motd,
     };
 
     let builder = config::build_base_config(config_inputs);
