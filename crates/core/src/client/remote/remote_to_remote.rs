@@ -42,6 +42,12 @@ use super::super::error::{ClientError, invalid_argument_error};
 use super::super::summary::ClientSummary;
 use super::invocation::{RemoteInvocationBuilder, RemoteOperands, RemoteRole};
 
+/// Parsed source connection information: host, optional user, optional port, and paths.
+///
+/// Returned by `parse_source_operands` to encapsulate all connection details
+/// extracted from remote source operand(s).
+type SourceConnectionInfo = (String, Option<String>, Option<u16>, Vec<String>);
+
 /// Statistics from a proxy transfer.
 #[derive(Debug, Default)]
 struct ProxyStats {
@@ -97,10 +103,7 @@ pub fn run_remote_to_remote_transfer(
 }
 
 /// Parses source operand(s) and extracts connection info.
-#[allow(clippy::type_complexity)]
-fn parse_source_operands(
-    operands: &RemoteOperands,
-) -> Result<(String, Option<String>, Option<u16>, Vec<String>), ClientError> {
+fn parse_source_operands(operands: &RemoteOperands) -> Result<SourceConnectionInfo, ClientError> {
     match operands {
         RemoteOperands::Single(operand_str) => {
             let operand = parse_ssh_operand(OsStr::new(operand_str))

@@ -33,7 +33,7 @@ pub(crate) fn determine_append_mode(
     if existing_len == 0 || existing_len >= file_size {
         reader
             .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         return Ok(AppendMode::Disabled);
     }
 
@@ -41,19 +41,22 @@ pub(crate) fn determine_append_mode(
         let matches = verify_append_prefix(reader, source, destination, existing_len)?;
         reader
             .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         if !matches {
             return Ok(AppendMode::Disabled);
         }
     } else {
         reader
             .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     }
 
     Ok(AppendMode::Append(existing_len))
 }
 
+/// Verifies that the existing destination prefix matches the source.
+///
+/// Uses a single buffer split into two halves to reduce allocation overhead.
 fn verify_append_prefix(
     reader: &mut fs::File,
     source: &Path,
@@ -62,7 +65,7 @@ fn verify_append_prefix(
 ) -> Result<bool, LocalCopyError> {
     reader
         .seek(SeekFrom::Start(0))
-        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let mut destination_file = fs::File::open(destination).map_err(|error| {
         LocalCopyError::io(
             "read existing destination",
@@ -71,14 +74,17 @@ fn verify_append_prefix(
         )
     })?;
     let mut remaining = existing_len;
-    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
-    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    // Use a single buffer split into two halves to reduce allocations
+    let half_size = COPY_BUFFER_SIZE / 2;
+    let mut unified_buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let (source_buffer, destination_buffer) = unified_buffer.split_at_mut(half_size);
 
     while remaining > 0 {
-        let chunk = remaining.min(COPY_BUFFER_SIZE as u64) as usize;
+        let chunk = remaining.min(half_size as u64) as usize;
         let source_read = reader
             .read(&mut source_buffer[..chunk])
-            .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         let destination_read = destination_file
             .read(&mut destination_buffer[..chunk])
             .map_err(|error| {

@@ -14,6 +14,11 @@ autobins = false
 name = "oc-rsync"
 path = "src/bin/oc-rsync.rs"
 
+[[bin]]
+name = "dhat-profile"
+path = "src/bin/dhat_profile.rs"
+required-features = ["dhat-heap"]
+
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
 sd-notify = ["daemon/sd-notify"]
@@ -24,11 +29,14 @@ xattr = ["cli/xattr", "core/xattr"]
 iconv = ["core/iconv"]
 # Async runtime support - enables tokio-based async I/O throughout the codebase
 async = ["daemon/async", "core/async"]
+# Heap allocation profiling with dhat - use with profile.dhat
+dhat-heap = ["dep:dhat"]
 
 [dependencies]
 cli = { path = "crates/cli", default-features = false }
 daemon = { path = "crates/daemon", default-features = false }
 core = { path = "crates/core", default-features = false }
+mimalloc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -36,6 +44,10 @@ core = { path = "crates/core" }
 filetime = "0.2"
 libc = "0.2"
 tempfile = "3.10"
+
+[dependencies.dhat]
+workspace = true
+optional = true
 
 # Extra deps only for Windows + GNU
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
@@ -81,6 +93,14 @@ version = "0.5.3"
 repository = "https://github.com/oferchen/rsync"
 
 [workspace.dependencies]
+# High-performance memory allocator - 8-50% faster than system allocator
+mimalloc = "0.1"
+# Fast non-cryptographic hash for HashMap/HashSet - 2-5x faster for integer keys
+rustc-hash = "2.1"
+# Parallel directory walking - ~4x faster than walkdir
+jwalk = "0.8"
+# Cross-platform ACL support (Linux, macOS, FreeBSD)
+exacl = "0.12"
 # Async runtime - feature-gated for optional async support
 tokio = { version = "1.45", features = ["rt-multi-thread", "io-util", "net", "fs", "sync", "time", "process", "macros"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
@@ -94,12 +114,32 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rayon = "1.10"
 # Concurrent hash map - for shared state across daemon sessions
 dashmap = "6.1"
+# Heap profiling - for allocation analysis with dhat-viewer
+dhat = "0.3"
 
 [workspace.metadata.docs.rs]
 all-features = true
 no-default-features = false
 rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
+
+# ============================================================================
+# Build Profiles
+# ============================================================================
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+
+[profile.dhat]
+inherits = "release"
+debug = true
+strip = false
+
+# ============================================================================
+# Workspace Metadata
+# ============================================================================
 
 [workspace.metadata.oc_rsync]
 brand = "oc"
