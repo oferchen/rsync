@@ -633,6 +633,7 @@ dependencies = [
  "batch",
  "checksums",
  "compress",
+ "criterion",
  "filetime",
  "filters",
  "globset",

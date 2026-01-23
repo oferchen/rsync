@@ -166,7 +166,10 @@ impl BufferPool {
     /// This is primarily useful for testing and monitoring.
     #[must_use]
     pub fn available(&self) -> usize {
-        self.buffers.lock().expect("buffer pool mutex poisoned").len()
+        self.buffers
+            .lock()
+            .expect("buffer pool mutex poisoned")
+            .len()
     }
 
     /// Returns the maximum number of buffers the pool will retain.
