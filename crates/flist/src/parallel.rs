@@ -158,6 +158,106 @@ pub fn collect_paths_then_metadata_parallel(
     }
 }
 
+use crate::lazy_entry::LazyFileListEntry;
+
+/// Collects file entries with lazy metadata loading.
+///
+/// Only performs directory enumeration initially - metadata is fetched
+/// lazily when accessed. This enables efficient filtering before
+/// incurring the cost of `stat()` syscalls.
+///
+/// # Example
+///
+/// ```ignore
+/// use flist::parallel::collect_lazy_parallel;
+/// use std::path::PathBuf;
+///
+/// let entries = collect_lazy_parallel(PathBuf::from("/path"), false)?;
+///
+/// // Filter by path without stat() calls
+/// let filtered: Vec<_> = entries.into_iter()
+///     .filter(|e| !e.relative_path().starts_with("."))
+///     .collect();
+///
+/// // Now resolve metadata only for filtered entries
+/// let resolved = resolve_metadata_parallel(filtered)?;
+/// ```
+pub fn collect_lazy_parallel(
+    root: PathBuf,
+    follow_symlinks: bool,
+) -> Result<Vec<LazyFileListEntry>, std::io::Error> {
+    // Collect paths without metadata
+    let paths = collect_paths_recursive(&root, &root, follow_symlinks);
+
+    // Convert to lazy entries
+    let entries: Vec<LazyFileListEntry> = paths
+        .into_iter()
+        .map(|(full_path, relative_path, depth, is_root)| {
+            LazyFileListEntry::new(full_path, relative_path, depth, is_root, follow_symlinks)
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Resolves metadata for multiple lazy entries in parallel.
+///
+/// Uses rayon's parallel iterator to fetch metadata concurrently,
+/// providing significant speedup on systems with slow `stat()` syscalls.
+///
+/// # Example
+///
+/// ```ignore
+/// use flist::parallel::{collect_lazy_parallel, resolve_metadata_parallel};
+///
+/// let lazy_entries = collect_lazy_parallel(root, false)?;
+///
+/// // Filter entries by path (no metadata needed)
+/// let filtered: Vec<_> = lazy_entries.into_iter()
+///     .filter(|e| e.relative_path().extension() != Some("tmp".as_ref()))
+///     .collect();
+///
+/// // Resolve metadata in parallel
+/// let resolved = resolve_metadata_parallel(filtered)?;
+/// ```
+///
+/// # Errors
+///
+/// Returns errors for paths that could not have their metadata fetched,
+/// along with the paths that failed.
+pub fn resolve_metadata_parallel(
+    entries: Vec<LazyFileListEntry>,
+) -> Result<Vec<FileListEntry>, Vec<(PathBuf, std::io::Error)>> {
+    let results: Vec<_> = entries
+        .into_par_iter()
+        .map(|entry| {
+            let path = entry.full_path().to_path_buf();
+            match entry.into_resolved() {
+                Ok(resolved) => Ok(resolved),
+                Err(e) => Err((path, e)),
+            }
+        })
+        .collect();
+
+    let mut resolved = Vec::new();
+    let mut errors = Vec::new();
+
+    for result in results {
+        match result {
+            Ok(entry) => resolved.push(entry),
+            Err(e) => errors.push(e),
+        }
+    }
+
+    if errors.is_empty() {
+        // Sort to maintain deterministic order
+        resolved.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        Ok(resolved)
+    } else {
+        Err(errors)
+    }
+}
+
 /// Recursively collects paths without fetching metadata.
 fn collect_paths_recursive(
     root: &PathBuf,
@@ -261,5 +361,61 @@ mod tests {
 
         // Should find all entries
         assert_eq!(entries.len(), 5);
+    }
+
+    #[test]
+    fn collect_lazy_parallel_defers_metadata() {
+        let temp = create_test_tree();
+
+        let entries = collect_lazy_parallel(temp.path().to_path_buf(), false).unwrap();
+
+        // Should find all entries
+        assert_eq!(entries.len(), 5);
+
+        // Metadata should not be resolved yet
+        for entry in &entries {
+            assert!(!entry.is_resolved());
+        }
+    }
+
+    #[test]
+    fn resolve_metadata_parallel_resolves_all() {
+        let temp = create_test_tree();
+
+        let lazy_entries = collect_lazy_parallel(temp.path().to_path_buf(), false).unwrap();
+        let resolved = resolve_metadata_parallel(lazy_entries).unwrap();
+
+        // Should resolve all entries
+        assert_eq!(resolved.len(), 5);
+
+        // Verify metadata is present
+        for entry in &resolved {
+            let _ = entry.metadata();
+        }
+    }
+
+    #[test]
+    fn lazy_parallel_enables_filtering() {
+        let temp = create_test_tree();
+
+        let lazy_entries = collect_lazy_parallel(temp.path().to_path_buf(), false).unwrap();
+
+        // Filter to only files (by checking name, not metadata)
+        let filtered: Vec<_> = lazy_entries
+            .into_iter()
+            .filter(|e| e.relative_path().extension().is_some())
+            .collect();
+
+        // Should have 3 .txt files
+        assert_eq!(filtered.len(), 3);
+
+        // Resolve only the filtered entries
+        let resolved = resolve_metadata_parallel(filtered).unwrap();
+        assert_eq!(resolved.len(), 3);
+
+        // All should be files
+        for entry in &resolved {
+            assert!(entry.metadata().is_file());
+        }
     }
 }

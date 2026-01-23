@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
+use std::sync::Arc;
+
 use super::ActiveCompressor;
+use super::buffer_pool::BufferPool;
+use super::deferred_sync::{DeferredSync, SyncStrategy};
 use super::filter_program::{
     ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
     FilterSegmentLayers, FilterSegmentStack, directory_has_marker,
@@ -83,6 +87,12 @@ pub(crate) struct CopyContext<'a> {
     last_progress: Instant,
     created_entries: Vec<CreatedEntry>,
     destination_root: PathBuf,
+    /// Shared buffer pool for file I/O operations.
+    #[cfg(feature = "optimized-buffers")]
+    buffer_pool: Arc<BufferPool>,
+    /// Deferred filesystem sync manager.
+    #[cfg(feature = "batch-sync")]
+    deferred_sync: DeferredSync,
 }
 
 pub(crate) struct FinalizeMetadataParams<'a> {
