@@ -503,6 +503,12 @@ impl ReceiverContext {
 
         let reader = &mut reader; // Convert owned reader to mutable reference for rest of function
 
+        // Print verbose message before receiving file list (mirrors upstream flist.c:2571-2572)
+        // INFO_GTE(FLIST, 1) && !am_server - when verbose and acting as client
+        if self.config.flags.verbose && self.config.client_mode {
+            eprintln!("receiving incremental file list");
+        }
+
         // Receive file list from sender
         let file_count = self.receive_file_list(reader)?;
         let _ = file_count; // Suppress unused warning (file list stored in self.file_list)
@@ -568,9 +574,22 @@ impl ReceiverContext {
                 dest_dir.join(relative_path)
             };
 
-            // Skip directories (already handled above)
+            // Skip directories (already handled above), but output in verbose mode
             if file_entry.is_dir() {
+                // Output directory name with trailing slash in verbose mode
+                if self.config.flags.verbose && self.config.client_mode {
+                    if relative_path.as_os_str() == "." {
+                        eprintln!("./");
+                    } else {
+                        eprintln!("{}/", relative_path.display());
+                    }
+                }
                 continue;
+            }
+
+            // Output file name in verbose mode (mirrors upstream rsync.c:674)
+            if self.config.flags.verbose && self.config.client_mode {
+                eprintln!("{}", relative_path.display());
             }
 
             // Send file index using NDX encoding via NdxCodec Strategy pattern.
