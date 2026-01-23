@@ -9,10 +9,13 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime};
 
+#[cfg(feature = "optimized-buffers")]
 use std::sync::Arc;
 
 use super::ActiveCompressor;
+#[cfg(feature = "optimized-buffers")]
 use super::buffer_pool::BufferPool;
+#[cfg(feature = "batch-sync")]
 use super::deferred_sync::{DeferredSync, SyncStrategy};
 use super::filter_program::{
     ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
