@@ -282,7 +282,8 @@ pub(super) fn execute_transfer(
     )?;
 
     #[cfg(feature = "optimized-buffers")]
-    let mut buffer_guard = super::super::super::super::BufferPool::acquire_from(context.buffer_pool());
+    let mut buffer_guard =
+        super::super::super::super::BufferPool::acquire_from(context.buffer_pool());
     #[cfg(feature = "optimized-buffers")]
     let buffer: &mut [u8] = &mut buffer_guard;
 
