@@ -230,18 +230,20 @@ impl LocalCopySummary {
     /// Creates a summary from server-side receiver statistics.
     ///
     /// This constructor is used when the local side acted as the receiver in a pull transfer.
-    /// It maps the available receiver statistics (files listed, files transferred, bytes received)
-    /// to the corresponding LocalCopySummary fields.
+    /// It maps the available receiver statistics (files listed, files transferred, bytes received,
+    /// total source bytes) to the corresponding LocalCopySummary fields.
     #[must_use]
     pub fn from_receiver_stats(
         files_listed: usize,
         files_transferred: usize,
         bytes_received: u64,
+        total_source_bytes: u64,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
             bytes_received,
+            total_source_bytes,
             ..Default::default()
         }
     }
@@ -427,10 +429,11 @@ mod tests {
 
     #[test]
     fn from_receiver_stats_sets_fields() {
-        let summary = LocalCopySummary::from_receiver_stats(100, 50, 1024);
+        let summary = LocalCopySummary::from_receiver_stats(100, 50, 1024, 8192);
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
         assert_eq!(summary.bytes_received(), 1024);
+        assert_eq!(summary.total_source_bytes(), 8192);
     }
 
     #[test]
