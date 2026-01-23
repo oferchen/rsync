@@ -67,25 +67,31 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --no-deps
 
   # ===========================================================================
-  # Test Job - Full test suite on Linux
+  # Test Job - Full test suite on Linux with toolchain matrix
   # ===========================================================================
   test:
-    name: nextest
+    name: nextest (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     needs: lint
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: test
 
       - name: Install cargo-nextest
@@ -95,6 +101,14 @@ jobs:
 
       - name: Run tests
         run: cargo nextest run --workspace --all-targets --all-features
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.toolchain }}
+          path: target/debug/rsync*
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ===========================================================================
   # Feature Flags - Test various feature combinations (reusable workflow)
@@ -107,25 +121,31 @@ jobs:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
 
   # ===========================================================================
-  # Windows Test - Platform-specific testing (optimized for speed)
+  # Windows Test - Platform-specific testing with toolchain matrix
   # ===========================================================================
   windows-test:
-    name: Windows
+    name: Windows (${{ matrix.toolchain }})
     runs-on: windows-latest
     needs: lint
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-windows-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -140,6 +160,14 @@ jobs:
           # Run Windows-specific crates only (core, engine, cli have platform code)
           # Full test suite runs on Linux; Windows validates platform-specific paths
           cargo nextest run -p core -p engine -p cli --all-features
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-windows-${{ matrix.toolchain }}
+          path: target/debug/rsync*
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ===========================================================================
   # Interop Tests - Compatibility with upstream rsync (reusable workflow)
