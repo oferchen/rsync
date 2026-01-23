@@ -9,17 +9,9 @@ use std::path::{Path, PathBuf};
 use rustc_hash::FxHashMap;
 
 #[cfg(unix)]
+#[derive(Default)]
 pub(crate) struct HardLinkTracker {
     entries: FxHashMap<HardLinkKey, PathBuf>,
-}
-
-#[cfg(unix)]
-impl Default for HardLinkTracker {
-    fn default() -> Self {
-        Self {
-            entries: FxHashMap::default(),
-        }
-    }
 }
 
 #[cfg(unix)]

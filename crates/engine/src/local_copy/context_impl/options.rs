@@ -64,6 +64,7 @@ impl<'a> CopyContext<'a> {
         self.options.preallocate_enabled()
     }
 
+    #[allow(dead_code)] // Only used when batch-sync feature is disabled
     pub(super) const fn fsync_enabled(&self) -> bool {
         self.options.fsync_enabled()
     }
