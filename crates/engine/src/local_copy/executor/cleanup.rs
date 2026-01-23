@@ -1,7 +1,7 @@
 //! Deletion helpers for extraneous or source entries.
 
 use std::collections::HashSet;
-use std::ffi::OsString;
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -9,17 +9,20 @@ use std::time::Duration;
 
 use crate::local_copy::{CopyContext, LocalCopyAction, LocalCopyError, LocalCopyRecord};
 
-pub(crate) fn delete_extraneous_entries(
+/// Deletes entries in `destination` that are not in `source_entries`.
+///
+/// The `source_entries` parameter accepts any slice of types convertible to `&OsStr`,
+/// including `&[OsString]` (owned) and `&[&OsString]` (borrowed), avoiding allocation
+/// when borrowing from an existing data structure.
+pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
     context: &mut CopyContext,
     destination: &Path,
     relative: Option<&Path>,
-    source_entries: &[OsString],
+    source_entries: &[S],
 ) -> Result<(), LocalCopyError> {
     let mut skipped_due_to_limit = 0u64;
-    let mut keep = HashSet::with_capacity(source_entries.len());
-    for name in source_entries {
-        keep.insert(name.clone());
-    }
+    // Build HashSet from references without cloning - use OsStr for comparison
+    let keep: HashSet<&OsStr> = source_entries.iter().map(|s| s.as_ref()).collect();
 
     let read_dir = match fs::read_dir(destination) {
         Ok(iter) => iter,
@@ -39,7 +42,7 @@ pub(crate) fn delete_extraneous_entries(
             .map_err(|error| LocalCopyError::io("read destination entry", destination, error))?;
         let name = entry.file_name();
 
-        if keep.contains(&name) {
+        if keep.contains(name.as_os_str()) {
             continue;
         }
 

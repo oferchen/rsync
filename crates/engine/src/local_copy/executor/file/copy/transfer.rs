@@ -36,7 +36,41 @@ use super::super::comparison::{
 use super::super::guard::{DestinationWriteGuard, remove_incomplete_destination};
 use super::super::preallocate::maybe_preallocate_destination;
 
-#[allow(clippy::too_many_arguments)]
+/// Boolean flags controlling file transfer behavior.
+///
+/// This struct groups the boolean parameters that were previously passed
+/// individually to `execute_transfer`, reducing parameter count and
+/// improving code clarity.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct TransferFlags {
+    /// Whether append mode is allowed for existing files.
+    pub append_allowed: bool,
+    /// Whether to verify appended data matches the source.
+    pub append_verify: bool,
+    /// Whether to always transfer the entire file (no delta).
+    pub whole_file_enabled: bool,
+    /// Whether to update the file in place (no temp file).
+    pub inplace_enabled: bool,
+    /// Whether to keep partial transfers on interruption.
+    pub partial_enabled: bool,
+    /// Whether to use sparse writes for zero-filled regions.
+    pub use_sparse_writes: bool,
+    /// Whether to compress data during transfer.
+    pub compress_enabled: bool,
+    /// Whether to compare files by size only.
+    pub size_only_enabled: bool,
+    /// Whether to ignore modification times when comparing.
+    pub ignore_times_enabled: bool,
+    /// Whether to use checksums for comparison.
+    pub checksum_enabled: bool,
+    /// Whether to preserve extended attributes (Unix only).
+    #[cfg(all(unix, feature = "xattr"))]
+    pub preserve_xattrs: bool,
+    /// Whether to preserve ACLs (Unix only).
+    #[cfg(all(unix, feature = "acl"))]
+    pub preserve_acls: bool,
+}
+
 pub(super) fn execute_transfer(
     context: &mut CopyContext,
     source: &Path,
@@ -48,24 +82,31 @@ pub(super) fn execute_transfer(
     destination_previously_existed: bool,
     file_type: fs::FileType,
     relative: Option<&Path>,
-    append_allowed: bool,
-    append_verify: bool,
-    whole_file_enabled: bool,
-    inplace_enabled: bool,
-    partial_enabled: bool,
-    use_sparse_writes: bool,
-    compress_enabled: bool,
-    size_only_enabled: bool,
-    ignore_times_enabled: bool,
-    checksum_enabled: bool,
+    flags: TransferFlags,
     mode: LocalCopyExecution,
-    #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
-    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
     copy_source_override: Option<PathBuf>,
 ) -> Result<(), LocalCopyError> {
     // keep the param used on non-unix builds to avoid warnings
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
+
+    // Unpack flags for easier access in the function body
+    let TransferFlags {
+        append_allowed,
+        append_verify,
+        whole_file_enabled,
+        inplace_enabled,
+        partial_enabled,
+        use_sparse_writes,
+        compress_enabled,
+        size_only_enabled,
+        ignore_times_enabled,
+        checksum_enabled,
+        #[cfg(all(unix, feature = "xattr"))]
+        preserve_xattrs,
+        #[cfg(all(unix, feature = "acl"))]
+        preserve_acls,
+    } = flags;
 
     let file_size = metadata.len();
 
@@ -227,11 +268,18 @@ pub(super) fn execute_transfer(
         None
     };
 
-    // re-open in case we’re copying from a reference path
-    let copy_source = copy_source_override.as_deref().unwrap_or(source);
-    let mut reader = open_source_file(copy_source, context.open_noatime_enabled())
-        .map_err(|error| LocalCopyError::io("copy file", copy_source, error))?;
-    if append_offset > 0 {
+    // Use existing reader or re-open if copying from a reference path
+    let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {
+        // Reference path differs from source - need to open the override path
+        let file = open_source_file(override_path, context.open_noatime_enabled())
+            .map_err(|error| LocalCopyError::io("copy file", override_path.clone(), error))?;
+        (file, override_path.as_path())
+    } else {
+        // Same source - reuse the existing reader (already at correct position)
+        (reader, source)
+    };
+    // Seek to append offset if needed (for override path case, or to reset position)
+    if copy_source_override.is_some() && append_offset > 0 {
         reader
             .seek(SeekFrom::Start(append_offset))
             .map_err(|error| LocalCopyError::io("copy file", copy_source, error))?;

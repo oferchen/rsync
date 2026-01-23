@@ -195,7 +195,11 @@ impl CompressedTokenEncoder {
         }
 
         let chunk_len = self.literal_buf.len().min(CHUNK_SIZE);
-        let chunk: Vec<u8> = self.literal_buf.drain(..chunk_len).collect();
+        let chunk: Vec<u8> = {
+            let mut v = Vec::with_capacity(chunk_len);
+            v.extend(self.literal_buf.drain(..chunk_len));
+            v
+        };
 
         let mut compressed = Vec::new();
 
