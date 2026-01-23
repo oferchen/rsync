@@ -53,11 +53,14 @@ impl LocalCopyError {
     }
 
     /// Constructs an I/O error with action context.
+    ///
+    /// Accepts any type that can be converted to `PathBuf`, including `&Path`,
+    /// `PathBuf`, `&str`, and `String`.
     #[must_use]
-    pub const fn io(action: &'static str, path: PathBuf, source: io::Error) -> Self {
+    pub fn io(action: &'static str, path: impl Into<PathBuf>, source: io::Error) -> Self {
         Self::new(LocalCopyErrorKind::Io {
             action,
-            path,
+            path: path.into(),
             source,
         })
     }

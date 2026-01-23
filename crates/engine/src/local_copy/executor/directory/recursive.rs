@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -203,13 +204,11 @@ pub(crate) fn copy_directory_recursive(
                 context.prepare_parent_directory(parent)?;
             }
             if context.implied_dirs_enabled() {
-                fs::create_dir_all(destination).map_err(|error| {
-                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
-                })?;
+                fs::create_dir_all(destination)
+                    .map_err(|error| LocalCopyError::io("create directory", destination, error))?;
             } else {
-                fs::create_dir(destination).map_err(|error| {
-                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
-                })?;
+                fs::create_dir(destination)
+                    .map_err(|error| LocalCopyError::io("create directory", destination, error))?;
             }
             context.register_progress();
             context.register_created_path(destination, CreatedEntryKind::Directory, false);
@@ -398,8 +397,11 @@ pub(crate) fn copy_directory_recursive(
                 delete_extraneous_entries(context, destination, relative, &plan.keep_names)?;
             }
             DeleteTiming::Delay | DeleteTiming::After => {
+                // Clone names for deferred processing (data must outlive the plan)
+                let keep_owned: Vec<OsString> =
+                    plan.keep_names.iter().map(|s| (*s).clone()).collect();
                 let relative_owned = relative.map(Path::to_path_buf);
-                context.defer_deletion(destination.to_path_buf(), relative_owned, plan.keep_names);
+                context.defer_deletion(destination.to_path_buf(), relative_owned, keep_owned);
             }
         }
     }
@@ -407,7 +409,7 @@ pub(crate) fn copy_directory_recursive(
     if prune_enabled && !kept_any {
         if created_directory_on_disk {
             fs::remove_dir(destination).map_err(|error| {
-                LocalCopyError::io("remove empty directory", destination.to_path_buf(), error)
+                LocalCopyError::io("remove empty directory", destination, error)
             })?;
             if context
                 .last_created_entry_path()

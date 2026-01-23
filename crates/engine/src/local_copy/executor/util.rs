@@ -14,8 +14,7 @@ pub(crate) fn non_empty_path(path: &Path) -> Option<&Path> {
 }
 
 pub(crate) fn follow_symlink_metadata(path: &Path) -> Result<fs::Metadata, LocalCopyError> {
-    fs::metadata(path)
-        .map_err(|error| LocalCopyError::io("inspect symlink target", path.to_path_buf(), error))
+    fs::metadata(path).map_err(|error| LocalCopyError::io("inspect symlink target", path, error))
 }
 
 #[cfg(test)]

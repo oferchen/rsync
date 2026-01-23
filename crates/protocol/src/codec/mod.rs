@@ -44,13 +44,13 @@
 mod ndx;
 mod protocol;
 
-// Re-export from protocol submodule
+/// Protocol codec types for version-aware encoding.
 pub use protocol::{
     LegacyProtocolCodec, ModernProtocolCodec, ProtocolCodec, ProtocolCodecEnum,
     create_protocol_codec,
 };
 
-// Re-export from ndx submodule
+/// NDX (file index) codec types for file list operations.
 pub use ndx::{
     LegacyNdxCodec, ModernNdxCodec, NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET,
     NdxCodec, NdxCodecEnum, NdxState, create_ndx_codec, write_ndx_done, write_ndx_flist_eof,

@@ -27,6 +27,12 @@ use super::invocation::{
 };
 use crate::server::{ServerConfig, ServerRole};
 
+/// SSH invocation result containing args, host, optional user, and optional port.
+///
+/// Used by `parse_single_remote` and `parse_remote_operands` to return parsed
+/// remote connection information along with the rsync invocation arguments.
+type SshInvocationResult = (Vec<OsString>, String, Option<String>, Option<u16>);
+
 /// Executes a transfer over SSH transport.
 ///
 /// This is the main entry point for SSH-based remote transfers. It:
@@ -110,12 +116,11 @@ pub fn run_ssh_transfer(
 }
 
 /// Parses a single remote operand and builds the invocation args.
-#[allow(clippy::type_complexity)]
 fn parse_single_remote(
     operand_str: &str,
     config: &ClientConfig,
     role: RemoteRole,
-) -> Result<(Vec<OsString>, String, Option<String>, Option<u16>), ClientError> {
+) -> Result<SshInvocationResult, ClientError> {
     let operand = parse_ssh_operand(OsStr::new(operand_str))
         .map_err(|e| invalid_argument_error(&format!("invalid remote operand: {e}"), 1))?;
 
@@ -131,12 +136,11 @@ fn parse_single_remote(
 }
 
 /// Parses remote operand(s) and builds the invocation args.
-#[allow(clippy::type_complexity)]
 fn parse_remote_operands(
     remote_operands: &RemoteOperands,
     config: &ClientConfig,
     role: RemoteRole,
-) -> Result<(Vec<OsString>, String, Option<String>, Option<u16>), ClientError> {
+) -> Result<SshInvocationResult, ClientError> {
     match remote_operands {
         RemoteOperands::Single(operand_str) => parse_single_remote(operand_str, config, role),
         RemoteOperands::Multiple(operand_strs) => {
