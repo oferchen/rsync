@@ -29,6 +29,17 @@ impl<'a> CopyContext<'a> {
         let dir_merge_ephemeral = Vec::new();
         let dir_merge_marker_ephemeral = Vec::new();
         let timeout = options.timeout();
+
+        #[cfg(feature = "optimized-buffers")]
+        let buffer_pool = Arc::new(BufferPool::default());
+
+        #[cfg(feature = "batch-sync")]
+        let deferred_sync = if options.fsync_enabled() {
+            DeferredSync::new(SyncStrategy::Batched(100))
+        } else {
+            DeferredSync::new(SyncStrategy::None)
+        };
+
         Self {
             mode,
             options,
@@ -54,6 +65,10 @@ impl<'a> CopyContext<'a> {
             last_progress: Instant::now(),
             created_entries: Vec::new(),
             destination_root,
+            #[cfg(feature = "optimized-buffers")]
+            buffer_pool,
+            #[cfg(feature = "batch-sync")]
+            deferred_sync,
         }
     }
 
@@ -179,6 +194,20 @@ impl<'a> CopyContext<'a> {
 
         self.record_hard_link(metadata, destination);
         remove_source_entry_if_requested(self, source, relative, file_type)?;
+
+        // Register file for deferred sync when batch-sync is enabled
+        #[cfg(feature = "batch-sync")]
+        {
+            self.deferred_sync
+                .register(destination.to_path_buf())
+                .map_err(|error| {
+                    LocalCopyError::io("register deferred sync", destination.to_path_buf(), error)
+                })?;
+            self.deferred_sync.flush_if_threshold().map_err(|error| {
+                LocalCopyError::io("flush deferred sync threshold", PathBuf::new(), error)
+            })?;
+        }
+
         Ok(())
     }
 
@@ -453,5 +482,22 @@ impl<'a> CopyContext<'a> {
 
     pub(super) const fn max_file_size_limit(&self) -> Option<u64> {
         self.options.max_file_size_limit()
+    }
+
+    /// Returns an Arc reference to the shared buffer pool.
+    ///
+    /// The Arc is returned so that [`BufferGuard`] can hold an owned reference,
+    /// avoiding borrow checker issues when the context is mutably borrowed.
+    #[cfg(feature = "optimized-buffers")]
+    pub(super) fn buffer_pool(&self) -> Arc<BufferPool> {
+        Arc::clone(&self.buffer_pool)
+    }
+
+    /// Flushes all pending sync operations.
+    #[cfg(feature = "batch-sync")]
+    pub(super) fn flush_deferred_syncs(&mut self) -> Result<(), LocalCopyError> {
+        self.deferred_sync
+            .flush()
+            .map_err(|error| LocalCopyError::io("flush syncs", PathBuf::new(), error))
     }
 }

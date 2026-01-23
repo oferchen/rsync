@@ -27,6 +27,7 @@ use crate::local_copy::sync_xattrs_if_requested;
 
 use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 
+#[cfg(not(feature = "optimized-buffers"))]
 use super::super::super::super::COPY_BUFFER_SIZE;
 use super::super::append::{AppendMode, determine_append_mode};
 use super::super::comparison::{
@@ -280,13 +281,22 @@ pub(super) fn execute_transfer(
         context.preallocate_enabled(),
     )?;
 
+    #[cfg(feature = "optimized-buffers")]
+    let mut buffer_guard = super::super::super::super::BufferPool::acquire_from(context.buffer_pool());
+    #[cfg(feature = "optimized-buffers")]
+    let buffer: &mut [u8] = &mut buffer_guard;
+
+    #[cfg(not(feature = "optimized-buffers"))]
     let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+    #[cfg(not(feature = "optimized-buffers"))]
+    let buffer: &mut [u8] = &mut buffer;
+
     let start = Instant::now();
 
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
-        &mut buffer,
+        buffer,
         use_sparse_writes,
         compress_enabled,
         source,

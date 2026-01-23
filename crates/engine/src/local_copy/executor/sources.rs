@@ -420,6 +420,11 @@ pub(crate) fn copy_sources(
 
             context.flush_deferred_updates()?;
             context.flush_deferred_deletions()?;
+
+            // Flush any remaining deferred sync operations
+            #[cfg(feature = "batch-sync")]
+            context.flush_deferred_syncs()?;
+
             context.enforce_timeout()?;
             Ok(())
         })()

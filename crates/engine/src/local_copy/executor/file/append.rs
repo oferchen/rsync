@@ -54,6 +54,9 @@ pub(crate) fn determine_append_mode(
     Ok(AppendMode::Append(existing_len))
 }
 
+/// Verifies that the existing destination prefix matches the source.
+///
+/// Uses a single buffer split into two halves to reduce allocation overhead.
 fn verify_append_prefix(
     reader: &mut fs::File,
     source: &Path,
@@ -71,11 +74,14 @@ fn verify_append_prefix(
         )
     })?;
     let mut remaining = existing_len;
-    let mut source_buffer = vec![0u8; COPY_BUFFER_SIZE];
-    let mut destination_buffer = vec![0u8; COPY_BUFFER_SIZE];
+
+    // Use a single buffer split into two halves to reduce allocations
+    let half_size = COPY_BUFFER_SIZE / 2;
+    let mut unified_buffer = vec![0u8; COPY_BUFFER_SIZE];
+    let (source_buffer, destination_buffer) = unified_buffer.split_at_mut(half_size);
 
     while remaining > 0 {
-        let chunk = remaining.min(COPY_BUFFER_SIZE as u64) as usize;
+        let chunk = remaining.min(half_size as u64) as usize;
         let source_read = reader
             .read(&mut source_buffer[..chunk])
             .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
