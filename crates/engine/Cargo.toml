@@ -46,7 +46,7 @@ checksums = { path = "../checksums", default-features = false }
 libc = "0.2"
 
 [features]
-default = ["zstd", "lz4", "acl", "xattr"]
+default = ["zstd", "lz4", "acl", "xattr", "optimized-buffers", "lazy-metadata", "batch-sync"]
 xattr = ["metadata/xattr"]
 acl = ["metadata/acl"]
 zstd = ["compress/zstd"]
@@ -57,6 +57,13 @@ async = ["dep:tokio", "dep:md5", "dep:xxhash-rust", "dep:filetime"]
 parallel = ["dep:rayon"]
 # Structured logging instrumentation for performance analysis
 tracing = ["dep:tracing"]
+# Performance optimizations (enabled by default)
+# Buffer pool - reuses I/O buffers to reduce allocation overhead
+optimized-buffers = []
+# Lazy metadata - defers stat() calls until metadata is needed
+lazy-metadata = []
+# Batch sync - batches fsync() calls for better throughput
+batch-sync = []
 
 [dev-dependencies]
 filetime = "0.2"
