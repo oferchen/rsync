@@ -858,6 +858,7 @@ impl ReceiverContext {
             files_listed: file_count,
             files_transferred,
             bytes_received,
+            bytes_sent: 0, // Set by caller after run() via CountingWriter
             total_source_bytes,
             metadata_errors,
         })
@@ -871,8 +872,14 @@ pub struct TransferStats {
     pub files_listed: usize,
     /// Number of files actually transferred.
     pub files_transferred: usize,
-    /// Total bytes received.
+    /// Total bytes received from the sender (file data, deltas, etc.).
     pub bytes_received: u64,
+    /// Total bytes sent to the sender (signatures, file indices, etc.).
+    ///
+    /// This tracks data sent back during the transfer, such as signature blocks
+    /// for delta generation and file index requests. Mirrors upstream rsync's
+    /// `stats.total_written` tracking in io.c:859.
+    pub bytes_sent: u64,
     /// Total size of all source files in the file list.
     ///
     /// This is the sum of all file sizes from the received file list,
