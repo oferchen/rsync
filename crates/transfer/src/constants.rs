@@ -80,6 +80,82 @@ pub const fn aligned_overshoot(offset: u64) -> usize {
     (offset & (ALIGN_BOUNDARY as u64 - 1)) as usize
 }
 
+// ============================================================================
+// Optimized Zero Detection
+// ============================================================================
+//
+// These functions use 128-bit integer comparison for fast zero detection,
+// processing 16 bytes at a time. On x86-64, u128 operations are optimized
+// to use SSE/AVX registers, providing SIMD-like performance.
+
+/// Counts the number of leading zero bytes in a slice.
+///
+/// Uses 16-byte chunks with u128 comparison for fast detection,
+/// falling back to byte-by-byte scanning for the remainder.
+///
+/// # Performance
+///
+/// Processes 16 bytes per iteration using native u128 comparison,
+/// which the compiler optimizes to SIMD instructions on x86-64.
+#[inline]
+pub fn leading_zero_count(bytes: &[u8]) -> usize {
+    let mut offset = 0usize;
+    let mut iter = bytes.chunks_exact(16);
+
+    for chunk in &mut iter {
+        // SAFETY: chunks_exact(16) guarantees exactly 16-byte slices
+        let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
+        if u128::from_ne_bytes(*chunk) == 0 {
+            offset += 16;
+            continue;
+        }
+        // Found non-zero in this chunk - scan for exact position
+        let position = chunk.iter().position(|&b| b != 0).unwrap_or(16);
+        return offset + position;
+    }
+
+    // Handle remainder (< 16 bytes)
+    offset + iter.remainder().iter().take_while(|&&b| b == 0).count()
+}
+
+/// Counts the number of trailing zero bytes in a slice.
+///
+/// Uses 16-byte chunks with u128 comparison for fast detection,
+/// scanning from the end of the slice.
+///
+/// # Performance
+///
+/// Processes 16 bytes per iteration using native u128 comparison,
+/// which the compiler optimizes to SIMD instructions on x86-64.
+#[inline]
+pub fn trailing_zero_count(bytes: &[u8]) -> usize {
+    let mut offset = 0usize;
+    let mut iter = bytes.rchunks_exact(16);
+
+    for chunk in &mut iter {
+        // SAFETY: rchunks_exact(16) guarantees exactly 16-byte slices
+        let chunk: &[u8; 16] = chunk.try_into().expect("rchunks_exact guarantees 16 bytes");
+        if u128::from_ne_bytes(*chunk) == 0 {
+            offset += 16;
+            continue;
+        }
+        // Found non-zero in this chunk - scan for exact position
+        let trailing = chunk.iter().rev().take_while(|&&b| b == 0).count();
+        return offset + trailing;
+    }
+
+    // Handle remainder (< 16 bytes)
+    offset + iter.remainder().iter().rev().take_while(|&&b| b == 0).count()
+}
+
+/// Checks if a buffer contains only zeros.
+///
+/// Optimized for large buffers using 16-byte u128 comparisons.
+#[inline]
+pub fn is_all_zeros(bytes: &[u8]) -> bool {
+    leading_zero_count(bytes) == bytes.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +211,77 @@ mod tests {
     fn aligned_overshoot_between_boundaries() {
         assert_eq!(aligned_overshoot(1025), 1);
         assert_eq!(aligned_overshoot(2000), 976);
+    }
+
+    // Zero detection tests
+
+    #[test]
+    fn leading_zero_count_empty() {
+        assert_eq!(leading_zero_count(&[]), 0);
+    }
+
+    #[test]
+    fn leading_zero_count_all_zeros() {
+        assert_eq!(leading_zero_count(&[0; 1]), 1);
+        assert_eq!(leading_zero_count(&[0; 15]), 15);
+        assert_eq!(leading_zero_count(&[0; 16]), 16);
+        assert_eq!(leading_zero_count(&[0; 17]), 17);
+        assert_eq!(leading_zero_count(&[0; 32]), 32);
+        assert_eq!(leading_zero_count(&[0; 100]), 100);
+    }
+
+    #[test]
+    fn leading_zero_count_no_zeros() {
+        assert_eq!(leading_zero_count(&[1]), 0);
+        assert_eq!(leading_zero_count(&[1, 2, 3]), 0);
+    }
+
+    #[test]
+    fn leading_zero_count_mixed() {
+        assert_eq!(leading_zero_count(&[0, 0, 1, 0]), 2);
+        assert_eq!(leading_zero_count(&[0, 0, 0, 0, 0, 1]), 5);
+        // Test at 16-byte boundary
+        let mut data = vec![0u8; 20];
+        data[16] = 1;
+        assert_eq!(leading_zero_count(&data), 16);
+    }
+
+    #[test]
+    fn trailing_zero_count_empty() {
+        assert_eq!(trailing_zero_count(&[]), 0);
+    }
+
+    #[test]
+    fn trailing_zero_count_all_zeros() {
+        assert_eq!(trailing_zero_count(&[0; 1]), 1);
+        assert_eq!(trailing_zero_count(&[0; 15]), 15);
+        assert_eq!(trailing_zero_count(&[0; 16]), 16);
+        assert_eq!(trailing_zero_count(&[0; 17]), 17);
+        assert_eq!(trailing_zero_count(&[0; 32]), 32);
+    }
+
+    #[test]
+    fn trailing_zero_count_no_zeros() {
+        assert_eq!(trailing_zero_count(&[1]), 0);
+        assert_eq!(trailing_zero_count(&[1, 2, 3]), 0);
+    }
+
+    #[test]
+    fn trailing_zero_count_mixed() {
+        assert_eq!(trailing_zero_count(&[1, 0, 0]), 2);
+        assert_eq!(trailing_zero_count(&[1, 0, 0, 0, 0, 0]), 5);
+        // Test at 16-byte boundary
+        let mut data = vec![0u8; 20];
+        data[3] = 1;
+        assert_eq!(trailing_zero_count(&data), 16);
+    }
+
+    #[test]
+    fn is_all_zeros_works() {
+        assert!(is_all_zeros(&[]));
+        assert!(is_all_zeros(&[0]));
+        assert!(is_all_zeros(&[0; 100]));
+        assert!(!is_all_zeros(&[1]));
+        assert!(!is_all_zeros(&[0, 0, 1]));
     }
 }
