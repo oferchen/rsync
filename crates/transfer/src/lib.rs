@@ -63,7 +63,7 @@
 //!
 //! See the `generator` module documentation for implementation details.
 
-use std::io::{self, Read, Write};
+use std::io::{self, BufReader, BufWriter, Read, Write};
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -277,8 +277,14 @@ pub fn run_server_with_handshake<W: Write>(
     // - Client activates INPUT multiplex to receive multiplexed data from server
     // - Filter list is sent through PLAIN output (not multiplexed)
     // - The remote daemon (server) will have OUTPUT multiplex active and send us multiplexed data
-    let reader = reader::ServerReader::new_plain(chained_stdin);
-    let mut writer = writer::ServerWriter::new_plain(stdout);
+    //
+    // Performance optimization: Wrap streams in buffered I/O to reduce syscalls.
+    // Without buffering, each read_exact/write_all becomes a syscall, causing
+    // significant per-file overhead in daemon transfers.
+    let buffered_stdin = BufReader::with_capacity(64 * 1024, chained_stdin);
+    let reader = reader::ServerReader::new_plain(buffered_stdin);
+    let buffered_stdout = BufWriter::with_capacity(64 * 1024, stdout);
+    let mut writer = writer::ServerWriter::new_plain(buffered_stdout);
 
     // Activate OUTPUT multiplex based on mode and protocol version.
     //
