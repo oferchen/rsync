@@ -88,10 +88,15 @@ mod builder;
 mod entry;
 mod error;
 mod file_list_walker;
+mod lazy_entry;
+mod lazy_metadata;
 
 #[cfg(feature = "parallel")]
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
+
+pub use lazy_entry::LazyFileListEntry;
+pub use lazy_metadata::LazyMetadata;
 
 #[cfg(test)]
 mod tests;
