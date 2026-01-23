@@ -67,7 +67,9 @@ mod overrides;
 mod plan;
 mod skip_compress;
 
+#[cfg(feature = "optimized-buffers")]
 pub use buffer_pool::{BufferGuard, BufferPool};
+#[cfg(feature = "batch-sync")]
 pub use deferred_sync::{DeferredSync, SyncStrategy};
 
 pub use plan::{

@@ -413,6 +413,7 @@ dependencies = [
  "branding",
  "checksums",
  "compress",
+ "criterion",
  "engine",
  "filetime",
  "filters",
