@@ -21,6 +21,10 @@ use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use engine::signature::FileSignature;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
+use crate::constants::CHUNK_SIZE;
+use crate::map_file::{BufferedMap, MapFile};
+use crate::token_buffer::TokenBuffer;
+
 // ============================================================================
 // Sparse Write State - Tracks pending zeros for hole creation
 // ============================================================================
@@ -74,12 +78,12 @@ impl SparseWriteState {
     /// Writes data with sparse optimization.
     ///
     /// Zero runs are tracked and become holes; non-zero data is written normally.
+    /// Uses 32KB chunks matching upstream rsync's CHUNK_SIZE for efficient processing.
     pub fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
         if data.is_empty() {
             return Ok(0);
         }
 
-        const CHUNK_SIZE: usize = 1024;
         let mut offset = 0;
 
         while offset < data.len() {
@@ -247,32 +251,58 @@ pub struct DeltaApplyResult {
 /// Applies delta data to reconstruct a file.
 ///
 /// Mirrors upstream's `receive_data()` function structure.
+///
+/// # Performance Optimizations
+///
+/// - Uses `MapFile` for basis file access with 256KB sliding window cache,
+///   avoiding repeated open/seek/read syscalls for block references.
+/// - Uses `TokenBuffer` for literal data, reusing the same allocation across
+///   all tokens to avoid per-token heap allocations.
 pub struct DeltaApplicator<'a> {
     output: File,
     sparse_state: Option<SparseWriteState>,
     checksum_verifier: ChecksumVerifier,
     basis_signature: Option<&'a FileSignature>,
-    basis_path: Option<&'a Path>,
+    /// Cached basis file mapper - opened once and reused for all block refs
+    basis_map: Option<MapFile<BufferedMap>>,
+    /// Reusable buffer for literal token data
+    token_buffer: TokenBuffer,
     stats: DeltaApplyResult,
 }
 
 impl<'a> DeltaApplicator<'a> {
     /// Creates a new delta applicator.
+    ///
+    /// If `basis_path` is provided, opens the file once and caches it for
+    /// efficient block reference lookups.
     pub fn new(
         output: File,
         config: &DeltaApplyConfig,
         checksum_verifier: ChecksumVerifier,
         basis_signature: Option<&'a FileSignature>,
         basis_path: Option<&'a Path>,
-    ) -> Self {
-        Self {
+    ) -> io::Result<Self> {
+        // Open basis file once if provided - cached for all block references
+        let basis_map = if let Some(path) = basis_path {
+            Some(MapFile::open(path).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("failed to open basis file {path:?}: {e}"),
+                )
+            })?)
+        } else {
+            None
+        };
+
+        Ok(Self {
             output,
             sparse_state: config.sparse.then(SparseWriteState::new),
             checksum_verifier,
             basis_signature,
-            basis_path,
+            basis_map,
+            token_buffer: TokenBuffer::with_default_capacity(),
             stats: DeltaApplyResult::default(),
-        }
+        })
     }
 
     /// Applies literal data.
@@ -291,8 +321,13 @@ impl<'a> DeltaApplicator<'a> {
     }
 
     /// Applies a block reference by copying from basis file.
+    ///
+    /// Uses cached `MapFile` with 256KB sliding window for efficient access,
+    /// avoiding repeated open/seek/read syscalls for each block reference.
     pub fn apply_block_ref(&mut self, block_idx: usize) -> io::Result<()> {
-        let (Some(signature), Some(basis_path)) = (&self.basis_signature, &self.basis_path) else {
+        let (Some(signature), Some(basis_map)) =
+            (&self.basis_signature, self.basis_map.as_mut())
+        else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("block reference {block_idx} without basis file"),
@@ -315,23 +350,15 @@ impl<'a> DeltaApplicator<'a> {
             block_len as usize
         };
 
-        let mut basis_file = File::open(basis_path).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("failed to open basis file {basis_path:?}: {e}"),
-            )
-        })?;
-        basis_file.seek(SeekFrom::Start(offset))?;
+        // Use cached MapFile - data stays in 256KB sliding window
+        let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
 
-        let mut block_data = vec![0u8; bytes_to_copy];
-        basis_file.read_exact(&mut block_data)?;
-
-        self.checksum_verifier.update(&block_data);
+        self.checksum_verifier.update(block_data);
 
         if let Some(ref mut sparse) = self.sparse_state {
-            sparse.write(&mut self.output, &block_data)?;
+            sparse.write(&mut self.output, block_data)?;
         } else {
-            self.output.write_all(&block_data)?;
+            self.output.write_all(block_data)?;
         }
 
         self.stats.bytes_written += bytes_to_copy as u64;
@@ -342,6 +369,9 @@ impl<'a> DeltaApplicator<'a> {
     /// Reads and applies a single token from the reader.
     ///
     /// Returns `Ok(true)` if more tokens expected, `Ok(false)` at end.
+    ///
+    /// Uses reusable `TokenBuffer` to avoid per-token heap allocations,
+    /// significantly reducing allocation overhead for token-heavy transfers.
     pub fn apply_token<R: Read>(&mut self, reader: &mut R) -> io::Result<bool> {
         let mut buf = [0u8; 4];
         reader.read_exact(&mut buf)?;
@@ -350,9 +380,23 @@ impl<'a> DeltaApplicator<'a> {
         match token.cmp(&0) {
             std::cmp::Ordering::Equal => Ok(false),
             std::cmp::Ordering::Greater => {
-                let mut data = vec![0u8; token as usize];
-                reader.read_exact(&mut data)?;
-                self.apply_literal(&data)?;
+                let len = token as usize;
+                // Reuse TokenBuffer - grows but never shrinks
+                self.token_buffer.resize_for(len);
+                reader.read_exact(self.token_buffer.as_mut_slice())?;
+
+                // Apply literal data inline to avoid borrow conflict
+                let data = self.token_buffer.as_slice();
+                self.checksum_verifier.update(data);
+
+                if let Some(ref mut sparse) = self.sparse_state {
+                    sparse.write(&mut self.output, data)?;
+                } else {
+                    self.output.write_all(data)?;
+                }
+
+                self.stats.bytes_written += len as u64;
+                self.stats.literal_bytes += len as u64;
                 Ok(true)
             }
             std::cmp::Ordering::Less => {

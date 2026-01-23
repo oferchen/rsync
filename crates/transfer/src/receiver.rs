@@ -30,7 +30,7 @@
 //! - [`protocol::wire`] - Wire format for signatures and deltas
 
 use std::fs;
-use std::io::{self, Read, SeekFrom, Write};
+use std::io::{self, Read, Write};
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
@@ -54,7 +54,8 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 use metadata::id_lookup::{lookup_group_by_name, lookup_user_by_name};
 
 use super::delta_apply::{ChecksumVerifier, SparseWriteState};
-use super::error::{read_exact_retry, seek_retry};
+use super::map_file::MapFile;
+use super::token_buffer::TokenBuffer;
 
 use engine::delta::{DeltaScript, DeltaToken, SignatureLayoutParams, calculate_signature_layout};
 use engine::fuzzy::FuzzyMatcher;
@@ -651,6 +652,21 @@ impl ReceiverContext {
                 self.compat_flags.as_ref(),
             );
 
+            // Performance optimizations:
+            // 1. MapFile: Cache basis file with 256KB sliding window to avoid
+            //    repeated open/seek/read syscalls for each block reference.
+            //    For a typical 16MB file with 700-byte blocks, this prevents ~23,000 syscalls.
+            // 2. TokenBuffer: Reuse allocation for literal data across all tokens
+            //    to avoid per-token heap allocation overhead.
+            let mut basis_map = if let Some(ref path) = basis_path_opt {
+                Some(MapFile::open(path).map_err(|e| {
+                    io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
+                })?)
+            } else {
+                None
+            };
+            let mut token_buffer = TokenBuffer::with_default_capacity();
+
             // Read tokens in a loop
             loop {
                 let mut token_buf = [0u8; 4];
@@ -692,23 +708,28 @@ impl ReceiverContext {
                     break;
                 } else if token > 0 {
                     // Literal data: token bytes follow
-                    let mut data = vec![0u8; token as usize];
-                    reader.read_exact(&mut data)?;
+                    // Reuse TokenBuffer to avoid per-token allocation
+                    let len = token as usize;
+                    token_buffer.resize_for(len);
+                    reader.read_exact(token_buffer.as_mut_slice())?;
+                    let data = token_buffer.as_slice();
                     // Use sparse writing if enabled
                     if let Some(ref mut sparse) = sparse_state {
-                        sparse.write(&mut output, &data)?;
+                        sparse.write(&mut output, data)?;
                     } else {
-                        output.write_all(&data)?;
+                        output.write_all(data)?;
                     }
                     // Update checksum with literal data
-                    checksum_verifier.update(&data);
-                    total_bytes += token as u64;
+                    checksum_verifier.update(data);
+                    total_bytes += len as u64;
                 } else {
                     // Negative: block reference = -(token+1)
                     // For new files (no basis), this shouldn't happen
                     let block_idx = -(token + 1) as usize;
-                    if let (Some(sig), Some(basis_path)) = (&signature_opt, &basis_path_opt) {
-                        // We have a basis file - copy the block
+                    if let (Some(sig), Some(basis_map)) =
+                        (&signature_opt, basis_map.as_mut())
+                    {
+                        // We have a basis file - copy the block using cached MapFile
                         // Mirrors upstream receiver.c receive_data() block copy logic
                         let layout = sig.layout();
                         let block_count = layout.block_count() as usize;
@@ -740,29 +761,19 @@ impl ReceiverContext {
                             block_len as usize
                         };
 
-                        // Open basis file and seek to block offset
-                        let mut basis_file = fs::File::open(basis_path).map_err(|e| {
-                            io::Error::new(
-                                e.kind(),
-                                format!("failed to open basis file {basis_path:?}: {e}"),
-                            )
-                        })?;
-                        // Use seek_retry to handle EINTR (upstream rsync retries on interrupt)
-                        seek_retry(&mut basis_file, SeekFrom::Start(offset))?;
+                        // Use cached MapFile with 256KB sliding window
+                        // This avoids ~23,000 open/seek/read syscalls for a typical 16MB file
+                        let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
 
-                        // Read block data and write to output
-                        // Use read_exact_retry to handle EINTR (upstream rsync retries on interrupt)
-                        let mut block_data = vec![0u8; bytes_to_copy];
-                        read_exact_retry(&mut basis_file, &mut block_data)?;
                         // Use sparse writing if enabled
                         if let Some(ref mut sparse) = sparse_state {
-                            sparse.write(&mut output, &block_data)?;
+                            sparse.write(&mut output, block_data)?;
                         } else {
-                            output.write_all(&block_data)?;
+                            output.write_all(block_data)?;
                         }
 
                         // Update checksum with copied data
-                        checksum_verifier.update(&block_data);
+                        checksum_verifier.update(block_data);
 
                         total_bytes += bytes_to_copy as u64;
                     } else {
