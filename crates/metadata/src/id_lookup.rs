@@ -24,7 +24,7 @@ use rustix::process::{RawGid, RawUid};
 use std::collections::HashMap;
 use std::io;
 use std::ptr;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, RwLock};
 use std::{
     ffi::{CStr, CString},
     mem::MaybeUninit,
@@ -34,15 +34,21 @@ use std::{
 ///
 /// Maps remote UIDs to their resolved local UIDs. This avoids expensive NSS
 /// lookups (getpwuid_r + getpwnam_r) for each file when preserving ownership.
-static UID_CACHE: LazyLock<Mutex<HashMap<RawUid, RawUid>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+///
+/// Uses RwLock instead of Mutex to allow concurrent reads - the cache is read
+/// much more frequently than it is written (once per unique UID vs once per file).
+static UID_CACHE: LazyLock<RwLock<HashMap<RawUid, RawUid>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Thread-safe cache for GID mappings.
 ///
 /// Maps remote GIDs to their resolved local GIDs. This avoids expensive NSS
 /// lookups (getgrgid_r + getgrnam_r) for each file when preserving ownership.
-static GID_CACHE: LazyLock<Mutex<HashMap<RawGid, RawGid>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+///
+/// Uses RwLock instead of Mutex to allow concurrent reads - the cache is read
+/// much more frequently than it is written (once per unique GID vs once per file).
+static GID_CACHE: LazyLock<RwLock<HashMap<RawGid, RawGid>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Maps a remote UID to a local UID.
 ///
@@ -57,7 +63,8 @@ pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
     }
 
     // Check cache first (fast path for common case: all files have same owner)
-    if let Ok(cache) = UID_CACHE.lock() {
+    // Uses read lock to allow concurrent cache hits from multiple threads
+    if let Ok(cache) = UID_CACHE.read() {
         if let Some(&cached) = cache.get(&uid) {
             return Some(ownership::uid_from_raw(cached));
         }
@@ -66,8 +73,8 @@ pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
     // Cache miss: perform expensive NSS lookup
     let mapped = map_uid_uncached(uid);
 
-    // Store in cache for future lookups
-    if let Ok(mut cache) = UID_CACHE.lock() {
+    // Store in cache for future lookups (requires write lock)
+    if let Ok(mut cache) = UID_CACHE.write() {
         cache.insert(uid, mapped);
     }
 
@@ -100,7 +107,8 @@ pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
     }
 
     // Check cache first (fast path for common case: all files have same group)
-    if let Ok(cache) = GID_CACHE.lock() {
+    // Uses read lock to allow concurrent cache hits from multiple threads
+    if let Ok(cache) = GID_CACHE.read() {
         if let Some(&cached) = cache.get(&gid) {
             return Some(ownership::gid_from_raw(cached));
         }
@@ -109,8 +117,8 @@ pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
     // Cache miss: perform expensive NSS lookup
     let mapped = map_gid_uncached(gid);
 
-    // Store in cache for future lookups
-    if let Ok(mut cache) = GID_CACHE.lock() {
+    // Store in cache for future lookups (requires write lock)
+    if let Ok(mut cache) = GID_CACHE.write() {
         cache.insert(gid, mapped);
     }
 
@@ -271,10 +279,10 @@ pub fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
 /// In production, the caches persist for the lifetime of the process.
 #[cfg(test)]
 pub fn clear_id_caches() {
-    if let Ok(mut cache) = UID_CACHE.lock() {
+    if let Ok(mut cache) = UID_CACHE.write() {
         cache.clear();
     }
-    if let Ok(mut cache) = GID_CACHE.lock() {
+    if let Ok(mut cache) = GID_CACHE.write() {
         cache.clear();
     }
 }
@@ -282,13 +290,13 @@ pub fn clear_id_caches() {
 /// Returns the current size of the UID cache.
 #[cfg(test)]
 pub fn uid_cache_size() -> usize {
-    UID_CACHE.lock().map(|c| c.len()).unwrap_or(0)
+    UID_CACHE.read().map(|c| c.len()).unwrap_or(0)
 }
 
 /// Returns the current size of the GID cache.
 #[cfg(test)]
 pub fn gid_cache_size() -> usize {
-    GID_CACHE.lock().map(|c| c.len()).unwrap_or(0)
+    GID_CACHE.read().map(|c| c.len()).unwrap_or(0)
 }
 
 /// Looks up the GID for a given group name.

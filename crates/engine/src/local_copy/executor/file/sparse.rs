@@ -11,7 +11,15 @@ use rustix::{
 
 use crate::local_copy::LocalCopyError;
 
-const SPARSE_WRITE_SIZE: usize = 1024;
+/// Threshold for detecting sparse (all-zeros) regions during file writes.
+///
+/// A run of zeros at least this size will be converted to a sparse hole
+/// using fallocate(PUNCH_HOLE) or seek past on supported systems.
+///
+/// Matches upstream rsync's CHUNK_SIZE (32KB) for consistent behavior.
+/// Using a larger threshold reduces syscall overhead for small zero runs
+/// while still efficiently handling large sparse regions.
+const SPARSE_WRITE_SIZE: usize = 32 * 1024;
 
 /// Buffer size for writing zeros when fallocate is not supported.
 /// Matches upstream rsync's do_punch_hole fallback buffer size.
