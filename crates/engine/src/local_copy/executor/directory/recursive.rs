@@ -203,13 +203,11 @@ pub(crate) fn copy_directory_recursive(
                 context.prepare_parent_directory(parent)?;
             }
             if context.implied_dirs_enabled() {
-                fs::create_dir_all(destination).map_err(|error| {
-                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
-                })?;
+                fs::create_dir_all(destination)
+                    .map_err(|error| LocalCopyError::io("create directory", destination, error))?;
             } else {
-                fs::create_dir(destination).map_err(|error| {
-                    LocalCopyError::io("create directory", destination.to_path_buf(), error)
-                })?;
+                fs::create_dir(destination)
+                    .map_err(|error| LocalCopyError::io("create directory", destination, error))?;
             }
             context.register_progress();
             context.register_created_path(destination, CreatedEntryKind::Directory, false);
@@ -407,7 +405,7 @@ pub(crate) fn copy_directory_recursive(
     if prune_enabled && !kept_any {
         if created_directory_on_disk {
             fs::remove_dir(destination).map_err(|error| {
-                LocalCopyError::io("remove empty directory", destination.to_path_buf(), error)
+                LocalCopyError::io("remove empty directory", destination, error)
             })?;
             if context
                 .last_created_entry_path()

@@ -65,7 +65,7 @@ pub(super) fn handle_dry_run(
     }
 
     let mut reader = fs::File::open(source)
-        .map_err(|error| LocalCopyError::io("open source file", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("open source file", source, error))?;
 
     let append_mode = determine_append_mode(
         context.append_enabled(),

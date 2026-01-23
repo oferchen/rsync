@@ -197,7 +197,7 @@ pub(super) fn execute_transfer(
 
     // regular file copy
     let mut reader = open_source_file(source, context.open_noatime_enabled())
-        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
     let append_mode = determine_append_mode(
         append_allowed,
         append_verify,
@@ -213,7 +213,7 @@ pub(super) fn execute_transfer(
     };
     reader
         .seek(SeekFrom::Start(append_offset))
-        .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
 
     // delta signature if we can
     let delta_signature = if append_offset == 0 && !whole_file_enabled && !inplace_enabled {
@@ -230,11 +230,11 @@ pub(super) fn execute_transfer(
     // re-open in case we’re copying from a reference path
     let copy_source = copy_source_override.as_deref().unwrap_or(source);
     let mut reader = open_source_file(copy_source, context.open_noatime_enabled())
-        .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("copy file", copy_source, error))?;
     if append_offset > 0 {
         reader
             .seek(SeekFrom::Start(append_offset))
-            .map_err(|error| LocalCopyError::io("copy file", copy_source.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", copy_source, error))?;
     }
 
     // choose write strategy
@@ -247,9 +247,9 @@ pub(super) fn execute_transfer(
             .write(true)
             .truncate(false)
             .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
         file.seek(SeekFrom::Start(append_offset))
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
         file
     } else if inplace_enabled {
         fs::OpenOptions::new()
@@ -257,7 +257,7 @@ pub(super) fn execute_transfer(
             .write(true)
             .truncate(true)
             .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?
     } else {
         let (new_guard, file) = DestinationWriteGuard::new(
             destination,
@@ -517,7 +517,7 @@ fn copy_special_as_regular_file(
             .write(true)
             .truncate(true)
             .open(destination)
-            .map_err(|error| LocalCopyError::io("copy file", destination.to_path_buf(), error))?;
+            .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
         if context.fsync_enabled() {
             sync_destination_file(&mut file, destination)?;
         }
@@ -674,7 +674,7 @@ fn copy_special_as_regular_file(
 fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), LocalCopyError> {
     writer
         .sync_all()
-        .map_err(|error| LocalCopyError::io("fsync destination file", path.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("fsync destination file", path, error))?;
     record_fsync_call();
     Ok(())
 }

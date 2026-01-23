@@ -51,11 +51,9 @@ fn preallocate_destination_file(
         let fd = file.as_fd();
         match fallocate(fd, FallocateFlags::empty(), 0, total_len) {
             Ok(()) => Ok(()),
-            Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
-                file.set_len(total_len).map_err(|error| {
-                    LocalCopyError::io("preallocate destination file", path.to_path_buf(), error)
-                })
-            }
+            Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => file
+                .set_len(total_len)
+                .map_err(|error| LocalCopyError::io("preallocate destination file", path, error)),
             Err(errno) => Err(LocalCopyError::io(
                 "preallocate destination file",
                 path.to_path_buf(),
@@ -70,9 +68,8 @@ fn preallocate_destination_file(
             return Ok(());
         }
 
-        file.set_len(total_len).map_err(|error| {
-            LocalCopyError::io("preallocate destination file", path.to_path_buf(), error)
-        })
+        file.set_len(total_len)
+            .map_err(|error| LocalCopyError::io("preallocate destination file", path, error))
     }
 }
 
