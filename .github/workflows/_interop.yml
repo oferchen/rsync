@@ -20,6 +20,9 @@ on:
         type: number
         default: 30
 
+permissions:
+  contents: read
+
 jobs:
   interop:
     name: interop with upstream rsync
