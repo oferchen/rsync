@@ -119,7 +119,12 @@ impl DeltaGenerator {
                 if !pending_literals.is_empty() {
                     literal_bytes += pending_literals.len() as u64;
                     total_bytes += pending_literals.len() as u64;
-                    tokens.push(DeltaToken::Literal(std::mem::take(&mut pending_literals)));
+                    // Use replace instead of take to preserve capacity for next literals
+                    let filled = std::mem::replace(
+                        &mut pending_literals,
+                        Vec::with_capacity(block_len),
+                    );
+                    tokens.push(DeltaToken::Literal(filled));
                 }
 
                 let block = index.block(block_index);

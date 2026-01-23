@@ -68,26 +68,19 @@
 //! - `core::client` integrates these helpers for local filesystem copies.
 //! - [`filetime`] for lower-level timestamp manipulation utilities.
 
-#[cfg(all(feature = "acl", target_os = "macos"))]
-mod acl_macos;
+// Cross-platform ACL support using exacl (Linux, macOS, FreeBSD)
+#[cfg(all(
+    feature = "acl",
+    any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+))]
+mod acl_exacl;
 
+// Stub for Apple platforms that don't support ACLs (iOS, tvOS, watchOS)
 #[cfg(all(
     feature = "acl",
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 mod acl_stub;
-
-#[cfg(all(
-    unix,
-    feature = "acl",
-    not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-    ))
-))]
-mod acl_support;
 
 mod apply;
 mod chmod;
@@ -118,26 +111,18 @@ pub mod nfsv4_acl;
 #[cfg(unix)]
 pub mod fake_super;
 
-#[cfg(all(feature = "acl", target_os = "macos"))]
-pub use acl_macos::sync_acls;
+// Export sync_acls from the appropriate platform module
+#[cfg(all(
+    feature = "acl",
+    any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+))]
+pub use acl_exacl::sync_acls;
 
 #[cfg(all(
     feature = "acl",
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 pub use acl_stub::sync_acls;
-
-#[cfg(all(
-    unix,
-    feature = "acl",
-    not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-    ))
-))]
-pub use acl_support::sync_acls;
 
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,

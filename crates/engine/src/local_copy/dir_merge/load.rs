@@ -99,7 +99,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     visited.push(canonical);
 
     let file = fs::File::open(path)
-        .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("read filter file", path, error))?;
     let mut entries = DirMergeEntries::default();
 
     let map_error = |error: FilterParseError| {
@@ -113,7 +113,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
     let mut contents = String::new();
     io::BufReader::new(file)
         .read_to_string(&mut contents)
-        .map_err(|error| LocalCopyError::io("read filter file", path.to_path_buf(), error))?;
+        .map_err(|error| LocalCopyError::io("read filter file", path, error))?;
 
     match options.parser() {
         DirMergeParser::Whitespace { enforce_kind } => {

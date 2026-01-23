@@ -60,7 +60,7 @@ pub(crate) fn punch_hole(
         Ok(()) => {
             // Seek to pos + len after successful hole punch
             file.seek(SeekFrom::Start(pos + len))
-                .map_err(|e| LocalCopyError::io("seek after hole punch", path.to_path_buf(), e))?;
+                .map_err(|e| LocalCopyError::io("seek after hole punch", path, e))?;
             return Ok(());
         }
         Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
@@ -76,7 +76,7 @@ pub(crate) fn punch_hole(
         Ok(()) => {
             // Seek to pos + len after successful zero range
             file.seek(SeekFrom::Start(pos + len))
-                .map_err(|e| LocalCopyError::io("seek after zero range", path.to_path_buf(), e))?;
+                .map_err(|e| LocalCopyError::io("seek after zero range", path, e))?;
             return Ok(());
         }
         Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
@@ -111,7 +111,7 @@ pub(crate) fn punch_hole(
 
     // Seek to the starting position before writing zeros
     file.seek(SeekFrom::Start(pos))
-        .map_err(|e| LocalCopyError::io("seek before writing zeros", path.to_path_buf(), e))?;
+        .map_err(|e| LocalCopyError::io("seek before writing zeros", path, e))?;
 
     write_zeros_fallback(file, path, len)
 }
@@ -130,9 +130,8 @@ fn write_zeros_fallback(
 
     while len > 0 {
         let chunk_size = len.min(ZERO_WRITE_BUFFER_SIZE as u64) as usize;
-        file.write_all(&zeros[..chunk_size]).map_err(|e| {
-            LocalCopyError::io("write zeros for sparse hole", path.to_path_buf(), e)
-        })?;
+        file.write_all(&zeros[..chunk_size])
+            .map_err(|e| LocalCopyError::io("write zeros for sparse hole", path, e))?;
         len -= chunk_size as u64;
     }
 
@@ -172,7 +171,7 @@ impl SparseWriteState {
             writer
                 .seek(SeekFrom::Current(step as i64))
                 .map_err(|error| {
-                    LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
+                    LocalCopyError::io("seek in destination file", destination, error)
                 })?;
             remaining -= step;
         }
@@ -226,9 +225,9 @@ impl SparseWriteState {
     ) -> Result<u64, LocalCopyError> {
         self.flush(writer, destination)?;
 
-        writer.stream_position().map_err(|error| {
-            LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
-        })
+        writer
+            .stream_position()
+            .map_err(|error| LocalCopyError::io("seek in destination file", destination, error))
     }
 
     /// Finishes sparse writing by punching holes for any remaining zeros.
@@ -242,9 +241,9 @@ impl SparseWriteState {
     ) -> Result<u64, LocalCopyError> {
         self.flush_with_punch_hole(writer, destination)?;
 
-        writer.stream_position().map_err(|error| {
-            LocalCopyError::io("seek in destination file", destination.to_path_buf(), error)
-        })
+        writer
+            .stream_position()
+            .map_err(|error| LocalCopyError::io("seek in destination file", destination, error))
     }
 }
 
@@ -283,9 +282,7 @@ pub(crate) fn write_sparse_chunk(
             state.flush(writer, destination)?;
             writer
                 .write_all(&chunk[data_start..data_end])
-                .map_err(|error| {
-                    LocalCopyError::io("copy file", destination.to_path_buf(), error)
-                })?;
+                .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
         }
 
         state.replace(trailing);

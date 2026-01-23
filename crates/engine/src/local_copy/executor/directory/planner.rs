@@ -40,7 +40,9 @@ impl<'a> PlannedEntry<'a> {
 
 pub(crate) struct DirectoryPlan<'a> {
     pub(crate) planned_entries: Vec<PlannedEntry<'a>>,
-    pub(crate) keep_names: Vec<OsString>,
+    /// Names of entries to keep when deleting extraneous files.
+    /// References the file_name fields of DirectoryEntry, avoiding allocation.
+    pub(crate) keep_names: Vec<&'a OsString>,
     pub(crate) deletion_enabled: bool,
     pub(crate) delete_timing: Option<DeleteTiming>,
 }
@@ -252,7 +254,7 @@ pub(crate) fn plan_directory_entries<'a>(
             };
 
             if preserve_name {
-                keep_names.push(file_name.clone());
+                keep_names.push(file_name);
             }
         }
 
@@ -282,6 +284,236 @@ pub(crate) fn apply_pre_transfer_deletions(
         delete_extraneous_entries(context, destination, relative, &plan.keep_names)?;
     }
     Ok(())
+}
+
+/// Plans directory entries with parallel metadata prefetching.
+///
+/// When the `parallel` feature is enabled and the context options require
+/// expensive metadata operations (symlink following, device checks), this
+/// function prefetches the metadata in parallel before running the sequential
+/// planning logic.
+///
+/// # Performance
+///
+/// For directories with many symlinks or when `--one-file-system` is enabled,
+/// this can provide significant speedup by parallelizing filesystem syscalls.
+#[cfg(feature = "parallel")]
+pub(crate) fn plan_directory_entries_parallel<'a>(
+    context: &mut CopyContext,
+    entries: &'a [DirectoryEntry],
+    relative: Option<&Path>,
+    root_device: Option<u64>,
+) -> Result<DirectoryPlan<'a>, LocalCopyError> {
+    use super::parallel_planner::{PrefetchConfig, prefetch_entry_metadata};
+
+    // Determine what needs to be prefetched based on context options
+    let config = PrefetchConfig {
+        follow_symlinks: context.copy_links_enabled() || context.copy_dirlinks_enabled(),
+        read_symlink_targets: context.safe_links_enabled() && context.copy_unsafe_links_enabled(),
+        check_devices: context.one_file_system_enabled() && root_device.is_some(),
+    };
+
+    // Prefetch metadata in parallel
+    let prefetched = prefetch_entry_metadata(entries, config);
+
+    // Now run the sequential planning with prefetched data
+    plan_directory_entries_with_prefetch(context, entries, relative, root_device, &prefetched)
+}
+
+/// Plans directory entries using prefetched metadata.
+///
+/// This is the sequential planning phase that uses pre-gathered metadata
+/// to avoid blocking on filesystem syscalls.
+#[cfg(feature = "parallel")]
+fn plan_directory_entries_with_prefetch<'a>(
+    context: &mut CopyContext,
+    entries: &'a [DirectoryEntry],
+    relative: Option<&Path>,
+    root_device: Option<u64>,
+    prefetched: &[super::parallel_planner::PrefetchedEntryData],
+) -> Result<DirectoryPlan<'a>, LocalCopyError> {
+    let deletion_enabled = context.options().delete_extraneous();
+    let delete_timing = context.delete_timing();
+    let mut keep_names = if deletion_enabled {
+        Vec::with_capacity(entries.len())
+    } else {
+        Vec::new()
+    };
+    let mut planned_entries = Vec::with_capacity(entries.len());
+
+    for (entry, prefetch) in entries.iter().zip(prefetched.iter()) {
+        context.enforce_timeout()?;
+        context.register_progress();
+
+        let file_name = &entry.file_name;
+        let entry_metadata = &entry.metadata;
+        let entry_type = entry_metadata.file_type();
+        let mut metadata_override = None;
+        let mut effective_type = entry_type;
+
+        // Use prefetched symlink metadata if available
+        if entry_type.is_symlink()
+            && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
+        {
+            if let Some(ref result) = prefetch.symlink_target_metadata {
+                match result {
+                    Ok(target_metadata) => {
+                        let target_type = target_metadata.file_type();
+                        if context.copy_links_enabled()
+                            || (context.copy_dirlinks_enabled() && target_type.is_dir())
+                        {
+                            effective_type = target_type;
+                            metadata_override = Some(target_metadata.clone());
+                        }
+                    }
+                    Err(_) if context.copy_links_enabled() => {
+                        // Re-fetch to get the actual error for reporting
+                        return Err(follow_symlink_metadata(entry.path.as_path()).unwrap_err());
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
+        let relative_path = match relative {
+            Some(base) => base.join(Path::new(&file_name)),
+            None => PathBuf::from(Path::new(&file_name)),
+        };
+        context.record_file_list_entry(non_empty_path(relative_path.as_path()));
+
+        let mut keep_name = true;
+        let mut action = decide_entry_action(
+            context,
+            relative_path.as_path(),
+            entry_type,
+            effective_type,
+            &mut keep_name,
+        )?;
+
+        // Handle safe_links with prefetched symlink target
+        if matches!(action, EntryAction::CopySymlink)
+            && context.safe_links_enabled()
+            && context.copy_unsafe_links_enabled()
+        {
+            if let Some(ref result) = prefetch.symlink_target {
+                match result {
+                    Ok(target) => {
+                        if !symlink_target_is_safe(target, relative_path.as_path()) {
+                            // Use prefetched metadata or re-fetch
+                            let target_metadata = if let Some(ref meta_result) =
+                                prefetch.symlink_target_metadata
+                            {
+                                meta_result.as_ref().map_err(|e| {
+                                    LocalCopyError::io(
+                                        "read symlink target metadata",
+                                        entry.path.clone(),
+                                        std::io::Error::other(e.to_string()),
+                                    )
+                                })?
+                            } else {
+                                &follow_symlink_metadata(entry.path.as_path())?
+                            };
+
+                            let target_type = target_metadata.file_type();
+                            if target_type.is_dir() {
+                                action = EntryAction::CopyDirectory;
+                                metadata_override = Some(target_metadata.clone());
+                            } else if target_type.is_file() {
+                                action = EntryAction::CopyFile;
+                                metadata_override = Some(target_metadata.clone());
+                            } else if is_fifo(target_type) {
+                                if context.specials_enabled() {
+                                    action = EntryAction::CopyFifo;
+                                    metadata_override = Some(target_metadata.clone());
+                                } else {
+                                    keep_name = false;
+                                    action = EntryAction::SkipNonRegular;
+                                    metadata_override = None;
+                                }
+                            } else if is_device(target_type) {
+                                if context.copy_devices_as_files_enabled() {
+                                    action = EntryAction::CopyDeviceAsFile;
+                                    metadata_override = Some(target_metadata.clone());
+                                } else if context.devices_enabled() {
+                                    action = EntryAction::CopyDevice;
+                                    metadata_override = Some(target_metadata.clone());
+                                } else {
+                                    keep_name = false;
+                                    action = EntryAction::SkipNonRegular;
+                                    metadata_override = None;
+                                }
+                            } else {
+                                keep_name = false;
+                                action = EntryAction::SkipNonRegular;
+                                metadata_override = None;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(LocalCopyError::io(
+                            "read symbolic link",
+                            entry.path.clone(),
+                            std::io::Error::other(e.to_string()),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Use prefetched device ID for one-file-system check
+        #[cfg(unix)]
+        if matches!(action, EntryAction::CopyDirectory)
+            && context.one_file_system_enabled()
+            && let Some(root) = root_device
+            && let Some(entry_device) = prefetch.device_id
+            && entry_device != root
+        {
+            action = EntryAction::SkipMountPoint;
+        }
+
+        #[cfg(not(unix))]
+        if matches!(action, EntryAction::CopyDirectory)
+            && context.one_file_system_enabled()
+            && let Some(root) = root_device
+            && let Some(entry_device) = crate::local_copy::overrides::device_identifier(
+                entry.path.as_path(),
+                metadata_override.as_ref().unwrap_or(entry_metadata),
+            )
+            && entry_device != root
+        {
+            action = EntryAction::SkipMountPoint;
+        }
+
+        if deletion_enabled && keep_name {
+            let preserve_name = match delete_timing {
+                Some(DeleteTiming::Before) => matches!(
+                    action,
+                    EntryAction::CopyDirectory
+                        | EntryAction::SkipExcluded
+                        | EntryAction::SkipMountPoint
+                ),
+                _ => true,
+            };
+
+            if preserve_name {
+                keep_names.push(file_name);
+            }
+        }
+
+        planned_entries.push(PlannedEntry {
+            entry,
+            relative: relative_path,
+            action,
+            metadata_override,
+        });
+    }
+
+    Ok(DirectoryPlan {
+        planned_entries,
+        keep_names,
+        deletion_enabled,
+        delete_timing,
+    })
 }
 
 #[cfg(test)]
@@ -366,9 +598,10 @@ mod tests {
 
     #[test]
     fn directory_plan_deletion_enabled() {
+        let names = vec![OsString::from("keep_me")];
         let plan = DirectoryPlan {
             planned_entries: Vec::new(),
-            keep_names: vec![OsString::from("keep_me")],
+            keep_names: names.iter().collect(),
             deletion_enabled: true,
             delete_timing: Some(DeleteTiming::Before),
         };
@@ -390,13 +623,14 @@ mod tests {
 
     #[test]
     fn directory_plan_multiple_keep_names() {
+        let names = vec![
+            OsString::from("file1.txt"),
+            OsString::from("file2.txt"),
+            OsString::from("dir"),
+        ];
         let plan = DirectoryPlan {
             planned_entries: Vec::new(),
-            keep_names: vec![
-                OsString::from("file1.txt"),
-                OsString::from("file2.txt"),
-                OsString::from("dir"),
-            ],
+            keep_names: names.iter().collect(),
             deletion_enabled: true,
             delete_timing: Some(DeleteTiming::During),
         };

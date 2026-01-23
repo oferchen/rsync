@@ -369,7 +369,8 @@ impl<'a> DeltaApplicator<'a> {
             sparse.finish(&mut self.output)?;
         }
 
-        self.output.sync_all()?;
+        // Note: We don't call sync_all() by default, matching upstream rsync behavior.
+        // Upstream rsync only fsyncs when --fsync flag is explicitly set.
 
         let expected_len = self.checksum_verifier.digest_len();
         let mut expected = vec![0u8; expected_len];

@@ -149,13 +149,9 @@ impl Iterator for FileListWalker {
 
                 if let Some(name) = state.next_name() {
                     let full_path = state.fs_path.join(&name);
-                    let relative_path = if state.relative_prefix.as_os_str().is_empty() {
-                        PathBuf::from(&name)
-                    } else {
-                        let mut rel = state.relative_prefix.clone();
-                        rel.push(&name);
-                        rel
-                    };
+                    // Use join() which is equivalent to clone()+push() but clearer.
+                    // When relative_prefix is empty, join() with name creates PathBuf from name.
+                    let relative_path = state.relative_prefix.join(&name);
                     (full_path, relative_path, state.depth + 1)
                 } else {
                     self.stack.pop();
@@ -210,10 +206,14 @@ impl DirectoryState {
         })
     }
 
+    /// Returns the next entry name, taking ownership to avoid cloning.
     fn next_name(&mut self) -> Option<OsString> {
-        if let Some(name) = self.entries.get(self.index) {
+        if self.index < self.entries.len() {
+            // Take ownership of the entry to avoid cloning.
+            // We replace with empty OsString which is cheap (no allocation).
+            let name = std::mem::take(&mut self.entries[self.index]);
             self.index += 1;
-            Some(name.clone())
+            Some(name)
         } else {
             None
         }

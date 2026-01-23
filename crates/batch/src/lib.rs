@@ -76,7 +76,7 @@ pub use format::{BatchFlags, BatchHeader, FileEntry};
 pub use reader::BatchReader;
 pub use writer::BatchWriter;
 
-// Re-export DeltaOp from protocol for read_all_delta_ops return type
+/// Delta operation type re-exported from protocol for `read_all_delta_ops` return type.
 pub use protocol::wire::DeltaOp;
 
 use std::path::Path;

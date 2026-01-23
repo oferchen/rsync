@@ -28,7 +28,8 @@ thiserror = "2.0"
 rayon = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 globset = "0.4"
-walkdir = "2.5"
+jwalk = { workspace = true }
+rustc-hash = { workspace = true }
 rustix = { version = "0.38", features = ["fs", "process"] }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 md5 = { version = "0.7", optional = true }
@@ -46,7 +47,7 @@ checksums = { path = "../checksums", default-features = false }
 libc = "0.2"
 
 [features]
-default = ["zstd", "lz4", "acl", "xattr"]
+default = ["zstd", "lz4", "acl", "xattr", "optimized-buffers", "lazy-metadata", "batch-sync"]
 xattr = ["metadata/xattr"]
 acl = ["metadata/acl"]
 zstd = ["compress/zstd"]
@@ -57,6 +58,13 @@ async = ["dep:tokio", "dep:md5", "dep:xxhash-rust", "dep:filetime"]
 parallel = ["dep:rayon"]
 # Structured logging instrumentation for performance analysis
 tracing = ["dep:tracing"]
+# Performance optimizations (enabled by default)
+# Buffer pool - reuses I/O buffers to reduce allocation overhead
+optimized-buffers = []
+# Lazy metadata - defers stat() calls until metadata is needed
+lazy-metadata = []
+# Batch sync - batches fsync() calls for better throughput
+batch-sync = []
 
 [dev-dependencies]
 filetime = "0.2"
@@ -68,3 +76,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 [target.'cfg(unix)'.dev-dependencies]
 xattr = "1.3"
 libc = "0.2"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "optimizations_benchmark"
+harness = false
+required-features = ["optimized-buffers"]
