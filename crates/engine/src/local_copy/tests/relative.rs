@@ -1,4 +1,5 @@
-
+// These tests use Unix-style absolute paths (starting with /)
+#[cfg(unix)]
 #[test]
 fn relative_root_drops_absolute_prefix_without_marker() {
     let operand = OsString::from("/var/log/messages");
@@ -7,6 +8,7 @@ fn relative_root_drops_absolute_prefix_without_marker() {
     assert_eq!(spec.relative_root(), Some(expected));
 }
 
+#[cfg(unix)]
 #[test]
 fn relative_root_respects_marker_boundary() {
     let operand = OsString::from("/srv/./data/file.txt");
