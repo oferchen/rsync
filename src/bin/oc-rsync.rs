@@ -1,5 +1,11 @@
 #![deny(unsafe_code)]
 
+use mimalloc::MiMalloc;
+
+/// High-performance memory allocator for improved allocation throughput.
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 #[path = "client.rs"]
 mod client;
 mod support;

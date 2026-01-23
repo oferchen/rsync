@@ -1,15 +1,25 @@
 //! Hard link tracking for local copy operations.
+//!
+//! Uses [`FxHashMap`] for fast lookups with integer-based device/inode keys.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 #[cfg(unix)]
-#[derive(Default)]
 pub(crate) struct HardLinkTracker {
-    entries: HashMap<HardLinkKey, PathBuf>,
+    entries: FxHashMap<HardLinkKey, PathBuf>,
+}
+
+#[cfg(unix)]
+impl Default for HardLinkTracker {
+    fn default() -> Self {
+        Self {
+            entries: FxHashMap::default(),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -22,9 +32,7 @@ struct HardLinkKey {
 #[cfg(unix)]
 impl HardLinkTracker {
     pub(crate) fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-        }
+        Self::default()
     }
 
     pub(crate) fn existing_target(&self, metadata: &fs::Metadata) -> Option<PathBuf> {
