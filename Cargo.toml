@@ -36,6 +36,7 @@ dhat-heap = ["dep:dhat"]
 cli = { path = "crates/cli", default-features = false }
 daemon = { path = "crates/daemon", default-features = false }
 core = { path = "crates/core", default-features = false }
+mimalloc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = "2.0"
@@ -92,6 +93,14 @@ version = "0.5.3"
 repository = "https://github.com/oferchen/rsync"
 
 [workspace.dependencies]
+# High-performance memory allocator - 8-50% faster than system allocator
+mimalloc = "0.1"
+# Fast non-cryptographic hash for HashMap/HashSet - 2-5x faster for integer keys
+rustc-hash = "2.1"
+# Parallel directory walking - ~4x faster than walkdir
+jwalk = "0.8"
+# Cross-platform ACL support (Linux, macOS, FreeBSD)
+exacl = "0.12"
 # Async runtime - feature-gated for optional async support
 tokio = { version = "1.45", features = ["rt-multi-thread", "io-util", "net", "fs", "sync", "time", "process", "macros"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
