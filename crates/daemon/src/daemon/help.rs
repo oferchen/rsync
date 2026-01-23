@@ -1,7 +1,6 @@
 use core::branding::{Brand, manifest, source_line};
 
 /// Renders the deterministic daemon help text for the supplied branding profile.
-#[allow(dead_code)] // Used in integration tests and by daemon binary
 pub(crate) fn help_text(brand: Brand) -> String {
     let manifest = manifest();
     let program = brand.daemon_program_name();
