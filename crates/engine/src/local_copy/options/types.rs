@@ -46,10 +46,15 @@ pub enum ReferenceDirectoryKind {
 }
 
 /// Reference directory consulted during copy execution.
+///
+/// This represents a `--compare-dest`, `--copy-dest`, or `--link-dest` directory
+/// used for basis file lookup during both local and remote transfers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReferenceDirectory {
-    pub(super) kind: ReferenceDirectoryKind,
-    pub(super) path: PathBuf,
+    /// The kind of reference directory operation.
+    pub kind: ReferenceDirectoryKind,
+    /// The path to the reference directory.
+    pub path: PathBuf,
 }
 
 impl ReferenceDirectory {

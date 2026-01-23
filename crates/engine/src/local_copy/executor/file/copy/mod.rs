@@ -12,7 +12,7 @@ use crate::local_copy::{
     LocalCopyRecord,
 };
 
-use transfer::execute_transfer;
+use transfer::{TransferFlags, execute_transfer};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use transfer::take_fsync_call_count;
@@ -175,6 +175,23 @@ pub(crate) fn copy_file(
         return Ok(());
     }
 
+    let transfer_flags = TransferFlags {
+        append_allowed,
+        append_verify,
+        whole_file_enabled,
+        inplace_enabled,
+        partial_enabled,
+        use_sparse_writes,
+        compress_enabled,
+        size_only_enabled,
+        ignore_times_enabled,
+        checksum_enabled,
+        #[cfg(all(unix, feature = "xattr"))]
+        preserve_xattrs,
+        #[cfg(all(unix, feature = "acl"))]
+        preserve_acls,
+    };
+
     execute_transfer(
         context,
         source,
@@ -186,21 +203,8 @@ pub(crate) fn copy_file(
         destination_previously_existed,
         file_type,
         relative,
-        append_allowed,
-        append_verify,
-        whole_file_enabled,
-        inplace_enabled,
-        partial_enabled,
-        use_sparse_writes,
-        compress_enabled,
-        size_only_enabled,
-        ignore_times_enabled,
-        checksum_enabled,
+        transfer_flags,
         mode,
-        #[cfg(all(unix, feature = "xattr"))]
-        preserve_xattrs,
-        #[cfg(all(unix, feature = "acl"))]
-        preserve_acls,
         link_outcome.copy_source_override,
     )
 }

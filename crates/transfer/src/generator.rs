@@ -81,9 +81,14 @@ pub struct GeneratorContext {
     /// Server configuration.
     config: ServerConfig,
     /// List of files to send (contains relative paths for wire transmission).
+    ///
+    /// **Invariant**: `file_list` and `full_paths` must always have the same length.
+    /// Use [`Self::push_file_item`] to add entries and [`Self::clear_file_list`] to clear.
     file_list: Vec<FileEntry>,
-    /// Full filesystem paths for each file in file_list (parallel array).
+    /// Full filesystem paths for each file in `file_list` (parallel array).
     /// Used to open files for delta generation during transfer.
+    ///
+    /// **Invariant**: `file_list[i]` corresponds to `full_paths[i]` for all valid indices.
     full_paths: Vec<PathBuf>,
     /// Filter rules received from client.
     filters: Option<FilterSet>,
@@ -166,7 +171,34 @@ impl GeneratorContext {
     /// Returns the generated file list.
     #[must_use]
     pub fn file_list(&self) -> &[FileEntry] {
+        debug_assert_eq!(
+            self.file_list.len(),
+            self.full_paths.len(),
+            "file_list and full_paths must be kept in sync"
+        );
         &self.file_list
+    }
+
+    /// Adds a file entry and its corresponding full path to the file list.
+    ///
+    /// This method maintains the invariant that `file_list` and `full_paths`
+    /// have the same length and corresponding entries at each index.
+    fn push_file_item(&mut self, entry: FileEntry, full_path: PathBuf) {
+        debug_assert_eq!(
+            self.file_list.len(),
+            self.full_paths.len(),
+            "file_list and full_paths must be kept in sync before push"
+        );
+        self.file_list.push(entry);
+        self.full_paths.push(full_path);
+    }
+
+    /// Clears both the file list and full paths arrays.
+    ///
+    /// This method maintains the invariant that both arrays are cleared together.
+    fn clear_file_list(&mut self) {
+        self.file_list.clear();
+        self.full_paths.clear();
     }
 
     // =========================================================================
@@ -533,6 +565,13 @@ impl GeneratorContext {
             self.validate_file_index(ndx)?;
 
             let file_entry = &self.file_list[ndx];
+            // Direct field access to allow subsequent mutable access to self.total_bytes_read
+            // (Rust's borrow checker allows disjoint field borrows)
+            debug_assert_eq!(
+                self.file_list.len(),
+                self.full_paths.len(),
+                "file_list and full_paths must be kept in sync"
+            );
             let source_path = &self.full_paths[ndx];
 
             // Read signature blocks
@@ -561,15 +600,18 @@ impl GeneratorContext {
 
             // Generate delta (or send whole file if no basis)
             let delta_script = if has_basis {
+                let delta_params = DeltaGenParams {
+                    protocol: self.protocol,
+                    negotiated_algorithms: self.negotiated_algorithms.as_ref(),
+                    compat_flags: self.compat_flags.as_ref(),
+                    checksum_seed: self.checksum_seed,
+                };
                 generate_delta_from_signature(
                     source_file,
                     block_length,
                     sig_blocks,
                     strong_sum_length,
-                    self.protocol,
-                    self.negotiated_algorithms.as_ref(),
-                    self.compat_flags.as_ref(),
-                    self.checksum_seed,
+                    &delta_params,
                 )?
             } else {
                 generate_whole_file_delta(source_file)?
@@ -719,8 +761,7 @@ impl GeneratorContext {
         self.flist_build_start = Some(Instant::now());
 
         info_log!(Flist, 1, "building file list...");
-        self.file_list.clear();
-        self.full_paths.clear();
+        self.clear_file_list();
 
         for base_path in base_paths {
             self.walk_path(base_path, base_path)?;
@@ -730,7 +771,12 @@ impl GeneratorContext {
         // We need to sort both file_list and full_paths together to maintain correspondence.
         // Create index array, sort by rsync rules, then reorder both arrays.
         let file_list_ref = &self.file_list;
-        let mut indices: Vec<usize> = (0..self.file_list.len()).collect();
+        let mut indices: Vec<usize> = {
+            let len = self.file_list.len();
+            let mut v = Vec::with_capacity(len);
+            v.extend(0..len);
+            v
+        };
         indices.sort_by(|&a, &b| compare_file_entries(&file_list_ref[a], &file_list_ref[b]));
 
         // Apply permutation in-place using cycle-following algorithm.
@@ -820,8 +866,7 @@ impl GeneratorContext {
                 return Ok(());
             }
         };
-        self.file_list.push(entry);
-        self.full_paths.push(path.to_path_buf());
+        self.push_file_item(entry, path.to_path_buf());
 
         // Recurse into directories if recursive mode is enabled
         if metadata.is_dir() && self.config.flags.recursive {
@@ -1327,22 +1372,32 @@ pub fn calculate_duration_ms(start: Option<Instant>, end: Option<Instant>) -> u6
 
 // Helper functions for delta generation
 
+/// Parameters for delta generation from a received signature.
+///
+/// Groups protocol-related parameters to reduce argument count.
+struct DeltaGenParams<'a> {
+    /// Protocol version for algorithm selection.
+    protocol: ProtocolVersion,
+    /// Negotiated algorithms from capability exchange.
+    negotiated_algorithms: Option<&'a NegotiationResult>,
+    /// Compatibility flags affecting checksum behavior.
+    compat_flags: Option<&'a CompatibilityFlags>,
+    /// Checksum seed for rolling checksum computation.
+    checksum_seed: i32,
+}
+
 /// Generates a delta script from a received signature.
 ///
 /// Reconstructs the signature from wire format blocks, creates an index,
 /// and uses DeltaGenerator to produce the delta.
 ///
 /// Takes ownership of sig_blocks to avoid cloning strong_sum data.
-#[allow(clippy::too_many_arguments)]
 fn generate_delta_from_signature<R: Read>(
     source: R,
     block_length: u32,
     sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
     strong_sum_length: u8,
-    protocol: ProtocolVersion,
-    negotiated_algorithms: Option<&NegotiationResult>,
-    compat_flags: Option<&CompatibilityFlags>,
-    checksum_seed: i32,
+    params: &DeltaGenParams<'_>,
 ) -> io::Result<DeltaScript> {
     use checksums::RollingDigest;
     use engine::delta::SignatureLayout;
@@ -1389,10 +1444,10 @@ fn generate_delta_from_signature<R: Read>(
 
     // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
     let checksum_factory = ChecksumFactory::from_negotiation(
-        negotiated_algorithms,
-        protocol,
-        checksum_seed,
-        compat_flags,
+        params.negotiated_algorithms,
+        params.protocol,
+        params.checksum_seed,
+        params.compat_flags,
     );
     let checksum_algorithm = checksum_factory.signature_algorithm();
 
