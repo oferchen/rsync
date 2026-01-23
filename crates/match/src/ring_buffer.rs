@@ -40,6 +40,7 @@ pub struct RingBuffer {
     len: usize,
 }
 
+#[allow(dead_code)]
 impl RingBuffer {
     /// Creates a new ring buffer with the specified capacity.
     ///

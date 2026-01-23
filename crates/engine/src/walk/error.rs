@@ -62,6 +62,7 @@ pub enum WalkError {
 
 impl WalkError {
     /// Creates a loop error.
+    #[cfg(test)]
     pub(crate) fn symlink_loop(path: PathBuf, ancestor: PathBuf) -> Self {
         Self::Loop { path, ancestor }
     }

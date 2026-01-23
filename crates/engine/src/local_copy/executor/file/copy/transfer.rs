@@ -71,6 +71,7 @@ pub(super) struct TransferFlags {
     pub preserve_acls: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn execute_transfer(
     context: &mut CopyContext,
     source: &Path,
@@ -562,6 +563,7 @@ fn copy_special_as_regular_file(
     let mut guard: Option<DestinationWriteGuard> = None;
 
     if inplace_enabled {
+        #[cfg_attr(feature = "batch-sync", allow(unused_mut, unused_variables))]
         let mut file = fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -574,6 +576,7 @@ fn copy_special_as_regular_file(
             sync_destination_file(&mut file, destination)?;
         }
     } else {
+        #[cfg_attr(feature = "batch-sync", allow(unused_mut, unused_variables))]
         let (new_guard, mut file) = DestinationWriteGuard::new(
             destination,
             partial_enabled,
@@ -726,6 +729,7 @@ fn copy_special_as_regular_file(
 }
 
 #[cfg(any(not(feature = "batch-sync"), test))]
+#[allow(dead_code)]
 fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), LocalCopyError> {
     writer
         .sync_all()
@@ -735,6 +739,7 @@ fn sync_destination_file(writer: &mut fs::File, path: &Path) -> Result<(), Local
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 fn record_fsync_call() {
     FSYNC_CALL_COUNT.fetch_add(1, Ordering::Relaxed);
 }

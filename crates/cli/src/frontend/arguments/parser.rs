@@ -898,7 +898,7 @@ mod tests {
         // -a --no-recursive should result in recursive=false
         let result = parse_test_args(["-a", "--no-recursive", "src/", "dst/"]);
         assert!(result.is_ok());
-        let parsed = result.unwrap();
+        let _parsed = result.unwrap();
         // archive sets recursive, but --no-recursive should override
         // The actual behavior depends on implementation
     }
@@ -962,7 +962,7 @@ mod tests {
         // Empty --rsh should be filtered out
         let result = parse_test_args(["--rsh=", "src/", "dst/"]);
         assert!(result.is_ok());
-        let parsed = result.unwrap();
+        let _parsed = result.unwrap();
         // Should fall back to RSYNC_RSH env or None
         // (exact behavior depends on env)
     }

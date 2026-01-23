@@ -79,7 +79,7 @@ impl BenchDaemon {
         // Wait for daemon to be ready
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            if TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+            if TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
                 return Some(Self {
                     _workdir: workdir,
                     module_path,
