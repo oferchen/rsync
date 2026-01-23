@@ -631,6 +631,7 @@ jobs:
     needs:
       - validate-version
       - macos
+      - release-artifacts  # Formula references release URLs, must wait for upload
 
     steps:
       - name: Checkout
