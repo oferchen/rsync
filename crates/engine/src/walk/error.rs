@@ -2,6 +2,7 @@
 
 use std::io;
 use std::path::PathBuf;
+
 use thiserror::Error;
 
 /// Error encountered during directory traversal.
@@ -24,6 +25,9 @@ use thiserror::Error;
 ///         }
 ///         Err(WalkError::Loop { path, .. }) => {
 ///             eprintln!("Symlink loop at: {}", path.display());
+///         }
+///         Err(WalkError::Walk(msg)) => {
+///             eprintln!("Walk error: {msg}");
 ///         }
 ///     }
 /// }
@@ -50,6 +54,10 @@ pub enum WalkError {
         /// The ancestor path that the link points back to.
         ancestor: PathBuf,
     },
+
+    /// A directory traversal error from the walker.
+    #[error("directory walk error: {0}")]
+    Walk(String),
 }
 
 impl WalkError {
@@ -58,11 +66,12 @@ impl WalkError {
         Self::Loop { path, ancestor }
     }
 
-    /// Returns the path where the error occurred.
+    /// Returns the path where the error occurred, if available.
     #[must_use]
-    pub fn path(&self) -> &PathBuf {
+    pub fn path(&self) -> Option<&PathBuf> {
         match self {
-            Self::Io { path, .. } | Self::Loop { path, .. } => path,
+            Self::Io { path, .. } | Self::Loop { path, .. } => Some(path),
+            Self::Walk(_) => None,
         }
     }
 
@@ -85,27 +94,12 @@ impl WalkError {
     }
 }
 
-impl From<walkdir::Error> for WalkError {
-    fn from(err: walkdir::Error) -> Self {
-        let path = err.path().map(|p| p.to_path_buf()).unwrap_or_default();
-
-        if let Some(ancestor) = err.loop_ancestor() {
-            return Self::symlink_loop(path, ancestor.to_path_buf());
-        }
-
-        if let Some(io_err) = err.into_io_error() {
-            Self::Io {
-                action: "traverse",
-                path,
-                source: io_err,
-            }
-        } else {
-            // Fallback for unexpected error types
-            Self::Io {
-                action: "traverse",
-                path,
-                source: io::Error::other("unknown walkdir error"),
-            }
+impl From<io::Error> for WalkError {
+    fn from(err: io::Error) -> Self {
+        Self::Io {
+            action: "traverse",
+            path: PathBuf::new(),
+            source: err,
         }
     }
 }
@@ -146,7 +140,13 @@ mod tests {
             source: io::Error::other("err"),
         };
 
-        assert_eq!(err.path(), &path);
+        assert_eq!(err.path(), Some(&path));
+    }
+
+    #[test]
+    fn walk_error_has_no_path() {
+        let err = WalkError::Walk("test error".to_string());
+        assert_eq!(err.path(), None);
     }
 
     #[test]

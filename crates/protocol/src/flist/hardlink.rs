@@ -4,13 +4,15 @@
 //! (device, inode) pairs. This module provides a table structure to track
 //! hardlinks and assign unique indices for wire protocol transmission.
 //!
+//! Uses [`FxHashMap`] for fast lookups with integer-based keys.
+//!
 //! # Upstream Reference
 //!
 //! - `hlink.c:match_hlinkinfo()` - Hardlink matching logic
 //! - `hlink.c:init_hard_links()` - Hardlink table initialization
 //! - Protocol 30+ uses indices into a hardlink list
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Device and inode pair identifying a unique file.
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
@@ -81,7 +83,7 @@ pub enum HardlinkLookup {
 #[derive(Debug, Default)]
 pub struct HardlinkTable {
     /// Map from (dev, ino) to hardlink entry.
-    entries: HashMap<DevIno, HardlinkEntry>,
+    entries: FxHashMap<DevIno, HardlinkEntry>,
 }
 
 impl HardlinkTable {
@@ -95,7 +97,7 @@ impl HardlinkTable {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            entries: HashMap::with_capacity(capacity),
+            entries: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
         }
     }
 
@@ -175,8 +177,8 @@ mod tests {
 
     #[test]
     fn dev_ino_hash() {
-        use std::collections::HashSet;
-        let mut set = HashSet::new();
+        use rustc_hash::FxHashSet;
+        let mut set = FxHashSet::default();
         set.insert(DevIno::new(1, 2));
         assert!(set.contains(&DevIno::new(1, 2)));
         assert!(!set.contains(&DevIno::new(1, 3)));
