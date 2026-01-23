@@ -32,6 +32,7 @@
 mod entry;
 mod flags;
 mod hardlink;
+mod macros;
 mod read;
 mod sort;
 mod state;

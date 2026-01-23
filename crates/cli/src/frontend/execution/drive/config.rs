@@ -133,6 +133,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) rsync_path: Option<OsString>,
     pub(crate) early_input: Option<PathBuf>,
     pub(crate) batch_config: Option<batch::BatchConfig>,
+    pub(crate) no_motd: bool,
 }
 
 /// Builds the base [`ClientConfigBuilder`] from the provided inputs.
@@ -316,5 +317,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         || inputs.log_file_template.is_some()
         || !matches!(inputs.name_level, NameOutputLevel::Disabled);
 
-    builder.force_event_collection(force_event_collection)
+    builder
+        .force_event_collection(force_event_collection)
+        .no_motd(inputs.no_motd)
 }
