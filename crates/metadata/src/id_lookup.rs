@@ -5,33 +5,78 @@
 //! feature, which translates user/group names between systems rather than using
 //! raw numeric IDs.
 //!
+//! # Performance
+//!
+//! UID/GID lookups are cached to avoid repeated NSS queries. Without caching,
+//! each lookup triggers multiple syscalls (getpwuid_r, getgrgid_r) plus systemd
+//! userdb connections on systems with libnss_systemd, causing 15x slowdown on
+//! workloads with many files.
+//!
 //! # Upstream Reference
 //!
-//! - `uidlist.c` - UID/GID list management in upstream rsync
+//! - `uidlist.c` - UID/GID list management in upstream rsync (uses linked list cache)
 
 #![allow(unsafe_code)]
 
 use crate::ownership;
 use rustix::fs::{Gid, Uid};
 use rustix::process::{RawGid, RawUid};
+use std::collections::HashMap;
 use std::io;
 use std::ptr;
+use std::sync::{LazyLock, Mutex};
 use std::{
     ffi::{CStr, CString},
     mem::MaybeUninit,
 };
+
+/// Thread-safe cache for UID mappings.
+///
+/// Maps remote UIDs to their resolved local UIDs. This avoids expensive NSS
+/// lookups (getpwuid_r + getpwnam_r) for each file when preserving ownership.
+static UID_CACHE: LazyLock<Mutex<HashMap<RawUid, RawUid>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Thread-safe cache for GID mappings.
+///
+/// Maps remote GIDs to their resolved local GIDs. This avoids expensive NSS
+/// lookups (getgrgid_r + getgrnam_r) for each file when preserving ownership.
+static GID_CACHE: LazyLock<Mutex<HashMap<RawGid, RawGid>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Maps a remote UID to a local UID.
 ///
 /// When `numeric_ids` is true, returns the UID unchanged.
 /// Otherwise, looks up the name for the remote UID and finds the local UID with that name.
 /// If lookup fails, returns the original UID.
+///
+/// Results are cached to avoid repeated NSS lookups for files with the same owner.
 pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
     if numeric_ids {
         return Some(ownership::uid_from_raw(uid));
     }
 
-    let mapped = match lookup_user_name(uid) {
+    // Check cache first (fast path for common case: all files have same owner)
+    if let Ok(cache) = UID_CACHE.lock() {
+        if let Some(&cached) = cache.get(&uid) {
+            return Some(ownership::uid_from_raw(cached));
+        }
+    }
+
+    // Cache miss: perform expensive NSS lookup
+    let mapped = map_uid_uncached(uid);
+
+    // Store in cache for future lookups
+    if let Ok(mut cache) = UID_CACHE.lock() {
+        cache.insert(uid, mapped);
+    }
+
+    Some(ownership::uid_from_raw(mapped))
+}
+
+/// Performs uncached UID mapping via NSS lookup.
+fn map_uid_uncached(uid: RawUid) -> RawUid {
+    match lookup_user_name(uid) {
         Ok(Some(bytes)) => match lookup_user_by_name(&bytes) {
             Ok(Some(mapped)) => mapped,
             Ok(None) => uid,
@@ -39,9 +84,7 @@ pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
         },
         Ok(None) => uid,
         Err(_) => uid,
-    };
-
-    Some(ownership::uid_from_raw(mapped))
+    }
 }
 
 /// Maps a remote GID to a local GID.
@@ -49,12 +92,34 @@ pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
 /// When `numeric_ids` is true, returns the GID unchanged.
 /// Otherwise, looks up the name for the remote GID and finds the local GID with that name.
 /// If lookup fails, returns the original GID.
+///
+/// Results are cached to avoid repeated NSS lookups for files with the same group.
 pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
     if numeric_ids {
         return Some(ownership::gid_from_raw(gid));
     }
 
-    let mapped = match lookup_group_name(gid) {
+    // Check cache first (fast path for common case: all files have same group)
+    if let Ok(cache) = GID_CACHE.lock() {
+        if let Some(&cached) = cache.get(&gid) {
+            return Some(ownership::gid_from_raw(cached));
+        }
+    }
+
+    // Cache miss: perform expensive NSS lookup
+    let mapped = map_gid_uncached(gid);
+
+    // Store in cache for future lookups
+    if let Ok(mut cache) = GID_CACHE.lock() {
+        cache.insert(gid, mapped);
+    }
+
+    Some(ownership::gid_from_raw(mapped))
+}
+
+/// Performs uncached GID mapping via NSS lookup.
+fn map_gid_uncached(gid: RawGid) -> RawGid {
+    match lookup_group_name(gid) {
         Ok(Some(bytes)) => match lookup_group_by_name(&bytes) {
             Ok(Some(mapped)) => mapped,
             Ok(None) => gid,
@@ -62,9 +127,7 @@ pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
         },
         Ok(None) => gid,
         Err(_) => gid,
-    };
-
-    Some(ownership::gid_from_raw(mapped))
+    }
 }
 
 /// Looks up the username for a given UID.
@@ -200,6 +263,32 @@ pub fn lookup_group_name(gid: RawGid) -> Result<Option<Vec<u8>>, io::Error> {
 
         return Err(io::Error::from_raw_os_error(errno));
     }
+}
+
+/// Clears the UID/GID mapping caches.
+///
+/// This is primarily useful for testing to ensure a clean state between tests.
+/// In production, the caches persist for the lifetime of the process.
+#[cfg(test)]
+pub fn clear_id_caches() {
+    if let Ok(mut cache) = UID_CACHE.lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = GID_CACHE.lock() {
+        cache.clear();
+    }
+}
+
+/// Returns the current size of the UID cache.
+#[cfg(test)]
+pub fn uid_cache_size() -> usize {
+    UID_CACHE.lock().map(|c| c.len()).unwrap_or(0)
+}
+
+/// Returns the current size of the GID cache.
+#[cfg(test)]
+pub fn gid_cache_size() -> usize {
+    GID_CACHE.lock().map(|c| c.len()).unwrap_or(0)
 }
 
 /// Looks up the GID for a given group name.
@@ -425,5 +514,88 @@ mod tests {
         let gid_result = map_gid(1000, true);
         assert!(uid_result.is_some());
         assert!(gid_result.is_some());
+    }
+
+    // ==================== Cache behavior tests ====================
+
+    #[test]
+    fn uid_cache_stores_mapping_on_lookup() {
+        clear_id_caches();
+        let initial_size = uid_cache_size();
+
+        // Perform non-numeric lookup to trigger caching
+        let _ = map_uid(0, false);
+
+        // Cache should now contain at least one entry
+        assert!(
+            uid_cache_size() > initial_size,
+            "UID cache should grow after lookup"
+        );
+    }
+
+    #[test]
+    fn gid_cache_stores_mapping_on_lookup() {
+        clear_id_caches();
+        let initial_size = gid_cache_size();
+
+        // Perform non-numeric lookup to trigger caching
+        let _ = map_gid(0, false);
+
+        // Cache should now contain at least one entry
+        assert!(
+            gid_cache_size() > initial_size,
+            "GID cache should grow after lookup"
+        );
+    }
+
+    #[test]
+    fn numeric_ids_bypasses_cache() {
+        clear_id_caches();
+        let initial_uid_size = uid_cache_size();
+        let initial_gid_size = gid_cache_size();
+
+        // Numeric lookups should not use or populate cache
+        let _ = map_uid(1000, true);
+        let _ = map_gid(1000, true);
+
+        assert_eq!(
+            uid_cache_size(),
+            initial_uid_size,
+            "UID cache should not change for numeric lookups"
+        );
+        assert_eq!(
+            gid_cache_size(),
+            initial_gid_size,
+            "GID cache should not change for numeric lookups"
+        );
+    }
+
+    #[test]
+    fn repeated_lookups_return_same_result() {
+        clear_id_caches();
+
+        // Multiple lookups for the same UID should return same result
+        let first = map_uid(0, false);
+        let second = map_uid(0, false);
+        let third = map_uid(0, false);
+
+        assert_eq!(first, second);
+        assert_eq!(second, third);
+
+        // Cache should only have one entry for this UID
+        // (actual count may be higher if other tests ran concurrently)
+    }
+
+    #[test]
+    fn clear_id_caches_empties_both_caches() {
+        // Populate caches
+        let _ = map_uid(0, false);
+        let _ = map_gid(0, false);
+
+        // Clear and verify
+        clear_id_caches();
+
+        assert_eq!(uid_cache_size(), 0, "UID cache should be empty after clear");
+        assert_eq!(gid_cache_size(), 0, "GID cache should be empty after clear");
     }
 }

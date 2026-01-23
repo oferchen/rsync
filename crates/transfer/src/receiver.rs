@@ -578,7 +578,8 @@ impl ReceiverContext {
                 const ITEM_TRANSFER: u16 = 1 << 15; // 0x8000
                 writer.write_all(&ITEM_TRANSFER.to_le_bytes())?;
             }
-            writer.flush()?;
+            // Note: No flush here - we batch NDX+iflags with sum_head+signature
+            // and flush once after sending the complete request.
 
             // Step 1 & 2: Generate signature if basis file exists
             // Uses find_basis_file() helper to encapsulate exact match, reference directories, and fuzzy logic.
@@ -781,8 +782,11 @@ impl ReceiverContext {
                 }
             }
 
-            // Sync the output file
-            output.sync_all()?;
+            // Note: We don't call sync_all() by default, matching upstream rsync behavior.
+            // Upstream rsync only fsyncs when --fsync flag is explicitly set (do_fsync=0 default).
+            // The atomic rename still provides crash consistency - data is flushed when
+            // the kernel closes the file or needs the buffers.
+            // TODO: Add --fsync flag support for users who need guaranteed durability.
 
             // Atomic rename (crash-safe)
             fs::rename(&temp_path, &file_path)?;
