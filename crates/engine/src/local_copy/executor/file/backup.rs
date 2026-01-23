@@ -63,16 +63,13 @@ pub(crate) fn copy_entry_to_backup(
     file_type: fs::FileType,
 ) -> Result<(), LocalCopyError> {
     if file_type.is_file() {
-        fs::copy(source, backup_path).map_err(|error| {
-            LocalCopyError::io("create backup", backup_path.to_path_buf(), error)
-        })?;
+        fs::copy(source, backup_path)
+            .map_err(|error| LocalCopyError::io("create backup", backup_path, error))?;
     } else if file_type.is_symlink() {
-        let target = fs::read_link(source).map_err(|error| {
-            LocalCopyError::io("read symbolic link", source.to_path_buf(), error)
-        })?;
-        create_symlink(&target, source, backup_path).map_err(|error| {
-            LocalCopyError::io("create symbolic link", backup_path.to_path_buf(), error)
-        })?;
+        let target = fs::read_link(source)
+            .map_err(|error| LocalCopyError::io("read symbolic link", source, error))?;
+        create_symlink(&target, source, backup_path)
+            .map_err(|error| LocalCopyError::io("create symbolic link", backup_path, error))?;
     }
     Ok(())
 }

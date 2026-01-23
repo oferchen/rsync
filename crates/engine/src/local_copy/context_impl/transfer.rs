@@ -11,7 +11,7 @@ impl<'a> CopyContext<'a> {
         ActiveCompressor::new(self.compression_algorithm(), self.compression_level())
             .map(Some)
             .map_err(|error| {
-                LocalCopyError::io("initialise compression", source.to_path_buf(), error)
+                LocalCopyError::io("initialise compression", source, error)
             })
     }
 
@@ -298,7 +298,7 @@ impl<'a> CopyContext<'a> {
 
             let read = reader
                 .read(&mut buffer[..chunk_len])
-                .map_err(|error| LocalCopyError::io("copy file", source.to_path_buf(), error))?;
+                .map_err(|error| LocalCopyError::io("copy file", source, error))?;
             if read == 0 {
                 break;
             }
@@ -307,7 +307,7 @@ impl<'a> CopyContext<'a> {
                 write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?
             } else {
                 writer.write_all(&buffer[..read]).map_err(|error| {
-                    LocalCopyError::io("copy file", destination.to_path_buf(), error)
+                    LocalCopyError::io("copy file", destination, error)
                 })?;
                 read
             };
@@ -317,7 +317,7 @@ impl<'a> CopyContext<'a> {
             let mut compressed_delta = None;
             if let Some(encoder) = compressor.as_mut() {
                 encoder.write(&buffer[..read]).map_err(|error| {
-                    LocalCopyError::io("compress file", source.to_path_buf(), error)
+                    LocalCopyError::io("compress file", source, error)
                 })?;
                 let total = encoder.bytes_written();
                 let delta = total.saturating_sub(compressed_progress);
@@ -356,7 +356,7 @@ impl<'a> CopyContext<'a> {
 
         let outcome = if let Some(encoder) = compressor {
             let compressed_total = encoder.finish().map_err(|error| {
-                LocalCopyError::io("compress file", source.to_path_buf(), error)
+                LocalCopyError::io("compress file", source, error)
             })?;
             self.register_progress();
             let delta = compressed_total.saturating_sub(compressed_progress);
