@@ -34,6 +34,14 @@ impl ClientConfigBuilder {
         self.human_readable = enabled;
         self
     }
+
+    /// Suppresses daemon MOTD (message of the day) output.
+    #[must_use]
+    #[doc(alias = "--no-motd")]
+    pub const fn no_motd(mut self, no_motd: bool) -> Self {
+        self.no_motd = no_motd;
+        self
+    }
 }
 
 #[cfg(test)]
