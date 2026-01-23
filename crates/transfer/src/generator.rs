@@ -600,19 +600,16 @@ impl GeneratorContext {
 
             // Generate delta (or send whole file if no basis)
             let delta_script = if has_basis {
-                let delta_params = DeltaGenParams {
+                let config = DeltaGeneratorConfig {
+                    block_length,
+                    sig_blocks,
+                    strong_sum_length,
                     protocol: self.protocol,
                     negotiated_algorithms: self.negotiated_algorithms.as_ref(),
                     compat_flags: self.compat_flags.as_ref(),
                     checksum_seed: self.checksum_seed,
                 };
-                generate_delta_from_signature(
-                    source_file,
-                    block_length,
-                    sig_blocks,
-                    strong_sum_length,
-                    &delta_params,
-                )?
+                generate_delta_from_signature(source_file, config)?
             } else {
                 generate_whole_file_delta(source_file)?
             };
@@ -1372,17 +1369,61 @@ pub fn calculate_duration_ms(start: Option<Instant>, end: Option<Instant>) -> u6
 
 // Helper functions for delta generation
 
-/// Parameters for delta generation from a received signature.
+/// Configuration for delta generation from a received signature.
 ///
-/// Groups protocol-related parameters to reduce argument count.
-struct DeltaGenParams<'a> {
+/// Groups all parameters needed for delta generation into a single struct,
+/// following the Parameter Object pattern to reduce function argument count.
+///
+/// # Usage
+///
+/// ```ignore
+/// let config = DeltaGeneratorConfig {
+///     block_length: sum_head.block_length,
+///     sig_blocks,
+///     strong_sum_length: sum_head.s2length,
+///     protocol: self.protocol,
+///     negotiated_algorithms: self.negotiated_algorithms.as_ref(),
+///     compat_flags: self.compat_flags.as_ref(),
+///     checksum_seed: self.checksum_seed,
+/// };
+/// let delta = generate_delta_from_signature(source_file, config)?;
+/// ```
+struct DeltaGeneratorConfig<'a> {
+    /// Block length used for signature computation.
+    ///
+    /// This determines the granularity of the delta algorithm.
+    /// Smaller blocks allow finer-grained matching but increase overhead.
+    block_length: u32,
+
+    /// Signature blocks received from the wire format.
+    ///
+    /// Each block contains rolling and strong checksums for matching.
+    /// Takes ownership to avoid cloning strong_sum data.
+    sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
+
+    /// Length of the strong checksum in bytes.
+    ///
+    /// Determines how many bytes of the strong checksum are used for verification.
+    strong_sum_length: u8,
+
     /// Protocol version for algorithm selection.
+    ///
+    /// Different protocol versions may use different checksum algorithms.
     protocol: ProtocolVersion,
+
     /// Negotiated algorithms from capability exchange.
+    ///
+    /// When present, overrides the default algorithm selection based on protocol version.
     negotiated_algorithms: Option<&'a NegotiationResult>,
+
     /// Compatibility flags affecting checksum behavior.
+    ///
+    /// Controls checksum computation details for upstream compatibility.
     compat_flags: Option<&'a CompatibilityFlags>,
+
     /// Checksum seed for rolling checksum computation.
+    ///
+    /// Used to initialize the rolling checksum state.
     checksum_seed: i32,
 }
 
@@ -1391,13 +1432,10 @@ struct DeltaGenParams<'a> {
 /// Reconstructs the signature from wire format blocks, creates an index,
 /// and uses DeltaGenerator to produce the delta.
 ///
-/// Takes ownership of sig_blocks to avoid cloning strong_sum data.
+/// Takes ownership of sig_blocks via the config to avoid cloning strong_sum data.
 fn generate_delta_from_signature<R: Read>(
     source: R,
-    block_length: u32,
-    sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
-    strong_sum_length: u8,
-    params: &DeltaGenParams<'_>,
+    config: DeltaGeneratorConfig<'_>,
 ) -> io::Result<DeltaScript> {
     use checksums::RollingDigest;
     use engine::delta::SignatureLayout;
@@ -1405,18 +1443,18 @@ fn generate_delta_from_signature<R: Read>(
     use std::num::{NonZeroU8, NonZeroU32};
 
     // Reconstruct engine signature from wire format
-    let block_length_nz = NonZeroU32::new(block_length).ok_or_else(|| {
+    let block_length_nz = NonZeroU32::new(config.block_length).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidData, "block length must be non-zero")
     })?;
 
-    let strong_sum_length_nz = NonZeroU8::new(strong_sum_length).ok_or_else(|| {
+    let strong_sum_length_nz = NonZeroU8::new(config.strong_sum_length).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "strong sum length must be non-zero",
         )
     })?;
 
-    let block_count = sig_blocks.len() as u64;
+    let block_count = config.sig_blocks.len() as u64;
 
     // Reconstruct signature layout (remainder unknown, set to 0)
     let layout = SignatureLayout::from_raw_parts(
@@ -1427,27 +1465,28 @@ fn generate_delta_from_signature<R: Read>(
     );
 
     // Convert wire blocks to engine signature blocks (consumes sig_blocks)
-    let engine_blocks: Vec<SignatureBlock> = sig_blocks
+    let engine_blocks: Vec<SignatureBlock> = config
+        .sig_blocks
         .into_iter()
         .map(|wire_block| {
             SignatureBlock::from_raw_parts(
                 wire_block.index as u64,
-                RollingDigest::from_value(wire_block.rolling_sum, block_length as usize),
+                RollingDigest::from_value(wire_block.rolling_sum, config.block_length as usize),
                 wire_block.strong_sum,
             )
         })
         .collect();
 
     // Calculate total bytes (approximation since we don't know exact remainder)
-    let total_bytes = (block_count.saturating_sub(1)) * u64::from(block_length);
+    let total_bytes = (block_count.saturating_sub(1)) * u64::from(config.block_length);
     let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
 
     // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
     let checksum_factory = ChecksumFactory::from_negotiation(
-        params.negotiated_algorithms,
-        params.protocol,
-        params.checksum_seed,
-        params.compat_flags,
+        config.negotiated_algorithms,
+        config.protocol,
+        config.checksum_seed,
+        config.compat_flags,
     );
     let checksum_algorithm = checksum_factory.signature_algorithm();
 
