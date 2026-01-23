@@ -124,8 +124,9 @@ pub use delta::{
 pub use error::{EngineError, EngineResult};
 pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
 pub use local_copy::{
-    LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions, LocalCopyPlan,
-    LocalCopySummary, SkipCompressList, SkipCompressParseError,
+    DeleteTiming, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions,
+    LocalCopyPlan, LocalCopySummary, ReferenceDirectory, ReferenceDirectoryKind, SkipCompressList,
+    SkipCompressParseError,
 };
 pub use signature::{
     FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
