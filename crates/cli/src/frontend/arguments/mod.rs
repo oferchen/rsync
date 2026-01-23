@@ -6,6 +6,9 @@ mod program_name;
 mod short_options;
 mod stop;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) use bandwidth::BandwidthArgument;
 pub(crate) use env::env_protect_args_default;
 pub use parsed_args::ParsedArgs; // Changed to pub for test_utils

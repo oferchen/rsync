@@ -6,5 +6,6 @@ pub(super) use crate::limiter::{BandwidthLimiter, LimiterChange};
 pub(super) use std::num::NonZeroU64;
 
 mod argument;
+mod edge_cases;
 mod limit;
 mod numeric;
