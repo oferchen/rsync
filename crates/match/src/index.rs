@@ -106,17 +106,53 @@ impl DeltaSignatureIndex {
         // Key is (sum1, sum2) - all candidates have block_length
         let key = (digest.sum1(), digest.sum2());
         let candidates = self.lookup.get(&key)?;
+
+        // Use parallel matching for many candidates (strong checksum is CPU-intensive)
+        #[cfg(feature = "parallel")]
+        if candidates.len() >= Self::PARALLEL_THRESHOLD {
+            return self.find_match_parallel(candidates, window);
+        }
+
+        self.find_match_sequential(candidates, window)
+    }
+
+    /// Minimum number of candidates to trigger parallel verification.
+    ///
+    /// Below this threshold, the overhead of thread spawning exceeds the benefit.
+    /// With 4+ candidates, parallel strong checksum computation provides measurable speedup.
+    #[cfg(feature = "parallel")]
+    const PARALLEL_THRESHOLD: usize = 4;
+
+    /// Sequential candidate verification (used for few candidates).
+    #[inline]
+    fn find_match_sequential(&self, candidates: &[usize], window: &[u8]) -> Option<usize> {
         for &index in candidates {
             let block = &self.blocks[index];
-            // All indexed blocks have block_length, skip redundant check
             debug_assert_eq!(block.len(), self.block_length);
             let strong = self.algorithm.compute_truncated(window, self.strong_length);
             if strong.as_slice() == block.strong() {
                 return Some(index);
             }
         }
-
         None
+    }
+
+    /// Parallel candidate verification using rayon.
+    ///
+    /// Computes strong checksums concurrently and returns the first match found.
+    /// Uses `find_any` for early termination when a match is discovered.
+    #[cfg(feature = "parallel")]
+    fn find_match_parallel(&self, candidates: &[usize], window: &[u8]) -> Option<usize> {
+        use rayon::prelude::*;
+
+        candidates
+            .par_iter()
+            .find_any(|&&index| {
+                let block = &self.blocks[index];
+                let strong = self.algorithm.compute_truncated(window, self.strong_length);
+                strong.as_slice() == block.strong()
+            })
+            .copied()
     }
 
     /// Attempts to locate a matching block for a non-contiguous window backed by a [`VecDeque`].
