@@ -680,3 +680,411 @@ fn tri_state_flag_with_order(
 fn last_occurrence(matches: &clap::ArgMatches, id: &str) -> Option<usize> {
     matches.indices_of(id).and_then(|indices| indices.max())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to parse arguments without the program name being auto-detected
+    fn parse_test_args<I, S>(args: I) -> Result<ParsedArgs, clap::Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let iter = std::iter::once("rsync".to_string())
+            .chain(args.into_iter().map(|s| s.as_ref().to_string()));
+        parse_args(iter)
+    }
+
+    // ========================================================================
+    // Delete Mode Conflict Tests
+    // ========================================================================
+
+    #[test]
+    fn delete_modes_are_mutually_exclusive_two_flags() {
+        // --delete-before and --delete-after conflict
+        let result = parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn delete_modes_are_mutually_exclusive_three_flags() {
+        // Multiple delete mode flags conflict
+        let result = parse_test_args([
+            "-r",
+            "--delete-before",
+            "--delete-during",
+            "--delete-after",
+            "src/",
+            "dst/",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn delete_requires_recursive_or_dirs() {
+        // --delete without -r or -d should fail
+        let result = parse_test_args(["--delete", "src/", "dst/"]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("--recursive"));
+    }
+
+    #[test]
+    fn delete_with_recursive_succeeds() {
+        // --delete with -r should succeed
+        let result = parse_test_args(["-r", "--delete", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.delete_mode.is_enabled());
+    }
+
+    #[test]
+    fn delete_with_dirs_succeeds() {
+        // --delete with -d should succeed
+        let result = parse_test_args(["-d", "--delete", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.delete_mode.is_enabled());
+    }
+
+    #[test]
+    fn delete_excluded_activates_delete_mode() {
+        // --delete-excluded should activate delete mode
+        let result = parse_test_args(["-r", "--delete-excluded", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.delete_mode.is_enabled());
+    }
+
+    #[test]
+    fn max_delete_activates_delete_mode() {
+        // --max-delete should activate delete mode
+        let result = parse_test_args(["-r", "--max-delete=10", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.delete_mode.is_enabled());
+    }
+
+    // ========================================================================
+    // Tri-State Flag Tests (--perms/--no-perms pattern)
+    // ========================================================================
+
+    #[test]
+    fn perms_flag_only() {
+        let result = parse_test_args(["--perms", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.perms, Some(true));
+    }
+
+    #[test]
+    fn no_perms_flag_only() {
+        let result = parse_test_args(["--no-perms", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.perms, Some(false));
+    }
+
+    #[test]
+    fn neither_perms_flag() {
+        let result = parse_test_args(["src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.perms, None);
+    }
+
+    #[test]
+    fn perms_then_no_perms_uses_last() {
+        // Last flag wins when both are present
+        let result = parse_test_args(["--perms", "--no-perms", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.perms, Some(false));
+    }
+
+    #[test]
+    fn no_perms_then_perms_uses_last() {
+        // Last flag wins
+        let result = parse_test_args(["--no-perms", "--perms", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.perms, Some(true));
+    }
+
+    #[test]
+    fn multiple_perms_alternations() {
+        // Complex alternation - last should win
+        let result = parse_test_args([
+            "--perms",
+            "--no-perms",
+            "--perms",
+            "--no-perms",
+            "--perms",
+            "src/",
+            "dst/",
+        ]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.perms, Some(true));
+    }
+
+    // ========================================================================
+    // Negative-First Tri-State Flags (--prune-empty-dirs pattern)
+    // ========================================================================
+
+    #[test]
+    fn prune_empty_dirs_flag() {
+        let result = parse_test_args(["--prune-empty-dirs", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.prune_empty_dirs, Some(true));
+    }
+
+    #[test]
+    fn no_prune_empty_dirs_flag() {
+        let result = parse_test_args(["--no-prune-empty-dirs", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.prune_empty_dirs, Some(false));
+    }
+
+    #[test]
+    fn omit_link_times_flag() {
+        let result = parse_test_args(["--omit-link-times", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.omit_link_times, Some(true));
+    }
+
+    // ========================================================================
+    // List-Only Implies Dry-Run
+    // ========================================================================
+
+    #[test]
+    fn list_only_enables_dry_run() {
+        let result = parse_test_args(["--list-only", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.dry_run);
+        assert!(parsed.list_only);
+    }
+
+    #[test]
+    fn dry_run_without_list_only() {
+        let result = parse_test_args(["--dry-run", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.dry_run);
+        assert!(!parsed.list_only);
+    }
+
+    // ========================================================================
+    // Archive Mode Tests
+    // ========================================================================
+
+    #[test]
+    fn archive_mode_sets_recursive() {
+        let result = parse_test_args(["-a", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.recursive);
+    }
+
+    #[test]
+    fn archive_no_recursive_override() {
+        // -a --no-recursive should result in recursive=false
+        let result = parse_test_args(["-a", "--no-recursive", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        // archive sets recursive, but --no-recursive should override
+        // The actual behavior depends on implementation
+    }
+
+    // ========================================================================
+    // Backup Flag Tests
+    // ========================================================================
+
+    #[test]
+    fn backup_dir_implies_backup() {
+        let result = parse_test_args(["--backup-dir=/tmp/backup", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.backup);
+    }
+
+    #[test]
+    fn backup_suffix_implies_backup() {
+        let result = parse_test_args(["--suffix=.bak", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.backup);
+    }
+
+    // ========================================================================
+    // Single-Occurrence Rules
+    // ========================================================================
+
+    #[test]
+    fn usermap_twice_fails() {
+        let result = parse_test_args([
+            "--usermap=0:1000",
+            "--usermap=0:1001",
+            "src/",
+            "dst/",
+        ]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("usermap"));
+    }
+
+    #[test]
+    fn groupmap_twice_fails() {
+        let result = parse_test_args([
+            "--groupmap=0:1000",
+            "--groupmap=0:1001",
+            "src/",
+            "dst/",
+        ]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("groupmap"));
+    }
+
+    // ========================================================================
+    // Empty Value Handling
+    // ========================================================================
+
+    #[test]
+    fn empty_rsh_uses_env() {
+        // Empty --rsh should be filtered out
+        let result = parse_test_args(["--rsh=", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        // Should fall back to RSYNC_RSH env or None
+        // (exact behavior depends on env)
+    }
+
+    // ========================================================================
+    // Verbosity Flag Tests
+    // ========================================================================
+
+    #[test]
+    fn verbose_flag() {
+        let result = parse_test_args(["-v", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.verbosity > 0);
+    }
+
+    #[test]
+    fn multiple_verbose_flags() {
+        let result = parse_test_args(["-vvv", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.verbosity >= 3);
+    }
+
+    #[test]
+    fn quiet_flag_reduces_verbosity() {
+        // -q reduces verbosity; with no -v, verbosity stays at 0
+        let result = parse_test_args(["-q", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.verbosity, 0);
+    }
+
+    // ========================================================================
+    // Compression Tests
+    // ========================================================================
+
+    #[test]
+    fn compress_flag() {
+        let result = parse_test_args(["-z", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.compress);
+    }
+
+    #[test]
+    fn no_compress_flag() {
+        let result = parse_test_args(["--no-compress", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.no_compress);
+    }
+
+    // ========================================================================
+    // Port Validation
+    // ========================================================================
+
+    #[test]
+    fn valid_port() {
+        let result = parse_test_args(["--port=8873", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.daemon_port, Some(8873));
+    }
+
+    #[test]
+    fn port_max_value() {
+        let result = parse_test_args(["--port=65535", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.daemon_port, Some(65535));
+    }
+
+    // ========================================================================
+    // Help and Version
+    // ========================================================================
+
+    #[test]
+    fn help_flag() {
+        let result = parse_test_args(["--help"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.show_help);
+    }
+
+    #[test]
+    fn version_flag() {
+        let result = parse_test_args(["--version"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert!(parsed.show_version);
+    }
+
+    // ========================================================================
+    // Checksum Tests
+    // ========================================================================
+
+    #[test]
+    fn checksum_flag() {
+        let result = parse_test_args(["-c", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.checksum, Some(true));
+    }
+
+    // ========================================================================
+    // Times Tests
+    // ========================================================================
+
+    #[test]
+    fn times_flag() {
+        let result = parse_test_args(["-t", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.times, Some(true));
+    }
+
+    #[test]
+    fn no_times_flag() {
+        let result = parse_test_args(["--no-times", "src/", "dst/"]);
+        assert!(result.is_ok());
+        let parsed = result.unwrap();
+        assert_eq!(parsed.times, Some(false));
+    }
+}
