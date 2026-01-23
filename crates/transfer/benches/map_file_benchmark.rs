@@ -35,7 +35,7 @@ fn bench_sequential_reads(c: &mut Criterion) {
 
         // Direct File reads in 32KB chunks
         group.bench_with_input(
-            BenchmarkId::new("direct_file", format!("{}KB", size_kb)),
+            BenchmarkId::new("direct_file", format!("{size_kb}KB")),
             &size,
             |b, &size| {
                 b.iter(|| {
@@ -57,7 +57,7 @@ fn bench_sequential_reads(c: &mut Criterion) {
 
         // MapFile with BufferedMap (256KB window)
         group.bench_with_input(
-            BenchmarkId::new("map_file", format!("{}KB", size_kb)),
+            BenchmarkId::new("map_file", format!("{size_kb}KB")),
             &size,
             |b, &size| {
                 b.iter(|| {

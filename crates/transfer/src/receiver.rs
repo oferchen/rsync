@@ -44,6 +44,7 @@ use protocol::codec::{NdxCodec, create_ndx_codec};
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
 use protocol::idlist::IdList;
+#[cfg(test)]
 use protocol::wire::DeltaOp;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
@@ -54,7 +55,9 @@ use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 use super::map_file::MapFile;
 use super::token_buffer::TokenBuffer;
 
-use engine::delta::{DeltaScript, DeltaToken, SignatureLayoutParams, calculate_signature_layout};
+use engine::delta::{SignatureLayoutParams, calculate_signature_layout};
+#[cfg(test)]
+use engine::delta::{DeltaScript, DeltaToken};
 use engine::fuzzy::FuzzyMatcher;
 use engine::signature::{FileSignature, generate_file_signature};
 
@@ -1282,11 +1285,12 @@ pub fn write_signature_blocks<W: Write + ?Sized>(
     Ok(())
 }
 
-// Helper functions for delta transfer
+// Helper functions for delta transfer (test-only)
 
 /// Applies a delta script to create a new file (whole-file transfer, no basis).
 ///
 /// All tokens must be Literal; Copy operations indicate a protocol error.
+#[cfg(test)]
 fn apply_whole_file_delta(path: &std::path::Path, script: &DeltaScript) -> io::Result<()> {
     let mut output = fs::File::create(path)?;
 
@@ -1309,6 +1313,7 @@ fn apply_whole_file_delta(path: &std::path::Path, script: &DeltaScript) -> io::R
 }
 
 /// Converts wire protocol delta operations to engine delta script.
+#[cfg(test)]
 fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
     let mut tokens = Vec::with_capacity(ops.len());
     let mut total_bytes = 0u64;
