@@ -23,56 +23,228 @@ const IPTOS_THROUGHPUT: libc::c_int = 0x08;
 ///
 /// This is a small adapter/facade so the rest of the module stays platform-neutral.
 mod socket_consts {
+    /// Socket-level option protocol number.
+    ///
+    /// Used as the `level` argument to `setsockopt()` for socket-level options
+    /// like `SO_KEEPALIVE`, `SO_REUSEADDR`, and buffer sizes. This is the
+    /// protocol-independent socket layer, as opposed to protocol-specific
+    /// levels like `IPPROTO_TCP`.
+    ///
+    /// # Platform values
+    /// - Unix: Typically `1` (from `libc::SOL_SOCKET`)
+    /// - Windows: `0xFFFF` (Winsock `SOL_SOCKET`)
     #[cfg(not(target_family = "windows"))]
     pub const SOL_SOCKET: libc::c_int = libc::SOL_SOCKET;
+    /// Socket-level option protocol number (Windows variant).
+    ///
+    /// See [`SOL_SOCKET`] for details.
     #[cfg(target_family = "windows")]
     pub const SOL_SOCKET: libc::c_int = 0xFFFF;
 
+    /// Enable TCP keepalive probes on the connection.
+    ///
+    /// When enabled, the kernel periodically sends keepalive probes on idle
+    /// connections to detect dead peers. This is essential for long-running
+    /// rsync transfers over unreliable networks where connections may silently
+    /// drop.
+    ///
+    /// # Default
+    /// Disabled (0) by default on most systems.
+    ///
+    /// # Usage
+    /// Specify `SO_KEEPALIVE` or `SO_KEEPALIVE=1` to enable.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=SO_KEEPALIVE` option in upstream rsync.
     #[cfg(not(target_family = "windows"))]
     pub const SO_KEEPALIVE: libc::c_int = libc::SO_KEEPALIVE;
+    /// Enable TCP keepalive probes (Windows variant).
+    ///
+    /// See [`SO_KEEPALIVE`] for details.
     #[cfg(target_family = "windows")]
     pub const SO_KEEPALIVE: libc::c_int = 0x0008;
 
+    /// Allow reuse of local addresses in TIME_WAIT state.
+    ///
+    /// Permits binding to an address that is already in use (typically in
+    /// TIME_WAIT state from a recently closed connection). Useful for rsync
+    /// daemons that need to restart quickly without waiting for socket
+    /// cleanup.
+    ///
+    /// # Default
+    /// Disabled (0) by default.
+    ///
+    /// # Usage
+    /// Specify `SO_REUSEADDR` or `SO_REUSEADDR=1` to enable.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=SO_REUSEADDR` option in upstream rsync.
     #[cfg(not(target_family = "windows"))]
     pub const SO_REUSEADDR: libc::c_int = libc::SO_REUSEADDR;
+    /// Allow reuse of local addresses (Windows variant).
+    ///
+    /// See [`SO_REUSEADDR`] for details.
     #[cfg(target_family = "windows")]
     pub const SO_REUSEADDR: libc::c_int = 0x0004;
 
+    /// Allow sending broadcast messages on the socket.
+    ///
+    /// Enables transmission of broadcast messages. Not typically used in
+    /// standard rsync point-to-point transfers, but may be relevant for
+    /// network discovery or specialized deployments.
+    ///
+    /// # Default
+    /// Disabled (0) by default.
+    ///
+    /// # Usage
+    /// Specify `SO_BROADCAST` or `SO_BROADCAST=1` to enable.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=SO_BROADCAST` option in upstream rsync.
     #[cfg(not(target_family = "windows"))]
     pub const SO_BROADCAST: libc::c_int = libc::SO_BROADCAST;
+    /// Allow sending broadcast messages (Windows variant).
+    ///
+    /// See [`SO_BROADCAST`] for details.
     #[cfg(target_family = "windows")]
     pub const SO_BROADCAST: libc::c_int = 0x0020;
 
+    /// Set the send buffer size in bytes.
+    ///
+    /// Controls the size of the kernel's send buffer for the socket. Larger
+    /// buffers can improve throughput on high-latency or high-bandwidth
+    /// networks by allowing more data to be in flight. Useful for tuning
+    /// rsync performance over WAN links.
+    ///
+    /// # Default
+    /// System-dependent, typically 8KB-256KB depending on the OS.
+    ///
+    /// # Usage
+    /// Specify `SO_SNDBUF=<bytes>`, e.g., `SO_SNDBUF=65536` for 64KB.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=SO_SNDBUF=<n>` option in upstream rsync.
     #[cfg(not(target_family = "windows"))]
     pub const SO_SNDBUF: libc::c_int = libc::SO_SNDBUF;
+    /// Set the send buffer size (Windows variant).
+    ///
+    /// See [`SO_SNDBUF`] for details.
     #[cfg(target_family = "windows")]
     pub const SO_SNDBUF: libc::c_int = 0x1001;
 
+    /// Set the receive buffer size in bytes.
+    ///
+    /// Controls the size of the kernel's receive buffer for the socket. Larger
+    /// buffers can improve throughput on high-latency or high-bandwidth
+    /// networks by preventing receive-side bottlenecks. Should be tuned
+    /// alongside `SO_SNDBUF` for optimal performance.
+    ///
+    /// # Default
+    /// System-dependent, typically 8KB-256KB depending on the OS.
+    ///
+    /// # Usage
+    /// Specify `SO_RCVBUF=<bytes>`, e.g., `SO_RCVBUF=65536` for 64KB.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=SO_RCVBUF=<n>` option in upstream rsync.
     #[cfg(not(target_family = "windows"))]
     pub const SO_RCVBUF: libc::c_int = libc::SO_RCVBUF;
+    /// Set the receive buffer size (Windows variant).
+    ///
+    /// See [`SO_RCVBUF`] for details.
     #[cfg(target_family = "windows")]
     pub const SO_RCVBUF: libc::c_int = 0x1002;
 
+    /// Set the send timeout in seconds.
+    ///
+    /// Specifies the maximum time that a send operation may block before
+    /// returning an error. Useful for preventing rsync from hanging
+    /// indefinitely on unresponsive connections.
+    ///
+    /// # Default
+    /// No timeout (0) by default; operations may block indefinitely.
+    ///
+    /// # Usage
+    /// Specify `SO_SNDTIMEO=<seconds>`, e.g., `SO_SNDTIMEO=30` for 30 seconds.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=SO_SNDTIMEO=<n>` option in upstream rsync.
     #[cfg(not(target_family = "windows"))]
     pub const SO_SNDTIMEO: libc::c_int = libc::SO_SNDTIMEO;
+    /// Set the send timeout (Windows variant).
+    ///
+    /// See [`SO_SNDTIMEO`] for details.
     #[cfg(target_family = "windows")]
     pub const SO_SNDTIMEO: libc::c_int = 0x1005;
 
+    /// Set the receive timeout in seconds.
+    ///
+    /// Specifies the maximum time that a receive operation may block before
+    /// returning an error. Useful for preventing rsync from hanging
+    /// indefinitely waiting for data from unresponsive servers.
+    ///
+    /// # Default
+    /// No timeout (0) by default; operations may block indefinitely.
+    ///
+    /// # Usage
+    /// Specify `SO_RCVTIMEO=<seconds>`, e.g., `SO_RCVTIMEO=30` for 30 seconds.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=SO_RCVTIMEO=<n>` option in upstream rsync.
     #[cfg(not(target_family = "windows"))]
     pub const SO_RCVTIMEO: libc::c_int = libc::SO_RCVTIMEO;
+    /// Set the receive timeout (Windows variant).
+    ///
+    /// See [`SO_RCVTIMEO`] for details.
     #[cfg(target_family = "windows")]
     pub const SO_RCVTIMEO: libc::c_int = 0x1006;
 
+    /// TCP protocol number for protocol-specific socket options.
+    ///
+    /// Used as the `level` argument to `setsockopt()` for TCP-specific options
+    /// like `TCP_NODELAY`. This is the standard IANA-assigned protocol number
+    /// for TCP (6).
+    ///
+    /// # Platform values
+    /// - Unix: `6` (from `libc::IPPROTO_TCP`)
+    /// - Windows: `6` (Winsock `IPPROTO_TCP`)
     #[cfg(not(target_family = "windows"))]
     pub const IPPROTO_TCP: libc::c_int = libc::IPPROTO_TCP;
+    /// TCP protocol number (Windows variant).
+    ///
+    /// See [`IPPROTO_TCP`] for details.
     #[cfg(target_family = "windows")]
     pub const IPPROTO_TCP: libc::c_int = 6;
 
+    /// Disable Nagle's algorithm for latency-sensitive transfers.
+    ///
+    /// When enabled, disables the Nagle algorithm which normally coalesces
+    /// small packets to improve bandwidth efficiency. Disabling Nagle reduces
+    /// latency for interactive rsync sessions or when transferring many small
+    /// files, at the cost of potentially increased packet overhead.
+    ///
+    /// # Default
+    /// Disabled (0) by default; Nagle's algorithm is active.
+    ///
+    /// # Usage
+    /// Specify `TCP_NODELAY` or `TCP_NODELAY=1` to disable Nagle's algorithm.
+    ///
+    /// # Upstream rsync
+    /// Equivalent to the `--sockopts=TCP_NODELAY` option in upstream rsync.
+    /// Often combined with `IPTOS_LOWDELAY` for latency-sensitive workloads.
     #[cfg(not(target_family = "windows"))]
     pub const TCP_NODELAY: libc::c_int = libc::TCP_NODELAY;
+    /// Disable Nagle's algorithm (Windows variant).
+    ///
+    /// See [`TCP_NODELAY`] for details.
     #[cfg(target_family = "windows")]
     pub const TCP_NODELAY: libc::c_int = 0x0001;
 
+    /// Sentinel value indicating a socket operation error.
+    ///
+    /// On Windows, `setsockopt()` returns `SOCKET_ERROR` (-1) on failure,
+    /// which is consistent with Unix behavior. This constant is only needed
+    /// on Windows to avoid magic numbers in error checking.
     // setsockopt() returns -1 on error; on Winsock this is SOCKET_ERROR == -1.
     // Only needed on Windows; on Unix we just compare against -1 directly.
     #[cfg(windows)]
