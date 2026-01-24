@@ -18,6 +18,8 @@ xattr = ["core/xattr"]
 acl = ["core/acl"]
 zstd = ["core/zstd", "compress/zstd"]
 lz4 = ["core/lz4", "compress/lz4"]
+# Parallel file operations - enables rayon-based parallelism for checksum mode
+parallel = ["engine/parallel"]
 
 [dependencies]
 clap = { version = "4.5.17", features = ["std"] }

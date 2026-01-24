@@ -29,6 +29,8 @@ xattr = ["cli/xattr", "core/xattr"]
 iconv = ["core/iconv"]
 # Async runtime support - enables tokio-based async I/O throughout the codebase
 async = ["daemon/async", "core/async"]
+# Parallel file operations - enables rayon-based parallelism for checksum mode
+parallel = ["cli/parallel"]
 # Heap allocation profiling with dhat - use with profile.dhat
 dhat-heap = ["dep:dhat"]
 
