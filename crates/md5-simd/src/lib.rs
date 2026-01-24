@@ -20,6 +20,7 @@
 
 mod dispatcher;
 mod scalar;
+mod simd;
 
 pub use dispatcher::Backend;
 
