@@ -123,6 +123,7 @@ pub(super) fn execute_transfer(
             checksum: checksum_enabled,
             checksum_algorithm: context.options().checksum_algorithm(),
             modify_window: context.options().modify_window(),
+            prefetched_match: None, // TODO: Pass from checksum cache when parallel feature enabled
         });
 
         if skip {

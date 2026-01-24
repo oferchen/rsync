@@ -67,6 +67,10 @@ pub(crate) fn build_delta_signature(
     }
 }
 
+/// Parameters for deciding whether to skip copying a file.
+///
+/// This struct collects all the information needed to determine if a
+/// destination file is already in sync with its source.
 pub(crate) struct CopyComparison<'a> {
     pub(crate) source_path: &'a Path,
     pub(crate) source: &'a fs::Metadata,
@@ -77,8 +81,21 @@ pub(crate) struct CopyComparison<'a> {
     pub(crate) checksum: bool,
     pub(crate) checksum_algorithm: SignatureAlgorithm,
     pub(crate) modify_window: Duration,
+    /// Prefetched checksum match result from parallel computation.
+    ///
+    /// When `Some(true)`, checksums were pre-computed and match (skip copy).
+    /// When `Some(false)`, checksums were pre-computed and differ (need copy).
+    /// When `None`, no prefetched result available (compute on-demand).
+    pub(crate) prefetched_match: Option<bool>,
 }
 
+/// Determines whether a file copy should be skipped.
+///
+/// Returns `true` if the destination file is already in sync with the source
+/// based on the configured comparison criteria (size, time, checksum).
+///
+/// When `prefetched_match` is provided, it's used directly for checksum
+/// comparisons instead of recomputing the checksums.
 pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     let CopyComparison {
         source_path,
@@ -90,14 +107,18 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
         checksum,
         checksum_algorithm,
         modify_window,
+        prefetched_match,
     } = params;
     if destination.len() != source.len() {
         return false;
     }
 
     if checksum {
-        return files_checksum_match(source_path, destination_path, checksum_algorithm)
-            .unwrap_or(false);
+        // Use prefetched result if available, otherwise compute on-demand
+        return prefetched_match.unwrap_or_else(|| {
+            files_checksum_match(source_path, destination_path, checksum_algorithm)
+                .unwrap_or(false)
+        });
     }
 
     if ignore_times {
@@ -286,6 +307,7 @@ mod tests {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
             modify_window: Duration::ZERO,
+            prefetched_match: None,
         };
 
         assert!(!should_skip_copy(comparison));
@@ -317,6 +339,7 @@ mod tests {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
             modify_window: Duration::ZERO,
+            prefetched_match: None,
         };
 
         assert!(should_skip_copy(comparison));
@@ -348,6 +371,7 @@ mod tests {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
             modify_window: Duration::ZERO,
+            prefetched_match: None,
         };
 
         assert!(!should_skip_copy(comparison));

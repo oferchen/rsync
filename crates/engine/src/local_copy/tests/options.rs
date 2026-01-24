@@ -67,6 +67,7 @@ fn should_skip_copy_requires_exact_mtime_when_window_zero() {
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::ZERO,
+        prefetched_match: None,
     }));
 }
 
@@ -97,6 +98,7 @@ fn should_skip_copy_allows_difference_within_window() {
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::from_secs(5),
+        prefetched_match: None,
     }));
 
     set_file_mtime(&destination, outside).expect("set dest outside window");
@@ -112,6 +114,7 @@ fn should_skip_copy_allows_difference_within_window() {
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::from_secs(5),
+        prefetched_match: None,
     }));
 }
 
@@ -140,6 +143,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::ZERO,
+        prefetched_match: None,
     }));
 
     assert!(!should_skip_copy(CopyComparison {
@@ -152,6 +156,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         checksum: false,
         checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
         modify_window: Duration::ZERO,
+        prefetched_match: None,
     }));
 }
 
