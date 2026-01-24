@@ -298,6 +298,7 @@ pub(crate) fn apply_pre_transfer_deletions(
 /// For directories with many symlinks or when `--one-file-system` is enabled,
 /// this can provide significant speedup by parallelizing filesystem syscalls.
 #[cfg(feature = "parallel")]
+#[allow(dead_code)] // Prepared for integration with parallel directory traversal
 pub(crate) fn plan_directory_entries_parallel<'a>(
     context: &mut CopyContext,
     entries: &'a [DirectoryEntry],
