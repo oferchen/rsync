@@ -224,10 +224,75 @@ pub(crate) fn should_skip_with_prefetched_checksum(
     prefetched.get(source).map(|result| result.checksums_match())
 }
 
+/// Cache for prefetched file checksums during directory traversal.
+///
+/// This wrapper around `HashMap` provides a clean interface for managing
+/// prefetched checksums within a single directory's processing context.
+/// The cache is populated once per directory via [`prefetch_checksums`]
+/// and queried during file copy decisions.
+///
+/// # Example
+///
+/// ```ignore
+/// let pairs = collect_file_pairs(&planned_entries);
+/// let cache = ChecksumCache::from_prefetch(&pairs, algorithm);
+///
+/// // Later, during copy decision:
+/// if let Some(matches) = cache.lookup(source_path) {
+///     if matches { /* skip copy */ }
+/// }
+/// ```
+#[derive(Debug, Default)]
+pub(crate) struct ChecksumCache {
+    inner: HashMap<PathBuf, ChecksumPrefetchResult>,
+}
+
+impl ChecksumCache {
+    /// Creates a new empty checksum cache.
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: HashMap::new(),
+        }
+    }
+
+    /// Creates a checksum cache by prefetching checksums for the given file pairs.
+    ///
+    /// This is the primary constructor, computing all checksums in parallel
+    /// using rayon.
+    pub(crate) fn from_prefetch(pairs: &[FilePair], algorithm: SignatureAlgorithm) -> Self {
+        Self {
+            inner: prefetch_checksums(pairs, algorithm),
+        }
+    }
+
+    /// Looks up a source path in the cache and returns whether checksums match.
+    ///
+    /// Returns `Some(true)` if checksums match (skip copy), `Some(false)` if
+    /// checksums differ (need copy), or `None` if the path wasn't prefetched.
+    pub(crate) fn lookup(&self, source: &Path) -> Option<bool> {
+        self.inner.get(source).map(|result| result.checksums_match())
+    }
+
+    /// Returns the number of entries in the cache.
+    pub(crate) fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns true if the cache is empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Clears all entries from the cache.
+    pub(crate) fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
