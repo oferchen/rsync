@@ -69,6 +69,8 @@ impl<'a> CopyContext<'a> {
             buffer_pool,
             #[cfg(feature = "batch-sync")]
             deferred_sync,
+            #[cfg(feature = "parallel")]
+            checksum_cache: None,
         }
     }
 
@@ -263,6 +265,35 @@ impl<'a> CopyContext<'a> {
 
     pub(super) fn reference_directories(&self) -> &[ReferenceDirectory] {
         self.options.reference_directories()
+    }
+
+    /// Sets the checksum cache for the current directory.
+    ///
+    /// The cache should be populated via parallel checksum prefetching
+    /// before processing files in the directory.
+    #[cfg(feature = "parallel")]
+    pub(super) fn set_checksum_cache(
+        &mut self,
+        cache: super::executor::ChecksumCache,
+    ) {
+        self.checksum_cache = Some(cache);
+    }
+
+    /// Looks up a source path in the checksum cache.
+    ///
+    /// Returns `Some(true)` if checksums match (skip copy), `Some(false)` if
+    /// checksums differ (need copy), or `None` if not in cache.
+    #[cfg(feature = "parallel")]
+    pub(super) fn lookup_checksum(&self, source: &Path) -> Option<bool> {
+        self.checksum_cache.as_ref().and_then(|cache| cache.lookup(source))
+    }
+
+    /// Clears the checksum cache to free memory after directory processing.
+    #[cfg(feature = "parallel")]
+    pub(super) fn clear_checksum_cache(&mut self) {
+        if let Some(ref mut cache) = self.checksum_cache {
+            cache.clear();
+        }
     }
 
     pub(super) fn register_deferred_update(&mut self, update: DeferredUpdate) {
