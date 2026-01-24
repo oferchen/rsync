@@ -1089,4 +1089,420 @@ mod tests {
 
         assert_eq!(read_state.read_ndx(&mut cursor).unwrap(), NDX_FLIST_OFFSET);
     }
+
+    // ========================================================================
+    // Protocol Version Range Tests (v27-v32)
+    // ========================================================================
+
+    #[test]
+    fn test_all_versions_create_valid_ndx_codecs() {
+        for version in 28..=32 {
+            let codec = create_ndx_codec(version);
+            assert_eq!(codec.protocol_version(), version);
+        }
+    }
+
+    #[test]
+    fn test_version_boundary_at_30_for_ndx() {
+        // Version 29 uses legacy 4-byte encoding
+        let mut legacy = create_ndx_codec(29);
+        let mut legacy_buf = Vec::new();
+        legacy.write_ndx(&mut legacy_buf, 0).unwrap();
+        assert_eq!(legacy_buf.len(), 4);
+
+        // Version 30 uses delta-encoded format
+        let mut modern = create_ndx_codec(30);
+        let mut modern_buf = Vec::new();
+        modern.write_ndx(&mut modern_buf, 0).unwrap();
+        assert_eq!(modern_buf.len(), 1); // Delta encoding is more compact
+    }
+
+    // ========================================================================
+    // Interop Tests - Upstream NDX Byte Patterns
+    // ========================================================================
+
+    #[test]
+    fn test_legacy_ndx_upstream_byte_patterns() {
+        let mut codec = LegacyNdxCodec::new(29);
+
+        // Zero as 4-byte LE
+        let mut buf = Vec::new();
+        codec.write_ndx(&mut buf, 0).unwrap();
+        assert_eq!(buf, [0x00, 0x00, 0x00, 0x00]);
+
+        // 255 as 4-byte LE
+        buf.clear();
+        codec.write_ndx(&mut buf, 255).unwrap();
+        assert_eq!(buf, [0xff, 0x00, 0x00, 0x00]);
+
+        // NDX_DONE (-1) as 4-byte LE
+        buf.clear();
+        codec.write_ndx(&mut buf, NDX_DONE).unwrap();
+        assert_eq!(buf, [0xff, 0xff, 0xff, 0xff]);
+
+        // NDX_FLIST_EOF (-2) as 4-byte LE
+        buf.clear();
+        codec.write_ndx(&mut buf, NDX_FLIST_EOF).unwrap();
+        assert_eq!(buf, [0xfe, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn test_modern_ndx_done_is_single_byte_zero() {
+        // NDX_DONE is always 0x00 in protocol 30+
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+        codec.write_ndx(&mut buf, NDX_DONE).unwrap();
+        assert_eq!(buf, [0x00]);
+    }
+
+    #[test]
+    fn test_modern_ndx_first_positive_is_delta_one() {
+        // First positive after initial prev=-1: diff=1
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+        codec.write_ndx(&mut buf, 0).unwrap();
+        assert_eq!(buf, [0x01]); // delta from -1 to 0 is 1
+    }
+
+    #[test]
+    fn test_modern_ndx_sequential_indices() {
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Each sequential index has delta=1
+        for ndx in 0..5 {
+            codec.write_ndx(&mut buf, ndx).unwrap();
+        }
+
+        // Should be all 0x01 bytes
+        assert_eq!(buf, [0x01, 0x01, 0x01, 0x01, 0x01]);
+    }
+
+    #[test]
+    fn test_modern_ndx_negative_prefix_0xff() {
+        // All negative values (except -1) start with 0xFF prefix
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        codec.write_ndx(&mut buf, NDX_FLIST_EOF).unwrap(); // -2
+        assert_eq!(buf[0], 0xFF);
+
+        buf.clear();
+        let mut codec2 = ModernNdxCodec::new(30);
+        codec2.write_ndx(&mut buf, NDX_DEL_STATS).unwrap(); // -3
+        assert_eq!(buf[0], 0xFF);
+    }
+
+    // ========================================================================
+    // Error Handling Tests
+    // ========================================================================
+
+    #[test]
+    fn test_legacy_ndx_read_truncated() {
+        let mut codec = LegacyNdxCodec::new(29);
+        let truncated = [0u8, 0, 0]; // Only 3 bytes, need 4
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(codec.read_ndx(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn test_modern_ndx_read_truncated_extended() {
+        let mut codec = ModernNdxCodec::new(30);
+
+        // Extended encoding starts with 0xFE but is incomplete
+        let truncated = [0xFE, 0x00]; // Missing bytes for 2-byte diff
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(codec.read_ndx(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn test_modern_ndx_read_truncated_4byte() {
+        let mut codec = ModernNdxCodec::new(30);
+
+        // 4-byte encoding with high bit set but incomplete
+        let truncated = [0xFE, 0x80, 0x00, 0x00]; // Missing last byte
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(codec.read_ndx(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn test_empty_input_returns_error() {
+        let mut legacy = LegacyNdxCodec::new(29);
+        let mut modern = ModernNdxCodec::new(30);
+        let empty: [u8; 0] = [];
+
+        let mut cursor = Cursor::new(&empty[..]);
+        assert!(legacy.read_ndx(&mut cursor).is_err());
+
+        let mut cursor = Cursor::new(&empty[..]);
+        assert!(modern.read_ndx(&mut cursor).is_err());
+    }
+
+    // ========================================================================
+    // Cross-Version Compatibility Tests
+    // ========================================================================
+
+    #[test]
+    fn test_all_versions_roundtrip_ndx_constants() {
+        let constants = [NDX_DONE, NDX_FLIST_EOF, NDX_DEL_STATS, NDX_FLIST_OFFSET];
+
+        for version in [28, 29, 30, 31, 32] {
+            let mut write_codec = create_ndx_codec(version);
+            let mut buf = Vec::new();
+
+            for &ndx in &constants {
+                write_codec.write_ndx(&mut buf, ndx).unwrap();
+            }
+
+            let mut read_codec = create_ndx_codec(version);
+            let mut cursor = Cursor::new(&buf);
+
+            for &expected in &constants {
+                let read = read_codec.read_ndx(&mut cursor).unwrap();
+                assert_eq!(read, expected, "v{version} roundtrip failed for {expected}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_all_versions_roundtrip_positive_sequence() {
+        let indices: Vec<i32> = (0..100).collect();
+
+        for version in [28, 29, 30, 31, 32] {
+            let mut write_codec = create_ndx_codec(version);
+            let mut buf = Vec::new();
+
+            for &ndx in &indices {
+                write_codec.write_ndx(&mut buf, ndx).unwrap();
+            }
+
+            let mut read_codec = create_ndx_codec(version);
+            let mut cursor = Cursor::new(&buf);
+
+            for &expected in &indices {
+                let read = read_codec.read_ndx(&mut cursor).unwrap();
+                assert_eq!(read, expected, "v{version} roundtrip failed for index {expected}");
+            }
+        }
+    }
+
+    // ========================================================================
+    // Extended Encoding Boundary Tests
+    // ========================================================================
+
+    #[test]
+    fn test_modern_single_byte_max_diff_253() {
+        // Diff values 1-253 use single-byte encoding
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // ndx=252 after prev=-1 means diff=253 (max single byte)
+        codec.write_ndx(&mut buf, 252).unwrap();
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf[0], 253);
+    }
+
+    #[test]
+    fn test_modern_two_byte_at_diff_254() {
+        // Diff >= 254 triggers 0xFE prefix
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // ndx=253 after prev=-1 means diff=254
+        codec.write_ndx(&mut buf, 253).unwrap();
+        assert_eq!(buf[0], 0xFE);
+        assert_eq!(buf.len(), 3); // 0xFE + 2 bytes for diff
+    }
+
+    #[test]
+    fn test_modern_two_byte_max_diff_32767() {
+        // 2-byte encoding handles diff up to 32767 (0x7FFF)
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // First write to set prev_positive
+        codec.write_ndx(&mut buf, 0).unwrap();
+        buf.clear();
+
+        // Write 32767 (diff = 32767 from prev=0)
+        codec.write_ndx(&mut buf, 32767).unwrap();
+        assert_eq!(buf[0], 0xFE);
+        // High bit not set means 2-byte diff
+        assert!(buf[1] & 0x80 == 0);
+    }
+
+    #[test]
+    fn test_modern_four_byte_for_large_diff() {
+        // Diff > 32767 requires 4-byte full value encoding
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Large value that requires full encoding
+        codec.write_ndx(&mut buf, 0x01_00_00_00).unwrap();
+        assert_eq!(buf[0], 0xFE);
+        // High bit set indicates 4-byte format
+        assert!(buf[1] & 0x80 != 0);
+        assert_eq!(buf.len(), 5);
+    }
+
+    // ========================================================================
+    // NdxCodecEnum Dispatch Tests
+    // ========================================================================
+
+    #[test]
+    fn test_ndx_codec_enum_dispatches_correctly() {
+        // Legacy via enum
+        let mut legacy_enum = NdxCodecEnum::new(29);
+        let mut buf = Vec::new();
+        legacy_enum.write_ndx(&mut buf, 5).unwrap();
+        assert_eq!(buf.len(), 4, "enum should use legacy 4-byte format");
+
+        // Modern via enum
+        let mut modern_enum = NdxCodecEnum::new(30);
+        buf.clear();
+        modern_enum.write_ndx(&mut buf, 0).unwrap();
+        assert_eq!(buf.len(), 1, "enum should use modern delta format");
+    }
+
+    #[test]
+    fn test_ndx_codec_enum_protocol_version() {
+        for version in [28, 29, 30, 31, 32] {
+            let codec = NdxCodecEnum::new(version);
+            assert_eq!(codec.protocol_version(), version);
+        }
+    }
+
+    #[test]
+    fn test_create_ndx_codec_matches_direct_construction() {
+        // Factory function should produce same behavior as direct construction
+        let factory = create_ndx_codec(29);
+        let direct = NdxCodecEnum::Legacy(LegacyNdxCodec::new(29));
+        assert_eq!(factory.protocol_version(), direct.protocol_version());
+
+        let factory = create_ndx_codec(30);
+        let direct = NdxCodecEnum::Modern(ModernNdxCodec::new(30));
+        assert_eq!(factory.protocol_version(), direct.protocol_version());
+    }
+
+    // ========================================================================
+    // NdxState Legacy Compatibility Tests
+    // ========================================================================
+
+    #[test]
+    fn test_ndx_state_default_equals_new() {
+        let default_state = NdxState::default();
+        let new_state = NdxState::new();
+
+        // Both should produce same output for same input
+        let mut default_buf = Vec::new();
+        let mut new_buf = Vec::new();
+
+        let mut d = default_state.clone();
+        let mut n = new_state.clone();
+
+        d.write_ndx(&mut default_buf, 0).unwrap();
+        n.write_ndx(&mut new_buf, 0).unwrap();
+
+        assert_eq!(default_buf, new_buf);
+    }
+
+    #[test]
+    fn test_write_ndx_done_helper() {
+        let mut buf = Vec::new();
+        write_ndx_done(&mut buf).unwrap();
+        assert_eq!(buf, [0x00]);
+    }
+
+    #[test]
+    fn test_write_ndx_flist_eof_helper() {
+        let mut buf = Vec::new();
+        let mut state = NdxState::new();
+        write_ndx_flist_eof(&mut buf, &mut state).unwrap();
+        // NDX_FLIST_EOF (-2) with prev_negative=1: diff = 2-1 = 1
+        assert_eq!(buf, [0xFF, 0x01]);
+    }
+
+    #[test]
+    fn test_ndx_state_clone_independence() {
+        let mut state = NdxState::new();
+        let mut buf = Vec::new();
+        state.write_ndx(&mut buf, 0).unwrap();
+        state.write_ndx(&mut buf, 1).unwrap();
+
+        // Clone after writing
+        let mut cloned = state.clone();
+
+        // Write different values to each
+        let mut orig_buf = Vec::new();
+        let mut clone_buf = Vec::new();
+
+        state.write_ndx(&mut orig_buf, 10).unwrap();
+        cloned.write_ndx(&mut clone_buf, 10).unwrap();
+
+        // Both should produce same output since they have same prev state
+        assert_eq!(orig_buf, clone_buf);
+    }
+
+    // ========================================================================
+    // Extreme Value Tests
+    // ========================================================================
+
+    #[test]
+    fn test_ndx_extreme_positive_values() {
+        let extreme_values = [
+            0i32,
+            1,
+            127,
+            128,
+            253,
+            254,
+            255,
+            256,
+            32767,
+            32768,
+            65535,
+            65536,
+            0x7FFF_FFFF, // i32::MAX
+        ];
+
+        for version in [28, 29, 30, 31, 32] {
+            let mut write_codec = create_ndx_codec(version);
+            let mut buf = Vec::new();
+
+            for &ndx in &extreme_values {
+                write_codec.write_ndx(&mut buf, ndx).unwrap();
+            }
+
+            let mut read_codec = create_ndx_codec(version);
+            let mut cursor = Cursor::new(&buf);
+
+            for &expected in &extreme_values {
+                let read = read_codec.read_ndx(&mut cursor).unwrap();
+                assert_eq!(read, expected, "v{version} failed for {expected}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_ndx_large_gaps() {
+        // Test with large gaps between values
+        let values = [0i32, 10000, 20000, 100000, 1000000];
+
+        for version in [28, 29, 30, 31, 32] {
+            let mut write_codec = create_ndx_codec(version);
+            let mut buf = Vec::new();
+
+            for &ndx in &values {
+                write_codec.write_ndx(&mut buf, ndx).unwrap();
+            }
+
+            let mut read_codec = create_ndx_codec(version);
+            let mut cursor = Cursor::new(&buf);
+
+            for &expected in &values {
+                let read = read_codec.read_ndx(&mut cursor).unwrap();
+                assert_eq!(read, expected, "v{version} failed for {expected}");
+            }
+        }
+    }
 }

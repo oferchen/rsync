@@ -432,4 +432,265 @@ mod tests {
         let result = select_highest_mutual(&mut versions).unwrap();
         assert_eq!(result, ProtocolVersion::V31);
     }
+
+    // ========================================================================
+    // Protocol Version Negotiation v27-v32 Tests
+    // ========================================================================
+
+    #[test]
+    fn select_negotiates_v28_as_oldest_supported() {
+        // Version 28 is the oldest supported version
+        let result = select_highest_mutual([28_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V28);
+        assert_eq!(result.as_u8(), 28);
+    }
+
+    #[test]
+    fn select_negotiates_v29_legacy() {
+        let result = select_highest_mutual([29_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V29);
+        assert!(result.uses_legacy_ascii_negotiation());
+    }
+
+    #[test]
+    fn select_negotiates_v30_first_binary() {
+        let result = select_highest_mutual([30_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V30);
+        assert!(result.uses_binary_negotiation());
+    }
+
+    #[test]
+    fn select_negotiates_v31() {
+        let result = select_highest_mutual([31_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V31);
+    }
+
+    #[test]
+    fn select_negotiates_v32_as_newest() {
+        let result = select_highest_mutual([32_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V32);
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_rejects_v27_alone() {
+        // Version 27 is not supported
+        let err = select_highest_mutual([27_u8]).unwrap_err();
+        assert!(matches!(err, NegotiationError::UnsupportedVersion(27)));
+    }
+
+    #[test]
+    fn select_v27_with_supported_uses_supported() {
+        // When v27 is offered alongside supported versions, pick the supported one
+        let result = select_highest_mutual([27_u8, 28]).unwrap();
+        assert_eq!(result.as_u8(), 28);
+    }
+
+    #[test]
+    fn select_all_supported_versions_returns_newest() {
+        // When all supported versions are offered, return newest
+        let result = select_highest_mutual([28_u8, 29, 30, 31, 32]).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_highest_from_sparse_set() {
+        // Test with gaps in version set
+        let result = select_highest_mutual([28_u8, 31]).unwrap();
+        assert_eq!(result.as_u8(), 31);
+    }
+
+    // ========================================================================
+    // Version Selection Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn select_highest_when_multiple_duplicates() {
+        // Handle duplicates gracefully
+        let result = select_highest_mutual([30_u8, 30, 30, 31, 31, 31, 31]).unwrap();
+        assert_eq!(result.as_u8(), 31);
+    }
+
+    #[test]
+    fn select_with_reversed_order() {
+        // Input order shouldn't matter
+        let result = select_highest_mutual([32_u8, 31, 30, 29, 28]).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_with_scrambled_order() {
+        let result = select_highest_mutual([30_u8, 28, 32, 29, 31]).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_early_return_optimization() {
+        // Once NEWEST is seen, should return immediately
+        // (tested via short-circuit test above, but verify behavior)
+        let result = select_highest_mutual([32_u8, 28]).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_oldest_when_only_oldest_offered() {
+        let result = select_highest_mutual([28_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::OLDEST);
+    }
+
+    #[test]
+    fn select_with_zero_and_valid() {
+        // Zero should be ignored when valid versions present
+        let result = select_highest_mutual([0_u8, 30]).unwrap();
+        assert_eq!(result.as_u8(), 30);
+    }
+
+    #[test]
+    fn select_future_clamps_to_newest() {
+        // Future versions (33-40) clamp to NEWEST
+        let result = select_highest_mutual([33_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+
+        let result = select_highest_mutual([40_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn select_beyond_maximum_fails() {
+        // Versions beyond MAXIMUM_PROTOCOL_ADVERTISEMENT fail
+        let err = select_highest_mutual([41_u8]).unwrap_err();
+        assert!(matches!(err, NegotiationError::UnsupportedVersion(41)));
+    }
+
+    #[test]
+    fn select_reports_oldest_unsupported_version() {
+        // When all versions are too old, report the oldest one
+        let err = select_highest_mutual([25_u8, 26, 27]).unwrap_err();
+        assert!(matches!(err, NegotiationError::UnsupportedVersion(25)));
+    }
+
+    #[test]
+    fn select_empty_iterator_reports_no_mutual() {
+        let err = select_highest_mutual(Vec::<u8>::new()).unwrap_err();
+        match err {
+            NegotiationError::NoMutualProtocol { peer_versions } => {
+                assert!(peer_versions.is_empty());
+            }
+            _ => panic!("expected NoMutualProtocol"),
+        }
+    }
+
+    // ========================================================================
+    // Interop Tests - Upstream Protocol Compatibility
+    // ========================================================================
+
+    #[test]
+    fn interop_upstream_rsync_34_offers_32() {
+        // rsync 3.4.x offers protocol 32 as newest
+        let result = select_highest_mutual([32_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V32);
+    }
+
+    #[test]
+    fn interop_upstream_rsync_31_offers_31() {
+        // rsync 3.1.x offers protocol 31
+        let result = select_highest_mutual([31_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V31);
+    }
+
+    #[test]
+    fn interop_upstream_rsync_30_offers_30() {
+        // rsync 3.0.x introduced protocol 30 (binary negotiation)
+        let result = select_highest_mutual([30_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V30);
+        assert!(result.uses_binary_negotiation());
+    }
+
+    #[test]
+    fn interop_old_rsync_offers_29() {
+        // Older rsync versions use protocol 29 (legacy ASCII)
+        let result = select_highest_mutual([29_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V29);
+        assert!(result.uses_legacy_ascii_negotiation());
+    }
+
+    #[test]
+    fn interop_multiple_upstream_versions() {
+        // Upstream might advertise range of versions
+        let result = select_highest_mutual([30_u8, 31, 32]).unwrap();
+        assert_eq!(result, ProtocolVersion::NEWEST);
+    }
+
+    #[test]
+    fn interop_negotiation_style_boundary() {
+        // Verify the legacy/binary boundary at version 30
+        let v29 = select_highest_mutual([29_u8]).unwrap();
+        let v30 = select_highest_mutual([30_u8]).unwrap();
+
+        assert!(v29.uses_legacy_ascii_negotiation());
+        assert!(!v29.uses_binary_negotiation());
+
+        assert!(!v30.uses_legacy_ascii_negotiation());
+        assert!(v30.uses_binary_negotiation());
+    }
+
+    // ========================================================================
+    // Protocol Feature Checks After Selection
+    // ========================================================================
+
+    #[test]
+    fn selected_v28_has_correct_features() {
+        let v = select_highest_mutual([28_u8]).unwrap();
+        assert!(!v.uses_varint_encoding());
+        assert!(!v.supports_sender_receiver_modifiers());
+        assert!(!v.supports_perishable_modifier());
+        assert!(!v.supports_flist_times());
+        assert!(v.uses_old_prefixes());
+    }
+
+    #[test]
+    fn selected_v29_has_correct_features() {
+        let v = select_highest_mutual([29_u8]).unwrap();
+        assert!(!v.uses_varint_encoding());
+        assert!(v.supports_sender_receiver_modifiers());
+        assert!(!v.supports_perishable_modifier());
+        assert!(v.supports_flist_times());
+        assert!(!v.uses_old_prefixes());
+    }
+
+    #[test]
+    fn selected_v30_has_correct_features() {
+        let v = select_highest_mutual([30_u8]).unwrap();
+        assert!(v.uses_varint_encoding());
+        assert!(v.supports_sender_receiver_modifiers());
+        assert!(v.supports_perishable_modifier());
+        assert!(v.supports_flist_times());
+        assert!(!v.uses_old_prefixes());
+        assert!(v.uses_safe_file_list());
+        assert!(!v.safe_file_list_always_enabled());
+    }
+
+    #[test]
+    fn selected_v31_has_correct_features() {
+        let v = select_highest_mutual([31_u8]).unwrap();
+        assert!(v.uses_varint_encoding());
+        assert!(v.supports_sender_receiver_modifiers());
+        assert!(v.supports_perishable_modifier());
+        assert!(v.supports_flist_times());
+        assert!(!v.uses_old_prefixes());
+        assert!(v.uses_safe_file_list());
+        assert!(v.safe_file_list_always_enabled());
+    }
+
+    #[test]
+    fn selected_v32_has_correct_features() {
+        let v = select_highest_mutual([32_u8]).unwrap();
+        assert!(v.uses_varint_encoding());
+        assert!(v.supports_sender_receiver_modifiers());
+        assert!(v.supports_perishable_modifier());
+        assert!(v.supports_flist_times());
+        assert!(!v.uses_old_prefixes());
+        assert!(v.uses_safe_file_list());
+        assert!(v.safe_file_list_always_enabled());
+    }
 }
