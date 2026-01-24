@@ -247,3 +247,4 @@ DEBUGGING_INTEROP.md
 tools/ci/*.log
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,linux,macos,windows,rust-analyzer,visualstudiocode,jetbrains
+.worktrees/
