@@ -225,6 +225,11 @@ post_uninstall_script = "#!/bin/sh\nset -e\nexit 0"
 [package.metadata.generate-rpm.requires]
 glibc = "*"
 
+# Release profile with debug symbols for profiling (flamegraph, perf)
+[profile.release]
+debug = true              # Include debug symbols for profiling
+strip = false             # Don't strip symbols
+
 [profile.dist]
 inherits = "release"
 opt-level = "z"           # Optimize for size
@@ -232,6 +237,7 @@ lto = "fat"               # Full link-time optimization
 codegen-units = 1         # Single codegen unit for maximum optimization
 panic = "abort"           # Remove unwinding code (~10% smaller)
 strip = "symbols"         # Strip symbols from binary
+debug = false             # No debug symbols in dist
 
 # Optimize dependencies for size in dist builds
 [profile.dist.package."*"]
