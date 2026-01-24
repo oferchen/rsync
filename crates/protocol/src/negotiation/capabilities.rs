@@ -902,4 +902,255 @@ mod tests {
         let result = choose_compression_algorithm("").unwrap();
         assert_eq!(result, CompressionAlgorithm::None);
     }
+
+    // ========================================================================
+    // Interop Tests - Upstream Protocol Compatibility
+    // ========================================================================
+
+    #[test]
+    fn test_upstream_checksum_list_format() {
+        // Upstream rsync 3.4.1 sends checksums in this format:
+        // "xxh128 xxh3 xxh64 md5 md4 sha1 none"
+        let upstream_format = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
+        let result = choose_checksum_algorithm(upstream_format).unwrap();
+        // First match should be xxh128
+        assert_eq!(result, ChecksumAlgorithm::XXH128);
+    }
+
+    #[test]
+    fn test_legacy_rsync_checksum_list() {
+        // Older rsync might only offer md4 and md5
+        let legacy_format = "md5 md4";
+        let result = choose_checksum_algorithm(legacy_format).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    #[test]
+    fn test_minimal_rsync_checksum_list() {
+        // Minimal rsync might only offer none
+        let minimal_format = "none";
+        let result = choose_checksum_algorithm(minimal_format).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::None);
+    }
+
+    // ========================================================================
+    // Algorithm Parsing Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_checksum_case_sensitive() {
+        // Algorithm names are case-sensitive
+        assert!(ChecksumAlgorithm::parse("MD5").is_err());
+        assert!(ChecksumAlgorithm::parse("Md5").is_err());
+        assert!(ChecksumAlgorithm::parse("md5").is_ok());
+    }
+
+    #[test]
+    fn test_compression_case_sensitive() {
+        assert!(CompressionAlgorithm::parse("ZLIB").is_err());
+        assert!(CompressionAlgorithm::parse("Zlib").is_err());
+        assert!(CompressionAlgorithm::parse("zlib").is_ok());
+    }
+
+    #[test]
+    fn test_checksum_with_whitespace() {
+        // Lists can have multiple spaces between items
+        let list = "md5   md4     sha1";
+        let result = choose_checksum_algorithm(list).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    #[test]
+    fn test_compression_with_leading_trailing_space() {
+        // split_whitespace handles leading/trailing spaces
+        let list = "  zlib   zlibx  none  ";
+        let result = choose_compression_algorithm(list).unwrap();
+        assert_eq!(result, CompressionAlgorithm::Zlib);
+    }
+
+    // ========================================================================
+    // NegotiationResult Tests
+    // ========================================================================
+
+    #[test]
+    fn test_negotiation_result_debug() {
+        let result = NegotiationResult {
+            checksum: ChecksumAlgorithm::MD5,
+            compression: CompressionAlgorithm::Zlib,
+        };
+        let debug = format!("{:?}", result);
+        assert!(debug.contains("MD5"));
+        assert!(debug.contains("Zlib"));
+    }
+
+    #[test]
+    fn test_negotiation_result_equality() {
+        let r1 = NegotiationResult {
+            checksum: ChecksumAlgorithm::XXH128,
+            compression: CompressionAlgorithm::None,
+        };
+        let r2 = NegotiationResult {
+            checksum: ChecksumAlgorithm::XXH128,
+            compression: CompressionAlgorithm::None,
+        };
+        let r3 = NegotiationResult {
+            checksum: ChecksumAlgorithm::MD5,
+            compression: CompressionAlgorithm::None,
+        };
+        assert_eq!(r1, r2);
+        assert_ne!(r1, r3);
+    }
+
+    #[test]
+    fn test_negotiation_result_clone() {
+        let r1 = NegotiationResult {
+            checksum: ChecksumAlgorithm::SHA1,
+            compression: CompressionAlgorithm::ZlibX,
+        };
+        let r2 = r1;
+        assert_eq!(r1.checksum, r2.checksum);
+        assert_eq!(r1.compression, r2.compression);
+    }
+
+    // ========================================================================
+    // vstring Encoding Tests
+    // ========================================================================
+
+    #[test]
+    fn test_vstring_empty_string() {
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, "").unwrap();
+        assert_eq!(buffer, vec![0x00]); // Length 0
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, "");
+    }
+
+    #[test]
+    fn test_vstring_single_byte_boundary() {
+        // Length 127 should use single-byte format
+        let test_str = "x".repeat(127);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+        assert_eq!(buffer[0], 127); // Single byte length
+        assert_eq!(buffer.len(), 1 + 127);
+    }
+
+    #[test]
+    fn test_vstring_two_byte_boundary() {
+        // Length 128 should use two-byte format
+        let test_str = "x".repeat(128);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+        assert!(buffer[0] & 0x80 != 0); // Two-byte format indicator
+        assert_eq!(buffer.len(), 2 + 128);
+    }
+
+    #[test]
+    fn test_vstring_max_single_byte() {
+        // Maximum single-byte length is 127
+        let test_str = "y".repeat(127);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    #[test]
+    fn test_vstring_moderate_length() {
+        // Test a moderate length that uses 2-byte format
+        let test_str = "z".repeat(500);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    // ========================================================================
+    // Protocol Version Specific Tests
+    // ========================================================================
+
+    #[test]
+    fn test_all_supported_versions_negotiate() {
+        for version_num in 28..=32 {
+            let protocol = ProtocolVersion::try_from(version_num).unwrap();
+
+            if protocol.uses_fixed_encoding() {
+                // Protocol < 30 uses defaults
+                let mut stdin = &b""[..];
+                let mut stdout = Vec::new();
+                let result = negotiate_capabilities(
+                    protocol, &mut stdin, &mut stdout,
+                    true, true, false, true
+                ).unwrap();
+                assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+                assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+            } else {
+                // Protocol >= 30 exchanges lists
+                let client_response = b"\x03md5\x04zlib";
+                let mut stdin = &client_response[..];
+                let mut stdout = Vec::new();
+                let result = negotiate_capabilities(
+                    protocol, &mut stdin, &mut stdout,
+                    true, true, false, true
+                ).unwrap();
+                assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+                assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+            }
+        }
+    }
+
+    #[test]
+    fn test_v28_uses_legacy_defaults() {
+        let protocol = ProtocolVersion::try_from(28).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol, &mut stdin, &mut stdout,
+            true, true, false, true
+        ).unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+        assert!(stdout.is_empty());
+    }
+
+    #[test]
+    fn test_v29_uses_legacy_defaults() {
+        let protocol = ProtocolVersion::try_from(29).unwrap();
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol, &mut stdin, &mut stdout,
+            true, true, false, true
+        ).unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+        assert!(stdout.is_empty());
+    }
+
+    #[test]
+    fn test_v30_requires_exchange() {
+        let protocol = ProtocolVersion::try_from(30).unwrap();
+        let client_response = b"\x05xxh64\x05zlibx";
+        let mut stdin = &client_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol, &mut stdin, &mut stdout,
+            true, true, false, true
+        ).unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::XXH64);
+        assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
+        assert!(!stdout.is_empty()); // Should have sent our lists
+    }
 }
