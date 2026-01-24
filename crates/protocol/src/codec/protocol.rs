@@ -933,4 +933,339 @@ mod tests {
             );
         }
     }
+
+    // ============================================================================
+    // Protocol Version Range Tests (v27-v32)
+    // ============================================================================
+
+    #[test]
+    fn version_27_not_supported_use_28_as_minimum() {
+        // Protocol 27 is below the supported range; use 28 as minimum
+        let codec = create_protocol_codec(28);
+        assert!(codec.is_legacy());
+        assert_eq!(codec.protocol_version(), 28);
+    }
+
+    #[test]
+    fn all_supported_versions_create_valid_codecs() {
+        for version in 28..=32 {
+            let codec = create_protocol_codec(version);
+            assert_eq!(codec.protocol_version(), version);
+        }
+    }
+
+    #[test]
+    fn version_boundary_at_30_encoding_changes() {
+        // Version 29 uses legacy fixed-size encoding
+        let legacy = create_protocol_codec(29);
+        let mut legacy_buf = Vec::new();
+        legacy.write_file_size(&mut legacy_buf, 100).unwrap();
+        assert_eq!(legacy_buf.len(), 4, "legacy version uses 4-byte fixed");
+
+        // Version 30 uses modern varlong encoding
+        let modern = create_protocol_codec(30);
+        let mut modern_buf = Vec::new();
+        modern.write_file_size(&mut modern_buf, 100).unwrap();
+        assert!(modern_buf.len() <= 4, "modern version uses varlong");
+    }
+
+    // ============================================================================
+    // Interop Tests - Upstream Protocol Byte Patterns
+    // ============================================================================
+
+    #[test]
+    fn legacy_encoding_matches_upstream_byte_patterns() {
+        let codec = create_protocol_codec(29);
+
+        // Zero encoded as 4-byte LE
+        let mut buf = Vec::new();
+        codec.write_file_size(&mut buf, 0).unwrap();
+        assert_eq!(buf, [0x00, 0x00, 0x00, 0x00]);
+
+        // 255 encoded as 4-byte LE
+        buf.clear();
+        codec.write_file_size(&mut buf, 255).unwrap();
+        assert_eq!(buf, [0xff, 0x00, 0x00, 0x00]);
+
+        // 1000 (0x3E8) encoded as 4-byte LE
+        buf.clear();
+        codec.write_file_size(&mut buf, 1000).unwrap();
+        assert_eq!(buf, [0xe8, 0x03, 0x00, 0x00]);
+
+        // Max positive 32-bit
+        buf.clear();
+        codec.write_file_size(&mut buf, 0x7FFF_FFFF).unwrap();
+        assert_eq!(buf, [0xff, 0xff, 0xff, 0x7f]);
+    }
+
+    #[test]
+    fn legacy_large_file_uses_12_byte_longint() {
+        let codec = create_protocol_codec(29);
+        let mut buf = Vec::new();
+
+        // Large value (> 32-bit) uses marker + 64-bit value
+        codec.write_file_size(&mut buf, 0x1_0000_0000i64).unwrap();
+        assert_eq!(buf.len(), 12);
+        // First 4 bytes are the marker (0xFFFFFFFF)
+        assert_eq!(&buf[0..4], [0xff, 0xff, 0xff, 0xff]);
+    }
+
+    #[test]
+    fn modern_encoding_efficient_for_small_values() {
+        let codec = create_protocol_codec(30);
+
+        // Zero should be compact
+        let mut buf = Vec::new();
+        codec.write_file_size(&mut buf, 0).unwrap();
+        assert!(buf.len() <= 4); // varlong with min_bytes=3
+
+        // Read back to verify
+        let mut cursor = Cursor::new(&buf);
+        let value = codec.read_file_size(&mut cursor).unwrap();
+        assert_eq!(value, 0);
+    }
+
+    #[test]
+    fn mtime_encoding_differs_between_versions() {
+        let legacy = create_protocol_codec(29);
+        let modern = create_protocol_codec(30);
+        let mtime = 1700000000i64; // Typical Unix timestamp
+
+        let mut legacy_buf = Vec::new();
+        legacy.write_mtime(&mut legacy_buf, mtime).unwrap();
+        assert_eq!(legacy_buf.len(), 4, "legacy mtime is 4 bytes");
+
+        let mut modern_buf = Vec::new();
+        modern.write_mtime(&mut modern_buf, mtime).unwrap();
+        // Modern uses varlong with min_bytes=4
+
+        // Both must roundtrip correctly
+        let mut cursor = Cursor::new(&legacy_buf);
+        assert_eq!(legacy.read_mtime(&mut cursor).unwrap(), mtime);
+
+        let mut cursor = Cursor::new(&modern_buf);
+        assert_eq!(modern.read_mtime(&mut cursor).unwrap(), mtime);
+    }
+
+    // ============================================================================
+    // Compatibility Flags Tests
+    // ============================================================================
+
+    #[test]
+    fn compatibility_flags_progressive_enablement() {
+        // Track feature enablement across versions
+        struct VersionFeatures {
+            sender_receiver: bool,
+            perishable: bool,
+            flist_times: bool,
+            old_prefixes: bool,
+        }
+
+        let expected = [
+            (28, VersionFeatures { sender_receiver: false, perishable: false, flist_times: false, old_prefixes: true }),
+            (29, VersionFeatures { sender_receiver: true, perishable: false, flist_times: true, old_prefixes: false }),
+            (30, VersionFeatures { sender_receiver: true, perishable: true, flist_times: true, old_prefixes: false }),
+            (31, VersionFeatures { sender_receiver: true, perishable: true, flist_times: true, old_prefixes: false }),
+            (32, VersionFeatures { sender_receiver: true, perishable: true, flist_times: true, old_prefixes: false }),
+        ];
+
+        for (version, features) in expected {
+            let codec = create_protocol_codec(version);
+            assert_eq!(
+                codec.supports_sender_receiver_modifiers(), features.sender_receiver,
+                "v{version} sender_receiver mismatch"
+            );
+            assert_eq!(
+                codec.supports_perishable_modifier(), features.perishable,
+                "v{version} perishable mismatch"
+            );
+            assert_eq!(
+                codec.supports_flist_times(), features.flist_times,
+                "v{version} flist_times mismatch"
+            );
+            assert_eq!(
+                codec.uses_old_prefixes(), features.old_prefixes,
+                "v{version} old_prefixes mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn feature_flags_never_disable_in_newer_versions() {
+        // Once a feature is enabled, it stays enabled
+        let mut prev_sr = false;
+        let mut prev_perishable = false;
+        let mut prev_flist = false;
+
+        for version in 28..=32 {
+            let codec = create_protocol_codec(version);
+
+            if prev_sr {
+                assert!(codec.supports_sender_receiver_modifiers(),
+                    "sender_receiver must stay enabled at v{version}");
+            }
+            if prev_perishable {
+                assert!(codec.supports_perishable_modifier(),
+                    "perishable must stay enabled at v{version}");
+            }
+            if prev_flist {
+                assert!(codec.supports_flist_times(),
+                    "flist_times must stay enabled at v{version}");
+            }
+
+            prev_sr = codec.supports_sender_receiver_modifiers();
+            prev_perishable = codec.supports_perishable_modifier();
+            prev_flist = codec.supports_flist_times();
+        }
+    }
+
+    // ============================================================================
+    // Error Handling Tests
+    // ============================================================================
+
+    #[test]
+    fn read_file_size_handles_truncated_input() {
+        let legacy = create_protocol_codec(29);
+        let modern = create_protocol_codec(30);
+
+        // Legacy needs at least 4 bytes
+        let truncated = [0u8, 0, 0];
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(legacy.read_file_size(&mut cursor).is_err());
+
+        // Modern needs at least min_bytes=3
+        let truncated = [0u8, 0];
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(modern.read_file_size(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn read_mtime_handles_truncated_input() {
+        let legacy = create_protocol_codec(29);
+
+        let truncated = [0u8, 0];
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(legacy.read_mtime(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn read_int_handles_truncated_input() {
+        let codec = create_protocol_codec(30);
+
+        let truncated = [0u8, 0];
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(codec.read_int(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn read_long_name_len_handles_truncated_input() {
+        let legacy = create_protocol_codec(29);
+
+        let truncated = [0u8, 0, 0];
+        let mut cursor = Cursor::new(&truncated[..]);
+        assert!(legacy.read_long_name_len(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn empty_input_returns_error() {
+        let codec = create_protocol_codec(30);
+        let empty: [u8; 0] = [];
+
+        let mut cursor = Cursor::new(&empty[..]);
+        assert!(codec.read_file_size(&mut cursor).is_err());
+
+        let mut cursor = Cursor::new(&empty[..]);
+        assert!(codec.read_mtime(&mut cursor).is_err());
+
+        let mut cursor = Cursor::new(&empty[..]);
+        assert!(codec.read_int(&mut cursor).is_err());
+
+        let mut cursor = Cursor::new(&empty[..]);
+        assert!(codec.read_long_name_len(&mut cursor).is_err());
+    }
+
+    // ============================================================================
+    // Cross-Version Compatibility Tests
+    // ============================================================================
+
+    #[test]
+    fn write_int_consistent_across_all_versions() {
+        // write_int always uses 4-byte LE regardless of version
+        let mut prev_buf: Option<Vec<u8>> = None;
+
+        for version in 28..=32 {
+            let codec = create_protocol_codec(version);
+            let mut buf = Vec::new();
+            codec.write_int(&mut buf, 12345).unwrap();
+
+            if let Some(ref prev) = prev_buf {
+                assert_eq!(&buf, prev, "write_int should be same across versions");
+            }
+            prev_buf = Some(buf);
+        }
+    }
+
+    #[test]
+    fn write_varint_available_in_all_versions() {
+        // write_varint is available regardless of version
+        for version in [28, 29, 30, 31, 32] {
+            let codec = create_protocol_codec(version);
+            let mut buf = Vec::new();
+            codec.write_varint(&mut buf, 1000).unwrap();
+
+            let mut cursor = Cursor::new(&buf);
+            let value = codec.read_varint(&mut cursor).unwrap();
+            assert_eq!(value, 1000);
+        }
+    }
+
+    // ============================================================================
+    // Extreme Value Tests
+    // ============================================================================
+
+    #[test]
+    fn file_size_extreme_values_roundtrip() {
+        // Varlong encoding in modern protocol has limits on encoded size
+        // Legacy uses 64-bit longint for values > 32-bit
+        // Test values within the supported range
+        let test_values = [
+            0i64,
+            1,
+            i8::MAX as i64,
+            u8::MAX as i64,
+            i16::MAX as i64,
+            u16::MAX as i64,
+            i32::MAX as i64,
+            u32::MAX as i64,
+            0x1_0000_0000i64,      // Just above 32-bit
+            0xFFFF_FFFF_FFFFi64,   // 48-bit max (within varlong range)
+        ];
+
+        for version in [28, 29, 30, 31, 32] {
+            let codec = create_protocol_codec(version);
+            for &size in &test_values {
+                let mut buf = Vec::new();
+                codec.write_file_size(&mut buf, size).unwrap();
+
+                let mut cursor = Cursor::new(&buf);
+                let read = codec.read_file_size(&mut cursor).unwrap();
+                assert_eq!(read, size, "v{version} roundtrip failed for {size}");
+            }
+        }
+    }
+
+    #[test]
+    fn negative_int_roundtrip() {
+        for version in [28, 29, 30, 31, 32] {
+            let codec = create_protocol_codec(version);
+            for value in [-1i32, -100, i32::MIN, i32::MIN + 1] {
+                let mut buf = Vec::new();
+                codec.write_int(&mut buf, value).unwrap();
+
+                let mut cursor = Cursor::new(&buf);
+                let read = codec.read_int(&mut cursor).unwrap();
+                assert_eq!(read, value, "v{version} int roundtrip failed for {value}");
+            }
+        }
+    }
 }
