@@ -22,7 +22,15 @@ mod dispatcher;
 mod scalar;
 mod simd;
 
+#[cfg(feature = "rayon")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rayon")))]
+mod rayon_support;
+
 pub use dispatcher::Backend;
+
+#[cfg(feature = "rayon")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rayon")))]
+pub use rayon_support::{digest_files, ParallelMd5};
 
 /// MD5 digest type (16 bytes / 128 bits).
 pub type Digest = [u8; 16];
