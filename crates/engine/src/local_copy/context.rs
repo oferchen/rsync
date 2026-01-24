@@ -96,6 +96,9 @@ pub(crate) struct CopyContext<'a> {
     /// Deferred filesystem sync manager.
     #[cfg(feature = "batch-sync")]
     deferred_sync: DeferredSync,
+    /// Cache of prefetched file checksums for parallel checksum mode.
+    #[cfg(feature = "parallel")]
+    checksum_cache: Option<super::executor::ChecksumCache>,
 }
 
 pub(crate) struct FinalizeMetadataParams<'a> {
