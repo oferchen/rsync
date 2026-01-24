@@ -42,10 +42,6 @@ pub(crate) struct FileChecksum {
 /// Result of checksum prefetching for a file pair.
 #[derive(Debug)]
 pub(crate) struct ChecksumPrefetchResult {
-    /// Source file path.
-    pub(crate) source: PathBuf,
-    /// Destination file path.
-    pub(crate) destination: PathBuf,
     /// Source checksum, if successfully computed.
     pub(crate) source_checksum: Option<FileChecksum>,
     /// Destination checksum, if successfully computed.
@@ -100,8 +96,6 @@ pub(crate) fn prefetch_checksums(
                 return (
                     pair.source.clone(),
                     ChecksumPrefetchResult {
-                        source: pair.source.clone(),
-                        destination: pair.destination.clone(),
                         source_checksum: None,
                         destination_checksum: None,
                     },
@@ -117,8 +111,6 @@ pub(crate) fn prefetch_checksums(
             (
                 pair.source.clone(),
                 ChecksumPrefetchResult {
-                    source: pair.source.clone(),
-                    destination: pair.destination.clone(),
                     source_checksum,
                     destination_checksum,
                 },
@@ -217,6 +209,7 @@ fn hash_file_contents(mut file: File, algorithm: SignatureAlgorithm) -> io::Resu
 /// Checks if a file pair should be skipped based on prefetched checksums.
 ///
 /// This is a fast lookup that uses previously computed checksums.
+#[allow(dead_code)] // Convenience wrapper, prefer ChecksumCache::lookup
 pub(crate) fn should_skip_with_prefetched_checksum(
     prefetched: &HashMap<PathBuf, ChecksumPrefetchResult>,
     source: &Path,
@@ -274,6 +267,7 @@ impl ChecksumCache {
     }
 
     /// Returns the number of entries in the cache.
+    #[allow(dead_code)] // API completeness with is_empty
     pub(crate) fn len(&self) -> usize {
         self.inner.len()
     }
