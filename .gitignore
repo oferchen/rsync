@@ -246,5 +246,11 @@ DEBUGGING_INTEROP.md
 # Generated logs
 tools/ci/*.log
 
+# Profiling artifacts
+perf*.data
+flamegraph*.svg
+benchmark*.json
+benchmark_results.csv
+
 # End of https://www.toptal.com/developers/gitignore/api/rust,linux,macos,windows,rust-analyzer,visualstudiocode,jetbrains
 .worktrees/
