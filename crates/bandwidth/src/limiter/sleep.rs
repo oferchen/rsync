@@ -186,4 +186,64 @@ mod tests {
         // This tests that the function runs without error
         sleep_for(Duration::from_micros(100));
     }
+
+    // ==================== Additional sleep tests ====================
+
+    #[test]
+    fn limiter_sleep_copy_semantics() {
+        let sleep1 = LimiterSleep::new(Duration::from_secs(1), Duration::from_millis(999));
+        let sleep2 = sleep1; // Copy
+        assert_eq!(sleep1, sleep2);
+    }
+
+    #[test]
+    fn limiter_sleep_equality() {
+        let s1 = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        let s2 = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        let s3 = LimiterSleep::new(Duration::from_secs(2), Duration::from_secs(1));
+
+        assert_eq!(s1, s2);
+        assert_ne!(s1, s3);
+    }
+
+    #[test]
+    fn duration_from_microseconds_small_values() {
+        // Test values less than 1 second
+        let one_us = duration_from_microseconds(1);
+        assert_eq!(one_us.as_micros(), 1);
+
+        let hundred_us = duration_from_microseconds(100);
+        assert_eq!(hundred_us.as_micros(), 100);
+
+        let one_ms = duration_from_microseconds(1000);
+        assert_eq!(one_ms.as_millis(), 1);
+    }
+
+    #[test]
+    fn duration_from_microseconds_multi_second() {
+        // Test values spanning multiple seconds
+        let five_secs = duration_from_microseconds(5_000_000);
+        assert_eq!(five_secs.as_secs(), 5);
+        assert_eq!(five_secs.subsec_micros(), 0);
+
+        let five_and_half = duration_from_microseconds(5_500_000);
+        assert_eq!(five_and_half.as_secs(), 5);
+        assert_eq!(five_and_half.subsec_micros(), 500_000);
+    }
+
+    #[test]
+    fn duration_from_microseconds_near_max() {
+        // Test value just under MAX_REPRESENTABLE
+        let just_under = MAX_REPRESENTABLE_MICROSECONDS - 1;
+        let result = duration_from_microseconds(just_under);
+        assert!(result < Duration::MAX);
+    }
+
+    #[test]
+    fn limiter_sleep_both_nonzero() {
+        let sleep = LimiterSleep::new(Duration::from_secs(1), Duration::from_millis(950));
+        assert!(!sleep.is_noop());
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
+        assert_eq!(sleep.actual(), Duration::from_millis(950));
+    }
 }

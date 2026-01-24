@@ -237,3 +237,182 @@ fn parse_bandwidth_limit_rejects_missing_burst_value() {
     let error = parse_bandwidth_limit("1M:").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
 }
+
+// ==================== Additional coverage tests for bandwidth limit components ====================
+
+#[test]
+fn constrained_by_clears_burst_when_override_is_unlimited() {
+    // Test lines 218-224 in components.rs
+    // When override is unlimited (limit_specified=true, rate=None),
+    // the result should be unlimited with burst cleared
+    let client = parse_bandwidth_limit("4M:48K").expect("client components");
+
+    // Create an unlimited override with limit_specified = true
+    let module = BandwidthLimitComponents::new_with_flags(None, None, true, false);
+
+    let combined = client.constrained_by(&module);
+
+    assert!(combined.is_unlimited());
+    assert!(combined.burst().is_none());
+    assert!(!combined.burst_specified());
+}
+
+#[test]
+fn constrained_by_burst_only_override_on_unlimited_client() {
+    // Test burst-only override when client is unlimited
+    // This should not apply burst since there's no active limit
+    let client = BandwidthLimitComponents::unlimited();
+    let burst = NonZeroU64::new(8192).unwrap();
+    let module = BandwidthLimitComponents::new_with_flags(None, Some(burst), false, true);
+
+    let combined = client.constrained_by(&module);
+
+    // Client is unlimited, burst-only override doesn't create a limiter
+    assert!(combined.is_unlimited());
+    assert!(combined.burst().is_none());
+}
+
+#[test]
+fn constrained_by_preserves_client_burst_when_override_has_no_burst() {
+    // When override has rate but no burst specified, preserve client burst
+    let client = parse_bandwidth_limit("8M:64K").expect("client");
+    let module = BandwidthLimitComponents::new(Some(NonZeroU64::new(4 * 1024 * 1024).unwrap()), None);
+
+    let combined = client.constrained_by(&module);
+
+    // Rate should be capped to 4M
+    assert_eq!(combined.rate().map(NonZeroU64::get), Some(4 * 1024 * 1024));
+    // Burst should be preserved from client
+    assert_eq!(combined.burst().map(NonZeroU64::get), Some(64 * 1024));
+}
+
+#[test]
+fn constrained_by_clears_client_burst_when_override_has_rate_and_client_was_unlimited() {
+    // Lines 217-219: when override has rate but client was unlimited, clear burst
+    let client = BandwidthLimitComponents::unlimited();
+    let rate = NonZeroU64::new(2 * 1024 * 1024).unwrap();
+    let module = BandwidthLimitComponents::new(Some(rate), None);
+
+    let combined = client.constrained_by(&module);
+
+    assert_eq!(combined.rate(), Some(rate));
+    assert!(combined.burst().is_none());
+    assert!(!combined.burst_specified());
+}
+
+#[test]
+fn constrained_by_takes_stricter_limit_with_explicit_burst_clear() {
+    // When override specifies rate AND burst (even if burst is None with burst_specified=true)
+    let client = parse_bandwidth_limit("8M:64K").expect("client");
+    // Override with lower rate and explicit burst=None
+    let module = BandwidthLimitComponents::new_with_specified(
+        Some(NonZeroU64::new(2 * 1024 * 1024).unwrap()),
+        None,
+        true, // burst_specified = true, but burst = None
+    );
+
+    let combined = client.constrained_by(&module);
+
+    // Rate should be min(8M, 2M) = 2M
+    assert_eq!(combined.rate().map(NonZeroU64::get), Some(2 * 1024 * 1024));
+    // Burst should be cleared because override specified burst=None
+    assert!(combined.burst().is_none());
+    assert!(combined.burst_specified());
+}
+
+#[test]
+fn parse_bandwidth_limit_with_burst_zero_clears_burst() {
+    // ":0" burst should be parsed as None with burst_specified=true
+    let components = parse_bandwidth_limit("2M:0").expect("parse succeeds");
+    assert_eq!(components.rate(), NonZeroU64::new(2 * 1024 * 1024));
+    assert!(components.burst().is_none());
+    assert!(components.burst_specified());
+}
+
+#[test]
+fn parse_bandwidth_limit_with_very_small_burst() {
+    // Burst can be small (it's not subject to minimum like rate)
+    let error = parse_bandwidth_limit("1M:100b").unwrap_err();
+    // 100 bytes is below 512 minimum
+    assert_eq!(error, BandwidthParseError::TooSmall);
+}
+
+#[test]
+fn parse_bandwidth_limit_with_large_burst() {
+    // Large burst value
+    let components = parse_bandwidth_limit("1M:10M").expect("parse succeeds");
+    assert_eq!(components.rate(), NonZeroU64::new(1024 * 1024));
+    assert_eq!(components.burst(), NonZeroU64::new(10 * 1024 * 1024));
+}
+
+#[test]
+fn components_to_limiter_creates_correct_limiter() {
+    let components = BandwidthLimitComponents::new(
+        Some(NonZeroU64::new(2048).unwrap()),
+        Some(NonZeroU64::new(1024).unwrap()),
+    );
+
+    let limiter = components.to_limiter().expect("should create limiter");
+    assert_eq!(limiter.limit_bytes().get(), 2048);
+    assert_eq!(limiter.burst_bytes().map(|b| b.get()), Some(1024));
+}
+
+#[test]
+fn components_equality_includes_specification_flags() {
+    let c1 = BandwidthLimitComponents::new_with_flags(
+        Some(NonZeroU64::new(1024).unwrap()),
+        None,
+        true,
+        false,
+    );
+    let c2 = BandwidthLimitComponents::new_with_flags(
+        Some(NonZeroU64::new(1024).unwrap()),
+        None,
+        true,
+        true, // Different burst_specified
+    );
+
+    // These should NOT be equal because burst_specified differs
+    assert_ne!(c1, c2);
+}
+
+#[test]
+fn components_copy_trait() {
+    let c1 = BandwidthLimitComponents::new(
+        Some(NonZeroU64::new(1024).unwrap()),
+        None,
+    );
+    let c2 = c1; // Copy
+    let c3 = c1; // Another copy
+
+    assert_eq!(c1, c2);
+    assert_eq!(c2, c3);
+}
+
+#[test]
+fn constrained_by_combines_limit_specified_flags() {
+    // Test that limit_specified is OR'd from both components
+    let c1 = BandwidthLimitComponents::unlimited();
+    let c2 = BandwidthLimitComponents::unlimited();
+
+    let combined = c1.constrained_by(&c2);
+    assert!(!combined.limit_specified());
+
+    // Now with one specifying limit
+    let c3 = BandwidthLimitComponents::new_with_flags(None, None, true, false);
+    let combined2 = c1.constrained_by(&c3);
+    assert!(combined2.limit_specified());
+}
+
+#[test]
+fn parse_bandwidth_limit_various_rate_burst_combinations() {
+    // Small rate, large burst
+    let small_rate_large_burst = parse_bandwidth_limit("1K:1M").expect("parse");
+    assert_eq!(small_rate_large_burst.rate(), NonZeroU64::new(1024));
+    assert_eq!(small_rate_large_burst.burst(), NonZeroU64::new(1024 * 1024));
+
+    // Large rate, small burst
+    let large_rate_small_burst = parse_bandwidth_limit("100M:1K").expect("parse");
+    assert_eq!(large_rate_small_burst.rate(), NonZeroU64::new(100 * 1024 * 1024));
+    assert_eq!(large_rate_small_burst.burst(), NonZeroU64::new(1024));
+}

@@ -141,3 +141,93 @@ fn limiter_clamps_debt_to_configured_burst() {
     );
     assert!(sleep.requested() <= Duration::from_millis(1));
 }
+
+// ==================== Additional pacing tests ====================
+
+#[test]
+fn limiter_handles_very_slow_rate() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // 512 bytes/second (minimum allowed)
+    let mut limiter = BandwidthLimiter::new(NonZeroU64::new(512).unwrap());
+
+    // Writing 512 bytes should take ~1 second
+    let sleep = limiter.register(512);
+
+    assert!(sleep.requested() >= Duration::from_millis(500));
+}
+
+#[test]
+fn limiter_handles_very_fast_rate() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // 1 GB/second
+    let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1_000_000_000).unwrap());
+
+    // Even large writes shouldn't need much sleep
+    let sleep = limiter.register(1_000_000);
+
+    // At 1GB/s, 1MB takes 1ms
+    assert!(sleep.requested() <= Duration::from_millis(10));
+}
+
+#[test]
+fn limiter_write_max_with_large_burst() {
+    // When burst is larger than calculated write_max, use burst
+    let limiter = BandwidthLimiter::with_burst(
+        NonZeroU64::new(1024).unwrap(),
+        Some(NonZeroU64::new(1_000_000).unwrap()), // 1MB burst
+    );
+
+    assert_eq!(limiter.write_max_bytes(), 1_000_000);
+}
+
+#[test]
+fn limiter_recommended_read_size_respects_buffer_size() {
+    let limiter = BandwidthLimiter::new(NonZeroU64::new(1024 * 1024).unwrap());
+
+    // When buffer is smaller than write_max, return buffer size
+    assert_eq!(limiter.recommended_read_size(100), 100);
+
+    // When buffer is larger than write_max, return write_max
+    let write_max = limiter.write_max_bytes();
+    assert_eq!(limiter.recommended_read_size(usize::MAX), write_max);
+}
+
+#[test]
+fn limiter_multiple_small_writes_aggregate() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // 1KB/s rate
+    let mut limiter = BandwidthLimiter::new(NonZeroU64::new(1024).unwrap());
+
+    // Many small writes that together equal 1KB
+    for _ in 0..64 {
+        let _ = limiter.register(16);
+    }
+
+    // Should have slept approximately 1 second total
+    let total = session.total_duration();
+    assert!(total >= Duration::from_millis(500));
+}
+
+#[test]
+fn limiter_burst_affects_initial_allowance() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // Small rate but large burst
+    let mut limiter = BandwidthLimiter::with_burst(
+        NonZeroU64::new(1024).unwrap(),      // 1KB/s
+        Some(NonZeroU64::new(10240).unwrap()), // 10KB burst
+    );
+
+    // First write up to burst size should be fast (debt clamped)
+    let sleep = limiter.register(5000);
+
+    // Debt is clamped to burst, so sleep should be reasonable
+    assert!(sleep.requested() <= Duration::from_secs(10));
+}
