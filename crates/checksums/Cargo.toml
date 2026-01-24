@@ -23,6 +23,8 @@ openssl-vendored = ["openssl", "openssl/vendored"]
 parallel = ["rayon"]
 # Runtime SIMD detection for XXH3 (AVX2/NEON) - recommended for portable binaries
 xxh3-simd = ["dep:xxh3"]
+# SIMD-accelerated MD5 batch hashing (AVX2/AVX-512/NEON)
+md5-simd = ["dep:md5-simd"]
 
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
@@ -36,6 +38,7 @@ xxh3 = { version = "0.1", optional = true }
 thiserror = "2.0"
 openssl = { version = "0.10", optional = true }
 rayon = { version = "1.10", optional = true }
+md5-simd = { path = "../md5-simd", optional = true, default-features = false }
 logging = { path = "../logging" }
 
 [dev-dependencies]
