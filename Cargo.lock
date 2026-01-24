@@ -306,6 +306,7 @@ dependencies = [
  "logging",
  "md-5",
  "md4",
+ "md5-simd",
  "openssl",
  "proptest",
  "rand 0.8.5",
@@ -1270,6 +1271,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d19b8ee7fc7d812058d3b708c7f719efd0713d53854648e4223c6fcae709e2df"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "md5-simd"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "md-5",
+ "rand 0.8.5",
+ "rayon",
+ "tempfile",
 ]
 
 [[package]]
