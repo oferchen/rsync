@@ -530,4 +530,165 @@ mod tests {
         assert!(c.limit_specified());
         assert!(c.burst_specified());
     }
+
+    // ==================== Additional component tests ====================
+
+    #[test]
+    fn constrained_by_both_unlimited() {
+        let c1 = BandwidthLimitComponents::unlimited();
+        let c2 = BandwidthLimitComponents::unlimited();
+        let combined = c1.constrained_by(&c2);
+
+        assert!(combined.is_unlimited());
+        assert!(!combined.limit_specified());
+        assert!(!combined.burst_specified());
+    }
+
+    #[test]
+    fn constrained_by_override_has_higher_rate() {
+        // When override rate is higher, keep the lower original rate
+        let c1 = BandwidthLimitComponents::new(Some(nz(1000)), None);
+        let c2 = BandwidthLimitComponents::new(Some(nz(2000)), None);
+
+        let combined = c1.constrained_by(&c2);
+
+        assert_eq!(combined.rate(), Some(nz(1000)));
+    }
+
+    #[test]
+    fn constrained_by_override_has_lower_rate() {
+        // When override rate is lower, use the override rate
+        let c1 = BandwidthLimitComponents::new(Some(nz(2000)), None);
+        let c2 = BandwidthLimitComponents::new(Some(nz(1000)), None);
+
+        let combined = c1.constrained_by(&c2);
+
+        assert_eq!(combined.rate(), Some(nz(1000)));
+    }
+
+    #[test]
+    fn constrained_by_client_has_no_limit_override_adds() {
+        // Client unlimited, override adds limit
+        let c1 = BandwidthLimitComponents::unlimited();
+        let c2 = BandwidthLimitComponents::new(Some(nz(5000)), Some(nz(1000)));
+
+        let combined = c1.constrained_by(&c2);
+
+        assert_eq!(combined.rate(), Some(nz(5000)));
+        assert_eq!(combined.burst(), Some(nz(1000)));
+    }
+
+    #[test]
+    fn constrained_by_burst_only_override_on_limited_client() {
+        // Client has limit and burst, override only specifies new burst
+        let c1 = BandwidthLimitComponents::new(Some(nz(5000)), Some(nz(1000)));
+        let c2 = BandwidthLimitComponents::new_with_flags(None, Some(nz(2000)), false, true);
+
+        let combined = c1.constrained_by(&c2);
+
+        // Rate preserved, burst updated
+        assert_eq!(combined.rate(), Some(nz(5000)));
+        assert_eq!(combined.burst(), Some(nz(2000)));
+        assert!(combined.burst_specified());
+    }
+
+    #[test]
+    fn constrained_by_clears_burst_when_override_unlimited_is_specified() {
+        // Client has burst, override disables limit entirely
+        let c1 = BandwidthLimitComponents::new(Some(nz(5000)), Some(nz(1000)));
+        let c2 = BandwidthLimitComponents::new_with_flags(None, None, true, false);
+
+        let combined = c1.constrained_by(&c2);
+
+        assert!(combined.is_unlimited());
+        assert!(combined.burst().is_none());
+    }
+
+    #[test]
+    fn new_with_flags_unlimited_with_burst_specified() {
+        // Rate is None, burst_specified is true but burst is None
+        let c = BandwidthLimitComponents::new_with_flags(None, None, false, true);
+
+        // Without rate, burst_specified should be false (normalized)
+        assert!(!c.limit_specified());
+        assert!(!c.burst_specified());
+    }
+
+    #[test]
+    fn new_with_flags_rate_present_burst_none() {
+        let c = BandwidthLimitComponents::new_with_flags(Some(nz(1000)), None, true, true);
+
+        assert_eq!(c.rate(), Some(nz(1000)));
+        assert!(c.burst().is_none());
+        assert!(c.limit_specified());
+        assert!(c.burst_specified());
+    }
+
+    #[test]
+    fn apply_to_limiter_enables_new_limiter() {
+        let c = BandwidthLimitComponents::new(Some(nz(5000)), Some(nz(1000)));
+        let mut limiter: Option<BandwidthLimiter> = None;
+
+        let change = c.apply_to_limiter(&mut limiter);
+
+        assert_eq!(change, LimiterChange::Enabled);
+        assert!(limiter.is_some());
+        let l = limiter.unwrap();
+        assert_eq!(l.limit_bytes(), nz(5000));
+        assert_eq!(l.burst_bytes(), Some(nz(1000)));
+    }
+
+    #[test]
+    fn apply_to_limiter_updates_existing() {
+        let mut limiter = Some(BandwidthLimiter::new(nz(10000)));
+        let c = BandwidthLimitComponents::new(Some(nz(5000)), Some(nz(1000)));
+
+        let change = c.apply_to_limiter(&mut limiter);
+
+        // Should update because new limit is lower
+        assert_eq!(change, LimiterChange::Updated);
+        let l = limiter.unwrap();
+        assert_eq!(l.limit_bytes(), nz(5000));
+    }
+
+    #[test]
+    fn from_str_trait_works() {
+        let c: Result<BandwidthLimitComponents, _> = "2M".parse();
+        assert!(c.is_ok());
+        let c = c.unwrap();
+        assert_eq!(c.rate(), NonZeroU64::new(2 * 1024 * 1024));
+    }
+
+    #[test]
+    fn from_str_trait_error() {
+        let c: Result<BandwidthLimitComponents, _> = "invalid".parse();
+        assert!(c.is_err());
+    }
+
+    #[test]
+    fn constrained_by_preserves_had_limit_state() {
+        // Test the had_limit variable logic in constrained_by
+        // When client had limit, preserve its burst if override doesn't specify
+        let c1 = BandwidthLimitComponents::new(Some(nz(8000)), Some(nz(2000)));
+        let c2 = BandwidthLimitComponents::new(Some(nz(4000)), None); // No burst specified
+
+        let combined = c1.constrained_by(&c2);
+
+        // Should keep client's burst since had_limit was true and override didn't specify burst
+        assert_eq!(combined.burst(), Some(nz(2000)));
+    }
+
+    #[test]
+    fn constrained_by_clears_burst_when_client_was_unlimited_and_override_adds_rate() {
+        // Test line 217-219: when client was unlimited and override adds rate without burst
+        let c1 = BandwidthLimitComponents::unlimited();
+        let c2 = BandwidthLimitComponents::new(Some(nz(4000)), None);
+
+        let combined = c1.constrained_by(&c2);
+
+        // Rate from override, burst cleared because client had no limit
+        assert_eq!(combined.rate(), Some(nz(4000)));
+        assert!(combined.burst().is_none());
+        assert!(!combined.burst_specified());
+    }
 }
