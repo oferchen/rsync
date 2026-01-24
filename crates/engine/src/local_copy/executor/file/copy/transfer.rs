@@ -113,6 +113,16 @@ pub(super) fn execute_transfer(
 
     // fast-path: see if destination is already in-sync
     if let Some(existing) = existing_metadata {
+        // Look up prefetched checksum result when parallel feature is enabled
+        #[cfg(feature = "parallel")]
+        let prefetched_match = if checksum_enabled {
+            context.lookup_checksum(source)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "parallel"))]
+        let prefetched_match = None;
+
         let mut skip = should_skip_copy(CopyComparison {
             source_path: source,
             source: metadata,
@@ -123,7 +133,7 @@ pub(super) fn execute_transfer(
             checksum: checksum_enabled,
             checksum_algorithm: context.options().checksum_algorithm(),
             modify_window: context.options().modify_window(),
-            prefetched_match: None, // TODO: Pass from checksum cache when parallel feature enabled
+            prefetched_match,
         });
 
         if skip {

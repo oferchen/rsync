@@ -431,3 +431,78 @@ fn execute_with_update_skips_newer_destination() {
     assert_eq!(summary.regular_files_skipped_newer(), 1);
     assert_eq!(fs::read(dest_path).expect("read destination"), b"existing");
 }
+
+/// Tests that checksum mode correctly identifies identical files and skips copying.
+///
+/// This test exercises the checksum comparison path, which is parallelized when
+/// the `parallel` feature is enabled. The test creates multiple files with
+/// identical content at source and destination to verify:
+/// 1. Files with matching checksums are skipped
+/// 2. Files with different checksums are copied
+/// 3. Summary statistics accurately reflect the operations
+#[test]
+fn execute_with_checksum_skips_matching_directory_contents() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let target_root = temp.path().join("target");
+    fs::create_dir_all(&source_root).expect("create source root");
+    fs::create_dir_all(&target_root).expect("create target root");
+
+    // Create multiple files - some identical, some different
+    let identical_content = b"identical content here";
+    let different_source = b"different source data!";
+    let different_dest = b"different dest content";
+
+    // Identical files (should be skipped)
+    fs::write(source_root.join("same1.txt"), identical_content).expect("write same1 source");
+    fs::write(target_root.join("same1.txt"), identical_content).expect("write same1 dest");
+
+    fs::write(source_root.join("same2.txt"), identical_content).expect("write same2 source");
+    fs::write(target_root.join("same2.txt"), identical_content).expect("write same2 dest");
+
+    // Different content file (same size, should be copied)
+    fs::write(source_root.join("diff.txt"), different_source).expect("write diff source");
+    fs::write(target_root.join("diff.txt"), different_dest).expect("write diff dest");
+
+    // New file (no destination, should be copied)
+    fs::write(source_root.join("new.txt"), b"brand new file").expect("write new source");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, target_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().checksum(true).recursive(true),
+        )
+        .expect("copy succeeds");
+
+    // Verify results
+    assert_eq!(summary.regular_files_total(), 4, "should process 4 files");
+    assert_eq!(
+        summary.regular_files_matched(),
+        2,
+        "2 identical files should match"
+    );
+    assert_eq!(summary.files_copied(), 2, "2 different/new files should copy");
+
+    // Verify file contents
+    assert_eq!(
+        fs::read(target_root.join("same1.txt")).expect("read same1"),
+        identical_content
+    );
+    assert_eq!(
+        fs::read(target_root.join("same2.txt")).expect("read same2"),
+        identical_content
+    );
+    assert_eq!(
+        fs::read(target_root.join("diff.txt")).expect("read diff"),
+        different_source // source content should overwrite destination
+    );
+    assert_eq!(
+        fs::read(target_root.join("new.txt")).expect("read new"),
+        b"brand new file"
+    );
+}
