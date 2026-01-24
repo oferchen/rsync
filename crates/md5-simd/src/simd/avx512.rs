@@ -12,6 +12,7 @@ use crate::Digest;
 /// Note: This function currently falls back to scalar until AVX-512 intrinsics
 /// are stabilized in Rust.
 #[cfg(target_arch = "x86_64")]
+#[allow(dead_code)] // Stub until AVX-512 intrinsics are stabilized
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     // AVX-512 intrinsics require nightly Rust.
     // Fall back to scalar for now.
