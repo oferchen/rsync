@@ -102,7 +102,7 @@ fn bench_report_backend(c: &mut Criterion) {
     println!("\nActive backend: {:?} ({} lanes)", backend, backend.lanes());
 
     c.bench_function("backend_query", |b| {
-        b.iter(|| active_backend());
+        b.iter(active_backend);
     });
 }
 
