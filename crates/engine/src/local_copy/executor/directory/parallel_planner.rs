@@ -32,6 +32,7 @@ use super::support::DirectoryEntry;
 #[derive(Debug)]
 pub(crate) struct PrefetchedEntryData {
     /// Index of the entry in the original slice (for ordering).
+    #[allow(dead_code)] // Stored for potential reordering verification
     pub(crate) index: usize,
     /// Symlink target metadata, if the entry is a symlink and we need to follow it.
     pub(crate) symlink_target_metadata: Option<io::Result<fs::Metadata>>,

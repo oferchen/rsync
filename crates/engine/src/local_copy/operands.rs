@@ -112,22 +112,25 @@ fn detect_relative_prefix_components(operand: &OsStr) -> Option<usize> {
         return Some(count);
     }
 
-    let components: Vec<Component<'_>> = path.components().collect();
-
-    if components.is_empty() {
-        return None;
-    }
-
+    // Iterate without collecting - only need first 2 components
+    let mut components = path.components();
     let mut skip = 0;
 
-    if let Some(Component::Prefix(_)) = components.first() {
+    let first = match components.next() {
+        Some(c) => c,
+        None => return None,
+    };
+
+    if matches!(first, Component::Prefix(_)) {
         if !path.has_root() {
             return None;
         }
         skip += 1;
-    }
-
-    if let Some(Component::RootDir) = components.get(skip) {
+        // Check second component for RootDir
+        if let Some(Component::RootDir) = components.next() {
+            skip += 1;
+        }
+    } else if matches!(first, Component::RootDir) {
         skip += 1;
     }
 
