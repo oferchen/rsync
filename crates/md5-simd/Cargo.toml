@@ -1,0 +1,30 @@
+[package]
+name = "md5-simd"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["rsync-rust contributors"]
+license = "MIT OR Apache-2.0"
+description = "SIMD-accelerated parallel MD5 hashing"
+repository = "https://github.com/rsync-rust/rsync"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+
+[features]
+default = ["rayon"]
+rayon = ["dep:rayon"]
+
+[dependencies]
+rayon = { version = "1.10", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+md-5 = "0.10"
+rand = "0.8"
+
+[[bench]]
+name = "throughput"
+harness = false
