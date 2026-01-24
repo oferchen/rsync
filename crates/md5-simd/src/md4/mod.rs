@@ -1,69 +1,51 @@
-//! Runtime CPU detection and backend dispatch.
+//! MD4 hashing implementations.
+//!
+//! MD4 is a predecessor to MD5 with a simpler structure:
+//! - 3 rounds of 16 operations each (vs MD5's 4 rounds of 16)
+//! - Only 3 constants (vs MD5's 64)
+//! - Simpler round functions
+//!
+//! # Example
+//!
+//! ```
+//! use md5_simd::md4;
+//!
+//! // Single hash
+//! let hash = md4::digest(b"hello world");
+//!
+//! // Batch hash (uses SIMD when available)
+//! let inputs = [b"input1".as_slice(), b"input2", b"input3"];
+//! let hashes = md4::digest_batch(&inputs);
+//! ```
 
-use crate::Digest;
-use crate::scalar;
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-use crate::simd;
+pub mod scalar;
 
-/// Available SIMD backends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-    /// AVX-512 with 16 parallel lanes.
-    Avx512,
-    /// AVX2 with 8 parallel lanes.
-    Avx2,
-    /// SSE4.1 with 4 parallel lanes (blendv optimization).
-    Sse41,
-    /// SSSE3 with 4 parallel lanes (pshufb optimization).
-    Ssse3,
-    /// SSE2 with 4 parallel lanes (baseline x86_64).
-    Sse2,
-    /// ARM NEON with 4 parallel lanes.
-    Neon,
-    /// WebAssembly SIMD with 4 parallel lanes.
-    Wasm,
-    /// Scalar fallback (1 lane).
-    Scalar,
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32"))]
+pub mod simd;
+
+use crate::{Backend, Digest};
+
+/// Compute MD4 digests for multiple inputs in parallel.
+///
+/// Uses SIMD instructions when available to process multiple hashes
+/// simultaneously. Returns digests in the same order as inputs.
+pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<Digest> {
+    md4_dispatcher().digest_batch(inputs)
 }
 
-impl Backend {
-    /// Number of parallel lanes for this backend.
-    pub const fn lanes(self) -> usize {
-        match self {
-            Backend::Avx512 => 16,
-            Backend::Avx2 => 8,
-            Backend::Sse41 => 4,
-            Backend::Ssse3 => 4,
-            Backend::Sse2 => 4,
-            Backend::Neon => 4,
-            Backend::Wasm => 4,
-            Backend::Scalar => 1,
-        }
-    }
-
-    /// Human-readable name of the backend.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Backend::Avx512 => "AVX-512",
-            Backend::Avx2 => "AVX2",
-            Backend::Sse41 => "SSE4.1",
-            Backend::Ssse3 => "SSSE3",
-            Backend::Sse2 => "SSE2",
-            Backend::Neon => "NEON",
-            Backend::Wasm => "WASM SIMD",
-            Backend::Scalar => "Scalar",
-        }
-    }
+/// Compute MD4 digest for a single input.
+pub fn digest(input: &[u8]) -> Digest {
+    scalar::digest(input)
 }
 
-/// Dispatcher that selects the optimal backend at runtime.
-pub struct Dispatcher {
+/// MD4 dispatcher that selects the optimal backend at runtime.
+struct Md4Dispatcher {
     backend: Backend,
 }
 
-impl Dispatcher {
+impl Md4Dispatcher {
     /// Detect CPU features and select the best available backend.
-    pub fn detect() -> Self {
+    fn detect() -> Self {
         let backend = Self::detect_backend();
         Self { backend }
     }
@@ -76,12 +58,6 @@ impl Dispatcher {
             }
             if is_x86_feature_detected!("avx2") {
                 return Backend::Avx2;
-            }
-            if is_x86_feature_detected!("sse4.1") {
-                return Backend::Sse41;
-            }
-            if is_x86_feature_detected!("ssse3") {
-                return Backend::Ssse3;
             }
             // SSE2 is baseline for x86_64, always available
             return Backend::Sse2;
@@ -106,13 +82,8 @@ impl Dispatcher {
         Backend::Scalar
     }
 
-    /// Get the selected backend.
-    pub const fn backend(&self) -> Backend {
-        self.backend
-    }
-
-    /// Compute MD5 digests for multiple inputs.
-    pub fn digest_batch<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+    /// Compute MD4 digests for multiple inputs.
+    fn digest_batch<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         if inputs.is_empty() {
             return Vec::new();
         }
@@ -122,10 +93,6 @@ impl Dispatcher {
             Backend::Avx512 => self.digest_batch_avx512(inputs),
             #[cfg(target_arch = "x86_64")]
             Backend::Avx2 => self.digest_batch_avx2(inputs),
-            #[cfg(target_arch = "x86_64")]
-            Backend::Sse41 => self.digest_batch_sse41(inputs),
-            #[cfg(target_arch = "x86_64")]
-            Backend::Ssse3 => self.digest_batch_ssse3(inputs),
             #[cfg(target_arch = "x86_64")]
             Backend::Sse2 => self.digest_batch_sse2(inputs),
             #[cfg(target_arch = "aarch64")]
@@ -138,8 +105,6 @@ impl Dispatcher {
     }
 
     /// AVX-512 batched digest implementation.
-    ///
-    /// Processes inputs in batches of 16 using AVX-512 SIMD.
     #[cfg(target_arch = "x86_64")]
     fn digest_batch_avx512<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
@@ -147,7 +112,6 @@ impl Dispatcher {
 
         for chunk in chunks {
             if chunk.len() == 16 {
-                // Full batch of 16 - use AVX-512
                 let batch: [&[u8]; 16] = [
                     chunk[0].as_ref(),
                     chunk[1].as_ref(),
@@ -192,7 +156,6 @@ impl Dispatcher {
 
         for chunk in chunks {
             if chunk.len() == 8 {
-                // Full batch of 8 - use SIMD
                 let batch: [&[u8]; 8] = [
                     chunk[0].as_ref(),
                     chunk[1].as_ref(),
@@ -222,8 +185,6 @@ impl Dispatcher {
     }
 
     /// SSE2 batched digest implementation.
-    ///
-    /// Processes inputs in batches of 4 using SSE2 SIMD.
     #[cfg(target_arch = "x86_64")]
     fn digest_batch_sse2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
@@ -254,76 +215,7 @@ impl Dispatcher {
         results
     }
 
-    /// SSSE3 batched digest implementation.
-    ///
-    /// Processes inputs in batches of 4 using SSSE3 SIMD.
-    #[cfg(target_arch = "x86_64")]
-    fn digest_batch_ssse3<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
-        let mut results = Vec::with_capacity(inputs.len());
-        let chunks = inputs.chunks(4);
-
-        for chunk in chunks {
-            if chunk.len() == 4 {
-                let batch: [&[u8]; 4] = [
-                    chunk[0].as_ref(),
-                    chunk[1].as_ref(),
-                    chunk[2].as_ref(),
-                    chunk[3].as_ref(),
-                ];
-                // SAFETY: We verified SSSE3 is available in detect_backend()
-                let digests = unsafe { simd::ssse3::digest_x4(&batch) };
-                results.extend_from_slice(&digests);
-            } else {
-                let mut batch: [&[u8]; 4] = [&[]; 4];
-                for (i, input) in chunk.iter().enumerate() {
-                    batch[i] = input.as_ref();
-                }
-                // SAFETY: We verified SSSE3 is available in detect_backend()
-                let digests = unsafe { simd::ssse3::digest_x4(&batch) };
-                results.extend_from_slice(&digests[..chunk.len()]);
-            }
-        }
-
-        results
-    }
-
-    /// SSE4.1 batched digest implementation.
-    ///
-    /// Processes inputs in batches of 4 using SSE4.1 SIMD with blendv optimization.
-    #[cfg(target_arch = "x86_64")]
-    fn digest_batch_sse41<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
-        let mut results = Vec::with_capacity(inputs.len());
-        let chunks = inputs.chunks(4);
-
-        for chunk in chunks {
-            if chunk.len() == 4 {
-                let batch: [&[u8]; 4] = [
-                    chunk[0].as_ref(),
-                    chunk[1].as_ref(),
-                    chunk[2].as_ref(),
-                    chunk[3].as_ref(),
-                ];
-                // SAFETY: We verified SSE4.1 is available in detect_backend()
-                let digests = unsafe { simd::sse41::digest_x4(&batch) };
-                results.extend_from_slice(&digests);
-            } else {
-                let mut batch: [&[u8]; 4] = [&[]; 4];
-                for (i, input) in chunk.iter().enumerate() {
-                    batch[i] = input.as_ref();
-                }
-                // SAFETY: We verified SSE4.1 is available in detect_backend()
-                let digests = unsafe { simd::sse41::digest_x4(&batch) };
-                results.extend_from_slice(&digests[..chunk.len()]);
-            }
-        }
-
-        results
-    }
-
     /// NEON batched digest implementation.
-    ///
-    /// Processes inputs in batches of 4 using NEON SIMD.
-    /// Currently falls back to scalar while NEON MD5 is implemented.
     #[cfg(target_arch = "aarch64")]
     fn digest_batch_neon<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
@@ -331,7 +223,6 @@ impl Dispatcher {
 
         for chunk in chunks {
             if chunk.len() == 4 {
-                // Full batch of 4 - use NEON
                 let batch: [&[u8]; 4] = [
                     chunk[0].as_ref(),
                     chunk[1].as_ref(),
@@ -384,40 +275,25 @@ impl Dispatcher {
 
         results
     }
-
-    /// Compute MD5 digest for a single input.
-    pub fn digest(&self, input: &[u8]) -> Digest {
-        scalar::digest(input)
-    }
 }
 
-/// Global dispatcher instance, initialized on first use.
-pub fn global() -> &'static Dispatcher {
+/// Global MD4 dispatcher instance, initialized on first use.
+fn md4_dispatcher() -> &'static Md4Dispatcher {
     use std::sync::OnceLock;
-    static DISPATCHER: OnceLock<Dispatcher> = OnceLock::new();
-    DISPATCHER.get_or_init(Dispatcher::detect)
+    static DISPATCHER: OnceLock<Md4Dispatcher> = OnceLock::new();
+    DISPATCHER.get_or_init(Md4Dispatcher::detect)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn dispatcher_detects_backend() {
-        let dispatcher = Dispatcher::detect();
-        // Just verify it doesn't panic and returns a valid backend
-        let _ = dispatcher.backend();
+    fn to_hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     #[test]
-    fn global_dispatcher_is_consistent() {
-        let d1 = global();
-        let d2 = global();
-        assert_eq!(d1.backend(), d2.backend());
-    }
-
-    #[test]
-    fn digest_batch_matches_scalar() {
+    fn md4_digest_batch_matches_scalar() {
         let inputs: Vec<&[u8]> = vec![
             b"",
             b"a",
@@ -431,10 +307,8 @@ mod tests {
             b"third test",
         ];
 
-        let dispatcher = Dispatcher::detect();
-        let results = dispatcher.digest_batch(&inputs);
+        let results = digest_batch(&inputs);
 
-        // Verify each result matches scalar
         for (i, input) in inputs.iter().enumerate() {
             let expected = scalar::digest(input);
             assert_eq!(
@@ -446,15 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn digest_batch_partial_batch() {
-        // Test with exactly 3 inputs (partial batch)
-        let inputs: Vec<&[u8]> = vec![b"one", b"two", b"three"];
-        let dispatcher = Dispatcher::detect();
-        let results = dispatcher.digest_batch(&inputs);
-
-        assert_eq!(results.len(), 3);
-        for (i, input) in inputs.iter().enumerate() {
-            assert_eq!(results[i], scalar::digest(input));
-        }
+    fn md4_single_digest_works() {
+        let result = digest(b"abc");
+        assert_eq!(to_hex(&result), "a448017aaf21d8525fc10ae87aa6729d");
     }
 }

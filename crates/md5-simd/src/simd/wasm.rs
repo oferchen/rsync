@@ -1,10 +1,10 @@
-//! ARM NEON 4-lane parallel MD5 implementation.
+//! WebAssembly SIMD 4-lane parallel MD5 implementation.
 //!
-//! Processes 4 independent MD5 computations simultaneously using 128-bit NEON registers.
-//! NEON is mandatory on aarch64, so this is always available on 64-bit ARM processors.
+//! Processes 4 independent MD5 computations simultaneously using 128-bit WASM SIMD.
+//! WASM SIMD is widely supported in modern browsers and runtimes.
 
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::*;
+#[cfg(target_arch = "wasm32")]
+use std::arch::wasm32::*;
 
 use crate::Digest;
 
@@ -14,7 +14,7 @@ const INIT_B: u32 = 0xefcdab89;
 const INIT_C: u32 = 0x98badcfe;
 const INIT_D: u32 = 0x10325476;
 
-/// MD5 round constants (T[i] = floor(2^32 * abs(sin(i+1)))).
+/// MD5 round constants.
 const K: [u32; 64] = [
     0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
     0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
@@ -29,22 +29,22 @@ const K: [u32; 64] = [
 /// Maximum input size supported.
 const MAX_INPUT_SIZE: usize = 1024 * 1024;
 
-/// Macro for compile-time rotate left on NEON.
-macro_rules! rotl_const {
-    ($x:expr, $n:expr) => {{
-        let left = vshlq_n_u32::<$n>($x);
-        let right = vshrq_n_u32::<{ 32 - $n }>($x);
-        vorrq_u32(left, right)
-    }};
+/// Rotate left for WASM SIMD (requires runtime shift amount).
+#[cfg(target_arch = "wasm32")]
+#[inline(always)]
+fn rotl(x: v128, n: u32) -> v128 {
+    v128_or(
+        i32x4_shl(x, n),
+        u32x4_shr(x, 32 - n),
+    )
 }
 
-/// Compute MD5 digests for up to 4 inputs in parallel using NEON.
+/// Compute MD5 digests for up to 4 inputs in parallel using WASM SIMD.
 ///
 /// # Safety
-/// Caller must ensure NEON is available (mandatory on aarch64).
-#[cfg(target_arch = "aarch64")]
-#[target_feature(enable = "neon")]
-pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
+/// Caller must ensure WASM SIMD is available.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
     if max_len > MAX_INPUT_SIZE {
@@ -70,10 +70,10 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_blocks = block_counts.iter().max().copied().unwrap_or(0);
 
     // Initialize state
-    let mut a = vdupq_n_u32(INIT_A);
-    let mut b = vdupq_n_u32(INIT_B);
-    let mut c = vdupq_n_u32(INIT_C);
-    let mut d = vdupq_n_u32(INIT_D);
+    let mut a = u32x4_splat(INIT_A);
+    let mut b = u32x4_splat(INIT_B);
+    let mut c = u32x4_splat(INIT_C);
+    let mut d = u32x4_splat(INIT_D);
 
     for block_idx in 0..max_blocks {
         let block_offset = block_idx * 64;
@@ -82,10 +82,10 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
             if block_idx < block_counts[lane] { 0xFFFFFFFF } else { 0 }
         });
-        let mask = vld1q_u32(lane_active.as_ptr());
+        let mask = u32x4(lane_active[0], lane_active[1], lane_active[2], lane_active[3]);
 
         // Load message words
-        let mut m = [vdupq_n_u32(0); 16];
+        let mut m = [u32x4_splat(0); 16];
         for (word_idx, m_word) in m.iter_mut().enumerate() {
             let word_offset = block_offset + word_idx * 4;
             let words: [u32; 4] = std::array::from_fn(|lane| {
@@ -99,7 +99,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                     0
                 }
             });
-            *m_word = vld1q_u32(words.as_ptr());
+            *m_word = u32x4(words[0], words[1], words[2], words[3]);
         }
 
         let aa = a;
@@ -110,10 +110,10 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         // Round 1: F = (B & C) | (~B & D)
         macro_rules! round1 {
             ($a:ident, $b:ident, $c:ident, $d:ident, $mi:expr, $ki:expr, $s:expr) => {{
-                let f = vorrq_u32(vandq_u32($b, $c), vbicq_u32($d, $b));
-                let k = vdupq_n_u32(K[$ki]);
-                let temp = vaddq_u32(vaddq_u32($a, f), vaddq_u32(k, m[$mi]));
-                $a = vaddq_u32($b, rotl_const!(temp, $s));
+                let f = v128_or(v128_and($b, $c), v128_andnot($d, $b));
+                let k = u32x4_splat(K[$ki]);
+                let temp = i32x4_add(i32x4_add($a, f), i32x4_add(k, m[$mi]));
+                $a = i32x4_add($b, rotl(temp, $s));
             }};
         }
 
@@ -129,10 +129,10 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         // Round 2: G = (B & D) | (C & ~D)
         macro_rules! round2 {
             ($a:ident, $b:ident, $c:ident, $d:ident, $mi:expr, $ki:expr, $s:expr) => {{
-                let g = vorrq_u32(vandq_u32($b, $d), vbicq_u32($c, $d));
-                let k = vdupq_n_u32(K[$ki]);
-                let temp = vaddq_u32(vaddq_u32($a, g), vaddq_u32(k, m[$mi]));
-                $a = vaddq_u32($b, rotl_const!(temp, $s));
+                let g = v128_or(v128_and($b, $d), v128_andnot($c, $d));
+                let k = u32x4_splat(K[$ki]);
+                let temp = i32x4_add(i32x4_add($a, g), i32x4_add(k, m[$mi]));
+                $a = i32x4_add($b, rotl(temp, $s));
             }};
         }
 
@@ -148,10 +148,10 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         // Round 3: H = B ^ C ^ D
         macro_rules! round3 {
             ($a:ident, $b:ident, $c:ident, $d:ident, $mi:expr, $ki:expr, $s:expr) => {{
-                let h = veorq_u32(veorq_u32($b, $c), $d);
-                let k = vdupq_n_u32(K[$ki]);
-                let temp = vaddq_u32(vaddq_u32($a, h), vaddq_u32(k, m[$mi]));
-                $a = vaddq_u32($b, rotl_const!(temp, $s));
+                let h = v128_xor(v128_xor($b, $c), $d);
+                let k = u32x4_splat(K[$ki]);
+                let temp = i32x4_add(i32x4_add($a, h), i32x4_add(k, m[$mi]));
+                $a = i32x4_add($b, rotl(temp, $s));
             }};
         }
 
@@ -167,10 +167,10 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         // Round 4: I = C ^ (B | ~D)
         macro_rules! round4 {
             ($a:ident, $b:ident, $c:ident, $d:ident, $mi:expr, $ki:expr, $s:expr) => {{
-                let i_val = veorq_u32($c, vornq_u32($b, $d));
-                let k = vdupq_n_u32(K[$ki]);
-                let temp = vaddq_u32(vaddq_u32($a, i_val), vaddq_u32(k, m[$mi]));
-                $a = vaddq_u32($b, rotl_const!(temp, $s));
+                let i_val = v128_xor($c, v128_or($b, v128_not($d)));
+                let k = u32x4_splat(K[$ki]);
+                let temp = i32x4_add(i32x4_add($a, i_val), i32x4_add(k, m[$mi]));
+                $a = i32x4_add($b, rotl(temp, $s));
             }};
         }
 
@@ -184,120 +184,58 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         round4!(c, d, a, b,  2, 62, 15); round4!(b, c, d, a,  9, 63, 21);
 
         // Add saved state
-        let new_a = vaddq_u32(a, aa);
-        let new_b = vaddq_u32(b, bb);
-        let new_c = vaddq_u32(c, cc);
-        let new_d = vaddq_u32(d, dd);
+        let new_a = i32x4_add(a, aa);
+        let new_b = i32x4_add(b, bb);
+        let new_c = i32x4_add(c, cc);
+        let new_d = i32x4_add(d, dd);
 
-        // Blend using mask
-        a = vbslq_u32(mask, new_a, aa);
-        b = vbslq_u32(mask, new_b, bb);
-        c = vbslq_u32(mask, new_c, cc);
-        d = vbslq_u32(mask, new_d, dd);
+        // Blend using mask (bitselect: mask ? new : old)
+        a = v128_bitselect(new_a, aa, mask);
+        b = v128_bitselect(new_b, bb, mask);
+        c = v128_bitselect(new_c, cc, mask);
+        d = v128_bitselect(new_d, dd, mask);
     }
 
     // Extract results
     let mut results = [[0u8; 16]; 4];
 
-    #[repr(C, align(16))]
-    struct Aligned([u32; 4]);
-
-    let mut a_out = Aligned([0; 4]);
-    let mut b_out = Aligned([0; 4]);
-    let mut c_out = Aligned([0; 4]);
-    let mut d_out = Aligned([0; 4]);
-
-    vst1q_u32(a_out.0.as_mut_ptr(), a);
-    vst1q_u32(b_out.0.as_mut_ptr(), b);
-    vst1q_u32(c_out.0.as_mut_ptr(), c);
-    vst1q_u32(d_out.0.as_mut_ptr(), d);
+    let a_arr = [
+        u32x4_extract_lane::<0>(a),
+        u32x4_extract_lane::<1>(a),
+        u32x4_extract_lane::<2>(a),
+        u32x4_extract_lane::<3>(a),
+    ];
+    let b_arr = [
+        u32x4_extract_lane::<0>(b),
+        u32x4_extract_lane::<1>(b),
+        u32x4_extract_lane::<2>(b),
+        u32x4_extract_lane::<3>(b),
+    ];
+    let c_arr = [
+        u32x4_extract_lane::<0>(c),
+        u32x4_extract_lane::<1>(c),
+        u32x4_extract_lane::<2>(c),
+        u32x4_extract_lane::<3>(c),
+    ];
+    let d_arr = [
+        u32x4_extract_lane::<0>(d),
+        u32x4_extract_lane::<1>(d),
+        u32x4_extract_lane::<2>(d),
+        u32x4_extract_lane::<3>(d),
+    ];
 
     for (lane, result) in results.iter_mut().enumerate() {
-        result[0..4].copy_from_slice(&a_out.0[lane].to_le_bytes());
-        result[4..8].copy_from_slice(&b_out.0[lane].to_le_bytes());
-        result[8..12].copy_from_slice(&c_out.0[lane].to_le_bytes());
-        result[12..16].copy_from_slice(&d_out.0[lane].to_le_bytes());
+        result[0..4].copy_from_slice(&a_arr[lane].to_le_bytes());
+        result[4..8].copy_from_slice(&b_arr[lane].to_le_bytes());
+        result[8..12].copy_from_slice(&c_arr[lane].to_le_bytes());
+        result[12..16].copy_from_slice(&d_arr[lane].to_le_bytes());
     }
 
     results
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
-    }
-
-    #[test]
-    fn neon_md5_matches_scalar() {
-        let inputs: [&[u8]; 4] = [
-            b"",
-            b"a",
-            b"abc",
-            b"message digest",
-        ];
-
-        let results = unsafe { digest_x4(&inputs) };
-
-        for (i, input) in inputs.iter().enumerate() {
-            let expected = crate::scalar::digest(input);
-            assert_eq!(
-                to_hex(&results[i]),
-                to_hex(&expected),
-                "Mismatch at lane {i} for input {:?}",
-                String::from_utf8_lossy(input)
-            );
-        }
-    }
-
-    #[test]
-    fn neon_md5_rfc1321_vectors() {
-        let inputs: [&[u8]; 4] = [
-            b"",
-            b"a",
-            b"abc",
-            b"message digest",
-        ];
-
-        let expected = [
-            "d41d8cd98f00b204e9800998ecf8427e",
-            "0cc175b9c0f1b6a831c399e269772661",
-            "900150983cd24fb0d6963f7d28e17f72",
-            "f96b697d7cb7938d525a2f31aaf161d0",
-        ];
-
-        let results = unsafe { digest_x4(&inputs) };
-
-        for i in 0..4 {
-            assert_eq!(
-                to_hex(&results[i]),
-                expected[i],
-                "RFC 1321 vector mismatch at lane {i}"
-            );
-        }
-    }
-
-    #[test]
-    fn neon_md5_various_lengths() {
-        let input0: Vec<u8> = (0..55).map(|i| (i % 256) as u8).collect();
-        let input1: Vec<u8> = (0..56).map(|i| (i % 256) as u8).collect();
-        let input2: Vec<u8> = (0..64).map(|i| (i % 256) as u8).collect();
-        let input3: Vec<u8> = (0..65).map(|i| (i % 256) as u8).collect();
-
-        let inputs: [&[u8]; 4] = [&input0, &input1, &input2, &input3];
-
-        let results = unsafe { digest_x4(&inputs) };
-
-        for (i, input) in inputs.iter().enumerate() {
-            let expected = crate::scalar::digest(input);
-            assert_eq!(
-                to_hex(&results[i]),
-                to_hex(&expected),
-                "Mismatch at lane {i} for input length {}",
-                input.len()
-            );
-        }
-    }
+/// Fallback for WASM without SIMD.
+#[cfg(all(target_arch = "wasm32", not(target_feature = "simd128")))]
+pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
+    std::array::from_fn(|i| crate::scalar::digest(inputs[i]))
 }
