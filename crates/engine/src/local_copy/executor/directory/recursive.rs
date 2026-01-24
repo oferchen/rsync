@@ -19,7 +19,12 @@ use ::metadata::apply_directory_metadata_with_options;
 
 use super::super::non_empty_path;
 use super::planner::{EntryAction, apply_pre_transfer_deletions, plan_directory_entries};
+#[cfg(feature = "parallel")]
+use super::planner::DirectoryPlan;
 use super::support::read_directory_entries_sorted;
+
+#[cfg(feature = "parallel")]
+use super::parallel_checksum::{ChecksumCache, FilePair};
 
 /// Helper to capture a file entry to the batch file if batch mode is active.
 fn capture_batch_file_entry(
@@ -77,6 +82,97 @@ fn capture_batch_file_entry(
     }
 
     Ok(())
+}
+
+/// Collects file pairs for parallel checksum prefetching.
+///
+/// This function extracts source-destination file pairs from the directory plan
+/// that are candidates for checksum comparison. Only files where both source and
+/// destination exist with matching sizes are included, as size mismatches already
+/// indicate the files differ.
+///
+/// # Arguments
+///
+/// * `plan` - The directory plan containing planned entries
+/// * `destination` - The destination directory path
+///
+/// # Returns
+///
+/// A vector of file pairs suitable for parallel checksum computation.
+#[cfg(feature = "parallel")]
+pub(crate) fn collect_file_pairs_for_checksum(
+    plan: &DirectoryPlan<'_>,
+    destination: &Path,
+) -> Vec<FilePair> {
+    let mut pairs = Vec::new();
+
+    for planned in &plan.planned_entries {
+        if !matches!(planned.action, EntryAction::CopyFile) {
+            continue;
+        }
+
+        let source_path = &planned.entry.path;
+        let target_path = destination.join(Path::new(&planned.entry.file_name));
+        let source_size = planned.metadata().len();
+
+        // Check if destination exists and get its size
+        let destination_size = match fs::metadata(&target_path) {
+            Ok(meta) if meta.file_type().is_file() => meta.len(),
+            _ => continue, // Skip if destination doesn't exist or isn't a file
+        };
+
+        // Only prefetch if sizes match (different sizes = guaranteed different content)
+        if source_size == destination_size {
+            pairs.push(FilePair {
+                source: source_path.clone(),
+                destination: target_path,
+                source_size,
+                destination_size,
+            });
+        }
+    }
+
+    pairs
+}
+
+/// Prefetches file checksums in parallel for a directory.
+///
+/// When `--checksum` mode is enabled, this function computes file checksums
+/// for all eligible file pairs in parallel using rayon. The results are stored
+/// in a [`ChecksumCache`] that can be used during the sequential copy phase
+/// to avoid recomputing checksums.
+///
+/// # Arguments
+///
+/// * `context` - The copy context (used to get checksum algorithm)
+/// * `plan` - The directory plan containing files to process
+/// * `destination` - The destination directory path
+///
+/// # Returns
+///
+/// A populated [`ChecksumCache`] if checksum mode is enabled and there are
+/// eligible file pairs, or an empty cache otherwise.
+#[cfg(feature = "parallel")]
+pub(crate) fn prefetch_directory_checksums(
+    context: &CopyContext,
+    plan: &DirectoryPlan<'_>,
+    destination: &Path,
+) -> ChecksumCache {
+    // Only prefetch if checksum comparison is enabled
+    if !context.checksum_enabled() {
+        return ChecksumCache::new();
+    }
+
+    let pairs = collect_file_pairs_for_checksum(plan, destination);
+
+    // Skip prefetching if no eligible pairs
+    if pairs.is_empty() {
+        return ChecksumCache::new();
+    }
+
+    // Compute checksums in parallel
+    let algorithm = context.options().checksum_algorithm();
+    ChecksumCache::from_prefetch(&pairs, algorithm)
 }
 
 pub(crate) fn copy_directory_recursive(
@@ -271,6 +367,15 @@ pub(crate) fn copy_directory_recursive(
     let plan = plan_directory_entries(context, &entries, relative, root_device)?;
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
 
+    // Prefetch checksums in parallel when checksum mode is enabled
+    #[cfg(feature = "parallel")]
+    {
+        let cache = prefetch_directory_checksums(context, &plan, destination);
+        if !cache.is_empty() {
+            context.set_checksum_cache(cache);
+        }
+    }
+
     for planned in plan.planned_entries {
         let file_name = &planned.entry.file_name;
         let target_path = destination.join(Path::new(file_name));
@@ -390,6 +495,10 @@ pub(crate) fn copy_directory_recursive(
         }
     }
 
+    // Clear checksum cache to free memory
+    #[cfg(feature = "parallel")]
+    context.clear_checksum_cache();
+
     if plan.deletion_enabled {
         match plan.delete_timing.unwrap_or(DeleteTiming::During) {
             DeleteTiming::Before => {}
@@ -451,4 +560,186 @@ pub(crate) fn copy_directory_recursive(
     }
 
     Ok(true)
+}
+
+#[cfg(all(test, feature = "parallel"))]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    use super::super::planner::{DirectoryPlan, EntryAction, PlannedEntry};
+    use super::super::support::DirectoryEntry;
+    use tempfile::tempdir;
+
+    fn create_test_entry(path: PathBuf, file_name: &str, size: u64) -> DirectoryEntry {
+        // Create the actual file so we can get metadata
+        std::fs::write(&path, vec![0u8; size as usize]).expect("create test file");
+        let metadata = std::fs::metadata(&path).expect("get metadata");
+        DirectoryEntry {
+            path,
+            file_name: OsString::from(file_name),
+            metadata,
+        }
+    }
+
+    #[test]
+    fn collect_file_pairs_filters_to_copyfile_actions() {
+        let dir = tempdir().unwrap();
+        let source_dir = dir.path().join("src");
+        let dest_dir = dir.path().join("dst");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // Create source files
+        let entry1 = create_test_entry(source_dir.join("file1.txt"), "file1.txt", 100);
+        let entry2 = create_test_entry(source_dir.join("file2.txt"), "file2.txt", 200);
+        let entry3 = create_test_entry(source_dir.join("dir"), "dir", 0);
+
+        // Create destination files with same sizes
+        std::fs::write(dest_dir.join("file1.txt"), vec![0u8; 100]).unwrap();
+        std::fs::write(dest_dir.join("file2.txt"), vec![0u8; 200]).unwrap();
+        std::fs::create_dir(dest_dir.join("dir")).unwrap();
+
+        let entries = vec![entry1, entry2, entry3];
+        let planned: Vec<PlannedEntry> = vec![
+            PlannedEntry {
+                entry: &entries[0],
+                relative: PathBuf::from("file1.txt"),
+                action: EntryAction::CopyFile,
+                metadata_override: None,
+            },
+            PlannedEntry {
+                entry: &entries[1],
+                relative: PathBuf::from("file2.txt"),
+                action: EntryAction::CopyFile,
+                metadata_override: None,
+            },
+            PlannedEntry {
+                entry: &entries[2],
+                relative: PathBuf::from("dir"),
+                action: EntryAction::CopyDirectory,
+                metadata_override: None,
+            },
+        ];
+
+        let plan = DirectoryPlan {
+            planned_entries: planned,
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+
+        // Should only include CopyFile entries (2 files, not the directory)
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.iter().any(|p| p.source.ends_with("file1.txt")));
+        assert!(pairs.iter().any(|p| p.source.ends_with("file2.txt")));
+    }
+
+    #[test]
+    fn collect_file_pairs_skips_missing_destination() {
+        let dir = tempdir().unwrap();
+        let source_dir = dir.path().join("src");
+        let dest_dir = dir.path().join("dst");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // Create source file
+        let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
+
+        // Don't create destination file
+
+        let entries = vec![entry];
+        let planned: Vec<PlannedEntry> = vec![PlannedEntry {
+            entry: &entries[0],
+            relative: PathBuf::from("file.txt"),
+            action: EntryAction::CopyFile,
+            metadata_override: None,
+        }];
+
+        let plan = DirectoryPlan {
+            planned_entries: planned,
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+
+        // Should be empty because destination doesn't exist
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn collect_file_pairs_skips_size_mismatch() {
+        let dir = tempdir().unwrap();
+        let source_dir = dir.path().join("src");
+        let dest_dir = dir.path().join("dst");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // Create source file (100 bytes)
+        let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
+
+        // Create destination file with different size (50 bytes)
+        std::fs::write(dest_dir.join("file.txt"), vec![0u8; 50]).unwrap();
+
+        let entries = vec![entry];
+        let planned: Vec<PlannedEntry> = vec![PlannedEntry {
+            entry: &entries[0],
+            relative: PathBuf::from("file.txt"),
+            action: EntryAction::CopyFile,
+            metadata_override: None,
+        }];
+
+        let plan = DirectoryPlan {
+            planned_entries: planned,
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+
+        // Should be empty because sizes don't match
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn collect_file_pairs_includes_matching_sizes() {
+        let dir = tempdir().unwrap();
+        let source_dir = dir.path().join("src");
+        let dest_dir = dir.path().join("dst");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        // Create source file (100 bytes)
+        let entry = create_test_entry(source_dir.join("file.txt"), "file.txt", 100);
+
+        // Create destination file with same size (100 bytes)
+        std::fs::write(dest_dir.join("file.txt"), vec![0u8; 100]).unwrap();
+
+        let entries = vec![entry];
+        let planned: Vec<PlannedEntry> = vec![PlannedEntry {
+            entry: &entries[0],
+            relative: PathBuf::from("file.txt"),
+            action: EntryAction::CopyFile,
+            metadata_override: None,
+        }];
+
+        let plan = DirectoryPlan {
+            planned_entries: planned,
+            keep_names: Vec::new(),
+            deletion_enabled: false,
+            delete_timing: None,
+        };
+
+        let pairs = collect_file_pairs_for_checksum(&plan, &dest_dir);
+
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].source_size, 100);
+        assert_eq!(pairs[0].destination_size, 100);
+    }
 }
