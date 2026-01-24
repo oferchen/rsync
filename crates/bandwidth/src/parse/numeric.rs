@@ -322,4 +322,137 @@ mod tests {
         let result = parse_digits(huge.as_bytes());
         assert!(result.is_err());
     }
+
+    // ==================== Additional numeric tests ====================
+
+    #[test]
+    fn parse_decimal_mantissa_only_separator() {
+        // Just "." should give (0, 0, 1)
+        let (int, frac, denom) = parse_decimal_mantissa(".").unwrap();
+        assert_eq!(int, 0);
+        assert_eq!(frac, 0);
+        assert_eq!(denom, 1);
+    }
+
+    #[test]
+    fn parse_decimal_mantissa_comma_only() {
+        // Just "," should give (0, 0, 1)
+        let (int, frac, denom) = parse_decimal_mantissa(",").unwrap();
+        assert_eq!(int, 0);
+        assert_eq!(frac, 0);
+        assert_eq!(denom, 1);
+    }
+
+    #[test]
+    fn parse_decimal_mantissa_trailing_zeros() {
+        // "1.00" should preserve trailing zeros in denominator
+        let (int, frac, denom) = parse_decimal_mantissa("1.00").unwrap();
+        assert_eq!(int, 1);
+        assert_eq!(frac, 0);
+        assert_eq!(denom, 100);
+    }
+
+    #[test]
+    fn parse_decimal_mantissa_large_integer() {
+        let large = "12345678901234567890";
+        let (int, frac, denom) = parse_decimal_mantissa(large).unwrap();
+        assert_eq!(int, 12345678901234567890u128);
+        assert_eq!(frac, 0);
+        assert_eq!(denom, 1);
+    }
+
+    #[test]
+    fn parse_decimal_mantissa_overflow_integer() {
+        // More than u128::MAX digits should overflow
+        let huge = "9".repeat(50);
+        let result = parse_decimal_mantissa(&huge);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_decimal_mantissa_overflow_fraction() {
+        // Very long fractional part should overflow
+        let huge = format!("1.{}", "9".repeat(50));
+        let result = parse_decimal_mantissa(&huge);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_decimal_mantissa_mixed_separators_rejected() {
+        // "1.2,3" should fail (multiple separators)
+        let result = parse_decimal_mantissa("1.2,3");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_decimal_with_exponent_sign_variations() {
+        // Positive exponent with explicit +
+        let (int, _, _, exp) = parse_decimal_with_exponent("1e+5").unwrap();
+        assert_eq!(int, 1);
+        assert_eq!(exp, 5);
+
+        // Negative exponent
+        let (int, _, _, exp) = parse_decimal_with_exponent("1e-5").unwrap();
+        assert_eq!(int, 1);
+        assert_eq!(exp, -5);
+    }
+
+    #[test]
+    fn parse_decimal_with_exponent_mixed_case() {
+        // 'e' lowercase
+        let (_, _, _, exp1) = parse_decimal_with_exponent("1e10").unwrap();
+        // 'E' uppercase
+        let (_, _, _, exp2) = parse_decimal_with_exponent("1E10").unwrap();
+        assert_eq!(exp1, exp2);
+    }
+
+    #[test]
+    fn parse_decimal_with_exponent_decimal_with_negative_exp() {
+        // "1.5e-2" = 0.015
+        let (int, frac, denom, exp) = parse_decimal_with_exponent("1.5e-2").unwrap();
+        assert_eq!(int, 1);
+        assert_eq!(frac, 5);
+        assert_eq!(denom, 10);
+        assert_eq!(exp, -2);
+    }
+
+    #[test]
+    fn pow_u128_exact_boundary() {
+        // Test powers that are exact boundaries
+        // 10^38 fits in u128 (max is ~3.4 * 10^38)
+        let result = pow_u128(10, 38);
+        assert!(result.is_ok());
+
+        // 10^39 overflows
+        let result = pow_u128(10, 39);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pow_u128_alternating_bits() {
+        // Test exponent like 5 (binary 101) to exercise both branches
+        // 3^5 = 243
+        assert_eq!(pow_u128(3, 5).unwrap(), 243);
+
+        // 7^7 = 823543
+        assert_eq!(pow_u128(7, 7).unwrap(), 823543);
+    }
+
+    #[test]
+    fn parse_digits_all_zeros() {
+        assert_eq!(parse_digits(b"0000").unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_digits_mixed_digits() {
+        assert_eq!(parse_digits(b"1234567890").unwrap(), 1234567890);
+    }
+
+    #[test]
+    fn parse_decimal_mantissa_non_digit_in_fraction_rejected() {
+        // "1.2a3" should fail because 'a' is in the fractional part
+        // This tests line 73-74 in numeric.rs
+        let result = parse_decimal_mantissa("1.2a3");
+        assert!(result.is_err());
+    }
 }
