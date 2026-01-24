@@ -17,7 +17,7 @@
 //!
 //! # Ownership Model
 //!
-//! The pool is wrapped in [`Arc`] to allow [`BufferGuard`] to hold an owned
+//! The pool is wrapped in [`Arc`](std::sync::Arc) to allow [`BufferGuard`] to hold an owned
 //! reference, avoiding borrow checker issues when the pool is part of a larger
 //! context struct.
 //!
