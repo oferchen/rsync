@@ -2,6 +2,8 @@
 
 use crate::Digest;
 use crate::scalar;
+#[cfg(target_arch = "x86_64")]
+use crate::simd;
 
 /// Available SIMD backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,12 +73,61 @@ impl Dispatcher {
             return Vec::new();
         }
 
-        // For now, always use scalar. SIMD backends added in later tasks.
         match self.backend {
-            Backend::Avx512 | Backend::Avx2 | Backend::Neon | Backend::Scalar => {
+            #[cfg(target_arch = "x86_64")]
+            Backend::Avx512 => {
+                // AVX-512 falls back to scalar for now (requires nightly)
+                inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
+            }
+            #[cfg(target_arch = "x86_64")]
+            Backend::Avx2 => self.digest_batch_avx2(inputs),
+            #[cfg(target_arch = "aarch64")]
+            Backend::Neon => {
+                // NEON falls back to scalar for now
+                inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
+            }
+            #[allow(unreachable_patterns)]
+            Backend::Scalar | _ => {
                 inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
             }
         }
+    }
+
+    /// AVX2 batched digest implementation.
+    #[cfg(target_arch = "x86_64")]
+    fn digest_batch_avx2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
+        let mut results = Vec::with_capacity(inputs.len());
+        let chunks = inputs.chunks(8);
+
+        for chunk in chunks {
+            if chunk.len() == 8 {
+                // Full batch of 8 - use SIMD
+                let batch: [&[u8]; 8] = [
+                    chunk[0].as_ref(),
+                    chunk[1].as_ref(),
+                    chunk[2].as_ref(),
+                    chunk[3].as_ref(),
+                    chunk[4].as_ref(),
+                    chunk[5].as_ref(),
+                    chunk[6].as_ref(),
+                    chunk[7].as_ref(),
+                ];
+                // SAFETY: We verified AVX2 is available in detect_backend()
+                let digests = unsafe { simd::avx2::digest_x8(&batch) };
+                results.extend_from_slice(&digests);
+            } else {
+                // Partial batch - pad with empty inputs
+                let mut batch: [&[u8]; 8] = [&[]; 8];
+                for (i, input) in chunk.iter().enumerate() {
+                    batch[i] = input.as_ref();
+                }
+                // SAFETY: We verified AVX2 is available in detect_backend()
+                let digests = unsafe { simd::avx2::digest_x8(&batch) };
+                results.extend_from_slice(&digests[..chunk.len()]);
+            }
+        }
+
+        results
     }
 
     /// Compute MD5 digest for a single input.
@@ -108,5 +159,47 @@ mod tests {
         let d1 = global();
         let d2 = global();
         assert_eq!(d1.backend(), d2.backend());
+    }
+
+    #[test]
+    fn digest_batch_matches_scalar() {
+        let inputs: Vec<&[u8]> = vec![
+            b"",
+            b"a",
+            b"abc",
+            b"message digest",
+            b"abcdefghijklmnopqrstuvwxyz",
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+            b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+            b"test",
+            b"another test",
+            b"third test",
+        ];
+
+        let dispatcher = Dispatcher::detect();
+        let results = dispatcher.digest_batch(&inputs);
+
+        // Verify each result matches scalar
+        for (i, input) in inputs.iter().enumerate() {
+            let expected = scalar::digest(input);
+            assert_eq!(
+                results[i], expected,
+                "Mismatch at index {i} for input {:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn digest_batch_partial_batch() {
+        // Test with exactly 3 inputs (partial batch)
+        let inputs: Vec<&[u8]> = vec![b"one", b"two", b"three"];
+        let dispatcher = Dispatcher::detect();
+        let results = dispatcher.digest_batch(&inputs);
+
+        assert_eq!(results.len(), 3);
+        for (i, input) in inputs.iter().enumerate() {
+            assert_eq!(results[i], scalar::digest(input));
+        }
     }
 }
