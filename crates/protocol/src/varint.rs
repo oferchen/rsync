@@ -1484,6 +1484,594 @@ mod tests {
 }
 
 // ===========================================================================
+// PHASE 2.7: VARINT 1-BYTE ENCODING TESTS (0-127)
+// ===========================================================================
+
+/// Tests for varint 1-byte encoding range (0-127).
+///
+/// The rsync varint encoding uses a single byte for values 0-127, where the
+/// high bit is clear (`0xxx_xxxx`). These tests verify:
+/// - All values in range [0, 127] encode to exactly 1 byte
+/// - The encoded byte equals the input value
+/// - Round-trip encoding/decoding preserves the value
+/// - Boundary values (0, 127) are handled correctly
+#[cfg(test)]
+mod phase2_7_varint_1byte_encoding {
+    use super::*;
+    use std::io::Cursor;
+
+    /// Verifies that values 0-127 encode to exactly one byte.
+    #[test]
+    fn all_1byte_values_encode_to_single_byte() {
+        for value in 0..=127_i32 {
+            let (len, _bytes) = encode_bytes(value);
+            assert_eq!(
+                len, 1,
+                "value {} should encode to 1 byte, got {}",
+                value, len
+            );
+        }
+    }
+
+    /// Verifies that for 1-byte encoding, the encoded byte equals the value.
+    #[test]
+    fn encoded_byte_equals_value_for_1byte_range() {
+        for value in 0..=127_i32 {
+            let (len, bytes) = encode_bytes(value);
+            assert_eq!(len, 1);
+            assert_eq!(
+                bytes[0], value as u8,
+                "encoded byte for {} should be {}, got {}",
+                value, value, bytes[0]
+            );
+        }
+    }
+
+    /// Verifies round-trip for all 1-byte values via encode_varint_to_vec/decode_varint.
+    #[test]
+    fn roundtrip_all_1byte_values_via_vec() {
+        for value in 0..=127_i32 {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            assert_eq!(
+                encoded.len(),
+                1,
+                "value {} should encode to 1 byte",
+                value
+            );
+
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for value {}", value);
+            assert!(remainder.is_empty(), "no bytes should remain");
+        }
+    }
+
+    /// Verifies round-trip for all 1-byte values via write_varint/read_varint.
+    #[test]
+    fn roundtrip_all_1byte_values_via_stream() {
+        for value in 0..=127_i32 {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, value).expect("write succeeds");
+            assert_eq!(buf.len(), 1, "value {} should write 1 byte", value);
+
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            assert_eq!(decoded, value, "stream round-trip failed for value {}", value);
+            assert_eq!(cursor.position(), 1, "should have read exactly 1 byte");
+        }
+    }
+
+    /// Tests boundary value 0 (minimum 1-byte value).
+    #[test]
+    fn boundary_zero() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(0, &mut encoded);
+        assert_eq!(encoded, vec![0x00]);
+
+        let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 0);
+        assert!(remainder.is_empty());
+    }
+
+    /// Tests boundary value 127 (maximum 1-byte value).
+    #[test]
+    fn boundary_127() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(127, &mut encoded);
+        assert_eq!(encoded, vec![0x7F]);
+
+        let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 127);
+        assert!(remainder.is_empty());
+    }
+
+    /// Tests that 128 requires more than 1 byte (boundary transition).
+    #[test]
+    fn boundary_128_is_not_1byte() {
+        let (len, _) = encode_bytes(128);
+        assert!(len > 1, "value 128 should NOT encode to 1 byte");
+    }
+
+    /// Tests decoding raw 1-byte sequences directly.
+    #[test]
+    fn decode_raw_1byte_sequences() {
+        // Test decoding specific raw bytes
+        for byte in 0u8..=127 {
+            let data = [byte];
+            let (value, consumed) = decode_bytes(&data).expect("decode succeeds");
+            assert_eq!(value, byte as i32, "raw byte 0x{:02X} should decode to {}", byte, byte);
+            assert_eq!(consumed, 1);
+        }
+    }
+
+    /// Tests that high-bit-clear bytes are always 1-byte encodings.
+    #[test]
+    fn high_bit_clear_indicates_1byte() {
+        // For bytes 0x00-0x7F, INT_BYTE_EXTRA should be 0
+        for byte in 0u8..=127 {
+            let extra = INT_BYTE_EXTRA[(byte / 4) as usize];
+            assert_eq!(
+                extra, 0,
+                "byte 0x{:02X} should have 0 extra bytes, got {}",
+                byte, extra
+            );
+        }
+    }
+
+    /// Tests multiple consecutive 1-byte values in a stream.
+    #[test]
+    fn multiple_1byte_values_in_stream() {
+        let values = [0, 1, 42, 63, 64, 100, 126, 127];
+        let mut encoded = Vec::new();
+        for &v in &values {
+            encode_varint_to_vec(v, &mut encoded);
+        }
+        assert_eq!(encoded.len(), values.len(), "all values should be 1 byte each");
+
+        let mut cursor = Cursor::new(&encoded);
+        for &expected in &values {
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            assert_eq!(decoded, expected);
+        }
+    }
+}
+
+// ===========================================================================
+// PHASE 2.8: VARINT 2-BYTE ENCODING TESTS (128-16383)
+// ===========================================================================
+
+/// Tests for varint 2-byte encoding range (128-16383).
+///
+/// The rsync varint encoding uses two bytes for values that don't fit in
+/// a single byte. The format is `10xx_xxxx` for the first byte, followed
+/// by one additional byte. These tests verify:
+/// - Values in range [128, 16383] encode to exactly 2 bytes
+/// - The encoding format matches upstream rsync
+/// - Round-trip encoding/decoding preserves values
+/// - Boundary values (128, 16383) are handled correctly
+#[cfg(test)]
+mod phase2_8_varint_2byte_encoding {
+    use super::*;
+    use std::io::Cursor;
+
+    /// Verifies that value 128 (minimum 2-byte value) encodes correctly.
+    #[test]
+    fn boundary_128_encodes_to_2_bytes() {
+        let (len, _) = encode_bytes(128);
+        assert_eq!(len, 2, "value 128 should encode to 2 bytes");
+
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(128, &mut encoded);
+        assert_eq!(encoded.len(), 2);
+
+        // Verify round-trip
+        let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 128);
+        assert!(remainder.is_empty());
+    }
+
+    /// Verifies that value 255 encodes to 2 bytes.
+    #[test]
+    fn value_255_encodes_to_2_bytes() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(255, &mut encoded);
+        assert_eq!(encoded.len(), 2);
+        // Verify against known encoding from upstream
+        assert_eq!(encoded, vec![0x80, 0xFF]);
+
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 255);
+    }
+
+    /// Verifies that value 256 encodes to 2 bytes.
+    #[test]
+    fn value_256_encodes_to_2_bytes() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(256, &mut encoded);
+        assert_eq!(encoded.len(), 2);
+        // Verify against known encoding from upstream
+        assert_eq!(encoded, vec![0x81, 0x00]);
+
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 256);
+    }
+
+    /// Verifies round-trip for sample 2-byte values.
+    #[test]
+    fn roundtrip_sample_2byte_values() {
+        let values = [
+            128, 129, 200, 255, 256, 300, 500, 1000, 2000, 4000, 8000, 10000, 16000, 16383,
+        ];
+        for value in values {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            assert!(
+                encoded.len() <= 2,
+                "value {} should encode to at most 2 bytes, got {}",
+                value,
+                encoded.len()
+            );
+
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for value {}", value);
+            assert!(remainder.is_empty());
+        }
+    }
+
+    /// Verifies round-trip via write_varint/read_varint for 2-byte values.
+    #[test]
+    fn roundtrip_2byte_values_via_stream() {
+        let values = [128, 255, 256, 1000, 8000, 16383];
+        for value in values {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, value).expect("write succeeds");
+
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            assert_eq!(decoded, value, "stream round-trip failed for value {}", value);
+            assert_eq!(cursor.position() as usize, buf.len());
+        }
+    }
+
+    /// Tests the boundary between 2-byte and 3-byte encoding.
+    #[test]
+    fn boundary_between_2byte_and_3byte() {
+        // 16383 should be 2 bytes (max for 2-byte encoding with 14 bits)
+        let (len_16383, _) = encode_bytes(16383);
+
+        // 16384 should require 3 bytes
+        let (len_16384, _) = encode_bytes(16384);
+
+        assert!(
+            len_16384 > len_16383,
+            "16384 ({} bytes) should require more bytes than 16383 ({} bytes)",
+            len_16384, len_16383
+        );
+    }
+
+    /// Tests decoding 2-byte sequences with first byte having bit 7 set.
+    #[test]
+    fn decode_2byte_sequences() {
+        // Test that bytes 0x80-0xBF indicate 1 extra byte
+        for first_byte in 0x80u8..=0xBF {
+            let extra = INT_BYTE_EXTRA[(first_byte / 4) as usize];
+            assert_eq!(
+                extra, 1,
+                "byte 0x{:02X} should have 1 extra byte, got {}",
+                first_byte, extra
+            );
+        }
+    }
+
+    /// Tests truncated 2-byte input handling.
+    #[test]
+    fn truncated_2byte_input_fails() {
+        // 0x80 indicates 1 extra byte is needed
+        let data = [0x80u8];
+        let err = decode_varint(&data).expect_err("truncated input must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    /// Tests multiple consecutive 2-byte values.
+    #[test]
+    fn multiple_2byte_values_in_stream() {
+        let values = [128, 255, 256, 1000, 8000, 16000];
+        let mut encoded = Vec::new();
+        for &v in &values {
+            encode_varint_to_vec(v, &mut encoded);
+        }
+
+        let mut cursor = Cursor::new(&encoded);
+        for &expected in &values {
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            assert_eq!(decoded, expected);
+        }
+        assert_eq!(cursor.position() as usize, encoded.len());
+    }
+
+    /// Tests that the encoded format matches known upstream values.
+    #[test]
+    fn encoding_matches_upstream_format() {
+        // Known encodings from upstream rsync io.c
+        let cases = [
+            (128, vec![0x80, 0x80]),
+            (255, vec![0x80, 0xFF]),
+            (256, vec![0x81, 0x00]),
+        ];
+        for (value, expected) in cases {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            assert_eq!(
+                encoded, expected,
+                "value {} encoded as {:02X?}, expected {:02X?}",
+                value, encoded, expected
+            );
+        }
+    }
+}
+
+// ===========================================================================
+// PHASE 2.9: VARINT EXTENDED ENCODING TESTS (>16383)
+// ===========================================================================
+
+/// Tests for varint extended encoding (values > 16383).
+///
+/// Values larger than 16383 require 3, 4, or 5 bytes depending on magnitude.
+/// The encoding uses progressively more indicator bits in the first byte:
+/// - `110x_xxxx` + 2 bytes for 3-byte encoding
+/// - `1110_xxxx` + 3 bytes for 4-byte encoding
+/// - `1111_0xxx` + 4 bytes for 5-byte encoding (full i32 range)
+///
+/// These tests verify extended encoding for large positive and negative values.
+#[cfg(test)]
+mod phase2_9_varint_extended_encoding {
+    use super::*;
+    use std::io::Cursor;
+
+    /// Tests 3-byte encoding boundary (16384).
+    #[test]
+    fn boundary_16384_is_3_bytes() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(16384, &mut encoded);
+        assert_eq!(encoded.len(), 3);
+        // Verify known encoding
+        assert_eq!(encoded, vec![0xC0, 0x00, 0x40]);
+
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 16384);
+    }
+
+    /// Tests values requiring 3 bytes.
+    #[test]
+    fn roundtrip_3byte_values() {
+        let values = [
+            16384,    // Minimum 3-byte
+            20000,
+            50000,
+            100000,
+            500000,
+            1000000,
+            2097151,  // Maximum that might fit in 3 bytes
+        ];
+        for value in values {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for value {}", value);
+            assert!(remainder.is_empty());
+        }
+    }
+
+    /// Tests values requiring 4 bytes.
+    #[test]
+    fn roundtrip_4byte_values() {
+        let values = [
+            0x20_0000,      // 2097152
+            0x100_0000,     // 16777216
+            0x1000_0000,    // 268435456
+        ];
+        for value in values {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for value {}", value);
+            assert!(remainder.is_empty());
+        }
+    }
+
+    /// Tests values requiring 5 bytes (maximum encoding).
+    #[test]
+    fn roundtrip_5byte_values() {
+        let values = [
+            0x1000_0000_i32,  // 268435456
+            0x4000_0000_i32,  // 1073741824
+            i32::MAX,         // 2147483647
+        ];
+        for value in values {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            assert!(encoded.len() <= 5, "i32 values should encode to at most 5 bytes");
+
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for value {}", value);
+            assert!(remainder.is_empty());
+        }
+    }
+
+    /// Tests known 5-byte encoding from upstream.
+    #[test]
+    fn known_5byte_encoding() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(1_073_741_824, &mut encoded);
+        // Verify against known upstream encoding
+        assert_eq!(encoded, vec![0xF0, 0x00, 0x00, 0x00, 0x40]);
+
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, 1_073_741_824);
+    }
+
+    /// Tests negative values (require 5 bytes due to sign extension).
+    #[test]
+    fn negative_values_require_5_bytes() {
+        let negatives = [-1, -128, -129, -32768, i32::MIN];
+        for value in negatives {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            // Negative values always need 5 bytes due to sign bits
+            assert_eq!(
+                encoded.len(), 5,
+                "negative value {} should encode to 5 bytes, got {}",
+                value, encoded.len()
+            );
+
+            let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value);
+        }
+    }
+
+    /// Tests known negative value encodings from upstream.
+    #[test]
+    fn known_negative_encodings() {
+        let cases = [
+            (-1, vec![0xF0, 0xFF, 0xFF, 0xFF, 0xFF]),
+            (-128, vec![0xF0, 0x80, 0xFF, 0xFF, 0xFF]),
+            (-129, vec![0xF0, 0x7F, 0xFF, 0xFF, 0xFF]),
+            (-32768, vec![0xF0, 0x00, 0x80, 0xFF, 0xFF]),
+        ];
+        for (value, expected) in cases {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            assert_eq!(
+                encoded, expected,
+                "value {} encoded as {:02X?}, expected {:02X?}",
+                value, encoded, expected
+            );
+        }
+    }
+
+    /// Tests i32::MAX boundary.
+    #[test]
+    fn boundary_i32_max() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(i32::MAX, &mut encoded);
+        assert_eq!(encoded.len(), 5);
+
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, i32::MAX);
+    }
+
+    /// Tests i32::MIN boundary.
+    #[test]
+    fn boundary_i32_min() {
+        let mut encoded = Vec::new();
+        encode_varint_to_vec(i32::MIN, &mut encoded);
+        assert_eq!(encoded.len(), 5);
+
+        let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+        assert_eq!(decoded, i32::MIN);
+    }
+
+    /// Tests INT_BYTE_EXTRA table for extended encodings.
+    #[test]
+    fn int_byte_extra_for_extended_encodings() {
+        // 0xC0-0xDF (192-223) / 4 -> indices 48-55: 2 extra bytes
+        for first_byte in 0xC0u8..=0xDF {
+            let extra = INT_BYTE_EXTRA[(first_byte / 4) as usize];
+            assert_eq!(extra, 2, "byte 0x{:02X} should have 2 extra bytes", first_byte);
+        }
+
+        // 0xE0-0xEF (224-239) / 4 -> indices 56-59: 3 extra bytes
+        for first_byte in 0xE0u8..=0xEF {
+            let extra = INT_BYTE_EXTRA[(first_byte / 4) as usize];
+            assert_eq!(extra, 3, "byte 0x{:02X} should have 3 extra bytes", first_byte);
+        }
+
+        // 0xF0-0xF7 (240-247) / 4 -> indices 60-61: 4 extra bytes
+        for first_byte in 0xF0u8..=0xF7 {
+            let extra = INT_BYTE_EXTRA[(first_byte / 4) as usize];
+            assert_eq!(extra, 4, "byte 0x{:02X} should have 4 extra bytes", first_byte);
+        }
+    }
+
+    /// Tests truncated extended encoding input.
+    #[test]
+    fn truncated_extended_encodings_fail() {
+        // 3-byte truncated (need 2 extra, only have 1)
+        let err = decode_varint(&[0xC0, 0x00]).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+
+        // 4-byte truncated (need 3 extra, only have 2)
+        let err = decode_varint(&[0xE0, 0x00, 0x00]).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+
+        // 5-byte truncated (need 4 extra, only have 3)
+        let err = decode_varint(&[0xF0, 0x00, 0x00, 0x00]).expect_err("truncated must fail");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    /// Tests overflow tag bytes (0xF8-0xFF indicate >4 extra bytes).
+    #[test]
+    fn overflow_tag_bytes_are_rejected() {
+        // 0xF8-0xFB indicate 5 extra bytes (overflow for i32)
+        let err = decode_varint(&[0xF8, 0, 0, 0, 0, 0]).expect_err("overflow must fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("overflow"));
+
+        // 0xFC-0xFF indicate 6 extra bytes (overflow for i32)
+        let err = decode_varint(&[0xFC, 0, 0, 0, 0, 0, 0]).expect_err("overflow must fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// Tests stream round-trip for extended values.
+    #[test]
+    fn stream_roundtrip_extended_values() {
+        let values = [16384, 100000, 1000000, i32::MAX, -1, -1000, i32::MIN];
+        for value in values {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, value).expect("write succeeds");
+
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            assert_eq!(decoded, value, "stream round-trip failed for {}", value);
+            assert_eq!(cursor.position() as usize, buf.len());
+        }
+    }
+
+    /// Tests multiple extended values in sequence.
+    #[test]
+    fn multiple_extended_values_in_sequence() {
+        let values = [16384, -1, 1000000, i32::MAX, i32::MIN, 100000];
+        let mut encoded = Vec::new();
+        for &v in &values {
+            encode_varint_to_vec(v, &mut encoded);
+        }
+
+        let mut remaining = encoded.as_slice();
+        for &expected in &values {
+            let (decoded, rest) = decode_varint(remaining).expect("decode succeeds");
+            assert_eq!(decoded, expected);
+            remaining = rest;
+        }
+        assert!(remaining.is_empty());
+    }
+
+    /// Tests powers of two in extended range.
+    #[test]
+    fn powers_of_two_extended() {
+        for shift in 14..31 {
+            let value: i32 = 1 << shift;
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+
+            let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for 2^{}", shift);
+        }
+    }
+}
+
+// ===========================================================================
 // PROPERTY-BASED TESTS
 // ===========================================================================
 

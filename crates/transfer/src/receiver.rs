@@ -565,7 +565,13 @@ impl ReceiverContext {
         // Use NdxCodec Strategy pattern for protocol-version-aware NDX encoding.
         // The codec handles both legacy (4-byte LE) and modern (delta) formats,
         // and maintains its own prev_positive state for delta encoding.
+        //
+        // We need separate codecs for write and read because:
+        // 1. The receiver writes NDX to request files from sender
+        // 2. The sender writes NDX back to confirm which file it's sending
+        // Each side maintains its own delta encoding state independently.
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
         for (file_idx, file_entry) in self.file_list.iter().enumerate() {
             let relative_path = file_entry.path();
@@ -642,8 +648,17 @@ impl ReceiverContext {
             writer.flush()?;
 
             // Step 4: Read sender attributes using SenderAttrs helper
-            // The sender echoes back: ndx, iflags, and optional fields
-            let _sender_attrs = SenderAttrs::read(reader, self.protocol.as_u8())?;
+            // The sender echoes back: ndx, iflags, and optional fields.
+            // Uses NdxCodec to properly decode variable-length NDX for protocol 30+.
+            let (echoed_ndx, _sender_attrs) =
+                SenderAttrs::read_with_codec(reader, &mut ndx_read_codec)?;
+
+            // Verify the sender echoed back the correct file index
+            debug_assert_eq!(
+                echoed_ndx, ndx,
+                "sender echoed NDX {} but we requested {}",
+                echoed_ndx, ndx
+            );
 
             // Read sum_head echoed by sender (we don't use it, but must consume it)
             let _echoed_sum_head = SumHead::read(reader)?;
@@ -1024,20 +1039,36 @@ impl SenderAttrs {
     /// Item flag indicating alternate name follows.
     pub const ITEM_XNAME_FOLLOWS: u16 = 1 << 12; // 0x1000
 
-    /// Reads sender attributes from the wire.
+    /// Reads sender attributes from the wire using an NDX codec.
     ///
-    /// For protocol >= 29, reads iflags and optional trailing fields.
-    /// For older protocols, returns default ITEM_TRANSFER flags.
-    pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
-        // Read initial NDX byte (we already know the NDX, just consume it)
-        let mut ndx_byte = [0u8; 1];
-        let n = reader.read(&mut ndx_byte)?;
-        if n != 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "failed to read NDX byte from sender",
-            ));
-        }
+    /// The sender echoes back NDX + iflags after receiving a file request.
+    /// Protocol 30+ uses variable-length delta-encoded NDX values, which
+    /// require the codec to maintain state across calls.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The input stream to read from
+    /// * `ndx_codec` - The NDX codec for protocol-aware decoding (must match sender's state)
+    ///
+    /// # Protocol Details
+    ///
+    /// - Protocol >= 30: Uses delta-encoded NDX (1-5 bytes depending on value)
+    /// - Protocol < 30: Uses 4-byte little-endian NDX
+    /// - Protocol >= 29: Reads 2-byte iflags after NDX
+    /// - Protocol < 29: Uses default ITEM_TRANSFER flags
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:2289-2318` - `read_ndx()` for NDX decoding
+    /// - `rsync.c:383` - `read_ndx_and_attrs()` reads NDX + iflags
+    pub fn read_with_codec<R: Read>(
+        reader: &mut R,
+        ndx_codec: &mut impl NdxCodec,
+    ) -> io::Result<(i32, Self)> {
+        // Read NDX using protocol-aware codec (handles delta encoding for protocol 30+)
+        let ndx = ndx_codec.read_ndx(reader)?;
+
+        let protocol_version = ndx_codec.protocol_version();
 
         // For protocol >= 29, read iflags (shortint = 2 bytes LE)
         let iflags = if protocol_version >= 29 {
@@ -1070,6 +1101,85 @@ impl SenderAttrs {
                 len_byte[0] as usize
             };
             // Upstream MAXPATHLEN is typically 4096; reject excessively long names
+            const MAX_XNAME_LEN: usize = 4096;
+            if xname_len > MAX_XNAME_LEN {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("xname length {xname_len} exceeds maximum {MAX_XNAME_LEN}"),
+                ));
+            }
+            if xname_len > 0 {
+                let mut xname_buf = vec![0u8; xname_len];
+                reader.read_exact(&mut xname_buf)?;
+                Some(xname_buf)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok((
+            ndx,
+            Self {
+                iflags,
+                fnamecmp_type,
+                xname,
+            },
+        ))
+    }
+
+    /// Reads sender attributes from the wire (legacy method for tests).
+    ///
+    /// **Deprecated**: Use [`read_with_codec`] for proper protocol 30+ support.
+    /// This method only reads a single byte for NDX, which is incorrect for
+    /// protocol 30+ that uses variable-length delta encoding.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The input stream to read from
+    /// * `protocol_version` - The negotiated protocol version
+    #[cfg(test)]
+    pub fn read<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<Self> {
+        // Legacy implementation: read single byte for NDX (only valid for tests
+        // with protocol < 30 or first NDX where delta=1 fits in one byte)
+        let mut ndx_byte = [0u8; 1];
+        let n = reader.read(&mut ndx_byte)?;
+        if n != 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "failed to read NDX byte from sender",
+            ));
+        }
+
+        // For protocol >= 29, read iflags (shortint = 2 bytes LE)
+        let iflags = if protocol_version >= 29 {
+            let mut iflags_buf = [0u8; 2];
+            reader.read_exact(&mut iflags_buf)?;
+            u16::from_le_bytes(iflags_buf)
+        } else {
+            Self::ITEM_TRANSFER // Default for older protocols
+        };
+
+        // Read optional fields based on iflags
+        let fnamecmp_type = if iflags & Self::ITEM_BASIS_TYPE_FOLLOWS != 0 {
+            let mut byte = [0u8; 1];
+            reader.read_exact(&mut byte)?;
+            Some(byte[0])
+        } else {
+            None
+        };
+
+        let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
+            let mut len_byte = [0u8; 1];
+            reader.read_exact(&mut len_byte)?;
+            let xname_len = if len_byte[0] & 0x80 != 0 {
+                let mut second_byte = [0u8; 1];
+                reader.read_exact(&mut second_byte)?;
+                ((len_byte[0] & 0x7F) as usize) * 256 + second_byte[0] as usize
+            } else {
+                len_byte[0] as usize
+            };
             const MAX_XNAME_LEN: usize = 4096;
             if xname_len > MAX_XNAME_LEN {
                 return Err(io::Error::new(
@@ -2007,6 +2117,109 @@ mod tests {
         assert_eq!(SenderAttrs::ITEM_TRANSFER, 0x8000);
         assert_eq!(SenderAttrs::ITEM_BASIS_TYPE_FOLLOWS, 0x0800);
         assert_eq!(SenderAttrs::ITEM_XNAME_FOLLOWS, 0x1000);
+    }
+
+    #[test]
+    fn sender_attrs_read_with_codec_protocol_30_delta_encoded() {
+        use protocol::codec::{NdxCodec, create_ndx_codec};
+
+        // Simulate sender encoding NDX 0 for protocol 30+
+        // With prev_positive=-1, ndx=0, diff=1, encoded as single byte 0x01
+        let mut sender_codec = create_ndx_codec(31);
+        let mut wire_data = Vec::new();
+        sender_codec.write_ndx(&mut wire_data, 0).unwrap();
+        // Add iflags (ITEM_TRANSFER = 0x8000)
+        wire_data.extend_from_slice(&0x8000u16.to_le_bytes());
+
+        // Receiver reads with its own codec
+        let mut receiver_codec = create_ndx_codec(31);
+        let mut cursor = Cursor::new(&wire_data);
+        let (ndx, attrs) = SenderAttrs::read_with_codec(&mut cursor, &mut receiver_codec).unwrap();
+
+        assert_eq!(ndx, 0);
+        assert_eq!(attrs.iflags, 0x8000);
+    }
+
+    #[test]
+    fn sender_attrs_read_with_codec_protocol_30_sequential_indices() {
+        use protocol::codec::{NdxCodec, create_ndx_codec};
+
+        // Simulate sender sending sequential indices 0, 1, 2
+        let mut sender_codec = create_ndx_codec(31);
+        let mut wire_data = Vec::new();
+        for ndx in 0..3 {
+            sender_codec.write_ndx(&mut wire_data, ndx).unwrap();
+            wire_data.extend_from_slice(&0x8000u16.to_le_bytes());
+        }
+
+        // Receiver reads all three
+        let mut receiver_codec = create_ndx_codec(31);
+        let mut cursor = Cursor::new(&wire_data);
+
+        for expected_ndx in 0..3 {
+            let (ndx, attrs) =
+                SenderAttrs::read_with_codec(&mut cursor, &mut receiver_codec).unwrap();
+            assert_eq!(ndx, expected_ndx, "expected NDX {expected_ndx}");
+            assert_eq!(attrs.iflags, 0x8000);
+        }
+    }
+
+    #[test]
+    fn sender_attrs_read_with_codec_legacy_protocol_29() {
+        use protocol::codec::{NdxCodec, create_ndx_codec};
+
+        // Protocol 29 uses 4-byte LE NDX
+        let mut sender_codec = create_ndx_codec(29);
+        let mut wire_data = Vec::new();
+        sender_codec.write_ndx(&mut wire_data, 42).unwrap();
+        // Add iflags
+        wire_data.extend_from_slice(&0x8000u16.to_le_bytes());
+
+        let mut receiver_codec = create_ndx_codec(29);
+        let mut cursor = Cursor::new(&wire_data);
+        let (ndx, attrs) = SenderAttrs::read_with_codec(&mut cursor, &mut receiver_codec).unwrap();
+
+        assert_eq!(ndx, 42);
+        assert_eq!(attrs.iflags, 0x8000);
+    }
+
+    #[test]
+    fn sender_attrs_read_with_codec_protocol_28_no_iflags() {
+        use protocol::codec::{NdxCodec, create_ndx_codec};
+
+        // Protocol 28: 4-byte LE NDX, no iflags
+        let mut sender_codec = create_ndx_codec(28);
+        let mut wire_data = Vec::new();
+        sender_codec.write_ndx(&mut wire_data, 5).unwrap();
+        // No iflags for protocol < 29
+
+        let mut receiver_codec = create_ndx_codec(28);
+        let mut cursor = Cursor::new(&wire_data);
+        let (ndx, attrs) = SenderAttrs::read_with_codec(&mut cursor, &mut receiver_codec).unwrap();
+
+        assert_eq!(ndx, 5);
+        // Default iflags for protocol < 29
+        assert_eq!(attrs.iflags, SenderAttrs::ITEM_TRANSFER);
+    }
+
+    #[test]
+    fn sender_attrs_read_with_codec_large_index() {
+        use protocol::codec::{NdxCodec, create_ndx_codec};
+
+        // Test with a large index that requires extended encoding in protocol 30+
+        let large_index = 50000;
+
+        let mut sender_codec = create_ndx_codec(31);
+        let mut wire_data = Vec::new();
+        sender_codec.write_ndx(&mut wire_data, large_index).unwrap();
+        wire_data.extend_from_slice(&0x8000u16.to_le_bytes());
+
+        let mut receiver_codec = create_ndx_codec(31);
+        let mut cursor = Cursor::new(&wire_data);
+        let (ndx, attrs) = SenderAttrs::read_with_codec(&mut cursor, &mut receiver_codec).unwrap();
+
+        assert_eq!(ndx, large_index);
+        assert_eq!(attrs.iflags, 0x8000);
     }
 
     // ============================================================================
