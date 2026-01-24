@@ -3,8 +3,6 @@
 //! Uses [`jwalk`] for ~4x faster directory walking compared to single-threaded
 //! walkdir, with sorted results matching upstream rsync's ordering.
 
-use std::cmp::Ordering;
-use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -221,35 +219,11 @@ impl DirectoryWalker for WalkdirWalker {
     }
 }
 
-/// Compares file names using platform-appropriate byte ordering.
-///
-/// # Platform Behavior
-///
-/// - **Unix**: Byte-wise comparison of the raw OS string bytes
-/// - **Windows**: UTF-16 wide character comparison
-/// - **Other**: Lossy UTF-8 string comparison
-#[allow(dead_code)]
-fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        left.as_bytes().cmp(right.as_bytes())
-    }
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        left.encode_wide().cmp(right.encode_wide())
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        left.to_string_lossy().cmp(&right.to_string_lossy())
-    }
-}
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+
     use super::*;
     use tempfile::TempDir;
 
@@ -366,21 +340,6 @@ mod tests {
         assert!(results[0].is_err());
     }
 
-    #[test]
-    fn compare_file_names_ordering() {
-        assert_eq!(
-            compare_file_names(OsStr::new("a"), OsStr::new("b")),
-            Ordering::Less
-        );
-        assert_eq!(
-            compare_file_names(OsStr::new("b"), OsStr::new("a")),
-            Ordering::Greater
-        );
-        assert_eq!(
-            compare_file_names(OsStr::new("a"), OsStr::new("a")),
-            Ordering::Equal
-        );
-    }
 
     #[cfg(unix)]
     #[test]
