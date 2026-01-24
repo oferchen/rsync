@@ -75,21 +75,9 @@ impl Dispatcher {
 
         match self.backend {
             #[cfg(target_arch = "x86_64")]
-            Backend::Avx512 => {
-                // AVX-512 falls back to scalar for now (requires nightly)
-                inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
-            }
-            #[cfg(target_arch = "x86_64")]
             Backend::Avx2 => self.digest_batch_avx2(inputs),
-            #[cfg(target_arch = "aarch64")]
-            Backend::Neon => {
-                // NEON falls back to scalar for now
-                inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
-            }
-            #[allow(unreachable_patterns)]
-            Backend::Scalar | _ => {
-                inputs.iter().map(|i| scalar::digest(i.as_ref())).collect()
-            }
+            // AVX-512, NEON, and Scalar all fall back to sequential for now
+            _ => inputs.iter().map(|i| scalar::digest(i.as_ref())).collect(),
         }
     }
 
