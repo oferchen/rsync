@@ -211,6 +211,22 @@ impl StrongDigest for Md5 {
     }
 }
 
+/// Batch compute MD5 digests using SIMD when available.
+///
+/// This function computes MD5 digests for multiple inputs in parallel using
+/// SIMD instructions (AVX2/AVX-512/NEON) when the `md5-simd` feature is enabled.
+/// Falls back to sequential computation when SIMD is unavailable.
+#[cfg(feature = "md5-simd")]
+pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
+    md5_simd::digest_batch(inputs)
+}
+
+/// Batch compute MD5 digests (sequential fallback when SIMD unavailable).
+#[cfg(not(feature = "md5-simd"))]
+pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
+    inputs.iter().map(|i| Md5::digest(i.as_ref())).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,5 +375,28 @@ mod tests {
             to_hex(&unseeded),
             "Default seed should match unseeded hash"
         );
+    }
+
+    #[test]
+    fn md5_batch_matches_sequential() {
+        let inputs: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"abc",
+            b"message digest",
+            b"abcdefghijklmnopqrstuvwxyz",
+        ];
+
+        let batch_results = super::digest_batch(inputs);
+        let sequential_results: Vec<[u8; 16]> = inputs.iter().map(|i| Md5::digest(i)).collect();
+
+        assert_eq!(batch_results.len(), sequential_results.len());
+        for (i, (batch, seq)) in batch_results.iter().zip(sequential_results.iter()).enumerate() {
+            assert_eq!(
+                to_hex(batch),
+                to_hex(seq),
+                "Mismatch at index {i}"
+            );
+        }
     }
 }
