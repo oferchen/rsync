@@ -84,6 +84,7 @@ pub(crate) fn find_reference_action(
             checksum,
             checksum_algorithm: context.options().checksum_algorithm(),
             modify_window: context.options().modify_window(),
+            prefetched_match: None,
         }) {
             return Ok(Some(match reference.kind() {
                 ReferenceDirectoryKind::Compare => ReferenceDecision::Skip,
