@@ -73,7 +73,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
         .iter()
         .map(|input| {
             let len = input.len();
-            let individual_padded_len = ((len + 9 + 63) / 64) * 64;
+            let individual_padded_len = (len + 9).div_ceil(64) * 64;
             let mut buf = vec![0u8; individual_padded_len.max(64)];
             buf[..len].copy_from_slice(input);
             buf[len] = 0x80;
@@ -109,6 +109,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
 
         // Load message words (transposed: word i from all 8 inputs)
         let mut m = [_mm256_setzero_si256(); 16];
+        #[allow(clippy::needless_range_loop)]
         for word_idx in 0..16 {
             let word_offset = block_offset + word_idx * 4;
             let words: [i32; 8] = std::array::from_fn(|lane| {
@@ -217,11 +218,11 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
     _mm256_store_si256(c_out.0.as_mut_ptr() as *mut __m256i, c);
     _mm256_store_si256(d_out.0.as_mut_ptr() as *mut __m256i, d);
 
-    for lane in 0..8 {
-        results[lane][0..4].copy_from_slice(&(a_out.0[lane] as u32).to_le_bytes());
-        results[lane][4..8].copy_from_slice(&(b_out.0[lane] as u32).to_le_bytes());
-        results[lane][8..12].copy_from_slice(&(c_out.0[lane] as u32).to_le_bytes());
-        results[lane][12..16].copy_from_slice(&(d_out.0[lane] as u32).to_le_bytes());
+    for (lane, result) in results.iter_mut().enumerate() {
+        result[0..4].copy_from_slice(&(a_out.0[lane] as u32).to_le_bytes());
+        result[4..8].copy_from_slice(&(b_out.0[lane] as u32).to_le_bytes());
+        result[8..12].copy_from_slice(&(c_out.0[lane] as u32).to_le_bytes());
+        result[12..16].copy_from_slice(&(d_out.0[lane] as u32).to_le_bytes());
     }
 
     results
