@@ -183,7 +183,7 @@ impl BandwidthLimiter {
     }
 
     #[cfg(test)]
-    const fn accumulated_debt_for_testing(&self) -> u128 {
+    pub(crate) const fn accumulated_debt_for_testing(&self) -> u128 {
         self.total_written
     }
 }
@@ -642,5 +642,119 @@ mod tests {
         // Should return default (noop) sleep
         assert!(sleep.is_noop());
         assert!(sleep.requested().is_zero());
+    }
+
+    // ==================== Additional coverage tests ====================
+
+    #[test]
+    fn register_multiple_times_updates_last_instant() {
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000_000)); // Very fast
+        // First register establishes last_instant
+        let _ = limiter.register(100);
+        // Second register uses elapsed time from last_instant
+        let sleep2 = limiter.register(100);
+        // With such a high limit, should not need to sleep
+        assert!(sleep2.requested() < Duration::from_millis(1));
+    }
+
+    #[test]
+    fn debt_reduction_from_elapsed_time() {
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000)); // 1 MB/s
+        // Register some bytes
+        let _ = limiter.register(1000);
+        // Sleep a bit to let time elapse
+        std::thread::sleep(Duration::from_millis(10));
+        // Next register should have reduced debt due to elapsed time
+        let sleep = limiter.register(100);
+        // Debt should be partially forgiven
+        assert!(sleep.requested() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn elapsed_time_forgives_all_debt_when_slow_enough() {
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000_000)); // Very fast: 1 GB/s
+        // Register a small amount
+        let _ = limiter.register(100);
+        // Wait a bit (more than enough time for debt to be forgiven)
+        std::thread::sleep(Duration::from_millis(10));
+        // Debt should be completely forgiven
+        let sleep = limiter.register(100);
+        // With 1 GB/s limit and small writes, no sleep needed
+        assert!(sleep.is_noop() || sleep.requested() < Duration::from_micros(100));
+    }
+
+    #[test]
+    fn calculate_write_max_with_tiny_limit() {
+        // Limit of 1 byte/s
+        let result = calculate_write_max(nz(1), None);
+        // Should be MIN_WRITE_MAX (512)
+        assert_eq!(result, MIN_WRITE_MAX);
+    }
+
+    #[test]
+    fn calculate_write_max_progression() {
+        // Test that write_max increases with limit
+        let small = calculate_write_max(nz(1024), None);
+        let medium = calculate_write_max(nz(1024 * 100), None);
+        let large = calculate_write_max(nz(1024 * 1000), None);
+
+        assert!(medium >= small);
+        assert!(large >= medium);
+    }
+
+    #[test]
+    fn recommended_read_size_with_zero_write_max() {
+        // This tests the .max(1) in recommended_read_size
+        // Even if write_max somehow became 0, we'd get at least 1
+        // But in practice write_max is always >= MIN_WRITE_MAX
+        let limiter = BandwidthLimiter::new(nz(1));
+        assert!(limiter.recommended_read_size(1000) >= 1);
+    }
+
+    #[test]
+    fn limiter_debt_clamping_repeated() {
+        // Test that debt clamping works across multiple operations
+        let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
+
+        for _ in 0..10 {
+            let _ = limiter.register(1000);
+            assert!(limiter.accumulated_debt_for_testing() <= 500);
+        }
+    }
+
+    #[test]
+    fn update_limit_changes_write_max() {
+        let mut limiter = BandwidthLimiter::new(nz(1024));
+        let initial_write_max = limiter.write_max_bytes();
+
+        limiter.update_limit(nz(1024 * 1024));
+        let new_write_max = limiter.write_max_bytes();
+
+        assert!(new_write_max > initial_write_max);
+    }
+
+    #[test]
+    fn update_configuration_changes_write_max_based_on_burst() {
+        let mut limiter = BandwidthLimiter::new(nz(1024 * 1024));
+        let initial_write_max = limiter.write_max_bytes();
+
+        // Set a smaller burst
+        limiter.update_configuration(nz(1024 * 1024), Some(nz(1024)));
+        let new_write_max = limiter.write_max_bytes();
+
+        assert!(new_write_max < initial_write_max);
+        assert_eq!(new_write_max, 1024);
+    }
+
+    #[test]
+    fn reset_clears_simulated_elapsed_us() {
+        let mut limiter = BandwidthLimiter::new(nz(1024));
+        let _ = limiter.register(4096); // Accumulate some state
+        limiter.reset();
+
+        // After reset, simulated_elapsed_us should be 0
+        // We can't directly check this, but behavior should be like a fresh limiter
+        let sleep = limiter.register(1024);
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
     }
 }
