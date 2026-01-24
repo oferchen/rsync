@@ -252,6 +252,7 @@ impl<'a> CopyContext<'a> {
                 checksum,
                 checksum_algorithm: self.options.checksum_algorithm(),
                 modify_window: self.options.modify_window(),
+                prefetched_match: None,
             }) {
                 return Ok(Some(candidate));
             }
