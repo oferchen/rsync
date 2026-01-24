@@ -23,3 +23,6 @@ mod test_support;
 pub(super) use self::test_support::append_recorded_sleeps;
 #[cfg(any(test, feature = "test-support"))]
 pub use self::test_support::{RecordedSleepIter, RecordedSleepSession, recorded_sleep_session};
+
+#[cfg(test)]
+mod tests;
