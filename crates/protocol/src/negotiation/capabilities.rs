@@ -1153,4 +1153,503 @@ mod tests {
         assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
         assert!(!stdout.is_empty()); // Should have sent our lists
     }
+
+    // ========================================================================
+    // PHASE 2.10: VSTRING 1-BYTE LENGTH FORMAT TESTS
+    // ========================================================================
+    //
+    // The vstring format uses a simple length-prefixed encoding:
+    // - For lengths 0-127: single byte = length (high bit clear)
+    // - For lengths 128-32767: two bytes = [(len >> 8) | 0x80, len & 0xFF]
+    //
+    // These tests verify the 1-byte length format for strings up to 127 bytes.
+
+    /// Tests that empty string uses 1-byte length format.
+    #[test]
+    fn phase2_10_vstring_1byte_empty_string() {
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, "").unwrap();
+
+        // Should be: 1 length byte (0x00) + 0 data bytes = 1 byte total
+        assert_eq!(buffer.len(), 1);
+        assert_eq!(buffer[0], 0x00);
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, "");
+    }
+
+    /// Tests that single-character string uses 1-byte length format.
+    #[test]
+    fn phase2_10_vstring_1byte_single_char() {
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, "x").unwrap();
+
+        // Should be: 1 length byte (0x01) + 1 data byte = 2 bytes total
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(buffer[0], 0x01);
+        assert_eq!(buffer[1], b'x');
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, "x");
+    }
+
+    /// Tests all 1-byte length values (0-127).
+    #[test]
+    fn phase2_10_vstring_1byte_all_lengths() {
+        for len in 0..=127usize {
+            let test_str = "a".repeat(len);
+            let mut buffer = Vec::new();
+            write_vstring(&mut buffer, &test_str).unwrap();
+
+            // Should use 1-byte length format
+            assert_eq!(buffer[0], len as u8, "length {} should encode as single byte", len);
+            assert_eq!(buffer.len(), 1 + len, "total size should be 1 + {}", len);
+            // High bit should be clear
+            assert!(buffer[0] & 0x80 == 0, "high bit should be clear for length {}", len);
+
+            let mut reader = &buffer[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, test_str, "round-trip failed for length {}", len);
+        }
+    }
+
+    /// Tests boundary at 127 (maximum 1-byte length).
+    #[test]
+    fn phase2_10_vstring_1byte_boundary_127() {
+        let test_str = "b".repeat(127);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // Should use single-byte format: 0x7F
+        assert_eq!(buffer[0], 0x7F);
+        assert!(buffer[0] & 0x80 == 0, "high bit should be clear");
+        assert_eq!(buffer.len(), 128); // 1 + 127
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests that raw 1-byte length sequences decode correctly.
+    #[test]
+    fn phase2_10_vstring_1byte_decode_raw() {
+        // Test decoding raw bytes: length byte + content
+        for len in 0u8..=127 {
+            let mut data = vec![len];
+            data.extend(std::iter::repeat(b'x').take(len as usize));
+
+            let mut reader = &data[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received.len(), len as usize);
+            assert!(received.chars().all(|c| c == 'x'));
+        }
+    }
+
+    /// Tests typical algorithm names (all use 1-byte format).
+    #[test]
+    fn phase2_10_vstring_1byte_algorithm_names() {
+        let names = ["md4", "md5", "sha1", "xxh64", "xxh128", "zlib", "zlibx", "zstd", "lz4", "none"];
+        for name in names {
+            assert!(name.len() <= 127, "algorithm name should fit in 1-byte format");
+
+            let mut buffer = Vec::new();
+            write_vstring(&mut buffer, name).unwrap();
+
+            // Verify 1-byte format
+            assert_eq!(buffer[0], name.len() as u8);
+            assert!(buffer[0] & 0x80 == 0);
+
+            let mut reader = &buffer[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, name);
+        }
+    }
+
+    /// Tests typical space-separated algorithm lists (1-byte format).
+    #[test]
+    fn phase2_10_vstring_1byte_algorithm_lists() {
+        let lists = [
+            "md5 md4 sha1",
+            "xxh128 xxh3 xxh64 md5 md4 sha1 none",
+            "zstd lz4 zlibx zlib none",
+        ];
+        for list in lists {
+            assert!(list.len() <= 127, "list should fit in 1-byte format");
+
+            let mut buffer = Vec::new();
+            write_vstring(&mut buffer, list).unwrap();
+
+            // Verify 1-byte format
+            assert_eq!(buffer[0], list.len() as u8);
+            assert!(buffer[0] & 0x80 == 0);
+
+            let mut reader = &buffer[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, list);
+        }
+    }
+
+    // ========================================================================
+    // PHASE 2.11: VSTRING 2-BYTE LENGTH FORMAT TESTS
+    // ========================================================================
+    //
+    // For lengths 128-32767, vstring uses a 2-byte length format:
+    // - First byte: (len >> 8) | 0x80 (high bit indicates 2-byte format)
+    // - Second byte: len & 0xFF
+    //
+    // This allows encoding strings up to 32767 bytes.
+
+    /// Tests boundary at 128 (minimum 2-byte length).
+    #[test]
+    fn phase2_11_vstring_2byte_boundary_128() {
+        let test_str = "c".repeat(128);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // Should use 2-byte format: [0x80, 0x80] for length 128
+        // 128 = 0x0080, so high byte = 0x00 | 0x80 = 0x80, low byte = 0x80
+        assert_eq!(buffer[0], 0x80);
+        assert_eq!(buffer[1], 0x80);
+        assert!(buffer[0] & 0x80 != 0, "high bit should be set for 2-byte format");
+        assert_eq!(buffer.len(), 2 + 128); // 2 length bytes + 128 data bytes
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests value 200 (clear case of 2-byte format).
+    #[test]
+    fn phase2_11_vstring_2byte_length_200() {
+        let test_str = "d".repeat(200);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // 200 = 0x00C8, so high byte = 0x00 | 0x80 = 0x80, low byte = 0xC8
+        assert_eq!(buffer[0], 0x80);
+        assert_eq!(buffer[1], 0xC8);
+        assert_eq!(buffer.len(), 2 + 200);
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests value 255 (boundary within first 256-byte range).
+    #[test]
+    fn phase2_11_vstring_2byte_length_255() {
+        let test_str = "e".repeat(255);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // 255 = 0x00FF, so high byte = 0x00 | 0x80 = 0x80, low byte = 0xFF
+        assert_eq!(buffer[0], 0x80);
+        assert_eq!(buffer[1], 0xFF);
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests value 256 (crosses into second high byte).
+    #[test]
+    fn phase2_11_vstring_2byte_length_256() {
+        let test_str = "f".repeat(256);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // 256 = 0x0100, so high byte = 0x01 | 0x80 = 0x81, low byte = 0x00
+        assert_eq!(buffer[0], 0x81);
+        assert_eq!(buffer[1], 0x00);
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests sample values across the 2-byte range.
+    #[test]
+    fn phase2_11_vstring_2byte_sample_values() {
+        let lengths = [128, 200, 255, 256, 500, 1000, 2000, 4000, 8000];
+        for len in lengths {
+            let test_str = "g".repeat(len);
+            let mut buffer = Vec::new();
+            write_vstring(&mut buffer, &test_str).unwrap();
+
+            // Verify 2-byte format
+            assert!(buffer[0] & 0x80 != 0, "high bit should be set for length {}", len);
+
+            // Verify encoding: len = ((buffer[0] & 0x7F) << 8) | buffer[1]
+            let decoded_len = ((buffer[0] & 0x7F) as usize) * 256 + buffer[1] as usize;
+            assert_eq!(decoded_len, len, "length encoding mismatch for {}", len);
+
+            let mut reader = &buffer[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, test_str, "round-trip failed for length {}", len);
+        }
+    }
+
+    /// Tests decoding raw 2-byte length sequences.
+    #[test]
+    fn phase2_11_vstring_2byte_decode_raw() {
+        // Test specific 2-byte encoded lengths
+        let cases = [
+            (128, 0x80u8, 0x80u8),   // 128 = 0x0080
+            (200, 0x80, 0xC8),       // 200 = 0x00C8
+            (256, 0x81, 0x00),       // 256 = 0x0100
+            (1000, 0x83, 0xE8),      // 1000 = 0x03E8
+            (8000, 0x9F, 0x40),      // 8000 = 0x1F40
+        ];
+
+        for (len, high, low) in cases {
+            let mut data = vec![high, low];
+            data.extend(std::iter::repeat(b'x').take(len));
+
+            let mut reader = &data[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received.len(), len, "decode failed for length {}", len);
+        }
+    }
+
+    /// Tests truncated 2-byte length (only high byte present).
+    #[test]
+    fn phase2_11_vstring_2byte_truncated_length() {
+        // Only the high byte, missing the low byte
+        let data = [0x80u8];
+        let mut reader = &data[..];
+        let result = read_vstring(&mut reader);
+        assert!(result.is_err(), "should fail on truncated 2-byte length");
+    }
+
+    /// Tests truncated 2-byte vstring (length present but data truncated).
+    #[test]
+    fn phase2_11_vstring_2byte_truncated_data() {
+        // Length says 200 bytes, but only 50 provided
+        let mut data = vec![0x80, 0xC8]; // Length 200
+        data.extend(std::iter::repeat(b'x').take(50)); // Only 50 bytes
+
+        let mut reader = &data[..];
+        let result = read_vstring(&mut reader);
+        assert!(result.is_err(), "should fail on truncated data");
+    }
+
+    /// Tests multiple 2-byte vstrings in sequence.
+    #[test]
+    fn phase2_11_vstring_2byte_multiple_in_sequence() {
+        let strings = ["h".repeat(128), "i".repeat(200), "j".repeat(500)];
+        let mut buffer = Vec::new();
+
+        for s in &strings {
+            write_vstring(&mut buffer, s).unwrap();
+        }
+
+        let mut reader = &buffer[..];
+        for expected in &strings {
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, *expected);
+        }
+    }
+
+    // ========================================================================
+    // PHASE 2.12: VSTRING MAXIMUM LENGTH HANDLING TESTS
+    // ========================================================================
+    //
+    // The vstring format has limits:
+    // - Maximum encodable length: 0x7FFF (32767 bytes)
+    // - Sanity limit in read_vstring: 8192 bytes
+    // - Upstream MAX_NSTR_STRLEN: 1024 bytes
+    //
+    // These tests verify boundary conditions and error handling.
+
+    /// Tests maximum encodable length (0x7FFF = 32767).
+    #[test]
+    fn phase2_12_vstring_max_encodable_length() {
+        let test_str = "k".repeat(0x7FFF);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // 0x7FFF encoded as [0xFF, 0xFF] (7F | 80 = FF, FF)
+        assert_eq!(buffer[0], 0xFF);
+        assert_eq!(buffer[1], 0xFF);
+
+        // Verify round-trip (note: exceeds sanity limit, so read will fail)
+        // This test specifically verifies the ENCODING works for max length
+        assert_eq!(buffer.len(), 2 + 0x7FFF);
+    }
+
+    /// Tests that encoding length > 0x7FFF fails.
+    #[test]
+    fn phase2_12_vstring_exceeds_max_encodable() {
+        let test_str = "l".repeat(0x8000); // 32768 bytes
+        let mut buffer = Vec::new();
+        let result = write_vstring(&mut buffer, &test_str);
+
+        assert!(result.is_err(), "should reject strings > 0x7FFF bytes");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("vstring too long"));
+    }
+
+    /// Tests sanity limit in read_vstring (8192 bytes).
+    #[test]
+    fn phase2_12_vstring_sanity_limit_exceeded() {
+        // Encode a length of 10000 (exceeds 8192 sanity limit)
+        // 10000 = 0x2710, so high byte = 0x27 | 0x80 = 0xA7, low byte = 0x10
+        let data = [0xA7u8, 0x10];
+
+        let mut reader = &data[..];
+        let result = read_vstring(&mut reader);
+
+        assert!(result.is_err(), "should reject vstrings > 8192 bytes");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("vstring too long"));
+    }
+
+    /// Tests exactly at sanity limit (8192 bytes).
+    #[test]
+    fn phase2_12_vstring_at_sanity_limit() {
+        let test_str = "m".repeat(8192);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests just below sanity limit (8191 bytes).
+    #[test]
+    fn phase2_12_vstring_below_sanity_limit() {
+        let test_str = "n".repeat(8191);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests just above sanity limit (8193 bytes).
+    #[test]
+    fn phase2_12_vstring_above_sanity_limit() {
+        // Write succeeds (max is 0x7FFF)
+        let test_str = "o".repeat(8193);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        // Read fails (sanity limit is 8192)
+        let mut reader = &buffer[..];
+        let result = read_vstring(&mut reader);
+        assert!(result.is_err(), "should reject vstrings > 8192 bytes");
+    }
+
+    /// Tests typical upstream limit (1024 bytes, MAX_NSTR_STRLEN).
+    #[test]
+    fn phase2_12_vstring_upstream_typical_limit() {
+        // Upstream uses MAX_NSTR_STRLEN = 1024 for negotiation strings
+        let test_str = "p".repeat(1024);
+        let mut buffer = Vec::new();
+        write_vstring(&mut buffer, &test_str).unwrap();
+
+        let mut reader = &buffer[..];
+        let received = read_vstring(&mut reader).unwrap();
+        assert_eq!(received, test_str);
+    }
+
+    /// Tests empty input (EOF) handling.
+    #[test]
+    fn phase2_12_vstring_empty_input() {
+        let data: [u8; 0] = [];
+        let mut reader = &data[..];
+        let result = read_vstring(&mut reader);
+
+        assert!(result.is_err(), "should fail on empty input");
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    /// Tests UTF-8 validation (algorithm names are ASCII but we validate).
+    #[test]
+    fn phase2_12_vstring_invalid_utf8() {
+        // Create a vstring with invalid UTF-8 bytes
+        let mut data = vec![0x03]; // Length 3
+        data.extend([0xFF, 0xFE, 0x80]); // Invalid UTF-8 sequence
+
+        let mut reader = &data[..];
+        let result = read_vstring(&mut reader);
+
+        assert!(result.is_err(), "should reject invalid UTF-8");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("UTF-8"));
+    }
+
+    /// Tests various boundary values around encoding transitions.
+    #[test]
+    fn phase2_12_vstring_encoding_transitions() {
+        let boundaries = [
+            0,     // Minimum
+            1,     // Single char
+            127,   // Max 1-byte
+            128,   // Min 2-byte
+            255,   // 0x00FF
+            256,   // 0x0100
+            1023,  // Just under upstream limit
+            1024,  // Upstream limit
+            4096,  // 4KB
+            8191,  // Just under sanity limit
+            8192,  // At sanity limit
+        ];
+
+        for len in boundaries {
+            let test_str = "q".repeat(len);
+            let mut buffer = Vec::new();
+            write_vstring(&mut buffer, &test_str).unwrap();
+
+            let mut reader = &buffer[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received.len(), len, "round-trip failed for length {}", len);
+        }
+    }
+
+    /// Tests that write_vstring properly handles boundary between 1 and 2 byte formats.
+    #[test]
+    fn phase2_12_vstring_format_boundary_exact() {
+        // 127 bytes should use 1-byte format
+        let s127 = "r".repeat(127);
+        let mut buf127 = Vec::new();
+        write_vstring(&mut buf127, &s127).unwrap();
+        assert!(buf127[0] & 0x80 == 0, "127 should use 1-byte format");
+
+        // 128 bytes should use 2-byte format
+        let s128 = "s".repeat(128);
+        let mut buf128 = Vec::new();
+        write_vstring(&mut buf128, &s128).unwrap();
+        assert!(buf128[0] & 0x80 != 0, "128 should use 2-byte format");
+    }
+
+    /// Tests maximum practical negotiation string from upstream.
+    #[test]
+    fn phase2_12_vstring_realistic_max_negotiation() {
+        // Realistic maximum: all supported checksums + compressions
+        // "xxh128 xxh3 xxh64 md5 md4 sha1 none" = 37 chars
+        // "zstd lz4 zlibx zlib none" = 24 chars
+        // Well under both limits
+        let checksum_list = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
+        let compression_list = "zstd lz4 zlibx zlib none";
+
+        for list in [checksum_list, compression_list] {
+            let mut buffer = Vec::new();
+            write_vstring(&mut buffer, list).unwrap();
+
+            // All realistic lists should fit in 1-byte format
+            assert!(buffer[0] & 0x80 == 0, "realistic list should use 1-byte format");
+
+            let mut reader = &buffer[..];
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, list);
+        }
+    }
 }
