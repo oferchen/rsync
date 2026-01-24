@@ -78,6 +78,7 @@ members = [
     "crates/windows-gnu-eh",
     "xtask",
     "crates/apple-fs",
+    "crates/md5-simd",
 ]
 exclude = [
     "crates/protocol/fuzz",
