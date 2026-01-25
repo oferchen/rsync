@@ -94,6 +94,7 @@ pub struct RequestConfig<'a> {
 /// - `generator.c:recv_generator()` sends NDX, iflags, sum_head
 /// - `match.c:write_sum_head()` sends signature header
 /// - `match.c:395` sends signature blocks
+#[allow(clippy::too_many_arguments)]
 pub fn send_file_request<W: Write + ?Sized>(
     writer: &mut W,
     ndx_codec: &mut impl NdxCodec,
