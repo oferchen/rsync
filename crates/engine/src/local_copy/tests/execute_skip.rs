@@ -506,3 +506,370 @@ fn execute_with_checksum_skips_matching_directory_contents() {
         b"brand new file"
     );
 }
+
+// ==================== Size Comparison Edge Cases ====================
+
+#[test]
+fn execute_with_size_only_copies_different_size_files() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"longer content").expect("write source");
+    fs::write(&destination, b"short").expect("write dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"longer content");
+}
+
+#[test]
+fn execute_with_size_only_handles_empty_vs_nonempty() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"non-empty").expect("write source");
+    fs::write(&destination, b"").expect("write empty dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().size_only(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"non-empty");
+}
+
+// ==================== Update Mode Edge Cases ====================
+
+#[test]
+fn execute_with_update_copies_when_destination_older() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"updated").expect("write source");
+    fs::write(&destination, b"stale").expect("write dest");
+
+    let older = FileTime::from_unix_time(1_700_000_000, 0);
+    let newer = FileTime::from_unix_time(1_700_000_100, 0);
+    set_file_times(&source, newer, newer).expect("set source times");
+    set_file_times(&destination, older, older).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().update(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"updated");
+}
+
+#[test]
+fn execute_with_update_copies_when_destination_missing() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"new file").expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().update(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"new file");
+}
+
+// ==================== Ignore Existing Edge Cases ====================
+
+#[test]
+fn execute_with_ignore_existing_creates_new_destination() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"new content").expect("write source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().ignore_existing(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"new content");
+}
+
+// ==================== Min/Max Size Combined Tests ====================
+
+#[test]
+fn execute_with_min_max_size_filters_correctly() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    fs::write(source_root.join("tiny.txt"), b"ab").expect("write tiny");
+    fs::write(source_root.join("small.txt"), b"1234567890").expect("write small");
+    fs::write(source_root.join("medium.txt"), vec![0u8; 100]).expect("write medium");
+    fs::write(source_root.join("large.txt"), vec![0u8; 500]).expect("write large");
+
+    let dest_root = temp.path().join("dest");
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .min_file_size(Some(5))
+                .max_file_size(Some(200)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 2);
+    assert!(!dest_root.join("tiny.txt").exists());
+    assert!(dest_root.join("small.txt").exists());
+    assert!(dest_root.join("medium.txt").exists());
+    assert!(!dest_root.join("large.txt").exists());
+}
+
+// ==================== Checksum Edge Cases ====================
+
+#[test]
+fn execute_with_checksum_handles_empty_files() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"").expect("write empty source");
+    fs::write(&destination, b"").expect("write empty dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().checksum(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+}
+
+#[test]
+fn execute_with_checksum_copies_different_empty_and_nonempty() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    fs::write(&source, b"not empty").expect("write source");
+    fs::write(&destination, b"").expect("write empty dest");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().checksum(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&destination).expect("read"), b"not empty");
+}
+
+// ==================== Modify Window Tests ====================
+
+#[test]
+fn execute_skips_within_modify_window() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    let content = b"modify window test";
+    fs::write(&source, content).expect("write source");
+    fs::write(&destination, content).expect("write dest");
+
+    let base_time = FileTime::from_unix_time(1_700_000_000, 0);
+    let slightly_different = FileTime::from_unix_time(1_700_000_001, 0);
+    set_file_mtime(&source, base_time).expect("set source mtime");
+    set_file_mtime(&destination, slightly_different).expect("set dest mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .times(true)
+                .with_modify_window(Duration::from_secs(2)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
+}
+
+// ==================== Filter/Exclude Tests ====================
+
+#[test]
+fn execute_with_filter_excludes_matching_files() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    fs::write(source_root.join("keep.txt"), b"keep").expect("write keep");
+    fs::write(source_root.join("skip.bak"), b"skip").expect("write skip");
+    fs::write(source_root.join("also_keep.txt"), b"also").expect("write also_keep");
+
+    let dest_root = temp.path().join("dest");
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let program = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("*.bak"))])
+        .expect("compile filter");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().with_filter_program(Some(program)),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 2);
+    assert!(dest_root.join("keep.txt").exists());
+    assert!(dest_root.join("also_keep.txt").exists());
+    assert!(!dest_root.join("skip.bak").exists());
+}
+
+// ==================== Multiple Sources Skip Tests ====================
+
+#[test]
+fn execute_with_multiple_sources_and_ignore_existing() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    fs::write(source_root.join("new.txt"), b"new").expect("write new");
+    fs::write(source_root.join("exists.txt"), b"updated").expect("write exists");
+    fs::write(source_root.join("another_new.txt"), b"also new").expect("write another");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest");
+    fs::write(dest_root.join("exists.txt"), b"original").expect("write existing");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().ignore_existing(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 2);
+    assert_eq!(summary.regular_files_ignored_existing(), 1);
+    assert_eq!(fs::read(dest_root.join("new.txt")).expect("read"), b"new");
+    assert_eq!(fs::read(dest_root.join("another_new.txt")).expect("read"), b"also new");
+    assert_eq!(fs::read(dest_root.join("exists.txt")).expect("read"), b"original");
+}
+
+// ==================== Dry Run Skip Tests ====================
+
+#[test]
+fn execute_dry_run_reports_skipped_files_as_matched() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    let content = b"identical";
+    fs::write(&source, content).expect("write source");
+    fs::write(&destination, content).expect("write dest");
+
+    let mtime = FileTime::from_last_modification_time(&fs::metadata(&source).expect("meta"));
+    set_file_mtime(&destination, mtime).expect("align times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::DryRun,
+            LocalCopyOptions::default().times(true),
+        )
+        .expect("dry run succeeds");
+
+    // In dry run mode, identical files are counted and matched
+    assert_eq!(summary.regular_files_total(), 1);
+    // File content remains unchanged since it's dry run
+    assert_eq!(fs::read(&destination).expect("read"), content);
+}

@@ -441,6 +441,7 @@ pub fn decode_varint(bytes: &[u8]) -> io::Result<(i32, &[u8])> {
 }
 
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
@@ -1496,6 +1497,7 @@ mod tests {
 /// - Round-trip encoding/decoding preserves the value
 /// - Boundary values (0, 127) are handled correctly
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod phase2_7_varint_1byte_encoding {
     use super::*;
     use std::io::Cursor;
@@ -1533,12 +1535,7 @@ mod phase2_7_varint_1byte_encoding {
         for value in 0..=127_i32 {
             let mut encoded = Vec::new();
             encode_varint_to_vec(value, &mut encoded);
-            assert_eq!(
-                encoded.len(),
-                1,
-                "value {} should encode to 1 byte",
-                value
-            );
+            assert_eq!(encoded.len(), 1, "value {} should encode to 1 byte", value);
 
             let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
             assert_eq!(decoded, value, "round-trip failed for value {}", value);
@@ -1556,7 +1553,11 @@ mod phase2_7_varint_1byte_encoding {
 
             let mut cursor = Cursor::new(&buf);
             let decoded = read_varint(&mut cursor).expect("read succeeds");
-            assert_eq!(decoded, value, "stream round-trip failed for value {}", value);
+            assert_eq!(
+                decoded, value,
+                "stream round-trip failed for value {}",
+                value
+            );
             assert_eq!(cursor.position(), 1, "should have read exactly 1 byte");
         }
     }
@@ -1599,7 +1600,11 @@ mod phase2_7_varint_1byte_encoding {
         for byte in 0u8..=127 {
             let data = [byte];
             let (value, consumed) = decode_bytes(&data).expect("decode succeeds");
-            assert_eq!(value, byte as i32, "raw byte 0x{:02X} should decode to {}", byte, byte);
+            assert_eq!(
+                value, byte as i32,
+                "raw byte 0x{:02X} should decode to {}",
+                byte, byte
+            );
             assert_eq!(consumed, 1);
         }
     }
@@ -1626,7 +1631,11 @@ mod phase2_7_varint_1byte_encoding {
         for &v in &values {
             encode_varint_to_vec(v, &mut encoded);
         }
-        assert_eq!(encoded.len(), values.len(), "all values should be 1 byte each");
+        assert_eq!(
+            encoded.len(),
+            values.len(),
+            "all values should be 1 byte each"
+        );
 
         let mut cursor = Cursor::new(&encoded);
         for &expected in &values {
@@ -1650,6 +1659,7 @@ mod phase2_7_varint_1byte_encoding {
 /// - Round-trip encoding/decoding preserves values
 /// - Boundary values (128, 16383) are handled correctly
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod phase2_8_varint_2byte_encoding {
     use super::*;
     use std::io::Cursor;
@@ -1728,7 +1738,11 @@ mod phase2_8_varint_2byte_encoding {
 
             let mut cursor = Cursor::new(&buf);
             let decoded = read_varint(&mut cursor).expect("read succeeds");
-            assert_eq!(decoded, value, "stream round-trip failed for value {}", value);
+            assert_eq!(
+                decoded, value,
+                "stream round-trip failed for value {}",
+                value
+            );
             assert_eq!(cursor.position() as usize, buf.len());
         }
     }
@@ -1745,7 +1759,8 @@ mod phase2_8_varint_2byte_encoding {
         assert!(
             len_16384 > len_16383,
             "16384 ({} bytes) should require more bytes than 16383 ({} bytes)",
-            len_16384, len_16383
+            len_16384,
+            len_16383
         );
     }
 
@@ -1824,6 +1839,7 @@ mod phase2_8_varint_2byte_encoding {
 ///
 /// These tests verify extended encoding for large positive and negative values.
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod phase2_9_varint_extended_encoding {
     use super::*;
     use std::io::Cursor;
@@ -1845,13 +1861,9 @@ mod phase2_9_varint_extended_encoding {
     #[test]
     fn roundtrip_3byte_values() {
         let values = [
-            16384,    // Minimum 3-byte
-            20000,
-            50000,
-            100000,
-            500000,
-            1000000,
-            2097151,  // Maximum that might fit in 3 bytes
+            16384, // Minimum 3-byte
+            20000, 50000, 100000, 500000, 1000000,
+            2097151, // Maximum that might fit in 3 bytes
         ];
         for value in values {
             let mut encoded = Vec::new();
@@ -1867,9 +1879,9 @@ mod phase2_9_varint_extended_encoding {
     #[test]
     fn roundtrip_4byte_values() {
         let values = [
-            0x20_0000,      // 2097152
-            0x100_0000,     // 16777216
-            0x1000_0000,    // 268435456
+            0x20_0000,   // 2097152
+            0x100_0000,  // 16777216
+            0x1000_0000, // 268435456
         ];
         for value in values {
             let mut encoded = Vec::new();
@@ -1885,14 +1897,17 @@ mod phase2_9_varint_extended_encoding {
     #[test]
     fn roundtrip_5byte_values() {
         let values = [
-            0x1000_0000_i32,  // 268435456
-            0x4000_0000_i32,  // 1073741824
-            i32::MAX,         // 2147483647
+            0x1000_0000_i32, // 268435456
+            0x4000_0000_i32, // 1073741824
+            i32::MAX,        // 2147483647
         ];
         for value in values {
             let mut encoded = Vec::new();
             encode_varint_to_vec(value, &mut encoded);
-            assert!(encoded.len() <= 5, "i32 values should encode to at most 5 bytes");
+            assert!(
+                encoded.len() <= 5,
+                "i32 values should encode to at most 5 bytes"
+            );
 
             let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
             assert_eq!(decoded, value, "round-trip failed for value {}", value);
@@ -1921,9 +1936,11 @@ mod phase2_9_varint_extended_encoding {
             encode_varint_to_vec(value, &mut encoded);
             // Negative values always need 5 bytes due to sign bits
             assert_eq!(
-                encoded.len(), 5,
+                encoded.len(),
+                5,
                 "negative value {} should encode to 5 bytes, got {}",
-                value, encoded.len()
+                value,
+                encoded.len()
             );
 
             let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
@@ -1979,19 +1996,31 @@ mod phase2_9_varint_extended_encoding {
         // 0xC0-0xDF (192-223) / 4 -> indices 48-55: 2 extra bytes
         for first_byte in 0xC0u8..=0xDF {
             let extra = INT_BYTE_EXTRA[(first_byte / 4) as usize];
-            assert_eq!(extra, 2, "byte 0x{:02X} should have 2 extra bytes", first_byte);
+            assert_eq!(
+                extra, 2,
+                "byte 0x{:02X} should have 2 extra bytes",
+                first_byte
+            );
         }
 
         // 0xE0-0xEF (224-239) / 4 -> indices 56-59: 3 extra bytes
         for first_byte in 0xE0u8..=0xEF {
             let extra = INT_BYTE_EXTRA[(first_byte / 4) as usize];
-            assert_eq!(extra, 3, "byte 0x{:02X} should have 3 extra bytes", first_byte);
+            assert_eq!(
+                extra, 3,
+                "byte 0x{:02X} should have 3 extra bytes",
+                first_byte
+            );
         }
 
         // 0xF0-0xF7 (240-247) / 4 -> indices 60-61: 4 extra bytes
         for first_byte in 0xF0u8..=0xF7 {
             let extra = INT_BYTE_EXTRA[(first_byte / 4) as usize];
-            assert_eq!(extra, 4, "byte 0x{:02X} should have 4 extra bytes", first_byte);
+            assert_eq!(
+                extra, 4,
+                "byte 0x{:02X} should have 4 extra bytes",
+                first_byte
+            );
         }
     }
 
@@ -2076,6 +2105,7 @@ mod phase2_9_varint_extended_encoding {
 // ===========================================================================
 
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod proptest_tests {
     use super::*;
     use proptest::prelude::*;

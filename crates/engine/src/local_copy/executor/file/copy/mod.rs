@@ -12,10 +12,10 @@ use crate::local_copy::{
     LocalCopyRecord,
 };
 
-use transfer::{TransferFlags, execute_transfer};
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use transfer::take_fsync_call_count;
+use transfer::{TransferFlags, execute_transfer};
 
 pub(crate) fn copy_file(
     context: &mut CopyContext,

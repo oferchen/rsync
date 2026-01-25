@@ -118,9 +118,9 @@ mod server;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use arguments::{ProgramName, detect_program_name, parse_args};
 #[cfg(test)]
 pub(crate) use arguments::BandwidthArgument;
+pub(crate) use arguments::{ProgramName, detect_program_name, parse_args};
 #[cfg(test)]
 pub(crate) use core::branding::{self as branding};
 #[cfg(test)]

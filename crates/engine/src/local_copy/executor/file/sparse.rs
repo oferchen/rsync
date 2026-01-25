@@ -1230,9 +1230,8 @@ mod tests {
         state.accumulate(usize::MAX);
         let second = state.pending_zeros();
 
-        // Should saturate at u64::MAX
+        // Should saturate at u64::MAX (second >= first means no overflow)
         assert!(second >= first);
-        assert!(second <= u64::MAX);
     }
 
     #[test]
@@ -1267,9 +1266,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(size as u64)
-            .expect("truncate");
+        file.as_file_mut().set_len(size as u64).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0u8; size];
@@ -1301,9 +1298,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(size as u64)
-            .expect("truncate");
+        file.as_file_mut().set_len(size as u64).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0u8; size];
@@ -1350,9 +1345,9 @@ mod tests {
 
         // Alternating zero and non-zero bytes
         let mut chunk = vec![0u8; 256];
-        for i in 0..256 {
+        for (i, byte) in chunk.iter_mut().enumerate() {
             if i % 2 == 0 {
-                chunk[i] = 0xAA;
+                *byte = 0xAA;
             }
         }
 
@@ -1365,9 +1360,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(256)
-            .expect("truncate");
+        file.as_file_mut().set_len(256).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![1u8; 256];
@@ -1646,9 +1639,7 @@ mod tests {
             .expect("finish");
 
         let total = (chunk1.len() + chunk2.len() + chunk3.len()) as u64;
-        file.as_file_mut()
-            .set_len(total)
-            .expect("truncate");
+        file.as_file_mut().set_len(total).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; total as usize];
@@ -1681,9 +1672,7 @@ mod tests {
             .expect("finish");
 
         let total = (zeros.len() + data.len()) as u64;
-        file.as_file_mut()
-            .set_len(total)
-            .expect("truncate");
+        file.as_file_mut().set_len(total).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; total as usize];
@@ -1762,9 +1751,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(size as u64)
-            .expect("truncate");
+        file.as_file_mut().set_len(size as u64).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; size];
@@ -1798,18 +1785,24 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(size as u64)
-            .expect("truncate");
+        file.as_file_mut().set_len(size as u64).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; size];
         file.as_file_mut().read_exact(&mut buffer).expect("read");
 
-        assert!(buffer[..super::SPARSE_WRITE_SIZE - 1].iter().all(|&b| b == 0));
+        assert!(
+            buffer[..super::SPARSE_WRITE_SIZE - 1]
+                .iter()
+                .all(|&b| b == 0)
+        );
         assert_eq!(buffer[super::SPARSE_WRITE_SIZE - 1], b'B');
         assert_eq!(buffer[super::SPARSE_WRITE_SIZE], b'C');
-        assert!(buffer[super::SPARSE_WRITE_SIZE + 1..].iter().all(|&b| b == 0));
+        assert!(
+            buffer[super::SPARSE_WRITE_SIZE + 1..]
+                .iter()
+                .all(|&b| b == 0)
+        );
     }
 
     // ==================== Scalar Remainder Tests ====================
@@ -1868,9 +1861,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(size as u64)
-            .expect("truncate");
+        file.as_file_mut().set_len(size as u64).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; size];
@@ -1891,8 +1882,8 @@ mod tests {
         // Zeros, then contiguous data block, then zeros
         let size = 1024;
         let mut chunk = vec![0u8; size];
-        for i in 400..600 {
-            chunk[i] = 0xBB;
+        for byte in &mut chunk[400..600] {
+            *byte = 0xBB;
         }
 
         let written = write_sparse_chunk(file.as_file_mut(), &mut state, &chunk, path.as_path())
@@ -1904,9 +1895,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(size as u64)
-            .expect("truncate");
+        file.as_file_mut().set_len(size as u64).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; size];
@@ -1941,17 +1930,23 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(size as u64)
-            .expect("truncate");
+        file.as_file_mut().set_len(size as u64).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; size];
         file.as_file_mut().read_exact(&mut buffer).expect("read");
 
-        assert!(buffer[..super::SPARSE_WRITE_SIZE + 10].iter().all(|&b| b == 0));
+        assert!(
+            buffer[..super::SPARSE_WRITE_SIZE + 10]
+                .iter()
+                .all(|&b| b == 0)
+        );
         assert_eq!(buffer[super::SPARSE_WRITE_SIZE + 10], b'X');
-        assert!(buffer[super::SPARSE_WRITE_SIZE + 11..].iter().all(|&b| b == 0));
+        assert!(
+            buffer[super::SPARSE_WRITE_SIZE + 11..]
+                .iter()
+                .all(|&b| b == 0)
+        );
     }
 
     #[test]
@@ -1973,9 +1968,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(100)
-            .expect("truncate");
+        file.as_file_mut().set_len(100).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; 100];
@@ -2004,9 +1997,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(100)
-            .expect("truncate");
+        file.as_file_mut().set_len(100).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; 100];
@@ -2035,9 +2026,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(1)
-            .expect("truncate");
+        file.as_file_mut().set_len(1).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = [0xFFu8; 1];
@@ -2091,9 +2080,7 @@ mod tests {
             .finish(file.as_file_mut(), path.as_path())
             .expect("finish");
 
-        file.as_file_mut()
-            .set_len(pos)
-            .expect("truncate");
+        file.as_file_mut().set_len(pos).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; pos as usize];
@@ -2109,7 +2096,9 @@ mod tests {
     #[test]
     fn leading_zero_run_consistency_across_sizes() {
         // Test that scalar and SIMD paths produce consistent results
-        for size in [1, 7, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 100, 255] {
+        for size in [
+            1, 7, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 100, 255,
+        ] {
             let all_zeros = vec![0u8; size];
             assert_eq!(
                 leading_zero_run(&all_zeros),
@@ -2152,7 +2141,9 @@ mod tests {
 
     #[test]
     fn trailing_zero_run_consistency_across_sizes() {
-        for size in [1, 7, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 100, 255] {
+        for size in [
+            1, 7, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 100, 255,
+        ] {
             let all_zeros = vec![0u8; size];
             assert_eq!(
                 trailing_zero_run(&all_zeros),
@@ -2219,9 +2210,7 @@ mod tests {
             .expect("finish");
 
         // Truncate to exact size
-        file.as_file_mut()
-            .set_len(final_pos)
-            .expect("truncate");
+        file.as_file_mut().set_len(final_pos).expect("truncate");
 
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
@@ -2260,9 +2249,7 @@ mod tests {
             .expect("finish2");
         assert_eq!(pos2, 7);
 
-        file.as_file_mut()
-            .set_len(7)
-            .expect("truncate");
+        file.as_file_mut().set_len(7).expect("truncate");
         file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
 
         let mut buffer = vec![0xFFu8; 7];

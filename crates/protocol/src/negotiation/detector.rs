@@ -340,7 +340,7 @@ impl Default for NegotiationPrologueDetector {
 }
 
 #[cfg(test)]
-#[allow(unused_must_use)]
+#[allow(unused_must_use, clippy::uninlined_format_args)]
 mod tests {
     use super::*;
 
@@ -497,5 +497,365 @@ mod tests {
         let mut detector = NegotiationPrologueDetector::new();
         detector.observe_byte(0x00);
         assert!(detector.is_decided());
+    }
+
+    // ========================================================================
+    // Comprehensive Binary Detection Tests
+    // ========================================================================
+
+    #[test]
+    fn binary_detected_for_all_non_at_bytes() {
+        // All byte values except '@' (0x40) should trigger binary detection
+        for byte in 0u8..=255 {
+            if byte == b'@' {
+                continue;
+            }
+            let mut detector = NegotiationPrologueDetector::new();
+            let result = detector.observe_byte(byte);
+            assert_eq!(
+                result,
+                NegotiationPrologue::Binary,
+                "byte {:#04X} should be binary",
+                byte
+            );
+            assert!(detector.is_binary());
+            assert!(!detector.is_legacy());
+        }
+    }
+
+    #[test]
+    fn binary_detection_immediate() {
+        let mut detector = NegotiationPrologueDetector::new();
+
+        // First non-@ byte should immediately decide binary
+        let result = detector.observe_byte(0x1F);
+        assert_eq!(result, NegotiationPrologue::Binary);
+        assert!(detector.is_decided());
+        assert!(!detector.requires_more_data());
+    }
+
+    // ========================================================================
+    // Comprehensive Legacy Detection Tests
+    // ========================================================================
+
+    #[test]
+    fn legacy_full_prefix_match() {
+        let mut detector = NegotiationPrologueDetector::new();
+        let result = detector.observe(b"@RSYNCD:");
+
+        assert!(detector.is_legacy());
+        assert!(detector.legacy_prefix_complete());
+        assert!(!detector.requires_more_data());
+        assert_eq!(detector.buffered_len(), LEGACY_DAEMON_PREFIX_LEN);
+        assert_eq!(detector.buffered_prefix(), b"@RSYNCD:");
+        assert!(result == NegotiationPrologue::LegacyAscii);
+    }
+
+    #[test]
+    fn legacy_incremental_byte_by_byte() {
+        let prefix = b"@RSYNCD:";
+        let mut detector = NegotiationPrologueDetector::new();
+
+        for (i, &byte) in prefix.iter().enumerate() {
+            let _result = detector.observe_byte(byte);
+            assert!(detector.is_legacy(), "should be legacy at byte {i}");
+
+            if i < prefix.len() - 1 {
+                assert!(!detector.legacy_prefix_complete());
+                assert!(detector.requires_more_data());
+            } else {
+                assert!(detector.legacy_prefix_complete());
+                assert!(!detector.requires_more_data());
+            }
+
+            // Check progress matches upstream expectation
+            let remaining = detector.legacy_prefix_remaining();
+            if i < prefix.len() - 1 {
+                assert_eq!(remaining, Some(prefix.len() - 1 - i));
+            } else {
+                assert!(remaining.is_none() || remaining == Some(0));
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_incremental_chunks() {
+        let mut detector = NegotiationPrologueDetector::new();
+
+        // Feed in multiple chunks
+        detector.observe(b"@RSY");
+        assert!(detector.is_legacy());
+        assert!(!detector.legacy_prefix_complete());
+        assert_eq!(detector.buffered_len(), 4);
+
+        detector.observe(b"NCD:");
+        assert!(detector.is_legacy());
+        assert!(detector.legacy_prefix_complete());
+        assert_eq!(detector.buffered_len(), 8);
+    }
+
+    #[test]
+    fn legacy_mismatch_early() {
+        // Prefix starts with @ but doesn't match @RSYNCD:
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@WRONG:");
+
+        assert!(detector.is_legacy());
+        // Should still be marked as legacy but with complete prefix (mismatch)
+        assert!(detector.legacy_prefix_complete());
+        assert!(!detector.requires_more_data());
+    }
+
+    #[test]
+    fn legacy_mismatch_at_second_byte() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@X");
+
+        // Still legacy (started with @) but mismatch detected
+        assert!(detector.is_legacy());
+        assert!(detector.legacy_prefix_complete());
+    }
+
+    // ========================================================================
+    // State Persistence Tests
+    // ========================================================================
+
+    #[test]
+    fn decision_sticky_after_binary() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe_byte(0x00);
+        assert!(detector.is_binary());
+
+        // Feeding @ after binary decision doesn't change anything
+        detector.observe(b"@RSYNCD:");
+        assert!(detector.is_binary());
+        assert!(!detector.is_legacy());
+
+        // Buffer should remain empty for binary
+        assert_eq!(detector.buffered_len(), 0);
+    }
+
+    #[test]
+    fn decision_sticky_after_legacy() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@RSYNCD:");
+        assert!(detector.is_legacy());
+
+        // Feeding binary data after legacy decision doesn't change anything
+        detector.observe(&[0x00, 0x01, 0x02]);
+        assert!(detector.is_legacy());
+        assert!(!detector.is_binary());
+    }
+
+    // ========================================================================
+    // Reset Tests
+    // ========================================================================
+
+    #[test]
+    fn reset_after_binary() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe_byte(0x00);
+        assert!(detector.is_binary());
+
+        detector.reset();
+        assert!(!detector.is_decided());
+        assert!(detector.decision().is_none());
+        assert_eq!(detector.buffered_len(), 0);
+        assert!(detector.requires_more_data());
+    }
+
+    #[test]
+    fn reset_after_legacy() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@RSYNCD:");
+        assert!(detector.is_legacy());
+        assert_eq!(detector.buffered_len(), 8);
+
+        detector.reset();
+        assert!(!detector.is_decided());
+        assert!(detector.decision().is_none());
+        assert_eq!(detector.buffered_len(), 0);
+        assert!(detector.requires_more_data());
+    }
+
+    #[test]
+    fn reset_allows_reuse() {
+        let mut detector = NegotiationPrologueDetector::new();
+
+        // First detection: binary
+        detector.observe_byte(0x00);
+        assert!(detector.is_binary());
+
+        // Reset and reuse
+        detector.reset();
+
+        // Second detection: legacy
+        detector.observe(b"@RSYNCD:");
+        assert!(detector.is_legacy());
+    }
+
+    // ========================================================================
+    // Copy Prefix Tests
+    // ========================================================================
+
+    #[test]
+    fn copy_buffered_prefix_exact_size() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@RSYNCD:");
+
+        let mut buffer = [0u8; LEGACY_DAEMON_PREFIX_LEN];
+        let copied = detector
+            .copy_buffered_prefix_into_array(&mut buffer)
+            .unwrap();
+
+        assert_eq!(copied, 8);
+        assert_eq!(&buffer[..8], b"@RSYNCD:");
+    }
+
+    #[test]
+    fn copy_buffered_prefix_larger_buffer() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@RSY");
+
+        let mut buffer = [0u8; 100];
+        let copied = detector.copy_buffered_prefix_into(&mut buffer).unwrap();
+
+        assert_eq!(copied, 4);
+        assert_eq!(&buffer[..4], b"@RSY");
+    }
+
+    #[test]
+    fn copy_buffered_prefix_binary_returns_zero() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe_byte(0x00);
+
+        let mut buffer = [0u8; 10];
+        let copied = detector.copy_buffered_prefix_into(&mut buffer).unwrap();
+
+        assert_eq!(copied, 0);
+    }
+
+    // ========================================================================
+    // Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn observe_empty_before_any_data() {
+        let mut detector = NegotiationPrologueDetector::new();
+        let result = detector.observe(&[]);
+
+        assert_eq!(result, NegotiationPrologue::NeedMoreData);
+        assert!(!detector.is_decided());
+    }
+
+    #[test]
+    fn observe_empty_after_partial_legacy() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@RSY");
+
+        let result = detector.observe(&[]);
+        assert_eq!(result, NegotiationPrologue::NeedMoreData);
+        assert!(detector.is_legacy());
+        assert!(!detector.legacy_prefix_complete());
+    }
+
+    #[test]
+    fn observe_empty_after_complete_legacy() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@RSYNCD:");
+
+        let result = detector.observe(&[]);
+        // After complete, empty observe returns cached decision
+        assert!(result == NegotiationPrologue::LegacyAscii);
+    }
+
+    #[test]
+    fn observe_empty_after_binary() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe_byte(0x00);
+
+        let result = detector.observe(&[]);
+        assert_eq!(result, NegotiationPrologue::Binary);
+    }
+
+    #[test]
+    fn observe_byte_is_equivalent_to_single_byte_slice() {
+        let test_bytes = [0x00, b'@', 0xFF, 0x7F];
+
+        for &byte in &test_bytes {
+            let mut detector1 = NegotiationPrologueDetector::new();
+            let mut detector2 = NegotiationPrologueDetector::new();
+
+            let result1 = detector1.observe_byte(byte);
+            let result2 = detector2.observe(&[byte]);
+
+            assert_eq!(result1, result2, "mismatch for byte {:#04X}", byte);
+            assert_eq!(detector1.is_binary(), detector2.is_binary());
+            assert_eq!(detector1.is_legacy(), detector2.is_legacy());
+        }
+    }
+
+    // ========================================================================
+    // Clone Tests
+    // ========================================================================
+
+    #[test]
+    fn clone_preserves_state() {
+        let mut original = NegotiationPrologueDetector::new();
+        original.observe(b"@RSY");
+
+        let cloned = original.clone();
+
+        assert_eq!(original.buffered_len(), cloned.buffered_len());
+        assert_eq!(original.decision(), cloned.decision());
+        assert_eq!(original.is_legacy(), cloned.is_legacy());
+        assert_eq!(
+            original.legacy_prefix_complete(),
+            cloned.legacy_prefix_complete()
+        );
+        assert_eq!(original.buffered_prefix(), cloned.buffered_prefix());
+    }
+
+    #[test]
+    fn clone_independence() {
+        let mut original = NegotiationPrologueDetector::new();
+        original.observe(b"@RSY");
+
+        let cloned = original.clone();
+
+        // Advance original further
+        original.observe(b"NCD:");
+        assert!(original.legacy_prefix_complete());
+
+        // Cloned should not be affected
+        assert!(!cloned.legacy_prefix_complete());
+        assert_eq!(cloned.buffered_len(), 4);
+    }
+
+    // ========================================================================
+    // Debug Trait Tests
+    // ========================================================================
+
+    #[test]
+    fn debug_format_new() {
+        let detector = NegotiationPrologueDetector::new();
+        let debug = format!("{:?}", detector);
+        assert!(debug.contains("NegotiationPrologueDetector"));
+    }
+
+    #[test]
+    fn debug_format_after_binary() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe_byte(0x00);
+        let debug = format!("{:?}", detector);
+        assert!(debug.contains("Binary") || debug.contains("Some"));
+    }
+
+    #[test]
+    fn debug_format_after_legacy() {
+        let mut detector = NegotiationPrologueDetector::new();
+        detector.observe(b"@RSYNCD:");
+        let debug = format!("{:?}", detector);
+        assert!(debug.contains("LegacyAscii") || debug.contains("Some"));
     }
 }

@@ -276,7 +276,8 @@ fn constrained_by_burst_only_override_on_unlimited_client() {
 fn constrained_by_preserves_client_burst_when_override_has_no_burst() {
     // When override has rate but no burst specified, preserve client burst
     let client = parse_bandwidth_limit("8M:64K").expect("client");
-    let module = BandwidthLimitComponents::new(Some(NonZeroU64::new(4 * 1024 * 1024).unwrap()), None);
+    let module =
+        BandwidthLimitComponents::new(Some(NonZeroU64::new(4 * 1024 * 1024).unwrap()), None);
 
     let combined = client.constrained_by(&module);
 
@@ -378,10 +379,7 @@ fn components_equality_includes_specification_flags() {
 
 #[test]
 fn components_copy_trait() {
-    let c1 = BandwidthLimitComponents::new(
-        Some(NonZeroU64::new(1024).unwrap()),
-        None,
-    );
+    let c1 = BandwidthLimitComponents::new(Some(NonZeroU64::new(1024).unwrap()), None);
     let c2 = c1; // Copy
     let c3 = c1; // Another copy
 
@@ -413,6 +411,9 @@ fn parse_bandwidth_limit_various_rate_burst_combinations() {
 
     // Large rate, small burst
     let large_rate_small_burst = parse_bandwidth_limit("100M:1K").expect("parse");
-    assert_eq!(large_rate_small_burst.rate(), NonZeroU64::new(100 * 1024 * 1024));
+    assert_eq!(
+        large_rate_small_burst.rate(),
+        NonZeroU64::new(100 * 1024 * 1024)
+    );
     assert_eq!(large_rate_small_burst.burst(), NonZeroU64::new(1024));
 }

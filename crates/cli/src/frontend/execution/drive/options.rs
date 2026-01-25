@@ -53,9 +53,11 @@ pub(crate) struct SettingsInputs<'a> {
 }
 
 /// Derived execution settings gathered from [`derive_settings`].
-#[allow(dead_code)]
 pub(crate) struct DerivedSettings {
     pub(crate) out_format_template: Option<OutFormat>,
+    /// Progress setting derived from --info and --progress flags.
+    /// Ignored in current implementation (passed through fallback instead).
+    #[allow(dead_code)]
     pub(crate) progress_setting: ProgressSetting,
     pub(crate) progress_mode: Option<ProgressMode>,
     pub(crate) stats: bool,
@@ -70,14 +72,26 @@ pub(crate) struct DerivedSettings {
     pub(crate) max_alloc_limit: Option<u64>,
     pub(crate) modify_window_setting: Option<u64>,
     pub(crate) compress: bool,
+    /// Whether compression is explicitly disabled.
+    /// Kept for fallback mode argument generation.
+    #[allow(dead_code)]
     pub(crate) compress_disabled: bool,
     pub(crate) compression_level_override: Option<CompressionLevel>,
+    /// Raw CLI value for compression level.
+    /// Kept for fallback mode argument passthrough.
+    #[allow(dead_code)]
     pub(crate) compress_level_cli: Option<OsString>,
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) compression_setting: CompressionSetting,
+    /// Raw CLI value for compression choice.
+    /// Kept for fallback mode argument passthrough.
+    #[allow(dead_code)]
     pub(crate) compress_choice_cli: Option<OsString>,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
     pub(crate) log_file_path: Option<OsString>,
+    /// Raw CLI value for log file format.
+    /// Kept for fallback mode argument passthrough.
+    #[allow(dead_code)]
     pub(crate) log_file_format_cli: Option<OsString>,
     pub(crate) log_file_template: Option<OutFormat>,
 }

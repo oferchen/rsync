@@ -209,7 +209,9 @@ mod tests {
     fn as_slice_returns_logical_contents() {
         let mut buffer = TokenBuffer::new();
         buffer.resize_for(10);
-        buffer.as_mut_slice().copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        buffer
+            .as_mut_slice()
+            .copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
         assert_eq!(buffer.as_slice(), &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
 

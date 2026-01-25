@@ -88,7 +88,11 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 
         // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { 0xFFFF_FFFF } else { 0 }
+            if block_idx < block_counts[lane] {
+                0xFFFF_FFFF
+            } else {
+                0
+            }
         });
         let mask = vld1q_u32(lane_active.as_ptr());
 
@@ -157,10 +161,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             ($mi:expr, $shift:expr) => {{
                 // G = (B & C) | (B & D) | (C & D)
                 // Equivalent to: (B & C) | (D & (B | C))
-                let g_val = vorrq_u32(
-                    vandq_u32(b, c),
-                    vandq_u32(d, vorrq_u32(b, c)),
-                );
+                let g_val = vorrq_u32(vandq_u32(b, c), vandq_u32(d, vorrq_u32(b, c)));
                 let temp = vaddq_u32(vaddq_u32(a, g_val), vaddq_u32(k2, m[M2[$mi]]));
                 let rotated = rotl_const!(temp, $shift);
                 a = d;
@@ -273,12 +274,7 @@ mod tests {
 
     #[test]
     fn neon_md4_matches_scalar() {
-        let inputs: [&[u8]; 4] = [
-            b"",
-            b"a",
-            b"abc",
-            b"message digest",
-        ];
+        let inputs: [&[u8]; 4] = [b"", b"a", b"abc", b"message digest"];
 
         let results = unsafe { digest_x4(&inputs) };
 
@@ -295,12 +291,7 @@ mod tests {
 
     #[test]
     fn neon_md4_rfc1320_vectors() {
-        let inputs: [&[u8]; 4] = [
-            b"",
-            b"a",
-            b"abc",
-            b"message digest",
-        ];
+        let inputs: [&[u8]; 4] = [b"", b"a", b"abc", b"message digest"];
 
         let expected = [
             "31d6cfe0d16ae931b73c59d7e0c089c0",

@@ -12,7 +12,7 @@
 //! When `do_negotiation=false`, neither side sends or reads anything and
 //! protocol defaults are used.
 
-use protocol::{negotiate_capabilities, ProtocolVersion};
+use protocol::{ProtocolVersion, negotiate_capabilities};
 use std::io::{Read, Write};
 
 // ============================================================================
@@ -163,16 +163,8 @@ fn test_daemon_client_falls_back_when_first_unsupported() {
     let mut stdin = &server_data[..];
     let mut stdout = Vec::new();
 
-    let result = negotiate_capabilities(
-        protocol,
-        &mut stdin,
-        &mut stdout,
-        true,
-        true,
-        true,
-        false,
-    )
-    .unwrap();
+    let result =
+        negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, true, false).unwrap();
 
     // Should fall back to md5 (first we support)
     assert_eq!(result.checksum.as_str(), "md5");
@@ -250,10 +242,7 @@ fn test_ssh_mode_bidirectional_exchange() {
     .unwrap();
 
     // SSH mode SHOULD send data
-    assert!(
-        !stdout.is_empty(),
-        "SSH mode must send algorithm lists"
-    );
+    assert!(!stdout.is_empty(), "SSH mode must send algorithm lists");
 
     // Verify we can parse what we sent
     let mut our_output = &stdout[..];
@@ -349,7 +338,10 @@ fn test_vstring_roundtrip_long() {
     write_vstring(&mut buf, &original).unwrap();
 
     // Long string uses 2-byte format with high bit set
-    assert!(buf[0] & 0x80 != 0, "high bit should be set for long strings");
+    assert!(
+        buf[0] & 0x80 != 0,
+        "high bit should be set for long strings"
+    );
 
     let mut reader = &buf[..];
     let decoded = read_vstring(&mut reader).unwrap();

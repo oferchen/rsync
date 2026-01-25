@@ -8,14 +8,8 @@ fn to_hex(bytes: &[u8]) -> String {
 
 #[test]
 fn single_digest_matches_rfc1321() {
-    assert_eq!(
-        to_hex(&digest(b"")),
-        "d41d8cd98f00b204e9800998ecf8427e"
-    );
-    assert_eq!(
-        to_hex(&digest(b"abc")),
-        "900150983cd24fb0d6963f7d28e17f72"
-    );
+    assert_eq!(to_hex(&digest(b"")), "d41d8cd98f00b204e9800998ecf8427e");
+    assert_eq!(to_hex(&digest(b"abc")), "900150983cd24fb0d6963f7d28e17f72");
 }
 
 #[test]

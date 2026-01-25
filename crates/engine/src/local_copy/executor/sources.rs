@@ -10,8 +10,8 @@ use crate::local_copy::{
     LocalCopyExecution, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan, LocalCopyRecord,
     LocalCopyRecordHandler, SourceSpec,
 };
-use ::metadata::MetadataOptions;
 use crate::local_copy::{is_device, is_fifo};
+use ::metadata::MetadataOptions;
 
 use super::{
     copy_device, copy_directory_recursive, copy_fifo, copy_file, copy_symlink,
@@ -110,6 +110,7 @@ enum SourceMetadataResult {
 }
 
 /// Attempts to fetch metadata for a source path, handling missing source scenarios.
+#[allow(clippy::too_many_arguments)]
 fn fetch_source_metadata(
     context: &mut CopyContext,
     source: &SourceSpec,
@@ -214,6 +215,7 @@ fn handle_directory_contents_copy(
 }
 
 /// Handles copying a directory source (the directory itself, not just contents).
+#[allow(clippy::too_many_arguments)]
 fn handle_directory_copy(
     context: &mut CopyContext,
     source_path: &Path,
@@ -340,6 +342,7 @@ fn compute_special_target_path(
 }
 
 /// Handles copying a symlink source.
+#[allow(clippy::too_many_arguments)]
 fn handle_symlink_copy(
     context: &mut CopyContext,
     source_path: &Path,
@@ -377,6 +380,7 @@ fn handle_symlink_copy(
 
 /// Handles copying a FIFO (named pipe) source.
 /// Returns true if the caller should continue to the next source.
+#[allow(clippy::too_many_arguments)]
 fn handle_fifo_copy(
     context: &mut CopyContext,
     source_path: &Path,
@@ -416,6 +420,7 @@ fn handle_fifo_copy(
 
 /// Handles copying a device node source.
 /// Returns true if the caller should continue to the next source.
+#[allow(clippy::too_many_arguments)]
 fn handle_device_copy(
     context: &mut CopyContext,
     source_path: &Path,
@@ -502,7 +507,13 @@ fn handle_non_directory_source(
             prefer_root_destination,
             false,
         );
-        copy_file(context, source_path, &target, &effective_metadata, record_path)?;
+        copy_file(
+            context,
+            source_path,
+            &target,
+            &effective_metadata,
+            record_path,
+        )?;
     } else if effective_type.is_dir() {
         let target = compute_target_path(
             proc_ctx.destination_path,

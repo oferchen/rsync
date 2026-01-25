@@ -49,7 +49,7 @@ pub const CHUNK_SIZE: usize = 32 * 1024;
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::write_int;
+/// use protocol::wire::write_int;
 ///
 /// let mut buf = Vec::new();
 /// write_int(&mut buf, 0x12345678).unwrap();
@@ -78,7 +78,7 @@ pub fn write_int<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::read_int;
+/// use protocol::wire::read_int;
 ///
 /// let data = [0x78, 0x56, 0x34, 0x12];
 /// let value = read_int(&mut &data[..]).unwrap();
@@ -116,7 +116,7 @@ pub fn read_int<R: Read>(reader: &mut R) -> io::Result<i32> {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::write_token_literal;
+/// use protocol::wire::write_token_literal;
 ///
 /// let mut buf = Vec::new();
 /// write_token_literal(&mut buf, b"hello").unwrap();
@@ -246,7 +246,7 @@ pub fn write_whole_file_delta<W: Write>(writer: &mut W, data: &[u8]) -> io::Resu
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::{DeltaOp, write_token_stream};
+/// use protocol::wire::{DeltaOp, write_token_stream};
 ///
 /// let ops = vec![
 ///     DeltaOp::Literal(b"hello".to_vec()),
@@ -290,7 +290,7 @@ pub fn write_token_stream<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Resu
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::read_token;
+/// use protocol::wire::read_token;
 ///
 /// // Read a literal token
 /// let data = 17i32.to_le_bytes();
@@ -332,7 +332,7 @@ pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::DeltaOp;
+/// use protocol::wire::DeltaOp;
 ///
 /// // Create a literal operation
 /// let lit = DeltaOp::Literal(vec![1, 2, 3, 4, 5]);

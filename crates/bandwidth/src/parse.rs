@@ -33,11 +33,7 @@ pub enum BandwidthParseError {
 /// `0` for this effect). Successful parses return the rounded byte-per-second
 /// limit as [`NonZeroU64`].
 pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, BandwidthParseError> {
-    if text
-        .as_bytes()
-        .iter()
-        .all(u8::is_ascii_whitespace)
-    {
+    if text.as_bytes().iter().all(u8::is_ascii_whitespace) {
         return Err(BandwidthParseError::Invalid);
     }
 

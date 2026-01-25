@@ -65,7 +65,9 @@ fn bench_sequential_reads(c: &mut Criterion) {
                     let mut total = 0;
                     while total < size {
                         let chunk_size = (32 * 1024).min(size - total);
-                        let data = map_file.map_ptr(total as u64, chunk_size).expect("Failed to map");
+                        let data = map_file
+                            .map_ptr(total as u64, chunk_size)
+                            .expect("Failed to map");
                         black_box(data);
                         total += chunk_size;
                     }

@@ -55,14 +55,70 @@ const INIT_D: u32 = 0x1032_5476;
 
 /// MD5 round constants.
 const K: [u32; 64] = [
-    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee, 0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
-    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be, 0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
-    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa, 0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
-    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed, 0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
-    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c, 0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
-    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05, 0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
-    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039, 0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
-    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1, 0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
+    0xd76a_a478,
+    0xe8c7_b756,
+    0x2420_70db,
+    0xc1bd_ceee,
+    0xf57c_0faf,
+    0x4787_c62a,
+    0xa830_4613,
+    0xfd46_9501,
+    0x6980_98d8,
+    0x8b44_f7af,
+    0xffff_5bb1,
+    0x895c_d7be,
+    0x6b90_1122,
+    0xfd98_7193,
+    0xa679_438e,
+    0x49b4_0821,
+    0xf61e_2562,
+    0xc040_b340,
+    0x265e_5a51,
+    0xe9b6_c7aa,
+    0xd62f_105d,
+    0x0244_1453,
+    0xd8a1_e681,
+    0xe7d3_fbc8,
+    0x21e1_cde6,
+    0xc337_07d6,
+    0xf4d5_0d87,
+    0x455a_14ed,
+    0xa9e3_e905,
+    0xfcef_a3f8,
+    0x676f_02d9,
+    0x8d2a_4c8a,
+    0xfffa_3942,
+    0x8771_f681,
+    0x6d9d_6122,
+    0xfde5_380c,
+    0xa4be_ea44,
+    0x4bde_cfa9,
+    0xf6bb_4b60,
+    0xbebf_bc70,
+    0x289b_7ec6,
+    0xeaa1_27fa,
+    0xd4ef_3085,
+    0x0488_1d05,
+    0xd9d4_d039,
+    0xe6db_99e5,
+    0x1fa2_7cf8,
+    0xc4ac_5665,
+    0xf429_2244,
+    0x432a_ff97,
+    0xab94_23a7,
+    0xfc93_a039,
+    0x655b_59c3,
+    0x8f0c_cc92,
+    0xffef_f47d,
+    0x8584_5dd1,
+    0x6fa8_7e4f,
+    0xfe2c_e6e0,
+    0xa301_4314,
+    0x4e08_11a1,
+    0xf753_7e82,
+    0xbd3a_f235,
+    0x2ad7_d2bb,
+    0xeb86_d391,
 ];
 
 /// Maximum input size supported.
@@ -79,10 +135,7 @@ const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn rotl(x: v128, n: u32) -> v128 {
-    v128_or(
-        i32x4_shl(x, n),
-        u32x4_shr(x, 32 - n),
-    )
+    v128_or(i32x4_shl(x, n), u32x4_shr(x, 32 - n))
 }
 
 /// Compute MD5 digests for up to 4 inputs in parallel using WASM SIMD.
@@ -156,9 +209,18 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 
         // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { 0xFFFF_FFFF } else { 0 }
+            if block_idx < block_counts[lane] {
+                0xFFFF_FFFF
+            } else {
+                0
+            }
         });
-        let mask = u32x4(lane_active[0], lane_active[1], lane_active[2], lane_active[3]);
+        let mask = u32x4(
+            lane_active[0],
+            lane_active[1],
+            lane_active[2],
+            lane_active[3],
+        );
 
         // Load message words
         let mut m = [u32x4_splat(0); 16];
@@ -193,14 +255,22 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             }};
         }
 
-        round1!(a, b, c, d,  0,  0,  7); round1!(d, a, b, c,  1,  1, 12);
-        round1!(c, d, a, b,  2,  2, 17); round1!(b, c, d, a,  3,  3, 22);
-        round1!(a, b, c, d,  4,  4,  7); round1!(d, a, b, c,  5,  5, 12);
-        round1!(c, d, a, b,  6,  6, 17); round1!(b, c, d, a,  7,  7, 22);
-        round1!(a, b, c, d,  8,  8,  7); round1!(d, a, b, c,  9,  9, 12);
-        round1!(c, d, a, b, 10, 10, 17); round1!(b, c, d, a, 11, 11, 22);
-        round1!(a, b, c, d, 12, 12,  7); round1!(d, a, b, c, 13, 13, 12);
-        round1!(c, d, a, b, 14, 14, 17); round1!(b, c, d, a, 15, 15, 22);
+        round1!(a, b, c, d, 0, 0, 7);
+        round1!(d, a, b, c, 1, 1, 12);
+        round1!(c, d, a, b, 2, 2, 17);
+        round1!(b, c, d, a, 3, 3, 22);
+        round1!(a, b, c, d, 4, 4, 7);
+        round1!(d, a, b, c, 5, 5, 12);
+        round1!(c, d, a, b, 6, 6, 17);
+        round1!(b, c, d, a, 7, 7, 22);
+        round1!(a, b, c, d, 8, 8, 7);
+        round1!(d, a, b, c, 9, 9, 12);
+        round1!(c, d, a, b, 10, 10, 17);
+        round1!(b, c, d, a, 11, 11, 22);
+        round1!(a, b, c, d, 12, 12, 7);
+        round1!(d, a, b, c, 13, 13, 12);
+        round1!(c, d, a, b, 14, 14, 17);
+        round1!(b, c, d, a, 15, 15, 22);
 
         // Round 2: G = (B & D) | (C & ~D)
         macro_rules! round2 {
@@ -212,14 +282,22 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             }};
         }
 
-        round2!(a, b, c, d,  1, 16,  5); round2!(d, a, b, c,  6, 17,  9);
-        round2!(c, d, a, b, 11, 18, 14); round2!(b, c, d, a,  0, 19, 20);
-        round2!(a, b, c, d,  5, 20,  5); round2!(d, a, b, c, 10, 21,  9);
-        round2!(c, d, a, b, 15, 22, 14); round2!(b, c, d, a,  4, 23, 20);
-        round2!(a, b, c, d,  9, 24,  5); round2!(d, a, b, c, 14, 25,  9);
-        round2!(c, d, a, b,  3, 26, 14); round2!(b, c, d, a,  8, 27, 20);
-        round2!(a, b, c, d, 13, 28,  5); round2!(d, a, b, c,  2, 29,  9);
-        round2!(c, d, a, b,  7, 30, 14); round2!(b, c, d, a, 12, 31, 20);
+        round2!(a, b, c, d, 1, 16, 5);
+        round2!(d, a, b, c, 6, 17, 9);
+        round2!(c, d, a, b, 11, 18, 14);
+        round2!(b, c, d, a, 0, 19, 20);
+        round2!(a, b, c, d, 5, 20, 5);
+        round2!(d, a, b, c, 10, 21, 9);
+        round2!(c, d, a, b, 15, 22, 14);
+        round2!(b, c, d, a, 4, 23, 20);
+        round2!(a, b, c, d, 9, 24, 5);
+        round2!(d, a, b, c, 14, 25, 9);
+        round2!(c, d, a, b, 3, 26, 14);
+        round2!(b, c, d, a, 8, 27, 20);
+        round2!(a, b, c, d, 13, 28, 5);
+        round2!(d, a, b, c, 2, 29, 9);
+        round2!(c, d, a, b, 7, 30, 14);
+        round2!(b, c, d, a, 12, 31, 20);
 
         // Round 3: H = B ^ C ^ D
         macro_rules! round3 {
@@ -231,14 +309,22 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             }};
         }
 
-        round3!(a, b, c, d,  5, 32,  4); round3!(d, a, b, c,  8, 33, 11);
-        round3!(c, d, a, b, 11, 34, 16); round3!(b, c, d, a, 14, 35, 23);
-        round3!(a, b, c, d,  1, 36,  4); round3!(d, a, b, c,  4, 37, 11);
-        round3!(c, d, a, b,  7, 38, 16); round3!(b, c, d, a, 10, 39, 23);
-        round3!(a, b, c, d, 13, 40,  4); round3!(d, a, b, c,  0, 41, 11);
-        round3!(c, d, a, b,  3, 42, 16); round3!(b, c, d, a,  6, 43, 23);
-        round3!(a, b, c, d,  9, 44,  4); round3!(d, a, b, c, 12, 45, 11);
-        round3!(c, d, a, b, 15, 46, 16); round3!(b, c, d, a,  2, 47, 23);
+        round3!(a, b, c, d, 5, 32, 4);
+        round3!(d, a, b, c, 8, 33, 11);
+        round3!(c, d, a, b, 11, 34, 16);
+        round3!(b, c, d, a, 14, 35, 23);
+        round3!(a, b, c, d, 1, 36, 4);
+        round3!(d, a, b, c, 4, 37, 11);
+        round3!(c, d, a, b, 7, 38, 16);
+        round3!(b, c, d, a, 10, 39, 23);
+        round3!(a, b, c, d, 13, 40, 4);
+        round3!(d, a, b, c, 0, 41, 11);
+        round3!(c, d, a, b, 3, 42, 16);
+        round3!(b, c, d, a, 6, 43, 23);
+        round3!(a, b, c, d, 9, 44, 4);
+        round3!(d, a, b, c, 12, 45, 11);
+        round3!(c, d, a, b, 15, 46, 16);
+        round3!(b, c, d, a, 2, 47, 23);
 
         // Round 4: I = C ^ (B | ~D)
         macro_rules! round4 {
@@ -250,14 +336,22 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
             }};
         }
 
-        round4!(a, b, c, d,  0, 48,  6); round4!(d, a, b, c,  7, 49, 10);
-        round4!(c, d, a, b, 14, 50, 15); round4!(b, c, d, a,  5, 51, 21);
-        round4!(a, b, c, d, 12, 52,  6); round4!(d, a, b, c,  3, 53, 10);
-        round4!(c, d, a, b, 10, 54, 15); round4!(b, c, d, a,  1, 55, 21);
-        round4!(a, b, c, d,  8, 56,  6); round4!(d, a, b, c, 15, 57, 10);
-        round4!(c, d, a, b,  6, 58, 15); round4!(b, c, d, a, 13, 59, 21);
-        round4!(a, b, c, d,  4, 60,  6); round4!(d, a, b, c, 11, 61, 10);
-        round4!(c, d, a, b,  2, 62, 15); round4!(b, c, d, a,  9, 63, 21);
+        round4!(a, b, c, d, 0, 48, 6);
+        round4!(d, a, b, c, 7, 49, 10);
+        round4!(c, d, a, b, 14, 50, 15);
+        round4!(b, c, d, a, 5, 51, 21);
+        round4!(a, b, c, d, 12, 52, 6);
+        round4!(d, a, b, c, 3, 53, 10);
+        round4!(c, d, a, b, 10, 54, 15);
+        round4!(b, c, d, a, 1, 55, 21);
+        round4!(a, b, c, d, 8, 56, 6);
+        round4!(d, a, b, c, 15, 57, 10);
+        round4!(c, d, a, b, 6, 58, 15);
+        round4!(b, c, d, a, 13, 59, 21);
+        round4!(a, b, c, d, 4, 60, 6);
+        round4!(d, a, b, c, 11, 61, 10);
+        round4!(c, d, a, b, 2, 62, 15);
+        round4!(b, c, d, a, 9, 63, 21);
 
         // Add saved state
         let new_a = i32x4_add(a, aa);

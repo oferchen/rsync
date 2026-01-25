@@ -22,6 +22,57 @@ pub struct SetupResult {
     pub checksum_seed: i32,
 }
 
+/// Configuration for protocol setup.
+///
+/// Groups all parameters needed for protocol setup into a single struct,
+/// following the Parameter Object pattern to reduce function argument count.
+///
+/// # Mode Configuration
+///
+/// The combination of `is_server` and `is_daemon_mode` controls the protocol behavior:
+///
+/// - `is_server=true`: Server mode - WRITE compat flags and checksum seed
+/// - `is_server=false`: Client mode - READ compat flags and checksum seed
+/// - `is_daemon_mode=true`: Daemon mode - unidirectional negotiation (rsync://)
+/// - `is_daemon_mode=false`: SSH mode - bidirectional exchange (rsync over SSH)
+#[derive(Debug)]
+pub struct ProtocolSetupConfig<'a> {
+    /// The negotiated protocol version.
+    pub protocol: ProtocolVersion,
+
+    /// Whether to skip compatibility flags exchange.
+    ///
+    /// Set to true when compat flags were already exchanged (e.g., during daemon handshake).
+    pub skip_compat_exchange: bool,
+
+    /// Client arguments for daemon mode (includes -e option with capabilities).
+    ///
+    /// When present, used to parse client capabilities from the `-e` option.
+    /// None for SSH mode or when acting as client.
+    pub client_args: Option<&'a [String]>,
+
+    /// Whether we are the server in this connection.
+    ///
+    /// Controls compat flags and checksum seed direction:
+    /// - `true`: Server mode - WRITE compat flags and seed
+    /// - `false`: Client mode - READ compat flags and seed
+    pub is_server: bool,
+
+    /// Whether this is a daemon mode connection.
+    ///
+    /// Controls capability negotiation direction:
+    /// - `true`: Daemon mode - unidirectional (server sends lists, client reads silently)
+    /// - `false`: SSH mode - bidirectional exchange
+    pub is_daemon_mode: bool,
+
+    /// Whether compression algorithm negotiation should happen.
+    ///
+    /// Must match on both sides based on whether `-z` flag was passed.
+    /// - `true`: Exchange compression algorithm lists
+    /// - `false`: Skip compression negotiation, use defaults
+    pub do_compression: bool,
+}
+
 /// Parses client capabilities from the `-e` option argument.
 ///
 /// The `-e` option contains a string like "efxCIvu" where each letter indicates
@@ -279,11 +330,9 @@ pub fn exchange_compat_flags_direct(
 ///
 /// # Arguments
 ///
-/// * `protocol` - The negotiated protocol version
 /// * `stdout` - Output stream for sending server's compatibility flags (f_out in upstream)
 /// * `stdin` - Input stream for reading client's algorithm choices (f_in in upstream)
-/// * `skip_compat_exchange` - Set to true if compat flags were already exchanged (daemon mode)
-/// * `client_args` - Client arguments for parsing capabilities (daemon mode only)
+/// * `config` - Protocol setup configuration containing all parameters
 ///
 /// # Returns
 ///
@@ -291,29 +340,10 @@ pub fn exchange_compat_flags_direct(
 /// the exchange fails.
 ///
 /// **IMPORTANT:** Parameter order matches upstream: f_out first, f_in second!
-///
-/// The `is_server` parameter controls compat flags exchange direction:
-/// - `true`: Server mode - WRITE compat flags (upstream am_server=true)
-/// - `false`: Client mode - READ compat flags (upstream am_server=false)
-///
-/// The `is_daemon_mode` parameter controls capability negotiation direction:
-/// - `true`: Daemon mode - server sends lists, client reads silently (rsync://)
-/// - `false`: SSH mode - bidirectional exchange (rsync over SSH)
-///
-/// The `do_compression` parameter controls whether compression algorithm negotiation happens:
-/// - `true`: Exchange compression algorithm lists (both sides send/receive)
-/// - `false`: Skip compression negotiation, use defaults
-///   This must match on both sides based on whether `-z` flag was passed.
-#[allow(clippy::too_many_arguments)]
 pub fn setup_protocol(
-    protocol: ProtocolVersion,
     stdout: &mut dyn Write,
     stdin: &mut dyn Read,
-    skip_compat_exchange: bool,
-    client_args: Option<&[String]>,
-    is_server: bool,
-    is_daemon_mode: bool,
-    do_compression: bool,
+    config: &ProtocolSetupConfig<'_>,
 ) -> io::Result<SetupResult> {
     // For daemon mode, the binary 4-byte protocol exchange has already happened
     // via the @RSYNCD text protocol (upstream compat.c:599-607 checks remote_protocol != 0).
@@ -325,128 +355,129 @@ pub fn setup_protocol(
 
     // Build compat flags and perform negotiation for protocol >= 30
     // This mirrors upstream compat.c:710-743 which happens INSIDE setup_protocol()
-    let (compat_flags, negotiated_algorithms) = if protocol.as_u8() >= 30 && !skip_compat_exchange {
-        // Build our compat flags (server side)
-        // This mirrors upstream compat.c:712-732 which builds flags from client_info string
-        let (our_flags, client_info) = if let Some(args) = client_args {
-            // Daemon server mode: parse client capabilities from -e option
-            let client_info = parse_client_info(args);
-            // DISABLED: allow_inc_recurse=false - see comment in exchange_compat_flags_direct
-            let flags = build_compat_flags_from_client_info(&client_info, false);
-            (flags, Some(client_info))
+    let (compat_flags, negotiated_algorithms) =
+        if config.protocol.as_u8() >= 30 && !config.skip_compat_exchange {
+            // Build our compat flags (server side)
+            // This mirrors upstream compat.c:712-732 which builds flags from client_info string
+            let (our_flags, client_info) = if let Some(args) = config.client_args {
+                // Daemon server mode: parse client capabilities from -e option
+                let client_info = parse_client_info(args);
+                // DISABLED: allow_inc_recurse=false - see comment in exchange_compat_flags_direct
+                let flags = build_compat_flags_from_client_info(&client_info, false);
+                (flags, Some(client_info))
+            } else {
+                // SSH/client mode: use default flags based on platform capabilities
+                #[cfg(unix)]
+                let mut flags = CompatibilityFlags::INC_RECURSE
+                    | CompatibilityFlags::CHECKSUM_SEED_FIX
+                    | CompatibilityFlags::VARINT_FLIST_FLAGS;
+                #[cfg(not(unix))]
+                let flags = CompatibilityFlags::INC_RECURSE
+                    | CompatibilityFlags::CHECKSUM_SEED_FIX
+                    | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+                // Advertise symlink timestamp support on Unix platforms
+                // (mirrors upstream CAN_SET_SYMLINK_TIMES at compat.c:713-714)
+                #[cfg(unix)]
+                {
+                    flags |= CompatibilityFlags::SYMLINK_TIMES;
+                }
+
+                (flags, None)
+            };
+
+            // Compression negotiation is controlled by the `do_compression` parameter
+            // which is passed from the caller based on whether -z flag was used.
+            // Both sides MUST have the same value for this to work correctly.
+            let send_compression = config.do_compression;
+
+            // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
+            // - Server (am_server=true): WRITES compat flags
+            // - Client (am_server=false): READS compat flags
+            let compat_flags = if config.is_server {
+                // Server: build and WRITE our compat flags
+                let compat_value = our_flags.bits() as i32;
+                protocol::write_varint(stdout, compat_value)?;
+                stdout.flush()?;
+                our_flags
+            } else {
+                // Client: READ compat flags from server
+                let compat_value = protocol::read_varint(stdin)?;
+                CompatibilityFlags::from_bits(compat_value as u32)
+            };
+
+            // Protocol 30+ capability negotiation (upstream compat.c:534-585)
+            // This MUST happen inside setup_protocol(), BEFORE the function returns,
+            // so negotiation completes in RAW mode BEFORE multiplex activation.
+            //
+            // The negotiation implementation is in protocol::negotiate_capabilities(),
+            // which mirrors upstream's negotiate_the_strings() function.
+            //
+            // Negotiation only happens if client has VARINT_FLIST_FLAGS ('v') capability.
+            // This matches upstream's do_negotiated_strings check.
+
+            // CRITICAL: Daemon mode and SSH mode have different negotiation flows!
+            // - SSH mode: Bidirectional - both sides exchange algorithm lists
+            // - Daemon mode: Unidirectional - server advertises, client selects silently
+            //
+            // For daemon mode, capability negotiation happens during @RSYNCD handshake,
+            // NOT here in setup_protocol. The client never sends algorithm responses back
+            // during setup_protocol in daemon mode.
+            //
+            // Upstream reference:
+            // - SSH mode: negotiate_the_strings() in compat.c (bidirectional)
+            // - Daemon mode: output_daemon_greeting() advertises, no response expected
+            //
+            // Protocol 30+ capability negotiation (upstream compat.c:534-585)
+            // This is called in BOTH daemon and SSH modes.
+            // The do_negotiation flag controls whether actual string exchange happens.
+            //
+            // CRITICAL: When acting as CLIENT (is_server=false), we must check the SERVER's
+            // compat flags (compat_flags), not our own flags! Upstream compat.c:740-742:
+            //   "compat_flags = read_varint(f_in);
+            //    if (compat_flags & CF_VARINT_FLIST_FLAGS) do_negotiated_strings = 1;"
+            let do_negotiation = if config.is_server {
+                // Server: check if client has 'v' capability
+                client_info.as_ref().map_or(
+                    our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
+                    |info| info.contains('v'),
+                )
+            } else {
+                // Client: check if SERVER's compat flags include VARINT_FLIST_FLAGS
+                // This mirrors upstream compat.c:740-742 where client reads server's flags
+                compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
+            };
+
+            // Daemon mode uses unidirectional negotiation (server sends, client reads silently)
+            // SSH mode uses bidirectional negotiation (both sides exchange)
+            // The caller tells us which mode via the is_daemon_mode parameter
+
+            // CRITICAL: Both daemon and SSH modes need to call negotiate_capabilities when
+            // do_negotiation is true (client has 'v' capability). The difference is:
+            // - Daemon mode (is_daemon_mode=true): Server sends lists, client doesn't respond back
+            // - SSH mode (is_daemon_mode=false): Both sides send lists, then both read each other's
+            //
+            // The is_daemon_mode flag inside negotiate_capabilities controls whether we read
+            // the client's response after sending our lists.
+            let algorithms = protocol::negotiate_capabilities(
+                config.protocol,
+                stdin,
+                stdout,
+                do_negotiation,
+                send_compression,
+                config.is_daemon_mode,
+                config.is_server,
+            )?;
+
+            (Some(compat_flags), Some(algorithms))
         } else {
-            // SSH/client mode: use default flags based on platform capabilities
-            #[cfg(unix)]
-            let mut flags = CompatibilityFlags::INC_RECURSE
-                | CompatibilityFlags::CHECKSUM_SEED_FIX
-                | CompatibilityFlags::VARINT_FLIST_FLAGS;
-            #[cfg(not(unix))]
-            let flags = CompatibilityFlags::INC_RECURSE
-                | CompatibilityFlags::CHECKSUM_SEED_FIX
-                | CompatibilityFlags::VARINT_FLIST_FLAGS;
-
-            // Advertise symlink timestamp support on Unix platforms
-            // (mirrors upstream CAN_SET_SYMLINK_TIMES at compat.c:713-714)
-            #[cfg(unix)]
-            {
-                flags |= CompatibilityFlags::SYMLINK_TIMES;
-            }
-
-            (flags, None)
+            (None, None) // Protocol < 30 uses default algorithms and no compat flags
         };
-
-        // Compression negotiation is controlled by the `do_compression` parameter
-        // which is passed from the caller based on whether -z flag was used.
-        // Both sides MUST have the same value for this to work correctly.
-        let send_compression = do_compression;
-
-        // Compat flags exchange is UNIDIRECTIONAL (upstream compat.c:710-741):
-        // - Server (am_server=true): WRITES compat flags
-        // - Client (am_server=false): READS compat flags
-        let compat_flags = if is_server {
-            // Server: build and WRITE our compat flags
-            let compat_value = our_flags.bits() as i32;
-            protocol::write_varint(stdout, compat_value)?;
-            stdout.flush()?;
-            our_flags
-        } else {
-            // Client: READ compat flags from server
-            let compat_value = protocol::read_varint(stdin)?;
-            CompatibilityFlags::from_bits(compat_value as u32)
-        };
-
-        // Protocol 30+ capability negotiation (upstream compat.c:534-585)
-        // This MUST happen inside setup_protocol(), BEFORE the function returns,
-        // so negotiation completes in RAW mode BEFORE multiplex activation.
-        //
-        // The negotiation implementation is in protocol::negotiate_capabilities(),
-        // which mirrors upstream's negotiate_the_strings() function.
-        //
-        // Negotiation only happens if client has VARINT_FLIST_FLAGS ('v') capability.
-        // This matches upstream's do_negotiated_strings check.
-
-        // CRITICAL: Daemon mode and SSH mode have different negotiation flows!
-        // - SSH mode: Bidirectional - both sides exchange algorithm lists
-        // - Daemon mode: Unidirectional - server advertises, client selects silently
-        //
-        // For daemon mode, capability negotiation happens during @RSYNCD handshake,
-        // NOT here in setup_protocol. The client never sends algorithm responses back
-        // during setup_protocol in daemon mode.
-        //
-        // Upstream reference:
-        // - SSH mode: negotiate_the_strings() in compat.c (bidirectional)
-        // - Daemon mode: output_daemon_greeting() advertises, no response expected
-        //
-        // Protocol 30+ capability negotiation (upstream compat.c:534-585)
-        // This is called in BOTH daemon and SSH modes.
-        // The do_negotiation flag controls whether actual string exchange happens.
-        //
-        // CRITICAL: When acting as CLIENT (is_server=false), we must check the SERVER's
-        // compat flags (compat_flags), not our own flags! Upstream compat.c:740-742:
-        //   "compat_flags = read_varint(f_in);
-        //    if (compat_flags & CF_VARINT_FLIST_FLAGS) do_negotiated_strings = 1;"
-        let do_negotiation = if is_server {
-            // Server: check if client has 'v' capability
-            client_info.as_ref().map_or(
-                our_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS),
-                |info| info.contains('v'),
-            )
-        } else {
-            // Client: check if SERVER's compat flags include VARINT_FLIST_FLAGS
-            // This mirrors upstream compat.c:740-742 where client reads server's flags
-            compat_flags.contains(CompatibilityFlags::VARINT_FLIST_FLAGS)
-        };
-
-        // Daemon mode uses unidirectional negotiation (server sends, client reads silently)
-        // SSH mode uses bidirectional negotiation (both sides exchange)
-        // The caller tells us which mode via the is_daemon_mode parameter
-
-        // CRITICAL: Both daemon and SSH modes need to call negotiate_capabilities when
-        // do_negotiation is true (client has 'v' capability). The difference is:
-        // - Daemon mode (is_daemon_mode=true): Server sends lists, client doesn't respond back
-        // - SSH mode (is_daemon_mode=false): Both sides send lists, then both read each other's
-        //
-        // The is_daemon_mode flag inside negotiate_capabilities controls whether we read
-        // the client's response after sending our lists.
-        let algorithms = protocol::negotiate_capabilities(
-            protocol,
-            stdin,
-            stdout,
-            do_negotiation,
-            send_compression,
-            is_daemon_mode,
-            is_server,
-        )?;
-
-        (Some(compat_flags), Some(algorithms))
-    } else {
-        (None, None) // Protocol < 30 uses default algorithms and no compat flags
-    };
 
     // Checksum seed exchange (ALL protocols, upstream compat.c:750)
     // - Server: generates and WRITES the seed
     // - Client: READS the seed from server
-    let checksum_seed = if is_server {
+    let checksum_seed = if config.is_server {
         // Server: generate and send seed
         let seed = {
             use std::time::{SystemTime, UNIX_EPOCH};
@@ -622,17 +653,17 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let result = setup_protocol(
+        let config = ProtocolSetupConfig {
             protocol,
-            &mut stdout,
-            &mut stdin,
-            false, // skip_compat_exchange
-            None,  // client_args
-            true,  // is_server
-            false, // is_daemon_mode
-            false, // do_compression
-        )
-        .expect("protocol 29 setup should succeed");
+            skip_compat_exchange: false,
+            client_args: None,
+            is_server: true,
+            is_daemon_mode: false,
+            do_compression: false,
+        };
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("protocol 29 setup should succeed");
 
         assert!(
             result.negotiated_algorithms.is_none(),
@@ -657,17 +688,17 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let result = setup_protocol(
+        let config = ProtocolSetupConfig {
             protocol,
-            &mut stdout,
-            &mut stdin,
-            true,  // skip_compat_exchange - SKIP
-            None,  // client_args
-            true,  // is_server
-            false, // is_daemon_mode
-            false, // do_compression
-        )
-        .expect("setup with skip_compat_exchange should succeed");
+            skip_compat_exchange: true, // SKIP
+            client_args: None,
+            is_server: true,
+            is_daemon_mode: false,
+            do_compression: false,
+        };
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("setup with skip_compat_exchange should succeed");
 
         assert!(
             result.compat_flags.is_none(),
@@ -694,17 +725,18 @@ mod tests {
         let mut stdin = &b"\x00"[..]; // Empty checksum list (0 = end of list)
         let mut stdout = Vec::new();
 
-        let result = setup_protocol(
+        let client_args = ["-efxCIvu".to_owned()];
+        let config = ProtocolSetupConfig {
             protocol,
-            &mut stdout,
-            &mut stdin,
-            false,                          // skip_compat_exchange
-            Some(&["-efxCIvu".to_owned()]), // client_args with 'v' capability
-            true,                           // is_server
-            true,                           // is_daemon_mode (server advertises, client reads)
-            false,                          // do_compression
-        )
-        .expect("server setup should succeed");
+            skip_compat_exchange: false,
+            client_args: Some(&client_args), // client_args with 'v' capability
+            is_server: true,
+            is_daemon_mode: true, // server advertises, client reads
+            do_compression: false,
+        };
+
+        let result =
+            setup_protocol(&mut stdout, &mut stdin, &config).expect("server setup should succeed");
 
         assert!(
             result.compat_flags.is_some(),
@@ -745,17 +777,17 @@ mod tests {
         let mut stdin = &server_response[..];
         let mut stdout = Vec::new();
 
-        let result = setup_protocol(
+        let config = ProtocolSetupConfig {
             protocol,
-            &mut stdout,
-            &mut stdin,
-            false, // skip_compat_exchange
-            None,  // client_args (not needed for client mode)
-            false, // is_server = CLIENT mode
-            true,  // is_daemon_mode (daemon mode, server sends lists)
-            false, // do_compression
-        )
-        .expect("client setup should succeed");
+            skip_compat_exchange: false,
+            client_args: None, // not needed for client mode
+            is_server: false,  // CLIENT mode
+            is_daemon_mode: true,
+            do_compression: false,
+        };
+
+        let result =
+            setup_protocol(&mut stdout, &mut stdin, &config).expect("client setup should succeed");
 
         assert!(
             result.compat_flags.is_some(),
@@ -783,34 +815,25 @@ mod tests {
         let protocol = ProtocolVersion::try_from(29).unwrap(); // Use protocol 29 for simpler test
         let mut stdin = &b""[..];
 
-        let mut stdout1 = Vec::new();
-        let result1 = setup_protocol(
+        let config = ProtocolSetupConfig {
             protocol,
-            &mut stdout1,
-            &mut stdin,
-            false,
-            None,
-            true, // is_server
-            false,
-            false,
-        )
-        .expect("first setup should succeed");
+            skip_compat_exchange: false,
+            client_args: None,
+            is_server: true,
+            is_daemon_mode: false,
+            do_compression: false,
+        };
+
+        let mut stdout1 = Vec::new();
+        let result1 =
+            setup_protocol(&mut stdout1, &mut stdin, &config).expect("first setup should succeed");
 
         // Small delay to ensure different timestamp
         std::thread::sleep(std::time::Duration::from_millis(1));
 
         let mut stdout2 = Vec::new();
-        let result2 = setup_protocol(
-            protocol,
-            &mut stdout2,
-            &mut stdin,
-            false,
-            None,
-            true, // is_server
-            false,
-            false,
-        )
-        .expect("second setup should succeed");
+        let result2 =
+            setup_protocol(&mut stdout2, &mut stdin, &config).expect("second setup should succeed");
 
         // Seeds should be different (includes timestamp and PID)
         // Note: This test may flake if both calls happen in the same second
@@ -845,17 +868,17 @@ mod tests {
         let mut stdin = &peer_data[..];
         let mut stdout = Vec::new();
 
-        let result = setup_protocol(
+        let config = ProtocolSetupConfig {
             protocol,
-            &mut stdout,
-            &mut stdin,
-            false, // skip_compat_exchange
-            None,  // client_args
-            false, // is_server = CLIENT
-            false, // is_daemon_mode = SSH mode (bidirectional)
-            false, // do_compression
-        )
-        .expect("SSH mode client setup should succeed");
+            skip_compat_exchange: false,
+            client_args: None,
+            is_server: false, // CLIENT
+            is_daemon_mode: false,
+            do_compression: false,
+        };
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("SSH mode client setup should succeed");
 
         // Should have read compat flags from peer
         assert!(result.compat_flags.is_some());
@@ -882,17 +905,19 @@ mod tests {
         // Test with minimal capabilities
         let mut stdin = &b"\x00"[..]; // empty checksum list
         let mut stdout = Vec::new();
-        let result_minimal = setup_protocol(
+
+        let client_args_minimal = ["-ev".to_owned()];
+        let config_minimal = ProtocolSetupConfig {
             protocol,
-            &mut stdout,
-            &mut stdin,
-            false,
-            Some(&["-ev".to_owned()]), // Only 'v' capability
-            true,
-            true,
-            false,
-        )
-        .expect("minimal caps setup should succeed");
+            skip_compat_exchange: false,
+            client_args: Some(&client_args_minimal), // Only 'v' capability
+            is_server: true,
+            is_daemon_mode: true,
+            do_compression: false,
+        };
+
+        let result_minimal = setup_protocol(&mut stdout, &mut stdin, &config_minimal)
+            .expect("minimal caps setup should succeed");
 
         let flags_minimal = result_minimal.compat_flags.unwrap();
         assert!(
@@ -907,17 +932,19 @@ mod tests {
         // Test with full capabilities
         let mut stdin = &b"\x00"[..];
         let mut stdout = Vec::new();
-        let result_full = setup_protocol(
+
+        let client_args_full = ["-e.LsfxCIvu".to_owned()];
+        let config_full = ProtocolSetupConfig {
             protocol,
-            &mut stdout,
-            &mut stdin,
-            false,
-            Some(&["-e.LsfxCIvu".to_owned()]), // Full capabilities
-            true,
-            true,
-            false,
-        )
-        .expect("full caps setup should succeed");
+            skip_compat_exchange: false,
+            client_args: Some(&client_args_full), // Full capabilities
+            is_server: true,
+            is_daemon_mode: true,
+            do_compression: false,
+        };
+
+        let result_full = setup_protocol(&mut stdout, &mut stdin, &config_full)
+            .expect("full caps setup should succeed");
 
         let flags_full = result_full.compat_flags.unwrap();
         assert!(
@@ -945,17 +972,18 @@ mod tests {
         let mut stdin = &b"\x00"[..]; // empty checksum list
         let mut stdout = Vec::new();
 
-        let result = setup_protocol(
-            protocol_30,
-            &mut stdout,
-            &mut stdin,
-            false,
-            Some(&["-efxCIvu".to_owned()]),
-            true,  // is_server
-            true,  // is_daemon_mode
-            false, // do_compression
-        )
-        .expect("protocol 30 setup should succeed");
+        let client_args = ["-efxCIvu".to_owned()];
+        let config = ProtocolSetupConfig {
+            protocol: protocol_30,
+            skip_compat_exchange: false,
+            client_args: Some(&client_args),
+            is_server: true,
+            is_daemon_mode: true,
+            do_compression: false,
+        };
+
+        let result = setup_protocol(&mut stdout, &mut stdin, &config)
+            .expect("protocol 30 setup should succeed");
 
         assert!(
             result.compat_flags.is_some(),

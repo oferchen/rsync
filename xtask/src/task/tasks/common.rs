@@ -4,9 +4,11 @@ use crate::task::Task;
 use std::time::Duration;
 
 /// Compiles workspace binaries with cargo build.
-#[allow(dead_code)]
 pub struct CargoBuildTask {
+    // TODO: Use profile and target fields in actual build execution
+    #[allow(dead_code)]
     pub profile: Option<&'static str>,
+    #[allow(dead_code)]
     pub target: Option<&'static str>,
 }
 

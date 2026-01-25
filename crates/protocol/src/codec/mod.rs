@@ -379,7 +379,11 @@ mod tests {
         let mut codecs_30 = ProtocolCodecs::for_version(30);
         let mut buf_30 = Vec::new();
         codecs_30.ndx.write_ndx(&mut buf_30, 0).unwrap();
-        assert_eq!(buf_30.len(), 1, "modern NDX should be 1 byte for first index");
+        assert_eq!(
+            buf_30.len(),
+            1,
+            "modern NDX should be 1 byte for first index"
+        );
 
         // Both should decode to the same value
         let mut cursor_29 = Cursor::new(&buf_29);

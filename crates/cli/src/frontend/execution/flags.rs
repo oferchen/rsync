@@ -550,7 +550,9 @@ fn debug_flag_error(display: &str) -> Message {
     .with_role(Role::Client)
 }
 
-/// Deprecated: Kept for reference, will be removed once native SSH is fully validated
+/// Check if progress-related flags are present in --info flags.
+/// Used by fallback path to determine if progress output is enabled.
+/// TODO: Will be used once fallback module is re-enabled
 #[allow(dead_code)]
 pub(crate) fn info_flags_include_progress(flags: &[OsString]) -> bool {
     flags.iter().any(|value| {

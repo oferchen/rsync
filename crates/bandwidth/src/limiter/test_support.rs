@@ -390,3 +390,342 @@ impl Default for RecordedSleepSession<'static> {
         recorded_sleep_session()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recorded_sleep_session_clear_empties_buffer() {
+        let mut session = recorded_sleep_session();
+        // Add some durations
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+        session.clear();
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn recorded_sleep_session_len_returns_count() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(3),
+        ]);
+        assert_eq!(session.len(), 3);
+    }
+
+    #[test]
+    fn recorded_sleep_session_is_empty_when_empty() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn recorded_sleep_session_not_empty_with_data() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1)]);
+        assert!(!session.is_empty());
+    }
+
+    #[test]
+    fn recorded_sleep_session_snapshot_preserves_data() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+
+        let snapshot1 = session.snapshot();
+        let snapshot2 = session.snapshot();
+
+        assert_eq!(snapshot1, snapshot2);
+        assert_eq!(snapshot1.len(), 2);
+    }
+
+    #[test]
+    fn recorded_sleep_session_last_duration_returns_last() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(5)]);
+
+        assert_eq!(session.last_duration(), Some(Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn recorded_sleep_session_last_duration_none_when_empty() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        assert_eq!(session.last_duration(), None);
+    }
+
+    #[test]
+    fn recorded_sleep_session_total_duration_sums_all() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(3),
+        ]);
+
+        assert_eq!(session.total_duration(), Duration::from_secs(6));
+    }
+
+    #[test]
+    fn recorded_sleep_session_total_duration_zero_when_empty() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        assert_eq!(session.total_duration(), Duration::ZERO);
+    }
+
+    #[test]
+    fn recorded_sleep_session_take_drains_buffer() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+
+        let taken = session.take();
+        assert_eq!(taken.len(), 2);
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn recorded_sleep_session_into_vec_drains_buffer() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1)]);
+
+        let vec = session.into_vec();
+        assert_eq!(vec.len(), 1);
+
+        // Need new session to check
+        let new_session = recorded_sleep_session();
+        assert!(new_session.is_empty());
+    }
+
+    #[test]
+    fn recorded_sleep_session_iter_preserves_data() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+
+        let collected: Vec<_> = session.iter().collect();
+        assert_eq!(collected.len(), 2);
+        assert_eq!(session.len(), 2); // Data still there
+    }
+
+    #[test]
+    fn recorded_sleep_session_iter_double_ended() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(3),
+        ]);
+
+        let mut iter = session.iter();
+        assert_eq!(iter.next_back(), Some(Duration::from_secs(3)));
+        assert_eq!(iter.next(), Some(Duration::from_secs(1)));
+        assert_eq!(iter.next_back(), Some(Duration::from_secs(2)));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn recorded_sleep_session_iter_size_hint() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+
+        let iter = session.iter();
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+    }
+
+    #[test]
+    fn recorded_sleep_session_iter_exact_size() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+
+        let iter = session.iter();
+        assert_eq!(iter.len(), 2);
+    }
+
+    #[test]
+    fn recorded_sleep_session_into_iterator() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+
+        let collected: Vec<_> = session.into_iter().collect();
+        assert_eq!(collected.len(), 2);
+    }
+
+    #[test]
+    fn recorded_sleep_session_ref_into_iterator() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1)]);
+
+        let collected: Vec<_> = (&session).into_iter().collect();
+        assert_eq!(collected.len(), 1);
+        // Data preserved
+        assert_eq!(session.len(), 1);
+    }
+
+    #[test]
+    fn recorded_sleep_session_mut_ref_into_iterator() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1)]);
+
+        let collected: Vec<_> = (&mut session).into_iter().collect();
+        assert_eq!(collected.len(), 1);
+        // Data preserved
+        assert_eq!(session.len(), 1);
+    }
+
+    #[test]
+    fn recorded_sleep_session_default() {
+        let session: RecordedSleepSession = Default::default();
+        // Should be able to use the session
+        let _ = session.is_empty();
+    }
+
+    #[test]
+    fn recorded_sleep_iter_fused() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1)]);
+
+        let mut iter = session.iter();
+        assert!(iter.next().is_some());
+        assert!(iter.next().is_none());
+        // Fused: keeps returning None
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn recorded_sleep_iter_interleaved_forward_backward() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![
+            Duration::from_millis(100),
+            Duration::from_millis(200),
+            Duration::from_millis(300),
+            Duration::from_millis(400),
+        ]);
+
+        let mut iter = session.iter();
+
+        // Interleave forward and backward iteration
+        assert_eq!(iter.next(), Some(Duration::from_millis(100)));
+        assert_eq!(iter.next_back(), Some(Duration::from_millis(400)));
+        assert_eq!(iter.next(), Some(Duration::from_millis(200)));
+        assert_eq!(iter.next_back(), Some(Duration::from_millis(300)));
+        assert_eq!(iter.next(), None);
+        assert_eq!(iter.next_back(), None);
+    }
+
+    #[test]
+    fn append_recorded_sleeps_adds_to_buffer() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        append_recorded_sleeps(vec![Duration::from_secs(1)]);
+        assert_eq!(session.len(), 1);
+
+        append_recorded_sleeps(vec![Duration::from_secs(2), Duration::from_secs(3)]);
+        assert_eq!(session.len(), 3);
+    }
+
+    #[test]
+    fn append_recorded_sleeps_empty_vec() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        append_recorded_sleeps(vec![]);
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn recorded_sleep_session_multiple_takes() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        append_recorded_sleeps(vec![Duration::from_secs(1)]);
+        let taken1 = session.take();
+        assert_eq!(taken1.len(), 1);
+
+        // Second take should be empty
+        let taken2 = session.take();
+        assert!(taken2.is_empty());
+
+        // Add more and take again
+        append_recorded_sleeps(vec![Duration::from_secs(2)]);
+        let taken3 = session.take();
+        assert_eq!(taken3.len(), 1);
+    }
+
+    #[test]
+    fn total_duration_saturation() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // Add durations that would overflow if not saturating
+        append_recorded_sleeps(vec![Duration::MAX, Duration::from_secs(1)]);
+
+        let total = session.total_duration();
+        // Should saturate to MAX, not overflow
+        assert_eq!(total, Duration::MAX);
+    }
+
+    #[test]
+    fn iter_len_decreases_during_iteration() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
+
+        let mut iter = session.iter();
+        assert_eq!(iter.len(), 2);
+
+        iter.next();
+        assert_eq!(iter.len(), 1);
+
+        iter.next();
+        assert_eq!(iter.len(), 0);
+    }
+
+    #[test]
+    fn iter_size_hint_accurate() {
+        let mut session = recorded_sleep_session();
+        session.clear();
+        append_recorded_sleeps(vec![
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+            Duration::from_secs(3),
+        ]);
+
+        let mut iter = session.iter();
+
+        let (lower, upper) = iter.size_hint();
+        assert_eq!(lower, 3);
+        assert_eq!(upper, Some(3));
+
+        iter.next();
+        let (lower, upper) = iter.size_hint();
+        assert_eq!(lower, 2);
+        assert_eq!(upper, Some(2));
+
+        iter.next_back();
+        let (lower, upper) = iter.size_hint();
+        assert_eq!(lower, 1);
+        assert_eq!(upper, Some(1));
+    }
+}

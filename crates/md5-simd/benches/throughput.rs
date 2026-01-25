@@ -99,7 +99,11 @@ fn bench_mixed_lengths(c: &mut Criterion) {
 /// Report the active backend.
 fn bench_report_backend(c: &mut Criterion) {
     let backend = active_backend();
-    println!("\nActive backend: {:?} ({} lanes)", backend, backend.lanes());
+    println!(
+        "\nActive backend: {:?} ({} lanes)",
+        backend,
+        backend.lanes()
+    );
 
     c.bench_function("backend_query", |b| {
         b.iter(active_backend);
