@@ -23,84 +23,109 @@ use super::FileEntry;
 ///
 /// This mirrors upstream's `f_name_cmp()` from `flist.c`.
 ///
-/// # Sorting Rules
+/// # Sorting Rules (Protocol 29+)
 ///
 /// 1. "." always sorts first (root directory marker)
-/// 2. At each directory level, files sort before directories
-/// 3. Within files or directories at the same level, sort alphabetically
-/// 4. A directory is immediately followed by its contents
+/// 2. At each directory depth, non-directories (files, symlinks, etc.) sort BEFORE directories
+/// 3. Directories are compared as if they have a trailing '/'
+/// 4. Within the same type, sort by byte comparison
+/// 5. Directory contents follow the directory entry
 ///
-/// # Example
+/// # Total Order Guarantee
 ///
-/// For entries: `test.txt`, `subdir/`, `subdir/file.txt`, `another.txt`
-///
-/// Sorted order:
-/// - `.` (root marker, if present)
-/// - `another.txt` (file at root, 'a' < 's' < 't')
-/// - `test.txt` (file at root)
-/// - `subdir/` (directory at root, after files)
-/// - `subdir/file.txt` (contents of subdir)
+/// This function implements a total order by using a canonical comparison
+/// that is transitive: if a < b and b < c, then a < c.
 #[must_use]
 pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     let name_a = a.name();
     let name_b = b.name();
 
     // "." always comes first
-    if name_a == "." {
-        return Ordering::Less;
+    match (name_a == ".", name_b == ".") {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Less,
+        (false, true) => return Ordering::Greater,
+        (false, false) => {}
     }
-    if name_b == "." {
-        return Ordering::Greater;
-    }
 
-    let is_dir_a = a.is_dir();
-    let is_dir_b = b.is_dir();
+    // For directories, conceptually append '/' for comparison purposes.
+    // This matches upstream rsync's f_name_cmp() which treats directories
+    // as having an implicit trailing slash.
+    let bytes_a = name_a.as_bytes();
+    let bytes_b = name_b.as_bytes();
+    let a_is_dir = a.is_dir();
+    let b_is_dir = b.is_dir();
 
-    // Get parent paths (empty string for root level)
-    let parent_a = name_a.rfind('/').map_or("", |i| &name_a[..i]);
-    let parent_b = name_b.rfind('/').map_or("", |i| &name_b[..i]);
-
-    // Get just the filename component
-    let file_a = name_a.rfind('/').map_or(name_a, |i| &name_a[i + 1..]);
-    let file_b = name_b.rfind('/').map_or(name_b, |i| &name_b[i + 1..]);
-
-    if parent_a == parent_b {
-        // Same parent directory - at the same level
-        // Files sort before directories, then alphabetically within each group
-        match (is_dir_a, is_dir_b) {
-            (false, true) => Ordering::Less,    // file < dir
-            (true, false) => Ordering::Greater, // dir > file
-            _ => file_a.cmp(file_b),            // same type: alphabetical
-        }
-    } else if name_b.starts_with(name_a) && name_b.as_bytes().get(name_a.len()) == Some(&b'/') {
-        // a is an ancestor of b (e.g., "subdir" vs "subdir/file.txt")
-        // Ancestor comes first
-        Ordering::Less
-    } else if name_a.starts_with(name_b) && name_a.as_bytes().get(name_b.len()) == Some(&b'/') {
-        // b is an ancestor of a
-        Ordering::Greater
-    } else {
-        // Different parent directories
-        // Compare the root-level components first
-        let root_a = name_a.find('/').map_or(name_a, |i| &name_a[..i]);
-        let root_b = name_b.find('/').map_or(name_b, |i| &name_b[..i]);
-
-        if root_a == root_b {
-            // Same root, different subpaths
-            name_a.cmp(name_b)
+    // Compare byte by byte, treating directory names as having implicit '/'
+    let mut i = 0;
+    loop {
+        // Get effective byte at position i, with implicit '/' for directories at end
+        let ch_a = if i < bytes_a.len() {
+            bytes_a[i]
+        } else if i == bytes_a.len() && a_is_dir {
+            b'/' // Implicit trailing slash for directory
         } else {
-            // Different roots - check if they're files or dirs at root
-            let a_is_file_at_root = !is_dir_a && !name_a.contains('/');
-            let b_is_file_at_root = !is_dir_b && !name_b.contains('/');
-            let a_is_under_dir = name_a.contains('/');
-            let b_is_under_dir = name_b.contains('/');
+            0 // Past end
+        };
 
-            match (a_is_file_at_root, b_is_file_at_root) {
-                (true, false) if b_is_under_dir || is_dir_b => Ordering::Less,
-                (false, true) if a_is_under_dir || is_dir_a => Ordering::Greater,
-                _ => root_a.cmp(root_b),
-            }
+        let ch_b = if i < bytes_b.len() {
+            bytes_b[i]
+        } else if i == bytes_b.len() && b_is_dir {
+            b'/' // Implicit trailing slash for directory
+        } else {
+            0 // Past end
+        };
+
+        // Check for end condition
+        let a_done = i > bytes_a.len() || (i == bytes_a.len() && !a_is_dir);
+        let b_done = i > bytes_b.len() || (i == bytes_b.len() && !b_is_dir);
+
+        if a_done && b_done {
+            return Ordering::Equal;
         }
+        if a_done {
+            // a ended, b continues
+            // If b's next char is '/', a is parent of b
+            if ch_b == b'/' {
+                return Ordering::Less;
+            }
+            // Otherwise a sorts before b (0 < any char)
+            return Ordering::Less;
+        }
+        if b_done {
+            // b ended, a continues
+            if ch_a == b'/' {
+                return Ordering::Greater;
+            }
+            return Ordering::Greater;
+        }
+
+        if ch_a != ch_b {
+            // At the divergence point, check if we're comparing at same depth
+            // by looking for '/' in the remaining parts
+            let remaining_a = &bytes_a[i..];
+            let remaining_b = &bytes_b[i..];
+
+            // Check if there's a separator before any difference in the current component
+            let a_has_sep_next = remaining_a.iter().position(|&c| c == b'/');
+            let b_has_sep_next = remaining_b.iter().position(|&c| c == b'/');
+
+            // Determine if entries are files or directories at this level
+            let a_is_dir_here = a_has_sep_next.is_some() || (a_is_dir && a_has_sep_next.is_none());
+            let b_is_dir_here = b_has_sep_next.is_some() || (b_is_dir && b_has_sep_next.is_none());
+
+            // At each level, files sort before directories
+            match (a_is_dir_here, b_is_dir_here) {
+                (true, false) => return Ordering::Greater, // a is dir, b is file -> b first
+                (false, true) => return Ordering::Less,    // a is file, b is dir -> a first
+                _ => {} // Same type, compare bytes
+            }
+
+            // Same type at this level - compare the effective bytes
+            return ch_a.cmp(&ch_b);
+        }
+
+        i += 1;
     }
 }
 
