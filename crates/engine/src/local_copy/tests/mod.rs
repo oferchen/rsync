@@ -198,6 +198,68 @@ fn set_acl_from_text(path: &Path, text: &str, ty: acl_sys::AclType) {
     active_acl_strategy().set_from_text(path, text, ty)
 }
 
+mod test_helpers {
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    /// Test context for copy operations.
+    pub struct CopyTestContext {
+        pub temp_dir: TempDir,
+        pub source: PathBuf,
+        pub dest: PathBuf,
+    }
+
+    /// Creates a test context with temporary directory and source/dest paths.
+    ///
+    /// The source directory is created automatically. The dest directory is not
+    /// created to allow tests to control whether it exists.
+    pub fn setup_copy_test() -> CopyTestContext {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let source = temp_dir.path().join("source");
+        let dest = temp_dir.path().join("dest");
+        std::fs::create_dir_all(&source).expect("create source");
+        CopyTestContext {
+            temp_dir,
+            source,
+            dest,
+        }
+    }
+
+    /// Creates a directory tree for testing.
+    ///
+    /// Takes a base path and a specification of paths to create. Each entry is a
+    /// tuple of (path, optional_content):
+    /// - If `content` is `Some(data)`, a file is created with that content
+    /// - If `content` is `None`, an empty directory is created
+    ///
+    /// Parent directories are created automatically as needed.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let temp = tempdir().expect("tempdir");
+    /// create_test_tree(temp.path(), &[
+    ///     ("dir1/file1.txt", Some(b"content1")),
+    ///     ("dir1/file2.txt", Some(b"content2")),
+    ///     ("dir2/subdir", None),  // empty directory
+    ///     ("dir3/nested/file.txt", Some(b"nested")),
+    /// ]);
+    /// ```
+    pub fn create_test_tree(base: &Path, spec: &[(&str, Option<&[u8]>)]) {
+        for (path, content) in spec {
+            let full_path = base.join(path);
+            if let Some(data) = content {
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent).expect("create parent directories");
+                }
+                std::fs::write(&full_path, data).expect("write file");
+            } else {
+                std::fs::create_dir_all(&full_path).expect("create directory");
+            }
+        }
+    }
+}
+
 #[cfg(unix)]
 mod unix_ids {
     #![allow(unsafe_code)]

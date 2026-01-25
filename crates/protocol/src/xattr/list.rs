@@ -157,7 +157,7 @@ mod tests {
 
         assert_eq!(list.len(), 2);
 
-        let names: Vec<_> = list.iter().map(|e| e.name_str().to_string()).collect();
+        let names: Vec<_> = list.iter().map(|e| e.name_str()).collect();
         assert_eq!(names, vec!["user.a", "user.b"]);
     }
 

@@ -1,3 +1,29 @@
+//! Progress tracking for client transfers.
+//!
+//! This module provides the infrastructure for reporting incremental progress
+//! updates during file transfers, mirroring the behavior of rsync's `--info=progress2`
+//! flag. The [`ClientProgressObserver`] trait allows custom progress handlers
+//! to be notified as files are copied, enabling progress bars and status displays
+//! in user interfaces.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! use core::client::{ClientConfig, ClientProgressUpdate, run_client_with_observer};
+//!
+//! let mut total_transferred = 0u64;
+//! let mut observer = |update: &ClientProgressUpdate| {
+//!     total_transferred = update.overall_transferred();
+//!     println!("Progress: {}/{} files", update.index(), update.total());
+//! };
+//!
+//! let config = ClientConfig::builder()
+//!     .transfer_args(["source", "dest"])
+//!     .build();
+//!
+//! run_client_with_observer(config, Some(&mut observer))?;
+//! ```
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

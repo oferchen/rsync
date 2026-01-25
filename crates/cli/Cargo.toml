@@ -32,7 +32,7 @@ compress = { path = "../compress", default-features = false }
 metadata = { path = "../metadata", default-features = false }
 rsync_io = { path = "../rsync_io", package = "rsync_io" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
-tempfile = "3.10"
+tempfile = "3.15"
 
 [target.'cfg(unix)'.dependencies]
 uzers = "0.12"
@@ -49,7 +49,7 @@ checksums = { path = "../checksums", default-features = false }
 assert_cmd = "2.0"
 predicates = "3.1"
 filetime = "0.2"
-tempfile = "3.10"
+tempfile = "3.15"
 filters = { path = "../filters" }
 rustix = { version = "0.38", features = ["fs"] }
 base64 = "0.22"

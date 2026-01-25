@@ -16,7 +16,7 @@ fn random_data(size: usize, seed: u64) -> Vec<u8> {
 fn bench_single_digest(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_digest");
 
-    for size in [64, 1024, 64 * 1024, 1024 * 1024] {
+    for size in [64, 1_024, 64 * 1_024, 1_024 * 1_024] {
         let data = random_data(size, 42);
         group.throughput(Throughput::Bytes(size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &data, |b, data| {
@@ -31,7 +31,7 @@ fn bench_single_digest(c: &mut Criterion) {
 fn bench_batch_digest(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_digest");
 
-    let input_size = 1024; // 1KB per input
+    let input_size = 1_024; // 1KB per input
     let data = random_data(input_size, 42);
 
     for batch_size in [8, 64, 256] {
@@ -57,7 +57,7 @@ fn bench_vs_reference(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("vs_reference");
 
-    let size = 64 * 1024; // 64KB
+    let size = 64 * 1_024; // 64KB
     let data = random_data(size, 42);
 
     group.throughput(Throughput::Bytes(size as u64));
@@ -82,7 +82,7 @@ fn bench_mixed_lengths(c: &mut Criterion) {
     let mut group = c.benchmark_group("mixed_lengths");
 
     // Simulate real rsync file checksums: varying file sizes
-    let sizes = [64, 128, 256, 512, 1024, 2048, 4096, 8192];
+    let sizes = [64, 128, 256, 512, 1_024, 2_048, 4_096, 8_192];
     let inputs: Vec<Vec<u8>> = sizes.iter().map(|&s| random_data(s, s as u64)).collect();
     let refs: Vec<&[u8]> = inputs.iter().map(|v| v.as_slice()).collect();
     let total_bytes: u64 = sizes.iter().sum::<usize>() as u64;

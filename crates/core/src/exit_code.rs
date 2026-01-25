@@ -336,6 +336,172 @@ pub trait HasExitCode {
     fn exit_code(&self) -> ExitCode;
 }
 
+/// Trait for standardized error handling across the workspace.
+///
+/// This trait provides a unified interface for error types to expose:
+/// - Unique error codes for programmatic error identification
+/// - Exit codes suitable for process termination (via [`HasExitCode`])
+/// - User-friendly error messages for display
+///
+/// # Design Philosophy
+///
+/// This trait complements the existing [`HasExitCode`] trait by adding
+/// structured error identification and user messaging. It follows these principles:
+///
+/// - **Error codes** are unique identifiers within an error type, useful for
+///   metrics, logging, and programmatic error handling
+/// - **Exit codes** (from [`HasExitCode`]) map to upstream rsync's exit codes
+///   for process termination
+/// - **User messages** provide human-readable descriptions, typically delegating
+///   to the `Display` implementation
+///
+/// # Implementation Guidelines
+///
+/// When implementing this trait:
+///
+/// 1. **Error codes** should be unique within your error type. Consider using
+///    the discriminant for enums, or a constant for simple error types.
+/// 2. **Exit codes** should match upstream rsync's behavior. See [`ExitCode`]
+///    for the canonical mapping.
+/// 3. **User messages** should be clear and actionable. Include context like
+///    file paths, operation names, and underlying error details.
+///
+/// # Examples
+///
+/// ```ignore
+/// use std::fmt;
+/// use core::exit_code::{ExitCode, ErrorCodification, HasExitCode};
+/// use thiserror::Error;
+///
+/// #[derive(Debug, Error)]
+/// pub enum MyError {
+///     #[error("file not found: {path}")]
+///     NotFound { path: String },
+///     #[error("permission denied: {path}")]
+///     PermissionDenied { path: String },
+/// }
+///
+/// impl HasExitCode for MyError {
+///     fn exit_code(&self) -> ExitCode {
+///         match self {
+///             Self::NotFound { .. } => ExitCode::FileSelect,
+///             Self::PermissionDenied { .. } => ExitCode::FileIo,
+///         }
+///     }
+/// }
+///
+/// impl ErrorCodification for MyError {
+///     fn error_code(&self) -> u32 {
+///         // Use discriminant or define unique codes
+///         match self {
+///             Self::NotFound { .. } => 1001,
+///             Self::PermissionDenied { .. } => 1002,
+///         }
+///     }
+///
+///     fn user_message(&self) -> String {
+///         // Delegate to Display implementation
+///         self.to_string()
+///     }
+/// }
+/// ```
+///
+/// # Relationship with `HasExitCode`
+///
+/// Types implementing `ErrorCodification` should also implement [`HasExitCode`]
+/// to provide the exit code. The default implementation of
+/// [`ErrorCodification::exit_code_i32`] delegates to `HasExitCode::exit_code().as_i32()`,
+/// making it seamless to use both traits together.
+pub trait ErrorCodification: HasExitCode + fmt::Display {
+    /// Returns a unique error code for this error variant.
+    ///
+    /// Error codes are used for programmatic error identification, metrics,
+    /// and logging. They should be unique within the error type.
+    ///
+    /// # Guidelines
+    ///
+    /// - Use the discriminant for enum variants (e.g., `1001`, `1002`, etc.)
+    /// - For simple error types, use a constant (e.g., `1000`)
+    /// - Document the error code mapping in your error type's documentation
+    /// - Ensure codes don't conflict within the same error type
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn error_code(&self) -> u32 {
+    ///     match self {
+    ///         Self::NotFound { .. } => 1001,
+    ///         Self::PermissionDenied { .. } => 1002,
+    ///         Self::IoError { .. } => 1003,
+    ///     }
+    /// }
+    /// ```
+    fn error_code(&self) -> u32;
+
+    /// Returns an exit code suitable for process termination.
+    ///
+    /// This method provides a convenient i32 interface to the exit code,
+    /// delegating to the [`HasExitCode`] trait implementation.
+    ///
+    /// The default implementation calls `self.exit_code().as_i32()`,
+    /// ensuring consistency with the typed exit code.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let err = MyError::NotFound { path: "/tmp/file".into() };
+    /// assert_eq!(err.exit_code_i32(), 3); // FileSelect
+    /// ```
+    fn exit_code_i32(&self) -> i32 {
+        self.exit_code().as_i32()
+    }
+
+    /// Returns a user-friendly error message.
+    ///
+    /// This message should be suitable for display to end users. It should:
+    /// - Be clear and concise
+    /// - Include relevant context (file paths, operation names, etc.)
+    /// - Suggest corrective actions when possible
+    ///
+    /// The default implementation delegates to the `Display` trait, which
+    /// is appropriate for most error types using `thiserror::Error`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn user_message(&self) -> String {
+    ///     // Default: delegate to Display
+    ///     self.to_string()
+    /// }
+    /// ```
+    fn user_message(&self) -> String {
+        self.to_string()
+    }
+
+    /// Returns the upstream rsync error code name for debugging.
+    ///
+    /// This method provides the symbolic name of the error code as defined
+    /// in upstream rsync's `errcode.h` (e.g., "RERR_SYNTAX", "RERR_PARTIAL").
+    ///
+    /// The default implementation maps the exit code to its description.
+    /// Override this to provide more specific error code names.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// fn error_code_name(&self) -> &'static str {
+    ///     match self {
+    ///         Self::NotFound { .. } => "RERR_FILESELECT",
+    ///         Self::PermissionDenied { .. } => "RERR_FILEIO",
+    ///         _ => self.exit_code().description(),
+    ///     }
+    /// }
+    /// ```
+    fn error_code_name(&self) -> &'static str {
+        self.exit_code().description()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

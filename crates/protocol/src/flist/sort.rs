@@ -289,7 +289,8 @@ mod tests {
 
         sort_file_list(&mut entries);
 
-        let names: Vec<_> = entries.iter().map(|e| e.name()).collect();
+        let mut names = Vec::with_capacity(entries.len());
+        names.extend(entries.iter().map(|e| e.name()));
         assert_eq!(
             names,
             vec![".", "another.txt", "test.txt", "subdir", "subdir/file.txt"]
@@ -302,7 +303,8 @@ mod tests {
 
         sort_file_list(&mut entries);
 
-        let names: Vec<_> = entries.iter().map(|e| e.name()).collect();
+        let mut names = Vec::with_capacity(entries.len());
+        names.extend(entries.iter().map(|e| e.name()));
         // z.txt is a file at root, so it comes before the 'a' directory
         assert_eq!(names, vec!["z.txt", "a", "a/nested.txt"]);
     }
@@ -333,7 +335,8 @@ mod tests {
         let (cleaned, stats) = flist_clean(entries);
         assert_eq!(cleaned.len(), 2);
         assert_eq!(stats.duplicates_removed, 1);
-        let names: Vec<_> = cleaned.iter().map(|e| e.name()).collect();
+        let mut names = Vec::with_capacity(cleaned.len());
+        names.extend(cleaned.iter().map(|e| e.name()));
         assert_eq!(names, vec!["a.txt", "b.txt"]);
     }
 
@@ -395,7 +398,8 @@ mod tests {
         ];
         let (cleaned, stats) = sort_and_clean_file_list(entries);
         assert_eq!(stats.duplicates_removed, 1);
-        let names: Vec<_> = cleaned.iter().map(|e| e.name()).collect();
+        let mut names = Vec::with_capacity(cleaned.len());
+        names.extend(cleaned.iter().map(|e| e.name()));
         assert_eq!(names, vec!["a.txt", "z.txt", "a"]);
     }
 }

@@ -12,19 +12,342 @@ use crate::local_copy::sync_acls_if_requested;
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyArgumentError,
-    LocalCopyError, LocalCopyMetadata, LocalCopyRecord, copy_device, copy_fifo, copy_file,
-    copy_symlink, delete_extraneous_entries, follow_symlink_metadata, map_metadata_error,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, copy_device,
+    copy_fifo, copy_file, copy_symlink, delete_extraneous_entries, follow_symlink_metadata,
+    map_metadata_error,
 };
 use ::metadata::apply_directory_metadata_with_options;
 
 use super::super::non_empty_path;
-use super::planner::{EntryAction, apply_pre_transfer_deletions, plan_directory_entries};
+use super::planner::{
+    EntryAction, PlannedEntry, apply_pre_transfer_deletions, plan_directory_entries,
+};
 #[cfg(feature = "parallel")]
 use super::planner::DirectoryPlan;
 use super::support::read_directory_entries_sorted;
 
 #[cfg(feature = "parallel")]
 use super::parallel_checksum::{ChecksumCache, FilePair};
+
+/// Result of checking destination directory state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DestinationState {
+    /// Destination directory already exists and is ready.
+    Ready,
+    /// Destination is missing and needs to be created.
+    Missing,
+}
+
+/// Checks the destination path and determines if it needs to be created.
+///
+/// Handles various cases:
+/// - Destination is already a directory: returns `Ready`
+/// - Destination is a symlink to a directory with `--keep-dirlinks`: returns `Ready`
+/// - Destination exists but is not a directory: removes it if force is enabled
+/// - Destination doesn't exist: returns `Missing`
+#[inline]
+fn check_destination_state(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+) -> Result<DestinationState, LocalCopyError> {
+    match fs::symlink_metadata(destination) {
+        Ok(existing) => {
+            let file_type = existing.file_type();
+            if file_type.is_dir() {
+                // Directory already present; nothing to do.
+                Ok(DestinationState::Ready)
+            } else if file_type.is_symlink() && context.keep_dirlinks_enabled() {
+                let target_metadata = follow_symlink_metadata(destination)?;
+                if target_metadata.file_type().is_dir() {
+                    Ok(DestinationState::Ready)
+                } else if context.force_replacements_enabled() {
+                    context.force_remove_destination(destination, relative, &existing)?;
+                    Ok(DestinationState::Missing)
+                } else {
+                    Err(LocalCopyError::invalid_argument(
+                        LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                    ))
+                }
+            } else if context.force_replacements_enabled() {
+                context.force_remove_destination(destination, relative, &existing)?;
+                Ok(DestinationState::Missing)
+            } else {
+                Err(LocalCopyError::invalid_argument(
+                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                ))
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(DestinationState::Missing),
+        Err(error) => Err(LocalCopyError::io(
+            "inspect destination directory",
+            destination.to_path_buf(),
+            error,
+        )),
+    }
+}
+
+/// Records that a directory was skipped because existing_only mode is enabled
+/// and the destination doesn't exist.
+#[inline]
+fn record_skipped_missing_destination(
+    context: &mut CopyContext,
+    metadata: &fs::Metadata,
+    relative: Option<&Path>,
+) {
+    context.summary_mut().record_directory_total();
+    if let Some(relative_path) = relative {
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        context.record(LocalCopyRecord::new(
+            relative_path.to_path_buf(),
+            LocalCopyAction::SkippedMissingDestination,
+            0,
+            Some(metadata_snapshot.len()),
+            Duration::default(),
+            Some(metadata_snapshot),
+        ));
+    }
+}
+
+/// Applies final metadata to a directory after all contents have been processed.
+///
+/// This includes permissions, timestamps (unless omit_dir_times is enabled),
+/// extended attributes, and ACLs.
+fn apply_final_directory_metadata(
+    context: &CopyContext,
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    #[cfg(all(unix, any(feature = "acl", feature = "xattr")))] mode: LocalCopyExecution,
+    #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
+    #[cfg(all(unix, feature = "acl"))] preserve_acls: bool,
+) -> Result<(), LocalCopyError> {
+    let metadata_options = if context.omit_dir_times_enabled() {
+        context.metadata_options().preserve_times(false)
+    } else {
+        context.metadata_options()
+    };
+    apply_directory_metadata_with_options(destination, metadata, metadata_options)
+        .map_err(map_metadata_error)?;
+
+    #[cfg(all(unix, feature = "xattr"))]
+    sync_xattrs_if_requested(
+        preserve_xattrs,
+        mode,
+        source,
+        destination,
+        true,
+        context.filter_program(),
+    )?;
+
+    #[cfg(all(unix, feature = "acl"))]
+    sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+
+    // Suppress unused variable warnings when features are disabled
+    let _ = source;
+
+    Ok(())
+}
+
+/// Handles the deletion phase after transfer, based on the configured timing.
+#[inline]
+fn handle_post_transfer_deletions<'a>(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    deletion_enabled: bool,
+    delete_timing: Option<DeleteTiming>,
+    keep_names: &[&'a OsString],
+) -> Result<(), LocalCopyError> {
+    if !deletion_enabled {
+        return Ok(());
+    }
+
+    match delete_timing.unwrap_or(DeleteTiming::During) {
+        DeleteTiming::Before => {
+            // Already handled by apply_pre_transfer_deletions
+        }
+        DeleteTiming::During => {
+            delete_extraneous_entries(context, destination, relative, keep_names)?;
+        }
+        DeleteTiming::Delay | DeleteTiming::After => {
+            // Clone names for deferred processing (data must outlive the plan)
+            let keep_owned: Vec<OsString> = keep_names.iter().map(|&s| s.clone()).collect();
+            let relative_owned = relative.map(Path::to_path_buf);
+            context.defer_deletion(destination.to_path_buf(), relative_owned, keep_owned);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles cleanup when an empty directory should be pruned.
+///
+/// Returns `true` if the directory was removed, `false` if it should be kept.
+#[inline]
+fn handle_empty_directory_pruning(
+    context: &mut CopyContext,
+    destination: &Path,
+    created_directory_on_disk: bool,
+) -> Result<bool, LocalCopyError> {
+    if created_directory_on_disk {
+        fs::remove_dir(destination)
+            .map_err(|error| LocalCopyError::io("remove empty directory", destination, error))?;
+        if context
+            .last_created_entry_path()
+            .is_some_and(|path| path == destination)
+        {
+            context.pop_last_created_entry();
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Processes a single planned entry during directory recursion.
+///
+/// This handles all entry types: directories, files, symlinks, FIFOs, and devices.
+/// Returns `true` if this entry should count as "kept" for pruning purposes.
+fn process_planned_entry(
+    context: &mut CopyContext,
+    planned: &PlannedEntry<'_>,
+    destination: &Path,
+    ensure_directory: &mut impl FnMut(&mut CopyContext) -> Result<(), LocalCopyError>,
+    root_device: Option<u64>,
+) -> Result<bool, LocalCopyError> {
+    let file_name = &planned.entry.file_name;
+    let target_path = destination.join(Path::new(file_name));
+    let entry_metadata = planned.metadata();
+    let record_relative = non_empty_path(planned.relative.as_path());
+
+    match planned.action {
+        EntryAction::SkipExcluded => Ok(false),
+        EntryAction::SkipNonRegular => {
+            if entry_metadata.file_type().is_symlink() {
+                context.summary_mut().record_symlink_total();
+            }
+            context.record_skipped_non_regular(record_relative);
+            Ok(false)
+        }
+        EntryAction::SkipMountPoint => {
+            context.record_skipped_mount_point(record_relative);
+            Ok(false)
+        }
+        EntryAction::CopyDirectory => {
+            ensure_directory(context)?;
+            // Capture directory entry to batch file
+            if let Some(rel_path) = record_relative {
+                capture_batch_file_entry(context, rel_path, entry_metadata)?;
+            }
+            copy_directory_recursive(
+                context,
+                planned.entry.path.as_path(),
+                &target_path,
+                entry_metadata,
+                Some(planned.relative.as_path()),
+                root_device,
+            )
+        }
+        EntryAction::CopyFile => {
+            ensure_directory(context)?;
+            // Capture file entry to batch file
+            if let Some(rel_path) = record_relative {
+                capture_batch_file_entry(context, rel_path, entry_metadata)?;
+            }
+            copy_file(
+                context,
+                planned.entry.path.as_path(),
+                &target_path,
+                entry_metadata,
+                Some(planned.relative.as_path()),
+            )?;
+            Ok(true)
+        }
+        EntryAction::CopySymlink => {
+            ensure_directory(context)?;
+            // Capture symlink entry to batch file
+            if let Some(rel_path) = record_relative {
+                capture_batch_file_entry(context, rel_path, entry_metadata)?;
+            }
+            let metadata_options = context.metadata_options();
+            copy_symlink(
+                context,
+                planned.entry.path.as_path(),
+                &target_path,
+                entry_metadata,
+                &metadata_options,
+                Some(planned.relative.as_path()),
+            )?;
+            Ok(true)
+        }
+        EntryAction::CopyFifo => {
+            ensure_directory(context)?;
+            // Capture FIFO entry to batch file
+            if let Some(rel_path) = record_relative {
+                capture_batch_file_entry(context, rel_path, entry_metadata)?;
+            }
+            let metadata_options = context.metadata_options();
+            copy_fifo(
+                context,
+                planned.entry.path.as_path(),
+                &target_path,
+                entry_metadata,
+                &metadata_options,
+                Some(planned.relative.as_path()),
+            )?;
+            Ok(true)
+        }
+        EntryAction::CopyDevice => {
+            ensure_directory(context)?;
+            // Capture device entry to batch file
+            if let Some(rel_path) = record_relative {
+                capture_batch_file_entry(context, rel_path, entry_metadata)?;
+            }
+            let metadata_options = context.metadata_options();
+            copy_device(
+                context,
+                planned.entry.path.as_path(),
+                &target_path,
+                entry_metadata,
+                &metadata_options,
+                Some(planned.relative.as_path()),
+            )?;
+            Ok(true)
+        }
+        EntryAction::CopyDeviceAsFile => {
+            ensure_directory(context)?;
+            // Capture device-as-file entry to batch file
+            if let Some(rel_path) = record_relative {
+                capture_batch_file_entry(context, rel_path, entry_metadata)?;
+            }
+            copy_file(
+                context,
+                planned.entry.path.as_path(),
+                &target_path,
+                entry_metadata,
+                Some(planned.relative.as_path()),
+            )?;
+            Ok(true)
+        }
+    }
+}
+
+/// Records directory completion statistics and pending records.
+#[inline]
+fn record_directory_completion(
+    context: &mut CopyContext,
+    creation_record_pending: bool,
+    pending_record: Option<LocalCopyRecord>,
+) {
+    context.summary_mut().record_directory_total();
+    if creation_record_pending {
+        context.summary_mut().record_directory();
+    }
+    if let Some(record) = pending_record {
+        context.record(record);
+    }
+}
 
 /// Helper to capture a file entry to the batch file if batch mode is active.
 fn capture_batch_file_entry(
@@ -175,6 +498,16 @@ pub(crate) fn prefetch_directory_checksums(
     ChecksumCache::from_prefetch(&pairs, algorithm)
 }
 
+/// Recursively copies a directory and its contents from source to destination.
+///
+/// This is the main entry point for recursive directory copying. It handles:
+/// - Destination state checking and preparation
+/// - Directory entry planning and filtering
+/// - Parallel checksum prefetching (when enabled)
+/// - Processing each entry (files, directories, symlinks, etc.)
+/// - Post-transfer deletions
+/// - Empty directory pruning
+/// - Final metadata application
 pub(crate) fn copy_directory_recursive(
     context: &mut CopyContext,
     source: &Path,
@@ -201,75 +534,30 @@ pub(crate) fn copy_directory_recursive(
         None
     };
 
-    let mut destination_missing = false;
+    // Check destination state and determine if we need to create it
+    let destination_state = check_destination_state(context, destination, relative)?;
+    let destination_missing = destination_state == DestinationState::Missing;
 
-    let keep_dirlinks = context.keep_dirlinks_enabled();
-
-    match fs::symlink_metadata(destination) {
-        Ok(existing) => {
-            let file_type = existing.file_type();
-            if file_type.is_dir() {
-                // Directory already present; nothing to do.
-            } else if file_type.is_symlink() && keep_dirlinks {
-                let target_metadata = follow_symlink_metadata(destination)?;
-                if !target_metadata.file_type().is_dir() {
-                    if context.force_replacements_enabled() {
-                        context.force_remove_destination(destination, relative, &existing)?;
-                        destination_missing = true;
-                    } else {
-                        return Err(LocalCopyError::invalid_argument(
-                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                        ));
-                    }
-                }
-            } else if context.force_replacements_enabled() {
-                context.force_remove_destination(destination, relative, &existing)?;
-                destination_missing = true;
-            } else {
-                return Err(LocalCopyError::invalid_argument(
-                    LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
-                ));
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            destination_missing = true;
-        }
-        Err(error) => {
-            return Err(LocalCopyError::io(
-                "inspect destination directory",
-                destination.to_path_buf(),
-                error,
-            ));
-        }
-    }
-
+    // Handle existing_only mode early exit
     if destination_missing && context.existing_only_enabled() {
-        context.summary_mut().record_directory_total();
-        if let Some(relative_path) = relative {
-            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-            context.record(LocalCopyRecord::new(
-                relative_path.to_path_buf(),
-                LocalCopyAction::SkippedMissingDestination,
-                0,
-                Some(metadata_snapshot.len()),
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
-        }
+        record_skipped_missing_destination(context, metadata, relative);
         return Ok(false);
     }
 
+    // Read and sort source directory entries
     let list_start = Instant::now();
     let entries = read_directory_entries_sorted(source)?;
     context.record_file_list_generation(list_start.elapsed());
     context.register_progress();
 
+    // Enter directory for filter processing
     let dir_merge_guard = context.enter_directory(source)?;
     if dir_merge_guard.is_excluded() {
         return Ok(false);
     }
     let _dir_merge_guard = dir_merge_guard;
 
+    // Setup directory creation state
     let directory_ready = Cell::new(!destination_missing);
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
@@ -283,6 +571,7 @@ pub(crate) fn copy_directory_recursive(
 
     let mut kept_any = !prune_enabled;
 
+    // Closure to ensure the destination directory exists when needed
     let mut ensure_directory = |context: &mut CopyContext| -> Result<(), LocalCopyError> {
         if directory_ready.get() {
             return Ok(());
@@ -328,42 +617,33 @@ pub(crate) fn copy_directory_recursive(
         Ok(())
     };
 
+    // Handle non-recursive mode: just create the directory without descending
     if !context.recursive_enabled() {
         ensure_directory(context)?;
-        context.summary_mut().record_directory_total();
-        if creation_record_pending {
-            context.summary_mut().record_directory();
-        }
-        if let Some(record) = pending_record.take() {
-            context.record(record);
-        }
+        record_directory_completion(context, creation_record_pending, pending_record.take());
         if !context.mode().is_dry_run() {
-            let metadata_options = if context.omit_dir_times_enabled() {
-                context.metadata_options().preserve_times(false)
-            } else {
-                context.metadata_options()
-            };
-            apply_directory_metadata_with_options(destination, metadata, metadata_options)
-                .map_err(map_metadata_error)?;
-            #[cfg(all(unix, feature = "xattr"))]
-            sync_xattrs_if_requested(
-                preserve_xattrs,
-                mode,
+            apply_final_directory_metadata(
+                context,
                 source,
                 destination,
-                true,
-                context.filter_program(),
+                metadata,
+                #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+                mode,
+                #[cfg(all(unix, feature = "xattr"))]
+                preserve_xattrs,
+                #[cfg(all(unix, feature = "acl"))]
+                preserve_acls,
             )?;
-            #[cfg(all(unix, feature = "acl"))]
-            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
         }
         return Ok(true);
     }
 
+    // Ensure directory exists if not pruning
     if !directory_ready.get() && !prune_enabled {
         ensure_directory(context)?;
     }
 
+    // Plan directory entries and apply pre-transfer deletions
     let plan = plan_directory_entries(context, &entries, relative, root_device)?;
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
 
@@ -376,122 +656,17 @@ pub(crate) fn copy_directory_recursive(
         }
     }
 
-    for planned in plan.planned_entries {
-        let file_name = &planned.entry.file_name;
-        let target_path = destination.join(Path::new(file_name));
-        let entry_metadata = planned.metadata();
-        let record_relative = non_empty_path(planned.relative.as_path());
-
-        match planned.action {
-            EntryAction::SkipExcluded => {}
-            EntryAction::SkipNonRegular => {
-                if entry_metadata.file_type().is_symlink() {
-                    context.summary_mut().record_symlink_total();
-                }
-                context.record_skipped_non_regular(record_relative);
-            }
-            EntryAction::SkipMountPoint => {
-                context.record_skipped_mount_point(record_relative);
-            }
-            EntryAction::CopyDirectory => {
-                ensure_directory(context)?;
-                // Capture directory entry to batch file
-                if let Some(rel_path) = record_relative {
-                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
-                }
-                let child_kept = copy_directory_recursive(
-                    context,
-                    planned.entry.path.as_path(),
-                    &target_path,
-                    entry_metadata,
-                    Some(planned.relative.as_path()),
-                    root_device,
-                )?;
-                if child_kept {
-                    kept_any = true;
-                }
-            }
-            EntryAction::CopyFile => {
-                ensure_directory(context)?;
-                // Capture file entry to batch file
-                if let Some(rel_path) = record_relative {
-                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
-                }
-                copy_file(
-                    context,
-                    planned.entry.path.as_path(),
-                    &target_path,
-                    entry_metadata,
-                    Some(planned.relative.as_path()),
-                )?;
-                kept_any = true;
-            }
-            EntryAction::CopySymlink => {
-                ensure_directory(context)?;
-                // Capture symlink entry to batch file
-                if let Some(rel_path) = record_relative {
-                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
-                }
-                let metadata_options = context.metadata_options();
-                copy_symlink(
-                    context,
-                    planned.entry.path.as_path(),
-                    &target_path,
-                    entry_metadata,
-                    &metadata_options,
-                    Some(planned.relative.as_path()),
-                )?;
-                kept_any = true;
-            }
-            EntryAction::CopyFifo => {
-                ensure_directory(context)?;
-                // Capture FIFO entry to batch file
-                if let Some(rel_path) = record_relative {
-                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
-                }
-                let metadata_options = context.metadata_options();
-                copy_fifo(
-                    context,
-                    planned.entry.path.as_path(),
-                    &target_path,
-                    entry_metadata,
-                    &metadata_options,
-                    Some(planned.relative.as_path()),
-                )?;
-                kept_any = true;
-            }
-            EntryAction::CopyDevice => {
-                ensure_directory(context)?;
-                // Capture device entry to batch file
-                if let Some(rel_path) = record_relative {
-                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
-                }
-                let metadata_options = context.metadata_options();
-                copy_device(
-                    context,
-                    planned.entry.path.as_path(),
-                    &target_path,
-                    entry_metadata,
-                    &metadata_options,
-                    Some(planned.relative.as_path()),
-                )?;
-                kept_any = true;
-            }
-            EntryAction::CopyDeviceAsFile => {
-                ensure_directory(context)?;
-                // Capture device-as-file entry to batch file
-                if let Some(rel_path) = record_relative {
-                    capture_batch_file_entry(context, rel_path, entry_metadata)?;
-                }
-                copy_file(
-                    context,
-                    planned.entry.path.as_path(),
-                    &target_path,
-                    entry_metadata,
-                    Some(planned.relative.as_path()),
-                )?;
-                kept_any = true;
-            }
+    // Process each planned entry
+    for planned in &plan.planned_entries {
+        let entry_kept = process_planned_entry(
+            context,
+            planned,
+            destination,
+            &mut ensure_directory,
+            root_device,
+        )?;
+        if entry_kept {
+            kept_any = true;
         }
     }
 
@@ -499,64 +674,38 @@ pub(crate) fn copy_directory_recursive(
     #[cfg(feature = "parallel")]
     context.clear_checksum_cache();
 
-    if plan.deletion_enabled {
-        match plan.delete_timing.unwrap_or(DeleteTiming::During) {
-            DeleteTiming::Before => {}
-            DeleteTiming::During => {
-                delete_extraneous_entries(context, destination, relative, &plan.keep_names)?;
-            }
-            DeleteTiming::Delay | DeleteTiming::After => {
-                // Clone names for deferred processing (data must outlive the plan)
-                let keep_owned: Vec<OsString> =
-                    plan.keep_names.iter().map(|s| (*s).clone()).collect();
-                let relative_owned = relative.map(Path::to_path_buf);
-                context.defer_deletion(destination.to_path_buf(), relative_owned, keep_owned);
-            }
-        }
-    }
+    // Handle post-transfer deletions
+    handle_post_transfer_deletions(
+        context,
+        destination,
+        relative,
+        plan.deletion_enabled,
+        plan.delete_timing,
+        &plan.keep_names,
+    )?;
 
+    // Handle empty directory pruning
     if prune_enabled && !kept_any {
-        if created_directory_on_disk {
-            fs::remove_dir(destination).map_err(|error| {
-                LocalCopyError::io("remove empty directory", destination, error)
-            })?;
-            if context
-                .last_created_entry_path()
-                .is_some_and(|path| path == destination)
-            {
-                context.pop_last_created_entry();
-            }
-        }
+        handle_empty_directory_pruning(context, destination, created_directory_on_disk)?;
         return Ok(false);
     }
 
-    context.summary_mut().record_directory_total();
-    if creation_record_pending {
-        context.summary_mut().record_directory();
-    }
-    if let Some(record) = pending_record {
-        context.record(record);
-    }
+    // Record completion and apply final metadata
+    record_directory_completion(context, creation_record_pending, pending_record);
 
     if !context.mode().is_dry_run() {
-        let metadata_options = if context.omit_dir_times_enabled() {
-            context.metadata_options().preserve_times(false)
-        } else {
-            context.metadata_options()
-        };
-        apply_directory_metadata_with_options(destination, metadata, metadata_options)
-            .map_err(map_metadata_error)?;
-        #[cfg(all(unix, feature = "xattr"))]
-        sync_xattrs_if_requested(
-            preserve_xattrs,
-            mode,
+        apply_final_directory_metadata(
+            context,
             source,
             destination,
-            true,
-            context.filter_program(),
+            metadata,
+            #[cfg(all(unix, any(feature = "acl", feature = "xattr")))]
+            mode,
+            #[cfg(all(unix, feature = "xattr"))]
+            preserve_xattrs,
+            #[cfg(all(unix, feature = "acl"))]
+            preserve_acls,
         )?;
-        #[cfg(all(unix, feature = "acl"))]
-        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
     }
 
     Ok(true)

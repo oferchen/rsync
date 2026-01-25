@@ -107,11 +107,11 @@ pub fn leading_zero_count(bytes: &[u8]) -> usize {
         let chunk: &[u8; 16] = chunk.try_into().expect("chunks_exact guarantees 16 bytes");
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
-            continue;
+        } else {
+            // Found non-zero in this chunk - scan for exact position
+            let position = chunk.iter().position(|&b| b != 0).unwrap_or(16);
+            return offset + position;
         }
-        // Found non-zero in this chunk - scan for exact position
-        let position = chunk.iter().position(|&b| b != 0).unwrap_or(16);
-        return offset + position;
     }
 
     // Handle remainder (< 16 bytes)
@@ -137,11 +137,11 @@ pub fn trailing_zero_count(bytes: &[u8]) -> usize {
         let chunk: &[u8; 16] = chunk.try_into().expect("rchunks_exact guarantees 16 bytes");
         if u128::from_ne_bytes(*chunk) == 0 {
             offset += 16;
-            continue;
+        } else {
+            // Found non-zero in this chunk - scan for exact position
+            let trailing = chunk.iter().rev().take_while(|&&b| b == 0).count();
+            return offset + trailing;
         }
-        // Found non-zero in this chunk - scan for exact position
-        let trailing = chunk.iter().rev().take_while(|&&b| b == 0).count();
-        return offset + trailing;
     }
 
     // Handle remainder (< 16 bytes)
