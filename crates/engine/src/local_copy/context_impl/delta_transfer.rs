@@ -40,9 +40,17 @@ impl<'a> CopyContext<'a> {
         let mut read_buffer = vec![0u8; buffer.len().max(index.block_length())];
         let mut buffer_len = 0usize;
         let mut buffer_pos = 0usize;
+        // Check timeout every 256KB to reduce clock_gettime syscalls
+        // (smaller interval than regular copy since delta is more CPU-intensive)
+        const TIMEOUT_CHECK_INTERVAL: usize = 256 * 1024;
+        let mut bytes_since_timeout_check: usize = 0;
 
         loop {
-            self.enforce_timeout()?;
+            // Only check timeout periodically
+            if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
+                self.enforce_timeout()?;
+                bytes_since_timeout_check = 0;
+            }
             if buffer_pos == buffer_len {
                 buffer_len = reader.read(&mut read_buffer).map_err(|error| {
                     LocalCopyError::io("copy file", source, error)
@@ -55,6 +63,7 @@ impl<'a> CopyContext<'a> {
 
             let byte = read_buffer[buffer_pos];
             buffer_pos += 1;
+            bytes_since_timeout_check += 1;
 
             window.push_back(byte);
             if let Some(outgoing_byte) = outgoing.take() {
