@@ -23,6 +23,7 @@ compress = { path = "../compress" }
 logging = { path = "../logging" }
 thiserror = "2.0"
 tracing = { workspace = true, optional = true }
+rayon = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
