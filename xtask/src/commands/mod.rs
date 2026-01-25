@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod branding;
 pub mod doc_package;
 pub mod docs;

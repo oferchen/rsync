@@ -81,6 +81,7 @@ members = [
     "xtask",
     "crates/apple-fs",
     "crates/md5-simd",
+    "crates/fast_io",
 ]
 exclude = [
     "crates/protocol/fuzz",
