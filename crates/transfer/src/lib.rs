@@ -111,8 +111,12 @@ mod writer;
 pub mod constants;
 /// Memory-mapped file abstraction for basis file access.
 pub mod map_file;
+/// Request pipelining for reduced latency in file transfers.
+pub mod pipeline;
 /// Reusable buffer for delta token data.
 pub mod token_buffer;
+/// Transfer operation helpers for pipelined requests.
+pub mod transfer_ops;
 
 pub use self::config::{ReferenceDirectory, ReferenceDirectoryKind, ServerConfig};
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
@@ -122,6 +126,10 @@ pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::ChecksumFactory;
 pub use self::writer::CountingWriter;
+pub use pipeline::{
+    PendingTransfer, PipelineConfig, PipelineState, DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW,
+    MIN_PIPELINE_WINDOW,
+};
 
 #[cfg(test)]
 mod tests;
