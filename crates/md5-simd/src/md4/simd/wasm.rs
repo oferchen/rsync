@@ -69,9 +69,18 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         let block_offset = block_idx * 64;
 
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { 0xFFFF_FFFF } else { 0 }
+            if block_idx < block_counts[lane] {
+                0xFFFF_FFFF
+            } else {
+                0
+            }
         });
-        let mask = u32x4(lane_active[0], lane_active[1], lane_active[2], lane_active[3]);
+        let mask = u32x4(
+            lane_active[0],
+            lane_active[1],
+            lane_active[2],
+            lane_active[3],
+        );
 
         let mut m = [u32x4_splat(0); 16];
         for (word_idx, m_word) in m.iter_mut().enumerate() {
@@ -102,14 +111,29 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                 let f = v128_or(v128_and(b, c), v128_andnot(d, b));
                 let temp = i32x4_add(i32x4_add(a, f), i32x4_add(k1, m[$i]));
                 let rotated = rotl(temp, $s);
-                a = d; d = c; c = b; b = rotated;
+                a = d;
+                d = c;
+                c = b;
+                b = rotated;
             }};
         }
 
-        round1!(0, 3);  round1!(1, 7);  round1!(2, 11);  round1!(3, 19);
-        round1!(4, 3);  round1!(5, 7);  round1!(6, 11);  round1!(7, 19);
-        round1!(8, 3);  round1!(9, 7);  round1!(10, 11); round1!(11, 19);
-        round1!(12, 3); round1!(13, 7); round1!(14, 11); round1!(15, 19);
+        round1!(0, 3);
+        round1!(1, 7);
+        round1!(2, 11);
+        round1!(3, 19);
+        round1!(4, 3);
+        round1!(5, 7);
+        round1!(6, 11);
+        round1!(7, 19);
+        round1!(8, 3);
+        round1!(9, 7);
+        round1!(10, 11);
+        round1!(11, 19);
+        round1!(12, 3);
+        round1!(13, 7);
+        round1!(14, 11);
+        round1!(15, 19);
 
         // Round 2: G = (B & C) | (B & D) | (C & D)
         let k2 = u32x4_splat(K[1]);
@@ -118,14 +142,29 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                 let g = v128_or(v128_and(b, c), v128_and(d, v128_or(b, c)));
                 let temp = i32x4_add(i32x4_add(a, g), i32x4_add(k2, m[M2[$mi]]));
                 let rotated = rotl(temp, $s);
-                a = d; d = c; c = b; b = rotated;
+                a = d;
+                d = c;
+                c = b;
+                b = rotated;
             }};
         }
 
-        round2!(0, 3);  round2!(1, 5);  round2!(2, 9);   round2!(3, 13);
-        round2!(4, 3);  round2!(5, 5);  round2!(6, 9);   round2!(7, 13);
-        round2!(8, 3);  round2!(9, 5);  round2!(10, 9);  round2!(11, 13);
-        round2!(12, 3); round2!(13, 5); round2!(14, 9);  round2!(15, 13);
+        round2!(0, 3);
+        round2!(1, 5);
+        round2!(2, 9);
+        round2!(3, 13);
+        round2!(4, 3);
+        round2!(5, 5);
+        round2!(6, 9);
+        round2!(7, 13);
+        round2!(8, 3);
+        round2!(9, 5);
+        round2!(10, 9);
+        round2!(11, 13);
+        round2!(12, 3);
+        round2!(13, 5);
+        round2!(14, 9);
+        round2!(15, 13);
 
         // Round 3: H = B ^ C ^ D
         let k3 = u32x4_splat(K[2]);
@@ -134,14 +173,29 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                 let h = v128_xor(v128_xor(b, c), d);
                 let temp = i32x4_add(i32x4_add(a, h), i32x4_add(k3, m[M3[$mi]]));
                 let rotated = rotl(temp, $s);
-                a = d; d = c; c = b; b = rotated;
+                a = d;
+                d = c;
+                c = b;
+                b = rotated;
             }};
         }
 
-        round3!(0, 3);  round3!(1, 9);  round3!(2, 11);  round3!(3, 15);
-        round3!(4, 3);  round3!(5, 9);  round3!(6, 11);  round3!(7, 15);
-        round3!(8, 3);  round3!(9, 9);  round3!(10, 11); round3!(11, 15);
-        round3!(12, 3); round3!(13, 9); round3!(14, 11); round3!(15, 15);
+        round3!(0, 3);
+        round3!(1, 9);
+        round3!(2, 11);
+        round3!(3, 15);
+        round3!(4, 3);
+        round3!(5, 9);
+        round3!(6, 11);
+        round3!(7, 15);
+        round3!(8, 3);
+        round3!(9, 9);
+        round3!(10, 11);
+        round3!(11, 15);
+        round3!(12, 3);
+        round3!(13, 9);
+        round3!(14, 11);
+        round3!(15, 15);
 
         let new_a = i32x4_add(a, aa);
         let new_b = i32x4_add(b, bb);
@@ -157,20 +211,28 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let mut results = [[0u8; 16]; 4];
 
     let a_arr = [
-        u32x4_extract_lane::<0>(a), u32x4_extract_lane::<1>(a),
-        u32x4_extract_lane::<2>(a), u32x4_extract_lane::<3>(a),
+        u32x4_extract_lane::<0>(a),
+        u32x4_extract_lane::<1>(a),
+        u32x4_extract_lane::<2>(a),
+        u32x4_extract_lane::<3>(a),
     ];
     let b_arr = [
-        u32x4_extract_lane::<0>(b), u32x4_extract_lane::<1>(b),
-        u32x4_extract_lane::<2>(b), u32x4_extract_lane::<3>(b),
+        u32x4_extract_lane::<0>(b),
+        u32x4_extract_lane::<1>(b),
+        u32x4_extract_lane::<2>(b),
+        u32x4_extract_lane::<3>(b),
     ];
     let c_arr = [
-        u32x4_extract_lane::<0>(c), u32x4_extract_lane::<1>(c),
-        u32x4_extract_lane::<2>(c), u32x4_extract_lane::<3>(c),
+        u32x4_extract_lane::<0>(c),
+        u32x4_extract_lane::<1>(c),
+        u32x4_extract_lane::<2>(c),
+        u32x4_extract_lane::<3>(c),
     ];
     let d_arr = [
-        u32x4_extract_lane::<0>(d), u32x4_extract_lane::<1>(d),
-        u32x4_extract_lane::<2>(d), u32x4_extract_lane::<3>(d),
+        u32x4_extract_lane::<0>(d),
+        u32x4_extract_lane::<1>(d),
+        u32x4_extract_lane::<2>(d),
+        u32x4_extract_lane::<3>(d),
     ];
 
     for (lane, result) in results.iter_mut().enumerate() {

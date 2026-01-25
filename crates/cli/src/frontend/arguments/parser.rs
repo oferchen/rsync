@@ -929,12 +929,7 @@ mod tests {
 
     #[test]
     fn usermap_twice_fails() {
-        let result = parse_test_args([
-            "--usermap=0:1000",
-            "--usermap=0:1001",
-            "src/",
-            "dst/",
-        ]);
+        let result = parse_test_args(["--usermap=0:1000", "--usermap=0:1001", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("usermap"));
@@ -942,12 +937,7 @@ mod tests {
 
     #[test]
     fn groupmap_twice_fails() {
-        let result = parse_test_args([
-            "--groupmap=0:1000",
-            "--groupmap=0:1001",
-            "src/",
-            "dst/",
-        ]);
+        let result = parse_test_args(["--groupmap=0:1000", "--groupmap=0:1001", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("groupmap"));

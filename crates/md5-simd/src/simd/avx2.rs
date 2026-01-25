@@ -43,30 +43,77 @@ const INIT_D: u32 = 0x1032_5476;
 
 /// Per-round shift amounts.
 const S: [u32; 64] = [
-    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
-    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9,
+    14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15,
+    21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 ];
 
 /// Pre-computed K constants.
 const K: [u32; 64] = [
-    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee,
-    0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
-    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be,
-    0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
-    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa,
-    0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
-    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed,
-    0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
-    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c,
-    0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
-    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05,
-    0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
-    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039,
-    0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
-    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1,
-    0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
+    0xd76a_a478,
+    0xe8c7_b756,
+    0x2420_70db,
+    0xc1bd_ceee,
+    0xf57c_0faf,
+    0x4787_c62a,
+    0xa830_4613,
+    0xfd46_9501,
+    0x6980_98d8,
+    0x8b44_f7af,
+    0xffff_5bb1,
+    0x895c_d7be,
+    0x6b90_1122,
+    0xfd98_7193,
+    0xa679_438e,
+    0x49b4_0821,
+    0xf61e_2562,
+    0xc040_b340,
+    0x265e_5a51,
+    0xe9b6_c7aa,
+    0xd62f_105d,
+    0x0244_1453,
+    0xd8a1_e681,
+    0xe7d3_fbc8,
+    0x21e1_cde6,
+    0xc337_07d6,
+    0xf4d5_0d87,
+    0x455a_14ed,
+    0xa9e3_e905,
+    0xfcef_a3f8,
+    0x676f_02d9,
+    0x8d2a_4c8a,
+    0xfffa_3942,
+    0x8771_f681,
+    0x6d9d_6122,
+    0xfde5_380c,
+    0xa4be_ea44,
+    0x4bde_cfa9,
+    0xf6bb_4b60,
+    0xbebf_bc70,
+    0x289b_7ec6,
+    0xeaa1_27fa,
+    0xd4ef_3085,
+    0x0488_1d05,
+    0xd9d4_d039,
+    0xe6db_99e5,
+    0x1fa2_7cf8,
+    0xc4ac_5665,
+    0xf429_2244,
+    0x432a_ff97,
+    0xab94_23a7,
+    0xfc93_a039,
+    0x655b_59c3,
+    0x8f0c_cc92,
+    0xffef_f47d,
+    0x8584_5dd1,
+    0x6fa8_7e4f,
+    0xfe2c_e6e0,
+    0xa301_4314,
+    0x4e08_11a1,
+    0xf753_7e82,
+    0xbd3a_f235,
+    0x2ad7_d2bb,
+    0xeb86_d391,
 ];
 
 /// Maximum input size supported (can be increased if needed).
@@ -166,11 +213,21 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
 
         // Create mask for active lanes (lanes that have data for this block)
         let lane_active: [i32; 8] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { -1 } else { 0 }
+            if block_idx < block_counts[lane] {
+                -1
+            } else {
+                0
+            }
         });
         let mask = _mm256_setr_epi32(
-            lane_active[0], lane_active[1], lane_active[2], lane_active[3],
-            lane_active[4], lane_active[5], lane_active[6], lane_active[7],
+            lane_active[0],
+            lane_active[1],
+            lane_active[2],
+            lane_active[3],
+            lane_active[4],
+            lane_active[5],
+            lane_active[6],
+            lane_active[7],
         );
 
         // Load message words (transposed: word i from all 8 inputs)
@@ -190,8 +247,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
                 }
             });
             m[word_idx] = _mm256_setr_epi32(
-                words[0], words[1], words[2], words[3],
-                words[4], words[5], words[6], words[7],
+                words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],
             );
         }
 
@@ -205,10 +261,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
         macro_rules! round {
             ($i:expr, $f:expr, $g:expr) => {{
                 let k_i = _mm256_set1_epi32(K[$i] as i32);
-                let temp = _mm256_add_epi32(
-                    _mm256_add_epi32(a, $f),
-                    _mm256_add_epi32(k_i, m[$g]),
-                );
+                let temp = _mm256_add_epi32(_mm256_add_epi32(a, $f), _mm256_add_epi32(k_i, m[$g]));
 
                 // Rotate left by S[i]
                 let rotated = rotl(temp, S[$i] as i32);
@@ -222,19 +275,13 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
 
         // Rounds 0-15: F = (B & C) | (~B & D)
         for i in 0..16 {
-            let f = _mm256_or_si256(
-                _mm256_and_si256(b, c),
-                _mm256_andnot_si256(b, d),
-            );
+            let f = _mm256_or_si256(_mm256_and_si256(b, c), _mm256_andnot_si256(b, d));
             round!(i, f, i);
         }
 
         // Rounds 16-31: G = (D & B) | (~D & C)
         for i in 16..32 {
-            let f = _mm256_or_si256(
-                _mm256_and_si256(d, b),
-                _mm256_andnot_si256(d, c),
-            );
+            let f = _mm256_or_si256(_mm256_and_si256(d, b), _mm256_andnot_si256(d, c));
             let g = (5 * i + 1) % 16;
             round!(i, f, g);
         }
@@ -396,8 +443,7 @@ mod tests {
         let input7: Vec<u8> = vec![];
 
         let inputs: [&[u8]; 8] = [
-            &input0, &input1, &input2, &input3,
-            &input4, &input5, &input6, &input7,
+            &input0, &input1, &input2, &input3, &input4, &input5, &input6, &input7,
         ];
 
         let results = unsafe { digest_x8(&inputs) };

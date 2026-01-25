@@ -29,7 +29,6 @@ use rayon::prelude::*;
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
 use crate::local_copy::buffer_pool::BufferPool;
-use crate::local_copy::COPY_BUFFER_SIZE;
 use crate::signature::SignatureAlgorithm;
 
 /// Precomputed checksum for a file.
@@ -241,7 +240,9 @@ pub(crate) fn should_skip_with_prefetched_checksum(
     prefetched: &HashMap<PathBuf, ChecksumPrefetchResult>,
     source: &Path,
 ) -> Option<bool> {
-    prefetched.get(source).map(|result| result.checksums_match())
+    prefetched
+        .get(source)
+        .map(|result| result.checksums_match())
 }
 
 /// Cache for prefetched file checksums during directory traversal.
@@ -290,7 +291,9 @@ impl ChecksumCache {
     /// Returns `Some(true)` if checksums match (skip copy), `Some(false)` if
     /// checksums differ (need copy), or `None` if the path wasn't prefetched.
     pub(crate) fn lookup(&self, source: &Path) -> Option<bool> {
-        self.inner.get(source).map(|result| result.checksums_match())
+        self.inner
+            .get(source)
+            .map(|result| result.checksums_match())
     }
 
     /// Returns the number of entries in the cache.

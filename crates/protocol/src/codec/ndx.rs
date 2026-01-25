@@ -1281,7 +1281,10 @@ mod tests {
 
             for &expected in &indices {
                 let read = read_codec.read_ndx(&mut cursor).unwrap();
-                assert_eq!(read, expected, "v{version} roundtrip failed for index {expected}");
+                assert_eq!(
+                    read, expected,
+                    "v{version} roundtrip failed for index {expected}"
+                );
             }
         }
     }
@@ -1504,5 +1507,382 @@ mod tests {
                 assert_eq!(read, expected, "v{version} failed for {expected}");
             }
         }
+    }
+
+    // ========================================================================
+    // I/O Error Handling Tests
+    // ========================================================================
+
+    #[test]
+    fn test_legacy_ndx_write_io_error() {
+        use std::io::{self, Write};
+
+        struct FailWriter;
+        impl Write for FailWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut codec = LegacyNdxCodec::new(29);
+        let result = codec.write_ndx(&mut FailWriter, 42);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn test_modern_ndx_write_io_error() {
+        use std::io::{self, Write};
+
+        struct FailWriter;
+        impl Write for FailWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut codec = ModernNdxCodec::new(30);
+        let result = codec.write_ndx(&mut FailWriter, 42);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn test_legacy_ndx_read_partial_data() {
+        let mut codec = LegacyNdxCodec::new(29);
+        // Only 3 bytes when 4 are needed
+        let partial_data = [0x01u8, 0x02, 0x03];
+        let mut cursor = Cursor::new(&partial_data[..]);
+        let result = codec.read_ndx(&mut cursor);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_modern_ndx_read_truncated_negative_prefix() {
+        let mut codec = ModernNdxCodec::new(30);
+        // 0xFF prefix for negative, but missing the delta byte
+        let truncated = [0xFFu8];
+        let mut cursor = Cursor::new(&truncated[..]);
+        let result = codec.read_ndx(&mut cursor);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn test_modern_ndx_read_truncated_2byte_diff() {
+        let mut codec = ModernNdxCodec::new(30);
+        // 0xFE prefix for extended encoding, but only 1 extra byte instead of 2
+        let truncated = [0xFEu8, 0x00];
+        let mut cursor = Cursor::new(&truncated[..]);
+        let result = codec.read_ndx(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_modern_ndx_read_truncated_4byte_value() {
+        let mut codec = ModernNdxCodec::new(30);
+        // 0xFE prefix, high bit set (4-byte mode), but only 2 extra bytes
+        let truncated = [0xFEu8, 0x80, 0x00, 0x00];
+        let mut cursor = Cursor::new(&truncated[..]);
+        let result = codec.read_ndx(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Delta Encoding Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_modern_ndx_zero_diff() {
+        // Writing the same value twice should produce a delta of 0
+        // But delta=0 is special (represents NDX_DONE), so it uses extended encoding
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // First write: ndx=0, diff=1 (from prev=-1)
+        codec.write_ndx(&mut buf, 0).unwrap();
+        assert_eq!(buf, [0x01]);
+
+        buf.clear();
+        // Second write: ndx=0, diff=0 (same value)
+        // Zero diff must use extended encoding to avoid confusion with NDX_DONE
+        codec.write_ndx(&mut buf, 0).unwrap();
+        assert!(buf[0] == 0xFE, "zero diff should use extended encoding");
+    }
+
+    #[test]
+    fn test_modern_ndx_negative_diff() {
+        // Negative diff (decreasing index) should use extended encoding
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Write 100, then 50 (decreasing)
+        codec.write_ndx(&mut buf, 100).unwrap();
+        buf.clear();
+        codec.write_ndx(&mut buf, 50).unwrap();
+        // Negative diff requires extended encoding
+        assert!(buf[0] == 0xFE, "negative diff should use extended encoding");
+    }
+
+    #[test]
+    fn test_modern_ndx_diff_boundary_253() {
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Write value where diff=253 (max single-byte)
+        codec.write_ndx(&mut buf, 252).unwrap(); // diff from -1 = 253
+        assert_eq!(buf.len(), 1);
+        assert_eq!(buf[0], 253);
+    }
+
+    #[test]
+    fn test_modern_ndx_diff_boundary_254() {
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Write value where diff=254 (triggers extended encoding)
+        codec.write_ndx(&mut buf, 253).unwrap(); // diff from -1 = 254
+        assert_eq!(buf[0], 0xFE);
+        assert!(buf.len() >= 3);
+    }
+
+    // ========================================================================
+    // State Consistency Tests
+    // ========================================================================
+
+    #[test]
+    fn test_modern_ndx_state_after_ndx_done() {
+        // NDX_DONE should not affect prev_positive
+        let mut write_codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Sequence: 0, 1, NDX_DONE, 2
+        write_codec.write_ndx(&mut buf, 0).unwrap();
+        write_codec.write_ndx(&mut buf, 1).unwrap();
+        write_codec.write_ndx(&mut buf, NDX_DONE).unwrap();
+        write_codec.write_ndx(&mut buf, 2).unwrap();
+
+        let mut read_codec = ModernNdxCodec::new(30);
+        let mut cursor = Cursor::new(&buf);
+
+        assert_eq!(read_codec.read_ndx(&mut cursor).unwrap(), 0);
+        assert_eq!(read_codec.read_ndx(&mut cursor).unwrap(), 1);
+        assert_eq!(read_codec.read_ndx(&mut cursor).unwrap(), NDX_DONE);
+        assert_eq!(read_codec.read_ndx(&mut cursor).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_modern_ndx_interleaved_positive_negative() {
+        let mut write_codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Interleave positive and negative values
+        let sequence = [
+            0,                // positive
+            NDX_FLIST_EOF,    // negative (-2)
+            5,                // positive
+            NDX_DEL_STATS,    // negative (-3)
+            10,               // positive
+            NDX_FLIST_OFFSET, // negative (-101)
+        ];
+
+        for &val in &sequence {
+            write_codec.write_ndx(&mut buf, val).unwrap();
+        }
+
+        let mut read_codec = ModernNdxCodec::new(30);
+        let mut cursor = Cursor::new(&buf);
+
+        for &expected in &sequence {
+            let read = read_codec.read_ndx(&mut cursor).unwrap();
+            assert_eq!(read, expected);
+        }
+    }
+
+    // ========================================================================
+    // NdxCodecEnum Dispatch Tests
+    // ========================================================================
+
+    #[test]
+    fn test_ndx_codec_enum_write_ndx_done_legacy() {
+        let mut codec = NdxCodecEnum::new(29);
+        let mut buf = Vec::new();
+        codec.write_ndx_done(&mut buf).unwrap();
+        assert_eq!(buf, [0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn test_ndx_codec_enum_write_ndx_done_modern() {
+        let mut codec = NdxCodecEnum::new(30);
+        let mut buf = Vec::new();
+        codec.write_ndx_done(&mut buf).unwrap();
+        assert_eq!(buf, [0x00]);
+    }
+
+    // ========================================================================
+    // Property-Based Tests
+    // ========================================================================
+
+    #[test]
+    fn test_ndx_roundtrip_random_sequence() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Generate deterministic "random" sequence using hash
+        fn pseudo_random(seed: u64, i: usize) -> i32 {
+            let mut hasher = DefaultHasher::new();
+            (seed, i).hash(&mut hasher);
+            (hasher.finish() % 10000) as i32
+        }
+
+        for version in [28, 29, 30, 31, 32] {
+            let mut write_codec = create_ndx_codec(version);
+            let mut buf = Vec::new();
+
+            let seed = 42u64;
+            let count = 100;
+
+            for i in 0..count {
+                let ndx = pseudo_random(seed, i);
+                write_codec.write_ndx(&mut buf, ndx).unwrap();
+            }
+
+            let mut read_codec = create_ndx_codec(version);
+            let mut cursor = Cursor::new(&buf);
+
+            for i in 0..count {
+                let expected = pseudo_random(seed, i);
+                let read = read_codec.read_ndx(&mut cursor).unwrap();
+                assert_eq!(read, expected, "v{version} failed at index {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_ndx_monotonic_sequence() {
+        // Test monotonically increasing sequence (common in rsync)
+        for version in [28, 29, 30, 31, 32] {
+            let mut write_codec = create_ndx_codec(version);
+            let mut buf = Vec::new();
+
+            for i in 0..1000 {
+                write_codec.write_ndx(&mut buf, i).unwrap();
+            }
+
+            let mut read_codec = create_ndx_codec(version);
+            let mut cursor = Cursor::new(&buf);
+
+            for i in 0..1000 {
+                let read = read_codec.read_ndx(&mut cursor).unwrap();
+                assert_eq!(read, i, "v{version} failed at index {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_ndx_sparse_sequence() {
+        // Test sparse sequence with large gaps
+        let sparse_indices: Vec<i32> = (0..100).map(|i| i * 1000).collect();
+
+        for version in [28, 29, 30, 31, 32] {
+            let mut write_codec = create_ndx_codec(version);
+            let mut buf = Vec::new();
+
+            for &ndx in &sparse_indices {
+                write_codec.write_ndx(&mut buf, ndx).unwrap();
+            }
+
+            let mut read_codec = create_ndx_codec(version);
+            let mut cursor = Cursor::new(&buf);
+
+            for &expected in &sparse_indices {
+                let read = read_codec.read_ndx(&mut cursor).unwrap();
+                assert_eq!(read, expected, "v{version} failed for {expected}");
+            }
+        }
+    }
+
+    // ========================================================================
+    // Wire Format Verification Tests
+    // ========================================================================
+
+    #[test]
+    fn test_modern_ndx_wire_format_single_byte() {
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // First positive (diff=1 from prev=-1)
+        codec.write_ndx(&mut buf, 0).unwrap();
+        assert_eq!(buf, [0x01]);
+
+        buf.clear();
+        // Second positive (diff=1 from prev=0)
+        codec.write_ndx(&mut buf, 1).unwrap();
+        assert_eq!(buf, [0x01]);
+
+        buf.clear();
+        // Larger diff (diff=10 from prev=1)
+        codec.write_ndx(&mut buf, 11).unwrap();
+        assert_eq!(buf, [0x0A]);
+    }
+
+    #[test]
+    fn test_modern_ndx_wire_format_two_byte_diff() {
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Force 2-byte diff encoding
+        // diff = 300 (0x012C), needs extended encoding
+        codec.write_ndx(&mut buf, 299).unwrap(); // diff from -1 = 300
+        assert_eq!(buf[0], 0xFE);
+        // 2-byte diff: high byte, low byte
+        assert_eq!(buf[1], 0x01); // 300 >> 8 = 1
+        assert_eq!(buf[2], 0x2C); // 300 & 0xFF = 0x2C
+    }
+
+    #[test]
+    fn test_modern_ndx_wire_format_four_byte_value() {
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // Force 4-byte value encoding
+        let large_value = 0x01_23_45_67i32;
+        codec.write_ndx(&mut buf, large_value).unwrap();
+        assert_eq!(buf[0], 0xFE);
+        // High bit set indicates 4-byte format
+        assert!(buf[1] & 0x80 != 0);
+    }
+
+    #[test]
+    fn test_modern_ndx_wire_format_negative() {
+        let mut codec = ModernNdxCodec::new(30);
+        let mut buf = Vec::new();
+
+        // NDX_FLIST_EOF (-2)
+        codec.write_ndx(&mut buf, NDX_FLIST_EOF).unwrap();
+        // Negative prefix + diff from prev_negative=1
+        // -(-2) = 2, diff = 2 - 1 = 1
+        assert_eq!(buf, [0xFF, 0x01]);
+    }
+
+    #[test]
+    fn test_legacy_ndx_wire_format() {
+        let mut codec = LegacyNdxCodec::new(29);
+        let mut buf = Vec::new();
+
+        // Test specific byte patterns
+        codec.write_ndx(&mut buf, 0x12345678).unwrap();
+        assert_eq!(buf, [0x78, 0x56, 0x34, 0x12]); // Little-endian
+
+        buf.clear();
+        codec.write_ndx(&mut buf, -1).unwrap();
+        assert_eq!(buf, [0xFF, 0xFF, 0xFF, 0xFF]); // -1 in LE
     }
 }

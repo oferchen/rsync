@@ -204,6 +204,8 @@ mod test_helpers {
 
     /// Test context for copy operations.
     pub struct CopyTestContext {
+        /// Temporary directory that must be kept alive for paths to remain valid.
+        #[allow(dead_code)]
         pub temp_dir: TempDir,
         pub source: PathBuf,
         pub dest: PathBuf,
@@ -245,6 +247,7 @@ mod test_helpers {
     ///     ("dir3/nested/file.txt", Some(b"nested")),
     /// ]);
     /// ```
+    #[allow(dead_code)]
     pub fn create_test_tree(base: &Path, spec: &[(&str, Option<&[u8]>)]) {
         for (path, content) in spec {
             let full_path = base.join(path);

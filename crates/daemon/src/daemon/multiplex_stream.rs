@@ -41,7 +41,6 @@ impl<R: Read> MultiplexReader<R> {
     /// # Returns
     ///
     /// A new `MultiplexReader` with an empty buffer, ready to receive multiplexed messages.
-    #[allow(dead_code)]
     pub fn new(inner: R) -> Self {
         Self {
             inner,
@@ -56,7 +55,6 @@ impl<R: Read> MultiplexReader<R> {
     ///
     /// The wrapped reader, allowing access to the raw stream after multiplex operations
     /// are complete.
-    #[allow(dead_code)]
     pub fn into_inner(self) -> R {
         self.inner
     }
@@ -176,7 +174,6 @@ impl<W: Write> MultiplexWriter<W> {
     /// # Returns
     ///
     /// A new `MultiplexWriter` ready to send MSG_DATA frames.
-    #[allow(dead_code)]
     pub fn new(inner: W) -> Self {
         Self { inner }
     }
@@ -187,7 +184,6 @@ impl<W: Write> MultiplexWriter<W> {
     ///
     /// The wrapped writer, allowing access to the raw stream after multiplex operations
     /// are complete.
-    #[allow(dead_code)]
     pub fn into_inner(self) -> W {
         self.inner
     }

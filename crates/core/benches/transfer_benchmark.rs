@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tempfile::TempDir;
 
 // Upstream binary paths
@@ -199,21 +199,17 @@ fn bench_small_files_pull(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(total_bytes as u64));
 
         let dest_up = TempDir::new().unwrap();
-        group.bench_with_input(
-            BenchmarkId::new("upstream", count),
-            &count,
-            |b, _| {
-                b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-                    for _ in 0..iters {
-                        let _ = fs::remove_dir_all(dest_up.path());
-                        fs::create_dir_all(dest_up.path()).unwrap();
-                        total += run_upstream(&daemon.module_url(), dest_up.path(), &[]);
-                    }
-                    total
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("upstream", count), &count, |b, _| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let _ = fs::remove_dir_all(dest_up.path());
+                    fs::create_dir_all(dest_up.path()).unwrap();
+                    total += run_upstream(&daemon.module_url(), dest_up.path(), &[]);
+                }
+                total
+            });
+        });
 
         let dest_oc = TempDir::new().unwrap();
         group.bench_with_input(BenchmarkId::new("oc-rsync", count), &count, |b, _| {
@@ -352,21 +348,17 @@ fn bench_deep_tree(c: &mut Criterion) {
         group.throughput(Throughput::Elements(depth as u64));
 
         let dest_up = TempDir::new().unwrap();
-        group.bench_with_input(
-            BenchmarkId::new("upstream", depth),
-            &depth,
-            |b, _| {
-                b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-                    for _ in 0..iters {
-                        let _ = fs::remove_dir_all(dest_up.path());
-                        fs::create_dir_all(dest_up.path()).unwrap();
-                        total += run_upstream(&daemon.module_url(), dest_up.path(), &[]);
-                    }
-                    total
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("upstream", depth), &depth, |b, _| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let _ = fs::remove_dir_all(dest_up.path());
+                    fs::create_dir_all(dest_up.path()).unwrap();
+                    total += run_upstream(&daemon.module_url(), dest_up.path(), &[]);
+                }
+                total
+            });
+        });
 
         let dest_oc = TempDir::new().unwrap();
         group.bench_with_input(BenchmarkId::new("oc-rsync", depth), &depth, |b, _| {

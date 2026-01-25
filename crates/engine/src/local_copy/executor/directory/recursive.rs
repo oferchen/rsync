@@ -12,18 +12,18 @@ use crate::local_copy::sync_acls_if_requested;
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyArgumentError,
-    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, copy_device,
-    copy_fifo, copy_file, copy_symlink, delete_extraneous_entries, follow_symlink_metadata,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord, copy_device, copy_fifo,
+    copy_file, copy_symlink, delete_extraneous_entries, follow_symlink_metadata,
     map_metadata_error,
 };
 use ::metadata::apply_directory_metadata_with_options;
 
 use super::super::non_empty_path;
+#[cfg(feature = "parallel")]
+use super::planner::DirectoryPlan;
 use super::planner::{
     EntryAction, PlannedEntry, apply_pre_transfer_deletions, plan_directory_entries,
 };
-#[cfg(feature = "parallel")]
-use super::planner::DirectoryPlan;
 use super::support::read_directory_entries_sorted;
 
 #[cfg(feature = "parallel")]
@@ -151,13 +151,13 @@ fn apply_final_directory_metadata(
 
 /// Handles the deletion phase after transfer, based on the configured timing.
 #[inline]
-fn handle_post_transfer_deletions<'a>(
+fn handle_post_transfer_deletions(
     context: &mut CopyContext,
     destination: &Path,
     relative: Option<&Path>,
     deletion_enabled: bool,
     delete_timing: Option<DeleteTiming>,
-    keep_names: &[&'a OsString],
+    keep_names: &[&OsString],
 ) -> Result<(), LocalCopyError> {
     if !deletion_enabled {
         return Ok(());

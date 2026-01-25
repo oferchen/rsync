@@ -356,3 +356,369 @@ fn execute_without_one_file_system_crosses_mount_points() {
             .all(|record| { record.action() != &LocalCopyAction::SkippedMountPoint })
     );
 }
+
+// ==================== Symlink Tests ====================
+
+#[cfg(unix)]
+#[test]
+fn execute_copies_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let target_file = temp.path().join("target.txt");
+    fs::write(&target_file, b"target content").expect("write target");
+
+    let source_link = temp.path().join("source_link");
+    symlink(&target_file, &source_link).expect("create symlink");
+
+    let dest_link = temp.path().join("dest_link");
+    let operands = vec![
+        source_link.into_os_string(),
+        dest_link.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().links(true),
+        )
+        .expect("symlink copy succeeds");
+
+    assert_eq!(summary.symlinks_copied(), 1);
+    let dest_target = fs::read_link(&dest_link).expect("read dest link");
+    assert_eq!(dest_target, target_file);
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_copies_symlink_within_directory() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let target_file = source_root.join("target.txt");
+    fs::write(&target_file, b"target").expect("write target");
+
+    let source_link = source_root.join("link");
+    symlink(Path::new("target.txt"), &source_link).expect("create relative symlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().links(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.symlinks_copied(), 1);
+    let dest_link = dest_root.join("link");
+    let dest_target = fs::read_link(&dest_link).expect("read dest link");
+    assert_eq!(dest_target, Path::new("target.txt"));
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_copies_symlink_with_safe_links_keeps_safe() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let target_file = source_root.join("target.txt");
+    fs::write(&target_file, b"safe content").expect("write target");
+
+    // Safe relative symlink within source tree
+    let safe_link = source_root.join("safe_link");
+    symlink(Path::new("target.txt"), &safe_link).expect("create safe symlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .links(true)
+                .safe_links(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.symlinks_copied(), 1);
+    let dest_link = dest_root.join("safe_link");
+    assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_with_safe_links_skips_unsafe() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    // Create target outside source tree
+    let outside_target = temp.path().join("outside.txt");
+    fs::write(&outside_target, b"outside content").expect("write outside");
+
+    // Create symlink pointing outside source tree (unsafe)
+    let unsafe_link = source_root.join("unsafe_link");
+    symlink(&outside_target, &unsafe_link).expect("create unsafe symlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let report = plan
+        .execute_with_report(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .links(true)
+                .safe_links(true)
+                .collect_events(true),
+        )
+        .expect("copy succeeds");
+
+    let summary = report.summary();
+    assert_eq!(summary.symlinks_copied(), 0);
+    assert!(!dest_root.join("unsafe_link").exists());
+    assert!(report.records().iter().any(|record| {
+        matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink)
+    }));
+}
+
+// ==================== Hard Link Tests ====================
+
+#[cfg(unix)]
+#[test]
+fn execute_preserves_hard_links_within_directory() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let file_a = source_root.join("file_a.txt");
+    let file_b = source_root.join("file_b.txt");
+    fs::write(&file_a, b"hard link content").expect("write file_a");
+    fs::hard_link(&file_a, &file_b).expect("create hard link");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().hard_links(true),
+        )
+        .expect("copy succeeds");
+
+    let dest_a = dest_root.join("file_a.txt");
+    let dest_b = dest_root.join("file_b.txt");
+    let meta_a = fs::metadata(&dest_a).expect("meta a");
+    let meta_b = fs::metadata(&dest_b).expect("meta b");
+
+    assert_eq!(meta_a.ino(), meta_b.ino());
+    assert_eq!(meta_a.nlink(), 2);
+    assert!(summary.hard_links_created() >= 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_without_hard_links_copies_separately() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    let file_a = source_root.join("file_a.txt");
+    let file_b = source_root.join("file_b.txt");
+    fs::write(&file_a, b"content").expect("write file_a");
+    fs::hard_link(&file_a, &file_b).expect("create hard link");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("copy succeeds");
+
+    let dest_a = dest_root.join("file_a.txt");
+    let dest_b = dest_root.join("file_b.txt");
+    let meta_a = fs::metadata(&dest_a).expect("meta a");
+    let meta_b = fs::metadata(&dest_b).expect("meta b");
+
+    // Without hard_links option, files are copied separately
+    assert_ne!(meta_a.ino(), meta_b.ino());
+    assert_eq!(meta_a.nlink(), 1);
+    assert_eq!(meta_b.nlink(), 1);
+    assert_eq!(summary.files_copied(), 2);
+}
+
+// ==================== Dry Run Special Tests ====================
+
+#[cfg(unix)]
+#[test]
+fn execute_dry_run_does_not_create_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let target_file = temp.path().join("target.txt");
+    fs::write(&target_file, b"target").expect("write target");
+
+    let source_link = temp.path().join("source_link");
+    symlink(&target_file, &source_link).expect("create symlink");
+
+    let dest_link = temp.path().join("dest_link");
+    let operands = vec![
+        source_link.into_os_string(),
+        dest_link.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::DryRun,
+            LocalCopyOptions::default().links(true),
+        )
+        .expect("dry run succeeds");
+
+    assert_eq!(summary.symlinks_copied(), 1);
+    assert!(!dest_link.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn execute_dry_run_does_not_create_fifo() {
+    let temp = tempdir().expect("tempdir");
+    let source_fifo = temp.path().join("source.pipe");
+    mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
+
+    let dest_fifo = temp.path().join("dest.pipe");
+    let operands = vec![
+        source_fifo.into_os_string(),
+        dest_fifo.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::DryRun,
+            LocalCopyOptions::default().specials(true),
+        )
+        .expect("dry run succeeds");
+
+    assert_eq!(summary.fifos_created(), 1);
+    assert!(!dest_fifo.exists());
+}
+
+// ==================== Symlink Edge Cases ====================
+
+#[cfg(unix)]
+#[test]
+fn execute_copies_broken_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_link = temp.path().join("broken_link");
+    symlink(Path::new("nonexistent_target"), &source_link).expect("create broken symlink");
+
+    let dest_link = temp.path().join("dest_link");
+    let operands = vec![
+        source_link.into_os_string(),
+        dest_link.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().links(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.symlinks_copied(), 1);
+    let dest_target = fs::read_link(&dest_link).expect("read dest link");
+    assert_eq!(dest_target, Path::new("nonexistent_target"));
+}
+
+// ==================== Multiple Special Files Tests ====================
+
+#[cfg(unix)]
+#[test]
+fn execute_copies_mixed_special_files() {
+    use std::os::unix::fs::{FileTypeExt, symlink};
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source");
+
+    // Create regular file
+    fs::write(source_root.join("regular.txt"), b"regular").expect("write regular");
+
+    // Create symlink
+    let target = source_root.join("target.txt");
+    fs::write(&target, b"target").expect("write target");
+    symlink(Path::new("target.txt"), source_root.join("link")).expect("create symlink");
+
+    // Create FIFO
+    let fifo = source_root.join("fifo");
+    mkfifo_for_tests(&fifo, 0o600).expect("mkfifo");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .links(true)
+                .specials(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 2);
+    assert_eq!(summary.symlinks_copied(), 1);
+    assert_eq!(summary.fifos_created(), 1);
+
+    assert!(dest_root.join("regular.txt").is_file());
+    assert!(dest_root.join("target.txt").is_file());
+    assert!(fs::symlink_metadata(dest_root.join("link"))
+        .expect("meta")
+        .file_type()
+        .is_symlink());
+    assert!(fs::symlink_metadata(dest_root.join("fifo"))
+        .expect("meta")
+        .file_type()
+        .is_fifo());
+}
