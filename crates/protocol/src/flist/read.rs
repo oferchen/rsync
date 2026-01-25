@@ -111,6 +111,7 @@ impl FileListReader {
     #[must_use]
     pub fn new(protocol: ProtocolVersion) -> Self {
         let codec = create_protocol_codec(protocol.as_u8());
+
         Self {
             protocol,
             codec,
@@ -136,6 +137,7 @@ impl FileListReader {
     #[must_use]
     pub fn with_compat_flags(protocol: ProtocolVersion, compat_flags: CompatibilityFlags) -> Self {
         let codec = create_protocol_codec(protocol.as_u8());
+
         Self {
             protocol,
             codec,
@@ -551,7 +553,11 @@ impl FileListReader {
         })
     }
 
-    /// Reads symlink target if preserving links and mode indicates a symlink.
+    /// Reads symlink target if mode indicates a symlink AND preserve_links is enabled.
+    ///
+    /// The sender only transmits symlink targets when preserve_links is negotiated.
+    /// If preserve_links is false, the sender omits symlink targets, so we must NOT
+    /// attempt to read them from the stream.
     ///
     /// Wire format: varint30(len) + raw bytes
     fn read_symlink_target<R: Read + ?Sized>(
@@ -562,7 +568,9 @@ impl FileListReader {
         // S_IFLNK check: mode & 0o170000 == 0o120000
         let is_symlink = mode & 0o170000 == 0o120000;
 
-        if !self.preserve_links || !is_symlink {
+        // Only read symlink target if this is a symlink AND preserve_links is enabled.
+        // The sender only sends symlink targets when preserve_links is true.
+        if !is_symlink || !self.preserve_links {
             return Ok(None);
         }
 
