@@ -113,6 +113,7 @@ pub trait StrongDigest: Sized {
     const DIGEST_LEN: usize;
 
     /// Creates a new hasher with an empty state.
+    #[must_use]
     fn new() -> Self {
         Self::with_seed(Default::default())
     }

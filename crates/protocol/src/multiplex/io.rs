@@ -150,7 +150,7 @@ fn write_all_vectored<W: Write + ?Sized>(
                         ));
                     }
                     Ok(written) => break written,
-                    Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(ref err) if err.kind() == io::ErrorKind::Interrupted => {}
                     Err(err) => return Err(err),
                 }
             }

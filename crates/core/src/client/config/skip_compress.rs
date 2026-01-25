@@ -8,6 +8,30 @@ use crate::{
 use engine::SkipCompressList;
 
 /// Parses a `--skip-compress` specification into a [`SkipCompressList`].
+///
+/// This function converts a user-provided pattern list (e.g., `"*.jpg/*.zip"`)
+/// into a structured skip-compress list that the engine can use to avoid
+/// compressing files that are already compressed.
+///
+/// # Arguments
+///
+/// * `value` - The pattern specification, typically from `--skip-compress`.
+///   Should be UTF-8 encoded patterns separated by forward slashes.
+///
+/// # Returns
+///
+/// Returns `Ok(SkipCompressList)` if the patterns are valid, or an error
+/// message if the specification is invalid or non-UTF-8.
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use core::client::parse_skip_compress_list;
+///
+/// let list = parse_skip_compress_list(OsStr::new("*.jpg/*.zip"))
+///     .expect("valid pattern");
+/// ```
 pub fn parse_skip_compress_list(value: &OsStr) -> Result<SkipCompressList, Message> {
     let text = value.to_str().ok_or_else(|| {
         rsync_error!(

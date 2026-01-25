@@ -99,7 +99,6 @@ impl NegotiationPrologueDetector {
                     decision = Some(self.decide(NegotiationPrologue::LegacyAscii));
                     break;
                 }
-
                 continue;
             }
 

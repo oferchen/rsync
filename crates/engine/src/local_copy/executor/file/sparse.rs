@@ -23,7 +23,6 @@ const SPARSE_WRITE_SIZE: usize = 32 * 1024;
 
 /// Buffer size for writing zeros when fallocate is not supported.
 /// Matches upstream rsync's do_punch_hole fallback buffer size.
-#[allow(dead_code)] // Used by punch_hole infrastructure for delta transfers
 const ZERO_WRITE_BUFFER_SIZE: usize = 4096;
 
 /// Punches a hole in the file at the specified position for the given length.
@@ -43,8 +42,11 @@ const ZERO_WRITE_BUFFER_SIZE: usize = 4096;
 /// * `path` - Path for error reporting
 /// * `pos` - Starting position for the hole
 /// * `len` - Length of the hole in bytes
+///
+/// # TODO
+/// Currently only used in tests. Will be used for delta transfer in-place updates.
 #[cfg(target_os = "linux")]
-#[allow(dead_code)] // Prepared for delta transfer in-place updates
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn punch_hole(
     file: &mut fs::File,
     path: &Path,
@@ -105,8 +107,11 @@ pub(crate) fn punch_hole(
 ///
 /// After a successful call, the file position will be at `pos + len`,
 /// matching the Linux implementation's behavior.
+///
+/// # TODO
+/// Currently only used in tests. Will be used for delta transfer in-place updates.
 #[cfg(not(target_os = "linux"))]
-#[allow(dead_code)] // Prepared for delta transfer in-place updates
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn punch_hole(
     file: &mut fs::File,
     path: &Path,
@@ -128,7 +133,6 @@ pub(crate) fn punch_hole(
 ///
 /// This is the final fallback when fallocate-based hole punching is not
 /// available. Unlike hole punching, this allocates disk space.
-#[allow(dead_code)] // Called by punch_hole for delta transfer support
 fn write_zeros_fallback(
     file: &mut fs::File,
     path: &Path,
@@ -154,7 +158,9 @@ fn write_zeros_fallback(
 pub(crate) struct SparseWriteState {
     pending_zero_run: u64,
     /// Position where the pending zero run starts (used for punch_hole path)
-    #[allow(dead_code)]
+    ///
+    /// TODO: Will be used for delta transfer in-place updates via flush_with_punch_hole
+    #[cfg_attr(not(test), allow(dead_code))]
     zero_run_start_pos: u64,
 }
 
@@ -192,7 +198,10 @@ impl SparseWriteState {
     /// This is used for in-place updates where we need to deallocate
     /// disk blocks. Falls back to writing zeros if hole punching is
     /// not supported.
-    #[allow(dead_code)] // Prepared for delta transfer in-place updates
+    ///
+    /// # TODO
+    /// Currently only used in tests. Will be used for delta transfer in-place updates.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn flush_with_punch_hole(
         &mut self,
         writer: &mut fs::File,
@@ -216,13 +225,19 @@ impl SparseWriteState {
     }
 
     /// Updates the starting position for the next zero run.
-    #[allow(dead_code)] // Prepared for delta transfer in-place updates
+    ///
+    /// # TODO
+    /// Currently only used in tests. Will be used for delta transfer in-place updates.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_zero_run_start(&mut self, pos: u64) {
         self.zero_run_start_pos = pos;
     }
 
     /// Returns the pending zero run length.
-    #[allow(dead_code)] // Prepared for delta transfer in-place updates
+    ///
+    /// # TODO
+    /// Currently only used in tests. Will be used for delta transfer in-place updates.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const fn pending_zeros(&self) -> u64 {
         self.pending_zero_run
     }
@@ -244,7 +259,10 @@ impl SparseWriteState {
     ///
     /// Use this variant when updating files in-place to deallocate disk
     /// blocks for zero regions.
-    #[allow(dead_code)] // Prepared for delta transfer in-place updates
+    ///
+    /// # TODO
+    /// Currently only used in tests. Will be used for delta transfer in-place updates.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn finish_with_punch_hole(
         &mut self,
         writer: &mut fs::File,

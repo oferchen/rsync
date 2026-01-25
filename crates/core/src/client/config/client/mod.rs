@@ -15,6 +15,43 @@ use super::{
 };
 
 /// Configuration describing the requested client operation.
+///
+/// This structure encapsulates all transfer settings supplied by the caller,
+/// from source and destination paths to preservation flags, filter rules, and
+/// network options. Instances are typically constructed via [`ClientConfig::builder()`]
+/// to enable incremental configuration through a fluent builder API.
+///
+/// # Examples
+///
+/// Basic local copy:
+///
+/// ```ignore
+/// use core::client::ClientConfig;
+///
+/// let config = ClientConfig::builder()
+///     .transfer_args(["source/", "dest/"])
+///     .recursive(true)
+///     .preserve_times(true)
+///     .build();
+/// ```
+///
+/// Transfer with deletion and compression:
+///
+/// ```ignore
+/// use core::client::{ClientConfig, DeleteMode, CompressionSetting};
+/// use compress::zlib::CompressionLevel;
+///
+/// let config = ClientConfig::builder()
+///     .transfer_args(["source/", "dest/"])
+///     .delete_mode(DeleteMode::Before)
+///     .compression_setting(CompressionSetting::level(CompressionLevel::Default))
+///     .build();
+/// ```
+///
+/// # See Also
+///
+/// - [`ClientConfigBuilder`] for the builder interface
+/// - [`run_client`](crate::client::run_client) for executing transfers with this configuration
 pub struct ClientConfig {
     pub(super) transfer_args: Vec<OsString>,
     pub(super) dry_run: bool,

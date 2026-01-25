@@ -17,29 +17,24 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Controls whether blocking I/O should be forced for remote shells.
-    #[must_use]
-    #[doc(alias = "--blocking-io")]
-    #[doc(alias = "--no-blocking-io")]
-    pub const fn blocking_io(mut self, blocking: Option<bool>) -> Self {
-        self.blocking_io = blocking;
-        self
-    }
+    builder_setter! {
+        /// Controls whether blocking I/O should be forced for remote shells.
+        #[doc(alias = "--blocking-io")]
+        #[doc(alias = "--no-blocking-io")]
+        blocking_io: Option<bool>,
 
-    /// Sets the timeout configuration that should apply to network transfers.
-    #[must_use]
-    #[doc(alias = "--timeout")]
-    pub const fn timeout(mut self, timeout: TransferTimeout) -> Self {
-        self.timeout = timeout;
-        self
-    }
+        /// Sets the timeout configuration that should apply to network transfers.
+        #[doc(alias = "--timeout")]
+        timeout: TransferTimeout,
 
-    /// Configures the connection timeout applied to network handshakes.
-    #[must_use]
-    #[doc(alias = "--contimeout")]
-    pub const fn connect_timeout(mut self, timeout: TransferTimeout) -> Self {
-        self.connect_timeout = timeout;
-        self
+        /// Configures the connection timeout applied to network handshakes.
+        #[doc(alias = "--contimeout")]
+        connect_timeout: TransferTimeout,
+
+        /// Selects the preferred address family for network operations.
+        #[doc(alias = "--ipv4")]
+        #[doc(alias = "--ipv6")]
+        address_mode: AddressMode,
     }
 
     /// Configures the deadline at which the transfer should stop.
@@ -56,15 +51,6 @@ impl ClientConfigBuilder {
     #[doc(alias = "--connect-program")]
     pub fn connect_program(mut self, program: Option<OsString>) -> Self {
         self.connect_program = program;
-        self
-    }
-
-    /// Selects the preferred address family for network operations.
-    #[must_use]
-    #[doc(alias = "--ipv4")]
-    #[doc(alias = "--ipv6")]
-    pub const fn address_mode(mut self, mode: AddressMode) -> Self {
-        self.address_mode = mode;
         self
     }
 

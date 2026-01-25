@@ -171,7 +171,25 @@ pub fn sync_acls(
 
 /// Resets the access ACL to match the file's permission bits.
 ///
-/// This matches upstream rsync's behavior when the source has no extended
+/// Converts the file's Unix permission mode (e.g., 0o755) into a minimal
+/// ACL containing only the base owner/group/other entries. This is used
+/// when the source file has no extended ACL entries.
+///
+/// # Platform Differences
+///
+/// - **Unix**: Extracts mode from `metadata.permissions().mode() & 0o777`
+/// - **Non-Unix**: Uses `0o444` (read-only) or `0o644` (writable) based on
+///   the readonly flag
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if:
+/// - Reading file metadata fails
+/// - Setting the ACL fails (except for unsupported filesystem errors)
+///
+/// # Upstream Reference
+///
+/// Matches upstream rsync's behavior when the source has no extended
 /// ACL entries - the destination should have only the base owner/group/other
 /// entries derived from permission bits.
 fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
@@ -209,6 +227,25 @@ fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
 }
 
 /// Clears the default ACL from a directory.
+///
+/// On Linux and FreeBSD, directories can have default ACLs that are
+/// automatically applied to newly created files within the directory.
+/// This function removes the default ACL by setting it to an empty list.
+///
+/// # Platform Support
+///
+/// Only compiled on Linux and FreeBSD, where default ACLs are supported.
+/// macOS does not use default ACLs in its extended ACL model.
+///
+/// # Errors
+///
+/// Returns [`MetadataError`] if clearing the ACL fails, except for
+/// unsupported filesystem errors which are silently ignored.
+///
+/// # Note
+///
+/// Setting an empty default ACL is the standard way to clear it on
+/// POSIX ACL systems. This is equivalent to `setfacl -k` on the command line.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn clear_default_acl(path: &Path) -> Result<(), MetadataError> {
     // Setting an empty default ACL clears it
@@ -225,6 +262,27 @@ fn clear_default_acl(path: &Path) -> Result<(), MetadataError> {
 }
 
 /// Checks if an I/O error indicates an unsupported filesystem.
+///
+/// Determines whether an error should be treated as "filesystem doesn't
+/// support ACLs" rather than a true error. This allows graceful degradation
+/// when copying files across different filesystem types.
+///
+/// # Detection Strategy
+///
+/// The function uses multiple detection methods in order:
+/// 1. **Error kind matching**: Checks for `Unsupported`, `InvalidInput`, `NotFound`
+/// 2. **OS error codes**: Checks for `ENOTSUP`, `ENOENT`, `EINVAL`, `ENODATA`, `EPERM`
+/// 3. **Error message parsing**: Looks for common error message patterns
+///
+/// # Common Scenarios
+///
+/// This function returns `true` for:
+/// - FAT/VFAT filesystems (don't support ACLs)
+/// - Network mounts without ACL support
+/// - Permission errors when reading ACLs
+/// - Missing xattr support in the kernel
+///
+/// # Upstream Reference
 ///
 /// Matches upstream rsync's `no_acl_syscall_error()` behavior where errors
 /// from filesystems that don't support ACLs are silently ignored.

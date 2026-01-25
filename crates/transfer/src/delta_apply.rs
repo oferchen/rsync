@@ -59,6 +59,7 @@ impl SparseWriteState {
     }
 
     /// Flushes pending zeros by seeking forward, creating a hole.
+    #[inline]
     pub fn flush<W: Write + Seek>(&mut self, writer: &mut W) -> io::Result<()> {
         if self.pending_zeros == 0 {
             return Ok(());
@@ -79,6 +80,7 @@ impl SparseWriteState {
     ///
     /// Zero runs are tracked and become holes; non-zero data is written normally.
     /// Uses 32KB chunks matching upstream rsync's CHUNK_SIZE for efficient processing.
+    #[inline]
     pub fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
         if data.is_empty() {
             return Ok(0);
@@ -191,6 +193,7 @@ impl ChecksumVerifier {
     }
 
     /// Updates the hasher with data.
+    #[inline]
     pub fn update(&mut self, data: &[u8]) {
         match self {
             Self::Md4(h) => h.update(data),
@@ -203,6 +206,7 @@ impl ChecksumVerifier {
     }
 
     /// Returns the digest length for the current algorithm.
+    #[inline]
     #[must_use]
     pub const fn digest_len(&self) -> usize {
         match self {
