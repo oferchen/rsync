@@ -97,14 +97,15 @@ impl DeltaGenerator {
             // Rolling checksum update: use evicted byte directly (if any)
             if let Some(outgoing_byte) = evicted {
                 // Window was full: roll with evicted byte leaving, new byte entering
+                // Use roll() directly for single-byte operations (faster than roll_many)
                 rolling
-                    .roll_many(&[outgoing_byte], &[byte])
+                    .roll(outgoing_byte, byte)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 // Evicted byte becomes a literal
                 pending_literals.push(outgoing_byte);
             } else {
-                // Window not yet full: just add the new byte to checksum
-                rolling.update(&[byte]);
+                // Window not yet full: use optimized single-byte update
+                rolling.update_byte(byte);
             }
 
             // Only check for matches when window is full
