@@ -87,11 +87,21 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
 
         // Create mask for active lanes
         let lane_active: [i32; 8] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { -1 } else { 0 }
+            if block_idx < block_counts[lane] {
+                -1
+            } else {
+                0
+            }
         });
         let mask = _mm256_setr_epi32(
-            lane_active[0], lane_active[1], lane_active[2], lane_active[3],
-            lane_active[4], lane_active[5], lane_active[6], lane_active[7],
+            lane_active[0],
+            lane_active[1],
+            lane_active[2],
+            lane_active[3],
+            lane_active[4],
+            lane_active[5],
+            lane_active[6],
+            lane_active[7],
         );
 
         // Load message words (transposed: word i from all 8 inputs)
@@ -111,8 +121,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
                 }
             });
             m[word_idx] = _mm256_setr_epi32(
-                words[0], words[1], words[2], words[3],
-                words[4], words[5], words[6], words[7],
+                words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],
             );
         }
 
@@ -125,14 +134,8 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
         // Round 1: F = (B & C) | (~B & D), message indices 0-15
         let k1 = _mm256_set1_epi32(K[0] as i32);
         for i in 0..16 {
-            let f_val = _mm256_or_si256(
-                _mm256_and_si256(b, c),
-                _mm256_andnot_si256(b, d),
-            );
-            let temp = _mm256_add_epi32(
-                _mm256_add_epi32(a, f_val),
-                _mm256_add_epi32(k1, m[i]),
-            );
+            let f_val = _mm256_or_si256(_mm256_and_si256(b, c), _mm256_andnot_si256(b, d));
+            let temp = _mm256_add_epi32(_mm256_add_epi32(a, f_val), _mm256_add_epi32(k1, m[i]));
             let rotated = rotl(temp, S1[i % 4]);
             a = d;
             d = c;
@@ -149,10 +152,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
                 _mm256_and_si256(b, c),
                 _mm256_and_si256(d, _mm256_or_si256(b, c)),
             );
-            let temp = _mm256_add_epi32(
-                _mm256_add_epi32(a, g_val),
-                _mm256_add_epi32(k2, m[M2[i]]),
-            );
+            let temp = _mm256_add_epi32(_mm256_add_epi32(a, g_val), _mm256_add_epi32(k2, m[M2[i]]));
             let rotated = rotl(temp, S2[i % 4]);
             a = d;
             d = c;
@@ -164,10 +164,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
         let k3 = _mm256_set1_epi32(K[2] as i32);
         for i in 0..16 {
             let h_val = _mm256_xor_si256(_mm256_xor_si256(b, c), d);
-            let temp = _mm256_add_epi32(
-                _mm256_add_epi32(a, h_val),
-                _mm256_add_epi32(k3, m[M3[i]]),
-            );
+            let temp = _mm256_add_epi32(_mm256_add_epi32(a, h_val), _mm256_add_epi32(k3, m[M3[i]]));
             let rotated = rotl(temp, S3[i % 4]);
             a = d;
             d = c;
@@ -316,8 +313,7 @@ mod tests {
         let input7: Vec<u8> = vec![];
 
         let inputs: [&[u8]; 8] = [
-            &input0, &input1, &input2, &input3,
-            &input4, &input5, &input6, &input7,
+            &input0, &input1, &input2, &input3, &input4, &input5, &input6, &input7,
         ];
 
         let results = unsafe { digest_x8(&inputs) };

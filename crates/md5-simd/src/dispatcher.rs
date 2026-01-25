@@ -1,9 +1,9 @@
 //! Runtime CPU detection and backend dispatch.
 
-use crate::Digest;
 use crate::scalar;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::simd;
+use crate::Digest;
 
 /// Available SIMD backends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +84,7 @@ impl Dispatcher {
                 return Backend::Ssse3;
             }
             // SSE2 is baseline for x86_64, always available
-            return Backend::Sse2;
+            Backend::Sse2
         }
 
         #[cfg(target_arch = "aarch64")]
@@ -438,7 +438,8 @@ mod tests {
         for (i, input) in inputs.iter().enumerate() {
             let expected = scalar::digest(input);
             assert_eq!(
-                results[i], expected,
+                results[i],
+                expected,
                 "Mismatch at index {i} for input {:?}",
                 String::from_utf8_lossy(input)
             );

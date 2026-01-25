@@ -62,22 +62,70 @@ const INIT_D: u32 = 0x1032_5476;
 /// additive constants in the MD5 compression function. Specifically,
 /// K[i] = floor(2^32 × abs(sin(i + 1))).
 const K: [u32; 64] = [
-    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee,
-    0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
-    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be,
-    0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
-    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa,
-    0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
-    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed,
-    0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
-    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c,
-    0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
-    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05,
-    0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
-    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039,
-    0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
-    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1,
-    0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
+    0xd76a_a478,
+    0xe8c7_b756,
+    0x2420_70db,
+    0xc1bd_ceee,
+    0xf57c_0faf,
+    0x4787_c62a,
+    0xa830_4613,
+    0xfd46_9501,
+    0x6980_98d8,
+    0x8b44_f7af,
+    0xffff_5bb1,
+    0x895c_d7be,
+    0x6b90_1122,
+    0xfd98_7193,
+    0xa679_438e,
+    0x49b4_0821,
+    0xf61e_2562,
+    0xc040_b340,
+    0x265e_5a51,
+    0xe9b6_c7aa,
+    0xd62f_105d,
+    0x0244_1453,
+    0xd8a1_e681,
+    0xe7d3_fbc8,
+    0x21e1_cde6,
+    0xc337_07d6,
+    0xf4d5_0d87,
+    0x455a_14ed,
+    0xa9e3_e905,
+    0xfcef_a3f8,
+    0x676f_02d9,
+    0x8d2a_4c8a,
+    0xfffa_3942,
+    0x8771_f681,
+    0x6d9d_6122,
+    0xfde5_380c,
+    0xa4be_ea44,
+    0x4bde_cfa9,
+    0xf6bb_4b60,
+    0xbebf_bc70,
+    0x289b_7ec6,
+    0xeaa1_27fa,
+    0xd4ef_3085,
+    0x0488_1d05,
+    0xd9d4_d039,
+    0xe6db_99e5,
+    0x1fa2_7cf8,
+    0xc4ac_5665,
+    0xf429_2244,
+    0x432a_ff97,
+    0xab94_23a7,
+    0xfc93_a039,
+    0x655b_59c3,
+    0x8f0c_cc92,
+    0xffef_f47d,
+    0x8584_5dd1,
+    0x6fa8_7e4f,
+    0xfe2c_e6e0,
+    0xa301_4314,
+    0x4e08_11a1,
+    0xf753_7e82,
+    0xbd3a_f235,
+    0x2ad7_d2bb,
+    0xeb86_d391,
 ];
 
 /// Maximum input size supported for parallel processing.
@@ -227,7 +275,11 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             .iter()
             .enumerate()
             .fold(0u16, |acc, (lane, &count)| {
-                if block_idx < count { acc | (1 << lane) } else { acc }
+                if block_idx < count {
+                    acc | (1 << lane)
+                } else {
+                    acc
+                }
             });
 
         // Load message words (transposed: word i from all 16 inputs)
@@ -235,9 +287,7 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             let word_offset = block_offset + word_idx * 4;
             for (lane, padded) in padded_storage.iter().enumerate() {
                 m_word.0[lane] = if word_offset + 4 <= padded.len() {
-                    u32::from_le_bytes(
-                        padded[word_offset..word_offset + 4].try_into().unwrap(),
-                    )
+                    u32::from_le_bytes(padded[word_offset..word_offset + 4].try_into().unwrap())
                 } else {
                     0
                 };
@@ -451,16 +501,16 @@ unsafe fn process_block_avx512(
     }
 
     // Rounds 0-15: F function, g = i, shifts = [7, 12, 17, 22] repeating
-    round_f!(0,  "8",  "7");
-    round_f!(1,  "9",  "12");
-    round_f!(2,  "10", "17");
-    round_f!(3,  "11", "22");
-    round_f!(4,  "12", "7");
-    round_f!(5,  "13", "12");
-    round_f!(6,  "14", "17");
-    round_f!(7,  "15", "22");
-    round_f!(8,  "16", "7");
-    round_f!(9,  "17", "12");
+    round_f!(0, "8", "7");
+    round_f!(1, "9", "12");
+    round_f!(2, "10", "17");
+    round_f!(3, "11", "22");
+    round_f!(4, "12", "7");
+    round_f!(5, "13", "12");
+    round_f!(6, "14", "17");
+    round_f!(7, "15", "22");
+    round_f!(8, "16", "7");
+    round_f!(9, "17", "12");
     round_f!(10, "18", "17");
     round_f!(11, "19", "22");
     round_f!(12, "20", "7");
@@ -469,58 +519,58 @@ unsafe fn process_block_avx512(
     round_f!(15, "23", "22");
 
     // Rounds 16-31: G function, g = (5*i + 1) % 16, shifts = [5, 9, 14, 20] repeating
-    round_g!(16, "9",  "5");   // m[1]
-    round_g!(17, "14", "9");   // m[6]
-    round_g!(18, "19", "14");  // m[11]
-    round_g!(19, "8",  "20");  // m[0]
-    round_g!(20, "13", "5");   // m[5]
-    round_g!(21, "18", "9");   // m[10]
-    round_g!(22, "23", "14");  // m[15]
-    round_g!(23, "12", "20");  // m[4]
-    round_g!(24, "17", "5");   // m[9]
-    round_g!(25, "22", "9");   // m[14]
-    round_g!(26, "11", "14");  // m[3]
-    round_g!(27, "16", "20");  // m[8]
-    round_g!(28, "21", "5");   // m[13]
-    round_g!(29, "10", "9");   // m[2]
-    round_g!(30, "15", "14");  // m[7]
-    round_g!(31, "20", "20");  // m[12]
+    round_g!(16, "9", "5"); // m[1]
+    round_g!(17, "14", "9"); // m[6]
+    round_g!(18, "19", "14"); // m[11]
+    round_g!(19, "8", "20"); // m[0]
+    round_g!(20, "13", "5"); // m[5]
+    round_g!(21, "18", "9"); // m[10]
+    round_g!(22, "23", "14"); // m[15]
+    round_g!(23, "12", "20"); // m[4]
+    round_g!(24, "17", "5"); // m[9]
+    round_g!(25, "22", "9"); // m[14]
+    round_g!(26, "11", "14"); // m[3]
+    round_g!(27, "16", "20"); // m[8]
+    round_g!(28, "21", "5"); // m[13]
+    round_g!(29, "10", "9"); // m[2]
+    round_g!(30, "15", "14"); // m[7]
+    round_g!(31, "20", "20"); // m[12]
 
     // Rounds 32-47: H function, g = (3*i + 5) % 16, shifts = [4, 11, 16, 23] repeating
-    round_h!(32, "13", "4");   // m[5]
-    round_h!(33, "16", "11");  // m[8]
-    round_h!(34, "19", "16");  // m[11]
-    round_h!(35, "22", "23");  // m[14]
-    round_h!(36, "9",  "4");   // m[1]
-    round_h!(37, "12", "11");  // m[4]
-    round_h!(38, "15", "16");  // m[7]
-    round_h!(39, "18", "23");  // m[10]
-    round_h!(40, "21", "4");   // m[13]
-    round_h!(41, "8",  "11");  // m[0]
-    round_h!(42, "11", "16");  // m[3]
-    round_h!(43, "14", "23");  // m[6]
-    round_h!(44, "17", "4");   // m[9]
-    round_h!(45, "20", "11");  // m[12]
-    round_h!(46, "23", "16");  // m[15]
-    round_h!(47, "10", "23");  // m[2]
+    round_h!(32, "13", "4"); // m[5]
+    round_h!(33, "16", "11"); // m[8]
+    round_h!(34, "19", "16"); // m[11]
+    round_h!(35, "22", "23"); // m[14]
+    round_h!(36, "9", "4"); // m[1]
+    round_h!(37, "12", "11"); // m[4]
+    round_h!(38, "15", "16"); // m[7]
+    round_h!(39, "18", "23"); // m[10]
+    round_h!(40, "21", "4"); // m[13]
+    round_h!(41, "8", "11"); // m[0]
+    round_h!(42, "11", "16"); // m[3]
+    round_h!(43, "14", "23"); // m[6]
+    round_h!(44, "17", "4"); // m[9]
+    round_h!(45, "20", "11"); // m[12]
+    round_h!(46, "23", "16"); // m[15]
+    round_h!(47, "10", "23"); // m[2]
 
     // Rounds 48-63: I function, g = (7*i) % 16, shifts = [6, 10, 15, 21] repeating
-    round_i!(48, "8",  "6");   // m[0]
-    round_i!(49, "15", "10");  // m[7]
-    round_i!(50, "22", "15");  // m[14]
-    round_i!(51, "13", "21");  // m[5]
-    round_i!(52, "20", "6");   // m[12]
-    round_i!(53, "11", "10");  // m[3]
-    round_i!(54, "18", "15");  // m[10]
-    round_i!(55, "9",  "21");  // m[1]
-    round_i!(56, "16", "6");   // m[8]
-    round_i!(57, "23", "10");  // m[15]
-    round_i!(58, "14", "15");  // m[6]
-    round_i!(59, "21", "21");  // m[13]
-    round_i!(60, "12", "6");   // m[4]
-    round_i!(61, "19", "10");  // m[11]
-    round_i!(62, "10", "15");  // m[2]
-    round_i!(63, "17", "21");  // m[9]
+    round_i!(48, "8", "6"); // m[0]
+    round_i!(49, "15", "10"); // m[7]
+    round_i!(50, "22", "15"); // m[14]
+    round_i!(51, "13", "21"); // m[5]
+    round_i!(52, "20", "6"); // m[12]
+    round_i!(53, "11", "10"); // m[3]
+    round_i!(54, "18", "15"); // m[10]
+    round_i!(55, "9", "21"); // m[1]
+    round_i!(56, "16", "6"); // m[8]
+    round_i!(57, "23", "10"); // m[15]
+    round_i!(58, "14", "15"); // m[6]
+    round_i!(59, "21", "21"); // m[13]
+    round_i!(60, "12", "6"); // m[4]
+    round_i!(61, "19", "10"); // m[11]
+    round_i!(62, "10", "15"); // m[2]
+    round_i!(63, "17", "21"); // m[9]
 
     // Add saved state and apply mask
     asm!(
@@ -705,10 +755,8 @@ mod tests {
         let input15: Vec<u8> = (0..4_096).map(|i| (i % 256) as u8).collect();
 
         let inputs: [&[u8]; 16] = [
-            &input0, &input1, &input2, &input3,
-            &input4, &input5, &input6, &input7,
-            &input8, &input9, &input10, &input11,
-            &input12, &input13, &input14, &input15,
+            &input0, &input1, &input2, &input3, &input4, &input5, &input6, &input7, &input8,
+            &input9, &input10, &input11, &input12, &input13, &input14, &input15,
         ];
 
         let results = unsafe { digest_x16(&inputs) };

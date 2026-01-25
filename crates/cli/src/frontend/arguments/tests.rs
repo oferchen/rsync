@@ -922,10 +922,7 @@ mod option_values {
     #[test]
     fn no_bwlimit_flag() {
         let parsed = parse_test_args(["--no-bwlimit", "src/", "dst/"]).expect("parse");
-        assert!(matches!(
-            parsed.bwlimit,
-            Some(BandwidthArgument::Disabled)
-        ));
+        assert!(matches!(parsed.bwlimit, Some(BandwidthArgument::Disabled)));
     }
 
     #[test]
@@ -1022,13 +1019,8 @@ mod option_values {
 
     #[test]
     fn multiple_includes() {
-        let parsed = parse_test_args([
-            "--include=*.rs",
-            "--include=*.toml",
-            "src/",
-            "dst/",
-        ])
-        .expect("parse");
+        let parsed =
+            parse_test_args(["--include=*.rs", "--include=*.toml", "src/", "dst/"]).expect("parse");
         assert_eq!(
             parsed.includes,
             vec![OsString::from("*.rs"), OsString::from("*.toml")]
@@ -1043,8 +1035,8 @@ mod option_values {
 
     #[test]
     fn exclude_from_with_equals() {
-        let parsed =
-            parse_test_args(["--exclude-from=/path/to/exclude.txt", "src/", "dst/"]).expect("parse");
+        let parsed = parse_test_args(["--exclude-from=/path/to/exclude.txt", "src/", "dst/"])
+            .expect("parse");
         assert_eq!(
             parsed.exclude_from,
             vec![OsString::from("/path/to/exclude.txt")]
@@ -1053,8 +1045,8 @@ mod option_values {
 
     #[test]
     fn include_from_with_equals() {
-        let parsed =
-            parse_test_args(["--include-from=/path/to/include.txt", "src/", "dst/"]).expect("parse");
+        let parsed = parse_test_args(["--include-from=/path/to/include.txt", "src/", "dst/"])
+            .expect("parse");
         assert_eq!(
             parsed.include_from,
             vec![OsString::from("/path/to/include.txt")]
@@ -1073,7 +1065,8 @@ mod option_values {
 
     #[test]
     fn temp_dir_with_equals() {
-        let parsed = parse_test_args(["--temp-dir=/tmp/rsync-temp", "src/", "dst/"]).expect("parse");
+        let parsed =
+            parse_test_args(["--temp-dir=/tmp/rsync-temp", "src/", "dst/"]).expect("parse");
         assert_eq!(
             parsed.temp_dir,
             Some(std::path::PathBuf::from("/tmp/rsync-temp"))
@@ -1216,7 +1209,8 @@ mod option_values {
 
     #[test]
     fn log_file_with_equals() {
-        let parsed = parse_test_args(["--log-file=/var/log/rsync.log", "src/", "dst/"]).expect("parse");
+        let parsed =
+            parse_test_args(["--log-file=/var/log/rsync.log", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.log_file, Some(OsString::from("/var/log/rsync.log")));
     }
 
@@ -1246,33 +1240,28 @@ mod option_values {
 
     #[test]
     fn sockopts_with_equals() {
-        let parsed = parse_test_args(["--sockopts=SO_SNDBUF=65536", "src/", "dst/"]).expect("parse");
+        let parsed =
+            parse_test_args(["--sockopts=SO_SNDBUF=65536", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.sockopts, Some(OsString::from("SO_SNDBUF=65536")));
     }
 
     #[test]
     fn remote_option_with_equals() {
-        let parsed = parse_test_args(["--remote-option=--bwlimit=100", "src/", "dst/"]).expect("parse");
-        assert_eq!(
-            parsed.remote_options,
-            vec![OsString::from("--bwlimit=100")]
-        );
+        let parsed =
+            parse_test_args(["--remote-option=--bwlimit=100", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.remote_options, vec![OsString::from("--bwlimit=100")]);
     }
 
     #[test]
     fn multiple_remote_options() {
-        let parsed = parse_test_args([
-            "-M",
-            "--bwlimit=100",
-            "-M",
-            "--compress",
-            "src/",
-            "dst/",
-        ])
-        .expect("parse");
+        let parsed = parse_test_args(["-M", "--bwlimit=100", "-M", "--compress", "src/", "dst/"])
+            .expect("parse");
         assert_eq!(
             parsed.remote_options,
-            vec![OsString::from("--bwlimit=100"), OsString::from("--compress")]
+            vec![
+                OsString::from("--bwlimit=100"),
+                OsString::from("--compress")
+            ]
         );
     }
 
@@ -1397,8 +1386,7 @@ mod delete_modes {
 
     #[test]
     fn delete_modes_mutually_exclusive() {
-        let result =
-            parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
+        let result = parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
@@ -1460,8 +1448,7 @@ mod error_handling {
 
     #[test]
     fn usermap_twice_fails() {
-        let result =
-            parse_test_args(["--usermap=0:1000", "--usermap=0:1001", "src/", "dst/"]);
+        let result = parse_test_args(["--usermap=0:1000", "--usermap=0:1001", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("usermap"));
@@ -1469,8 +1456,7 @@ mod error_handling {
 
     #[test]
     fn groupmap_twice_fails() {
-        let result =
-            parse_test_args(["--groupmap=0:1000", "--groupmap=0:1001", "src/", "dst/"]);
+        let result = parse_test_args(["--groupmap=0:1000", "--groupmap=0:1001", "src/", "dst/"]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("groupmap"));
@@ -1646,7 +1632,8 @@ mod tri_state_flags {
 
     #[test]
     fn recursive_negative_first_behavior() {
-        let parsed = parse_test_args(["--recursive", "--no-recursive", "src/", "dst/"]).expect("parse");
+        let parsed =
+            parse_test_args(["--recursive", "--no-recursive", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.recursive_override, Some(false));
     }
 
@@ -1658,7 +1645,8 @@ mod tri_state_flags {
 
     #[test]
     fn inc_recursive_positive_first_behavior() {
-        let parsed = parse_test_args(["--no-inc-recursive", "--inc-recursive", "src/", "dst/"]).expect("parse");
+        let parsed = parse_test_args(["--no-inc-recursive", "--inc-recursive", "src/", "dst/"])
+            .expect("parse");
         assert_eq!(parsed.inc_recursive, Some(true));
     }
 }
@@ -1812,7 +1800,8 @@ mod compression_options {
 
     #[test]
     fn skip_compress_option() {
-        let parsed = parse_test_args(["--skip-compress=gz/jpg/mp3", "src/", "dst/"]).expect("parse");
+        let parsed =
+            parse_test_args(["--skip-compress=gz/jpg/mp3", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.skip_compress, Some(OsString::from("gz/jpg/mp3")));
     }
 
@@ -1904,5 +1893,1081 @@ mod old_args_tests {
     fn no_old_args_flag() {
         let parsed = parse_test_args(["--no-old-args", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.old_args, Some(false));
+    }
+}
+
+// ============================================================================
+// Default Values Tests
+// ============================================================================
+
+mod default_values {
+    use super::*;
+
+    #[test]
+    fn minimal_args_have_sensible_defaults() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+
+        // Boolean defaults
+        assert!(!parsed.archive);
+        assert!(!parsed.recursive);
+        assert!(!parsed.dry_run);
+        assert!(!parsed.list_only);
+        assert!(!parsed.compress);
+        assert!(!parsed.backup);
+        assert!(!parsed.stats);
+        assert!(!parsed.partial);
+        assert!(!parsed.preallocate);
+        assert!(!parsed.delay_updates);
+        assert!(!parsed.itemize_changes);
+        assert!(!parsed.trust_sender);
+        assert!(!parsed.server_mode);
+        assert!(!parsed.sender_mode);
+        assert!(!parsed.daemon_mode);
+        assert!(!parsed.cvs_exclude);
+        assert!(!parsed.from0);
+        assert!(!parsed.no_motd);
+        assert!(!parsed.qsort);
+        assert!(!parsed.mkpath);
+        assert!(!parsed.size_only);
+        assert!(!parsed.ignore_times);
+        assert!(!parsed.ignore_existing);
+        assert!(!parsed.existing);
+        assert!(!parsed.ignore_missing_args);
+        assert!(!parsed.update);
+        assert!(!parsed.copy_dirlinks);
+        assert!(!parsed.safe_links);
+        assert!(!parsed.copy_devices);
+        assert!(!parsed.remove_source_files);
+        assert!(!parsed.eight_bit_output);
+
+        // Tri-state defaults (None means unspecified)
+        assert_eq!(parsed.perms, None);
+        assert_eq!(parsed.times, None);
+        assert_eq!(parsed.owner, None);
+        assert_eq!(parsed.group, None);
+        assert_eq!(parsed.links, None);
+        assert_eq!(parsed.hard_links, None);
+        assert_eq!(parsed.sparse, None);
+        assert_eq!(parsed.checksum, None);
+        assert_eq!(parsed.whole_file, None);
+        assert_eq!(parsed.inplace, None);
+        assert_eq!(parsed.append, None);
+        assert_eq!(parsed.relative, None);
+        assert_eq!(parsed.one_file_system, None);
+        assert_eq!(parsed.implied_dirs, None);
+        assert_eq!(parsed.force, None);
+        assert_eq!(parsed.fuzzy, None);
+        assert_eq!(parsed.devices, None);
+        assert_eq!(parsed.specials, None);
+        assert_eq!(parsed.acls, None);
+        assert_eq!(parsed.xattrs, None);
+        assert_eq!(parsed.numeric_ids, None);
+        assert_eq!(parsed.copy_links, None);
+        assert_eq!(parsed.keep_dirlinks, None);
+        assert_eq!(parsed.munge_links, None);
+        assert_eq!(parsed.fsync, None);
+        assert_eq!(parsed.prune_empty_dirs, None);
+        assert_eq!(parsed.omit_dir_times, None);
+        assert_eq!(parsed.omit_link_times, None);
+        assert_eq!(parsed.atimes, None);
+        assert_eq!(parsed.crtimes, None);
+        assert_eq!(parsed.executability, None);
+
+        // Optional values default to None
+        assert_eq!(parsed.bwlimit, None);
+        assert_eq!(parsed.daemon_port, None);
+        assert_eq!(parsed.remote_shell, None);
+        assert_eq!(parsed.rsync_path, None);
+        assert_eq!(parsed.backup_dir, None);
+        assert_eq!(parsed.backup_suffix, None);
+        assert_eq!(parsed.compress_level, None);
+        assert_eq!(parsed.compress_choice, None);
+        assert_eq!(parsed.max_size, None);
+        assert_eq!(parsed.min_size, None);
+        assert_eq!(parsed.max_delete, None);
+        assert_eq!(parsed.block_size, None);
+        assert_eq!(parsed.modify_window, None);
+        assert_eq!(parsed.timeout, None);
+        assert_eq!(parsed.contimeout, None);
+        assert_eq!(parsed.partial_dir, None);
+        assert_eq!(parsed.temp_dir, None);
+        assert_eq!(parsed.log_file, None);
+        assert_eq!(parsed.chown, None);
+        assert_eq!(parsed.iconv, None);
+
+        // Vec defaults to empty
+        assert!(parsed.excludes.is_empty());
+        assert!(parsed.includes.is_empty());
+        assert!(parsed.filters.is_empty());
+        assert!(parsed.exclude_from.is_empty());
+        assert!(parsed.include_from.is_empty());
+        assert!(parsed.files_from.is_empty());
+        assert!(parsed.chmod.is_empty());
+        assert!(parsed.link_destinations.is_empty());
+        assert!(parsed.compare_destinations.is_empty());
+        assert!(parsed.copy_destinations.is_empty());
+        assert!(parsed.remote_options.is_empty());
+        assert!(parsed.info.is_empty());
+        assert!(parsed.debug.is_empty());
+
+        // Verbosity defaults to 0
+        assert_eq!(parsed.verbosity, 0);
+
+        // Delete mode defaults to disabled
+        assert_eq!(parsed.delete_mode, DeleteMode::Disabled);
+
+        // Address mode defaults to default
+        assert_eq!(parsed.address_mode, AddressMode::Default);
+    }
+
+    #[test]
+    fn no_operands_is_valid() {
+        // Just help flag should work
+        let parsed = parse_test_args(["--help"]).expect("parse");
+        assert!(parsed.show_help);
+        assert!(parsed.remainder.is_empty());
+    }
+}
+
+// ============================================================================
+// Checksum Choice Validation Tests
+// ============================================================================
+
+mod checksum_choice_tests {
+    use super::*;
+    use core::client::StrongChecksumAlgorithm;
+
+    #[test]
+    fn checksum_choice_md4() {
+        let parsed = parse_test_args(["--checksum-choice=md4", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Md4);
+        assert_eq!(choice.file(), StrongChecksumAlgorithm::Md4);
+    }
+
+    #[test]
+    fn checksum_choice_md5() {
+        let parsed = parse_test_args(["--checksum-choice=md5", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Md5);
+        assert_eq!(choice.file(), StrongChecksumAlgorithm::Md5);
+    }
+
+    #[test]
+    fn checksum_choice_xxh64() {
+        let parsed = parse_test_args(["--checksum-choice=xxh64", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Xxh64);
+    }
+
+    #[test]
+    fn checksum_choice_xxh3() {
+        let parsed = parse_test_args(["--checksum-choice=xxh3", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Xxh3);
+    }
+
+    #[test]
+    fn checksum_choice_xxh128() {
+        let parsed = parse_test_args(["--checksum-choice=xxh128", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Xxh128);
+    }
+
+    #[test]
+    fn checksum_choice_auto() {
+        let parsed = parse_test_args(["--checksum-choice=auto", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Auto);
+    }
+
+    #[test]
+    fn checksum_choice_alias_cc() {
+        let parsed = parse_test_args(["--cc=md5", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Md5);
+    }
+
+    #[test]
+    fn checksum_choice_two_algorithms() {
+        let parsed =
+            parse_test_args(["--checksum-choice=xxh3,md5", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Xxh3);
+        assert_eq!(choice.file(), StrongChecksumAlgorithm::Md5);
+    }
+
+    #[test]
+    fn checksum_choice_sha1() {
+        let parsed = parse_test_args(["--checksum-choice=sha1", "src/", "dst/"]).expect("parse");
+        assert!(parsed.checksum_choice.is_some());
+        let choice = parsed.checksum_choice.unwrap();
+        assert_eq!(choice.transfer(), StrongChecksumAlgorithm::Sha1);
+    }
+
+    #[test]
+    fn checksum_seed_valid() {
+        let parsed = parse_test_args(["--checksum-seed=12345", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum_seed, Some(12345));
+    }
+
+    #[test]
+    fn checksum_seed_zero() {
+        let parsed = parse_test_args(["--checksum-seed=0", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.checksum_seed, Some(0));
+    }
+}
+
+// ============================================================================
+// Stop After / Stop At Tests
+// ============================================================================
+
+mod stop_time_tests {
+    use super::*;
+
+    #[test]
+    fn stop_after_option() {
+        let parsed = parse_test_args(["--stop-after=60", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.stop_after, Some(OsString::from("60")));
+    }
+
+    #[test]
+    fn stop_at_option() {
+        let parsed = parse_test_args(["--stop-at=12:30", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.stop_at, Some(OsString::from("12:30")));
+    }
+
+    #[test]
+    fn stop_after_alias_time_limit() {
+        let parsed = parse_test_args(["--time-limit=30", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.stop_after, Some(OsString::from("30")));
+    }
+}
+
+// ============================================================================
+// Batch File Conflict Tests
+// ============================================================================
+
+mod batch_file_tests {
+    use super::*;
+
+    #[test]
+    fn write_batch_option() {
+        let parsed = parse_test_args(["--write-batch=/tmp/batch", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.write_batch, Some(OsString::from("/tmp/batch")));
+    }
+
+    #[test]
+    fn read_batch_option() {
+        let parsed = parse_test_args(["--read-batch=/tmp/batch", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.read_batch, Some(OsString::from("/tmp/batch")));
+    }
+
+    #[test]
+    fn only_write_batch_option() {
+        let parsed =
+            parse_test_args(["--only-write-batch=/tmp/batch", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.only_write_batch, Some(OsString::from("/tmp/batch")));
+    }
+}
+
+// ============================================================================
+// Open Noatime Tests
+// ============================================================================
+
+mod open_noatime_tests {
+    use super::*;
+
+    #[test]
+    fn open_noatime_flag() {
+        let parsed = parse_test_args(["--open-noatime", "src/", "dst/"]).expect("parse");
+        assert!(parsed.open_noatime);
+    }
+
+    #[test]
+    fn no_open_noatime_flag() {
+        let parsed = parse_test_args(["--no-open-noatime", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.open_noatime);
+        assert!(parsed.no_open_noatime);
+    }
+
+    #[test]
+    fn open_noatime_then_no_open_noatime() {
+        let parsed = parse_test_args(["--open-noatime", "--no-open-noatime", "src/", "dst/"])
+            .expect("parse");
+        assert!(!parsed.open_noatime);
+    }
+}
+
+// ============================================================================
+// Super / Fake Super Tests
+// ============================================================================
+
+mod super_mode_tests {
+    use super::*;
+
+    #[test]
+    fn super_flag() {
+        let parsed = parse_test_args(["--super", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.super_mode, Some(true));
+    }
+
+    #[test]
+    fn no_super_flag() {
+        let parsed = parse_test_args(["--no-super", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.super_mode, Some(false));
+    }
+
+    #[test]
+    fn fake_super_flag() {
+        let parsed = parse_test_args(["--fake-super", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.fake_super, Some(true));
+    }
+
+    #[test]
+    fn no_fake_super_flag() {
+        let parsed = parse_test_args(["--no-fake-super", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.fake_super, Some(false));
+    }
+
+    #[test]
+    fn super_then_no_super() {
+        let parsed = parse_test_args(["--super", "--no-super", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.super_mode, Some(false));
+    }
+
+    #[test]
+    fn fake_super_then_no_fake_super() {
+        let parsed =
+            parse_test_args(["--fake-super", "--no-fake-super", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.fake_super, Some(false));
+    }
+}
+
+// ============================================================================
+// Device Handling Tests
+// ============================================================================
+
+mod device_tests {
+    use super::*;
+
+    #[test]
+    fn copy_devices_flag() {
+        let parsed = parse_test_args(["--copy-devices", "src/", "dst/"]).expect("parse");
+        assert!(parsed.copy_devices);
+    }
+
+    #[test]
+    fn write_devices_flag() {
+        let parsed = parse_test_args(["--write-devices", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.write_devices, Some(true));
+    }
+
+    #[test]
+    fn no_write_devices_flag() {
+        let parsed = parse_test_args(["--no-write-devices", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.write_devices, Some(false));
+    }
+
+    #[test]
+    fn devices_flag() {
+        let parsed = parse_test_args(["--devices", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.devices, Some(true));
+    }
+
+    #[test]
+    fn no_devices_flag() {
+        let parsed = parse_test_args(["--no-devices", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.devices, Some(false));
+    }
+
+    #[test]
+    fn specials_flag() {
+        let parsed = parse_test_args(["--specials", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.specials, Some(true));
+    }
+
+    #[test]
+    fn no_specials_flag() {
+        let parsed = parse_test_args(["--no-specials", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.specials, Some(false));
+    }
+
+    #[test]
+    fn archive_devices_short_d() {
+        let parsed = parse_test_args(["-D", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.devices, Some(true));
+        assert_eq!(parsed.specials, Some(true));
+    }
+}
+
+// ============================================================================
+// Human Readable Tests
+// ============================================================================
+
+mod human_readable_tests {
+    use super::*;
+
+    #[test]
+    fn human_readable_no_value() {
+        let parsed = parse_test_args(["-h", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    }
+
+    #[test]
+    fn human_readable_level_0() {
+        let parsed = parse_test_args(["--human-readable=0", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    }
+
+    #[test]
+    fn human_readable_level_1() {
+        let parsed = parse_test_args(["--human-readable=1", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    }
+
+    #[test]
+    fn human_readable_level_2() {
+        let parsed = parse_test_args(["--human-readable=2", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    }
+
+    #[test]
+    fn no_human_readable_flag() {
+        let parsed = parse_test_args(["--no-human-readable", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    }
+
+    #[test]
+    fn no_h_alias() {
+        let parsed = parse_test_args(["--no-h", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    }
+}
+
+// ============================================================================
+// Iconv Tests
+// ============================================================================
+
+mod iconv_tests {
+    use super::*;
+
+    #[test]
+    fn iconv_option() {
+        let parsed = parse_test_args(["--iconv=utf-8", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.iconv, Some(OsString::from("utf-8")));
+        assert!(!parsed.no_iconv);
+    }
+
+    #[test]
+    fn no_iconv_flag() {
+        let parsed = parse_test_args(["--no-iconv", "src/", "dst/"]).expect("parse");
+        assert!(parsed.no_iconv);
+        assert_eq!(parsed.iconv, None);
+    }
+}
+
+// ============================================================================
+// Additional Copy Link Tests
+// ============================================================================
+
+mod copy_link_tests {
+    use super::*;
+
+    #[test]
+    fn copy_unsafe_links_flag() {
+        let parsed = parse_test_args(["--copy-unsafe-links", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.copy_unsafe_links, Some(true));
+    }
+
+    #[test]
+    fn no_copy_unsafe_links_flag() {
+        let parsed = parse_test_args(["--no-copy-unsafe-links", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.copy_unsafe_links, Some(false));
+    }
+}
+
+// ============================================================================
+// Msgs to Stderr Tests
+// ============================================================================
+
+mod msgs_stderr_tests {
+    use super::*;
+
+    #[test]
+    fn msgs2stderr_flag() {
+        let parsed = parse_test_args(["--msgs2stderr", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.msgs_to_stderr, Some(true));
+    }
+
+    #[test]
+    fn no_msgs2stderr_flag() {
+        let parsed = parse_test_args(["--no-msgs2stderr", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.msgs_to_stderr, Some(false));
+    }
+
+    #[test]
+    fn stderr_mode_option() {
+        let parsed = parse_test_args(["--stderr=errors", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.stderr_mode, Some(OsString::from("errors")));
+    }
+}
+
+// ============================================================================
+// Dparam Tests
+// ============================================================================
+
+mod dparam_tests {
+    use super::*;
+
+    #[test]
+    fn dparam_single() {
+        let parsed = parse_test_args(["--dparam=foo=bar", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.dparam, vec![OsString::from("foo=bar")]);
+    }
+
+    #[test]
+    fn dparam_multiple() {
+        let parsed = parse_test_args(["--dparam=foo=bar", "--dparam=baz=qux", "src/", "dst/"])
+            .expect("parse");
+        assert_eq!(
+            parsed.dparam,
+            vec![OsString::from("foo=bar"), OsString::from("baz=qux")]
+        );
+    }
+}
+
+// ============================================================================
+// Additional Time Tests
+// ============================================================================
+
+mod time_option_tests {
+    use super::*;
+
+    #[test]
+    fn no_omit_dir_times_flag() {
+        let parsed = parse_test_args(["--no-omit-dir-times", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.omit_dir_times, Some(false));
+    }
+
+    #[test]
+    fn no_omit_link_times_flag() {
+        let parsed = parse_test_args(["--no-omit-link-times", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.omit_link_times, Some(false));
+    }
+
+    #[test]
+    fn no_atimes_flag() {
+        let parsed = parse_test_args(["--no-atimes", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.atimes, Some(false));
+    }
+
+    #[test]
+    fn no_crtimes_flag() {
+        let parsed = parse_test_args(["--no-crtimes", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.crtimes, Some(false));
+    }
+}
+
+// ============================================================================
+// Delay Updates Tests
+// ============================================================================
+
+mod delay_updates_tests {
+    use super::*;
+
+    #[test]
+    fn delay_updates_flag() {
+        let parsed = parse_test_args(["--delay-updates", "src/", "dst/"]).expect("parse");
+        assert!(parsed.delay_updates);
+    }
+
+    #[test]
+    fn no_delay_updates_flag() {
+        let parsed = parse_test_args(["--delay-updates", "--no-delay-updates", "src/", "dst/"])
+            .expect("parse");
+        assert!(!parsed.delay_updates);
+    }
+}
+
+// ============================================================================
+// No Backup Tests
+// ============================================================================
+
+mod backup_tests {
+    use super::*;
+
+    #[test]
+    fn no_backup_flag() {
+        let parsed = parse_test_args(["--backup", "--no-backup", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.backup);
+    }
+
+    #[test]
+    fn no_b_alias() {
+        let parsed = parse_test_args(["-b", "--no-b", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.backup);
+    }
+}
+
+// ============================================================================
+// Partial Progress Tests
+// ============================================================================
+
+mod partial_progress_tests {
+    use super::*;
+
+    #[test]
+    fn p_short_option() {
+        let parsed = parse_test_args(["-P", "src/", "dst/"]).expect("parse");
+        assert!(parsed.partial);
+    }
+
+    #[test]
+    fn p_short_option_multiple() {
+        let parsed = parse_test_args(["-PP", "src/", "dst/"]).expect("parse");
+        assert!(parsed.partial);
+    }
+}
+
+// ============================================================================
+// Additional Alias Tests
+// ============================================================================
+
+mod alias_tests {
+    use super::*;
+
+    #[test]
+    fn existing_alias_ignore_non_existing() {
+        let parsed = parse_test_args(["--ignore-non-existing", "src/", "dst/"]).expect("parse");
+        assert!(parsed.existing);
+    }
+
+    #[test]
+    fn del_alias_for_delete_during() {
+        let parsed = parse_test_args(["-r", "--del", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.delete_mode, DeleteMode::During);
+    }
+
+    #[test]
+    fn tmp_dir_alias() {
+        let parsed = parse_test_args(["--tmp-dir=/tmp/test", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.temp_dir, Some(std::path::PathBuf::from("/tmp/test")));
+    }
+
+    #[test]
+    fn log_format_alias() {
+        let parsed = parse_test_args(["--log-format=%n", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.out_format, Some(OsString::from("%n")));
+    }
+
+    #[test]
+    fn compress_level_alias_zl() {
+        let parsed = parse_test_args(["--zl=5", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.compress_level, Some(OsString::from("5")));
+    }
+
+    #[test]
+    fn compress_choice_alias_zc() {
+        let parsed = parse_test_args(["--zc=zstd", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.compress_choice, Some(OsString::from("zstd")));
+    }
+
+    #[test]
+    fn inc_recursive_alias_i_r() {
+        let parsed = parse_test_args(["--i-r", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.inc_recursive, Some(true));
+    }
+
+    #[test]
+    fn no_inc_recursive_alias() {
+        let parsed = parse_test_args(["--no-i-r", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.inc_recursive, Some(false));
+    }
+
+    #[test]
+    fn implied_dirs_alias_i_d() {
+        let parsed = parse_test_args(["--i-d", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.implied_dirs, Some(true));
+    }
+
+    #[test]
+    fn no_implied_dirs_alias() {
+        let parsed = parse_test_args(["--no-i-d", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.implied_dirs, Some(false));
+    }
+
+    #[test]
+    fn old_dirs_alias_for_no_mkpath() {
+        let parsed = parse_test_args(["--mkpath", "--old-dirs", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.mkpath);
+    }
+
+    #[test]
+    fn secluded_args_alias() {
+        let parsed = parse_test_args(["--secluded-args", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.protect_args, Some(true));
+    }
+
+    #[test]
+    fn no_secluded_args_alias() {
+        let parsed = parse_test_args(["--no-secluded-args", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.protect_args, Some(false));
+    }
+}
+
+// ============================================================================
+// Numeric IDs Tests
+// ============================================================================
+
+mod numeric_ids_tests {
+    use super::*;
+
+    #[test]
+    fn numeric_ids_flag() {
+        let parsed = parse_test_args(["--numeric-ids", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.numeric_ids, Some(true));
+    }
+
+    #[test]
+    fn no_numeric_ids_flag() {
+        let parsed = parse_test_args(["--no-numeric-ids", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.numeric_ids, Some(false));
+    }
+}
+
+// ============================================================================
+// ACLS and Xattrs Negation Tests
+// ============================================================================
+
+mod acls_xattrs_tests {
+    use super::*;
+
+    #[test]
+    fn no_acls_flag() {
+        let parsed = parse_test_args(["--no-acls", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.acls, Some(false));
+    }
+
+    #[test]
+    fn no_xattrs_flag() {
+        let parsed = parse_test_args(["--no-xattrs", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.xattrs, Some(false));
+    }
+}
+
+// ============================================================================
+// No Executability Tests
+// ============================================================================
+
+mod executability_tests {
+    use super::*;
+
+    #[test]
+    fn no_executability_flag() {
+        let parsed = parse_test_args(["--no-executability", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.executability, Some(false));
+    }
+
+    #[test]
+    fn executability_then_no_executability() {
+        let parsed = parse_test_args(["-E", "--no-executability", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.executability, Some(false));
+    }
+}
+
+// ============================================================================
+// Copy As Tests
+// ============================================================================
+
+mod copy_as_tests {
+    use super::*;
+
+    #[test]
+    fn copy_as_user() {
+        let parsed = parse_test_args(["--copy-as=root", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.copy_as, Some(OsString::from("root")));
+    }
+
+    #[test]
+    fn copy_as_user_group() {
+        let parsed = parse_test_args(["--copy-as=root:wheel", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.copy_as, Some(OsString::from("root:wheel")));
+    }
+}
+
+// ============================================================================
+// Usermap and Groupmap Tests
+// ============================================================================
+
+mod map_tests {
+    use super::*;
+
+    #[test]
+    fn usermap_single() {
+        let parsed = parse_test_args(["--usermap=0:1000", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.usermap, Some(OsString::from("0:1000")));
+    }
+
+    #[test]
+    fn groupmap_single() {
+        let parsed = parse_test_args(["--groupmap=0:1000", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.groupmap, Some(OsString::from("0:1000")));
+    }
+}
+
+// ============================================================================
+// Motd Tests
+// ============================================================================
+
+mod motd_tests {
+    use super::*;
+
+    #[test]
+    fn motd_flag_overrides_no_motd() {
+        let parsed = parse_test_args(["--no-motd", "--motd", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.no_motd);
+    }
+
+    #[test]
+    fn no_motd_then_motd() {
+        let parsed = parse_test_args(["--no-motd", "--motd", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.no_motd);
+    }
+}
+
+// ============================================================================
+// Early Input Tests
+// ============================================================================
+
+mod early_input_tests {
+    use super::*;
+
+    #[test]
+    fn early_input_option() {
+        let parsed = parse_test_args(["--early-input=/tmp/early", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.early_input, Some(OsString::from("/tmp/early")));
+    }
+}
+
+// ============================================================================
+// From0 Tests
+// ============================================================================
+
+mod from0_tests {
+    use super::*;
+
+    #[test]
+    fn from0_flag() {
+        let parsed = parse_test_args(["--from0", "src/", "dst/"]).expect("parse");
+        assert!(parsed.from0);
+    }
+
+    #[test]
+    fn no_from0_disables() {
+        let parsed = parse_test_args(["--from0", "--no-from0", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.from0);
+    }
+}
+
+// ============================================================================
+// No Timeout Tests
+// ============================================================================
+
+mod timeout_tests {
+    use super::*;
+
+    #[test]
+    fn no_timeout_option() {
+        let parsed =
+            parse_test_args(["--timeout=30", "--no-timeout", "src/", "dst/"]).expect("parse");
+        // --no-timeout should override --timeout
+        assert_eq!(parsed.timeout, None);
+    }
+
+    #[test]
+    fn no_contimeout_option() {
+        let parsed =
+            parse_test_args(["--contimeout=10", "--no-contimeout", "src/", "dst/"]).expect("parse");
+        // --no-contimeout should override --contimeout
+        assert_eq!(parsed.contimeout, None);
+    }
+}
+
+// ============================================================================
+// Connect Program Tests
+// ============================================================================
+
+mod connect_program_tests {
+    use super::*;
+
+    #[test]
+    fn connect_program_option() {
+        let parsed =
+            parse_test_args(["--connect-program=nc %H %P", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.connect_program, Some(OsString::from("nc %H %P")));
+    }
+}
+
+// ============================================================================
+// Rsync Filter Shortcut Tests
+// ============================================================================
+
+mod rsync_filter_tests {
+    use super::*;
+
+    #[test]
+    fn rsync_filter_single_f() {
+        let parsed = parse_test_args(["-F", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.rsync_filter_shortcuts, 1);
+    }
+
+    #[test]
+    fn rsync_filter_double_ff() {
+        let parsed = parse_test_args(["-FF", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.rsync_filter_shortcuts, 2);
+    }
+}
+
+// ============================================================================
+// Name Level and Itemize Changes Tests
+// ============================================================================
+
+mod name_level_tests {
+    use super::*;
+    use crate::frontend::progress::NameOutputLevel;
+
+    #[test]
+    fn itemize_changes_sets_name_level() {
+        let parsed = parse_test_args(["-i", "src/", "dst/"]).expect("parse");
+        assert!(parsed.itemize_changes);
+        assert_eq!(parsed.name_level, NameOutputLevel::UpdatedOnly);
+        assert!(parsed.name_overridden);
+    }
+
+    #[test]
+    fn no_itemize_changes_clears_name_level() {
+        let parsed = parse_test_args(["--no-itemize-changes", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.itemize_changes);
+        assert_eq!(parsed.name_level, NameOutputLevel::Disabled);
+        assert!(parsed.name_overridden);
+    }
+
+    #[test]
+    fn itemize_then_no_itemize() {
+        let parsed =
+            parse_test_args(["-i", "--no-itemize-changes", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.itemize_changes);
+    }
+}
+
+// ============================================================================
+// Progress Setting Tests
+// ============================================================================
+
+mod progress_setting_tests {
+    use super::*;
+    use crate::frontend::progress::ProgressSetting;
+
+    #[test]
+    fn progress_flag_sets_per_file() {
+        let parsed = parse_test_args(["--progress", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.progress, ProgressSetting::PerFile);
+    }
+
+    #[test]
+    fn no_progress_sets_disabled() {
+        let parsed = parse_test_args(["--no-progress", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.progress, ProgressSetting::Disabled);
+    }
+
+    #[test]
+    fn default_progress_is_unspecified() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.progress, ProgressSetting::Unspecified);
+    }
+}
+
+// ============================================================================
+// 8-bit Output Negation Tests
+// ============================================================================
+
+mod eight_bit_output_tests {
+    use super::*;
+
+    #[test]
+    fn no_8_bit_output_flag() {
+        let parsed = parse_test_args(["-8", "--no-8-bit-output", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.eight_bit_output);
+    }
+
+    #[test]
+    fn no_8_alias() {
+        let parsed = parse_test_args(["-8", "--no-8", "src/", "dst/"]).expect("parse");
+        assert!(!parsed.eight_bit_output);
+    }
+}
+
+// ============================================================================
+// Empty Value Tests
+// ============================================================================
+
+mod empty_value_tests {
+    use super::*;
+
+    #[test]
+    fn empty_rsync_path_is_filtered() {
+        let parsed = parse_test_args(["--rsync-path=", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.rsync_path, None);
+    }
+
+    #[test]
+    fn empty_connect_program_is_filtered() {
+        let parsed = parse_test_args(["--connect-program=", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.connect_program, None);
+    }
+}
+
+// ============================================================================
+// Parsed Args Derived Trait Tests
+// ============================================================================
+
+mod parsed_args_traits {
+    use super::*;
+
+    #[test]
+    fn parsed_args_clone() {
+        let parsed = parse_test_args(["-a", "src/", "dst/"]).expect("parse");
+        let cloned = parsed.clone();
+        assert_eq!(parsed, cloned);
+    }
+
+    #[test]
+    fn parsed_args_debug() {
+        let parsed = parse_test_args(["-a", "src/", "dst/"]).expect("parse");
+        let debug = format!("{parsed:?}");
+        assert!(debug.contains("archive"));
+    }
+
+    #[test]
+    fn parsed_args_eq() {
+        let parsed1 = parse_test_args(["-a", "src/", "dst/"]).expect("parse");
+        let parsed2 = parse_test_args(["-a", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed1, parsed2);
+    }
+
+    #[test]
+    fn parsed_args_ne() {
+        let parsed1 = parse_test_args(["-a", "src/", "dst/"]).expect("parse");
+        let parsed2 = parse_test_args(["-v", "src/", "dst/"]).expect("parse");
+        assert_ne!(parsed1, parsed2);
     }
 }

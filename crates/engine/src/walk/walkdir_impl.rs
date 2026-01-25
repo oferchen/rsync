@@ -11,7 +11,8 @@ use jwalk::{Parallelism, WalkDir};
 use super::{DirectoryWalker, WalkConfig, WalkEntry, WalkError};
 
 /// Type alias for the boxed jwalk iterator to reduce type complexity.
-type JwalkIterator = Box<dyn Iterator<Item = Result<jwalk::DirEntry<((), ())>, jwalk::Error>> + Send>;
+type JwalkIterator =
+    Box<dyn Iterator<Item = Result<jwalk::DirEntry<((), ())>, jwalk::Error>> + Send>;
 
 /// Directory walker implementation using the `jwalk` crate for parallel traversal.
 ///
@@ -175,7 +176,7 @@ impl Iterator for WalkdirWalker {
                                 "failed to read metadata for '{}': {}",
                                 dir_entry.path().display(),
                                 e
-                            ))))
+                            ))));
                         }
                     };
 
@@ -218,7 +219,6 @@ impl DirectoryWalker for WalkdirWalker {
         self.skip_dir_depth = Some(self.last_depth);
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -339,7 +339,6 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(results[0].is_err());
     }
-
 
     #[cfg(unix)]
     #[test]

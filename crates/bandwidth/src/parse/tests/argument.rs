@@ -451,7 +451,10 @@ fn parse_bandwidth_handles_all_large_unit_suffixes_with_values() {
     for (suffix_lower, suffix_upper) in [('g', 'G'), ('t', 'T'), ('p', 'P')] {
         let lower = parse_bandwidth_argument(&format!("1{suffix_lower}"));
         let upper = parse_bandwidth_argument(&format!("1{suffix_upper}"));
-        assert_eq!(lower, upper, "Case insensitivity failed for {suffix_lower}/{suffix_upper}");
+        assert_eq!(
+            lower, upper,
+            "Case insensitivity failed for {suffix_lower}/{suffix_upper}"
+        );
     }
 }
 

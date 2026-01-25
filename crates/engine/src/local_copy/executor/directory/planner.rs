@@ -401,19 +401,18 @@ fn plan_directory_entries_with_prefetch<'a>(
                     Ok(target) => {
                         if !symlink_target_is_safe(target, relative_path.as_path()) {
                             // Use prefetched metadata or re-fetch
-                            let target_metadata = if let Some(ref meta_result) =
-                                prefetch.symlink_target_metadata
-                            {
-                                meta_result.as_ref().map_err(|e| {
-                                    LocalCopyError::io(
-                                        "read symlink target metadata",
-                                        entry.path.clone(),
-                                        std::io::Error::other(e.to_string()),
-                                    )
-                                })?
-                            } else {
-                                &follow_symlink_metadata(entry.path.as_path())?
-                            };
+                            let target_metadata =
+                                if let Some(ref meta_result) = prefetch.symlink_target_metadata {
+                                    meta_result.as_ref().map_err(|e| {
+                                        LocalCopyError::io(
+                                            "read symlink target metadata",
+                                            entry.path.clone(),
+                                            std::io::Error::other(e.to_string()),
+                                        )
+                                    })?
+                                } else {
+                                    &follow_symlink_metadata(entry.path.as_path())?
+                                };
 
                             let target_type = target_metadata.file_type();
                             if target_type.is_dir() {

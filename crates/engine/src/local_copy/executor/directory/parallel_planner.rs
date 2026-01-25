@@ -244,11 +244,13 @@ mod tests {
 
         let prefetched = prefetch_entry_metadata(&entries, config);
         assert!(prefetched[0].symlink_target_metadata.is_some());
-        assert!(prefetched[0]
-            .symlink_target_metadata
-            .as_ref()
-            .unwrap()
-            .is_ok());
+        assert!(
+            prefetched[0]
+                .symlink_target_metadata
+                .as_ref()
+                .unwrap()
+                .is_ok()
+        );
         assert!(prefetched[0].symlink_target.is_some());
         assert!(prefetched[0].symlink_target.as_ref().unwrap().is_ok());
     }

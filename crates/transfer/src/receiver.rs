@@ -55,9 +55,9 @@ use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 use super::map_file::MapFile;
 use super::token_buffer::TokenBuffer;
 
-use engine::delta::{SignatureLayoutParams, calculate_signature_layout};
 #[cfg(test)]
 use engine::delta::{DeltaScript, DeltaToken};
+use engine::delta::{SignatureLayoutParams, calculate_signature_layout};
 use engine::fuzzy::FuzzyMatcher;
 use engine::signature::{FileSignature, generate_file_signature};
 
@@ -656,8 +656,7 @@ impl ReceiverContext {
             // Verify the sender echoed back the correct file index
             debug_assert_eq!(
                 echoed_ndx, ndx,
-                "sender echoed NDX {} but we requested {}",
-                echoed_ndx, ndx
+                "sender echoed NDX {echoed_ndx} but we requested {ndx}"
             );
 
             // Read sum_head echoed by sender (we don't use it, but must consume it)
@@ -761,9 +760,7 @@ impl ReceiverContext {
                     // Negative: block reference = -(token+1)
                     // For new files (no basis), this shouldn't happen
                     let block_idx = -(token + 1) as usize;
-                    if let (Some(sig), Some(basis_map)) =
-                        (&signature_opt, basis_map.as_mut())
-                    {
+                    if let (Some(sig), Some(basis_map)) = (&signature_opt, basis_map.as_mut()) {
                         // We have a basis file - copy the block using cached MapFile
                         // Mirrors upstream receiver.c receive_data() block copy logic
                         let layout = sig.layout();
@@ -843,10 +840,7 @@ impl ReceiverContext {
             // the kernel closes the file or needs the buffers.
             if self.config.fsync {
                 output.sync_all().map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!("fsync failed for {file_path:?}: {e}"),
-                    )
+                    io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
                 })?;
             }
 
