@@ -217,9 +217,9 @@ impl RollingChecksum {
         Ok(total)
     }
 
-    /// Convenience wrapper that allocates a stack buffer.
+    /// Convenience wrapper that allocates a heap buffer.
     pub fn update_reader<R: Read>(&mut self, reader: &mut R) -> io::Result<u64> {
-        let mut buffer = [0u8; Self::DEFAULT_READER_BUFFER_LEN];
+        let mut buffer = vec![0u8; Self::DEFAULT_READER_BUFFER_LEN];
         self.update_reader_with_buffer(reader, &mut buffer)
     }
 
@@ -457,17 +457,7 @@ impl From<RollingDigest> for RollingChecksum {
     }
 }
 
-impl From<RollingChecksum> for RollingDigest {
-    fn from(checksum: RollingChecksum) -> Self {
-        checksum.digest()
-    }
-}
-
-impl From<&RollingChecksum> for RollingDigest {
-    fn from(checksum: &RollingChecksum) -> Self {
-        checksum.digest()
-    }
-}
+impl_from_owned_and_ref!(RollingChecksum => RollingDigest, digest);
 
 /// Architecture-neutral dispatcher:
 /// 1. try arch-accelerated implementation,

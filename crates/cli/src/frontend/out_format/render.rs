@@ -427,7 +427,7 @@ fn format_full_checksum(event: &ClientEvent) -> String {
     };
 
     let mut hasher = Md5::new();
-    let mut buffer = [0u8; 32 * 1024];
+    let mut buffer = vec![0u8; 32 * 1024];
     loop {
         match file.read(&mut buffer) {
             Ok(0) => break,

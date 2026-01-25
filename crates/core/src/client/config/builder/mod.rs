@@ -3,6 +3,59 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+/// Generates chainable builder setter methods.
+///
+/// This macro reduces boilerplate for simple field setters that follow the
+/// pattern of assigning a value and returning `self`. Each generated method
+/// is marked `#[must_use]` and declared as `pub const fn`.
+///
+/// # Examples
+///
+/// Generate a simple setter with doc comment:
+///
+/// ```ignore
+/// builder_setter! {
+///     /// Sets the recursive flag.
+///     recursive: bool,
+/// }
+/// // Expands to:
+/// // /// Sets the recursive flag.
+/// // #[must_use]
+/// // pub const fn recursive(mut self, value: bool) -> Self {
+/// //     self.recursive = value;
+/// //     self
+/// // }
+/// ```
+///
+/// Generate multiple setters at once:
+///
+/// ```ignore
+/// builder_setter! {
+///     /// Sets the minimum file size to transfer.
+///     min_file_size: Option<u64>,
+///     /// Sets the maximum file size to transfer.
+///     max_file_size: Option<u64>,
+/// }
+/// ```
+#[macro_export]
+macro_rules! builder_setter {
+    // Single field with doc comments and attributes
+    ($(#[$attr:meta])* $field:ident: $ty:ty) => {
+        $(#[$attr])*
+        #[must_use]
+        pub const fn $field(mut self, value: $ty) -> Self {
+            self.$field = value;
+            self
+        }
+    };
+    // Multiple fields with doc comments
+    ($($(#[$attr:meta])* $field:ident: $ty:ty),+ $(,)?) => {
+        $(
+            builder_setter!($(#[$attr])* $field: $ty);
+        )+
+    };
+}
+
 use super::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, CompressionSetting, DeleteMode,
     FilterRuleSpec, IconvSetting, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumChoice,
@@ -14,6 +67,42 @@ use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
 
 /// Builder used to assemble a [`ClientConfig`].
+///
+/// This type provides a fluent interface for constructing [`ClientConfig`] instances
+/// with incremental configuration of transfer settings. Methods are chainable and
+/// return `self` to allow multiple options to be set in a single expression.
+///
+/// Create a builder via [`ClientConfig::builder()`].
+///
+/// # Examples
+///
+/// ```ignore
+/// use core::client::ClientConfig;
+///
+/// let config = ClientConfig::builder()
+///     .transfer_args(["src/", "dest/"])
+///     .recursive(true)
+///     .preserve_times(true)
+///     .preserve_permissions(true)
+///     .dry_run(false)
+///     .build();
+/// ```
+///
+/// Compression and bandwidth limiting:
+///
+/// ```ignore
+/// use core::client::{ClientConfig, BandwidthLimit, CompressionSetting};
+/// use compress::zlib::CompressionLevel;
+/// use std::num::NonZeroU64;
+///
+/// let config = ClientConfig::builder()
+///     .transfer_args(["large_file", "backup/"])
+///     .compression_setting(CompressionSetting::level(CompressionLevel::Default))
+///     .bandwidth_limit(Some(BandwidthLimit::from_bytes_per_second(
+///         NonZeroU64::new(1024 * 1024).unwrap()
+///     )))
+///     .build();
+/// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ClientConfigBuilder {
     transfer_args: Vec<OsString>,

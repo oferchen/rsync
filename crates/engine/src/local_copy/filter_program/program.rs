@@ -65,11 +65,14 @@ impl FilterProgram {
                         if rule.is_xattr_only() {
                             let compiled = XattrRule::new(&rule)?;
                             xattr_rules.push(compiled);
-                            continue;
+                        } else {
+                            current_segment.push_rule(rule)?;
                         }
                     }
-
-                    current_segment.push_rule(rule)?;
+                    #[cfg(not(all(unix, feature = "xattr")))]
+                    {
+                        current_segment.push_rule(rule)?;
+                    }
                 }
                 FilterProgramEntry::Clear => {
                     current_segment = FilterSegment::default();

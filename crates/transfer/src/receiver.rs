@@ -837,11 +837,18 @@ impl ReceiverContext {
                 }
             }
 
-            // Note: We don't call sync_all() by default, matching upstream rsync behavior.
+            // Step 5b: Fsync if requested (optional durability guarantee)
             // Upstream rsync only fsyncs when --fsync flag is explicitly set (do_fsync=0 default).
             // The atomic rename still provides crash consistency - data is flushed when
             // the kernel closes the file or needs the buffers.
-            // TODO: Add --fsync flag support for users who need guaranteed durability.
+            if self.config.fsync {
+                output.sync_all().map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("fsync failed for {file_path:?}: {e}"),
+                    )
+                })?;
+            }
 
             // Atomic rename (crash-safe)
             fs::rename(&temp_path, &file_path)?;
@@ -1478,6 +1485,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
             ignore_errors: false,
+            fsync: false,
         }
     }
 
@@ -2373,6 +2381,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
             ignore_errors: false,
+            fsync: false,
         }
     }
 

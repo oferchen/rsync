@@ -42,36 +42,92 @@ use compress::zlib::CompressionLevel;
 use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress};
 
 /// End of file marker.
+///
+/// Signals the end of a compressed token stream. No additional data follows.
 pub const END_FLAG: u8 = 0x00;
 
-/// Followed by 32-bit token number.
+/// Token encoding: absolute block index follows.
+///
+/// Followed by 32-bit token number (little-endian). Used when the relative
+/// encoding can't represent the offset (> 63 blocks from last token).
 pub const TOKEN_LONG: u8 = 0x20;
 
-/// Followed by 32-bit token + 16-bit run count.
+/// Token run encoding: absolute block index + run count follow.
+///
+/// Followed by 32-bit token number (LE) and 16-bit run count (LE).
+/// Represents multiple consecutive block matches.
 pub const TOKENRUN_LONG: u8 = 0x21;
 
-/// Compressed data follows: + 6-bit high len, then low len byte.
+/// Compressed literal data follows.
+///
+/// Format: `DEFLATED_DATA | (len >> 8)` where the low 6 bits contain
+/// the upper 6 bits of the length. The next byte contains the low 8 bits.
+/// Maximum length is 16383 (14 bits).
 pub const DEFLATED_DATA: u8 = 0x40;
 
-/// Relative token: + 6-bit relative token number.
+/// Token encoding: relative block index.
+///
+/// The low 6 bits contain the relative offset from the last token.
+/// Used for offsets 0-63.
 pub const TOKEN_REL: u8 = 0x80;
 
-/// Relative token run: + 6-bit relative token + 16-bit run count.
+/// Token run encoding: relative block index + run count follow.
+///
+/// The low 6 bits contain the relative offset from the last token.
+/// Followed by 16-bit run count (LE). Represents multiple consecutive
+/// block matches with relative addressing.
 pub const TOKENRUN_REL: u8 = 0xC0;
 
 /// Maximum compressed data count (14 bits).
+///
+/// The DEFLATED_DATA header uses 6 bits from the first byte and 8 bits
+/// from the second byte, allowing lengths up to 2^14 - 1 = 16383.
 pub const MAX_DATA_COUNT: usize = 16383;
 
-/// Chunk size for compression input.
+/// Chunk size for compression input (32 KiB).
+///
+/// Literal data is compressed in chunks of this size. Matches the
+/// CHUNK_SIZE constant used in upstream rsync's token.c.
 pub const CHUNK_SIZE: usize = 32 * 1024;
 
 /// Encoder state for sending compressed tokens.
 ///
-/// Uses a persistent deflate stream with Z_SYNC_FLUSH, stripping the trailing
-/// 4-byte sync marker (0x00 0x00 0xFF 0xFF) from output. The receiver adds
-/// the marker back before inflating.
+/// Manages a persistent deflate stream for compressing literal data in the
+/// rsync protocol. The encoder maintains state across multiple tokens to
+/// achieve better compression ratios.
 ///
-/// This matches upstream rsync's token.c:send_deflated_token() behavior.
+/// # Compression Strategy
+///
+/// - Uses Z_SYNC_FLUSH to produce incrementally decompressible output
+/// - Strips the trailing 4-byte sync marker (0x00 0x00 0xFF 0xFF) from each chunk
+/// - The receiver adds the marker back before inflating
+/// - Maintains a persistent deflate context across the entire file transfer
+///
+/// # Protocol Compatibility
+///
+/// This implementation matches upstream rsync's `token.c:send_deflated_token()`
+/// behavior. Protocol version affects the `see_token` method's behavior:
+/// - Protocol >= 31: Properly advances through data (recommended)
+/// - Protocol < 31: Has a data-duplicating bug in dictionary synchronization
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::CompressedTokenEncoder;
+/// use compress::zlib::CompressionLevel;
+///
+/// let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+/// let mut output = Vec::new();
+///
+/// // Send literal data
+/// encoder.send_literal(&mut output, b"hello world").unwrap();
+///
+/// // Send block match
+/// encoder.send_block_match(&mut output, 0).unwrap();
+///
+/// // Finish the stream
+/// encoder.finish(&mut output).unwrap();
+/// ```
 pub struct CompressedTokenEncoder {
     /// Accumulated literal data to compress.
     literal_buf: Vec<u8>,
@@ -93,10 +149,30 @@ pub struct CompressedTokenEncoder {
 impl CompressedTokenEncoder {
     /// Creates a new encoder with the specified compression level and protocol version.
     ///
+    /// # Arguments
+    ///
+    /// * `level` - Compression level (Fast, Default, Best, or Precise(1-9))
+    /// * `protocol_version` - rsync protocol version (affects `see_token` behavior)
+    ///
+    /// # Protocol Version Behavior
+    ///
     /// The protocol version affects `see_token` behavior:
-    /// - Protocol >= 31: Properly advances through data (no bug)
+    /// - Protocol >= 31: Properly advances through data (recommended)
     /// - Protocol < 31: Has a data-duplicating bug where the same data chunk is fed
     ///   multiple times to the compressor dictionary
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rsync_core::protocol::wire::CompressedTokenEncoder;
+    /// use compress::zlib::CompressionLevel;
+    ///
+    /// // Recommended: protocol 31 with default compression
+    /// let encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+    ///
+    /// // Fast compression for better performance
+    /// let fast_encoder = CompressedTokenEncoder::new(CompressionLevel::Fast, 31);
+    /// ```
     #[must_use]
     pub fn new(level: CompressionLevel, protocol_version: u32) -> Self {
         let compression = match level {
@@ -117,6 +193,10 @@ impl CompressedTokenEncoder {
     }
 
     /// Resets the encoder for a new file.
+    ///
+    /// Clears all internal state including the compression context, allowing
+    /// the encoder to be reused for a new file transfer. This is more efficient
+    /// than creating a new encoder.
     pub fn reset(&mut self) {
         self.literal_buf.clear();
         self.compressor.reset();
@@ -127,7 +207,18 @@ impl CompressedTokenEncoder {
 
     /// Sends literal data with compression.
     ///
-    /// Accumulates data and compresses when the buffer is full.
+    /// Accumulates data in an internal buffer and compresses it when the buffer
+    /// reaches CHUNK_SIZE (32 KiB). Data smaller than the chunk size is buffered
+    /// until more data arrives or [`finish`](Self::finish) is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The output stream to write compressed data to
+    /// * `data` - The literal data to send (will be buffered and compressed)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if compression or writing fails.
     pub fn send_literal<W: Write>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<()> {
         self.literal_buf.extend_from_slice(data);
 
@@ -141,7 +232,18 @@ impl CompressedTokenEncoder {
 
     /// Sends a block match token.
     ///
-    /// Flushes any pending compressed data and writes the token.
+    /// Flushes any pending compressed literal data and writes a token indicating
+    /// that the receiver should copy data from the specified block in the basis file.
+    /// Uses run-length encoding to efficiently represent consecutive block matches.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The output stream to write to
+    /// * `block_index` - The 0-based index of the block to copy from the basis file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if flushing or writing fails.
     pub fn send_block_match<W: Write>(
         &mut self,
         writer: &mut W,
@@ -166,6 +268,18 @@ impl CompressedTokenEncoder {
     }
 
     /// Signals end of file and flushes all pending data.
+    ///
+    /// Flushes any remaining literal data, outputs the final token run if any,
+    /// and writes the END_FLAG to signal completion. Also resets the encoder
+    /// state for potential reuse.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The output stream to write to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if flushing or writing the end marker fails.
     pub fn finish<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         // Flush any pending literal data
         self.flush_all_literals(writer)?;
@@ -323,6 +437,10 @@ impl CompressedTokenEncoder {
     ///   causing the first chunk of data to be fed repeatedly for each 0xFFFF-sized
     ///   iteration. The loop still terminates because `toklen` is decremented.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the compression operation fails.
+    ///
     /// Reference: upstream token.c lines 463-484 (`send_deflated_token`).
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         let mut toklen = data.len();
@@ -358,8 +476,40 @@ impl CompressedTokenEncoder {
 
 /// Decoder state for receiving compressed tokens.
 ///
-/// Uses a persistent inflate stream that matches the encoder's persistent
-/// deflate stream.
+/// Manages a persistent inflate stream for decompressing literal data in the
+/// rsync protocol. The decoder maintains state across multiple tokens to match
+/// the encoder's persistent deflate context.
+///
+/// # Decompression Strategy
+///
+/// - Uses Z_SYNC_FLUSH to incrementally decompress data
+/// - Adds back the 4-byte sync marker (0x00 0x00 0xFF 0xFF) that the encoder stripped
+/// - Maintains a persistent inflate context across the entire file transfer
+/// - Buffers decompressed data and returns it in chunks
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::{CompressedTokenDecoder, CompressedToken};
+/// use std::io::Cursor;
+///
+/// let mut decoder = CompressedTokenDecoder::new();
+/// # let encoded_data: Vec<u8> = vec![]; // Placeholder
+/// let mut cursor = Cursor::new(&encoded_data);
+///
+/// loop {
+///     match decoder.recv_token(&mut cursor)? {
+///         CompressedToken::Literal(data) => {
+///             // Write literal data to output
+///         }
+///         CompressedToken::BlockMatch(index) => {
+///             // Copy block from basis file
+///         }
+///         CompressedToken::End => break,
+///     }
+/// }
+/// # Ok::<(), std::io::Error>(())
+/// ```
 pub struct CompressedTokenDecoder {
     /// Decompression buffer.
     decompress_buf: Vec<u8>,
@@ -385,6 +535,9 @@ impl Default for CompressedTokenDecoder {
 
 impl CompressedTokenDecoder {
     /// Creates a new decoder.
+    ///
+    /// Initializes a decoder with a fresh inflate context ready to receive
+    /// compressed tokens.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -399,6 +552,9 @@ impl CompressedTokenDecoder {
     }
 
     /// Resets the decoder for a new file.
+    ///
+    /// Clears all internal state including the decompression context and buffers,
+    /// allowing the decoder to be reused for a new file transfer.
     pub fn reset(&mut self) {
         self.decompress_buf.clear();
         self.decompress_pos = 0;
@@ -410,10 +566,22 @@ impl CompressedTokenDecoder {
 
     /// Receives the next token from the stream.
     ///
-    /// Returns:
-    /// - `Ok(CompressedToken::Literal(data))` - literal data to write
-    /// - `Ok(CompressedToken::BlockMatch(index))` - copy from block index
-    /// - `Ok(CompressedToken::End)` - end of file
+    /// Reads and decodes the next token from the compressed stream. Automatically
+    /// decompresses literal data and returns it in chunks. Buffers decompressed
+    /// data internally to handle partial reads efficiently.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(CompressedToken::Literal(data))` - Literal data to write to output
+    /// - `Ok(CompressedToken::BlockMatch(index))` - Copy from block index in basis file
+    /// - `Ok(CompressedToken::End)` - End of file marker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reading from the stream fails
+    /// - Decompression fails
+    /// - An invalid flag byte is encountered
     pub fn recv_token<R: Read>(&mut self, reader: &mut R) -> io::Result<CompressedToken> {
         // Initialize on first call
         if !self.initialized {
@@ -555,6 +723,10 @@ impl CompressedTokenDecoder {
     /// Uses a fake deflate stored-block header to feed raw data through inflate
     /// without actual decompression, matching upstream rsync's `see_deflate_token()`.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the decompression operation fails.
+    ///
     /// Reference: upstream token.c lines 631-670.
     pub fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         let mut remaining = data;
@@ -589,17 +761,60 @@ impl CompressedTokenDecoder {
 }
 
 /// A token received from a compressed stream.
+///
+/// Represents the different types of operations that can appear in a compressed
+/// delta stream. Tokens are produced by [`CompressedTokenDecoder::recv_token`].
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::CompressedToken;
+///
+/// // Pattern match on tokens
+/// # let token = CompressedToken::Literal(vec![1, 2, 3]);
+/// match token {
+///     CompressedToken::Literal(data) => {
+///         println!("Received {} bytes of literal data", data.len());
+///     }
+///     CompressedToken::BlockMatch(index) => {
+///         println!("Copy block {}", index);
+///     }
+///     CompressedToken::End => {
+///         println!("End of stream");
+///     }
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompressedToken {
     /// Literal data to write to output.
+    ///
+    /// The contained bytes should be written directly to the output file
+    /// at the current position.
     Literal(Vec<u8>),
+
     /// Copy from block index in basis file.
+    ///
+    /// The receiver should copy one block's worth of data from the basis file
+    /// starting at the given block index. The block size is determined by the
+    /// signature header sent earlier in the protocol.
     BlockMatch(u32),
+
     /// End of file marker.
+    ///
+    /// Signals that the file transfer is complete. No more tokens will follow.
     End,
 }
 
 /// Writes a DEFLATED_DATA header.
+///
+/// Encodes the length into a 2-byte header where the first byte contains
+/// the DEFLATED_DATA flag (0x40) plus the upper 6 bits of the length,
+/// and the second byte contains the lower 8 bits.
+///
+/// # Arguments
+///
+/// * `writer` - The output stream to write to
+/// * `len` - The length of compressed data that follows (must be ≤ MAX_DATA_COUNT)
 #[inline]
 fn write_deflated_data_header<W: Write>(writer: &mut W, len: usize) -> io::Result<()> {
     debug_assert!(len <= MAX_DATA_COUNT);
@@ -608,6 +823,15 @@ fn write_deflated_data_header<W: Write>(writer: &mut W, len: usize) -> io::Resul
 }
 
 /// Reads the length from a DEFLATED_DATA header.
+///
+/// Decodes the 14-bit length from the DEFLATED_DATA header where the first byte
+/// contains the flag and upper 6 bits, and the second byte (read from reader)
+/// contains the lower 8 bits.
+///
+/// # Arguments
+///
+/// * `reader` - The input stream to read the second byte from
+/// * `first_byte` - The first byte of the header (already read)
 #[inline]
 fn read_deflated_data_length<R: Read>(reader: &mut R, first_byte: u8) -> io::Result<usize> {
     let high = (first_byte & 0x3F) as usize;

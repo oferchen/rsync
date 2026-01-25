@@ -331,18 +331,73 @@ pub const fn compiled_features_iter() -> CompiledFeaturesIter {
 }
 
 /// Returns the set of optional features compiled into the current build.
+///
+/// This function inspects the Cargo feature flags that were enabled at compile
+/// time and returns a vector of all optional capabilities available in this
+/// binary.
+///
+/// # Returns
+///
+/// A vector containing all [`CompiledFeature`] variants that were enabled at
+/// build time. The list may be empty if no optional features are compiled in.
+///
+/// # Examples
+///
+/// ```
+/// use core::version::{compiled_features, CompiledFeature};
+///
+/// let features = compiled_features();
+/// #[cfg(feature = "xattr")]
+/// assert!(features.contains(&CompiledFeature::Xattr));
+/// ```
 #[must_use]
 pub fn compiled_features() -> Vec<CompiledFeature> {
     compiled_features_static().as_slice().to_vec()
 }
 
 /// Returns a zero-allocation view over the compiled feature set.
+///
+/// This function provides a const-friendly way to access the compiled features
+/// without allocating a vector. Useful for performance-sensitive contexts or
+/// const evaluation.
+///
+/// # Returns
+///
+/// A static reference to the compiled features that can be used in const
+/// contexts.
+///
+/// # Examples
+///
+/// ```
+/// use core::version::compiled_features_static;
+///
+/// const FEATURES: &core::version::StaticCompiledFeatures = compiled_features_static();
+/// ```
 #[must_use]
 pub const fn compiled_features_static() -> &'static StaticCompiledFeatures {
     &COMPILED_FEATURES_STATIC
 }
 
 /// Convenience helper that exposes the labels for each compiled feature.
+///
+/// Returns a vector of human-readable feature labels suitable for display in
+/// version banners and diagnostic messages.
+///
+/// # Returns
+///
+/// A vector of string labels (e.g., `"ACLs"`, `"xattrs"`, `"zstd"`) for each
+/// compiled feature.
+///
+/// # Examples
+///
+/// ```
+/// use core::version::compiled_feature_labels;
+///
+/// let labels = compiled_feature_labels();
+/// for label in &labels {
+///     println!("Feature available: {}", label);
+/// }
+/// ```
 #[must_use]
 pub fn compiled_feature_labels() -> Vec<&'static str> {
     compiled_features_iter()
@@ -550,6 +605,23 @@ impl<'a> Extend<&'a CompiledFeature> for CompiledFeaturesDisplay {
 }
 
 /// Returns a [`CompiledFeaturesDisplay`] reflecting the active feature set.
+///
+/// This provides a Display-friendly wrapper around the compiled features for
+/// easy rendering in version output and diagnostics.
+///
+/// # Returns
+///
+/// A [`CompiledFeaturesDisplay`] that implements [`std::fmt::Display`] and can
+/// be formatted directly into strings.
+///
+/// # Examples
+///
+/// ```
+/// use core::version::compiled_features_display;
+///
+/// let display = compiled_features_display();
+/// println!("Compiled features: {}", display);
+/// ```
 #[must_use]
 pub fn compiled_features_display() -> CompiledFeaturesDisplay {
     CompiledFeaturesDisplay::new(compiled_features())

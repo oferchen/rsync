@@ -46,9 +46,7 @@ impl LimiterChange {
     where
         I: IntoIterator<Item = Self>,
     {
-        changes
-            .into_iter()
-            .fold(Self::Unchanged, |acc, change| acc.combine(change))
+        changes.into_iter().max().unwrap_or(Self::Unchanged)
     }
 
     /// Returns `true` when the limiter configuration or activation state changed.

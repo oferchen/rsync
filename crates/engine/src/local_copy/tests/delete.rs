@@ -1,21 +1,18 @@
 
 #[test]
 fn delete_respects_exclude_filters() {
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source");
-    let dest = temp.path().join("dest");
-    fs::create_dir_all(&source).expect("create source");
-    fs::create_dir_all(&dest).expect("create dest");
-    fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    let target_root = dest.join("source");
+    let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
     fs::write(target_root.join("extra.txt"), b"extra").expect("write extra");
 
     let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
@@ -28,7 +25,7 @@ fn delete_respects_exclude_filters() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let target_root = dest.join("source");
+    let target_root = ctx.dest.join("source");
     assert!(target_root.join("keep.txt").exists());
     assert!(!target_root.join("extra.txt").exists());
     let skip_path = target_root.join("skip.tmp");
@@ -40,20 +37,17 @@ fn delete_respects_exclude_filters() {
 
 #[test]
 fn delete_excluded_removes_excluded_entries() {
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source");
-    let dest = temp.path().join("dest");
-    fs::create_dir_all(&source).expect("create source");
-    fs::create_dir_all(&dest).expect("create dest");
-    fs::write(source.join("keep.txt"), b"keep").expect("write keep");
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
 
-    let target_root = dest.join("source");
+    let target_root = ctx.dest.join("source");
     fs::create_dir_all(&target_root).expect("create target root");
     fs::write(target_root.join("skip.tmp"), b"dest skip").expect("write existing skip");
 
     let operands = vec![
-        source.into_os_string(),
-        dest.clone().into_os_string(),
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let filters = FilterSet::from_rules([filters::FilterRule::exclude("*.tmp")])
@@ -67,7 +61,7 @@ fn delete_excluded_removes_excluded_entries() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let target_root = dest.join("source");
+    let target_root = ctx.dest.join("source");
     assert!(target_root.join("keep.txt").exists());
     assert!(!target_root.join("skip.tmp").exists());
     assert_eq!(summary.items_deleted(), 1);

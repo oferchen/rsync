@@ -71,6 +71,28 @@ pub(super) const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(1);
 /// The computation memoises its result for the current `PATH` (and `PATHEXT`
 /// on Windows) so repeated availability checks avoid re-walking identical
 /// search paths.
+///
+/// # Arguments
+///
+/// * `binary` - The executable name or path to search for. Can be a bare name
+///   like `"rsync"` for PATH search, or an absolute/relative path.
+///
+/// # Returns
+///
+/// Returns `Some(PathBuf)` with the full path to the executable if found and
+/// executable, or `None` if the binary is not available.
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use core::fallback::fallback_binary_path;
+///
+/// // Search for rsync in PATH
+/// if let Some(path) = fallback_binary_path(OsStr::new("rsync")) {
+///     println!("Found rsync at: {}", path.display());
+/// }
+/// ```
 #[must_use]
 pub fn fallback_binary_path(binary: &OsStr) -> Option<PathBuf> {
     let key = CacheKey::new(binary);
@@ -117,12 +139,53 @@ fn cached_result(
 /// The computation memoises its result for the current `PATH` (and `PATHEXT`
 /// on Windows) so repeated availability checks avoid re-walking identical
 /// search paths.
+///
+/// # Arguments
+///
+/// * `binary` - The executable name or path to check for availability.
+///
+/// # Returns
+///
+/// Returns `true` if the binary is found and executable, `false` otherwise.
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use core::fallback::fallback_binary_available;
+///
+/// if fallback_binary_available(OsStr::new("rsync")) {
+///     println!("rsync is available");
+/// }
+/// ```
 #[must_use]
 pub fn fallback_binary_available(binary: &OsStr) -> bool {
     fallback_binary_path(binary).is_some()
 }
 
 /// Reports whether the provided executable path resolves to the current process binary.
+///
+/// This helper prevents infinite recursion when a fallback rsync binary
+/// would delegate back to itself.
+///
+/// # Arguments
+///
+/// * `path` - The path to check against the current executable.
+///
+/// # Returns
+///
+/// Returns `true` if the path canonically resolves to the same file as the
+/// current executable, `false` otherwise or if canonicalization fails.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use core::fallback::fallback_binary_is_self;
+///
+/// let current_exe = std::env::current_exe().unwrap();
+/// assert!(fallback_binary_is_self(&current_exe));
+/// ```
 #[must_use]
 pub fn fallback_binary_is_self(path: &Path) -> bool {
     let Some(canonical_current) = cached_current_executable() else {

@@ -668,7 +668,7 @@ impl GeneratorContext {
     fn send_stats<W: Write>(&self, writer: &mut W, bytes_sent: u64) -> io::Result<()> {
         let total_read: u64 = self.total_bytes_read;
         let total_written: u64 = bytes_sent;
-        let total_size: u64 = self.file_list.iter().map(|e| e.size()).sum();
+        let total_size: u64 = self.file_list.iter().map(FileEntry::size).sum();
 
         let flist_buildtime = calculate_duration_ms(self.flist_build_start, self.flist_build_end);
         let flist_xfertime = calculate_duration_ms(self.flist_xfer_start, self.flist_xfer_end);
@@ -792,7 +792,11 @@ impl GeneratorContext {
             Flist,
             2,
             "file list entries: {:?}",
-            self.file_list.iter().map(|e| e.name()).collect::<Vec<_>>()
+            {
+                let mut names = Vec::with_capacity(count);
+                names.extend(self.file_list.iter().map(FileEntry::name));
+                names
+            }
         );
 
         Ok(count)
@@ -1739,6 +1743,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
             ignore_errors: false,
+            fsync: false,
         }
     }
 
@@ -2822,6 +2827,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
             ignore_errors: false,
+            fsync: false,
         }
     }
 
@@ -2928,6 +2934,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
             ignore_errors: false,
+            fsync: false,
         };
         let mut receiver = ReceiverContext::new(&handshake, recv_config);
 
@@ -2972,6 +2979,7 @@ mod tests {
             reference_directories: Vec::new(),
             iconv: None,
             ignore_errors: false,
+            fsync: false,
         };
         let mut receiver = ReceiverContext::new(&handshake, recv_config);
 

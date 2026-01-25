@@ -193,6 +193,21 @@ pub(crate) enum StrongHasher {
     Xxh128(Xxh3_128),
 }
 
+/// Fixed-size digest output from various hash algorithms.
+///
+/// Uses stack-allocated arrays to avoid heap allocations during checksum
+/// comparison. The enum size is 24 bytes (8 bytes discriminant + 20 bytes
+/// for the largest variant Sha1), which is acceptable for stack usage.
+#[derive(Debug, PartialEq, Eq)]
+enum Digest {
+    Md4([u8; 16]),
+    Md5([u8; 16]),
+    Sha1([u8; 20]),
+    Xxh64([u8; 8]),
+    Xxh3([u8; 8]),
+    Xxh128([u8; 16]),
+}
+
 impl StrongHasher {
     fn new(algorithm: SignatureAlgorithm) -> Self {
         use checksums::strong::StrongDigest;
@@ -219,14 +234,14 @@ impl StrongHasher {
         }
     }
 
-    fn finalize(self) -> Vec<u8> {
+    fn finalize(self) -> Digest {
         match self {
-            StrongHasher::Md4(state) => state.finalize().as_ref().to_vec(),
-            StrongHasher::Md5(state) => state.finalize().as_ref().to_vec(),
-            StrongHasher::Sha1(state) => state.finalize().as_ref().to_vec(),
-            StrongHasher::Xxh64(state) => state.finalize().as_ref().to_vec(),
-            StrongHasher::Xxh3(state) => state.finalize().as_ref().to_vec(),
-            StrongHasher::Xxh128(state) => state.finalize().as_ref().to_vec(),
+            StrongHasher::Md4(state) => Digest::Md4(state.finalize()),
+            StrongHasher::Md5(state) => Digest::Md5(state.finalize()),
+            StrongHasher::Sha1(state) => Digest::Sha1(state.finalize()),
+            StrongHasher::Xxh64(state) => Digest::Xxh64(state.finalize()),
+            StrongHasher::Xxh3(state) => Digest::Xxh3(state.finalize()),
+            StrongHasher::Xxh128(state) => Digest::Xxh128(state.finalize()),
         }
     }
 }
@@ -253,6 +268,7 @@ pub(crate) fn files_checksum_match(
         return Ok(false);
     }
 
+    // Compare digests directly using PartialEq - no heap allocation needed
     Ok(source_hasher.finalize() == destination_hasher.finalize())
 }
 

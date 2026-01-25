@@ -32,6 +32,30 @@ pub const CHUNK_SIZE: usize = 32 * 1024;
 
 /// Writes a 4-byte signed little-endian integer (upstream `write_int()`).
 ///
+/// This is the fundamental integer encoding used throughout the rsync protocol
+/// for token values, block indices, and lengths.
+///
+/// # Wire Format
+///
+/// Writes exactly 4 bytes in little-endian byte order:
+/// ```text
+/// [byte0, byte1, byte2, byte3] where value = byte0 + (byte1 << 8) + (byte2 << 16) + (byte3 << 24)
+/// ```
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::write_int;
+///
+/// let mut buf = Vec::new();
+/// write_int(&mut buf, 0x12345678).unwrap();
+/// assert_eq!(buf, [0x78, 0x56, 0x34, 0x12]); // Little-endian
+/// ```
+///
 /// Reference: `io.c:write_int()` line ~2082
 #[inline]
 pub fn write_int<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
@@ -39,6 +63,29 @@ pub fn write_int<W: Write>(writer: &mut W, value: i32) -> io::Result<()> {
 }
 
 /// Reads a 4-byte signed little-endian integer (upstream `read_int()`).
+///
+/// This is the counterpart to [`write_int`], reading back values written
+/// by rsync's `write_int()` function.
+///
+/// # Wire Format
+///
+/// Reads exactly 4 bytes in little-endian byte order.
+///
+/// # Errors
+///
+/// Returns an error if fewer than 4 bytes are available in the reader.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::read_int;
+///
+/// let data = [0x78, 0x56, 0x34, 0x12];
+/// let value = read_int(&mut &data[..]).unwrap();
+/// assert_eq!(value, 0x12345678);
+/// ```
+///
+/// Reference: `io.c:read_int()` line ~2091
 #[inline]
 pub fn read_int<R: Read>(reader: &mut R) -> io::Result<i32> {
     let mut buf = [0u8; 4];
@@ -48,8 +95,35 @@ pub fn read_int<R: Read>(reader: &mut R) -> io::Result<i32> {
 
 /// Writes literal data in upstream token format.
 ///
-/// Large data is chunked into CHUNK_SIZE (32KB) pieces.
-/// Each chunk is: `write_int(length)` followed by raw bytes.
+/// Large data is automatically chunked into CHUNK_SIZE (32KB) pieces.
+/// Each chunk is written as `write_int(length)` followed by raw bytes.
+///
+/// # Wire Format
+///
+/// For data of length N:
+/// - If N ≤ 32KB: `write_int(N)` + N bytes
+/// - If N > 32KB: Multiple chunks of format `write_int(chunk_len)` + chunk_bytes
+///
+/// # Arguments
+///
+/// * `writer` - The output stream to write to
+/// * `data` - The literal data to send (will be chunked automatically)
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::write_token_literal;
+///
+/// let mut buf = Vec::new();
+/// write_token_literal(&mut buf, b"hello").unwrap();
+///
+/// // Produces: write_int(5) + b"hello"
+/// assert_eq!(buf.len(), 4 + 5); // 4 bytes for length + 5 bytes of data
+/// ```
 ///
 /// Reference: `token.c:simple_send_token()` lines 307-314
 pub fn write_token_literal<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
@@ -66,8 +140,26 @@ pub fn write_token_literal<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<
 
 /// Writes a block match token in upstream format.
 ///
-/// Format: `write_int(-(block_index + 1))`
-/// Example: block 0 = -1, block 1 = -2, etc.
+/// Encodes a reference to a block in the basis file. The receiver should copy
+/// one block's worth of data from the basis file at the given block index.
+///
+/// # Wire Format
+///
+/// Block matches are encoded as negative integers: `write_int(-(block_index + 1))`
+///
+/// Examples:
+/// - block 0 → -1
+/// - block 1 → -2
+/// - block 42 → -43
+///
+/// # Arguments
+///
+/// * `writer` - The output stream to write to
+/// * `block_index` - The 0-based index of the block to copy
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
 ///
 /// Reference: `token.c:simple_send_token()` line 316
 #[inline]
@@ -78,8 +170,17 @@ pub fn write_token_block_match<W: Write>(writer: &mut W, block_index: u32) -> io
 
 /// Writes the end-of-file marker (token value 0).
 ///
-/// This corresponds to calling send_token with token=-1, which writes
-/// `-((-1)+1) = 0` to signal end of delta stream.
+/// Signals the end of a delta stream. The receiver should stop reading
+/// tokens after receiving this marker.
+///
+/// # Wire Format
+///
+/// Writes `write_int(0)`. This corresponds to calling send_token with token=-1,
+/// which encodes as `-((-1)+1) = 0`.
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
 ///
 /// Reference: `match.c:matched()` line 408, `token.c:simple_send_token()` line 316
 #[inline]
@@ -87,12 +188,25 @@ pub fn write_token_end<W: Write>(writer: &mut W) -> io::Result<()> {
     write_int(writer, 0)
 }
 
-/// Writes a complete delta stream in upstream wire format.
+/// Writes a complete delta stream for a whole-file transfer.
 ///
-/// This is for whole-file transfers where we just send all data as literals.
-/// Format:
-/// - For each chunk of data: `write_int(chunk_len)` + raw bytes
+/// This is used when there is no basis file available (e.g., when the receiver
+/// doesn't have the file). The entire file is sent as literal data with no
+/// block matches.
+///
+/// # Wire Format
+///
+/// - Literal data (chunked): `write_int(chunk_len)` + raw bytes (repeated as needed)
 /// - End marker: `write_int(0)`
+///
+/// # Arguments
+///
+/// * `writer` - The output stream to write to
+/// * `data` - The complete file data to send
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
 ///
 /// Reference: `match.c:match_sums()` lines 404-408 (whole file case)
 pub fn write_whole_file_delta<W: Write>(writer: &mut W, data: &[u8]) -> io::Result<()> {
@@ -102,14 +216,47 @@ pub fn write_whole_file_delta<W: Write>(writer: &mut W, data: &[u8]) -> io::Resu
 
 /// Writes a delta stream from DeltaOp slice in upstream wire format.
 ///
-/// Format for each operation:
-/// - Literal: `write_int(chunk_len)` + raw bytes (chunked to 32KB)
-/// - Copy (block match): `write_int(-(block_index + 1))`
+/// Converts a sequence of delta operations into the token-based wire format
+/// used by rsync. This is the primary function for sending delta data to
+/// an rsync receiver.
+///
+/// # Wire Format
+///
+/// For each operation:
+/// - **Literal**: `write_int(chunk_len)` + raw bytes (auto-chunked to 32KB)
+/// - **Copy** (block match): `write_int(-(block_index + 1))`
 ///
 /// Ends with `write_int(0)` as end marker.
 ///
-/// Note: Copy operations include block_index but length is determined
-/// by the block size from the checksum header, not sent in the token.
+/// # Note
+///
+/// Copy operations only send the block_index. The number of bytes to copy
+/// is determined by the block size from the checksum header that was sent
+/// earlier in the protocol exchange.
+///
+/// # Arguments
+///
+/// * `writer` - The output stream to write to
+/// * `ops` - The delta operations to encode
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::{DeltaOp, write_token_stream};
+///
+/// let ops = vec![
+///     DeltaOp::Literal(b"hello".to_vec()),
+///     DeltaOp::Copy { block_index: 0, length: 1024 },
+///     DeltaOp::Literal(b"world".to_vec()),
+/// ];
+///
+/// let mut buf = Vec::new();
+/// write_token_stream(&mut buf, &ops).unwrap();
+/// ```
 pub fn write_token_stream<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> {
     for op in ops {
         match op {
@@ -126,10 +273,40 @@ pub fn write_token_stream<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Resu
 
 /// Reads a token from upstream wire format.
 ///
-/// Returns:
-/// - `Ok(Some(n))` where n > 0: literal data of n bytes follows
-/// - `Ok(Some(n))` where n < 0: block match at index `-(n+1)`
-/// - `Ok(None)`: end of stream (token value 0)
+/// This function reads a single token value and interprets it according to
+/// rsync's token encoding rules. The caller is responsible for reading any
+/// associated data (for literals) based on the returned value.
+///
+/// # Returns
+///
+/// - `Ok(Some(n))` where n > 0: Literal data of n bytes follows
+/// - `Ok(Some(n))` where n < 0: Block match at index `-(n+1)`
+/// - `Ok(None)`: End of stream (token value 0)
+///
+/// # Errors
+///
+/// Returns an error if reading from the underlying stream fails.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::read_token;
+///
+/// // Read a literal token
+/// let data = 17i32.to_le_bytes();
+/// let token = read_token(&mut &data[..]).unwrap();
+/// assert_eq!(token, Some(17)); // 17 bytes of literal data follow
+///
+/// // Read a block match token
+/// let data = (-1i32).to_le_bytes();
+/// let token = read_token(&mut &data[..]).unwrap();
+/// assert_eq!(token, Some(-1)); // Block 0: -((-1) + 1) = 0
+///
+/// // Read end marker
+/// let data = 0i32.to_le_bytes();
+/// let token = read_token(&mut &data[..]).unwrap();
+/// assert_eq!(token, None); // End of stream
+/// ```
 pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
     let token = read_int(reader)?;
     if token == 0 {
@@ -144,31 +321,71 @@ pub fn read_token<R: Read>(reader: &mut R) -> io::Result<Option<i32>> {
 // ============================================================================
 
 /// Delta operation for file reconstruction.
+///
+/// Represents the internal format for delta operations (not the upstream wire format).
+/// This opcode-based format is used for backward compatibility with earlier versions
+/// of this implementation.
+///
+/// For upstream rsync compatibility, use the token-based functions like
+/// [`write_token_stream`] and [`read_token`] instead.
+///
+/// # Examples
+///
+/// ```
+/// use rsync_core::protocol::wire::DeltaOp;
+///
+/// // Create a literal operation
+/// let lit = DeltaOp::Literal(vec![1, 2, 3, 4, 5]);
+///
+/// // Create a copy operation
+/// let copy = DeltaOp::Copy {
+///     block_index: 0,
+///     length: 4096,
+/// };
+/// ```
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum DeltaOp {
     /// Write literal bytes to output.
+    ///
+    /// The contained data should be written directly to the output stream
+    /// at the current position.
     Literal(Vec<u8>),
+
     /// Copy bytes from basis file at given block index.
+    ///
+    /// The receiver should copy `length` bytes from the basis file starting
+    /// at the position indicated by `block_index * block_size`, where
+    /// `block_size` comes from the signature header.
     Copy {
-        /// Block index in basis file.
+        /// Block index in basis file (0-based).
         block_index: u32,
         /// Number of bytes to copy.
         length: u32,
     },
 }
 
-/// Writes a delta operation to the wire format.
+/// Writes a delta operation to the internal wire format.
 ///
-/// Format:
-/// - Op code (1 byte):
-///   - 0x00 = Literal
-///   - 0x01 = Copy
-/// - For Literal:
-///   - Length (varint)
-///   - Data bytes
-/// - For Copy:
-///   - Block index (varint)
-///   - Length (varint)
+/// This is the opcode-based format used internally for backward compatibility.
+/// For upstream rsync compatibility, use [`write_token_stream`] instead.
+///
+/// # Wire Format
+///
+/// **Opcode** (1 byte):
+/// - `0x00` = Literal
+/// - `0x01` = Copy
+///
+/// **For Literal** (`0x00`):
+/// - Length (varint)
+/// - Data bytes
+///
+/// **For Copy** (`0x01`):
+/// - Block index (varint)
+/// - Length (varint)
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
 pub fn write_delta_op<W: Write>(writer: &mut W, op: &DeltaOp) -> io::Result<()> {
     match op {
         DeltaOp::Literal(data) => {
@@ -188,7 +405,16 @@ pub fn write_delta_op<W: Write>(writer: &mut W, op: &DeltaOp) -> io::Result<()> 
     Ok(())
 }
 
-/// Reads a delta operation from the wire format.
+/// Reads a delta operation from the internal wire format.
+///
+/// This is the counterpart to [`write_delta_op`], decoding the opcode-based
+/// format. For upstream rsync compatibility, use [`read_token`] instead.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Reading from the underlying stream fails
+/// - An invalid opcode is encountered (not 0x00 or 0x01)
 pub fn read_delta_op<R: Read>(reader: &mut R) -> io::Result<DeltaOp> {
     let mut opcode = [0u8; 1];
     reader.read_exact(&mut opcode)?;
@@ -215,12 +441,20 @@ pub fn read_delta_op<R: Read>(reader: &mut R) -> io::Result<DeltaOp> {
     }
 }
 
-/// Writes a complete delta stream to the wire format.
+/// Writes a complete delta stream to the internal wire format.
 ///
-/// Format:
+/// This is the opcode-based format used internally. For upstream rsync
+/// compatibility, use [`write_token_stream`] instead.
+///
+/// # Wire Format
+///
 /// - Operation count (varint)
 /// - For each operation:
-///   - Delta operation (see `write_delta_op`)
+///   - Delta operation (see [`write_delta_op`])
+///
+/// # Errors
+///
+/// Returns an error if writing to the underlying stream fails.
 pub fn write_delta<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> {
     write_varint(writer, ops.len() as i32)?;
     for op in ops {
@@ -229,7 +463,16 @@ pub fn write_delta<W: Write>(writer: &mut W, ops: &[DeltaOp]) -> io::Result<()> 
     Ok(())
 }
 
-/// Reads a complete delta stream from the wire format.
+/// Reads a complete delta stream from the internal wire format.
+///
+/// This is the counterpart to [`write_delta`], decoding the opcode-based format.
+/// For upstream rsync compatibility, use [`read_token`] instead.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Reading from the underlying stream fails
+/// - An invalid opcode is encountered in any delta operation
 pub fn read_delta<R: Read>(reader: &mut R) -> io::Result<Vec<DeltaOp>> {
     let count = read_varint(reader)? as usize;
     let mut ops = Vec::with_capacity(count);

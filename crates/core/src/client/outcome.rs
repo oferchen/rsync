@@ -1,3 +1,10 @@
+//! Client transfer outcome types.
+//!
+//! This module defines the [`ClientOutcome`] enum that discriminates between
+//! local transfers handled by the native engine and transfers delegated to
+//! an upstream rsync binary. The type preserves execution mode while allowing
+//! callers to extract summary statistics when the transfer was handled locally.
+
 use super::summary::ClientSummary;
 
 /// Outcome returned when executing a client transfer.

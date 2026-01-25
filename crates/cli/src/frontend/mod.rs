@@ -87,10 +87,8 @@ mod outbuf;
 #[cfg(test)]
 pub(crate) use command_builder::clap_command;
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use core::client::*;
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use core::version::VersionInfoReport;
 use core::{
     branding::Brand,
@@ -120,41 +118,27 @@ mod server;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use arguments::{ProgramName, detect_program_name, parse_args};
 #[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use arguments::env_protect_args_default;
-#[allow(unused_imports)]
-pub(crate) use arguments::{
-    BandwidthArgument, ParsedArgs, ProgramName, detect_program_name, parse_args,
-};
+pub(crate) use arguments::BandwidthArgument;
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use core::branding::{self as branding};
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use core::client::{AddressMode, StrongChecksumChoice, TransferTimeout};
 pub(crate) use defaults::LIST_TIMESTAMP_FORMAT;
 #[cfg(test)]
 pub(crate) use execution::*;
-#[allow(unused_imports)]
-pub(crate) use execution::{
-    parse_checksum_seed_argument, parse_compress_level_argument, parse_human_readable_level,
-};
 #[cfg(test)]
 pub(crate) use filter_rules::MergeDirective;
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use filter_rules::{
-    FilterDirective, append_cvs_exclude_rules, append_filter_rules_from_files,
-    apply_merge_directive, collect_filter_arguments, locate_filter_arguments,
-    merge_directive_options, os_string_to_pattern, parse_filter_directive,
+    FilterDirective, append_filter_rules_from_files, apply_merge_directive,
+    collect_filter_arguments, merge_directive_options, parse_filter_directive,
 };
 use help::help_text;
 pub(crate) use out_format::{OutFormat, OutFormatContext, emit_out_format, parse_out_format};
-#[allow(unused_imports)] // NameOutputLevel and ProgressSetting are re-exported by wildcard
-pub(crate) use progress::{NameOutputLevel, ProgressSetting, *};
+pub(crate) use progress::*;
 #[cfg(test)]
-#[allow(unused_imports)]
 pub(crate) use std::num::NonZeroU64;
 
 #[cfg(test)]

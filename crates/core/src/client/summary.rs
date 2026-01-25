@@ -1,3 +1,33 @@
+//! Transfer summary and event tracking.
+//!
+//! This module provides comprehensive statistics and event logs for completed
+//! client transfers. The [`ClientSummary`] structure aggregates counters for
+//! files copied, bytes transferred, and time spent, while the [`ClientEvent`]
+//! type describes individual file-level actions taken during the transfer.
+//!
+//! These types enable post-transfer analysis, test assertions, and status
+//! displays that mirror the output of rsync's `--stats` and `--itemize-changes`
+//! flags.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! use core::client::{ClientConfig, run_client};
+//!
+//! let config = ClientConfig::builder()
+//!     .transfer_args(["source/", "dest/"])
+//!     .build();
+//!
+//! let summary = run_client(config)?;
+//! println!("Files copied: {}", summary.files_copied());
+//! println!("Bytes transferred: {}", summary.bytes_copied());
+//! println!("Total elapsed: {:?}", summary.total_elapsed());
+//!
+//! for event in summary.events() {
+//!     println!("{:?} {}", event.kind(), event.relative_path().display());
+//! }
+//! ```
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};

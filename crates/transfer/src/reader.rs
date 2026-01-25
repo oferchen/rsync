@@ -104,7 +104,6 @@ pub(super) struct MultiplexReader<R> {
     pos: usize,
 }
 
-#[allow(dead_code)]
 impl<R: Read> MultiplexReader<R> {
     const fn new(inner: R) -> Self {
         Self {
@@ -115,7 +114,6 @@ impl<R: Read> MultiplexReader<R> {
     }
 }
 
-#[allow(dead_code)]
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // If we have buffered data, copy it out first
