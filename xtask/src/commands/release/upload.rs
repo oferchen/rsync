@@ -386,6 +386,8 @@ mod tests {
     #[test]
     fn resolve_repository_defaults_to_branding_source() {
         let branding = sample_branding();
+        // Acquire env lock to ensure no other test has set the override variable.
+        let _env = EnvGuard::new();
         let repository = resolve_repository(&branding).expect("repository parsed");
         let expected = branding
             .source
@@ -406,6 +408,8 @@ mod tests {
     #[test]
     fn resolve_tag_defaults_to_rust_version() {
         let branding = sample_branding();
+        // Acquire env lock to ensure no other test has set the override variable.
+        let _env = EnvGuard::new();
         let tag = resolve_tag(&branding).expect("tag parsed");
         assert_eq!(tag, format!("v{}", branding.rust_version));
     }
