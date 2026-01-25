@@ -450,9 +450,25 @@ fn apply_ownership_from_entry(
 
     // Apply ownership if at least one is set
     if owner.is_some() || group.is_some() {
-        chownat(CWD, destination, owner, group, AtFlags::empty()).map_err(|error| {
-            MetadataError::new("preserve ownership", destination, io::Error::from(error))
-        })?;
+        // Optimization: check current ownership and skip syscall if already correct.
+        // This matches upstream rsync behavior which avoids redundant chown calls.
+        let current_meta = fs::metadata(destination).ok();
+        let needs_chown = match current_meta {
+            Some(ref meta) => {
+                let current_uid = meta.uid();
+                let current_gid = meta.gid();
+                let desired_uid = owner.map(|o| o.as_raw()).unwrap_or(current_uid);
+                let desired_gid = group.map(|g| g.as_raw()).unwrap_or(current_gid);
+                current_uid != desired_uid || current_gid != desired_gid
+            }
+            None => true, // Can't stat, try chown anyway
+        };
+
+        if needs_chown {
+            chownat(CWD, destination, owner, group, AtFlags::empty()).map_err(|error| {
+                MetadataError::new("preserve ownership", destination, io::Error::from(error))
+            })?;
+        }
     }
 
     Ok(())
@@ -524,9 +540,19 @@ fn apply_permissions_from_entry(
         // Standard permission preservation
         if options.permissions() {
             let mode = entry.permissions();
-            let permissions = PermissionsExt::from_mode(mode);
-            fs::set_permissions(destination, permissions)
-                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            // Optimization: check current permissions and skip syscall if already correct.
+            // This matches upstream rsync behavior which avoids redundant chmod calls.
+            let current_meta = fs::metadata(destination).ok();
+            let needs_chmod = match current_meta {
+                Some(ref meta) => (meta.permissions().mode() & 0o7777) != (mode & 0o7777),
+                None => true, // Can't stat, try chmod anyway
+            };
+
+            if needs_chmod {
+                let permissions = PermissionsExt::from_mode(mode);
+                fs::set_permissions(destination, permissions)
+                    .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            }
         }
 
         // Apply chmod modifiers if present
@@ -538,9 +564,12 @@ fn apply_permissions_from_entry(
 
             // Apply chmod modifiers
             let new_mode = chmod.apply(current_mode, current_meta.file_type());
-            let new_permissions = PermissionsExt::from_mode(new_mode);
-            fs::set_permissions(destination, new_permissions)
-                .map_err(|error| MetadataError::new("apply chmod", destination, error))?;
+            // Only apply if mode actually changed
+            if new_mode != current_mode {
+                let new_permissions = PermissionsExt::from_mode(new_mode);
+                fs::set_permissions(destination, new_permissions)
+                    .map_err(|error| MetadataError::new("apply chmod", destination, error))?;
+            }
         }
     }
 
@@ -554,9 +583,11 @@ fn apply_permissions_from_entry(
                     MetadataError::new("read destination permissions", destination, error)
                 })?
                 .permissions();
-            dest_perms.set_readonly(readonly);
-            fs::set_permissions(destination, dest_perms)
-                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            if dest_perms.readonly() != readonly {
+                dest_perms.set_readonly(readonly);
+                fs::set_permissions(destination, dest_perms)
+                    .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            }
         }
     }
 
@@ -572,8 +603,22 @@ fn apply_timestamps_from_entry(
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
     let atime = mtime; // Use mtime for both (rsync behavior)
 
-    set_file_times(destination, atime, mtime)
-        .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+    // Optimization: check current mtime and skip syscall if already correct.
+    // This matches upstream rsync behavior which avoids redundant utimensat calls.
+    // Compare at second granularity first (fast path), then nanoseconds if needed.
+    let current_meta = fs::metadata(destination).ok();
+    let needs_utime = match current_meta {
+        Some(ref meta) => {
+            let current_mtime = FileTime::from_last_modification_time(meta);
+            current_mtime != mtime
+        }
+        None => true, // Can't stat, try utime anyway
+    };
+
+    if needs_utime {
+        set_file_times(destination, atime, mtime)
+            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+    }
 
     Ok(())
 }
