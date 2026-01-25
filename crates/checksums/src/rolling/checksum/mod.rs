@@ -146,6 +146,33 @@ impl RollingChecksum {
         self.len = len;
     }
 
+    /// Updates the checksum with a single byte.
+    ///
+    /// This is an optimized path for single-byte updates that avoids slice overhead.
+    /// Useful when building up the initial window in delta generation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::RollingChecksum;
+    ///
+    /// let mut checksum = RollingChecksum::new();
+    /// checksum.update_byte(b'H');
+    /// checksum.update_byte(b'i');
+    ///
+    /// // Equivalent to slice update
+    /// let mut full = RollingChecksum::new();
+    /// full.update(b"Hi");
+    /// assert_eq!(checksum.value(), full.value());
+    /// ```
+    #[inline]
+    pub fn update_byte(&mut self, byte: u8) {
+        let b = u32::from(byte);
+        self.s1 = (self.s1.wrapping_add(b)) & 0xffff;
+        self.s2 = (self.s2.wrapping_add(self.s1)) & 0xffff;
+        self.len = self.len.saturating_add(1);
+    }
+
     /// Updates the checksum using a vectored slice of byte buffers.
     #[doc(alias = "writev")]
     #[inline]

@@ -104,11 +104,15 @@ pub(super) struct MultiplexReader<R> {
     pos: usize,
 }
 
+/// Default buffer capacity for MultiplexReader - matches IO_BUFFER_SIZE (32KB)
+const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 32 * 1024;
+
 impl<R: Read> MultiplexReader<R> {
-    const fn new(inner: R) -> Self {
+    fn new(inner: R) -> Self {
         Self {
             inner,
-            buffer: Vec::new(),
+            // Pre-allocate buffer to avoid repeated allocations during transfer
+            buffer: Vec::with_capacity(MULTIPLEX_READER_BUFFER_CAPACITY),
             pos: 0,
         }
     }
