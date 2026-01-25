@@ -90,6 +90,14 @@ impl IdList {
         self.entries.is_empty()
     }
 
+    /// Returns true if the list already contains this ID.
+    ///
+    /// Use this to check before performing expensive name lookups.
+    #[inline]
+    pub fn contains(&self, id: u32) -> bool {
+        self.entries.contains_key(&id)
+    }
+
     /// Adds an ID with its associated name to the list.
     ///
     /// If the ID already exists, this is a no-op (preserving first occurrence).
