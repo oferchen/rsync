@@ -40,7 +40,7 @@ use std::path::PathBuf;
 /// sufficient collision resistance for file integrity verification.
 const DEFAULT_CHECKSUM_LENGTH: NonZeroU8 = NonZeroU8::new(16).unwrap();
 
-use protocol::codec::{NdxCodec, create_ndx_codec};
+use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::filters::read_filter_list;
 use protocol::flist::{FileEntry, FileListReader, sort_file_list};
 use protocol::idlist::IdList;
@@ -155,11 +155,16 @@ impl ReceiverContext {
         } else {
             FileListReader::new(self.protocol)
         }
-        // Wire up preserve_uid/preserve_gid from server config flags.
-        // This MUST match what the sender is sending - if sender uses -o/-g,
-        // uid/gid values are included in the file list and we must consume them.
+        // Wire up preserve flags from server config.
+        // These MUST match what the sender is sending - if sender uses flags like -o/-g/-l,
+        // corresponding data is included in the file list and we must consume it.
         .with_preserve_uid(self.config.flags.owner)
-        .with_preserve_gid(self.config.flags.group);
+        .with_preserve_gid(self.config.flags.group)
+        .with_preserve_links(self.config.flags.links)
+        .with_preserve_devices(self.config.flags.devices)
+        .with_preserve_hard_links(self.config.flags.hard_links)
+        .with_preserve_acls(self.config.flags.acls)
+        .with_preserve_xattrs(self.config.flags.xattrs);
 
         // Wire up iconv converter if configured
         if let Some(ref converter) = self.config.iconv {
@@ -435,6 +440,46 @@ impl ReceiverContext {
         Ok(())
     }
 
+    /// Receives transfer statistics from the sender.
+    ///
+    /// The sender transmits statistics after the transfer loop completes but before
+    /// the goodbye handshake. We need to consume these to keep the protocol in sync.
+    ///
+    /// # Wire Format
+    ///
+    /// - total_read: i64 (sender's bytes read)
+    /// - total_written: i64 (sender's bytes written)
+    /// - total_size: i64 (total file size)
+    /// - For protocol 29+: flist_buildtime: i64 (file list build time in ms)
+    /// - For protocol 29+: flist_xfertime: i64 (file list transfer time in ms)
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1102-1130` - `read_final_stats()`
+    fn receive_stats<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<SenderStats> {
+        let stats_codec = create_protocol_codec(self.protocol.as_u8());
+
+        let total_read = stats_codec.read_stat(reader)? as u64;
+        let total_written = stats_codec.read_stat(reader)? as u64;
+        let total_size = stats_codec.read_stat(reader)? as u64;
+
+        let (flist_buildtime_ms, flist_xfertime_ms) = if self.protocol.as_u8() >= 29 {
+            let buildtime = stats_codec.read_stat(reader)? as u64;
+            let xfertime = stats_codec.read_stat(reader)? as u64;
+            (Some(buildtime), Some(xfertime))
+        } else {
+            (None, None)
+        };
+
+        Ok(SenderStats {
+            total_read,
+            total_written,
+            total_size,
+            flist_buildtime_ms,
+            flist_xfertime_ms,
+        })
+    }
+
     /// Runs the receiver role to completion.
     ///
     /// This orchestrates the full receive operation:
@@ -583,10 +628,13 @@ impl ReceiverContext {
                 dest_dir.join(relative_path)
             };
 
-            // Skip directories (already handled above), but output in verbose mode
-            if file_entry.is_dir() {
+            // Skip non-regular files (directories, symlinks, devices, etc.)
+            // Only regular files are transferred via delta transfer protocol.
+            // Symlinks have their targets stored in the file list entry itself.
+            // Devices/specials just need metadata, not content transfer.
+            if !file_entry.is_file() {
                 // Output directory name with trailing slash in verbose mode
-                if self.config.flags.verbose && self.config.client_mode {
+                if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
                     if relative_path.as_os_str() == "." {
                         eprintln!("./");
                     } else {
@@ -877,6 +925,10 @@ impl ReceiverContext {
         // Exchange phase transitions with sender
         self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
+        // Receive transfer statistics from sender
+        // The sender sends stats after the transfer loop but before goodbye.
+        let _sender_stats = self.receive_stats(reader)?;
+
         // Handle goodbye handshake
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
@@ -916,6 +968,24 @@ pub struct TransferStats {
     pub total_source_bytes: u64,
     /// Metadata errors encountered (path, error message).
     pub metadata_errors: Vec<(PathBuf, String)>,
+}
+
+/// Statistics received from the sender after transfer completion.
+///
+/// The sender transmits these statistics after the transfer loop but before
+/// the goodbye handshake.
+#[derive(Debug, Clone, Default)]
+pub struct SenderStats {
+    /// Total bytes read by the sender during transfer.
+    pub total_read: u64,
+    /// Total bytes written by the sender during transfer.
+    pub total_written: u64,
+    /// Total size of all source files.
+    pub total_size: u64,
+    /// File list build time in milliseconds (protocol 29+).
+    pub flist_buildtime_ms: Option<u64>,
+    /// File list transfer time in milliseconds (protocol 29+).
+    pub flist_xfertime_ms: Option<u64>,
 }
 
 // ============================================================================
