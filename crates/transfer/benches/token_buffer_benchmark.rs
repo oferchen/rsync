@@ -59,10 +59,10 @@ fn bench_sequential_tokens(c: &mut Criterion) {
         // Mix of token sizes typical in delta transfers
         let token_sizes: Vec<usize> = (0..token_count)
             .map(|i| match i % 4 {
-                0 => 700,    // Block size
-                1 => 4096,   // Page size
-                2 => 32768,  // Chunk size
-                _ => 1024,   // Random
+                0 => 700,   // Block size
+                1 => 4096,  // Page size
+                2 => 32768, // Chunk size
+                _ => 1024,  // Random
             })
             .collect();
 

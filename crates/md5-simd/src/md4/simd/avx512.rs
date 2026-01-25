@@ -180,7 +180,11 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             .iter()
             .enumerate()
             .fold(0u16, |acc, (lane, &count)| {
-                if block_idx < count { acc | (1 << lane) } else { acc }
+                if block_idx < count {
+                    acc | (1 << lane)
+                } else {
+                    acc
+                }
             });
 
         // Prepare message words in transposed format (word i from all 16 lanes)
@@ -191,7 +195,7 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
             for (lane, padded) in padded_storage.iter().enumerate() {
                 if word_offset + 4 <= padded.len() {
                     m_word.0[lane] = u32::from_le_bytes(
-                        padded[word_offset..word_offset + 4].try_into().unwrap()
+                        padded[word_offset..word_offset + 4].try_into().unwrap(),
                     );
                 }
             }
@@ -199,8 +203,12 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
 
         // Process block using inline assembly
         process_block_avx512(
-            &mut state_a, &mut state_b, &mut state_c, &mut state_d,
-            &m, mask_bits
+            &mut state_a,
+            &mut state_b,
+            &mut state_c,
+            &mut state_d,
+            &m,
+            mask_bits,
         );
     }
 
@@ -341,20 +349,20 @@ unsafe fn process_block_avx512(
     }
 
     // Round 1: steps 0-15
-    round1!("8", "3");   // m[0], s=3
-    round1!("9", "7");   // m[1], s=7
+    round1!("8", "3"); // m[0], s=3
+    round1!("9", "7"); // m[1], s=7
     round1!("10", "11"); // m[2], s=11
     round1!("11", "19"); // m[3], s=19
-    round1!("12", "3");  // m[4], s=3
-    round1!("13", "7");  // m[5], s=7
+    round1!("12", "3"); // m[4], s=3
+    round1!("13", "7"); // m[5], s=7
     round1!("14", "11"); // m[6], s=11
     round1!("15", "19"); // m[7], s=19
-    round1!("16", "3");  // m[8], s=3
-    round1!("17", "7");  // m[9], s=7
+    round1!("16", "3"); // m[8], s=3
+    round1!("17", "7"); // m[9], s=7
     round1!("18", "11"); // m[10], s=11
     round1!("19", "19"); // m[11], s=19
-    round1!("20", "3");  // m[12], s=3
-    round1!("21", "7");  // m[13], s=7
+    round1!("20", "3"); // m[12], s=3
+    round1!("21", "7"); // m[13], s=7
     round1!("22", "11"); // m[14], s=11
     round1!("23", "19"); // m[15], s=19
 
@@ -398,21 +406,21 @@ unsafe fn process_block_avx512(
     }
 
     // Round 2: steps 0-15 with M2 schedule
-    round2!("8", "3");   // M2[0]=0, s=3
-    round2!("12", "5");  // M2[1]=4, s=5
-    round2!("16", "9");  // M2[2]=8, s=9
+    round2!("8", "3"); // M2[0]=0, s=3
+    round2!("12", "5"); // M2[1]=4, s=5
+    round2!("16", "9"); // M2[2]=8, s=9
     round2!("20", "13"); // M2[3]=12, s=13
-    round2!("9", "3");   // M2[4]=1, s=3
-    round2!("13", "5");  // M2[5]=5, s=5
-    round2!("17", "9");  // M2[6]=9, s=9
+    round2!("9", "3"); // M2[4]=1, s=3
+    round2!("13", "5"); // M2[5]=5, s=5
+    round2!("17", "9"); // M2[6]=9, s=9
     round2!("21", "13"); // M2[7]=13, s=13
-    round2!("10", "3");  // M2[8]=2, s=3
-    round2!("14", "5");  // M2[9]=6, s=5
-    round2!("18", "9");  // M2[10]=10, s=9
+    round2!("10", "3"); // M2[8]=2, s=3
+    round2!("14", "5"); // M2[9]=6, s=5
+    round2!("18", "9"); // M2[10]=10, s=9
     round2!("22", "13"); // M2[11]=14, s=13
-    round2!("11", "3");  // M2[12]=3, s=3
-    round2!("15", "5");  // M2[13]=7, s=5
-    round2!("19", "9");  // M2[14]=11, s=9
+    round2!("11", "3"); // M2[12]=3, s=3
+    round2!("15", "5"); // M2[13]=7, s=5
+    round2!("19", "9"); // M2[14]=11, s=9
     round2!("23", "13"); // M2[15]=15, s=13
 
     // Round 3: H = B ^ C ^ D, K = 0x6ED9EBA1
@@ -454,20 +462,20 @@ unsafe fn process_block_avx512(
     }
 
     // Round 3: steps 0-15 with M3 schedule
-    round3!("8", "3");   // M3[0]=0, s=3
-    round3!("16", "9");  // M3[1]=8, s=9
+    round3!("8", "3"); // M3[0]=0, s=3
+    round3!("16", "9"); // M3[1]=8, s=9
     round3!("12", "11"); // M3[2]=4, s=11
     round3!("20", "15"); // M3[3]=12, s=15
-    round3!("10", "3");  // M3[4]=2, s=3
-    round3!("18", "9");  // M3[5]=10, s=9
+    round3!("10", "3"); // M3[4]=2, s=3
+    round3!("18", "9"); // M3[5]=10, s=9
     round3!("14", "11"); // M3[6]=6, s=11
     round3!("22", "15"); // M3[7]=14, s=15
-    round3!("9", "3");   // M3[8]=1, s=3
-    round3!("17", "9");  // M3[9]=9, s=9
+    round3!("9", "3"); // M3[8]=1, s=3
+    round3!("17", "9"); // M3[9]=9, s=9
     round3!("13", "11"); // M3[10]=5, s=11
     round3!("21", "15"); // M3[11]=13, s=15
-    round3!("11", "3");  // M3[12]=3, s=3
-    round3!("19", "9");  // M3[13]=11, s=9
+    round3!("11", "3"); // M3[12]=3, s=3
+    round3!("19", "9"); // M3[13]=11, s=9
     round3!("15", "11"); // M3[14]=7, s=11
     round3!("23", "15"); // M3[15]=15, s=15
 
@@ -637,10 +645,8 @@ mod tests {
         let input15: Vec<u8> = vec![0xEF; 900];
 
         let inputs: [&[u8]; 16] = [
-            &input0, &input1, &input2, &input3,
-            &input4, &input5, &input6, &input7,
-            &input8, &input9, &input10, &input11,
-            &input12, &input13, &input14, &input15,
+            &input0, &input1, &input2, &input3, &input4, &input5, &input6, &input7, &input8,
+            &input9, &input10, &input11, &input12, &input13, &input14, &input15,
         ];
 
         let results = unsafe { digest_x16(&inputs) };

@@ -120,10 +120,8 @@ impl DeltaGenerator {
                     literal_bytes += pending_literals.len() as u64;
                     total_bytes += pending_literals.len() as u64;
                     // Use replace instead of take to preserve capacity for next literals
-                    let filled = std::mem::replace(
-                        &mut pending_literals,
-                        Vec::with_capacity(block_len),
-                    );
+                    let filled =
+                        std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
                     tokens.push(DeltaToken::Literal(filled));
                 }
 

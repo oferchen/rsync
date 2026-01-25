@@ -116,8 +116,7 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     if checksum {
         // Use prefetched result if available, otherwise compute on-demand
         return prefetched_match.unwrap_or_else(|| {
-            files_checksum_match(source_path, destination_path, checksum_algorithm)
-                .unwrap_or(false)
+            files_checksum_match(source_path, destination_path, checksum_algorithm).unwrap_or(false)
         });
     }
 

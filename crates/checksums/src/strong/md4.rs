@@ -182,12 +182,12 @@ mod tests {
         let sequential_results: Vec<[u8; 16]> = inputs.iter().map(|i| Md4::digest(i)).collect();
 
         assert_eq!(batch_results.len(), sequential_results.len());
-        for (i, (batch, seq)) in batch_results.iter().zip(sequential_results.iter()).enumerate() {
-            assert_eq!(
-                to_hex(batch),
-                to_hex(seq),
-                "Mismatch at index {i}"
-            );
+        for (i, (batch, seq)) in batch_results
+            .iter()
+            .zip(sequential_results.iter())
+            .enumerate()
+        {
+            assert_eq!(to_hex(batch), to_hex(seq), "Mismatch at index {i}");
         }
     }
 }

@@ -20,7 +20,11 @@
 
 pub mod scalar;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "wasm32"))]
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
+))]
 pub mod simd;
 
 use crate::{Backend, Digest};
@@ -60,7 +64,7 @@ impl Md4Dispatcher {
                 return Backend::Avx2;
             }
             // SSE2 is baseline for x86_64, always available
-            return Backend::Sse2;
+            Backend::Sse2
         }
 
         #[cfg(target_arch = "aarch64")]
@@ -317,7 +321,8 @@ mod tests {
         for (i, input) in inputs.iter().enumerate() {
             let expected = scalar::digest(input);
             assert_eq!(
-                results[i], expected,
+                results[i],
+                expected,
                 "Mismatch at index {i} for input {:?}",
                 String::from_utf8_lossy(input)
             );

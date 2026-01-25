@@ -266,16 +266,15 @@ pub fn run_server_with_handshake<W: Write>(
         false
     };
 
-    let setup_result = setup::setup_protocol(
-        handshake.protocol,
-        &mut stdout,
-        &mut chained_stdin,
-        handshake.compat_exchanged,
-        handshake.client_args.as_deref(),
+    let setup_config = setup::ProtocolSetupConfig {
+        protocol: handshake.protocol,
+        skip_compat_exchange: handshake.compat_exchanged,
+        client_args: handshake.client_args.as_deref(),
         is_server,
         is_daemon_mode,
         do_compression,
-    )?;
+    };
+    let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
     // Store negotiated algorithms, compat flags, and checksum seed in handshake for use by role contexts
     // The role contexts will extract these and use them for checksum/compression operations

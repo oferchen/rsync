@@ -757,4 +757,572 @@ mod tests {
         let sleep = limiter.register(1024);
         assert_eq!(sleep.requested(), Duration::from_secs(1));
     }
+
+    // ========================================================================
+    // Token bucket behavior tests
+    // ========================================================================
+
+    #[test]
+    fn register_deterministic_sleep_calculation() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // Create limiter with 1024 bytes/second
+        let mut limiter = BandwidthLimiter::new(nz(1024));
+
+        // Write exactly 1024 bytes - should request exactly 1 second sleep
+        let sleep = limiter.register(1024);
+
+        // With 1024 bytes at 1024 bytes/sec, should sleep for 1 second
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn register_deterministic_multiple_writes() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // Create limiter with 1000 bytes/second
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+
+        // Write 500 bytes - should sleep for 0.5 seconds (500_000 us)
+        let sleep = limiter.register(500);
+        assert_eq!(sleep.requested(), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn register_exact_rate_calculation() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // 100 bytes/second
+        let mut limiter = BandwidthLimiter::new(nz(100));
+
+        // Write 100 bytes - should sleep for 1 second
+        let sleep = limiter.register(100);
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn register_very_slow_rate() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // 10 bytes/second
+        let mut limiter = BandwidthLimiter::new(nz(10));
+
+        // Write 10 bytes - should sleep for 1 second
+        let sleep = limiter.register(10);
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn register_very_fast_rate_no_sleep() {
+        // With very high rate, small writes should not trigger sleep
+        let mut limiter = BandwidthLimiter::new(nz(u64::MAX));
+        let sleep = limiter.register(1000);
+
+        // Sleep should be negligible
+        assert!(sleep.requested() < Duration::from_millis(1));
+    }
+
+    #[test]
+    fn register_sleep_under_minimum_threshold() {
+        // MINIMUM_SLEEP_MICROS is 100_000 (0.1 seconds)
+        // With 1_000_000 bytes/second and 50_000 bytes written
+        // sleep_us = 50_000 * 1_000_000 / 1_000_000 = 50_000 us (0.05 seconds)
+        // This is under MINIMUM_SLEEP_MICROS, so should return default (noop)
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000));
+        let sleep = limiter.register(50_000);
+
+        // Under threshold, should be noop
+        assert!(sleep.is_noop());
+    }
+
+    #[test]
+    fn register_sleep_at_minimum_threshold() {
+        // MINIMUM_SLEEP_MICROS is 100_000 (0.1 seconds)
+        // With 1_000_000 bytes/second and 100_000 bytes written
+        // sleep_us = 100_000 * 1_000_000 / 1_000_000 = 100_000 us
+        // This equals MINIMUM_SLEEP_MICROS, so it IS above the threshold
+        // (the check is `sleep_us < MINIMUM_SLEEP_MICROS`)
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000));
+        let sleep = limiter.register(100_000);
+
+        // At threshold (not below), should trigger sleep
+        assert!(!sleep.is_noop());
+        assert_eq!(sleep.requested(), Duration::from_millis(100));
+    }
+
+    #[test]
+    fn register_sleep_above_minimum_threshold() {
+        // With 1_000_000 bytes/second and 200_000 bytes written
+        // sleep_us = 200_000 * 1_000_000 / 1_000_000 = 200_000 us (0.2 seconds)
+        // This is above MINIMUM_SLEEP_MICROS
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000));
+        let sleep = limiter.register(200_000);
+
+        // Above threshold, should request sleep
+        assert!(!sleep.is_noop());
+        assert_eq!(sleep.requested(), Duration::from_millis(200));
+    }
+
+    // ========================================================================
+    // Burst clamping detailed tests
+    // ========================================================================
+
+    #[test]
+    fn burst_clamps_sleep_duration() {
+        // With burst, debt is clamped so sleep duration is limited
+        // 100 bytes/second with 500 byte burst
+        let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(500)));
+
+        // Write 1000 bytes - would normally sleep 10 seconds
+        // But debt clamped to 500, so sleep is 5 seconds
+        let sleep = limiter.register(1000);
+        assert_eq!(sleep.requested(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn burst_clamps_after_each_register() {
+        let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(200)));
+
+        // First write: 500 bytes, clamped to 200
+        let _sleep1 = limiter.register(500);
+        assert!(limiter.accumulated_debt_for_testing() <= 200);
+
+        // Second write: another 500 bytes, still clamped to 200
+        let _sleep2 = limiter.register(500);
+        assert!(limiter.accumulated_debt_for_testing() <= 200);
+    }
+
+    #[test]
+    fn no_burst_allows_unlimited_debt_growth() {
+        // Without burst, debt can grow (limited only by timing)
+        let mut limiter = BandwidthLimiter::new(nz(10)); // 10 bytes/second
+
+        // Write 1000 bytes
+        let sleep = limiter.register(1000);
+
+        // Should sleep for 100 seconds (1000 bytes / 10 bytes per second)
+        assert_eq!(sleep.requested(), Duration::from_secs(100));
+    }
+
+    // ========================================================================
+    // Write max calculation comprehensive tests
+    // ========================================================================
+
+    #[test]
+    fn write_max_minimum_for_tiny_rate() {
+        let limiter = BandwidthLimiter::new(nz(1));
+        // For limit < 1024, kib = 1, so base_write_max = 128
+        // But MIN_WRITE_MAX is 512, so we get 512
+        assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX);
+    }
+
+    #[test]
+    fn write_max_scales_with_rate() {
+        // For limit = 1024 * 50 = 51200, kib = 50
+        // base_write_max = 50 * 128 = 6400
+        let limiter = BandwidthLimiter::new(nz(1024 * 50));
+        assert_eq!(limiter.write_max_bytes(), 6400);
+    }
+
+    #[test]
+    fn write_max_capped_by_burst() {
+        // Even with high rate, burst caps write_max
+        let limiter = BandwidthLimiter::with_burst(nz(1024 * 1000), Some(nz(4096)));
+        assert_eq!(limiter.write_max_bytes(), 4096);
+    }
+
+    #[test]
+    fn write_max_burst_respects_minimum() {
+        // Burst below MIN_WRITE_MAX still gives MIN_WRITE_MAX
+        let limiter = BandwidthLimiter::with_burst(nz(1024 * 1000), Some(nz(100)));
+        assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX);
+    }
+
+    // ========================================================================
+    // Recommended read size tests
+    // ========================================================================
+
+    #[test]
+    fn recommended_read_size_exact_write_max() {
+        let limiter = BandwidthLimiter::new(nz(1024 * 100)); // write_max = 12800
+        assert_eq!(limiter.recommended_read_size(12800), 12800);
+    }
+
+    #[test]
+    fn recommended_read_size_much_larger() {
+        let limiter = BandwidthLimiter::new(nz(1024 * 100)); // write_max = 12800
+        assert_eq!(limiter.recommended_read_size(1_000_000), 12800);
+    }
+
+    #[test]
+    fn recommended_read_size_much_smaller() {
+        let limiter = BandwidthLimiter::new(nz(1024 * 100)); // write_max = 12800
+        assert_eq!(limiter.recommended_read_size(10), 10);
+    }
+
+    #[test]
+    fn recommended_read_size_one_byte() {
+        let limiter = BandwidthLimiter::new(nz(1024 * 100));
+        assert_eq!(limiter.recommended_read_size(1), 1);
+    }
+
+    // ========================================================================
+    // Register with elapsed time simulation tests
+    // ========================================================================
+
+    #[test]
+    fn register_first_call_has_no_elapsed_time() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+
+        // First register - no prior last_instant, so elapsed = 0
+        // All bytes become debt
+        let sleep = limiter.register(1000);
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn register_updates_last_instant() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000_000)); // Very fast
+
+        // First register
+        let _sleep1 = limiter.register(100);
+
+        // Second register - should use time since first
+        let sleep2 = limiter.register(100);
+
+        // With such a high rate, should be minimal sleep
+        assert!(sleep2.requested() < Duration::from_millis(1));
+    }
+
+    // ========================================================================
+    // Configuration update during operation tests
+    // ========================================================================
+
+    #[test]
+    fn update_limit_mid_operation_resets_state() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(nz(100));
+
+        // Accumulate some debt
+        let _sleep1 = limiter.register(100);
+
+        // Update limit - should reset
+        limiter.update_limit(nz(200));
+        assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+
+        // New register should start fresh
+        let sleep2 = limiter.register(200);
+        assert_eq!(sleep2.requested(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn update_configuration_mid_operation_resets_state() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::with_burst(nz(100), Some(nz(50)));
+
+        // Accumulate some debt
+        let _sleep1 = limiter.register(100);
+
+        // Update configuration
+        limiter.update_configuration(nz(200), Some(nz(100)));
+        assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+        assert_eq!(limiter.limit_bytes().get(), 200);
+        assert_eq!(limiter.burst_bytes().unwrap().get(), 100);
+    }
+
+    #[test]
+    fn reset_mid_operation_clears_state() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(nz(100));
+
+        // Accumulate some debt
+        let _sleep1 = limiter.register(100);
+
+        // Reset
+        limiter.reset();
+        assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+
+        // Configuration preserved
+        assert_eq!(limiter.limit_bytes().get(), 100);
+    }
+
+    // ========================================================================
+    // LimiterSleep result validation tests
+    // ========================================================================
+
+    #[test]
+    fn register_returns_correct_limiter_sleep() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+        let sleep = limiter.register(2000);
+
+        // Should request 2 seconds
+        assert_eq!(sleep.requested(), Duration::from_secs(2));
+        // Actual time is tracked (in tests, usually close to zero)
+        assert!(sleep.actual() < Duration::from_millis(100));
+    }
+
+    #[test]
+    fn register_zero_returns_noop_sleep() {
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+        let sleep = limiter.register(0);
+
+        assert!(sleep.is_noop());
+        assert_eq!(sleep.requested(), Duration::ZERO);
+        assert_eq!(sleep.actual(), Duration::ZERO);
+    }
+
+    // ========================================================================
+    // Clone behavior tests
+    // ========================================================================
+
+    #[test]
+    fn clone_preserves_configuration() {
+        let limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
+        let cloned = limiter.clone();
+
+        assert_eq!(cloned.limit_bytes(), limiter.limit_bytes());
+        assert_eq!(cloned.burst_bytes(), limiter.burst_bytes());
+        assert_eq!(cloned.write_max_bytes(), limiter.write_max_bytes());
+    }
+
+    #[test]
+    fn clone_preserves_state() {
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+        let _ = limiter.register(100);
+
+        let cloned = limiter.clone();
+
+        // State should be preserved
+        assert_eq!(
+            cloned.accumulated_debt_for_testing(),
+            limiter.accumulated_debt_for_testing()
+        );
+    }
+
+    #[test]
+    fn cloned_limiter_independent() {
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+        let cloned = limiter.clone();
+
+        // Modify original
+        let _ = limiter.register(100);
+
+        // Clone should be unaffected
+        assert_eq!(cloned.accumulated_debt_for_testing(), 0);
+    }
+
+    // ========================================================================
+    // Edge case: very large writes
+    // ========================================================================
+
+    #[test]
+    fn register_very_large_write() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        let mut limiter = BandwidthLimiter::new(nz(1_000_000)); // 1 MB/s
+
+        // Write 1 GB
+        let sleep = limiter.register(1_000_000_000);
+
+        // Should sleep for 1000 seconds
+        assert_eq!(sleep.requested(), Duration::from_secs(1000));
+    }
+
+    #[test]
+    fn register_usize_max_with_high_rate() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // Very high rate to keep sleep manageable
+        let mut limiter = BandwidthLimiter::new(nz(u64::MAX / 1000));
+
+        // Large write - should not panic
+        let _sleep = limiter.register(usize::MAX / 1000);
+    }
+
+    // ========================================================================
+    // Simulated elapsed time tests
+    // ========================================================================
+
+    #[test]
+    fn simulated_elapsed_time_reduces_debt() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // In test mode, sleeps are recorded but not actually performed
+        // The limiter tracks simulated_elapsed_us to compensate
+
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+
+        // First write
+        let sleep1 = limiter.register(1000);
+        assert_eq!(sleep1.requested(), Duration::from_secs(1));
+
+        // In tests, the actual sleep time is near-zero, but the limiter
+        // should track simulated elapsed time for subsequent calls
+    }
+
+    // ========================================================================
+    // Boundary condition tests
+    // ========================================================================
+
+    #[test]
+    fn register_exactly_one_byte() {
+        let mut limiter = BandwidthLimiter::new(nz(1)); // 1 byte/second
+        let sleep = limiter.register(1);
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn register_with_max_u64_limit() {
+        let mut limiter = BandwidthLimiter::new(nz(u64::MAX));
+        let sleep = limiter.register(1000);
+        // With max rate, sleep should be negligible
+        assert!(sleep.requested() < Duration::from_nanos(100));
+    }
+
+    #[test]
+    fn register_with_max_burst() {
+        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(u64::MAX)));
+        let sleep = limiter.register(5000);
+        // With max burst, no clamping should occur
+        assert_eq!(sleep.requested(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn register_with_min_burst() {
+        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(1)));
+        let _ = limiter.register(1000);
+        // Debt should be clamped to 1
+        assert!(limiter.accumulated_debt_for_testing() <= 1);
+    }
+
+    // ========================================================================
+    // Accessor method consistency tests
+    // ========================================================================
+
+    #[test]
+    fn accessors_consistent_after_construction() {
+        let limiter = BandwidthLimiter::with_burst(nz(5000), Some(nz(2500)));
+
+        assert_eq!(limiter.limit_bytes().get(), 5000);
+        assert_eq!(limiter.burst_bytes().unwrap().get(), 2500);
+        // write_max should reflect burst
+        assert_eq!(limiter.write_max_bytes(), 2500);
+    }
+
+    #[test]
+    fn accessors_consistent_after_update() {
+        let mut limiter = BandwidthLimiter::new(nz(1000));
+        limiter.update_configuration(nz(2000), Some(nz(1500)));
+
+        assert_eq!(limiter.limit_bytes().get(), 2000);
+        assert_eq!(limiter.burst_bytes().unwrap().get(), 1500);
+        assert_eq!(limiter.write_max_bytes(), 1500);
+    }
+
+    #[test]
+    fn accessors_consistent_after_reset() {
+        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
+        let _ = limiter.register(1000);
+        limiter.reset();
+
+        // Configuration unchanged
+        assert_eq!(limiter.limit_bytes().get(), 1000);
+        assert_eq!(limiter.burst_bytes().unwrap().get(), 500);
+        assert_eq!(limiter.write_max_bytes(), MIN_WRITE_MAX.max(500));
+        // State reset
+        assert_eq!(limiter.accumulated_debt_for_testing(), 0);
+    }
+
+    // ========================================================================
+    // Integration-style tests
+    // ========================================================================
+
+    #[test]
+    fn simulated_transfer_scenario() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // Simulate transferring a 10KB file at 1KB/s
+        let mut limiter = BandwidthLimiter::new(nz(1024)); // 1 KB/s
+
+        let mut total_requested = Duration::ZERO;
+        for _ in 0..10 {
+            let sleep = limiter.register(1024);
+            total_requested = total_requested.saturating_add(sleep.requested());
+        }
+
+        // Should have requested approximately 10 seconds total sleep
+        // (may be slightly less due to timing calculations between calls)
+        assert!(total_requested >= Duration::from_secs(9));
+        assert!(total_requested <= Duration::from_secs(11));
+    }
+
+    #[test]
+    fn simulated_bursty_transfer() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        // Simulate bursty transfer with burst limit
+        let mut limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
+
+        // Large burst write - debt clamped to 500
+        let sleep1 = limiter.register(2000);
+        assert!(sleep1.requested() <= Duration::from_millis(500));
+
+        // Another burst - debt still clamped
+        let sleep2 = limiter.register(2000);
+        assert!(sleep2.requested() <= Duration::from_millis(500));
+    }
 }

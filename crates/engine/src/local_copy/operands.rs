@@ -116,10 +116,7 @@ fn detect_relative_prefix_components(operand: &OsStr) -> Option<usize> {
     let mut components = path.components();
     let mut skip = 0;
 
-    let first = match components.next() {
-        Some(c) => c,
-        None => return None,
-    };
+    let first = components.next()?;
 
     if matches!(first, Component::Prefix(_)) {
         if !path.has_root() {

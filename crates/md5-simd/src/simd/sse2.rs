@@ -47,22 +47,70 @@ const INIT_D: u32 = 0x1032_5476;
 
 /// Pre-computed K constants (RFC 1321).
 const K: [u32; 64] = [
-    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee,
-    0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
-    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be,
-    0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
-    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa,
-    0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
-    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed,
-    0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
-    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c,
-    0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
-    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05,
-    0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
-    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039,
-    0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
-    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1,
-    0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
+    0xd76a_a478,
+    0xe8c7_b756,
+    0x2420_70db,
+    0xc1bd_ceee,
+    0xf57c_0faf,
+    0x4787_c62a,
+    0xa830_4613,
+    0xfd46_9501,
+    0x6980_98d8,
+    0x8b44_f7af,
+    0xffff_5bb1,
+    0x895c_d7be,
+    0x6b90_1122,
+    0xfd98_7193,
+    0xa679_438e,
+    0x49b4_0821,
+    0xf61e_2562,
+    0xc040_b340,
+    0x265e_5a51,
+    0xe9b6_c7aa,
+    0xd62f_105d,
+    0x0244_1453,
+    0xd8a1_e681,
+    0xe7d3_fbc8,
+    0x21e1_cde6,
+    0xc337_07d6,
+    0xf4d5_0d87,
+    0x455a_14ed,
+    0xa9e3_e905,
+    0xfcef_a3f8,
+    0x676f_02d9,
+    0x8d2a_4c8a,
+    0xfffa_3942,
+    0x8771_f681,
+    0x6d9d_6122,
+    0xfde5_380c,
+    0xa4be_ea44,
+    0x4bde_cfa9,
+    0xf6bb_4b60,
+    0xbebf_bc70,
+    0x289b_7ec6,
+    0xeaa1_27fa,
+    0xd4ef_3085,
+    0x0488_1d05,
+    0xd9d4_d039,
+    0xe6db_99e5,
+    0x1fa2_7cf8,
+    0xc4ac_5665,
+    0xf429_2244,
+    0x432a_ff97,
+    0xab94_23a7,
+    0xfc93_a039,
+    0x655b_59c3,
+    0x8f0c_cc92,
+    0xffef_f47d,
+    0x8584_5dd1,
+    0x6fa8_7e4f,
+    0xfe2c_e6e0,
+    0xa301_4314,
+    0x4e08_11a1,
+    0xf753_7e82,
+    0xbd3a_f235,
+    0x2ad7_d2bb,
+    0xeb86_d391,
 ];
 
 /// Maximum input size supported.
@@ -74,22 +122,54 @@ const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 /// logical left shift combined with logical right shift and OR.
 /// The shift amounts must be compile-time constants.
 macro_rules! rotl {
-    ($x:expr, 4) => { _mm_or_si128(_mm_slli_epi32($x, 4), _mm_srli_epi32($x, 28)) };
-    ($x:expr, 5) => { _mm_or_si128(_mm_slli_epi32($x, 5), _mm_srli_epi32($x, 27)) };
-    ($x:expr, 6) => { _mm_or_si128(_mm_slli_epi32($x, 6), _mm_srli_epi32($x, 26)) };
-    ($x:expr, 7) => { _mm_or_si128(_mm_slli_epi32($x, 7), _mm_srli_epi32($x, 25)) };
-    ($x:expr, 9) => { _mm_or_si128(_mm_slli_epi32($x, 9), _mm_srli_epi32($x, 23)) };
-    ($x:expr, 10) => { _mm_or_si128(_mm_slli_epi32($x, 10), _mm_srli_epi32($x, 22)) };
-    ($x:expr, 11) => { _mm_or_si128(_mm_slli_epi32($x, 11), _mm_srli_epi32($x, 21)) };
-    ($x:expr, 12) => { _mm_or_si128(_mm_slli_epi32($x, 12), _mm_srli_epi32($x, 20)) };
-    ($x:expr, 14) => { _mm_or_si128(_mm_slli_epi32($x, 14), _mm_srli_epi32($x, 18)) };
-    ($x:expr, 15) => { _mm_or_si128(_mm_slli_epi32($x, 15), _mm_srli_epi32($x, 17)) };
-    ($x:expr, 16) => { _mm_or_si128(_mm_slli_epi32($x, 16), _mm_srli_epi32($x, 16)) };
-    ($x:expr, 17) => { _mm_or_si128(_mm_slli_epi32($x, 17), _mm_srli_epi32($x, 15)) };
-    ($x:expr, 20) => { _mm_or_si128(_mm_slli_epi32($x, 20), _mm_srli_epi32($x, 12)) };
-    ($x:expr, 21) => { _mm_or_si128(_mm_slli_epi32($x, 21), _mm_srli_epi32($x, 11)) };
-    ($x:expr, 22) => { _mm_or_si128(_mm_slli_epi32($x, 22), _mm_srli_epi32($x, 10)) };
-    ($x:expr, 23) => { _mm_or_si128(_mm_slli_epi32($x, 23), _mm_srli_epi32($x, 9)) };
+    ($x:expr, 4) => {
+        _mm_or_si128(_mm_slli_epi32($x, 4), _mm_srli_epi32($x, 28))
+    };
+    ($x:expr, 5) => {
+        _mm_or_si128(_mm_slli_epi32($x, 5), _mm_srli_epi32($x, 27))
+    };
+    ($x:expr, 6) => {
+        _mm_or_si128(_mm_slli_epi32($x, 6), _mm_srli_epi32($x, 26))
+    };
+    ($x:expr, 7) => {
+        _mm_or_si128(_mm_slli_epi32($x, 7), _mm_srli_epi32($x, 25))
+    };
+    ($x:expr, 9) => {
+        _mm_or_si128(_mm_slli_epi32($x, 9), _mm_srli_epi32($x, 23))
+    };
+    ($x:expr, 10) => {
+        _mm_or_si128(_mm_slli_epi32($x, 10), _mm_srli_epi32($x, 22))
+    };
+    ($x:expr, 11) => {
+        _mm_or_si128(_mm_slli_epi32($x, 11), _mm_srli_epi32($x, 21))
+    };
+    ($x:expr, 12) => {
+        _mm_or_si128(_mm_slli_epi32($x, 12), _mm_srli_epi32($x, 20))
+    };
+    ($x:expr, 14) => {
+        _mm_or_si128(_mm_slli_epi32($x, 14), _mm_srli_epi32($x, 18))
+    };
+    ($x:expr, 15) => {
+        _mm_or_si128(_mm_slli_epi32($x, 15), _mm_srli_epi32($x, 17))
+    };
+    ($x:expr, 16) => {
+        _mm_or_si128(_mm_slli_epi32($x, 16), _mm_srli_epi32($x, 16))
+    };
+    ($x:expr, 17) => {
+        _mm_or_si128(_mm_slli_epi32($x, 17), _mm_srli_epi32($x, 15))
+    };
+    ($x:expr, 20) => {
+        _mm_or_si128(_mm_slli_epi32($x, 20), _mm_srli_epi32($x, 12))
+    };
+    ($x:expr, 21) => {
+        _mm_or_si128(_mm_slli_epi32($x, 21), _mm_srli_epi32($x, 11))
+    };
+    ($x:expr, 22) => {
+        _mm_or_si128(_mm_slli_epi32($x, 22), _mm_srli_epi32($x, 10))
+    };
+    ($x:expr, 23) => {
+        _mm_or_si128(_mm_slli_epi32($x, 23), _mm_srli_epi32($x, 9))
+    };
 }
 
 /// Compute MD5 digests for up to 4 inputs in parallel using SSE2.
@@ -166,9 +246,18 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 
         // Create mask for active lanes
         let lane_active: [i32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { -1 } else { 0 }
+            if block_idx < block_counts[lane] {
+                -1
+            } else {
+                0
+            }
         });
-        let mask = _mm_setr_epi32(lane_active[0], lane_active[1], lane_active[2], lane_active[3]);
+        let mask = _mm_setr_epi32(
+            lane_active[0],
+            lane_active[1],
+            lane_active[2],
+            lane_active[3],
+        );
 
         // Load message words (transposed)
         let mut m = [_mm_setzero_si128(); 16];
@@ -200,14 +289,29 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                 let k_i = _mm_set1_epi32(K[$i] as i32);
                 let temp = _mm_add_epi32(_mm_add_epi32(a, f), _mm_add_epi32(k_i, m[$g]));
                 let rotated = rotl!(temp, $s);
-                a = d; d = c; c = b; b = _mm_add_epi32(b, rotated);
+                a = d;
+                d = c;
+                c = b;
+                b = _mm_add_epi32(b, rotated);
             }};
         }
 
-        round1!(0, 0, 7);   round1!(1, 1, 12);  round1!(2, 2, 17);  round1!(3, 3, 22);
-        round1!(4, 4, 7);   round1!(5, 5, 12);  round1!(6, 6, 17);  round1!(7, 7, 22);
-        round1!(8, 8, 7);   round1!(9, 9, 12);  round1!(10, 10, 17); round1!(11, 11, 22);
-        round1!(12, 12, 7); round1!(13, 13, 12); round1!(14, 14, 17); round1!(15, 15, 22);
+        round1!(0, 0, 7);
+        round1!(1, 1, 12);
+        round1!(2, 2, 17);
+        round1!(3, 3, 22);
+        round1!(4, 4, 7);
+        round1!(5, 5, 12);
+        round1!(6, 6, 17);
+        round1!(7, 7, 22);
+        round1!(8, 8, 7);
+        round1!(9, 9, 12);
+        round1!(10, 10, 17);
+        round1!(11, 11, 22);
+        round1!(12, 12, 7);
+        round1!(13, 13, 12);
+        round1!(14, 14, 17);
+        round1!(15, 15, 22);
 
         // Round 2: G = (D & B) | (~D & C), shifts: 5,9,14,20
         macro_rules! round2 {
@@ -216,14 +320,29 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                 let k_i = _mm_set1_epi32(K[$i] as i32);
                 let temp = _mm_add_epi32(_mm_add_epi32(a, f), _mm_add_epi32(k_i, m[$g]));
                 let rotated = rotl!(temp, $s);
-                a = d; d = c; c = b; b = _mm_add_epi32(b, rotated);
+                a = d;
+                d = c;
+                c = b;
+                b = _mm_add_epi32(b, rotated);
             }};
         }
 
-        round2!(16, 1, 5);  round2!(17, 6, 9);   round2!(18, 11, 14); round2!(19, 0, 20);
-        round2!(20, 5, 5);  round2!(21, 10, 9);  round2!(22, 15, 14); round2!(23, 4, 20);
-        round2!(24, 9, 5);  round2!(25, 14, 9);  round2!(26, 3, 14);  round2!(27, 8, 20);
-        round2!(28, 13, 5); round2!(29, 2, 9);   round2!(30, 7, 14);  round2!(31, 12, 20);
+        round2!(16, 1, 5);
+        round2!(17, 6, 9);
+        round2!(18, 11, 14);
+        round2!(19, 0, 20);
+        round2!(20, 5, 5);
+        round2!(21, 10, 9);
+        round2!(22, 15, 14);
+        round2!(23, 4, 20);
+        round2!(24, 9, 5);
+        round2!(25, 14, 9);
+        round2!(26, 3, 14);
+        round2!(27, 8, 20);
+        round2!(28, 13, 5);
+        round2!(29, 2, 9);
+        round2!(30, 7, 14);
+        round2!(31, 12, 20);
 
         // Round 3: H = B ^ C ^ D, shifts: 4,11,16,23
         macro_rules! round3 {
@@ -232,14 +351,29 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                 let k_i = _mm_set1_epi32(K[$i] as i32);
                 let temp = _mm_add_epi32(_mm_add_epi32(a, f), _mm_add_epi32(k_i, m[$g]));
                 let rotated = rotl!(temp, $s);
-                a = d; d = c; c = b; b = _mm_add_epi32(b, rotated);
+                a = d;
+                d = c;
+                c = b;
+                b = _mm_add_epi32(b, rotated);
             }};
         }
 
-        round3!(32, 5, 4);  round3!(33, 8, 11);  round3!(34, 11, 16); round3!(35, 14, 23);
-        round3!(36, 1, 4);  round3!(37, 4, 11);  round3!(38, 7, 16);  round3!(39, 10, 23);
-        round3!(40, 13, 4); round3!(41, 0, 11);  round3!(42, 3, 16);  round3!(43, 6, 23);
-        round3!(44, 9, 4);  round3!(45, 12, 11); round3!(46, 15, 16); round3!(47, 2, 23);
+        round3!(32, 5, 4);
+        round3!(33, 8, 11);
+        round3!(34, 11, 16);
+        round3!(35, 14, 23);
+        round3!(36, 1, 4);
+        round3!(37, 4, 11);
+        round3!(38, 7, 16);
+        round3!(39, 10, 23);
+        round3!(40, 13, 4);
+        round3!(41, 0, 11);
+        round3!(42, 3, 16);
+        round3!(43, 6, 23);
+        round3!(44, 9, 4);
+        round3!(45, 12, 11);
+        round3!(46, 15, 16);
+        round3!(47, 2, 23);
 
         // Round 4: I = C ^ (B | ~D), shifts: 6,10,15,21
         macro_rules! round4 {
@@ -249,14 +383,29 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
                 let k_i = _mm_set1_epi32(K[$i] as i32);
                 let temp = _mm_add_epi32(_mm_add_epi32(a, f), _mm_add_epi32(k_i, m[$g]));
                 let rotated = rotl!(temp, $s);
-                a = d; d = c; c = b; b = _mm_add_epi32(b, rotated);
+                a = d;
+                d = c;
+                c = b;
+                b = _mm_add_epi32(b, rotated);
             }};
         }
 
-        round4!(48, 0, 6);  round4!(49, 7, 10);  round4!(50, 14, 15); round4!(51, 5, 21);
-        round4!(52, 12, 6); round4!(53, 3, 10);  round4!(54, 10, 15); round4!(55, 1, 21);
-        round4!(56, 8, 6);  round4!(57, 15, 10); round4!(58, 6, 15);  round4!(59, 13, 21);
-        round4!(60, 4, 6);  round4!(61, 11, 10); round4!(62, 2, 15);  round4!(63, 9, 21);
+        round4!(48, 0, 6);
+        round4!(49, 7, 10);
+        round4!(50, 14, 15);
+        round4!(51, 5, 21);
+        round4!(52, 12, 6);
+        round4!(53, 3, 10);
+        round4!(54, 10, 15);
+        round4!(55, 1, 21);
+        round4!(56, 8, 6);
+        round4!(57, 15, 10);
+        round4!(58, 6, 15);
+        round4!(59, 13, 21);
+        round4!(60, 4, 6);
+        round4!(61, 11, 10);
+        round4!(62, 2, 15);
+        round4!(63, 9, 21);
 
         // Add saved state
         let new_a = _mm_add_epi32(a, aa);
@@ -313,12 +462,7 @@ mod tests {
 
     #[test]
     fn sse2_matches_scalar() {
-        let inputs: [&[u8]; 4] = [
-            b"",
-            b"a",
-            b"abc",
-            b"message digest",
-        ];
+        let inputs: [&[u8]; 4] = [b"", b"a", b"abc", b"message digest"];
 
         let results = unsafe { digest_x4(&inputs) };
 
@@ -335,12 +479,7 @@ mod tests {
 
     #[test]
     fn sse2_rfc1321_vectors() {
-        let inputs: [&[u8]; 4] = [
-            b"",
-            b"a",
-            b"abc",
-            b"message digest",
-        ];
+        let inputs: [&[u8]; 4] = [b"", b"a", b"abc", b"message digest"];
 
         let expected = [
             "d41d8cd98f00b204e9800998ecf8427e",

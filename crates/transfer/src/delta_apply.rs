@@ -21,7 +21,7 @@ use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 use engine::signature::FileSignature;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
-use crate::constants::{leading_zero_count, trailing_zero_count, CHUNK_SIZE};
+use crate::constants::{CHUNK_SIZE, leading_zero_count, trailing_zero_count};
 use crate::map_file::{BufferedMap, MapFile};
 use crate::token_buffer::TokenBuffer;
 
@@ -289,10 +289,7 @@ impl<'a> DeltaApplicator<'a> {
         // Open basis file once if provided - cached for all block references
         let basis_map = if let Some(path) = basis_path {
             Some(MapFile::open(path).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("failed to open basis file {path:?}: {e}"),
-                )
+                io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
             })?)
         } else {
             None
@@ -329,8 +326,7 @@ impl<'a> DeltaApplicator<'a> {
     /// Uses cached `MapFile` with 256KB sliding window for efficient access,
     /// avoiding repeated open/seek/read syscalls for each block reference.
     pub fn apply_block_ref(&mut self, block_idx: usize) -> io::Result<()> {
-        let (Some(signature), Some(basis_map)) =
-            (&self.basis_signature, self.basis_map.as_mut())
+        let (Some(signature), Some(basis_map)) = (&self.basis_signature, self.basis_map.as_mut())
         else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

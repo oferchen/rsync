@@ -58,8 +58,8 @@ mod sha256;
 mod sha512;
 mod xxhash;
 
-pub use md4::{digest_batch as md4_digest_batch, Md4};
-pub use md5::{digest_batch as md5_digest_batch, Md5, Md5Seed};
+pub use md4::{Md4, digest_batch as md4_digest_batch};
+pub use md5::{Md5, Md5Seed, digest_batch as md5_digest_batch};
 
 #[cfg(feature = "openssl")]
 pub use openssl_support::openssl_acceleration_available;

@@ -788,16 +788,11 @@ impl GeneratorContext {
 
         let count = self.file_list.len();
         info_log!(Flist, 1, "built file list with {} entries", count);
-        debug_log!(
-            Flist,
-            2,
-            "file list entries: {:?}",
-            {
-                let mut names = Vec::with_capacity(count);
-                names.extend(self.file_list.iter().map(FileEntry::name));
-                names
-            }
-        );
+        debug_log!(Flist, 2, "file list entries: {:?}", {
+            let mut names = Vec::with_capacity(count);
+            names.extend(self.file_list.iter().map(FileEntry::name));
+            names
+        });
 
         Ok(count)
     }
@@ -1749,8 +1744,13 @@ mod tests {
 
     /// Creates a default `HandshakeResult` for testing.
     fn test_handshake() -> HandshakeResult {
+        test_handshake_with_protocol(32)
+    }
+
+    /// Creates a `HandshakeResult` with a specific protocol version for testing.
+    fn test_handshake_with_protocol(protocol_version: u8) -> HandshakeResult {
         HandshakeResult {
-            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            protocol: ProtocolVersion::try_from(protocol_version).unwrap(),
             buffered: Vec::new(),
             compat_exchanged: false,
             client_args: None,           // Test mode doesn't need client args
@@ -1758,6 +1758,27 @@ mod tests {
             negotiated_algorithms: None, // Test mode uses defaults
             compat_flags: None,          // Test mode uses defaults
             checksum_seed: 0,            // Test mode uses dummy seed
+        }
+    }
+
+    /// Creates a `HandshakeResult` with negotiated algorithms for testing.
+    fn test_handshake_with_negotiated_algorithms(
+        protocol_version: u8,
+        checksum: ChecksumAlgorithm,
+        compression: protocol::CompressionAlgorithm,
+    ) -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(protocol_version).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: Some(NegotiationResult {
+                checksum,
+                compression,
+            }),
+            compat_flags: None,
+            checksum_seed: 0,
         }
     }
 
@@ -1770,7 +1791,10 @@ mod tests {
     }
 
     /// Creates a `GeneratorContext` configured for a specific path with optional recursion.
-    fn test_generator_for_path(base_path: &Path, recursive: bool) -> (HandshakeResult, GeneratorContext) {
+    fn test_generator_for_path(
+        base_path: &Path,
+        recursive: bool,
+    ) -> (HandshakeResult, GeneratorContext) {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(base_path)];
@@ -2004,7 +2028,10 @@ mod tests {
         let base_path = temp_dir.path();
 
         let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
-        apply_filters(&mut ctx, vec![FilterRuleWireFormat::exclude("*.log".to_owned())]);
+        apply_filters(
+            &mut ctx,
+            vec![FilterRuleWireFormat::exclude("*.log".to_owned())],
+        );
 
         let count = build_file_list_for(&mut ctx, base_path);
 
@@ -2028,10 +2055,13 @@ mod tests {
         let base_path = temp_dir.path();
 
         let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
-        apply_filters(&mut ctx, vec![
-            FilterRuleWireFormat::include("*.txt".to_owned()),
-            FilterRuleWireFormat::exclude("*".to_owned()),
-        ]);
+        apply_filters(
+            &mut ctx,
+            vec![
+                FilterRuleWireFormat::include("*.txt".to_owned()),
+                FilterRuleWireFormat::exclude("*".to_owned()),
+            ],
+        );
 
         let count = build_file_list_for(&mut ctx, base_path);
 
@@ -2052,9 +2082,12 @@ mod tests {
         let base_path = temp_dir.path();
 
         let (_handshake, mut ctx) = test_generator_for_path(base_path, true);
-        apply_filters(&mut ctx, vec![
-            FilterRuleWireFormat::exclude("exclude_dir/".to_owned()).with_directory_only(true),
-        ]);
+        apply_filters(
+            &mut ctx,
+            vec![
+                FilterRuleWireFormat::exclude("exclude_dir/".to_owned()).with_directory_only(true),
+            ],
+        );
 
         let count = build_file_list_for(&mut ctx, base_path);
 
@@ -2514,8 +2547,7 @@ mod tests {
     #[test]
     fn should_activate_input_multiplex_client_mode_protocol_28() {
         // Client mode activates at protocol >= 23, so 28 should activate
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(28u8).unwrap();
+        let handshake = test_handshake_with_protocol(28);
         let mut config = test_config();
         config.client_mode = true;
 
@@ -2527,8 +2559,7 @@ mod tests {
     #[test]
     fn should_activate_input_multiplex_client_mode_protocol_32() {
         // Test with higher protocol version
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let handshake = test_handshake_with_protocol(32);
         let mut config = test_config();
         config.client_mode = true;
 
@@ -2538,8 +2569,7 @@ mod tests {
 
     #[test]
     fn should_activate_input_multiplex_server_mode_protocol_30() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(30u8).unwrap();
+        let handshake = test_handshake_with_protocol(30);
         let mut config = test_config();
         config.client_mode = false;
 
@@ -2549,8 +2579,7 @@ mod tests {
 
     #[test]
     fn should_activate_input_multiplex_server_mode_protocol_29() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let handshake = test_handshake_with_protocol(29);
         let mut config = test_config();
         config.client_mode = false;
 
@@ -2560,9 +2589,7 @@ mod tests {
 
     #[test]
     fn get_checksum_algorithm_default_protocol_28() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(28u8).unwrap();
-        handshake.negotiated_algorithms = None;
+        let handshake = test_handshake_with_protocol(28);
 
         let ctx = GeneratorContext::new(&handshake, test_config());
         assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::MD4);
@@ -2570,9 +2597,7 @@ mod tests {
 
     #[test]
     fn get_checksum_algorithm_default_protocol_30() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(30u8).unwrap();
-        handshake.negotiated_algorithms = None;
+        let handshake = test_handshake_with_protocol(30);
 
         let ctx = GeneratorContext::new(&handshake, test_config());
         assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::MD5);
@@ -2580,12 +2605,11 @@ mod tests {
 
     #[test]
     fn get_checksum_algorithm_negotiated() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(32u8).unwrap();
-        handshake.negotiated_algorithms = Some(NegotiationResult {
-            checksum: ChecksumAlgorithm::XXH3,
-            compression: protocol::CompressionAlgorithm::None,
-        });
+        let handshake = test_handshake_with_negotiated_algorithms(
+            32,
+            ChecksumAlgorithm::XXH3,
+            protocol::CompressionAlgorithm::None,
+        );
 
         let ctx = GeneratorContext::new(&handshake, test_config());
         assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::XXH3);
@@ -2692,9 +2716,7 @@ mod tests {
 
     #[test]
     fn send_io_error_flag_protocol_29() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(29u8).unwrap();
-
+        let handshake = test_handshake_with_protocol(29);
         let ctx = GeneratorContext::new(&handshake, test_config());
 
         let mut output = Vec::new();
@@ -2707,9 +2729,7 @@ mod tests {
 
     #[test]
     fn send_io_error_flag_protocol_30() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(30u8).unwrap();
-
+        let handshake = test_handshake_with_protocol(30);
         let ctx = GeneratorContext::new(&handshake, test_config());
 
         let mut output = Vec::new();
@@ -2721,9 +2741,7 @@ mod tests {
 
     #[test]
     fn send_io_error_flag_with_errors_protocol_29() {
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(29u8).unwrap();
-
+        let handshake = test_handshake_with_protocol(29);
         let mut ctx = GeneratorContext::new(&handshake, test_config());
         ctx.add_io_error(io_error_flags::IOERR_GENERAL);
 
@@ -2739,9 +2757,7 @@ mod tests {
     #[test]
     fn send_io_error_flag_ignore_errors_suppresses_value() {
         // Tests upstream behavior: flist.c:2518: write_int(f, ignore_errors ? 0 : io_error);
-        let mut handshake = test_handshake();
-        handshake.protocol = ProtocolVersion::try_from(29u8).unwrap();
-
+        let handshake = test_handshake_with_protocol(29);
         let mut config = test_config();
         config.ignore_errors = true;
 
@@ -2810,8 +2826,18 @@ mod tests {
 
     /// Creates test config with specific flags for ID list tests.
     fn config_with_flags(owner: bool, group: bool, numeric_ids: bool) -> ServerConfig {
+        config_with_role_and_flags(ServerRole::Generator, owner, group, numeric_ids)
+    }
+
+    /// Creates test config with specific role and flags for ID list tests.
+    fn config_with_role_and_flags(
+        role: ServerRole,
+        owner: bool,
+        group: bool,
+        numeric_ids: bool,
+    ) -> ServerConfig {
         ServerConfig {
-            role: ServerRole::Generator,
+            role,
             protocol: ProtocolVersion::try_from(32u8).unwrap(),
             flag_string: "-logDtpre.".to_owned(),
             flags: ParsedServerFlags {
@@ -2917,25 +2943,7 @@ mod tests {
         assert_eq!(wire_data, vec![0, 0]);
 
         // Receiver reads ID lists with matching flags
-        let recv_config = ServerConfig {
-            role: ServerRole::Receiver,
-            protocol: ProtocolVersion::try_from(32u8).unwrap(),
-            flag_string: "-logDtpre.".to_owned(),
-            flags: ParsedServerFlags {
-                owner: true,
-                group: true,
-                numeric_ids: false,
-                ..ParsedServerFlags::default()
-            },
-            args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-        };
+        let recv_config = config_with_role_and_flags(ServerRole::Receiver, true, true, false);
         let mut receiver = ReceiverContext::new(&handshake, recv_config);
 
         let mut cursor = Cursor::new(&wire_data[..]);
@@ -2962,25 +2970,7 @@ mod tests {
         assert!(wire_data.is_empty());
 
         // Receiver also skips reading with matching flags
-        let recv_config = ServerConfig {
-            role: ServerRole::Receiver,
-            protocol: ProtocolVersion::try_from(32u8).unwrap(),
-            flag_string: "-logDtpre.".to_owned(),
-            flags: ParsedServerFlags {
-                owner: true,
-                group: true,
-                numeric_ids: true,
-                ..ParsedServerFlags::default()
-            },
-            args: vec![OsString::from(".")],
-            compression_level: None,
-            client_mode: false,
-            filter_rules: Vec::new(),
-            reference_directories: Vec::new(),
-            iconv: None,
-            ignore_errors: false,
-            fsync: false,
-        };
+        let recv_config = config_with_role_and_flags(ServerRole::Receiver, true, true, true);
         let mut receiver = ReceiverContext::new(&handshake, recv_config);
 
         let mut cursor = Cursor::new(&wire_data[..]);
@@ -2992,11 +2982,11 @@ mod tests {
 
     #[test]
     fn generator_context_stores_negotiated_compression() {
-        let mut handshake = test_handshake();
-        handshake.negotiated_algorithms = Some(NegotiationResult {
-            checksum: ChecksumAlgorithm::XXH3,
-            compression: protocol::CompressionAlgorithm::Zlib,
-        });
+        let handshake = test_handshake_with_negotiated_algorithms(
+            32,
+            ChecksumAlgorithm::XXH3,
+            protocol::CompressionAlgorithm::Zlib,
+        );
 
         let ctx = GeneratorContext::new(&handshake, test_config());
         assert!(ctx.negotiated_algorithms.is_some());
@@ -3006,11 +2996,11 @@ mod tests {
 
     #[test]
     fn generator_context_handles_no_compression() {
-        let mut handshake = test_handshake();
-        handshake.negotiated_algorithms = Some(NegotiationResult {
-            checksum: ChecksumAlgorithm::MD5,
-            compression: protocol::CompressionAlgorithm::None,
-        });
+        let handshake = test_handshake_with_negotiated_algorithms(
+            32,
+            ChecksumAlgorithm::MD5,
+            protocol::CompressionAlgorithm::None,
+        );
 
         let ctx = GeneratorContext::new(&handshake, test_config());
         assert!(ctx.negotiated_algorithms.is_some());

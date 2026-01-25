@@ -158,8 +158,11 @@ pub(crate) fn read_file_list_from_reader<R: BufRead>(
     Ok(())
 }
 
-/// Deprecated: Kept for reference, will be removed once native SSH is fully validated
-#[allow(dead_code)]
+/// Determines whether the transfer involves any remote operands.
+///
+/// Returns `true` if any element in `remainder` (the CLI operands) or
+/// `file_list` (entries from `--files-from`) appears to be a remote path.
+#[cfg(test)]
 pub(crate) fn transfer_requires_remote(
     remainder: &[OsString],
     file_list_operands: &[OsString],

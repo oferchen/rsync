@@ -221,7 +221,7 @@ fn limiter_burst_affects_initial_allowance() {
 
     // Small rate but large burst
     let mut limiter = BandwidthLimiter::with_burst(
-        NonZeroU64::new(1024).unwrap(),      // 1KB/s
+        NonZeroU64::new(1024).unwrap(),        // 1KB/s
         Some(NonZeroU64::new(10240).unwrap()), // 10KB burst
     );
 

@@ -496,6 +496,7 @@ fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod tests {
     use super::*;
 
@@ -1085,9 +1086,15 @@ mod tests {
                 let mut stdin = &b""[..];
                 let mut stdout = Vec::new();
                 let result = negotiate_capabilities(
-                    protocol, &mut stdin, &mut stdout,
-                    true, true, false, true
-                ).unwrap();
+                    protocol,
+                    &mut stdin,
+                    &mut stdout,
+                    true,
+                    true,
+                    false,
+                    true,
+                )
+                .unwrap();
                 assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
                 assert_eq!(result.compression, CompressionAlgorithm::Zlib);
             } else {
@@ -1096,9 +1103,15 @@ mod tests {
                 let mut stdin = &client_response[..];
                 let mut stdout = Vec::new();
                 let result = negotiate_capabilities(
-                    protocol, &mut stdin, &mut stdout,
-                    true, true, false, true
-                ).unwrap();
+                    protocol,
+                    &mut stdin,
+                    &mut stdout,
+                    true,
+                    true,
+                    false,
+                    true,
+                )
+                .unwrap();
                 assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
                 assert_eq!(result.compression, CompressionAlgorithm::Zlib);
             }
@@ -1111,10 +1124,9 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol, &mut stdin, &mut stdout,
-            true, true, false, true
-        ).unwrap();
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                .unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
@@ -1127,10 +1139,9 @@ mod tests {
         let mut stdin = &b""[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol, &mut stdin, &mut stdout,
-            true, true, false, true
-        ).unwrap();
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                .unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
         assert_eq!(result.compression, CompressionAlgorithm::Zlib);
@@ -1144,10 +1155,9 @@ mod tests {
         let mut stdin = &client_response[..];
         let mut stdout = Vec::new();
 
-        let result = negotiate_capabilities(
-            protocol, &mut stdin, &mut stdout,
-            true, true, false, true
-        ).unwrap();
+        let result =
+            negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true)
+                .unwrap();
 
         assert_eq!(result.checksum, ChecksumAlgorithm::XXH64);
         assert_eq!(result.compression, CompressionAlgorithm::ZlibX);
@@ -1204,10 +1214,18 @@ mod tests {
             write_vstring(&mut buffer, &test_str).unwrap();
 
             // Should use 1-byte length format
-            assert_eq!(buffer[0], len as u8, "length {} should encode as single byte", len);
+            assert_eq!(
+                buffer[0], len as u8,
+                "length {} should encode as single byte",
+                len
+            );
             assert_eq!(buffer.len(), 1 + len, "total size should be 1 + {}", len);
             // High bit should be clear
-            assert!(buffer[0] & 0x80 == 0, "high bit should be clear for length {}", len);
+            assert!(
+                buffer[0] & 0x80 == 0,
+                "high bit should be clear for length {}",
+                len
+            );
 
             let mut reader = &buffer[..];
             let received = read_vstring(&mut reader).unwrap();
@@ -1238,7 +1256,7 @@ mod tests {
         // Test decoding raw bytes: length byte + content
         for len in 0u8..=127 {
             let mut data = vec![len];
-            data.extend(std::iter::repeat(b'x').take(len as usize));
+            data.extend(vec![b'x'; len as usize]);
 
             let mut reader = &data[..];
             let received = read_vstring(&mut reader).unwrap();
@@ -1250,9 +1268,14 @@ mod tests {
     /// Tests typical algorithm names (all use 1-byte format).
     #[test]
     fn phase2_10_vstring_1byte_algorithm_names() {
-        let names = ["md4", "md5", "sha1", "xxh64", "xxh128", "zlib", "zlibx", "zstd", "lz4", "none"];
+        let names = [
+            "md4", "md5", "sha1", "xxh64", "xxh128", "zlib", "zlibx", "zstd", "lz4", "none",
+        ];
         for name in names {
-            assert!(name.len() <= 127, "algorithm name should fit in 1-byte format");
+            assert!(
+                name.len() <= 127,
+                "algorithm name should fit in 1-byte format"
+            );
 
             let mut buffer = Vec::new();
             write_vstring(&mut buffer, name).unwrap();
@@ -1312,7 +1335,10 @@ mod tests {
         // 128 = 0x0080, so high byte = 0x00 | 0x80 = 0x80, low byte = 0x80
         assert_eq!(buffer[0], 0x80);
         assert_eq!(buffer[1], 0x80);
-        assert!(buffer[0] & 0x80 != 0, "high bit should be set for 2-byte format");
+        assert!(
+            buffer[0] & 0x80 != 0,
+            "high bit should be set for 2-byte format"
+        );
         assert_eq!(buffer.len(), 2 + 128); // 2 length bytes + 128 data bytes
 
         let mut reader = &buffer[..];
@@ -1379,7 +1405,11 @@ mod tests {
             write_vstring(&mut buffer, &test_str).unwrap();
 
             // Verify 2-byte format
-            assert!(buffer[0] & 0x80 != 0, "high bit should be set for length {}", len);
+            assert!(
+                buffer[0] & 0x80 != 0,
+                "high bit should be set for length {}",
+                len
+            );
 
             // Verify encoding: len = ((buffer[0] & 0x7F) << 8) | buffer[1]
             let decoded_len = ((buffer[0] & 0x7F) as usize) * 256 + buffer[1] as usize;
@@ -1396,16 +1426,16 @@ mod tests {
     fn phase2_11_vstring_2byte_decode_raw() {
         // Test specific 2-byte encoded lengths
         let cases = [
-            (128, 0x80u8, 0x80u8),   // 128 = 0x0080
-            (200, 0x80, 0xC8),       // 200 = 0x00C8
-            (256, 0x81, 0x00),       // 256 = 0x0100
-            (1000, 0x83, 0xE8),      // 1000 = 0x03E8
-            (8000, 0x9F, 0x40),      // 8000 = 0x1F40
+            (128, 0x80u8, 0x80u8), // 128 = 0x0080
+            (200, 0x80, 0xC8),     // 200 = 0x00C8
+            (256, 0x81, 0x00),     // 256 = 0x0100
+            (1000, 0x83, 0xE8),    // 1000 = 0x03E8
+            (8000, 0x9F, 0x40),    // 8000 = 0x1F40
         ];
 
         for (len, high, low) in cases {
             let mut data = vec![high, low];
-            data.extend(std::iter::repeat(b'x').take(len));
+            data.extend(vec![b'x'; len]);
 
             let mut reader = &data[..];
             let received = read_vstring(&mut reader).unwrap();
@@ -1428,7 +1458,7 @@ mod tests {
     fn phase2_11_vstring_2byte_truncated_data() {
         // Length says 200 bytes, but only 50 provided
         let mut data = vec![0x80, 0xC8]; // Length 200
-        data.extend(std::iter::repeat(b'x').take(50)); // Only 50 bytes
+        data.extend(vec![b'x'; 50]); // Only 50 bytes
 
         let mut reader = &data[..];
         let result = read_vstring(&mut reader);
@@ -1590,17 +1620,17 @@ mod tests {
     #[test]
     fn phase2_12_vstring_encoding_transitions() {
         let boundaries = [
-            0,     // Minimum
-            1,     // Single char
-            127,   // Max 1-byte
-            128,   // Min 2-byte
-            255,   // 0x00FF
-            256,   // 0x0100
-            1023,  // Just under upstream limit
-            1024,  // Upstream limit
-            4096,  // 4KB
-            8191,  // Just under sanity limit
-            8192,  // At sanity limit
+            0,    // Minimum
+            1,    // Single char
+            127,  // Max 1-byte
+            128,  // Min 2-byte
+            255,  // 0x00FF
+            256,  // 0x0100
+            1023, // Just under upstream limit
+            1024, // Upstream limit
+            4096, // 4KB
+            8191, // Just under sanity limit
+            8192, // At sanity limit
         ];
 
         for len in boundaries {
@@ -1645,11 +1675,450 @@ mod tests {
             write_vstring(&mut buffer, list).unwrap();
 
             // All realistic lists should fit in 1-byte format
-            assert!(buffer[0] & 0x80 == 0, "realistic list should use 1-byte format");
+            assert!(
+                buffer[0] & 0x80 == 0,
+                "realistic list should use 1-byte format"
+            );
 
             let mut reader = &buffer[..];
             let received = read_vstring(&mut reader).unwrap();
             assert_eq!(received, list);
+        }
+    }
+
+    // ========================================================================
+    // PHASE 3: I/O ERROR HANDLING TESTS
+    // ========================================================================
+
+    #[test]
+    fn phase3_write_vstring_io_error() {
+        struct FailWriter;
+        impl std::io::Write for FailWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let result = write_vstring(&mut FailWriter, "test");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn phase3_read_vstring_io_error() {
+        struct FailReader;
+        impl std::io::Read for FailReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "read failed",
+                ))
+            }
+        }
+
+        let result = read_vstring(&mut FailReader);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionReset);
+    }
+
+    #[test]
+    fn phase3_negotiate_stdin_io_error() {
+        struct FailReader;
+        impl std::io::Read for FailReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::TimedOut, "read timeout"))
+            }
+        }
+
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut FailReader,
+            &mut stdout,
+            true,
+            true,
+            false,
+            true,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn phase3_negotiate_stdout_io_error() {
+        struct FailWriter;
+        impl std::io::Write for FailWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::WouldBlock, "write blocked"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let input = b"\x03md5\x04zlib";
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut &input[..],
+            &mut FailWriter,
+            true,
+            true,
+            false,
+            true,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
+    }
+
+    // ========================================================================
+    // PHASE 4: ALGORITHM CONVERSION TESTS
+    // ========================================================================
+
+    #[test]
+    fn phase4_checksum_algorithm_as_str() {
+        assert_eq!(ChecksumAlgorithm::None.as_str(), "none");
+        assert_eq!(ChecksumAlgorithm::MD4.as_str(), "md4");
+        assert_eq!(ChecksumAlgorithm::MD5.as_str(), "md5");
+        assert_eq!(ChecksumAlgorithm::SHA1.as_str(), "sha1");
+        assert_eq!(ChecksumAlgorithm::XXH64.as_str(), "xxh64");
+        assert_eq!(ChecksumAlgorithm::XXH3.as_str(), "xxh3");
+        assert_eq!(ChecksumAlgorithm::XXH128.as_str(), "xxh128");
+    }
+
+    #[test]
+    fn phase4_compression_algorithm_as_str() {
+        assert_eq!(CompressionAlgorithm::None.as_str(), "none");
+        assert_eq!(CompressionAlgorithm::Zlib.as_str(), "zlib");
+        assert_eq!(CompressionAlgorithm::ZlibX.as_str(), "zlibx");
+        assert_eq!(CompressionAlgorithm::LZ4.as_str(), "lz4");
+        assert_eq!(CompressionAlgorithm::Zstd.as_str(), "zstd");
+    }
+
+    #[test]
+    fn phase4_checksum_algorithm_copy() {
+        let algo1 = ChecksumAlgorithm::MD5;
+        let algo2 = algo1; // Copy
+        assert_eq!(algo1, algo2);
+    }
+
+    #[test]
+    fn phase4_compression_algorithm_copy() {
+        let algo1 = CompressionAlgorithm::Zlib;
+        let algo2 = algo1; // Copy
+        assert_eq!(algo1, algo2);
+    }
+
+    #[test]
+    fn phase4_checksum_algorithm_debug() {
+        let debug = format!("{:?}", ChecksumAlgorithm::XXH128);
+        assert!(debug.contains("XXH128"));
+    }
+
+    #[test]
+    fn phase4_compression_algorithm_debug() {
+        let debug = format!("{:?}", CompressionAlgorithm::Zstd);
+        assert!(debug.contains("Zstd"));
+    }
+
+    #[test]
+    fn phase4_compression_to_compress_algorithm_none() {
+        let result = CompressionAlgorithm::None.to_compress_algorithm();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn phase4_compression_to_compress_algorithm_zlib() {
+        let result = CompressionAlgorithm::Zlib.to_compress_algorithm();
+        assert!(result.is_ok());
+        let algo = result.unwrap();
+        assert!(algo.is_some());
+    }
+
+    #[test]
+    fn phase4_compression_to_compress_algorithm_zlibx() {
+        // ZlibX also maps to Zlib compression
+        let result = CompressionAlgorithm::ZlibX.to_compress_algorithm();
+        assert!(result.is_ok());
+        let algo = result.unwrap();
+        assert!(algo.is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "lz4")]
+    fn phase4_compression_to_compress_algorithm_lz4() {
+        let result = CompressionAlgorithm::LZ4.to_compress_algorithm();
+        assert!(result.is_ok());
+        let algo = result.unwrap();
+        assert!(algo.is_some());
+    }
+
+    #[test]
+    #[cfg(not(feature = "lz4"))]
+    fn phase4_compression_lz4_not_available() {
+        let result = CompressionAlgorithm::LZ4.to_compress_algorithm();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("LZ4"));
+    }
+
+    #[test]
+    #[cfg(feature = "zstd")]
+    fn phase4_compression_to_compress_algorithm_zstd() {
+        let result = CompressionAlgorithm::Zstd.to_compress_algorithm();
+        assert!(result.is_ok());
+        let algo = result.unwrap();
+        assert!(algo.is_some());
+    }
+
+    #[test]
+    #[cfg(not(feature = "zstd"))]
+    fn phase4_compression_zstd_not_available() {
+        let result = CompressionAlgorithm::Zstd.to_compress_algorithm();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains("Zstd"));
+    }
+
+    // ========================================================================
+    // PHASE 5: NEGOTIATION EDGE CASES
+    // ========================================================================
+
+    #[test]
+    fn phase5_negotiate_only_unsupported_checksums() {
+        // If client sends only unsupported checksums, fallback to MD5
+        let list = "blake3 sha256 sha512 xxh256";
+        let result = choose_checksum_algorithm(list).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    #[test]
+    fn phase5_negotiate_only_unsupported_compressions() {
+        // If client sends only unsupported compressions, fallback to None
+        let list = "bzip2 lzma xz brotli";
+        let result = choose_compression_algorithm(list).unwrap();
+        assert_eq!(result, CompressionAlgorithm::None);
+    }
+
+    #[test]
+    fn phase5_negotiate_whitespace_only_list() {
+        let list = "   \t   \n   ";
+        let checksum = choose_checksum_algorithm(list).unwrap();
+        assert_eq!(checksum, ChecksumAlgorithm::MD5);
+
+        let compression = choose_compression_algorithm(list).unwrap();
+        assert_eq!(compression, CompressionAlgorithm::None);
+    }
+
+    #[test]
+    fn phase5_negotiate_mixed_supported_unsupported() {
+        // Mix of supported and unsupported, should pick first supported
+        let list = "blake3 unsupported xxh128 md5";
+        let result = choose_checksum_algorithm(list).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::XXH128);
+    }
+
+    #[test]
+    fn phase5_negotiate_order_preference() {
+        // First supported algorithm should win
+        let list1 = "xxh128 md5 sha1";
+        let list2 = "md5 xxh128 sha1";
+        let list3 = "sha1 md5 xxh128";
+
+        assert_eq!(
+            choose_checksum_algorithm(list1).unwrap(),
+            ChecksumAlgorithm::XXH128
+        );
+        assert_eq!(
+            choose_checksum_algorithm(list2).unwrap(),
+            ChecksumAlgorithm::MD5
+        );
+        assert_eq!(
+            choose_checksum_algorithm(list3).unwrap(),
+            ChecksumAlgorithm::SHA1
+        );
+    }
+
+    #[test]
+    fn phase5_negotiate_xxh3_support() {
+        let list = "xxh3 xxh128";
+        let result = choose_checksum_algorithm(list).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::XXH3);
+    }
+
+    #[test]
+    fn phase5_negotiate_zlibx_vs_zlib() {
+        let list = "zlibx zlib";
+        let result = choose_compression_algorithm(list).unwrap();
+        assert_eq!(result, CompressionAlgorithm::ZlibX);
+    }
+
+    // ========================================================================
+    // PHASE 6: FULL NEGOTIATION FLOW TESTS
+    // ========================================================================
+
+    #[test]
+    fn phase6_full_negotiation_all_supported_versions() {
+        for version in 28..=32 {
+            let protocol = ProtocolVersion::try_from(version).unwrap();
+
+            if protocol.uses_fixed_encoding() {
+                // Legacy: no exchange needed
+                let mut stdin = &b""[..];
+                let mut stdout = Vec::new();
+                let result = negotiate_capabilities(
+                    protocol,
+                    &mut stdin,
+                    &mut stdout,
+                    true,
+                    true,
+                    false,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+                assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+                assert!(stdout.is_empty());
+            } else {
+                // Modern: exchange required
+                let response = b"\x04sha1\x04none";
+                let mut stdin = &response[..];
+                let mut stdout = Vec::new();
+                let result = negotiate_capabilities(
+                    protocol,
+                    &mut stdin,
+                    &mut stdout,
+                    true,
+                    true,
+                    false,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
+                assert_eq!(result.compression, CompressionAlgorithm::None);
+                assert!(!stdout.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn phase6_full_negotiation_checksum_only() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let response = b"\x04sha1"; // Only checksum, no compression
+        let mut stdin = &response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            false, // send_compression = false
+            false,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
+        assert_eq!(result.compression, CompressionAlgorithm::None);
+    }
+
+    // ========================================================================
+    // PHASE 7: VSTRING SEQUENTIAL OPERATIONS
+    // ========================================================================
+
+    #[test]
+    fn phase7_vstring_multiple_sequential() {
+        let strings = ["first", "second", "third", "fourth"];
+        let mut buffer = Vec::new();
+
+        for s in &strings {
+            write_vstring(&mut buffer, s).unwrap();
+        }
+
+        let mut reader = &buffer[..];
+        for expected in &strings {
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, *expected);
+        }
+    }
+
+    #[test]
+    fn phase7_vstring_mixed_sizes() {
+        let strings = [
+            "a",               // 1 byte
+            "hello world",     // 11 bytes
+            &"x".repeat(127),  // max 1-byte format
+            &"y".repeat(128),  // min 2-byte format
+            &"z".repeat(1000), // larger 2-byte format
+        ];
+        let mut buffer = Vec::new();
+
+        for s in &strings {
+            write_vstring(&mut buffer, s).unwrap();
+        }
+
+        let mut reader = &buffer[..];
+        for expected in &strings {
+            let received = read_vstring(&mut reader).unwrap();
+            assert_eq!(received, *expected);
+        }
+    }
+
+    // ========================================================================
+    // PHASE 8: NEGOTIATION RESULT TESTS
+    // ========================================================================
+
+    #[test]
+    fn phase8_negotiation_result_copy() {
+        let r1 = NegotiationResult {
+            checksum: ChecksumAlgorithm::XXH128,
+            compression: CompressionAlgorithm::ZlibX,
+        };
+        let r2 = r1; // Copy
+        assert_eq!(r1.checksum, r2.checksum);
+        assert_eq!(r1.compression, r2.compression);
+    }
+
+    #[test]
+    fn phase8_negotiation_result_all_combinations() {
+        let checksums = [
+            ChecksumAlgorithm::None,
+            ChecksumAlgorithm::MD4,
+            ChecksumAlgorithm::MD5,
+            ChecksumAlgorithm::SHA1,
+            ChecksumAlgorithm::XXH64,
+            ChecksumAlgorithm::XXH3,
+            ChecksumAlgorithm::XXH128,
+        ];
+        let compressions = [
+            CompressionAlgorithm::None,
+            CompressionAlgorithm::Zlib,
+            CompressionAlgorithm::ZlibX,
+            CompressionAlgorithm::LZ4,
+            CompressionAlgorithm::Zstd,
+        ];
+
+        for &checksum in &checksums {
+            for &compression in &compressions {
+                let result = NegotiationResult {
+                    checksum,
+                    compression,
+                };
+                assert_eq!(result.checksum, checksum);
+                assert_eq!(result.compression, compression);
+            }
         }
     }
 }
