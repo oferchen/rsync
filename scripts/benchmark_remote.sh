@@ -4,6 +4,7 @@
 # Compares:
 #   - Upstream rsync 3.4.1
 #   - oc-rsync v0.5.2
+#   - oc-rsync v0.5.3
 #   - oc-rsync dev (current codebase)
 #
 # Tests against public rsync mirrors with 50-100MB of data.
@@ -30,6 +31,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Binary paths
 UPSTREAM="${PROJECT_ROOT}/target/interop/upstream-install/3.4.1/bin/rsync"
 OC_V052="${PROJECT_ROOT}/target/oc-rsync-v0.5.2"
+OC_V053="${PROJECT_ROOT}/target/oc-rsync-v0.5.3"
 OC_DEV="${PROJECT_ROOT}/target/release/oc-rsync"
 OC_DEV_DEBUG="${PROJECT_ROOT}/target/release-with-debug/oc-rsync"
 
@@ -91,6 +93,12 @@ check_prereqs() {
         echo -e "${YELLOW}WARN:${NC} oc-rsync v0.5.2 not found at: $OC_V052"
         echo "  Will skip v0.5.2 comparison"
         OC_V052=""
+    fi
+
+    if [[ ! -x "$OC_V053" ]]; then
+        echo -e "${YELLOW}WARN:${NC} oc-rsync v0.5.3 not found at: $OC_V053"
+        echo "  Will skip v0.5.3 comparison"
+        OC_V053=""
     fi
 
     if [[ ! -x "$OC_DEV" ]]; then
@@ -191,12 +199,14 @@ main() {
     echo "Binaries:"
     echo "  upstream-rsync: $UPSTREAM"
     [[ -n "$OC_V052" ]] && echo "  oc-rsync-v0.5.2: $OC_V052"
+    [[ -n "$OC_V053" ]] && echo "  oc-rsync-v0.5.3: $OC_V053"
     echo "  oc-rsync-dev: $OC_DEV"
     echo ""
 
     # Build list of binaries to test
     local binaries=("$UPSTREAM")
     [[ -n "$OC_V052" ]] && binaries+=("$OC_V052")
+    [[ -n "$OC_V053" ]] && binaries+=("$OC_V053")
     binaries+=("$OC_DEV")
 
     # Create temp directory
@@ -208,8 +218,18 @@ main() {
     # Test servers
     local servers=()
 
-    if test_server "rsync://rsync.kernel.org/pub/site/" "kernel.org"; then
-        servers+=("rsync://rsync.kernel.org/pub/site/|kernel.org")
+    # GNU mirrors (not kernel.org)
+    if test_server "rsync://ftp.gnu.org/gnu/bash/" "gnu-bash"; then
+        servers+=("rsync://ftp.gnu.org/gnu/bash/|gnu-bash")
+    fi
+
+    if test_server "rsync://ftp.gnu.org/gnu/coreutils/" "gnu-coreutils"; then
+        servers+=("rsync://ftp.gnu.org/gnu/coreutils/|gnu-coreutils")
+    fi
+
+    # Debian mirrors
+    if test_server "rsync://mirror.clarkson.edu/debian/doc/" "debian-doc"; then
+        servers+=("rsync://mirror.clarkson.edu/debian/doc/|debian-doc")
     fi
 
     if test_server "rsync://archive.ubuntu.com/ubuntu/pool/main/p/python3.12/" "ubuntu"; then
@@ -230,10 +250,20 @@ main() {
         local size_desc=""
 
         case "$name" in
-            kernel.org)
-                # Download keyring files (~8MB total)
+            gnu-bash)
+                # GNU Bash source tarballs (~50MB total)
                 source="$url"
-                size_desc="~8MB (keyring files)"
+                size_desc="~50MB (bash tarballs)"
+                ;;
+            gnu-coreutils)
+                # GNU Coreutils source tarballs (~100MB total)
+                source="$url"
+                size_desc="~100MB (coreutils tarballs)"
+                ;;
+            debian-doc)
+                # Debian documentation (~5MB)
+                source="$url"
+                size_desc="~5MB (debian docs)"
                 ;;
             ubuntu)
                 # Download python3.12-dbg package (~48MB)
@@ -270,8 +300,8 @@ main() {
         echo "Perf profiles: perf_remote_*.data"
         echo ""
         echo "To analyze bottlenecks:"
-        echo "  perf report -i perf_remote_kernel.org.data"
-        echo "  perf report -i perf_remote_ubuntu.data"
+        echo "  perf report -i perf_remote_gnu-bash.data"
+        echo "  perf report -i perf_remote_gnu-coreutils.data"
     fi
 }
 
