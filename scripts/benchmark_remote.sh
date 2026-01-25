@@ -13,10 +13,10 @@
 #   ./scripts/benchmark_remote.sh [OPTIONS]
 #
 # Options:
-#   --warmup N     Number of warmup runs (default: 2)
-#   --runs N       Number of benchmark runs (default: 5)
-#   --perf         Generate perf profiles for oc-rsync dev
-#   --export-json  Export results to JSON
+#   -w N    Number of warmup runs (default: 2)
+#   -n N    Number of benchmark runs (default: 5)
+#   -p      Generate perf profiles for oc-rsync dev
+#   -j      Export results to JSON
 #
 # Requirements:
 #   - hyperfine: cargo install hyperfine
@@ -56,25 +56,26 @@ usage() {
 Usage: $(basename "$0") [OPTIONS]
 
 Options:
-  -w, --warmup N     Number of warmup runs (default: 2)
-  -n, --runs N       Number of benchmark runs (default: 5)
-  -p, --perf         Generate perf profiles for oc-rsync dev
-  -j, --export-json  Export results to JSON
-  -h, --help         Show this help
+  -w N    Number of warmup runs (default: 2)
+  -n N    Number of benchmark runs (default: 5)
+  -p      Generate perf profiles for oc-rsync dev
+  -j      Export results to JSON
+  -h      Show this help
 EOF
     exit "${1:-0}"
 }
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -w|--warmup) WARMUP="$2"; shift 2 ;;
-        -n|--runs) RUNS="$2"; shift 2 ;;
-        -p|--perf) USE_PERF=true; shift ;;
-        -j|--export-json) EXPORT_JSON=true; shift ;;
-        -h|--help) usage 0 ;;
-        *) echo "Unknown option: $1"; usage 1 ;;
+while getopts "w:n:pjh" opt; do
+    case $opt in
+        w) WARMUP="$OPTARG" ;;
+        n) RUNS="$OPTARG" ;;
+        p) USE_PERF=true ;;
+        j) EXPORT_JSON=true ;;
+        h) usage 0 ;;
+        *) usage 1 ;;
     esac
 done
+shift $((OPTIND - 1))
 
 check_prereqs() {
     local missing=false

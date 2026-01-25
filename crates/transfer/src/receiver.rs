@@ -665,7 +665,10 @@ impl ReceiverContext {
             // Step 5: Apply delta to reconstruct file
             let temp_path = file_path.with_extension("oc-rsync.tmp");
             let mut temp_guard = TempFileGuard::new(temp_path.clone());
-            let mut output = fs::File::create(&temp_path)?;
+            // Use BufWriter to reduce syscall overhead for many small writes
+            // 64KB buffer matches typical OS page size for efficient I/O
+            let file = fs::File::create(&temp_path)?;
+            let mut output = std::io::BufWriter::with_capacity(64 * 1024, file);
             let mut total_bytes: u64 = 0;
 
             // Sparse file support: track zero runs to create holes
@@ -838,11 +841,18 @@ impl ReceiverContext {
             // Upstream rsync only fsyncs when --fsync flag is explicitly set (do_fsync=0 default).
             // The atomic rename still provides crash consistency - data is flushed when
             // the kernel closes the file or needs the buffers.
+            // Flush BufWriter and get inner file for sync_all
+            let file = output.into_inner().map_err(|e| {
+                io::Error::other(format!(
+                    "failed to flush output buffer for {file_path:?}: {e}"
+                ))
+            })?;
             if self.config.fsync {
-                output.sync_all().map_err(|e| {
+                file.sync_all().map_err(|e| {
                     io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
                 })?;
             }
+            drop(file); // Ensure file is closed before rename
 
             // Atomic rename (crash-safe)
             fs::rename(&temp_path, &file_path)?;

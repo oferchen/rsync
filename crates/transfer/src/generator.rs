@@ -275,18 +275,22 @@ impl GeneratorContext {
             // Collect UIDs if preserving ownership
             if self.config.flags.owner {
                 if let Some(uid) = entry.uid() {
-                    // Look up name for this UID
-                    let name = lookup_user_name(uid).ok().flatten();
-                    self.uid_list.add_id(uid, name);
+                    // Skip expensive lookup if we already have this UID
+                    if !self.uid_list.contains(uid) {
+                        let name = lookup_user_name(uid).ok().flatten();
+                        self.uid_list.add_id(uid, name);
+                    }
                 }
             }
 
             // Collect GIDs if preserving group
             if self.config.flags.group {
                 if let Some(gid) = entry.gid() {
-                    // Look up name for this GID
-                    let name = lookup_group_name(gid).ok().flatten();
-                    self.gid_list.add_id(gid, name);
+                    // Skip expensive lookup if we already have this GID
+                    if !self.gid_list.contains(gid) {
+                        let name = lookup_group_name(gid).ok().flatten();
+                        self.gid_list.add_id(gid, name);
+                    }
                 }
             }
         }
