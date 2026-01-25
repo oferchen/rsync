@@ -284,12 +284,19 @@ impl<'a> CopyContext<'a> {
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
         let expected_remaining = total_size.saturating_sub(initial_bytes);
+        // Check timeout every 1MB to reduce clock_gettime syscalls
+        const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
+        let mut bytes_since_timeout_check: u64 = 0;
 
         loop {
             if total_bytes >= expected_remaining {
                 break;
             }
-            self.enforce_timeout()?;
+            // Only check timeout periodically to reduce syscall overhead
+            if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
+                self.enforce_timeout()?;
+                bytes_since_timeout_check = 0;
+            }
             let chunk_len = if let Some(limiter) = self.limiter.as_ref() {
                 limiter.recommended_read_size(buffer.len())
             } else {
@@ -332,14 +339,18 @@ impl<'a> CopyContext<'a> {
             }
 
             total_bytes = total_bytes.saturating_add(read as u64);
+            bytes_since_timeout_check = bytes_since_timeout_check.saturating_add(read as u64);
             let literal_delta = if sparse {
                 read as u64
             } else {
                 written as u64
             };
             literal_bytes = literal_bytes.saturating_add(literal_delta);
-            let progressed = initial_bytes.saturating_add(total_bytes);
-            self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
+            // Only compute elapsed time if we have an observer to report to
+            if self.observer.is_some() {
+                let progressed = initial_bytes.saturating_add(total_bytes);
+                self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
+            }
         }
 
         if sparse {

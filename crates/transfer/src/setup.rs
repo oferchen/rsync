@@ -367,14 +367,14 @@ pub fn setup_protocol(
                 (flags, Some(client_info))
             } else {
                 // SSH/client mode: use default flags based on platform capabilities
+                // NOTE: INC_RECURSE is intentionally NOT included - we don't support
+                // incremental file lists yet. See daemon_transfer.rs line 475-477.
                 #[cfg(unix)]
-                let mut flags = CompatibilityFlags::INC_RECURSE
-                    | CompatibilityFlags::CHECKSUM_SEED_FIX
-                    | CompatibilityFlags::VARINT_FLIST_FLAGS;
+                let mut flags =
+                    CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
                 #[cfg(not(unix))]
-                let flags = CompatibilityFlags::INC_RECURSE
-                    | CompatibilityFlags::CHECKSUM_SEED_FIX
-                    | CompatibilityFlags::VARINT_FLIST_FLAGS;
+                let flags =
+                    CompatibilityFlags::CHECKSUM_SEED_FIX | CompatibilityFlags::VARINT_FLIST_FLAGS;
 
                 // Advertise symlink timestamp support on Unix platforms
                 // (mirrors upstream CAN_SET_SYMLINK_TIMES at compat.c:713-714)
@@ -403,7 +403,16 @@ pub fn setup_protocol(
             } else {
                 // Client: READ compat flags from server
                 let compat_value = protocol::read_varint(stdin)?;
-                CompatibilityFlags::from_bits(compat_value as u32)
+                let mut flags = CompatibilityFlags::from_bits(compat_value as u32);
+
+                // CRITICAL: Mask off INC_RECURSE - we don't support incremental file lists yet.
+                // The server may send INC_RECURSE in its compat flags regardless of whether
+                // we advertised 'i' in our capability string. We must clear this flag to
+                // prevent the receiver from trying to handle incremental file lists.
+                // See daemon_transfer.rs which deliberately omits 'i' from -e.LsfxCIvu.
+                flags &= !CompatibilityFlags::INC_RECURSE;
+
+                flags
             };
 
             // Protocol 30+ capability negotiation (upstream compat.c:534-585)
