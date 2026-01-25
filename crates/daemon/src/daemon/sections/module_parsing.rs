@@ -383,7 +383,9 @@ fn apply_inline_module_options(
                         "'incoming chmod' option must not be empty".to_owned(),
                     ));
                 }
-                module.incoming_chmod = Some(value.to_owned());
+                let mut owned = String::new();
+                value.clone_into(&mut owned);
+                module.incoming_chmod = Some(owned);
             }
             "outgoing chmod" | "outgoing-chmod" => {
                 if value.is_empty() {
@@ -391,7 +393,9 @@ fn apply_inline_module_options(
                         "'outgoing chmod' option must not be empty".to_owned(),
                     ));
                 }
-                module.outgoing_chmod = Some(value.to_owned());
+                let mut owned = String::new();
+                value.clone_into(&mut owned);
+                module.outgoing_chmod = Some(owned);
             }
             _ => {
                 return Err(config_error(format!(

@@ -72,7 +72,7 @@ where
     let daemon_port = matches.remove_one::<u16>("port");
     let remote_options = matches
         .remove_many::<OsString>("remote-option")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let protect_args = if matches.get_flag("no-protect-args") {
         Some(false)
@@ -219,7 +219,7 @@ where
     let copy_as = matches.remove_one::<OsString>("copy-as");
     let chmod = matches
         .remove_many::<OsString>("chmod")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let perms = tri_state_flag_positive_first(&matches, "perms", "no-perms");
     let executability =
@@ -309,7 +309,7 @@ where
     let early_input = matches.remove_one::<OsString>("early-input");
     let link_dest_args: Vec<OsString> = matches
         .remove_many::<OsString>("link-dest")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let link_dests = link_dest_args.iter().map(PathBuf::from).collect();
     let link_destinations = link_dest_args;
@@ -349,7 +349,7 @@ where
     }
     let remainder = matches
         .remove_many::<OsString>("args")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let checksum = tri_state_flag_positive_first(&matches, "checksum", "no-checksum");
     let size_only = matches.get_flag("size-only");
@@ -402,49 +402,49 @@ where
     };
     let excludes = matches
         .remove_many::<OsString>("exclude")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let includes = matches
         .remove_many::<OsString>("include")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let compare_destinations = matches
         .remove_many::<OsString>("compare-dest")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let copy_destinations = matches
         .remove_many::<OsString>("copy-dest")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let exclude_from = matches
         .remove_many::<OsString>("exclude-from")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let include_from = matches
         .remove_many::<OsString>("include-from")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let filters: Vec<OsString> = matches
         .remove_many::<OsString>("filter")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let rsync_filter_shortcuts = rsync_filter_indices.len();
     let filter_args = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
     let cvs_exclude = matches.get_flag("cvs-exclude");
     let files_from = matches
         .remove_many::<OsString>("files-from")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let from0 = matches.get_flag("from0");
     let disable_from0 = matches.get_flag("no-from0");
     let from0 = from0 && !disable_from0;
     let info = matches
         .remove_many::<OsString>("info")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let debug = matches
         .remove_many::<OsString>("debug")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let ignore_existing = matches.get_flag("ignore-existing");
     let existing = matches.get_flag("existing");
@@ -458,7 +458,7 @@ where
     let out_format = matches.remove_one::<OsString>("out-format");
     let dparam = matches
         .remove_many::<OsString>("dparam")
-        .map(|values| values.collect())
+        .map(Iterator::collect)
         .unwrap_or_default();
     let itemize_changes = itemize_changes_flag && !no_itemize_changes_flag;
     let mut no_motd = matches.get_flag("no-motd");
@@ -678,7 +678,7 @@ fn tri_state_flag_with_order(
 }
 
 fn last_occurrence(matches: &clap::ArgMatches, id: &str) -> Option<usize> {
-    matches.indices_of(id).and_then(|indices| indices.max())
+    matches.indices_of(id).and_then(Iterator::max)
 }
 
 #[cfg(test)]

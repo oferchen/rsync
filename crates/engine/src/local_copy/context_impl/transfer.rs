@@ -96,7 +96,7 @@ impl<'a> CopyContext<'a> {
                 if let Err(error) = segment.push_rule(compiled) {
                     ephemeral_stack.pop();
                     marker_ephemeral_stack.pop();
-                    return Err(filter_program_local_error(&candidate, error));
+                    return Err(filter_program_local_error(&candidate, &error));
                 }
             }
 
@@ -105,7 +105,7 @@ impl<'a> CopyContext<'a> {
                 if let Err(error) = segment.push_rule(FilterRule::exclude(pattern)) {
                     ephemeral_stack.pop();
                     marker_ephemeral_stack.pop();
-                    return Err(filter_program_local_error(&candidate, error));
+                    return Err(filter_program_local_error(&candidate, &error));
                 }
             }
 

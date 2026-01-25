@@ -8,7 +8,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
-pub(crate) fn filter_program_local_error(path: &Path, error: FilterProgramError) -> LocalCopyError {
+pub(crate) fn filter_program_local_error(path: &Path, error: &FilterProgramError) -> LocalCopyError {
     LocalCopyError::io(
         "compile filter file",
         path.to_path_buf(),

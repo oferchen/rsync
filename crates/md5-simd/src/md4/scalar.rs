@@ -5,19 +5,19 @@
 use crate::Digest;
 
 /// MD4 initial state constants (same as MD5, RFC 1320).
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
 /// Round constants for MD4.
 /// Round 1: no constant (0)
 /// Round 2: sqrt(2) * 2^30
 /// Round 3: sqrt(3) * 2^30
 const K: [u32; 3] = [
-    0x00000000, // Round 1
-    0x5A827999, // Round 2: sqrt(2) * 2^30
-    0x6ED9EBA1, // Round 3: sqrt(3) * 2^30
+    0x0000_0000, // Round 1
+    0x5A82_7999, // Round 2: sqrt(2) * 2^30
+    0x6ED9_EBA1, // Round 3: sqrt(3) * 2^30
 ];
 
 /// Shift amounts for each round.
@@ -146,7 +146,12 @@ mod tests {
     use super::*;
 
     fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[test]

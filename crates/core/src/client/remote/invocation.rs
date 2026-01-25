@@ -211,6 +211,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--ignore-errors"));
         }
 
+        // Add --fsync if set (upstream sends this as full argument, no short flag)
+        if self.config.fsync() {
+            args.push(OsString::from("--fsync"));
+        }
+
         // Build compact flag string
         let flags = self.build_flag_string();
         if !flags.is_empty() {
@@ -776,6 +781,32 @@ mod tests {
         assert!(
             !args.iter().any(|a| a == "--ignore-errors"),
             "unexpected --ignore-errors in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn includes_fsync_flag_when_set() {
+        let config = ClientConfig::builder().fsync(true).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+        let args = builder.build("/path");
+
+        // --fsync should appear after --server
+        assert!(
+            args.iter().any(|a| a == "--fsync"),
+            "expected --fsync in args: {args:?}"
+        );
+    }
+
+    #[test]
+    fn omits_fsync_flag_when_not_set() {
+        let config = ClientConfig::builder().build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+        let args = builder.build("/path");
+
+        // --fsync should not appear
+        assert!(
+            !args.iter().any(|a| a == "--fsync"),
+            "unexpected --fsync in args: {args:?}"
         );
     }
 }

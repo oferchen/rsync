@@ -70,6 +70,21 @@ pub struct ServerConfig {
     ///
     /// - `flist.c:2518`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub ignore_errors: bool,
+    /// Call fsync() after writing each file to ensure data durability (`--fsync`).
+    ///
+    /// When true, the receiver calls fsync() on each file after writing to guarantee
+    /// data is flushed to stable storage before proceeding. This matches upstream rsync's
+    /// `--fsync` flag behavior.
+    ///
+    /// Default is false (matching upstream's `do_fsync=0` default), as the atomic rename
+    /// provides crash consistency and the kernel will flush buffers when closing files
+    /// or when buffer pressure requires it.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:340`: `if (do_fsync && (fd != -1) && fsync(fd) != 0) { ... }`
+    /// - `options.c`: `--fsync` flag (long-form only, no short character)
+    pub fsync: bool,
 }
 
 impl ServerConfig {
@@ -106,6 +121,7 @@ impl ServerConfig {
             reference_directories: Vec::new(),
             iconv: None,
             ignore_errors: false,
+            fsync: false,
         })
     }
 }

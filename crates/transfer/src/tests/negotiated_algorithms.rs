@@ -42,6 +42,7 @@ fn test_config() -> ServerConfig {
         reference_directories: Vec::new(),
         iconv: None,
         ignore_errors: false,
+        fsync: false,
     }
 }
 
@@ -58,6 +59,7 @@ fn test_config_with_compression_level(level: compress::zlib::CompressionLevel) -
         reference_directories: Vec::new(),
         iconv: None,
         ignore_errors: false,
+        fsync: false,
     }
 }
 

@@ -27,6 +27,13 @@ pub mod version;
 /// Workspace metadata derived from the repository `Cargo.toml`.
 pub use ::branding::workspace;
 
+/// Test utilities and helper macros for error assertions.
+///
+/// This module provides common testing utilities including the
+/// [`assert_error_matches!`] macro for simplifying error assertions.
+/// The module itself is public but is primarily intended for use in tests.
+pub mod test_utils;
+
 /// File list generation and traversal (mirrors upstream `flist.c`).
 ///
 /// This crate handles file list building and transmission, matching the

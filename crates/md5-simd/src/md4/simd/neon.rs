@@ -8,16 +8,16 @@ use std::arch::aarch64::*;
 use crate::Digest;
 
 /// MD4 initial state constants.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
 /// Round constants for MD4.
 const K: [u32; 3] = [
-    0x00000000, // Round 1
-    0x5A827999, // Round 2
-    0x6ED9EBA1, // Round 3
+    0x0000_0000, // Round 1
+    0x5A82_7999, // Round 2
+    0x6ED9_EBA1, // Round 3
 ];
 
 // Shift amounts for each round (used in macros as compile-time constants):
@@ -31,7 +31,7 @@ const M2: [usize; 16] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15];
 const M3: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 
 /// Maximum input size supported.
-const MAX_INPUT_SIZE: usize = 1024 * 1024; // 1MB per input
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
 /// Macro for compile-time rotate left.
 macro_rules! rotl_const {
@@ -88,7 +88,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 
         // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { 0xFFFFFFFF } else { 0 }
+            if block_idx < block_counts[lane] { 0xFFFF_FFFF } else { 0 }
         });
         let mask = vld1q_u32(lane_active.as_ptr());
 
@@ -263,7 +263,12 @@ mod tests {
     use super::*;
 
     fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[test]

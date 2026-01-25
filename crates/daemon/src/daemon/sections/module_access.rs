@@ -1,286 +1,3 @@
-/// Writes an error payload and exit sequence to the stream.
-///
-/// This helper consolidates the common pattern of sending an error message
-/// followed by the daemon exit marker and flushing the stream.
-#[allow(dead_code)]
-fn send_error_response(
-    stream: &mut TcpStream,
-    limiter: &mut Option<BandwidthLimiter>,
-    messages: &LegacyMessageCache,
-    payload: &str,
-) -> io::Result<()> {
-    write_limited(stream, limiter, payload.as_bytes())?;
-    write_limited(stream, limiter, b"\n")?;
-    messages.write_exit(stream, limiter)?;
-    stream.flush()
-}
-
-/// Context for module request handling containing common parameters.
-#[allow(dead_code)]
-struct ModuleRequestContext<'a> {
-    limiter: &'a mut Option<BandwidthLimiter>,
-    peer_ip: IpAddr,
-    session_peer_host: Option<&'a str>,
-    log_sink: Option<&'a SharedLogSink>,
-    messages: &'a LegacyMessageCache,
-}
-
-/// Handles the case when a module is not found.
-#[allow(dead_code)]
-fn handle_unknown_module(
-    stream: &mut TcpStream,
-    ctx: &mut ModuleRequestContext<'_>,
-    request: &str,
-) -> io::Result<()> {
-    let module_display = sanitize_module_identifier(request);
-    let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref());
-    write_limited(stream, ctx.limiter, payload.as_bytes())?;
-    write_limited(stream, ctx.limiter, b"\n")?;
-    if let Some(log) = ctx.log_sink {
-        log_unknown_module(log, ctx.session_peer_host, ctx.peer_ip, request);
-    }
-    ctx.messages.write_exit(stream, ctx.limiter)?;
-    stream.flush()
-}
-
-/// Handles access denied when module doesn't permit the peer.
-#[allow(dead_code)]
-fn handle_access_denied(
-    stream: &mut TcpStream,
-    ctx: &mut ModuleRequestContext<'_>,
-    module: &ModuleDefinition,
-    module_peer_host: Option<&str>,
-    request: &str,
-) -> io::Result<()> {
-    if let Some(log) = ctx.log_sink {
-        log_module_denied(
-            log,
-            module_peer_host.or(ctx.session_peer_host),
-            ctx.peer_ip,
-            request,
-        );
-    }
-    deny_module(stream, module, ctx.peer_ip, ctx.limiter, ctx.messages)
-}
-
-/// Result of attempting to acquire a module connection.
-#[allow(dead_code)]
-enum ConnectionAcquisitionResult<'a> {
-    /// Successfully acquired the connection guard.
-    Acquired(ModuleConnectionGuard<'a>),
-    /// Connection limit reached, error response was sent.
-    LimitReached,
-    /// I/O error on lock file, error response was sent.
-    IoError,
-}
-
-/// Attempts to acquire a module connection, sending error responses on failure.
-#[allow(dead_code)]
-fn try_acquire_module_connection<'a>(
-    stream: &mut TcpStream,
-    ctx: &mut ModuleRequestContext<'_>,
-    module: &'a ModuleRuntime,
-    module_peer_host: Option<&str>,
-    request: &str,
-) -> io::Result<ConnectionAcquisitionResult<'a>> {
-    match module.try_acquire_connection() {
-        Ok(guard) => Ok(ConnectionAcquisitionResult::Acquired(guard)),
-        Err(ModuleConnectionError::Limit(limit)) => {
-            let payload =
-                MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
-            send_error_response(stream, ctx.limiter, ctx.messages, &payload)?;
-            if let Some(log) = ctx.log_sink {
-                log_module_limit(
-                    log,
-                    module_peer_host.or(ctx.session_peer_host),
-                    ctx.peer_ip,
-                    request,
-                    limit,
-                );
-            }
-            Ok(ConnectionAcquisitionResult::LimitReached)
-        }
-        Err(ModuleConnectionError::Io(error)) => {
-            send_error_response(stream, ctx.limiter, ctx.messages, MODULE_LOCK_ERROR_PAYLOAD)?;
-            if let Some(log) = ctx.log_sink {
-                log_module_lock_error(
-                    log,
-                    module_peer_host.or(ctx.session_peer_host),
-                    ctx.peer_ip,
-                    request,
-                    &error,
-                );
-            }
-            Ok(ConnectionAcquisitionResult::IoError)
-        }
-    }
-}
-
-/// Checks for refused options and sends error response if found.
-///
-/// Returns `Ok(Some(refused))` if a refused option was found and error was sent,
-/// `Ok(None)` if no refused options were found, or an I/O error.
-#[allow(dead_code)]
-fn check_refused_options(
-    stream: &mut TcpStream,
-    ctx: &mut ModuleRequestContext<'_>,
-    module: &ModuleRuntime,
-    options: &[String],
-    module_peer_host: Option<&str>,
-    request: &str,
-) -> io::Result<Option<()>> {
-    if let Some(refused) = refused_option(module, options) {
-        let payload = format!("@ERROR: The server is configured to refuse {refused}");
-        send_error_response(stream, ctx.limiter, ctx.messages, &payload)?;
-        if let Some(log) = ctx.log_sink {
-            log_module_refused_option(
-                log,
-                module_peer_host.or(ctx.session_peer_host),
-                ctx.peer_ip,
-                request,
-                refused,
-            );
-        }
-        Ok(Some(()))
-    } else {
-        Ok(None)
-    }
-}
-
-/// Handles module authentication if required.
-///
-/// Returns `Ok(true)` if authentication succeeded (or wasn't required),
-/// `Ok(false)` if authentication was denied, or an I/O error.
-#[allow(dead_code)]
-fn handle_module_authentication(
-    reader: &mut BufReader<TcpStream>,
-    ctx: &mut ModuleRequestContext<'_>,
-    module: &ModuleRuntime,
-    module_peer_host: Option<&str>,
-    request: &str,
-) -> io::Result<bool> {
-    apply_module_timeout(reader.get_mut(), module)?;
-
-    if !module.requires_authentication() {
-        send_daemon_ok(reader.get_mut(), ctx.limiter, ctx.messages)?;
-        return Ok(true);
-    }
-
-    match perform_module_authentication(reader, ctx.limiter, module, ctx.peer_ip, ctx.messages)? {
-        AuthenticationStatus::Denied => {
-            if let Some(log) = ctx.log_sink {
-                log_module_auth_failure(
-                    log,
-                    module_peer_host.or(ctx.session_peer_host),
-                    ctx.peer_ip,
-                    request,
-                );
-            }
-            Ok(false)
-        }
-        AuthenticationStatus::Granted => {
-            if let Some(log) = ctx.log_sink {
-                log_module_auth_success(
-                    log,
-                    module_peer_host.or(ctx.session_peer_host),
-                    ctx.peer_ip,
-                    request,
-                );
-            }
-            send_daemon_ok(reader.get_mut(), ctx.limiter, ctx.messages)?;
-            Ok(true)
-        }
-    }
-}
-
-/// Determines the server role from client arguments.
-///
-/// The `--sender` flag indicates the server should act as sender (Generator).
-/// When absent, the server acts as receiver (Receiver).
-#[allow(dead_code)]
-fn determine_server_role(client_args: &[String]) -> ServerRole {
-    if client_args.iter().any(|arg| arg == "--sender") {
-        ServerRole::Generator
-    } else {
-        ServerRole::Receiver
-    }
-}
-
-/// Extracts the short flags argument from client arguments.
-///
-/// Client args are like: `["--server", "--sender", "-vvre.iLsfxCIvu", ".", "testmod/"]`
-#[allow(dead_code)]
-fn extract_flag_string(client_args: &[String]) -> String {
-    client_args
-        .iter()
-        .find(|arg| arg.starts_with('-') && !arg.starts_with("--"))
-        .cloned()
-        .unwrap_or_default()
-}
-
-/// Builds server configuration from client arguments.
-#[allow(dead_code)]
-fn build_server_config(
-    client_args: &[String],
-    module_path: &Path,
-) -> Result<ServerConfig, String> {
-    let role = determine_server_role(client_args);
-    let flag_string = extract_flag_string(client_args);
-    ServerConfig::from_flag_string_and_args(
-        role,
-        flag_string,
-        vec![OsString::from(module_path)],
-    )
-}
-
-/// Validates that the module path exists.
-#[allow(dead_code)]
-fn validate_module_path(module_path: &Path) -> bool {
-    module_path.exists()
-}
-
-/// Executes the file transfer and logs the result.
-#[allow(dead_code, clippy::too_many_arguments)]
-fn execute_transfer(
-    config: ServerConfig,
-    handshake: HandshakeResult,
-    read_stream: &mut TcpStream,
-    write_stream: &mut TcpStream,
-    log_sink: Option<&SharedLogSink>,
-    peer_host: Option<&str>,
-    peer_ip: IpAddr,
-    request: &str,
-) {
-    let result = run_server_with_handshake(config, handshake, read_stream, write_stream);
-    match result {
-        Ok(_server_stats) => {
-            if let Some(log) = log_sink {
-                let text = format!(
-                    "transfer to {} ({}): module={} status=success",
-                    peer_host.unwrap_or("unknown"),
-                    peer_ip,
-                    request
-                );
-                let message = rsync_info!(text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
-        }
-        Err(err) => {
-            if let Some(log) = log_sink {
-                let text = format!(
-                    "transfer failed to {} ({}): module={} error={}",
-                    peer_host.unwrap_or("unknown"),
-                    peer_ip,
-                    request,
-                    err
-                );
-                let message = rsync_error!(1, text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
-        }
-    }
-}
-
 /// Sends the list of available modules to a client.
 ///
 /// This responds to a module listing request by sending the MOTD (message of the
@@ -302,7 +19,11 @@ fn respond_with_module_list(
         } else {
             format!("MOTD {line}")
         };
-        messages.write(stream, limiter, LegacyDaemonMessage::Other(payload.as_str()))?;
+        messages.write(
+            stream,
+            limiter,
+            LegacyDaemonMessage::Other(payload.as_str()),
+        )?;
     }
 
     messages.write_ok(stream, limiter)?;
@@ -320,10 +41,11 @@ fn respond_with_module_list(
 
         let mut line = module.name.clone();
         if let Some(comment) = &module.comment
-            && !comment.is_empty() {
-                line.push('\t');
-                line.push_str(comment);
-            }
+            && !comment.is_empty()
+        {
+            line.push('\t');
+            line.push_str(comment);
+        }
         line.push('\n');
         write_limited(stream, limiter, line.as_bytes())?;
     }
@@ -369,16 +91,18 @@ fn perform_module_authentication(
         stream.flush()?;
     }
 
-    let response = if let Some(line) = read_trimmed_line(reader)? { line } else {
+    let response = if let Some(line) = read_trimmed_line(reader)? {
+        line
+    } else {
         deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
         return Ok(AuthenticationStatus::Denied);
     };
 
     let mut segments = response.splitn(2, |ch: char| ch.is_ascii_whitespace());
     let username = segments.next().unwrap_or_default();
-    let digest = segments
-        .next()
-        .map_or("", |segment| segment.trim_start_matches(|ch: char| ch.is_ascii_whitespace()));
+    let digest = segments.next().map_or("", |segment| {
+        segment.trim_start_matches(|ch: char| ch.is_ascii_whitespace())
+    });
 
     if username.is_empty() || digest.is_empty() {
         deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
@@ -465,10 +189,10 @@ fn verify_secret_response(
 
         if let Some((user, secret)) = line.split_once(':')
             && user == username
-                && verify_daemon_auth_response(secret.as_bytes(), challenge, response)
-            {
-                return Ok(true);
-            }
+            && verify_daemon_auth_response(secret.as_bytes(), challenge, response)
+        {
+            return Ok(true);
+        }
     }
 
     Ok(false)
@@ -565,73 +289,6 @@ fn read_client_arguments<R: BufRead>(
     Ok(arguments)
 }
 
-/// Performs protocol setup exchange after client arguments are received.
-///
-/// This mirrors upstream's `setup_protocol()` in compat.c:572. The exchange:
-/// 1. Writes our protocol version to the client
-/// 2. Reads the client's protocol version
-/// 3. For protocol >= 30: exchanges compatibility flags
-///
-/// This must be called AFTER reading client arguments and BEFORE activating
-/// multiplexing, to match upstream's daemon flow.
-#[allow(dead_code)]
-fn perform_protocol_setup<S: Read + Write>(
-    stream: &mut S,
-    our_protocol: ProtocolVersion,
-) -> io::Result<(ProtocolVersion, protocol::CompatibilityFlags)> {
-    // Write our protocol version (4-byte little-endian i32)
-    let our_version_bytes = (our_protocol.as_u8() as i32).to_le_bytes();
-    stream.write_all(&our_version_bytes)?;
-    stream.flush()?;
-
-    // Read client's protocol version (4-byte little-endian i32)
-    let mut remote_bytes = [0u8; 4];
-    stream.read_exact(&mut remote_bytes)?;
-    let remote_version_i32 = i32::from_le_bytes(remote_bytes);
-
-    if remote_version_i32 <= 0 || remote_version_i32 > 255 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid remote protocol version: {remote_version_i32}"),
-        ));
-    }
-
-    let remote_protocol = protocol::ProtocolVersion::try_from(remote_version_i32 as u8)
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unsupported protocol version: {e}"),
-            )
-        })?;
-
-    // Use the minimum of our version and the remote version
-    let negotiated = if remote_protocol.as_u8() < our_protocol.as_u8() {
-        remote_protocol
-    } else {
-        our_protocol
-    };
-
-    // For protocol >= 30, exchange compatibility flags
-    let compat_flags = if negotiated.as_u8() >= 30 {
-        // Server sends flags first
-        let our_flags = protocol::CompatibilityFlags::INC_RECURSE
-            | protocol::CompatibilityFlags::CHECKSUM_SEED_FIX
-            | protocol::CompatibilityFlags::VARINT_FLIST_FLAGS;
-        protocol::write_varint(stream, our_flags.bits() as i32)?;
-        stream.flush()?;
-
-        // Read client's flags
-        let client_flags = protocol::CompatibilityFlags::read_from(stream)?;
-
-        // Use the intersection of both flags (only features both sides support)
-        our_flags & client_flags
-    } else {
-        protocol::CompatibilityFlags::EMPTY
-    };
-
-    Ok((negotiated, compat_flags))
-}
-
 /// Applies the module-specific bandwidth directives to the active limiter.
 ///
 /// The helper mirrors upstream rsync's precedence rules: a module `bwlimit`
@@ -676,6 +333,448 @@ pub(crate) fn apply_module_bandwidth_limit(
     .apply_to_limiter(limiter)
 }
 
+/// Context for module request handling, passed to helper functions.
+struct ModuleRequestContext<'a> {
+    reader: &'a mut BufReader<TcpStream>,
+    limiter: &'a mut Option<BandwidthLimiter>,
+    peer_ip: IpAddr,
+    session_peer_host: Option<&'a str>,
+    module_peer_host: Option<&'a str>,
+    request: &'a str,
+    log_sink: Option<&'a SharedLogSink>,
+    messages: &'a LegacyMessageCache,
+}
+
+impl<'a> ModuleRequestContext<'a> {
+    /// Returns the effective host for logging (module-specific or session-level).
+    fn effective_host(&self) -> Option<&str> {
+        self.module_peer_host.or(self.session_peer_host)
+    }
+}
+
+/// Sends an error message and exit marker to the client.
+fn send_error_and_exit(
+    stream: &mut TcpStream,
+    limiter: &mut Option<BandwidthLimiter>,
+    messages: &LegacyMessageCache,
+    payload: &str,
+) -> io::Result<()> {
+    write_limited(stream, limiter, payload.as_bytes())?;
+    write_limited(stream, limiter, b"\n")?;
+    messages.write_exit(stream, limiter)?;
+    stream.flush()
+}
+
+/// Handles max connections exceeded for a module.
+///
+/// Sends an error message indicating the connection limit was reached and logs the event.
+fn handle_max_connections_exceeded(
+    ctx: &mut ModuleRequestContext<'_>,
+    limit: NonZeroU32,
+) -> io::Result<()> {
+    let payload = MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
+    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    if let Some(log) = ctx.log_sink {
+        log_module_limit(log, ctx.effective_host(), ctx.peer_ip, ctx.request, limit);
+    }
+    Ok(())
+}
+
+/// Handles lock file errors when acquiring a module connection.
+///
+/// Sends an error message and logs the lock failure.
+fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> io::Result<()> {
+    send_error_and_exit(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        ctx.messages,
+        MODULE_LOCK_ERROR_PAYLOAD,
+    )?;
+    if let Some(log) = ctx.log_sink {
+        log_module_lock_error(log, ctx.effective_host(), ctx.peer_ip, ctx.request, error);
+    }
+    Ok(())
+}
+
+/// Handles refused options for a module.
+///
+/// Sends an error message indicating the option is refused and logs the event.
+fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> io::Result<()> {
+    let payload = format!("@ERROR: The server is configured to refuse {refused}");
+    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    if let Some(log) = ctx.log_sink {
+        log_module_refused_option(log, ctx.effective_host(), ctx.peer_ip, ctx.request, refused);
+    }
+    Ok(())
+}
+
+/// Handles module authentication flow.
+///
+/// Returns `true` if authentication succeeded (or was not required),
+/// `false` if authentication failed or was denied.
+fn handle_authentication(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleDefinition,
+) -> io::Result<bool> {
+    if !module.requires_authentication() {
+        send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
+        return Ok(true);
+    }
+
+    match perform_module_authentication(ctx.reader, ctx.limiter, module, ctx.peer_ip, ctx.messages)?
+    {
+        AuthenticationStatus::Denied => {
+            if let Some(log) = ctx.log_sink {
+                log_module_auth_failure(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
+            }
+            Ok(false)
+        }
+        AuthenticationStatus::Granted => {
+            if let Some(log) = ctx.log_sink {
+                log_module_auth_success(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
+            }
+            send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
+            Ok(true)
+        }
+    }
+}
+
+/// Reads and logs client arguments.
+///
+/// Returns the client arguments on success, or sends an error and returns `None`.
+fn read_and_log_client_args(
+    ctx: &mut ModuleRequestContext<'_>,
+    negotiated_protocol: Option<ProtocolVersion>,
+) -> io::Result<Option<Vec<String>>> {
+    let client_args = match read_client_arguments(ctx.reader, negotiated_protocol) {
+        Ok(args) => args,
+        Err(err) => {
+            let payload = format!("@ERROR: failed to read client arguments: {err}");
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            return Ok(None);
+        }
+    };
+
+    if let Some(log) = ctx.log_sink {
+        let args_str = client_args.join(" ");
+        let text = format!(
+            "module '{}' from {} ({}): client args: {}",
+            ctx.request,
+            ctx.effective_host().unwrap_or("unknown"),
+            ctx.peer_ip,
+            args_str
+        );
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    Ok(Some(client_args))
+}
+
+/// Determines the server role based on client arguments.
+///
+/// The `--sender` flag indicates that the SERVER should act as sender (Generator).
+/// When absent, the SERVER should act as receiver (Receiver).
+fn determine_server_role(client_args: &[String]) -> ServerRole {
+    if client_args.iter().any(|arg| arg == "--sender") {
+        ServerRole::Generator
+    } else {
+        ServerRole::Receiver
+    }
+}
+
+/// Builds the server configuration from client arguments.
+///
+/// Returns the configuration on success, or sends an error and returns `None`.
+fn build_server_config(
+    ctx: &mut ModuleRequestContext<'_>,
+    client_args: &[String],
+    module: &ModuleRuntime,
+) -> io::Result<Option<ServerConfig>> {
+    let role = determine_server_role(client_args);
+
+    let flag_string = client_args
+        .iter()
+        .find(|arg| arg.starts_with('-') && !arg.starts_with("--"))
+        .cloned()
+        .unwrap_or_default();
+
+    match ServerConfig::from_flag_string_and_args(
+        role,
+        flag_string,
+        vec![OsString::from(&module.path)],
+    ) {
+        Ok(cfg) => Ok(Some(cfg)),
+        Err(err) => {
+            let payload = format!("@ERROR: failed to configure server: {err}");
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            Ok(None)
+        }
+    }
+}
+
+/// Validates that the module path exists.
+///
+/// Returns `true` if the path exists, or sends an error and returns `false`.
+fn validate_module_path(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+) -> io::Result<bool> {
+    if Path::new(&module.path).exists() {
+        return Ok(true);
+    }
+
+    let payload = format!(
+        "@ERROR: module '{}' path does not exist: {}",
+        sanitize_module_identifier(ctx.request),
+        module.path.display()
+    );
+    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+
+    if let Some(log) = ctx.log_sink {
+        let text = format!(
+            "module '{}' path validation failed for {} ({}): path does not exist: {}",
+            ctx.request,
+            ctx.effective_host().unwrap_or("unknown"),
+            ctx.peer_ip,
+            module.path.display()
+        );
+        let message = rsync_error!(1, text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    Ok(false)
+}
+
+/// Sets up the TCP streams for the transfer.
+///
+/// Configures TCP_NODELAY and clones the stream for concurrent read/write.
+/// Returns the read and write streams on success, or sends an error and returns `None`.
+fn setup_transfer_streams(
+    ctx: &mut ModuleRequestContext<'_>,
+) -> io::Result<Option<(TcpStream, TcpStream)>> {
+    let stream = ctx.reader.get_mut();
+    stream.set_nodelay(true)?;
+
+    let read_stream = match stream.try_clone() {
+        Ok(s) => s,
+        Err(err) => {
+            let payload = format!("@ERROR: failed to clone stream: {err}");
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            return Ok(None);
+        }
+    };
+
+    let write_stream = match stream.try_clone() {
+        Ok(s) => s,
+        Err(err) => {
+            return Err(io::Error::other(format!(
+                "failed to clone write stream: {err}"
+            )));
+        }
+    };
+
+    Ok(Some((read_stream, write_stream)))
+}
+
+/// Builds the handshake result for the transfer.
+fn build_handshake_result(
+    reader: &BufReader<TcpStream>,
+    negotiated_protocol: Option<ProtocolVersion>,
+    client_args: Vec<String>,
+    module: &ModuleRuntime,
+) -> HandshakeResult {
+    let final_protocol = negotiated_protocol.unwrap_or(ProtocolVersion::V30);
+    let buffered_data = reader.buffer().to_vec();
+
+    HandshakeResult {
+        protocol: final_protocol,
+        buffered: buffered_data,
+        compat_exchanged: false,
+        client_args: Some(client_args),
+        io_timeout: module.timeout.map(|t| t.get()),
+        negotiated_algorithms: None,
+        compat_flags: None,
+        checksum_seed: 0,
+    }
+}
+
+/// Executes the server transfer and logs the result.
+fn execute_transfer(
+    ctx: &ModuleRequestContext<'_>,
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    read_stream: &mut TcpStream,
+    write_stream: &mut TcpStream,
+    role: ServerRole,
+    final_protocol: ProtocolVersion,
+) {
+    if let Some(log) = ctx.log_sink {
+        let text = format!(
+            "module '{}' from {} ({}): protocol {}, role: {:?}",
+            ctx.request,
+            ctx.effective_host().unwrap_or("unknown"),
+            ctx.peer_ip,
+            final_protocol.as_u8(),
+            role
+        );
+        let message = rsync_info!(text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+
+    let result = run_server_with_handshake(config, handshake, read_stream, write_stream);
+
+    match result {
+        Ok(_server_stats) => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "transfer to {} ({}): module={} status=success",
+                    ctx.effective_host().unwrap_or("unknown"),
+                    ctx.peer_ip,
+                    ctx.request
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+        Err(err) => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "transfer failed to {} ({}): module={} error={}",
+                    ctx.effective_host().unwrap_or("unknown"),
+                    ctx.peer_ip,
+                    ctx.request,
+                    err
+                );
+                let message = rsync_error!(1, text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+    }
+}
+
+/// Handles an unknown module request.
+///
+/// Sends an error message and logs the event.
+fn handle_unknown_module(
+    stream: &mut TcpStream,
+    limiter: &mut Option<BandwidthLimiter>,
+    messages: &LegacyMessageCache,
+    request: &str,
+    peer_ip: IpAddr,
+    session_peer_host: Option<&str>,
+    log_sink: Option<&SharedLogSink>,
+) -> io::Result<()> {
+    let module_display = sanitize_module_identifier(request);
+    let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref());
+    write_limited(stream, limiter, payload.as_bytes())?;
+    write_limited(stream, limiter, b"\n")?;
+
+    if let Some(log) = log_sink {
+        log_unknown_module(log, session_peer_host, peer_ip, request);
+    }
+
+    messages.write_exit(stream, limiter)?;
+    stream.flush()
+}
+
+/// Handles a denied module access.
+///
+/// Sends an access denied error and logs the event.
+fn handle_module_denied(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleDefinition,
+) -> io::Result<()> {
+    if let Some(log) = ctx.log_sink {
+        log_module_denied(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
+    }
+    deny_module(
+        ctx.reader.get_mut(),
+        module,
+        ctx.peer_ip,
+        ctx.limiter,
+        ctx.messages,
+    )
+}
+
+/// Processes an approved module request.
+///
+/// Handles the full transfer flow: connection acquisition, authentication,
+/// reading client arguments, building configuration, and executing transfer.
+fn process_approved_module(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    options: &[String],
+    negotiated_protocol: Option<ProtocolVersion>,
+) -> io::Result<()> {
+    // Acquire connection slot
+    let _connection_guard = match module.try_acquire_connection() {
+        Ok(guard) => guard,
+        Err(ModuleConnectionError::Limit(limit)) => {
+            return handle_max_connections_exceeded(ctx, limit);
+        }
+        Err(ModuleConnectionError::Io(error)) => {
+            return handle_lock_error(ctx, &error);
+        }
+    };
+
+    if let Some(log) = ctx.log_sink {
+        log_module_request(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
+    }
+
+    // Check for refused options
+    if let Some(refused) = refused_option(module, options) {
+        return handle_refused_option(ctx, refused);
+    }
+
+    apply_module_timeout(ctx.reader.get_mut(), module)?;
+
+    // Handle authentication
+    if !handle_authentication(ctx, module)? {
+        return Ok(());
+    }
+
+    // Read client arguments
+    let client_args = match read_and_log_client_args(ctx, negotiated_protocol)? {
+        Some(args) => args,
+        None => return Ok(()),
+    };
+
+    // Build server configuration
+    let config = match build_server_config(ctx, &client_args, module)? {
+        Some(cfg) => cfg,
+        None => return Ok(()),
+    };
+
+    // Validate module path
+    if !validate_module_path(ctx, module)? {
+        return Ok(());
+    }
+
+    // Setup transfer streams
+    let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {
+        Some(streams) => streams,
+        None => return Ok(()),
+    };
+
+    // Build handshake and execute transfer
+    let role = determine_server_role(&client_args);
+    let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args, module);
+    let final_protocol = handshake.protocol;
+
+    execute_transfer(
+        ctx,
+        config,
+        handshake,
+        &mut read_stream,
+        &mut write_stream,
+        role,
+        final_protocol,
+    );
+
+    Ok(())
+}
+
 /// Handles a client's module access request.
 ///
 /// This is the main entry point for processing a module request. It performs:
@@ -701,361 +800,65 @@ fn respond_with_module_request(
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
-    if let Some(module) = modules.iter().find(|module| module.name == request) {
-        let change = apply_module_bandwidth_limit(
+    let Some(module) = modules.iter().find(|module| module.name == request) else {
+        return handle_unknown_module(
+            reader.get_mut(),
             limiter,
-            module.bandwidth_limit(),
-            module.bandwidth_limit_specified(),
-            module.bandwidth_limit_configured(),
-            module.bandwidth_burst(),
-            module.bandwidth_burst_specified(),
+            messages,
+            request,
+            peer_ip,
+            session_peer_host,
+            log_sink,
         );
+    };
 
-        let mut hostname_cache: Option<Option<String>> = None;
-        let module_peer_host =
-            module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
+    // Apply module bandwidth limit
+    let change = apply_module_bandwidth_limit(
+        limiter,
+        module.bandwidth_limit(),
+        module.bandwidth_limit_specified(),
+        module.bandwidth_limit_configured(),
+        module.bandwidth_burst(),
+        module.bandwidth_burst_specified(),
+    );
 
-        if change != LimiterChange::Unchanged
-            && let Some(log) = log_sink {
-                log_module_bandwidth_change(
-                    log,
-                    module_peer_host.or(session_peer_host),
-                    peer_ip,
-                    request,
-                    limiter.as_ref(),
-                    change,
-                );
-            }
-        if module.permits(peer_ip, module_peer_host) {
-            let _connection_guard = match module.try_acquire_connection() {
-                Ok(guard) => guard,
-                Err(ModuleConnectionError::Limit(limit)) => {
-                    let payload =
-                        MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
-                    let stream = reader.get_mut();
-                    write_limited(stream, limiter, payload.as_bytes())?;
-                    write_limited(stream, limiter, b"\n")?;
-                    messages.write_exit(stream, limiter)?;
-                    stream.flush()?;
-                    if let Some(log) = log_sink {
-                        log_module_limit(
-                            log,
-                            module_peer_host.or(session_peer_host),
-                            peer_ip,
-                            request,
-                            limit,
-                        );
-                    }
-                    return Ok(());
-                }
-                Err(ModuleConnectionError::Io(error)) => {
-                    let stream = reader.get_mut();
-                    write_limited(stream, limiter, MODULE_LOCK_ERROR_PAYLOAD.as_bytes())?;
-                    write_limited(stream, limiter, b"\n")?;
-                    messages.write_exit(stream, limiter)?;
-                    stream.flush()?;
-                    if let Some(log) = log_sink {
-                        log_module_lock_error(
-                            log,
-                            module_peer_host.or(session_peer_host),
-                            peer_ip,
-                            request,
-                            &error,
-                        );
-                    }
-                    return Ok(());
-                }
-            };
+    // Resolve module-specific peer hostname
+    let mut hostname_cache: Option<Option<String>> = None;
+    let module_peer_host =
+        module_peer_hostname(module, &mut hostname_cache, peer_ip, reverse_lookup);
 
-            if let Some(log) = log_sink {
-                log_module_request(
-                    log,
-                    module_peer_host.or(session_peer_host),
-                    peer_ip,
-                    request,
-                );
-            }
-
-            if let Some(refused) = refused_option(module, options) {
-                let payload = format!("@ERROR: The server is configured to refuse {refused}");
-                let stream = reader.get_mut();
-                write_limited(stream, limiter, payload.as_bytes())?;
-                write_limited(stream, limiter, b"\n")?;
-                messages.write_exit(stream, limiter)?;
-                stream.flush()?;
-                if let Some(log) = log_sink {
-                    log_module_refused_option(
-                        log,
-                        module_peer_host.or(session_peer_host),
-                        peer_ip,
-                        request,
-                        refused,
-                    );
-                }
-                return Ok(());
-            }
-
-            apply_module_timeout(reader.get_mut(), module)?;
-            let mut acknowledged = false;
-            if module.requires_authentication() {
-                match perform_module_authentication(reader, limiter, module, peer_ip, messages)? {
-                    AuthenticationStatus::Denied => {
-                        if let Some(log) = log_sink {
-                            log_module_auth_failure(
-                                log,
-                                module_peer_host.or(session_peer_host),
-                                peer_ip,
-                                request,
-                            );
-                        }
-                        return Ok(());
-                    }
-                    AuthenticationStatus::Granted => {
-                        if let Some(log) = log_sink {
-                            log_module_auth_success(
-                                log,
-                                module_peer_host.or(session_peer_host),
-                                peer_ip,
-                                request,
-                            );
-                        }
-                        send_daemon_ok(reader.get_mut(), limiter, messages)?;
-                        acknowledged = true;
-                    }
-                }
-            }
-
-            if !acknowledged {
-                send_daemon_ok(reader.get_mut(), limiter, messages)?;
-            }
-
-            // Read client arguments sent after "@RSYNCD: OK"
-            // This mirrors upstream's read_args() in io.c:1292
-            let client_args = match read_client_arguments(reader, negotiated_protocol) {
-                Ok(args) => args,
-                Err(err) => {
-                    let payload = format!("@ERROR: failed to read client arguments: {err}");
-                    let stream = reader.get_mut();
-                    write_limited(stream, limiter, payload.as_bytes())?;
-                    write_limited(stream, limiter, b"\n")?;
-                    messages.write_exit(stream, limiter)?;
-                    stream.flush()?;
-                    return Ok(());
-                }
-            };
-
-            // Log received arguments for debugging
-            if let Some(log) = log_sink {
-                let args_str = client_args.join(" ");
-                let text = format!(
-                    "module '{}' from {} ({}): client args: {}",
-                    request,
-                    module_peer_host.or(session_peer_host).unwrap_or("unknown"),
-                    peer_ip,
-                    args_str
-                );
-                let message = rsync_info!(text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
-
-            // DAEMON WIRING: Wire core::server for daemon file transfers
-            // Determine role based on client arguments (mirrors upstream daemon.c)
-            // The --sender flag indicates that the SERVER should act as sender (Generator)
-            // When absent, the SERVER should act as receiver (Receiver)
-            // This is counterintuitive: --sender means "I (the server) am the sender"
-            let server_is_sender = client_args.iter().any(|arg| arg == "--sender");
-            let role = if server_is_sender {
-                // Server is sending to client (client is receiving from us)
-                ServerRole::Generator
-            } else {
-                // Server is receiving from client (client is sending to us)
-                ServerRole::Receiver
-            };
-
-            // Build ServerConfig with module path as the target directory
-            // Extract the short flags argument (starts with '-' but not '--')
-            // Client args are like: ["--server", "--sender", "-vvre.iLsfxCIvu", ".", "testmod/"]
-            let flag_string = client_args
-                .iter()
-                .find(|arg| arg.starts_with('-') && !arg.starts_with("--"))
-                .cloned()
-                .unwrap_or_default();
-            let config = match ServerConfig::from_flag_string_and_args(
-                role,
-                flag_string,
-                vec![OsString::from(&module.path)],
-            ) {
-                Ok(cfg) => cfg,
-                Err(err) => {
-                    let payload = format!("@ERROR: failed to configure server: {err}");
-                    let stream = reader.get_mut();
-                    write_limited(stream, limiter, payload.as_bytes())?;
-                    write_limited(stream, limiter, b"\n")?;
-                    messages.write_exit(stream, limiter)?;
-                    stream.flush()?;
-                    return Ok(());
-                }
-            };
-
-            // Validate that the module path exists and is accessible
-            if !Path::new(&module.path).exists() {
-                let payload = format!(
-                    "@ERROR: module '{}' path does not exist: {}",
-                    sanitize_module_identifier(request),
-                    module.path.display()
-                );
-                let stream = reader.get_mut();
-                write_limited(stream, limiter, payload.as_bytes())?;
-                write_limited(stream, limiter, b"\n")?;
-                messages.write_exit(stream, limiter)?;
-                stream.flush()?;
-                if let Some(log) = log_sink {
-                    let text = format!(
-                        "module '{}' path validation failed for {} ({}): path does not exist: {}",
-                        request,
-                        module_peer_host.or(session_peer_host).unwrap_or("unknown"),
-                        peer_ip,
-                        module.path.display()
-                    );
-                    let message = rsync_error!(1, text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                return Ok(());
-            }
-
-            // For daemon success path, we do NOT perform protocol setup here!
-            // Upstream does setup_protocol INSIDE start_server() (main.c:1245)
-            // only calling it early for error reporting (clientserver.c:1136)
-            // We pass the negotiated protocol to run_server_with_handshake,
-            // which will perform setup_protocol internally
-            let final_protocol = negotiated_protocol.unwrap_or(ProtocolVersion::V30);
-
-            // Extract any buffered data from the BufReader before proceeding
-            // The BufReader may have read ahead during the negotiation phase
-            let buffered_data = reader.buffer().to_vec();
-
-            // Get mutable reference to stream to set TCP_NODELAY and exchange compat flags
-            let stream = reader.get_mut();
-
-            // CRITICAL: Set TCP_NODELAY to disable Nagle's algorithm
-            // This prevents kernel buffering from reordering small writes
-            stream.set_nodelay(true)?;
-
-            // NOTE: Compat flags exchange moved to setup_protocol() to ensure correct timing
-            // relative to OUTPUT multiplex activation. The compat flags must be sent BEFORE
-            // multiplex is activated, but AFTER the stream is set up properly in run_server_with_handshake.
-
-            // Log the negotiated protocol
-            if let Some(log) = log_sink {
-                let text = format!(
-                    "module '{}' from {} ({}): protocol {}, role: {:?}",
-                    request,
-                    module_peer_host.or(session_peer_host).unwrap_or("unknown"),
-                    peer_ip,
-                    final_protocol.as_u8(),
-                    role
-                );
-                let message = rsync_info!(text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
-
-            // Now clone the stream for concurrent read/write
-            let mut read_stream = match stream.try_clone() {
-                Ok(s) => s,
-                Err(err) => {
-                    let payload = format!("@ERROR: failed to clone stream: {err}");
-                    let stream_mut = reader.get_mut();
-                    write_limited(stream_mut, limiter, payload.as_bytes())?;
-                    write_limited(stream_mut, limiter, b"\n")?;
-                    messages.write_exit(stream_mut, limiter)?;
-                    stream_mut.flush()?;
-                    return Ok(());
-                }
-            };
-
-            // Clone write stream - this creates another handle to the SAME socket
-            // Upstream rsync uses dup() which is equivalent to try_clone()
-            // The key is: both handles point to the same kernel socket, so no buffering issues
-            let mut write_stream = match stream.try_clone() {
-                Ok(s) => s,
-                Err(err) => {
-                    return Err(io::Error::other(
-                        format!("failed to clone write stream: {err}"),
-                    ));
-                }
-            };
-
-            // Create HandshakeResult from the negotiated protocol version
-            // Let setup_protocol() handle compat exchange with client capabilities
-            let handshake = HandshakeResult {
-                protocol: final_protocol,
-                buffered: buffered_data,
-                compat_exchanged: false,  // Let setup_protocol parse client_args and send compat flags
-                client_args: Some(client_args),  // Pass client args for capability parsing
-                io_timeout: module.timeout.map(|t| t.get()),  // Pass configured I/O timeout
-                negotiated_algorithms: None,  // Will be populated by setup_protocol()
-                compat_flags: None,  // Will be populated by setup_protocol()
-                checksum_seed: 0,  // Will be populated by setup_protocol()
-            };
-
-            // Run the server transfer - handles protocol setup and multiplex internally
-            let result = run_server_with_handshake(config, handshake, &mut read_stream, &mut write_stream);
-            match result {
-                Ok(_server_stats) => {
-                    if let Some(log) = log_sink {
-                        let text = format!(
-                            "transfer to {} ({}): module={} status=success",
-                            module_peer_host.or(session_peer_host).unwrap_or("unknown"),
-                            peer_ip,
-                            request
-                        );
-                        let message = rsync_info!(text).with_role(Role::Daemon);
-                        log_message(log, &message);
-                    }
-                }
-                Err(err) => {
-                    if let Some(log) = log_sink {
-                        let text = format!(
-                            "transfer failed to {} ({}): module={} error={}",
-                            module_peer_host.or(session_peer_host).unwrap_or("unknown"),
-                            peer_ip,
-                            request,
-                            err
-                        );
-                        let message = rsync_error!(1, text).with_role(Role::Daemon);
-                        log_message(log, &message);
-                    }
-                }
-            }
-
-            // Note: Connection guard (_connection_guard) drops here, releasing the slot
-            return Ok(());
-        } else {
-            if let Some(log) = log_sink {
-                log_module_denied(
-                    log,
-                    module_peer_host.or(session_peer_host),
-                    peer_ip,
-                    request,
-                );
-            }
-            deny_module(reader.get_mut(), module, peer_ip, limiter, messages)?;
-            return Ok(());
-        }
-    } else {
-        let module_display = sanitize_module_identifier(request);
-        let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref());
-        let stream = reader.get_mut();
-        write_limited(stream, limiter, payload.as_bytes())?;
-        write_limited(stream, limiter, b"\n")?;
+    // Log bandwidth change if applicable
+    if change != LimiterChange::Unchanged {
         if let Some(log) = log_sink {
-            log_unknown_module(log, session_peer_host, peer_ip, request);
+            log_module_bandwidth_change(
+                log,
+                module_peer_host.or(session_peer_host),
+                peer_ip,
+                request,
+                limiter.as_ref(),
+                change,
+            );
         }
     }
 
-    let stream = reader.get_mut();
-    messages.write_exit(stream, limiter)?;
-    stream.flush()
+    // Create context for helper functions
+    let mut ctx = ModuleRequestContext {
+        reader,
+        limiter,
+        peer_ip,
+        session_peer_host,
+        module_peer_host,
+        request,
+        log_sink,
+        messages,
+    };
+
+    // Check access permission
+    if !module.permits(peer_ip, module_peer_host) {
+        return handle_module_denied(&mut ctx, module);
+    }
+
+    process_approved_module(&mut ctx, module, options, negotiated_protocol)
 }
 
 /// Opens or creates a log file and wraps it in a shared message sink.
@@ -1110,9 +913,10 @@ fn lock_file_error(path: &Path, error: io::Error) -> DaemonError {
 /// Writes a message to the shared log sink with proper locking.
 fn log_message(log: &SharedLogSink, message: &Message) {
     if let Ok(mut sink) = log.lock()
-        && sink.write(message).is_ok() {
-            let _ = sink.flush();
-        }
+        && sink.write(message).is_ok()
+    {
+        let _ = sink.flush();
+    }
 }
 
 /// Formats a host for logging, using the IP address as fallback.
@@ -1189,7 +993,9 @@ mod module_access_tests {
 
         // Challenge should be base64-encoded MD5 hash (22 characters without padding)
         assert_eq!(challenge.len(), 22);
-        assert!(challenge.chars().all(|c| c.is_alphanumeric() || c == '+' || c == '/'));
+        assert!(challenge
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '+' || c == '/'));
     }
 
     #[test]
@@ -1294,76 +1100,15 @@ mod module_access_tests {
         assert!(args.is_empty());
     }
 
-    // Note: perform_protocol_setup tests are challenging to write as unit tests
-    // because the function requires bidirectional I/O (writing our version,
-    // then reading client's version, then potentially exchanging compat flags).
-    // Cursor<Vec<u8>> doesn't work well for bidirectional I/O patterns.
-    // These behaviors are better tested via integration tests with actual TCP streams.
-
-    #[test]
-    fn perform_protocol_setup_rejects_invalid_version_zero() {
-        let client_version = 0i32.to_le_bytes();
-        // Need buffer with room for both write and read
-        let mut buf = vec![0u8; 1024];
-        buf[..4].copy_from_slice(&client_version);
-        let mut stream = Cursor::new(buf);
-
-        let result = perform_protocol_setup(&mut stream, ProtocolVersion::V30);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        // The error might be UnexpectedEof or InvalidData depending on exact stream state
-        assert!(
-            err.kind() == io::ErrorKind::InvalidData || err.kind() == io::ErrorKind::UnexpectedEof,
-            "Expected InvalidData or UnexpectedEof, got {:?}",
-            err.kind()
-        );
-    }
-
-    #[test]
-    fn perform_protocol_setup_rejects_invalid_version_negative() {
-        let client_version = (-1i32).to_le_bytes();
-        let mut buf = vec![0u8; 1024];
-        buf[..4].copy_from_slice(&client_version);
-        let mut stream = Cursor::new(buf);
-
-        let result = perform_protocol_setup(&mut stream, ProtocolVersion::V30);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            err.kind() == io::ErrorKind::InvalidData || err.kind() == io::ErrorKind::UnexpectedEof,
-            "Expected InvalidData or UnexpectedEof, got {:?}",
-            err.kind()
-        );
-    }
-
-    #[test]
-    fn perform_protocol_setup_rejects_version_too_high() {
-        let client_version = 256i32.to_le_bytes();
-        let mut buf = vec![0u8; 1024];
-        buf[..4].copy_from_slice(&client_version);
-        let mut stream = Cursor::new(buf);
-
-        let result = perform_protocol_setup(&mut stream, ProtocolVersion::V30);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(
-            err.kind() == io::ErrorKind::InvalidData || err.kind() == io::ErrorKind::UnexpectedEof,
-            "Expected InvalidData or UnexpectedEof, got {:?}",
-            err.kind()
-        );
-    }
-
     #[test]
     fn apply_module_bandwidth_limit_disables_when_module_configured_none() {
-        let mut limiter = Some(BandwidthLimiter::new(
-            NonZeroU64::new(1024).unwrap(),
-        ));
+        let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
         let change = apply_module_bandwidth_limit(
             &mut limiter,
             None,
             false,
-            true,  // module_limit_configured
+            true, // module_limit_configured
             None,
             false,
         );
@@ -1374,15 +1119,13 @@ mod module_access_tests {
 
     #[test]
     fn apply_module_bandwidth_limit_preserves_when_not_configured() {
-        let mut limiter = Some(BandwidthLimiter::new(
-            NonZeroU64::new(1024).unwrap(),
-        ));
+        let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
         let change = apply_module_bandwidth_limit(
             &mut limiter,
             None,
             false,
-            false,  // module_limit_configured
+            false, // module_limit_configured
             None,
             false,
         );
@@ -1398,8 +1141,8 @@ mod module_access_tests {
         let change = apply_module_bandwidth_limit(
             &mut limiter,
             NonZeroU64::new(2048),
-            true,  // module_limit_specified
-            true,  // module_limit_configured
+            true, // module_limit_specified
+            true, // module_limit_configured
             None,
             false,
         );
@@ -1411,9 +1154,7 @@ mod module_access_tests {
 
     #[test]
     fn apply_module_bandwidth_limit_lowers_existing_limit() {
-        let mut limiter = Some(BandwidthLimiter::new(
-            NonZeroU64::new(2048).unwrap(),
-        ));
+        let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(2048).unwrap()));
 
         let change = apply_module_bandwidth_limit(
             &mut limiter,
@@ -1431,9 +1172,7 @@ mod module_access_tests {
 
     #[test]
     fn apply_module_bandwidth_limit_unchanged_when_limit_higher() {
-        let mut limiter = Some(BandwidthLimiter::new(
-            NonZeroU64::new(1024).unwrap(),
-        ));
+        let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
         let change = apply_module_bandwidth_limit(
             &mut limiter,
@@ -1451,17 +1190,15 @@ mod module_access_tests {
 
     #[test]
     fn apply_module_bandwidth_limit_burst_only_override() {
-        let mut limiter = Some(BandwidthLimiter::new(
-            NonZeroU64::new(1024).unwrap(),
-        ));
+        let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
 
         let change = apply_module_bandwidth_limit(
             &mut limiter,
             None,
             false,
-            true,  // module_limit_configured
+            true, // module_limit_configured
             NonZeroU64::new(4096),
-            true,  // module_burst_specified
+            true, // module_burst_specified
         );
 
         // Should update with burst
@@ -1501,124 +1238,6 @@ mod module_access_tests {
 
         let rate = NonZeroU64::new(1025).unwrap();
         assert_eq!(format_bandwidth_rate(rate), "1025 bytes/s");
-    }
-
-    // Tests for determine_server_role
-
-    #[test]
-    fn determine_server_role_returns_generator_with_sender_flag() {
-        let args = vec![
-            "--server".to_owned(),
-            "--sender".to_owned(),
-            "-vvre.iLsfxCIvu".to_owned(),
-            ".".to_owned(),
-            "testmod/".to_owned(),
-        ];
-        assert_eq!(determine_server_role(&args), ServerRole::Generator);
-    }
-
-    #[test]
-    fn determine_server_role_returns_receiver_without_sender_flag() {
-        let args = vec![
-            "--server".to_owned(),
-            "-vvre.iLsfxCIvu".to_owned(),
-            ".".to_owned(),
-            "testmod/".to_owned(),
-        ];
-        assert_eq!(determine_server_role(&args), ServerRole::Receiver);
-    }
-
-    #[test]
-    fn determine_server_role_returns_receiver_for_empty_args() {
-        let args: Vec<String> = vec![];
-        assert_eq!(determine_server_role(&args), ServerRole::Receiver);
-    }
-
-    #[test]
-    fn determine_server_role_ignores_sender_in_middle_of_other_arg() {
-        // The "--sender" must be an exact match, not a substring
-        let args = vec![
-            "--server".to_owned(),
-            "--not-a-sender".to_owned(),
-            ".".to_owned(),
-        ];
-        assert_eq!(determine_server_role(&args), ServerRole::Receiver);
-    }
-
-    // Tests for extract_flag_string
-
-    #[test]
-    fn extract_flag_string_finds_short_flags() {
-        let args = vec![
-            "--server".to_owned(),
-            "--sender".to_owned(),
-            "-vvre.iLsfxCIvu".to_owned(),
-            ".".to_owned(),
-            "testmod/".to_owned(),
-        ];
-        assert_eq!(extract_flag_string(&args), "-vvre.iLsfxCIvu");
-    }
-
-    #[test]
-    fn extract_flag_string_returns_empty_when_no_short_flags() {
-        let args = vec![
-            "--server".to_owned(),
-            "--sender".to_owned(),
-            ".".to_owned(),
-            "testmod/".to_owned(),
-        ];
-        assert_eq!(extract_flag_string(&args), "");
-    }
-
-    #[test]
-    fn extract_flag_string_returns_first_short_flag_group() {
-        let args = vec![
-            "--server".to_owned(),
-            "-abc".to_owned(),
-            "-xyz".to_owned(),
-        ];
-        // Should return first match
-        assert_eq!(extract_flag_string(&args), "-abc");
-    }
-
-    #[test]
-    fn extract_flag_string_handles_empty_args() {
-        let args: Vec<String> = vec![];
-        assert_eq!(extract_flag_string(&args), "");
-    }
-
-    #[test]
-    fn extract_flag_string_ignores_double_dash_flags() {
-        let args = vec![
-            "--server".to_owned(),
-            "--verbose".to_owned(),
-        ];
-        assert_eq!(extract_flag_string(&args), "");
-    }
-
-    // Tests for validate_module_path
-
-    #[test]
-    fn validate_module_path_returns_true_for_existing_path() {
-        // Use temp_dir which always exists
-        let path = std::env::temp_dir();
-        assert!(validate_module_path(&path));
-    }
-
-    #[test]
-    fn validate_module_path_returns_false_for_nonexistent_path() {
-        let path = std::path::Path::new("/this/path/does/not/exist/at/all/12345");
-        assert!(!validate_module_path(path));
-    }
-
-    #[test]
-    fn validate_module_path_works_with_file_path() {
-        // Create a temp file and check it
-        let temp_dir = std::env::temp_dir();
-        let test_file = temp_dir.join("test_validate_module_path.txt");
-        std::fs::write(&test_file, "test").unwrap();
-        assert!(validate_module_path(&test_file));
-        std::fs::remove_file(&test_file).unwrap();
     }
 
     // Tests for error file functions
@@ -1699,5 +1318,31 @@ mod module_access_tests {
         let fallback: IpAddr = "::1".parse().unwrap();
         assert_eq!(format_host(host, fallback), "::1");
     }
-}
 
+    // Tests for determine_server_role
+
+    #[test]
+    fn determine_server_role_sender_when_sender_flag_present() {
+        let args = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "-r".to_owned(),
+        ];
+        assert!(matches!(
+            determine_server_role(&args),
+            ServerRole::Generator
+        ));
+    }
+
+    #[test]
+    fn determine_server_role_receiver_when_sender_flag_absent() {
+        let args = vec!["--server".to_owned(), "-r".to_owned()];
+        assert!(matches!(determine_server_role(&args), ServerRole::Receiver));
+    }
+
+    #[test]
+    fn determine_server_role_receiver_when_empty() {
+        let args: Vec<String> = vec![];
+        assert!(matches!(determine_server_role(&args), ServerRole::Receiver));
+    }
+}

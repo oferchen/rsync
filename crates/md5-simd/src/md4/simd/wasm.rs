@@ -8,16 +8,16 @@ use std::arch::wasm32::*;
 use crate::Digest;
 
 /// MD4 initial state constants.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
 /// Round constants for MD4.
 const K: [u32; 3] = [
-    0x00000000, // Round 1
-    0x5A827999, // Round 2
-    0x6ED9EBA1, // Round 3
+    0x0000_0000, // Round 1
+    0x5A82_7999, // Round 2
+    0x6ED9_EBA1, // Round 3
 ];
 
 /// Message word indices for round 2.
@@ -25,7 +25,7 @@ const M2: [usize; 16] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15];
 /// Message word indices for round 3.
 const M3: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 
-const MAX_INPUT_SIZE: usize = 1024 * 1024;
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
 /// Rotate left for WASM SIMD.
 #[cfg(target_arch = "wasm32")]
@@ -69,7 +69,7 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
         let block_offset = block_idx * 64;
 
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { 0xFFFFFFFF } else { 0 }
+            if block_idx < block_counts[lane] { 0xFFFF_FFFF } else { 0 }
         });
         let mask = u32x4(lane_active[0], lane_active[1], lane_active[2], lane_active[3]);
 

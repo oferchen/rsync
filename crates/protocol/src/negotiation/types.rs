@@ -4,17 +4,87 @@ use std::io;
 use thiserror::Error;
 
 /// Error returned when the caller-provided slice cannot hold the buffered negotiation prefix.
+///
+/// During protocol negotiation, legacy ASCII exchanges (those beginning with `@RSYNCD:`) require
+/// replaying already-consumed bytes from the initial peek operation. When callers attempt to
+/// copy the buffered prefix into a destination slice that is too small to hold it, this error
+/// is returned without mutating the target buffer.
+///
+/// # When This Error Occurs
+///
+/// This error appears when:
+///
+/// * Calling [`NegotiationPrologueDetector::copy_buffered_prefix_into`](crate::NegotiationPrologueDetector::copy_buffered_prefix_into)
+///   with a slice smaller than the buffered prefix length
+/// * Calling [`NegotiationPrologueDetector::copy_buffered_prefix_into_array`](crate::NegotiationPrologueDetector::copy_buffered_prefix_into_array)
+///   with an array whose size is insufficient for the buffered data
+/// * Methods on [`NegotiationPrologueSniffer`](crate::NegotiationPrologueSniffer) that drain buffered prefix bytes
+///   into caller-provided slices when those slices lack capacity
+///
+/// # What to Do When Encountering This Error
+///
+/// Callers should:
+///
+/// 1. Check the [`required`](Self::required) capacity via the accessor method
+/// 2. Allocate a buffer of sufficient size (typically [`LEGACY_DAEMON_PREFIX_LEN`](crate::LEGACY_DAEMON_PREFIX_LEN)
+///    bytes for legacy negotiations)
+/// 3. Retry the copy operation with the properly-sized buffer
+///
+/// Alternatively, use the [`missing`](Self::missing) method to determine exactly how many
+/// additional bytes are needed beyond the currently-available capacity, allowing incremental
+/// buffer growth strategies.
+///
+/// # Relation to Upstream rsync
+///
+/// Upstream rsync reports buffer capacity errors when replaying sniffed bytes into the
+/// greeting parser. This type mirrors that behavior, ensuring that insufficient buffer
+/// allocations are surfaced with actionable diagnostic information rather than silently
+/// truncating data or triggering undefined behavior.
+///
+/// # Examples
+///
+/// ```
+/// use protocol::BufferedPrefixTooSmall;
+///
+/// // Simulate attempting to copy 10 bytes into a 5-byte buffer
+/// let err = BufferedPrefixTooSmall::new(10, 5);
+/// assert_eq!(err.required(), 10);
+/// assert_eq!(err.available(), 5);
+/// assert_eq!(err.missing(), 5);
+///
+/// // Convert to io::Error for propagation
+/// let io_err: std::io::Error = err.into();
+/// assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidInput);
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
 #[error(
     "provided buffer of length {available} is too small for negotiation prefix (requires {required})"
 )]
 pub struct BufferedPrefixTooSmall {
+    /// Number of bytes required to hold the complete buffered prefix.
     required: usize,
+    /// Number of bytes available in the caller-provided buffer.
     available: usize,
 }
 
 impl BufferedPrefixTooSmall {
     /// Creates an error describing the required and available capacities.
+    ///
+    /// # Parameters
+    ///
+    /// * `required` - Number of bytes needed to hold the complete buffered prefix
+    /// * `available` - Number of bytes in the caller-provided buffer
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::BufferedPrefixTooSmall;
+    ///
+    /// let err = BufferedPrefixTooSmall::new(100, 50);
+    /// assert_eq!(err.required(), 100);
+    /// assert_eq!(err.available(), 50);
+    /// assert_eq!(err.missing(), 50);
+    /// ```
     #[must_use]
     pub const fn new(required: usize, available: usize) -> Self {
         Self {
@@ -24,12 +94,37 @@ impl BufferedPrefixTooSmall {
     }
 
     /// Returns the number of bytes required to copy the buffered prefix.
+    ///
+    /// This value represents the minimum buffer size needed to successfully copy the
+    /// buffered negotiation prefix. For legacy ASCII negotiations, this is typically
+    /// equal to [`LEGACY_DAEMON_PREFIX_LEN`](crate::LEGACY_DAEMON_PREFIX_LEN).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::BufferedPrefixTooSmall;
+    ///
+    /// let err = BufferedPrefixTooSmall::new(100, 50);
+    /// assert_eq!(err.required(), 100);
+    /// ```
     #[must_use]
     pub const fn required(self) -> usize {
         self.required
     }
 
     /// Returns the caller-provided capacity.
+    ///
+    /// This is the size of the buffer that was passed to the copy operation, which
+    /// was insufficient to hold the buffered prefix.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::BufferedPrefixTooSmall;
+    ///
+    /// let err = BufferedPrefixTooSmall::new(100, 50);
+    /// assert_eq!(err.available(), 50);
+    /// ```
     #[must_use]
     pub const fn available(self) -> usize {
         self.available
@@ -44,6 +139,30 @@ impl BufferedPrefixTooSmall {
     /// guidance without reimplementing the subtraction logic. The value is saturated at
     /// zero to tolerate defensive checks that may construct the error even when the
     /// provided capacity already exceeds the requirement.
+    ///
+    /// # Return Value
+    ///
+    /// The number of additional bytes needed, computed as `required - available` with
+    /// saturation to prevent underflow. Returns `0` when the available capacity already
+    /// meets or exceeds the requirement.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::BufferedPrefixTooSmall;
+    ///
+    /// // Typical case: buffer is too small
+    /// let err = BufferedPrefixTooSmall::new(100, 50);
+    /// assert_eq!(err.missing(), 50);
+    ///
+    /// // Edge case: buffer is exact size (saturation to 0)
+    /// let err = BufferedPrefixTooSmall::new(100, 100);
+    /// assert_eq!(err.missing(), 0);
+    ///
+    /// // Edge case: buffer is larger than required (saturation to 0)
+    /// let err = BufferedPrefixTooSmall::new(50, 100);
+    /// assert_eq!(err.missing(), 0);
+    /// ```
     #[must_use]
     pub const fn missing(self) -> usize {
         self.required.saturating_sub(self.available)
@@ -92,6 +211,37 @@ impl fmt::Display for ParseNegotiationPrologueError {
 }
 
 impl From<BufferedPrefixTooSmall> for io::Error {
+    /// Converts a [`BufferedPrefixTooSmall`] error into an [`io::Error`].
+    ///
+    /// The resulting I/O error has kind [`InvalidInput`](io::ErrorKind::InvalidInput)
+    /// and retains the original error as its source, allowing callers to downcast
+    /// and inspect the specific buffer capacity details.
+    ///
+    /// # Error Kind Rationale
+    ///
+    /// `InvalidInput` is used because the error stems from the caller providing
+    /// a buffer that does not meet the method's preconditions (sufficient capacity).
+    /// This matches the semantic meaning of `InvalidInput` as defined in the standard
+    /// library: "A parameter was incorrect."
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use protocol::BufferedPrefixTooSmall;
+    /// use std::io;
+    ///
+    /// let err = BufferedPrefixTooSmall::new(100, 50);
+    /// let io_err: io::Error = err.into();
+    ///
+    /// assert_eq!(io_err.kind(), io::ErrorKind::InvalidInput);
+    ///
+    /// // The original error is preserved as the source
+    /// let source = io_err
+    ///     .get_ref()
+    ///     .and_then(|e| e.downcast_ref::<BufferedPrefixTooSmall>());
+    /// assert!(source.is_some());
+    /// assert_eq!(source.unwrap().required(), 100);
+    /// ```
     fn from(err: BufferedPrefixTooSmall) -> Self {
         io::Error::new(io::ErrorKind::InvalidInput, err)
     }

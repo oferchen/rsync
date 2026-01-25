@@ -19,12 +19,10 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Applies an explicit ownership override using numeric identifiers.
-    #[must_use]
-    #[doc(alias = "--chown")]
-    pub const fn owner_override(mut self, owner: Option<u32>) -> Self {
-        self.owner_override = owner;
-        self
+    builder_setter! {
+        /// Applies an explicit ownership override using numeric identifiers.
+        #[doc(alias = "--chown")]
+        owner_override: Option<u32>,
     }
 
     /// Requests that group metadata be preserved.
@@ -35,12 +33,10 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Applies an explicit group override using numeric identifiers.
-    #[must_use]
-    #[doc(alias = "--chown")]
-    pub const fn group_override(mut self, group: Option<u32>) -> Self {
-        self.group_override = group;
-        self
+    builder_setter! {
+        /// Applies an explicit group override using numeric identifiers.
+        #[doc(alias = "--chown")]
+        group_override: Option<u32>,
     }
 
     /// Sets the copy-as `USER[:GROUP]` specification.
@@ -94,17 +90,15 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Enables or disables fake-super mode.
-    ///
-    /// When enabled, privileged attributes (ownership, special permissions,
-    /// ACLs, etc.) are stored/restored using extended attributes instead of
-    /// requiring real super-user privileges. This allows non-root users to
-    /// backup files with full metadata preservation.
-    #[must_use]
-    #[doc(alias = "--fake-super")]
-    pub const fn fake_super(mut self, enabled: bool) -> Self {
-        self.fake_super = enabled;
-        self
+    builder_setter! {
+        /// Enables or disables fake-super mode.
+        ///
+        /// When enabled, privileged attributes (ownership, special permissions,
+        /// ACLs, etc.) are stored/restored using extended attributes instead of
+        /// requiring real super-user privileges. This allows non-root users to
+        /// backup files with full metadata preservation.
+        #[doc(alias = "--fake-super")]
+        fake_super: bool,
     }
 
     /// Requests that timestamps be preserved when applying metadata.
@@ -140,36 +134,24 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Requests that directory timestamps be skipped when preserving times.
-    #[must_use]
-    #[doc(alias = "--omit-dir-times")]
-    pub const fn omit_dir_times(mut self, omit: bool) -> Self {
-        self.omit_dir_times = omit;
-        self
+    builder_setter! {
+        /// Requests that directory timestamps be skipped when preserving times.
+        #[doc(alias = "--omit-dir-times")]
+        omit_dir_times: bool,
+
+        /// Controls whether symbolic link modification times should be preserved.
+        #[doc(alias = "--omit-link-times")]
+        omit_link_times: bool,
     }
 
-    /// Controls whether symbolic link modification times should be preserved.
-    #[must_use]
-    #[doc(alias = "--omit-link-times")]
-    pub const fn omit_link_times(mut self, omit: bool) -> Self {
-        self.omit_link_times = omit;
-        self
-    }
+    builder_setter! {
+        /// Requests that numeric UID/GID values be preserved instead of names.
+        #[doc(alias = "--numeric-ids")]
+        numeric_ids: bool,
 
-    /// Requests that numeric UID/GID values be preserved instead of names.
-    #[must_use]
-    #[doc(alias = "--numeric-ids")]
-    pub const fn numeric_ids(mut self, numeric_ids: bool) -> Self {
-        self.numeric_ids = numeric_ids;
-        self
-    }
-
-    /// Requests that destination files be preallocated before writing begins.
-    #[must_use]
-    #[doc(alias = "--preallocate")]
-    pub const fn preallocate(mut self, preallocate: bool) -> Self {
-        self.preallocate = preallocate;
-        self
+        /// Requests that destination files be preallocated before writing begins.
+        #[doc(alias = "--preallocate")]
+        preallocate: bool,
     }
 
     /// Enables or disables preservation of hard links between files.

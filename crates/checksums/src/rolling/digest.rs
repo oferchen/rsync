@@ -248,33 +248,8 @@ impl RollingDigest {
     }
 }
 
-impl From<RollingDigest> for u32 {
-    #[inline]
-    fn from(digest: RollingDigest) -> Self {
-        digest.value()
-    }
-}
-
-impl From<&RollingDigest> for u32 {
-    #[inline]
-    fn from(digest: &RollingDigest) -> Self {
-        digest.value()
-    }
-}
-
-impl From<RollingDigest> for [u8; 4] {
-    #[inline]
-    fn from(digest: RollingDigest) -> Self {
-        digest.to_le_bytes()
-    }
-}
-
-impl From<&RollingDigest> for [u8; 4] {
-    #[inline]
-    fn from(digest: &RollingDigest) -> Self {
-        digest.to_le_bytes()
-    }
-}
+impl_from_owned_and_ref!(RollingDigest => u32, value);
+impl_from_owned_and_ref!(RollingDigest => [u8; 4], to_le_bytes);
 
 impl Default for RollingDigest {
     fn default() -> Self {

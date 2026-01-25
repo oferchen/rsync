@@ -29,6 +29,36 @@
 //! rolling.roll(b'h', b'!').unwrap();
 //! ```
 
+/// Macro to implement From trait for both owned and reference types.
+///
+/// This reduces boilerplate when implementing conversions that work
+/// identically for both `T` and `&T`. The macro generates both
+/// implementations, ensuring consistent behavior and eliminating
+/// duplicate code.
+///
+/// # Arguments
+///
+/// * `$source` - Source type (will also generate `&$source`)
+/// * `$target` - Target type
+/// * `$method` - Method to call on the source for conversion
+macro_rules! impl_from_owned_and_ref {
+    ($source:ty => $target:ty, $method:ident) => {
+        impl From<$source> for $target {
+            #[inline]
+            fn from(value: $source) -> Self {
+                value.$method()
+            }
+        }
+
+        impl From<&$source> for $target {
+            #[inline]
+            fn from(value: &$source) -> Self {
+                value.$method()
+            }
+        }
+    };
+}
+
 mod checksum;
 mod digest;
 mod error;

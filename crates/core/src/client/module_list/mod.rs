@@ -1,3 +1,28 @@
+//! Rsync daemon module listing functionality.
+//!
+//! This module provides support for querying rsync daemons to retrieve their
+//! advertised module list, mirroring the behavior of `rsync rsync://host/` or
+//! `rsync host::`. The implementation handles legacy `@RSYNCD:` protocol
+//! negotiation, MOTD and capability parsing, and optional authentication.
+//!
+//! # Examples
+//!
+//! Requesting a module list from a daemon:
+//!
+//! ```ignore
+//! use core::client::{ModuleListRequest, run_module_list};
+//! use std::ffi::OsString;
+//!
+//! let operands = vec![OsString::from("rsync://example.com/")];
+//! let request = ModuleListRequest::from_operands(&operands)?
+//!     .expect("valid module list request");
+//!
+//! let list = run_module_list(request)?;
+//! for entry in list.entries() {
+//!     println!("{} - {}", entry.name(), entry.comment().unwrap_or(""));
+//! }
+//! ```
+
 mod auth;
 mod connect;
 mod errors;

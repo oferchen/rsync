@@ -1,7 +1,46 @@
 //! WebAssembly SIMD 4-lane parallel MD5 implementation.
 //!
 //! Processes 4 independent MD5 computations simultaneously using 128-bit WASM SIMD.
-//! WASM SIMD is widely supported in modern browsers and runtimes.
+//!
+//! # CPU Feature Requirements
+//!
+//! - **WASM SIMD (simd128)**: WebAssembly SIMD proposal
+//! - Widely supported in modern browsers and runtimes
+//! - Feature must be enabled at compile time with `target_feature = "simd128"`
+//!
+//! # Platform Support
+//!
+//! WASM SIMD is supported in:
+//! - Chrome/Edge 91+ (May 2021)
+//! - Firefox 89+ (June 2021)
+//! - Safari 16.4+ (March 2023)
+//! - Node.js 16.4+ with V8 9.1+
+//! - Wasmtime, Wasmer (modern versions)
+//!
+//! # SIMD Strategy
+//!
+//! WASM SIMD provides 128-bit vectors similar to SSE2, but with a portable
+//! instruction set that works across all architectures (x86, ARM, RISC-V).
+//!
+//! The implementation uses:
+//! - `v128` type for 128-bit SIMD values
+//! - `i32x4` operations for 32-bit integer lanes
+//! - `v128_bitselect` for efficient lane masking (similar to SSE4.1's blendv)
+//! - Manual rotation using shifts and OR (no native rotate instruction)
+//!
+//! # Performance Characteristics
+//!
+//! - **Throughput**: ~4x scalar performance (similar to SSE2/NEON)
+//! - **Portability**: Same code runs on x86, ARM, and other architectures
+//! - **Best use case**: Web applications, serverless functions, portable libraries
+//!
+//! # Differences from Native SIMD
+//!
+//! Unlike native x86/ARM SIMD, WASM SIMD:
+//! - Has no alignment requirements (but alignment can improve performance)
+//! - Always uses little-endian regardless of host
+//! - Provides `v128_bitselect` which is cleaner than SSE2 masking
+//! - Lacks specialized instructions like `pshufb` or hardware rotate
 
 #[cfg(target_arch = "wasm32")]
 use std::arch::wasm32::*;
@@ -9,27 +48,34 @@ use std::arch::wasm32::*;
 use crate::Digest;
 
 /// MD5 initial state constants.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
 /// MD5 round constants.
 const K: [u32; 64] = [
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee, 0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
+    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be, 0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
+    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa, 0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
+    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed, 0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
+    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c, 0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
+    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05, 0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
+    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039, 0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
+    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1, 0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
 ];
 
 /// Maximum input size supported.
-const MAX_INPUT_SIZE: usize = 1024 * 1024;
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
 /// Rotate left for WASM SIMD (requires runtime shift amount).
+///
+/// WASM SIMD lacks a native rotate instruction, so rotation is implemented
+/// using shifts and OR. Unlike SSE2, WASM SIMD supports runtime shift amounts
+/// without requiring compile-time constants.
+///
+/// This is a safe function (not `unsafe`) because WASM SIMD operations are
+/// inherently safe - they cannot cause undefined behavior.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 fn rotl(x: v128, n: u32) -> v128 {
@@ -41,8 +87,38 @@ fn rotl(x: v128, n: u32) -> v128 {
 
 /// Compute MD5 digests for up to 4 inputs in parallel using WASM SIMD.
 ///
-/// # Safety
-/// Caller must ensure WASM SIMD is available.
+/// Processes 4 independent byte slices in parallel, computing their MD5 digests
+/// simultaneously using WebAssembly SIMD instructions.
+///
+/// # Arguments
+///
+/// * `inputs` - Array of 4 byte slices to hash
+///
+/// # Returns
+///
+/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
+///
+/// # Performance
+///
+/// WASM SIMD performance varies by runtime:
+/// - Browser engines: Near-native performance on modern V8/SpiderMonkey/JavaScriptCore
+/// - Standalone runtimes: Performance depends on JIT quality and host architecture
+/// - Generally achieves 3-4x speedup over scalar WASM code
+///
+/// # Platform Requirements
+///
+/// This function is only available when:
+/// - Compiling for `wasm32` target
+/// - The `simd128` target feature is enabled
+///
+/// Unlike native SIMD implementations, this is a **safe** function (not `unsafe`)
+/// because WASM SIMD operations cannot cause undefined behavior - they're
+/// sandboxed and validated by the WASM runtime.
+///
+/// # Availability
+///
+/// The function has a fallback for WASM without SIMD support that processes
+/// inputs sequentially using the scalar implementation.
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
@@ -80,7 +156,7 @@ pub fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 
         // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { 0xFFFFFFFF } else { 0 }
+            if block_idx < block_counts[lane] { 0xFFFF_FFFF } else { 0 }
         });
         let mask = u32x4(lane_active[0], lane_active[1], lane_active[2], lane_active[3]);
 

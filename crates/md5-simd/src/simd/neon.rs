@@ -1,7 +1,38 @@
 //! ARM NEON 4-lane parallel MD5 implementation.
 //!
 //! Processes 4 independent MD5 computations simultaneously using 128-bit NEON registers.
-//! NEON is mandatory on aarch64, so this is always available on 64-bit ARM processors.
+//!
+//! # CPU Feature Requirements
+//!
+//! - **NEON**: Mandatory on aarch64 (ARMv8-A baseline)
+//! - No runtime feature detection needed on 64-bit ARM
+//!
+//! # SIMD Strategy
+//!
+//! NEON provides 128-bit registers similar to SSE2, but with different instruction
+//! semantics. The implementation uses NEON's efficient bitwise operations:
+//!
+//! - `vbic` (bit clear) for AND-NOT operations
+//! - `vorn` (OR-NOT) for the I-function in round 4
+//! - `vbsl` (bit select) for efficient lane masking
+//!
+//! Rotation is implemented using compile-time constant shifts (`vshlq_n_u32`/`vshrq_n_u32`)
+//! combined with OR, similar to SSE2 but with unsigned types for cleaner semantics.
+//!
+//! # Performance Characteristics
+//!
+//! - **Throughput**: ~4x scalar performance when all 4 lanes are active
+//! - **Latency**: Similar to scalar for single input
+//! - **Best use case**: Processing 4 or more inputs on ARM servers or mobile devices
+//! - **Power efficiency**: Excellent for ARM-based cloud instances
+//!
+//! # Platform Availability
+//!
+//! This backend is used on:
+//! - AWS Graviton (ARMv8.2+)
+//! - Apple Silicon M1/M2 (ARMv8.5+)
+//! - Ampere Altra (ARMv8.2+)
+//! - Mobile devices (Android, iOS)
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
@@ -9,27 +40,31 @@ use std::arch::aarch64::*;
 use crate::Digest;
 
 /// MD5 initial state constants.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
 /// MD5 round constants (T[i] = floor(2^32 * abs(sin(i+1)))).
 const K: [u32; 64] = [
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee, 0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
+    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be, 0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
+    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa, 0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
+    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed, 0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
+    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c, 0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
+    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05, 0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
+    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039, 0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
+    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1, 0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
 ];
 
 /// Maximum input size supported.
-const MAX_INPUT_SIZE: usize = 1024 * 1024;
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
 /// Macro for compile-time rotate left on NEON.
+///
+/// NEON lacks a rotate instruction, so rotation is implemented using
+/// compile-time constant shifts combined with OR. The shift amounts
+/// must be known at compile time, specified as const generic parameters.
 macro_rules! rotl_const {
     ($x:expr, $n:expr) => {{
         let left = vshlq_n_u32::<$n>($x);
@@ -40,8 +75,33 @@ macro_rules! rotl_const {
 
 /// Compute MD5 digests for up to 4 inputs in parallel using NEON.
 ///
+/// Processes 4 independent byte slices in parallel, computing their MD5 digests
+/// simultaneously using ARM NEON 128-bit registers.
+///
+/// # Arguments
+///
+/// * `inputs` - Array of 4 byte slices to hash
+///
+/// # Returns
+///
+/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
+///
+/// # Performance
+///
+/// Best performance is achieved when:
+/// - All 4 input slots are used
+/// - Inputs have similar lengths (minimizes masked blocks)
+/// - Running on modern ARM processors (ARMv8+)
+///
 /// # Safety
-/// Caller must ensure NEON is available (mandatory on aarch64).
+///
+/// Caller must ensure NEON is available. On aarch64, NEON is mandatory
+/// (part of the ARMv8-A baseline), so this function is always safe to
+/// call on 64-bit ARM platforms.
+///
+/// This function uses `unsafe` internally for:
+/// - NEON intrinsics (`v*` functions from `std::arch::aarch64`)
+/// - Aligned memory access via `vst1q_u32`
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
@@ -80,7 +140,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 
         // Create mask for active lanes
         let lane_active: [u32; 4] = std::array::from_fn(|lane| {
-            if block_idx < block_counts[lane] { 0xFFFFFFFF } else { 0 }
+            if block_idx < block_counts[lane] { 0xFFFF_FFFF } else { 0 }
         });
         let mask = vld1q_u32(lane_active.as_ptr());
 
@@ -227,7 +287,12 @@ mod tests {
     use super::*;
 
     fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[test]

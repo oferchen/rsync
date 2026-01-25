@@ -8,17 +8,26 @@ use std::arch::asm;
 
 use crate::Digest;
 
-/// MD4 initial state constants.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+/// MD4 initial state constants (RFC 1320).
+///
+/// These magic constants initialize the MD4 hash state. They represent
+/// the first 32 bits of the fractional parts of the cube roots of the
+/// first four prime numbers (2, 3, 5, 7).
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
-/// Round constants for MD4.
+/// Round constants for MD4 (RFC 1320).
+///
+/// MD4 uses three round constants:
+/// - Round 1 (steps 0-15): 0 (no constant added)
+/// - Round 2 (steps 16-31): 0x5A827999 (sqrt(2) fractional part scaled)
+/// - Round 3 (steps 32-47): 0x6ED9EBA1 (sqrt(3) fractional part scaled)
 const K: [u32; 3] = [
-    0x00000000, // Round 1
-    0x5A827999, // Round 2
-    0x6ED9EBA1, // Round 3
+    0x0000_0000, // Round 1
+    0x5A82_7999, // Round 2
+    0x6ED9_EBA1, // Round 3
 ];
 
 // Message word indices for round 2 (used in round macros below):
@@ -30,13 +39,103 @@ const K: [u32; 3] = [
 // Maps to zmm registers: [8, 16, 12, 20, 10, 18, 14, 22, 9, 17, 13, 21, 11, 19, 15, 23]
 
 /// 64-byte aligned storage for 16 u32 values.
+///
+/// This type ensures proper 64-byte alignment required for efficient AVX-512 operations.
+/// Each instance holds 16 32-bit values that are accessed by a single ZMM register load/store.
+///
+/// The 64-byte alignment matches cache line boundaries on most modern CPUs, reducing
+/// the risk of cache line splits and improving memory access performance.
 #[repr(C, align(64))]
 struct Aligned512([u32; 16]);
 
 /// Compute MD4 digests for 16 inputs in parallel using AVX-512.
 ///
+/// This function processes 16 independent MD4 hash computations simultaneously using
+/// AVX-512 SIMD instructions, providing significant performance improvements over
+/// sequential hashing when multiple inputs need to be processed.
+///
+/// # Algorithm
+///
+/// Uses 512-bit ZMM registers to compute 16 MD4 hashes in parallel through data-level
+/// parallelism. The implementation uses inline assembly to access AVX-512F and AVX-512BW
+/// instructions on stable Rust. Data is organized in a "transposed" layout where each
+/// ZMM register holds the same field (e.g., message word 0) from all 16 inputs.
+///
+/// # Performance
+///
+/// - **Throughput**: Processes 16 hashes with only ~16x the latency of a single hash
+/// - **Best for**: Batches of similarly-sized inputs (e.g., legacy protocol checksums)
+/// - **Fallback**: Inputs larger than 1MB automatically fall back to scalar implementation
+///   to avoid excessive memory allocation
+/// - **Requirements**: Requires AVX-512F and AVX-512BW CPU features (Intel Skylake-X or later,
+///   AMD Zen 4 or later)
+///
+/// # Parameters
+///
+/// * `inputs` - Array of exactly 16 byte slices to hash. Each slice can be any length,
+///   though performance is optimal when all inputs are similar in size.
+///
+/// # Returns
+///
+/// Array of 16 MD4 digests (16-byte arrays) corresponding to each input in the same order.
+///
 /// # Safety
-/// Caller must ensure AVX-512F and AVX-512BW are available.
+///
+/// Caller must ensure AVX-512F and AVX-512BW CPU features are available at runtime.
+/// The dispatcher module verifies this before calling this function. Calling this
+/// function on a CPU without these features will result in an illegal instruction fault.
+///
+/// # Security Warning
+///
+/// MD4 is cryptographically broken and should not be used for security purposes.
+/// This implementation is provided for compatibility with legacy systems only.
+/// For secure hashing, use SHA-2 or SHA-3 family algorithms.
+///
+/// # Examples
+///
+/// ```no_run
+/// use md5_simd::Digest;
+///
+/// // Prepare 16 inputs to hash in parallel
+/// let inputs: [&[u8]; 16] = [
+///     b"input 0",
+///     b"input 1",
+///     b"input 2",
+///     b"input 3",
+///     b"input 4",
+///     b"input 5",
+///     b"input 6",
+///     b"input 7",
+///     b"input 8",
+///     b"input 9",
+///     b"input 10",
+///     b"input 11",
+///     b"input 12",
+///     b"input 13",
+///     b"input 14",
+///     b"input 15",
+/// ];
+///
+/// // Safety: This example assumes AVX-512F and AVX-512BW are available.
+/// // In production, use the dispatcher to verify CPU features first.
+/// # #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
+/// let digests: [Digest; 16] = unsafe {
+///     md5_simd::md4::simd::avx512::digest_x16(&inputs)
+/// };
+///
+/// # #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
+/// // Each digest is a 16-byte MD4 hash
+/// for (i, digest) in digests.iter().enumerate() {
+///     println!("Input {}: {:02x?}", i, digest);
+/// }
+/// ```
+///
+/// # Implementation Notes
+///
+/// - Handles variable-length inputs by padding each to the nearest 64-byte block boundary
+/// - Processes blocks in lockstep, using masking to handle inputs of different lengths
+/// - Uses transposed data layout for efficient SIMD processing
+/// - Implements full MD4 specification (RFC 1320) including all 48 rounds (3 rounds of 16 steps)
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     // Find the maximum length to determine block count
@@ -117,7 +216,40 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     results
 }
 
-/// Process a single block for all 16 lanes using AVX-512.
+/// Process a single MD4 block for 16 lanes using AVX-512 inline assembly.
+///
+/// This is the core computation kernel that implements the MD4 compression function
+/// for 16 independent hash states in parallel. It processes one 64-byte block for
+/// each of the 16 lanes simultaneously.
+///
+/// # Algorithm
+///
+/// Implements the 48-round MD4 compression function (RFC 1320):
+/// - Round 1 (0-15): F function with message schedule [0..15], no added constant
+/// - Round 2 (16-31): G function with permuted message schedule, K = 0x5A827999
+/// - Round 3 (32-47): H function with permuted message schedule, K = 0x6ED9EBA1
+///
+/// # Parameters
+///
+/// * `state_a`, `state_b`, `state_c`, `state_d` - MD4 state registers for all 16 lanes
+/// * `m` - Transposed message words (16 arrays of 16 u32 values each)
+/// * `mask_bits` - Bitmask indicating which lanes are active (bit i = lane i)
+///
+/// # Implementation
+///
+/// Uses inline assembly to efficiently utilize AVX-512 instructions including:
+/// - `vpternlogd` for computing MD4 auxiliary functions
+/// - `vprold` for rotation operations
+/// - `vpblendmd` for conditional updates based on lane mask
+/// - `vmovdqa32/vmovdqu32` for aligned/unaligned loads and stores
+///
+/// The function is marked `#[inline(never)]` to reduce code size, as it contains
+/// substantial inline assembly that doesn't benefit from inlining.
+///
+/// # Safety
+///
+/// Requires AVX-512F and AVX-512BW to be available. Violating this precondition
+/// results in undefined behavior (illegal instruction fault).
 #[cfg(target_arch = "x86_64")]
 #[inline(never)]
 unsafe fn process_block_avx512(
@@ -376,7 +508,12 @@ mod tests {
     use super::*;
 
     fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[test]
@@ -488,7 +625,7 @@ mod tests {
         let input3: Vec<u8> = (0..65).map(|i| (i % 256) as u8).collect();
         let input4: Vec<u8> = (0..128).map(|i| (i % 256) as u8).collect();
         let input5: Vec<u8> = (0..200).map(|i| (i % 256) as u8).collect();
-        let input6: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
+        let input6: Vec<u8> = (0..1_000).map(|i| (i % 256) as u8).collect();
         let input7: Vec<u8> = vec![];
         let input8: Vec<u8> = (0..63).map(|i| (i % 256) as u8).collect();
         let input9: Vec<u8> = (0..57).map(|i| (i % 256) as u8).collect();

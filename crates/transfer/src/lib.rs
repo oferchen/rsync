@@ -147,6 +147,13 @@ pub type ServerResult = io::Result<ServerStats>;
 /// # Returns
 ///
 /// Returns `ServerStats` on successful transfer, or an error if handshake or transfer fails.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The protocol handshake fails (incompatible version or I/O error)
+/// - Reading from or writing to the streams fails
+/// - The receiver or generator role encounters a transfer error
 #[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout), fields(role = ?config.role)))]
 pub fn run_server_stdio(
     config: ServerConfig,
@@ -167,6 +174,16 @@ pub fn run_server_stdio(
 /// # Returns
 ///
 /// Returns `ServerStats` on successful transfer, or an error if transfer fails.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Protocol setup fails (compat flags exchange or capability negotiation)
+/// - Flushing the output stream fails before multiplex activation
+/// - Filter list writing fails (in client mode)
+/// - Multiplex activation fails
+/// - Sending the MSG_IO_TIMEOUT message fails (for daemon mode)
+/// - The receiver or generator role encounters a transfer error
 #[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout), fields(role = ?config.role, protocol = %handshake.protocol)))]
 pub fn run_server_with_handshake<W: Write>(
     config: ServerConfig,
@@ -435,8 +452,8 @@ pub fn run_server_with_handshake<W: Write>(
         }
         ServerRole::Generator => {
             // Convert OsString args to PathBuf for file walking
-            let paths: Vec<std::path::PathBuf> =
-                config.args.iter().map(std::path::PathBuf::from).collect();
+            let mut paths = Vec::with_capacity(config.args.len());
+            paths.extend(config.args.iter().map(std::path::PathBuf::from));
 
             let mut ctx = GeneratorContext::new(&handshake, config);
             // Pass reader by value - GeneratorContext::run now takes ownership and activates multiplex internally

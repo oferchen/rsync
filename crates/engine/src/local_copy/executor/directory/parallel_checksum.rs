@@ -22,11 +22,13 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rayon::prelude::*;
 
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
 
+use crate::local_copy::buffer_pool::BufferPool;
 use crate::local_copy::COPY_BUFFER_SIZE;
 use crate::signature::SignatureAlgorithm;
 
@@ -88,7 +90,12 @@ pub(crate) fn prefetch_checksums(
     pairs: &[FilePair],
     algorithm: SignatureAlgorithm,
 ) -> HashMap<PathBuf, ChecksumPrefetchResult> {
-    pairs
+    // Create a buffer pool sized for parallel operations
+    // Use num_cpus or a reasonable default to limit memory usage
+    let num_threads = rayon::current_num_threads();
+    let buffer_pool = Arc::new(BufferPool::new(num_threads));
+
+    let results: Vec<_> = pairs
         .par_iter()
         .map(|pair| {
             // Skip if sizes don't match (no need to hash)
@@ -102,10 +109,14 @@ pub(crate) fn prefetch_checksums(
                 );
             }
 
+            // Clone the buffer pool Arc for use in nested parallel operations
+            let pool_src = Arc::clone(&buffer_pool);
+            let pool_dst = Arc::clone(&buffer_pool);
+
             // Compute checksums in parallel for source and destination
             let (source_checksum, destination_checksum) = rayon::join(
-                || compute_file_checksum(&pair.source, algorithm),
-                || compute_file_checksum(&pair.destination, algorithm),
+                || compute_file_checksum(&pair.source, algorithm, &pool_src),
+                || compute_file_checksum(&pair.destination, algorithm, &pool_dst),
             );
 
             (
@@ -116,23 +127,39 @@ pub(crate) fn prefetch_checksums(
                 },
             )
         })
-        .collect()
+        .collect();
+
+    // Pre-allocate HashMap with exact capacity to avoid rehashing
+    let mut map = HashMap::with_capacity(results.len());
+    for (path, result) in results {
+        map.insert(path, result);
+    }
+    map
 }
 
 /// Computes the checksum of a single file.
-fn compute_file_checksum(path: &Path, algorithm: SignatureAlgorithm) -> Option<FileChecksum> {
+fn compute_file_checksum(
+    path: &Path,
+    algorithm: SignatureAlgorithm,
+    buffer_pool: &Arc<BufferPool>,
+) -> Option<FileChecksum> {
     let file = File::open(path).ok()?;
     let metadata = file.metadata().ok()?;
     let size = metadata.len();
 
-    let digest = hash_file_contents(file, algorithm).ok()?;
+    let digest = hash_file_contents(file, algorithm, buffer_pool).ok()?;
 
     Some(FileChecksum { digest, size })
 }
 
 /// Hashes file contents using the specified algorithm.
-fn hash_file_contents(mut file: File, algorithm: SignatureAlgorithm) -> io::Result<Vec<u8>> {
-    let mut buffer = vec![0u8; COPY_BUFFER_SIZE];
+fn hash_file_contents(
+    mut file: File,
+    algorithm: SignatureAlgorithm,
+    buffer_pool: &Arc<BufferPool>,
+) -> io::Result<Vec<u8>> {
+    // Acquire a reusable buffer from the pool instead of allocating
+    let mut buffer = BufferPool::acquire_from(Arc::clone(buffer_pool));
 
     let digest = match algorithm {
         SignatureAlgorithm::Md4 => {

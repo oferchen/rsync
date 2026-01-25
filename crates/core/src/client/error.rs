@@ -4,7 +4,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
-use crate::exit_code::{ExitCode, HasExitCode};
+use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
 use crate::rsync_error;
 use engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
@@ -82,6 +82,76 @@ impl ClientError {
 impl HasExitCode for ClientError {
     fn exit_code(&self) -> ExitCode {
         self.exit_code
+    }
+}
+
+impl ErrorCodification for ClientError {
+    fn error_code(&self) -> u32 {
+        // Map exit codes to unique error codes
+        // Use exit code as base (multiplied by 100) for namespace separation
+        match self.exit_code {
+            ExitCode::Ok => 0,
+            ExitCode::Syntax => 100,
+            ExitCode::Protocol => 200,
+            ExitCode::FileSelect => 300,
+            ExitCode::Unsupported => 400,
+            ExitCode::StartClient => 500,
+            ExitCode::SocketIo => 1000,
+            ExitCode::FileIo => 1100,
+            ExitCode::StreamIo => 1200,
+            ExitCode::MessageIo => 1300,
+            ExitCode::Ipc => 1400,
+            ExitCode::Crashed => 1500,
+            ExitCode::Terminated => 1600,
+            ExitCode::Signal1 => 1900,
+            ExitCode::Signal => 2000,
+            ExitCode::WaitChild => 2100,
+            ExitCode::Malloc => 2200,
+            ExitCode::PartialTransfer => 2300,
+            ExitCode::Vanished => 2400,
+            ExitCode::DeleteLimit => 2500,
+            ExitCode::Timeout => 3000,
+            ExitCode::ConnectionTimeout => 3500,
+            ExitCode::CommandFailed => 12400,
+            ExitCode::CommandKilled => 12500,
+            ExitCode::CommandRun => 12600,
+            ExitCode::CommandNotFound => 12700,
+        }
+    }
+
+    fn user_message(&self) -> String {
+        self.message.to_string()
+    }
+
+    fn error_code_name(&self) -> &'static str {
+        match self.exit_code {
+            ExitCode::Ok => "RERR_OK",
+            ExitCode::Syntax => "RERR_SYNTAX",
+            ExitCode::Protocol => "RERR_PROTOCOL",
+            ExitCode::FileSelect => "RERR_FILESELECT",
+            ExitCode::Unsupported => "RERR_UNSUPPORTED",
+            ExitCode::StartClient => "RERR_STARTCLIENT",
+            ExitCode::SocketIo => "RERR_SOCKETIO",
+            ExitCode::FileIo => "RERR_FILEIO",
+            ExitCode::StreamIo => "RERR_STREAMIO",
+            ExitCode::MessageIo => "RERR_MESSAGEIO",
+            ExitCode::Ipc => "RERR_IPC",
+            ExitCode::Crashed => "RERR_CRASHED",
+            ExitCode::Terminated => "RERR_TERMINATED",
+            ExitCode::Signal1 => "RERR_SIGNAL1",
+            ExitCode::Signal => "RERR_SIGNAL",
+            ExitCode::WaitChild => "RERR_WAITCHILD",
+            ExitCode::Malloc => "RERR_MALLOC",
+            ExitCode::PartialTransfer => "RERR_PARTIAL",
+            ExitCode::Vanished => "RERR_VANISHED",
+            ExitCode::DeleteLimit => "RERR_DEL_LIMIT",
+            ExitCode::Timeout => "RERR_TIMEOUT",
+            ExitCode::ConnectionTimeout => "RERR_CONTIMEOUT",
+            ExitCode::CommandFailed => "RERR_CMD_FAILED",
+            ExitCode::CommandKilled => "RERR_CMD_KILLED",
+            ExitCode::CommandRun => "RERR_CMD_RUN",
+            ExitCode::CommandNotFound => "RERR_CMD_NOTFOUND",
+        }
     }
 }
 

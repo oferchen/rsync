@@ -1,23 +1,20 @@
 
 #[test]
 fn backup_creation_uses_default_suffix() {
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source");
-    let dest = temp.path().join("dest");
-    fs::create_dir_all(&source).expect("create source");
-    fs::create_dir_all(&dest).expect("create dest");
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
 
-    let source_file = source.join("file.txt");
+    let source_file = ctx.source.join("file.txt");
     fs::write(&source_file, b"updated").expect("write source");
 
-    let dest_root = dest.join("source");
+    let dest_root = ctx.dest.join("source");
     fs::create_dir_all(&dest_root).expect("create dest root");
     let existing = dest_root.join("file.txt");
     fs::write(&existing, b"original").expect("write dest");
 
     let operands = vec![
-        source.into_os_string(),
-        dest.into_os_string(),
+        ctx.source.into_os_string(),
+        ctx.dest.into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().backup(true);

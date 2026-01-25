@@ -91,8 +91,9 @@ impl<W: Write> ServerWriter<W> {
     }
 
     /// Returns true if multiplex is active
+    ///
+    /// This method is primarily used for testing and verification.
     #[inline]
-    #[allow(dead_code)]
     pub const fn is_multiplexed(&self) -> bool {
         matches!(self, Self::Multiplex(_) | Self::Compressed(_))
     }

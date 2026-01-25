@@ -37,4 +37,4 @@ parallel = ["dep:rayon"]
 
 [dev-dependencies]
 protocol = { path = "../protocol" }
-tempfile = "3"
+tempfile = "3.15"

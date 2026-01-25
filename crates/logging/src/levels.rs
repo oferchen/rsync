@@ -121,6 +121,7 @@ pub struct InfoLevels {
 
 impl InfoLevels {
     /// Get the level for a specific flag.
+    #[must_use]
     pub const fn get(&self, flag: InfoFlag) -> u8 {
         match flag {
             InfoFlag::Backup => self.backup,
@@ -232,6 +233,7 @@ pub struct DebugLevels {
 
 impl DebugLevels {
     /// Get the level for a specific flag.
+    #[must_use]
     pub const fn get(&self, flag: DebugFlag) -> u8 {
         match flag {
             DebugFlag::Acl => self.acl,

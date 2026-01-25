@@ -2,12 +2,10 @@ use super::*;
 use std::num::NonZeroU32;
 
 impl ClientConfigBuilder {
-    /// Configures the optional bandwidth limit to apply during transfers.
-    #[must_use]
-    #[doc(alias = "--bwlimit")]
-    pub const fn bandwidth_limit(mut self, limit: Option<BandwidthLimit>) -> Self {
-        self.bandwidth_limit = limit;
-        self
+    builder_setter! {
+        /// Configures the optional bandwidth limit to apply during transfers.
+        #[doc(alias = "--bwlimit")]
+        bandwidth_limit: Option<BandwidthLimit>,
     }
 
     /// Enables or disables compression for the transfer.
@@ -38,12 +36,10 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Overrides the compression algorithm used when compression is enabled.
-    #[must_use]
-    #[doc(alias = "--compress-choice")]
-    pub const fn compression_algorithm(mut self, algorithm: CompressionAlgorithm) -> Self {
-        self.compression_algorithm = algorithm;
-        self
+    builder_setter! {
+        /// Overrides the compression algorithm used when compression is enabled.
+        #[doc(alias = "--compress-choice")]
+        compression_algorithm: CompressionAlgorithm,
     }
 
     /// Sets the compression level that should apply when compression is enabled.
@@ -66,13 +62,11 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Requests that source files be opened without updating their access times.
-    #[must_use]
-    #[doc(alias = "--open-noatime")]
-    #[doc(alias = "--no-open-noatime")]
-    pub const fn open_noatime(mut self, enabled: bool) -> Self {
-        self.open_noatime = enabled;
-        self
+    builder_setter! {
+        /// Requests that source files be opened without updating their access times.
+        #[doc(alias = "--open-noatime")]
+        #[doc(alias = "--no-open-noatime")]
+        open_noatime: bool,
     }
 
     /// Requests that whole-file transfers be used instead of the delta algorithm.
@@ -85,53 +79,43 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Applies an explicit delta-transfer block size override.
-    #[must_use]
-    #[doc(alias = "--block-size")]
-    pub const fn block_size_override(mut self, block_size: Option<NonZeroU32>) -> Self {
-        self.block_size_override = block_size;
-        self
+    builder_setter! {
+        /// Applies an explicit delta-transfer block size override.
+        #[doc(alias = "--block-size")]
+        block_size_override: Option<NonZeroU32>,
     }
 
-    /// Sets the maximum memory allocation limit per allocation request.
-    ///
-    /// When set, this limits how much memory can be allocated in a single
-    /// request, providing protection against memory exhaustion attacks.
-    #[must_use]
-    #[doc(alias = "--max-alloc")]
-    pub const fn max_alloc(mut self, limit: Option<u64>) -> Self {
-        self.max_alloc = limit;
-        self
+    builder_setter! {
+        /// Sets the maximum memory allocation limit per allocation request.
+        ///
+        /// When set, this limits how much memory can be allocated in a single
+        /// request, providing protection against memory exhaustion attacks.
+        #[doc(alias = "--max-alloc")]
+        max_alloc: Option<u64>,
     }
 
-    /// Enables or disables sparse file handling for the transfer.
-    #[must_use]
-    #[doc(alias = "--sparse")]
-    #[doc(alias = "-S")]
-    pub const fn sparse(mut self, sparse: bool) -> Self {
-        self.sparse = sparse;
-        self
+    builder_setter! {
+        /// Enables or disables sparse file handling for the transfer.
+        #[doc(alias = "--sparse")]
+        #[doc(alias = "-S")]
+        sparse: bool,
     }
 
-    /// Enables or disables fuzzy basis file search during delta transfers.
-    #[must_use]
-    #[doc(alias = "--fuzzy")]
-    #[doc(alias = "--no-fuzzy")]
-    #[doc(alias = "-y")]
-    pub const fn fuzzy(mut self, fuzzy: bool) -> Self {
-        self.fuzzy = fuzzy;
-        self
+    builder_setter! {
+        /// Enables or disables fuzzy basis file search during delta transfers.
+        #[doc(alias = "--fuzzy")]
+        #[doc(alias = "--no-fuzzy")]
+        #[doc(alias = "-y")]
+        fuzzy: bool,
     }
 
-    /// Enables qsort instead of merge sort for file list sorting.
-    ///
-    /// When enabled, uses qsort for file list sorting which may be faster
-    /// for certain data patterns but is not a stable sort.
-    #[must_use]
-    #[doc(alias = "--qsort")]
-    pub const fn qsort(mut self, qsort: bool) -> Self {
-        self.qsort = qsort;
-        self
+    builder_setter! {
+        /// Enables qsort instead of merge sort for file list sorting.
+        ///
+        /// When enabled, uses qsort for file list sorting which may be faster
+        /// for certain data patterns but is not a stable sort.
+        #[doc(alias = "--qsort")]
+        qsort: bool,
     }
 }
 

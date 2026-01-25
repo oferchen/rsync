@@ -1,4 +1,50 @@
-//! crates/core/src/client/run.rs
+//! Client transfer execution and orchestration.
+//!
+//! This module implements the primary entry points for executing file transfers,
+//! including [`run_client`], [`run_client_with_observer`], and
+//! [`run_client_or_fallback`]. These functions coordinate local copies, remote
+//! transfers over SSH and rsync daemon protocols, and delegation to system rsync
+//! binaries when features are not yet implemented natively.
+//!
+//! The orchestration layer handles:
+//! - Configuration validation and argument parsing
+//! - Progress tracking and event collection
+//! - Filter rule compilation and application
+//! - Batch mode file replay and recording
+//! - Remote transfer role determination
+//! - Fallback delegation when requested
+//!
+//! # Examples
+//!
+//! Basic local transfer:
+//!
+//! ```ignore
+//! use core::client::{ClientConfig, run_client};
+//!
+//! let config = ClientConfig::builder()
+//!     .transfer_args(["source/", "dest/"])
+//!     .recursive(true)
+//!     .build();
+//!
+//! let summary = run_client(config)?;
+//! println!("Transferred {} files", summary.files_copied());
+//! ```
+//!
+//! Transfer with progress reporting:
+//!
+//! ```ignore
+//! use core::client::{ClientConfig, run_client_with_observer};
+//!
+//! let mut observer = |update| {
+//!     println!("Progress: {}/{}", update.index(), update.total());
+//! };
+//!
+//! let config = ClientConfig::builder()
+//!     .transfer_args(["large_source/", "dest/"])
+//!     .build();
+//!
+//! run_client_with_observer(config, Some(&mut observer))?;
+//! ```
 
 use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
@@ -19,7 +65,8 @@ use engine::local_copy::{
 use filters::FilterRule as EngineFilterRule;
 
 use super::config::{
-    ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec, ReferenceDirectoryKind,
+    BandwidthLimit, ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec,
+    ReferenceDirectoryKind,
 };
 use super::error::{
     ClientError, compile_filter_error, map_local_copy_error, missing_operands_error,
@@ -35,6 +82,41 @@ use super::summary::ClientSummary;
 /// The helper executes the local copy engine for local transfers, or the
 /// native SSH transport for remote transfers. Both paths return a summary
 /// of the work performed.
+///
+/// # Arguments
+///
+/// * `config` - The client configuration specifying sources, destination,
+///   and transfer options.
+///
+/// # Returns
+///
+/// Returns `Ok(ClientSummary)` on successful transfer with statistics about
+/// files copied, bytes transferred, etc. Returns `Err(ClientError)` if the
+/// transfer fails or configuration is invalid.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - No transfer operands are provided (missing source or destination)
+/// - The destination directory cannot be accessed due to permission denied
+/// - Filter rules fail to compile due to invalid patterns
+/// - The local copy engine fails during file transfer
+/// - Remote SSH or daemon transfer fails
+/// - Batch file operations fail (creation, header writing, or flushing)
+///
+/// # Examples
+///
+/// ```no_run
+/// use core::client::{run_client, ClientConfig};
+///
+/// let config = ClientConfig::builder()
+///     .transfer_args(vec!["source.txt", "dest.txt"])
+///     .build();
+///
+/// let summary = run_client(config)?;
+/// println!("Copied {} files", summary.files_copied());
+/// # Ok::<(), core::client::ClientError>(())
+/// ```
 #[cfg_attr(feature = "tracing", instrument(skip(config)))]
 pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
     run_client_internal(config, None)
@@ -44,6 +126,50 @@ pub fn run_client(config: ClientConfig) -> Result<ClientSummary, ClientError> {
 ///
 /// When an observer is supplied the transfer emits progress updates mirroring
 /// the behaviour of `--info=progress2`.
+///
+/// # Arguments
+///
+/// * `config` - The client configuration specifying sources, destination,
+///   and transfer options.
+/// * `observer` - Optional progress observer to receive transfer updates.
+///   Pass `None` for no progress reporting.
+///
+/// # Returns
+///
+/// Returns `Ok(ClientSummary)` on successful transfer with statistics about
+/// files copied, bytes transferred, etc. Returns `Err(ClientError)` if the
+/// transfer fails or configuration is invalid.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - No transfer operands are provided (missing source or destination)
+/// - The destination directory cannot be accessed due to permission denied
+/// - Filter rules fail to compile due to invalid patterns
+/// - The local copy engine fails during file transfer
+/// - Remote SSH or daemon transfer fails
+/// - Batch file operations fail (creation, header writing, or flushing)
+///
+/// # Examples
+///
+/// ```no_run
+/// use core::client::{run_client_with_observer, ClientConfig, ClientProgressUpdate};
+///
+/// struct MyObserver;
+/// impl core::client::ClientProgressObserver for MyObserver {
+///     fn on_update(&mut self, update: &ClientProgressUpdate) {
+///         println!("Progress: {}/{}", update.index(), update.total());
+///     }
+/// }
+///
+/// let config = ClientConfig::builder()
+///     .transfer_args(vec!["source/", "dest/"])
+///     .build();
+///
+/// let mut observer = MyObserver;
+/// let summary = run_client_with_observer(config, Some(&mut observer))?;
+/// # Ok::<(), core::client::ClientError>(())
+/// ```
 #[cfg_attr(feature = "tracing", instrument(skip(config, observer)))]
 pub fn run_client_with_observer(
     config: ClientConfig,
@@ -57,6 +183,47 @@ pub fn run_client_with_observer(
 /// The caller may supply a [`RemoteFallbackContext`] that describes how to invoke
 /// an upstream `rsync` binary for remote transfers while the native engine
 /// evolves.
+///
+/// # Arguments
+///
+/// * `config` - The client configuration specifying sources, destination,
+///   and transfer options.
+/// * `observer` - Optional progress observer to receive transfer updates.
+/// * `_fallback` - Optional fallback context for delegating to system rsync
+///   (currently unused but reserved for future fallback support).
+///
+/// # Returns
+///
+/// Returns `Ok(ClientOutcome)` wrapping either a local transfer summary or
+/// fallback execution result. Returns `Err(ClientError)` if the transfer fails
+/// or configuration is invalid.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - No transfer operands are provided (missing source or destination)
+/// - The destination directory cannot be accessed due to permission denied
+/// - Filter rules fail to compile due to invalid patterns
+/// - The local copy engine fails during file transfer
+/// - Remote SSH or daemon transfer fails
+/// - Batch file operations fail (creation, header writing, or flushing)
+///
+/// # Examples
+///
+/// ```no_run
+/// use core::client::{run_client_or_fallback, ClientConfig};
+///
+/// let config = ClientConfig::builder()
+///     .transfer_args(vec!["source.txt", "dest.txt"])
+///     .build();
+///
+/// let outcome = run_client_or_fallback::<std::io::Stdout, std::io::Stderr>(
+///     config,
+///     None,
+///     None,
+/// )?;
+/// # Ok::<(), core::client::ClientError>(())
+/// ```
 #[cfg_attr(feature = "tracing", instrument(skip(config, observer, _fallback)))]
 pub fn run_client_or_fallback<Out, Err>(
     config: ClientConfig,
@@ -366,12 +533,12 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .bandwidth_limit(
                 config
                     .bandwidth_limit()
-                    .map(|limit| limit.bytes_per_second()),
+                    .map(BandwidthLimit::bytes_per_second),
             )
             .bandwidth_burst(
                 config
                     .bandwidth_limit()
-                    .and_then(|limit| limit.burst_bytes()),
+                    .and_then(BandwidthLimit::burst_bytes),
             )
     }
 
@@ -475,11 +642,11 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         config: &ClientConfig,
     ) -> LocalCopyOptions {
         options
-            .with_temp_directory(config.temp_directory().map(|path| path.to_path_buf()))
+            .with_temp_directory(config.temp_directory().map(Path::to_path_buf))
             .backup(config.backup())
-            .with_backup_directory(config.backup_directory().map(|path| path.to_path_buf()))
+            .with_backup_directory(config.backup_directory().map(Path::to_path_buf))
             .with_backup_suffix(config.backup_suffix().map(OsStr::to_os_string))
-            .with_partial_directory(config.partial_directory().map(|path| path.to_path_buf()))
+            .with_partial_directory(config.partial_directory().map(Path::to_path_buf))
             .delay_updates(config.delay_updates())
             .extend_link_dests(config.link_dest_paths().iter().cloned())
     }

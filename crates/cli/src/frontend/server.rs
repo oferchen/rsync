@@ -103,6 +103,7 @@ where
     let is_sender = args.iter().any(|a| a == "--sender");
     let is_receiver = args.iter().any(|a| a == "--receiver");
     let ignore_errors = args.iter().any(|a| a == "--ignore-errors");
+    let fsync = args.iter().any(|a| a == "--fsync");
 
     let role = if is_sender {
         ServerRole::Generator // Server sends files to client (generator role)
@@ -125,11 +126,12 @@ where
     for arg in args.iter().skip(1) {
         let arg_str = arg.to_string_lossy();
 
-        // Skip --server, --sender, --receiver, --ignore-errors
+        // Skip --server, --sender, --receiver, --ignore-errors, --fsync
         if arg_str == "--server"
             || arg_str == "--sender"
             || arg_str == "--receiver"
             || arg_str == "--ignore-errors"
+            || arg_str == "--fsync"
         {
             continue;
         }
@@ -168,6 +170,7 @@ where
 
     // Apply additional flags parsed from full arguments
     config.ignore_errors = ignore_errors;
+    config.fsync = fsync;
 
     // Run native server with stdio
     let mut stdin = io::stdin().lock();
