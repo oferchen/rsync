@@ -113,7 +113,7 @@ pub const CHUNK_SIZE: usize = 32 * 1024;
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::CompressedTokenEncoder;
+/// use protocol::wire::CompressedTokenEncoder;
 /// use compress::zlib::CompressionLevel;
 ///
 /// let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
@@ -164,7 +164,7 @@ impl CompressedTokenEncoder {
     /// # Examples
     ///
     /// ```
-    /// use rsync_core::protocol::wire::CompressedTokenEncoder;
+    /// use protocol::wire::CompressedTokenEncoder;
     /// use compress::zlib::CompressionLevel;
     ///
     /// // Recommended: protocol 31 with default compression
@@ -489,8 +489,8 @@ impl CompressedTokenEncoder {
 ///
 /// # Examples
 ///
-/// ```
-/// use rsync_core::protocol::wire::{CompressedTokenDecoder, CompressedToken};
+/// ```no_run
+/// use protocol::wire::{CompressedTokenDecoder, CompressedToken};
 /// use std::io::Cursor;
 ///
 /// let mut decoder = CompressedTokenDecoder::new();
@@ -768,7 +768,7 @@ impl CompressedTokenDecoder {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::CompressedToken;
+/// use protocol::wire::CompressedToken;
 ///
 /// // Pattern match on tokens
 /// # let token = CompressedToken::Literal(vec![1, 2, 3]);

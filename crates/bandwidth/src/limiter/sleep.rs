@@ -246,4 +246,231 @@ mod tests {
         assert_eq!(sleep.requested(), Duration::from_secs(1));
         assert_eq!(sleep.actual(), Duration::from_millis(950));
     }
+
+    // ========================================================================
+    // Additional sleep_for edge case tests
+    // ========================================================================
+
+    #[test]
+    fn sleep_for_handles_very_small_duration() {
+        // Should not panic with very small duration
+        sleep_for(Duration::from_nanos(1));
+    }
+
+    #[test]
+    fn sleep_for_handles_one_microsecond() {
+        sleep_for(Duration::from_micros(1));
+    }
+
+    #[test]
+    fn sleep_for_handles_one_millisecond() {
+        sleep_for(Duration::from_millis(1));
+    }
+
+    #[test]
+    fn sleep_for_max_sleep_duration_chunk() {
+        // Test sleeping for exactly MAX_SLEEP_DURATION - should be one chunk
+        // In tests, actual sleeping is skipped but chunks are recorded
+        sleep_for(MAX_SLEEP_DURATION);
+    }
+
+    #[test]
+    fn sleep_for_multiple_chunks() {
+        // Duration larger than MAX_SLEEP_DURATION should be split into chunks
+        // MAX_SLEEP_DURATION is i64::MAX seconds + 999_999_999 nanos
+        // In practice, any large duration tests the chunking logic
+        let large_duration = Duration::from_secs(100);
+        sleep_for(large_duration);
+    }
+
+    // ========================================================================
+    // duration_from_microseconds additional tests
+    // ========================================================================
+
+    #[test]
+    fn duration_from_microseconds_boundary_values() {
+        // Test at various boundaries
+        let one_sec_minus_one = duration_from_microseconds(999_999);
+        assert_eq!(one_sec_minus_one.as_secs(), 0);
+        assert_eq!(one_sec_minus_one.as_micros(), 999_999);
+
+        let exactly_one_sec = duration_from_microseconds(1_000_000);
+        assert_eq!(exactly_one_sec.as_secs(), 1);
+        assert_eq!(exactly_one_sec.subsec_micros(), 0);
+
+        let one_sec_plus_one = duration_from_microseconds(1_000_001);
+        assert_eq!(one_sec_plus_one.as_secs(), 1);
+        assert_eq!(one_sec_plus_one.subsec_micros(), 1);
+    }
+
+    #[test]
+    fn duration_from_microseconds_large_values_below_max() {
+        // Test various large values that should not overflow
+        let one_hour = duration_from_microseconds(3_600_000_000);
+        assert_eq!(one_hour.as_secs(), 3600);
+
+        let one_day = duration_from_microseconds(86_400_000_000);
+        assert_eq!(one_day.as_secs(), 86400);
+
+        let one_year = duration_from_microseconds(31_536_000_000_000);
+        assert_eq!(one_year.as_secs(), 31_536_000);
+    }
+
+    #[test]
+    fn duration_from_microseconds_exactly_at_max() {
+        // Test exactly at MAX_REPRESENTABLE_MICROSECONDS
+        let result = duration_from_microseconds(MAX_REPRESENTABLE_MICROSECONDS);
+        // Should not be Duration::MAX since it's at the boundary, not over
+        assert!(result < Duration::MAX);
+    }
+
+    #[test]
+    fn duration_from_microseconds_just_over_max() {
+        // Test just over MAX_REPRESENTABLE_MICROSECONDS
+        let result = duration_from_microseconds(MAX_REPRESENTABLE_MICROSECONDS + 1);
+        assert_eq!(result, Duration::MAX);
+    }
+
+    #[test]
+    fn duration_from_microseconds_way_over_max() {
+        // Test significantly over MAX_REPRESENTABLE_MICROSECONDS
+        let result = duration_from_microseconds(u128::MAX);
+        assert_eq!(result, Duration::MAX);
+    }
+
+    #[test]
+    fn duration_from_microseconds_fraction_preservation() {
+        // Verify sub-second microseconds are preserved correctly
+        let us = 1_234_567; // 1.234567 seconds
+        let result = duration_from_microseconds(us);
+        assert_eq!(result.as_secs(), 1);
+        assert_eq!(result.subsec_micros(), 234_567);
+    }
+
+    #[test]
+    fn duration_from_microseconds_subsec_nanos() {
+        // Verify nanoseconds conversion (micros * 1000)
+        let us = 1_500; // 1500 microseconds = 1.5 milliseconds
+        let result = duration_from_microseconds(us);
+        assert_eq!(result.as_millis(), 1);
+        // 500 micros = 500_000 nanos
+        assert_eq!(result.subsec_nanos(), 1_500_000);
+    }
+
+    // ========================================================================
+    // LimiterSleep additional edge case tests
+    // ========================================================================
+
+    #[test]
+    fn limiter_sleep_requested_larger_than_actual() {
+        // Common case: limiter requested more sleep than actually occurred
+        let sleep = LimiterSleep::new(Duration::from_secs(2), Duration::from_millis(1900));
+        assert_eq!(sleep.requested(), Duration::from_secs(2));
+        assert_eq!(sleep.actual(), Duration::from_millis(1900));
+        assert!(!sleep.is_noop());
+    }
+
+    #[test]
+    fn limiter_sleep_actual_larger_than_requested() {
+        // Unusual but possible: actual sleep exceeded requested
+        let sleep = LimiterSleep::new(Duration::from_secs(1), Duration::from_millis(1100));
+        assert_eq!(sleep.requested(), Duration::from_secs(1));
+        assert_eq!(sleep.actual(), Duration::from_millis(1100));
+        assert!(!sleep.is_noop());
+    }
+
+    #[test]
+    fn limiter_sleep_very_large_durations() {
+        let sleep = LimiterSleep::new(Duration::from_secs(86400), Duration::from_secs(86400));
+        assert_eq!(sleep.requested().as_secs(), 86400);
+        assert_eq!(sleep.actual().as_secs(), 86400);
+    }
+
+    #[test]
+    fn limiter_sleep_sub_microsecond_actual() {
+        let sleep = LimiterSleep::new(Duration::from_micros(100), Duration::from_nanos(500));
+        assert!(!sleep.is_noop());
+    }
+
+    #[test]
+    fn limiter_sleep_debug_contains_durations() {
+        let sleep = LimiterSleep::new(Duration::from_millis(100), Duration::from_millis(95));
+        let debug = format!("{sleep:?}");
+        assert!(debug.contains("requested"));
+        assert!(debug.contains("actual"));
+    }
+
+    #[test]
+    fn limiter_sleep_eq_symmetry() {
+        let s1 = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        let s2 = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        assert_eq!(s1, s2);
+        assert_eq!(s2, s1);
+    }
+
+    #[test]
+    fn limiter_sleep_ne_different_requested() {
+        let s1 = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        let s2 = LimiterSleep::new(Duration::from_secs(2), Duration::from_secs(1));
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn limiter_sleep_ne_different_actual() {
+        let s1 = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(1));
+        let s2 = LimiterSleep::new(Duration::from_secs(1), Duration::from_secs(2));
+        assert_ne!(s1, s2);
+    }
+
+    #[test]
+    fn limiter_sleep_default_is_noop() {
+        let default_sleep = LimiterSleep::default();
+        assert!(default_sleep.is_noop());
+    }
+
+    // ========================================================================
+    // sleep_for recording tests
+    // ========================================================================
+
+    #[test]
+    fn sleep_for_records_when_nonzero() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        sleep_for(Duration::from_millis(10));
+
+        // Should have recorded something
+        assert!(!session.is_empty());
+    }
+
+    #[test]
+    fn sleep_for_zero_records_nothing() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        sleep_for(Duration::ZERO);
+
+        // Should have recorded nothing for zero duration
+        assert!(session.is_empty());
+    }
+
+    #[test]
+    fn sleep_for_sub_microsecond_still_records() {
+        use super::super::recorded_sleep_session;
+
+        let mut session = recorded_sleep_session();
+        session.clear();
+
+        sleep_for(Duration::from_nanos(100));
+
+        // Even sub-microsecond should record (chunking happens)
+        // The loop checks !remaining.is_zero() and chunk.is_zero()
+        let sleeps = session.take();
+        // For very small durations, chunk might equal remaining and be non-zero
+        assert!(!sleeps.is_empty() || Duration::from_nanos(100).is_zero());
+    }
 }

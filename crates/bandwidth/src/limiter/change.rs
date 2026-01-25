@@ -323,4 +323,292 @@ mod tests {
         let debug = format!("{:?}", LimiterChange::Enabled);
         assert!(debug.contains("Enabled"));
     }
+
+    // ========================================================================
+    // Tests for apply_effective_limit function
+    // ========================================================================
+
+    fn nz(value: u64) -> NonZeroU64 {
+        NonZeroU64::new(value).expect("non-zero value required")
+    }
+
+    #[test]
+    fn apply_effective_limit_unchanged_when_nothing_specified() {
+        let mut limiter = None;
+        let result = apply_effective_limit(&mut limiter, None, false, None, false);
+        assert_eq!(result, LimiterChange::Unchanged);
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_unchanged_when_limiter_exists_but_nothing_specified() {
+        let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
+        let result = apply_effective_limit(&mut limiter, None, false, None, false);
+        assert_eq!(result, LimiterChange::Unchanged);
+        assert!(limiter.is_some());
+    }
+
+    #[test]
+    fn apply_effective_limit_enables_limiter_when_none_exists() {
+        let mut limiter = None;
+        let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        assert_eq!(result, LimiterChange::Enabled);
+        assert!(limiter.is_some());
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
+    }
+
+    #[test]
+    fn apply_effective_limit_enables_with_burst() {
+        let mut limiter = None;
+        let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true, Some(nz(500)), true);
+        assert_eq!(result, LimiterChange::Enabled);
+        assert!(limiter.is_some());
+        let l = limiter.as_ref().unwrap();
+        assert_eq!(l.limit_bytes().get(), 1000);
+        assert_eq!(l.burst_bytes().unwrap().get(), 500);
+    }
+
+    #[test]
+    fn apply_effective_limit_disables_limiter_when_limit_is_none() {
+        let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
+        let result = apply_effective_limit(&mut limiter, None, true, None, false);
+        assert_eq!(result, LimiterChange::Disabled);
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_unchanged_when_disabling_nonexistent_limiter() {
+        let mut limiter: Option<BandwidthLimiter> = None;
+        let result = apply_effective_limit(&mut limiter, None, true, None, false);
+        assert_eq!(result, LimiterChange::Unchanged);
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_updates_existing_limiter_limit_lower() {
+        // When new limit is lower than existing, use new limit (min)
+        let mut limiter = Some(BandwidthLimiter::new(nz(2000)));
+        let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        assert_eq!(result, LimiterChange::Updated);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
+    }
+
+    #[test]
+    fn apply_effective_limit_unchanged_when_limit_higher() {
+        // When new limit is higher than existing, use existing (min) - no change
+        let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
+        let result = apply_effective_limit(&mut limiter, Some(nz(2000)), true, None, false);
+        assert_eq!(result, LimiterChange::Unchanged);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
+    }
+
+    #[test]
+    fn apply_effective_limit_updates_burst_on_existing_limiter() {
+        let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
+        let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true, Some(nz(500)), true);
+        assert_eq!(result, LimiterChange::Updated);
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 500);
+    }
+
+    #[test]
+    fn apply_effective_limit_removes_burst_on_existing_limiter() {
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, true);
+        assert_eq!(result, LimiterChange::Updated);
+        assert!(limiter.as_ref().unwrap().burst_bytes().is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_preserves_burst_when_not_specified() {
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        // Update limit without specifying burst
+        let result = apply_effective_limit(&mut limiter, Some(nz(800)), true, None, false);
+        assert_eq!(result, LimiterChange::Updated);
+        // Burst should be preserved
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 500);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 800);
+    }
+
+    #[test]
+    fn apply_effective_limit_updates_burst_only_on_existing_limiter() {
+        let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
+        // Update only burst without specifying limit
+        let result = apply_effective_limit(&mut limiter, None, false, Some(nz(500)), true);
+        assert_eq!(result, LimiterChange::Updated);
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 500);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000); // Unchanged
+    }
+
+    #[test]
+    fn apply_effective_limit_burst_only_change_on_nonexistent_limiter() {
+        // Changing burst only when no limiter exists should do nothing
+        let mut limiter: Option<BandwidthLimiter> = None;
+        let result = apply_effective_limit(&mut limiter, None, false, Some(nz(500)), true);
+        assert_eq!(result, LimiterChange::Unchanged);
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_burst_unchanged_when_same() {
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        // Set burst to same value
+        let result = apply_effective_limit(&mut limiter, None, false, Some(nz(500)), true);
+        assert_eq!(result, LimiterChange::Unchanged);
+    }
+
+    #[test]
+    fn apply_effective_limit_multiple_changes_combine_correctly() {
+        // Test that both limit and burst changes result in Updated
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(2000), Some(nz(1000))));
+        let result = apply_effective_limit(&mut limiter, Some(nz(1500)), true, Some(nz(700)), true);
+        assert_eq!(result, LimiterChange::Updated);
+        // Limit should be min(2000, 1500) = 1500
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1500);
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 700);
+    }
+
+    #[test]
+    fn apply_effective_limit_disable_takes_precedence() {
+        // When limit is None and specified, disabling should happen regardless of burst
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        let result = apply_effective_limit(&mut limiter, None, true, Some(nz(700)), true);
+        assert_eq!(result, LimiterChange::Disabled);
+        assert!(limiter.is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_enable_with_burst_not_specified() {
+        // Enable limiter without burst
+        let mut limiter = None;
+        let result =
+            apply_effective_limit(&mut limiter, Some(nz(1000)), true, Some(nz(500)), false);
+        assert_eq!(result, LimiterChange::Enabled);
+        // Burst should be None since burst_specified is false
+        assert!(limiter.as_ref().unwrap().burst_bytes().is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_limit_not_specified_burst_change_only() {
+        // Test the branch where limit_specified is false but burst_specified is true
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        let result =
+            apply_effective_limit(&mut limiter, Some(nz(2000)), false, Some(nz(700)), true);
+        assert_eq!(result, LimiterChange::Updated);
+        // Limit unchanged (because limit_specified is false)
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
+        // Burst updated
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 700);
+    }
+
+    #[test]
+    fn apply_effective_limit_removes_burst_via_burst_only_update() {
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        // Only specify burst change (to None)
+        let result = apply_effective_limit(&mut limiter, None, false, None, true);
+        assert_eq!(result, LimiterChange::Updated);
+        assert!(limiter.as_ref().unwrap().burst_bytes().is_none());
+    }
+
+    #[test]
+    fn apply_effective_limit_limiter_with_lower_existing_limit() {
+        // Existing limit is lower than new limit - should not change
+        let mut limiter = Some(BandwidthLimiter::new(nz(500)));
+        let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        assert_eq!(result, LimiterChange::Unchanged);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 500);
+    }
+
+    #[test]
+    fn apply_effective_limit_limiter_with_equal_existing_limit() {
+        // Existing limit equals new limit - should not change
+        let mut limiter = Some(BandwidthLimiter::new(nz(1000)));
+        let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        assert_eq!(result, LimiterChange::Unchanged);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
+    }
+
+    // ========================================================================
+    // Edge cases for apply_effective_limit
+    // ========================================================================
+
+    #[test]
+    fn apply_effective_limit_very_small_limit() {
+        let mut limiter = None;
+        let result = apply_effective_limit(&mut limiter, Some(nz(1)), true, None, false);
+        assert_eq!(result, LimiterChange::Enabled);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1);
+    }
+
+    #[test]
+    fn apply_effective_limit_very_large_limit() {
+        let mut limiter = None;
+        let result = apply_effective_limit(&mut limiter, Some(nz(u64::MAX)), true, None, false);
+        assert_eq!(result, LimiterChange::Enabled);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), u64::MAX);
+    }
+
+    #[test]
+    fn apply_effective_limit_burst_larger_than_limit() {
+        let mut limiter = None;
+        let result =
+            apply_effective_limit(&mut limiter, Some(nz(1000)), true, Some(nz(5000)), true);
+        assert_eq!(result, LimiterChange::Enabled);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 5000);
+    }
+
+    #[test]
+    fn apply_effective_limit_burst_equal_to_limit() {
+        let mut limiter = None;
+        let result =
+            apply_effective_limit(&mut limiter, Some(nz(1000)), true, Some(nz(1000)), true);
+        assert_eq!(result, LimiterChange::Enabled);
+        assert_eq!(limiter.as_ref().unwrap().limit_bytes().get(), 1000);
+        assert_eq!(limiter.as_ref().unwrap().burst_bytes().unwrap().get(), 1000);
+    }
+
+    #[test]
+    fn apply_effective_limit_repeated_updates() {
+        let mut limiter = None;
+
+        // First enable
+        let r1 = apply_effective_limit(&mut limiter, Some(nz(2000)), true, None, false);
+        assert_eq!(r1, LimiterChange::Enabled);
+
+        // Update to lower
+        let r2 = apply_effective_limit(&mut limiter, Some(nz(1500)), true, None, false);
+        assert_eq!(r2, LimiterChange::Updated);
+
+        // Try to update to higher (should be unchanged due to min)
+        let r3 = apply_effective_limit(&mut limiter, Some(nz(2000)), true, None, false);
+        assert_eq!(r3, LimiterChange::Unchanged);
+
+        // Disable
+        let r4 = apply_effective_limit(&mut limiter, None, true, None, false);
+        assert_eq!(r4, LimiterChange::Disabled);
+
+        // Re-enable
+        let r5 = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
+        assert_eq!(r5, LimiterChange::Enabled);
+    }
+
+    #[test]
+    fn apply_effective_limit_burst_only_specified_but_same_value() {
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        // Specify burst_specified=true but same burst value
+        let result = apply_effective_limit(&mut limiter, None, false, Some(nz(500)), true);
+        // Should be unchanged since burst value is the same
+        assert_eq!(result, LimiterChange::Unchanged);
+    }
+
+    #[test]
+    fn apply_effective_limit_both_specified_but_neither_changed() {
+        // Both limit and burst specified but no actual change needed
+        let mut limiter = Some(BandwidthLimiter::with_burst(nz(1000), Some(nz(500))));
+        // Specify higher limit (min keeps existing) and same burst
+        let result = apply_effective_limit(&mut limiter, Some(nz(2000)), true, Some(nz(500)), true);
+        // limit_changed = false (target_limit = min(1000, 2000) = 1000 = existing)
+        // burst_changed = false (500 == 500)
+        assert_eq!(result, LimiterChange::Unchanged);
+    }
 }

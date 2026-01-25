@@ -145,7 +145,13 @@ pub fn trailing_zero_count(bytes: &[u8]) -> usize {
     }
 
     // Handle remainder (< 16 bytes)
-    offset + iter.remainder().iter().rev().take_while(|&&b| b == 0).count()
+    offset
+        + iter
+            .remainder()
+            .iter()
+            .rev()
+            .take_while(|&&b| b == 0)
+            .count()
 }
 
 /// Checks if a buffer contains only zeros.

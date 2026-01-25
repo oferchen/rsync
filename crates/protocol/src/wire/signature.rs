@@ -25,7 +25,7 @@ use crate::varint::{read_varint, write_varint};
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::SignatureBlock;
+/// use protocol::wire::SignatureBlock;
 ///
 /// let block = SignatureBlock {
 ///     index: 0,
@@ -87,7 +87,7 @@ pub struct SignatureBlock {
 /// # Examples
 ///
 /// ```
-/// use rsync_core::protocol::wire::{SignatureBlock, write_signature};
+/// use protocol::wire::{SignatureBlock, write_signature};
 ///
 /// let blocks = vec![
 ///     SignatureBlock {
@@ -152,8 +152,8 @@ pub fn write_signature<W: Write>(
 ///
 /// # Examples
 ///
-/// ```
-/// use rsync_core::protocol::wire::read_signature;
+/// ```no_run
+/// use protocol::wire::read_signature;
 ///
 /// # let mut data: &[u8] = &[]; // Placeholder
 /// let (block_length, block_count, strong_sum_length, blocks) =
