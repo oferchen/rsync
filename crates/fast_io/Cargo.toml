@@ -1,0 +1,31 @@
+[package]
+name = "fast_io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance I/O abstractions for rsync"
+repository.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[dependencies]
+rayon = { workspace = true }
+thiserror = "2.0"
+
+# Cached sorting with Schwartzian transform
+permutation = "0.4"
+
+# Optional: memory-mapped I/O
+memmap2 = { version = "0.9", optional = true }
+
+[features]
+default = ["mmap"]
+mmap = ["dep:memmap2"]
+
+[dev-dependencies]
+tempfile = "3.15"

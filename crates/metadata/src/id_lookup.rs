@@ -349,6 +349,13 @@ pub fn lookup_group_by_name(name: &[u8]) -> Result<Option<RawGid>, io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Global lock to serialize tests that modify shared caches.
+    fn cache_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     // map_uid tests
     #[test]
@@ -528,6 +535,7 @@ mod tests {
 
     #[test]
     fn uid_cache_stores_mapping_on_lookup() {
+        let _lock = cache_lock().lock().unwrap();
         clear_id_caches();
         let initial_size = uid_cache_size();
 
@@ -543,6 +551,7 @@ mod tests {
 
     #[test]
     fn gid_cache_stores_mapping_on_lookup() {
+        let _lock = cache_lock().lock().unwrap();
         clear_id_caches();
         let initial_size = gid_cache_size();
 
@@ -558,6 +567,7 @@ mod tests {
 
     #[test]
     fn numeric_ids_bypasses_cache() {
+        let _lock = cache_lock().lock().unwrap();
         clear_id_caches();
         let initial_uid_size = uid_cache_size();
         let initial_gid_size = gid_cache_size();
@@ -580,6 +590,7 @@ mod tests {
 
     #[test]
     fn repeated_lookups_return_same_result() {
+        let _lock = cache_lock().lock().unwrap();
         clear_id_caches();
 
         // Multiple lookups for the same UID should return same result
@@ -596,6 +607,7 @@ mod tests {
 
     #[test]
     fn clear_id_caches_empties_both_caches() {
+        let _lock = cache_lock().lock().unwrap();
         // Populate caches
         let _ = map_uid(0, false);
         let _ = map_gid(0, false);
