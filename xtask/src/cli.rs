@@ -28,6 +28,9 @@ pub struct Cli {
 /// Available xtask subcommands.
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Run performance benchmarks comparing oc-rsync versions.
+    Benchmark(BenchmarkArgs),
+
     /// Validate workspace branding metadata.
     Branding(BrandingArgs),
 
@@ -66,6 +69,34 @@ pub enum Command {
 
     /// Run the workspace test suite (prefers cargo-nextest).
     Test(TestArgs),
+}
+
+/// Arguments for the `benchmark` command.
+#[derive(Parser, Debug, Default)]
+pub struct BenchmarkArgs {
+    /// Directory for benchmark data and daemon.
+    #[arg(long, value_name = "DIR")]
+    pub bench_dir: Option<std::path::PathBuf>,
+
+    /// Rsync daemon port.
+    #[arg(long, value_name = "PORT")]
+    pub port: Option<u16>,
+
+    /// Number of runs per version.
+    #[arg(long, value_name = "N", default_value = "5")]
+    pub runs: Option<usize>,
+
+    /// Specific versions to benchmark (default: last 3 releases + dev).
+    #[arg(long, value_name = "VER")]
+    pub versions: Vec<String>,
+
+    /// Skip building versions (use existing binaries).
+    #[arg(long)]
+    pub skip_build: bool,
+
+    /// Output results as JSON.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// Output format for branding command.
@@ -290,6 +321,7 @@ pub trait CommandExt {
 impl CommandExt for Command {
     fn as_task(&self) -> Box<dyn Task> {
         match self {
+            Command::Benchmark(args) => args.as_task(),
             Command::Branding(args) => args.as_task(),
             Command::Docs(args) => args.as_task(),
             Command::DocPackage(args) => args.as_task(),
@@ -304,6 +336,12 @@ impl CommandExt for Command {
             Command::Sbom(_) => Box::new(SbomTask),
             Command::Test(args) => args.as_task(),
         }
+    }
+}
+
+impl CommandExt for BenchmarkArgs {
+    fn as_task(&self) -> Box<dyn Task> {
+        Box::new(BenchmarkTask)
     }
 }
 
@@ -370,6 +408,23 @@ impl CommandExt for TestArgs {
 // Simple leaf tasks for commands without complex decomposition.
 
 use std::time::Duration;
+
+/// Task for performance benchmarking.
+struct BenchmarkTask;
+
+impl Task for BenchmarkTask {
+    fn name(&self) -> &'static str {
+        "benchmark"
+    }
+
+    fn description(&self) -> &'static str {
+        "Run performance benchmarks"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(300)) // Benchmarks can take a while
+    }
+}
 
 /// Task for branding validation.
 struct BrandingTask;
