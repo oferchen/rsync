@@ -633,7 +633,9 @@ fn parse_config_modules_inner(
                             ));
                         }
                     } else {
-                        global_incoming_chmod = Some((value.to_owned(), origin));
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        global_incoming_chmod = Some((owned, origin));
                     }
                 }
                 "outgoing chmod" | "outgoing-chmod" => {
@@ -662,7 +664,9 @@ fn parse_config_modules_inner(
                             ));
                         }
                     } else {
-                        global_outgoing_chmod = Some((value.to_owned(), origin));
+                        let mut owned = String::new();
+                        value.clone_into(&mut owned);
+                        global_outgoing_chmod = Some((owned, origin));
                     }
                 }
                 "lock file" => {

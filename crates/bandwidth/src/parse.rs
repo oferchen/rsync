@@ -36,7 +36,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
     if text
         .as_bytes()
         .iter()
-        .all(|byte| byte.is_ascii_whitespace())
+        .all(u8::is_ascii_whitespace)
     {
         return Err(BandwidthParseError::Invalid);
     }
@@ -77,20 +77,16 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
                     exponent_digits_seen = true;
                     exponent_sign_allowed = false;
                 }
-                continue;
             }
             b'.' | b',' if !decimal_seen && !exponent_seen => {
                 decimal_seen = true;
-                continue;
             }
             b'e' | b'E' if digits_seen && !exponent_seen => {
                 exponent_seen = true;
                 exponent_sign_allowed = true;
-                continue;
             }
             b'+' | b'-' if exponent_sign_allowed => {
                 exponent_sign_allowed = false;
-                continue;
             }
             _ => {
                 numeric_end = index;

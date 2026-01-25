@@ -1,6 +1,34 @@
 //! AVX2 8-lane parallel MD5 implementation.
 //!
 //! Processes 8 independent MD5 computations simultaneously using 256-bit YMM registers.
+//!
+//! # CPU Feature Requirements
+//!
+//! - **AVX2**: Intel Haswell (2013+), AMD Excavator (2015+) or newer
+//! - Must be verified at runtime using `is_x86_feature_detected!("avx2")`
+//!
+//! # SIMD Strategy
+//!
+//! Similar to SSE2 but with twice the parallelism using 256-bit YMM registers.
+//! Each YMM register holds 8 lanes of 32-bit values, allowing 8 parallel MD5
+//! computations to proceed in lockstep.
+//!
+//! AVX2 provides significant advantages over SSE2:
+//! - Variable-shift instructions (`vpsllvd`/`vpsrlvd`) for efficient rotation
+//! - Native blend instruction (`vpblendvb`) for cleaner lane masking
+//! - 256-bit loads/stores for better memory bandwidth
+//!
+//! # Performance Characteristics
+//!
+//! - **Throughput**: ~8x scalar performance when all 8 lanes are active
+//! - **Latency**: Similar to scalar for single input
+//! - **Best use case**: Processing 8 or more inputs of similar lengths
+//! - **Efficiency**: ~2x throughput vs SSE2 with comparable energy
+//!
+//! # Input Size Limits
+//!
+//! Falls back to scalar implementation for inputs exceeding 1 MB to avoid
+//! excessive memory allocation for padding buffers.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -8,10 +36,10 @@ use std::arch::x86_64::*;
 use crate::Digest;
 
 /// MD5 initial state constants broadcast to 8 lanes.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
 /// Per-round shift amounts.
 const S: [u32; 64] = [
@@ -23,28 +51,36 @@ const S: [u32; 64] = [
 
 /// Pre-computed K constants.
 const K: [u32; 64] = [
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
-    0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-    0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
-    0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-    0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-    0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
-    0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
-    0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-    0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee,
+    0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
+    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be,
+    0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
+    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa,
+    0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
+    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed,
+    0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
+    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c,
+    0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
+    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05,
+    0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
+    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039,
+    0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
+    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1,
+    0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
 ];
 
 /// Maximum input size supported (can be increased if needed).
-const MAX_INPUT_SIZE: usize = 1024 * 1024; // 1MB per input
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
-/// Rotate left helper - AVX2 doesn't have a rotate instruction
+/// Rotate left helper - AVX2 doesn't have a rotate instruction.
+///
+/// Implements 32-bit rotate-left using AVX2's variable shift instructions.
+/// Unlike SSE2, AVX2 supports variable shift amounts via `vpsllvd`/`vpsrlvd`,
+/// allowing the shift amount to be a runtime value.
+///
+/// # Safety
+///
+/// Requires AVX2 support. This is enforced by the `#[target_feature]` attribute.
 #[target_feature(enable = "avx2")]
 unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
     // Use variable shift for runtime values
@@ -56,8 +92,38 @@ unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
 
 /// Compute MD5 digests for up to 8 inputs in parallel using AVX2.
 ///
+/// Processes 8 independent byte slices in parallel, computing their MD5 digests
+/// simultaneously using 256-bit YMM registers.
+///
+/// # Arguments
+///
+/// * `inputs` - Array of 8 byte slices to hash
+///
+/// # Returns
+///
+/// Array of 8 MD5 digests (16 bytes each) in the same order as the inputs
+///
+/// # Performance
+///
+/// Best performance is achieved when:
+/// - All 8 input slots are used
+/// - Inputs have similar lengths (minimizes masked blocks)
+/// - Input sizes are reasonable (< 1 MB)
+/// - CPU supports AVX2 (Haswell/2013 or newer)
+///
 /// # Safety
-/// Caller must ensure AVX2 is available.
+///
+/// Caller must ensure AVX2 is available. Use runtime detection before calling:
+///
+/// ```ignore
+/// if is_x86_feature_detected!("avx2") {
+///     let digests = unsafe { digest_x8(&inputs) };
+/// }
+/// ```
+///
+/// This function uses `unsafe` internally for:
+/// - AVX2 intrinsics (`_mm256_*` functions)
+/// - Aligned memory access via `_mm256_store_si256`
 #[target_feature(enable = "avx2")]
 pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
     // Find the maximum length to determine block count
@@ -233,7 +299,12 @@ mod tests {
     use super::*;
 
     fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[test]
@@ -321,7 +392,7 @@ mod tests {
         let input3: Vec<u8> = (0..65).map(|i| (i % 256) as u8).collect();
         let input4: Vec<u8> = (0..128).map(|i| (i % 256) as u8).collect();
         let input5: Vec<u8> = (0..200).map(|i| (i % 256) as u8).collect();
-        let input6: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
+        let input6: Vec<u8> = (0..1_000).map(|i| (i % 256) as u8).collect();
         let input7: Vec<u8> = vec![];
 
         let inputs: [&[u8]; 8] = [

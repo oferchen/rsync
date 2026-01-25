@@ -115,24 +115,38 @@ pub mod signature {
     };
 }
 
+// Batch mode types for offline transfer workflows
 pub use batch::{BatchConfig, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchWriter};
+
+// Delta generation and signature layout for rsync block matching
 pub use delta::{
     DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, SignatureLayout,
     SignatureLayoutError, SignatureLayoutParams, apply_delta, calculate_signature_layout,
     generate_delta,
 };
+
+// Common error types
 pub use error::{EngineError, EngineResult};
+
+// Fuzzy matching for finding similar basis files
 pub use fuzzy::{FuzzyMatch, FuzzyMatcher, compute_similarity_score};
+
+// Local filesystem copy operations
 pub use local_copy::{
     DeleteTiming, LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyOptions,
     LocalCopyPlan, LocalCopySummary, ReferenceDirectory, ReferenceDirectoryKind, SkipCompressList,
     SkipCompressParseError,
 };
+
+// File signature generation for delta transfers
 pub use signature::{
     FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
 };
+
+// Directory traversal abstractions for file list generation
 pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError, WalkdirWalker};
 
+// Async I/O operations (available with `async` feature)
 #[cfg(feature = "async")]
 pub use async_io::{
     AsyncBatchCopier, AsyncFileCopier, AsyncFileReader, AsyncFileWriter, AsyncIoError,

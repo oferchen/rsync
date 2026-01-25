@@ -601,7 +601,7 @@ impl RuntimeOptions {
         }
 
         let path = Some(path);
-        self.global_secrets_file = path.clone();
+        path.clone_into(&mut self.global_secrets_file);
         self.global_secrets_from_config = false;
         self.global_secrets_from_cli = true;
 
@@ -622,7 +622,8 @@ impl RuntimeOptions {
             fs::read_to_string(&path).map_err(|error| config_io_error("read", &path, error))?;
 
         for raw_line in contents.lines() {
-            let line = raw_line.trim_end_matches('\r').to_owned();
+            let mut line = String::new();
+            raw_line.trim_end_matches('\r').clone_into(&mut line);
             self.motd_lines.push(line);
         }
 
@@ -630,9 +631,11 @@ impl RuntimeOptions {
     }
 
     fn push_motd_line(&mut self, value: OsString) {
-        let line = value
+        let mut line = String::new();
+        value
             .to_string_lossy()
-            .trim_matches(['\r', '\n']).to_owned();
+            .trim_matches(['\r', '\n'])
+            .clone_into(&mut line);
         self.motd_lines.push(line);
     }
 }

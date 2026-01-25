@@ -21,7 +21,7 @@
 use std::error::Error;
 use std::fmt;
 
-use core::exit_code::{ExitCode, HasExitCode};
+use core::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use core::message::Message;
 
 /// Error returned when daemon orchestration fails.
@@ -72,6 +72,75 @@ impl DaemonError {
 impl HasExitCode for DaemonError {
     fn exit_code(&self) -> ExitCode {
         self.exit_code
+    }
+}
+
+impl ErrorCodification for DaemonError {
+    fn error_code(&self) -> u32 {
+        // Map exit codes to unique error codes (offset by 10000 to avoid conflicts with ClientError)
+        match self.exit_code {
+            ExitCode::Ok => 10000,
+            ExitCode::Syntax => 10100,
+            ExitCode::Protocol => 10200,
+            ExitCode::FileSelect => 10300,
+            ExitCode::Unsupported => 10400,
+            ExitCode::StartClient => 10500,
+            ExitCode::SocketIo => 11000,
+            ExitCode::FileIo => 11100,
+            ExitCode::StreamIo => 11200,
+            ExitCode::MessageIo => 11300,
+            ExitCode::Ipc => 11400,
+            ExitCode::Crashed => 11500,
+            ExitCode::Terminated => 11600,
+            ExitCode::Signal1 => 11900,
+            ExitCode::Signal => 12000,
+            ExitCode::WaitChild => 12100,
+            ExitCode::Malloc => 12200,
+            ExitCode::PartialTransfer => 12300,
+            ExitCode::Vanished => 12400,
+            ExitCode::DeleteLimit => 12500,
+            ExitCode::Timeout => 13000,
+            ExitCode::ConnectionTimeout => 13500,
+            ExitCode::CommandFailed => 22400,
+            ExitCode::CommandKilled => 22500,
+            ExitCode::CommandRun => 22600,
+            ExitCode::CommandNotFound => 22700,
+        }
+    }
+
+    fn user_message(&self) -> String {
+        self.message.to_string()
+    }
+
+    fn error_code_name(&self) -> &'static str {
+        match self.exit_code {
+            ExitCode::Ok => "RERR_OK",
+            ExitCode::Syntax => "RERR_SYNTAX",
+            ExitCode::Protocol => "RERR_PROTOCOL",
+            ExitCode::FileSelect => "RERR_FILESELECT",
+            ExitCode::Unsupported => "RERR_UNSUPPORTED",
+            ExitCode::StartClient => "RERR_STARTCLIENT",
+            ExitCode::SocketIo => "RERR_SOCKETIO",
+            ExitCode::FileIo => "RERR_FILEIO",
+            ExitCode::StreamIo => "RERR_STREAMIO",
+            ExitCode::MessageIo => "RERR_MESSAGEIO",
+            ExitCode::Ipc => "RERR_IPC",
+            ExitCode::Crashed => "RERR_CRASHED",
+            ExitCode::Terminated => "RERR_TERMINATED",
+            ExitCode::Signal1 => "RERR_SIGNAL1",
+            ExitCode::Signal => "RERR_SIGNAL",
+            ExitCode::WaitChild => "RERR_WAITCHILD",
+            ExitCode::Malloc => "RERR_MALLOC",
+            ExitCode::PartialTransfer => "RERR_PARTIAL",
+            ExitCode::Vanished => "RERR_VANISHED",
+            ExitCode::DeleteLimit => "RERR_DEL_LIMIT",
+            ExitCode::Timeout => "RERR_TIMEOUT",
+            ExitCode::ConnectionTimeout => "RERR_CONTIMEOUT",
+            ExitCode::CommandFailed => "RERR_CMD_FAILED",
+            ExitCode::CommandKilled => "RERR_CMD_KILLED",
+            ExitCode::CommandRun => "RERR_CMD_RUN",
+            ExitCode::CommandNotFound => "RERR_CMD_NOTFOUND",
+        }
     }
 }
 

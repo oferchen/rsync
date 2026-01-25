@@ -199,6 +199,7 @@ impl LazyFileListEntry {
     /// # Errors
     ///
     /// Returns an error if metadata fetch previously failed.
+    #[must_use]
     pub fn try_into_resolved(self) -> Option<Result<FileListEntry, io::Error>> {
         if !self.metadata.is_resolved() {
             return None;

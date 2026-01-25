@@ -16,6 +16,7 @@ pub struct VerbosityConfig {
 impl VerbosityConfig {
     /// Create a new configuration from a verbose level (0-5).
     /// Applies upstream rsync verbosity mapping.
+    #[must_use]
     pub fn from_verbose_level(level: u8) -> Self {
         let mut config = Self::default();
 

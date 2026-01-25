@@ -13,6 +13,32 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 /// candidates across the directories listed in the current `PATH` environment
 /// variable, mirroring the behaviour used by [`std::process::Command`] when
 /// launching child processes.
+///
+/// # Arguments
+///
+/// * `binary` - The executable name or path to generate candidates for.
+///
+/// # Returns
+///
+/// Returns a vector of candidate paths. For bare names like `"rsync"`, this
+/// includes all possible locations in PATH. For explicit paths like
+/// `"/usr/bin/rsync"` or `"./rsync"`, returns just that path (with potential
+/// PATHEXT extensions on Windows).
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use core::fallback::fallback_binary_candidates;
+///
+/// // Get all candidates for a bare name
+/// let candidates = fallback_binary_candidates(OsStr::new("rsync"));
+/// // Returns paths like /usr/bin/rsync, /usr/local/bin/rsync, etc.
+///
+/// // Explicit path returns single candidate
+/// let explicit = fallback_binary_candidates(OsStr::new("/usr/bin/rsync"));
+/// assert_eq!(explicit.len(), 1);
+/// ```
 #[must_use]
 pub fn fallback_binary_candidates(binary: &OsStr) -> Vec<PathBuf> {
     let direct_path = Path::new(binary);

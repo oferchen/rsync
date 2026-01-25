@@ -1,8 +1,34 @@
 //! SSE4.1 4-lane parallel MD5 implementation.
 //!
-//! SSE4.1 adds `blendvps` for efficient conditional blending, improving
-//! the mask application for different-length inputs.
-//! Available on Intel Penryn and later, AMD Bulldozer and later.
+//! Processes 4 independent MD5 computations simultaneously using 128-bit XMM registers.
+//!
+//! # CPU Feature Requirements
+//!
+//! - **SSE4.1**: Intel Penryn (2007+), AMD Bulldozer (2011+) or newer
+//! - Must be verified at runtime using `is_x86_feature_detected!("sse4.1")`
+//!
+//! # SIMD Strategy
+//!
+//! SSE4.1 provides a significant improvement over SSE2/SSSE3 with the `blendv`
+//! instruction family. This implementation uses `_mm_blendv_epi8` for efficient
+//! lane masking when inputs have different lengths.
+//!
+//! **Key advantage over SSE2**: The SSE2 implementation requires three instructions
+//! (AND, ANDNOT, OR) to implement conditional blending, while SSE4.1 does it in
+//! a single `blendv` instruction. This reduces instruction count and improves
+//! performance for inputs with varying lengths.
+//!
+//! # Performance Characteristics
+//!
+//! - **Throughput**: ~4x scalar performance
+//! - **Latency**: Similar to SSE2/SSSE3
+//! - **Best use case**: Processing inputs with varying block counts
+//! - **Efficiency**: Better than SSE2 for mixed-length inputs
+//!
+//! # Availability
+//!
+//! SSE4.1 is available on most processors from 2008 onwards but not guaranteed
+//! on all x86_64. Always use runtime detection before calling this implementation.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -10,24 +36,24 @@ use std::arch::x86_64::*;
 use crate::Digest;
 
 /// MD5 initial state constants.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
 /// MD5 round constants.
 const K: [u32; 64] = [
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee, 0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
+    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be, 0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
+    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa, 0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
+    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed, 0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
+    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c, 0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
+    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05, 0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
+    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039, 0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
+    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1, 0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
 ];
 
-const MAX_INPUT_SIZE: usize = 1024 * 1024;
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
 /// Rotate left macros for compile-time constants.
 macro_rules! rotl {
@@ -51,8 +77,37 @@ macro_rules! rotl {
 
 /// Compute MD5 digests for up to 4 inputs in parallel using SSE4.1.
 ///
+/// Processes 4 independent byte slices in parallel, computing their MD5 digests
+/// simultaneously. Uses SSE4.1's `blendv` instruction for more efficient lane
+/// masking compared to SSE2.
+///
+/// # Arguments
+///
+/// * `inputs` - Array of 4 byte slices to hash
+///
+/// # Returns
+///
+/// Array of 4 MD5 digests (16 bytes each) in the same order as the inputs
+///
+/// # Performance
+///
+/// This implementation is particularly efficient when processing inputs of
+/// varying lengths, as the `blendv` instruction provides better masking
+/// performance than SSE2's manual AND/ANDNOT/OR sequence.
+///
 /// # Safety
-/// Caller must ensure SSE4.1 is available.
+///
+/// Caller must ensure SSE4.1 is available. Use runtime detection before calling:
+///
+/// ```ignore
+/// if is_x86_feature_detected!("sse4.1") {
+///     let digests = unsafe { digest_x4(&inputs) };
+/// }
+/// ```
+///
+/// This function uses `unsafe` internally for:
+/// - SSE4.1 intrinsics (`_mm_*` functions including `_mm_blendv_epi8`)
+/// - Aligned memory access via `_mm_store_si128`
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.1")]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
@@ -235,7 +290,12 @@ mod tests {
     use super::*;
 
     fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[test]

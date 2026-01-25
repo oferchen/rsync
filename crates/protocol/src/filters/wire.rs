@@ -323,9 +323,9 @@ fn parse_wire_rule(buf: &[u8], protocol: ProtocolVersion) -> io::Result<FilterRu
     // Check for trailing slash (directory-only)
     if let Some(stripped) = pattern_text.strip_suffix('/') {
         rule.directory_only = true;
-        rule.pattern = stripped.to_owned();
+        stripped.clone_into(&mut rule.pattern);
     } else {
-        rule.pattern = pattern_text.to_owned();
+        pattern_text.clone_into(&mut rule.pattern);
     }
 
     Ok(rule)

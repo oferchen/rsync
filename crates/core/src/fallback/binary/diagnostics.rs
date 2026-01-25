@@ -2,6 +2,34 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 /// Formats a diagnostic explaining that a fallback executable is unavailable.
+///
+/// This helper generates a user-friendly error message when a fallback rsync
+/// binary cannot be found, including suggestions for how to resolve the issue.
+///
+/// # Arguments
+///
+/// * `binary` - The name or path of the missing fallback binary.
+/// * `env_vars` - Optional list of environment variable names that can be used
+///   to override the fallback path.
+///
+/// # Returns
+///
+/// Returns a formatted diagnostic string explaining the issue and suggesting
+/// remediation steps (install rsync or set an override environment variable).
+///
+/// # Examples
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use core::fallback::describe_missing_fallback_binary;
+///
+/// let message = describe_missing_fallback_binary(
+///     OsStr::new("rsync"),
+///     &["OC_RSYNC_FALLBACK"]
+/// );
+/// assert!(message.contains("not available on PATH"));
+/// assert!(message.contains("OC_RSYNC_FALLBACK"));
+/// ```
 #[must_use]
 pub fn describe_missing_fallback_binary(binary: &OsStr, env_vars: &[&str]) -> String {
     let display = Path::new(binary).display();

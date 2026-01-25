@@ -1,13 +1,43 @@
 //! AVX-512 16-lane parallel MD5 implementation.
 //!
 //! Processes 16 independent MD5 computations simultaneously using 512-bit ZMM registers.
-//! Uses inline assembly to work on stable Rust (AVX-512 intrinsics require nightly).
+//!
+//! # CPU Feature Requirements
+//!
+//! - **AVX-512F**: Foundation instructions (Intel Skylake-X/2017+, AMD Zen 4/2022+)
+//! - **AVX-512BW**: Byte/word instructions (same CPU generations)
+//! - Must be verified at runtime using `is_x86_feature_detected!`
+//!
+//! # Implementation Strategy
+//!
+//! This implementation uses **inline assembly** rather than intrinsics because AVX-512
+//! intrinsics require nightly Rust. Inline assembly is stable as of Rust 1.59 and provides
+//! full access to AVX-512 instructions.
+//!
+//! The assembly implementation:
+//! - Uses ZMM registers (zmm0-zmm30) for 512-bit operations
+//! - Leverages `vprold` for efficient rotation (AVX-512F native rotate)
+//! - Uses `vpternlogd` for computing MD5 round functions efficiently
+//! - Employs opmask registers (k1) for lane masking
+//!
+//! # Performance Characteristics
+//!
+//! - **Throughput**: ~16x scalar performance when all 16 lanes are active
+//! - **Latency**: Similar to scalar for single input
+//! - **Best use case**: High-throughput scenarios with 16+ inputs
+//! - **Efficiency**: Best on Ice Lake and newer (improved AVX-512 execution)
+//!
+//! # Power Considerations
+//!
+//! AVX-512 can cause CPU frequency throttling on some processors (Skylake-X).
+//! Modern CPUs (Ice Lake, Zen 4) have improved this significantly. Consider
+//! using AVX2 for workloads that don't benefit from 16-wide parallelism.
 //!
 //! # Safety
 //!
 //! All AVX-512 operations are performed via inline assembly, which is stable in Rust.
 //! The `digest_x16` function requires AVX-512F and AVX-512BW to be available, which
-//! is verified at runtime by the dispatcher before calling.
+//! must be verified at runtime by the caller before invoking this function.
 
 #![allow(unsafe_code)]
 
@@ -16,46 +46,139 @@ use std::arch::asm;
 
 use crate::Digest;
 
-/// MD5 initial state constants.
-const INIT_A: u32 = 0x67452301;
-const INIT_B: u32 = 0xefcdab89;
-const INIT_C: u32 = 0x98badcfe;
-const INIT_D: u32 = 0x10325476;
+/// MD5 initial state constants (RFC 1321).
+///
+/// These magic constants initialize the MD5 hash state. They represent
+/// the first 32 bits of the fractional parts of the cube roots of the
+/// first four prime numbers (2, 3, 5, 7).
+const INIT_A: u32 = 0x6745_2301;
+const INIT_B: u32 = 0xefcd_ab89;
+const INIT_C: u32 = 0x98ba_dcfe;
+const INIT_D: u32 = 0x1032_5476;
 
-
-/// Pre-computed K constants.
+/// Pre-computed K constants for MD5 rounds (RFC 1321).
+///
+/// These 64 constants are derived from the sine function and are used as
+/// additive constants in the MD5 compression function. Specifically,
+/// K[i] = floor(2^32 × abs(sin(i + 1))).
 const K: [u32; 64] = [
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
-    0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-    0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
-    0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-    0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-    0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
-    0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
-    0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-    0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
+    0xd76a_a478, 0xe8c7_b756, 0x2420_70db, 0xc1bd_ceee,
+    0xf57c_0faf, 0x4787_c62a, 0xa830_4613, 0xfd46_9501,
+    0x6980_98d8, 0x8b44_f7af, 0xffff_5bb1, 0x895c_d7be,
+    0x6b90_1122, 0xfd98_7193, 0xa679_438e, 0x49b4_0821,
+    0xf61e_2562, 0xc040_b340, 0x265e_5a51, 0xe9b6_c7aa,
+    0xd62f_105d, 0x0244_1453, 0xd8a1_e681, 0xe7d3_fbc8,
+    0x21e1_cde6, 0xc337_07d6, 0xf4d5_0d87, 0x455a_14ed,
+    0xa9e3_e905, 0xfcef_a3f8, 0x676f_02d9, 0x8d2a_4c8a,
+    0xfffa_3942, 0x8771_f681, 0x6d9d_6122, 0xfde5_380c,
+    0xa4be_ea44, 0x4bde_cfa9, 0xf6bb_4b60, 0xbebf_bc70,
+    0x289b_7ec6, 0xeaa1_27fa, 0xd4ef_3085, 0x0488_1d05,
+    0xd9d4_d039, 0xe6db_99e5, 0x1fa2_7cf8, 0xc4ac_5665,
+    0xf429_2244, 0x432a_ff97, 0xab94_23a7, 0xfc93_a039,
+    0x655b_59c3, 0x8f0c_cc92, 0xffef_f47d, 0x8584_5dd1,
+    0x6fa8_7e4f, 0xfe2c_e6e0, 0xa301_4314, 0x4e08_11a1,
+    0xf753_7e82, 0xbd3a_f235, 0x2ad7_d2bb, 0xeb86_d391,
 ];
 
-/// Maximum input size supported.
-const MAX_INPUT_SIZE: usize = 1024 * 1024; // 1MB per input
+/// Maximum input size supported for parallel processing.
+///
+/// Inputs larger than this threshold automatically fall back to scalar processing
+/// to avoid excessive memory allocation for padded buffers. This limit balances
+/// memory usage with the benefits of parallel processing.
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
 /// Aligned storage for 512-bit (16 × 32-bit) values.
+///
+/// This type ensures proper 64-byte alignment required for efficient AVX-512 operations.
+/// Each instance holds 16 32-bit values that are accessed by a single ZMM register load/store.
+///
+/// The 64-byte alignment matches cache line boundaries on most modern CPUs, reducing
+/// the risk of cache line splits and improving memory access performance.
 #[repr(C, align(64))]
 struct Aligned512([u32; 16]);
 
-/// Compute MD5 digests for up to 16 inputs in parallel using AVX-512.
+/// Compute MD5 digests for 16 inputs in parallel using AVX-512.
+///
+/// This function processes 16 independent MD5 hash computations simultaneously using
+/// AVX-512 SIMD instructions, providing significant performance improvements over
+/// sequential hashing when multiple inputs need to be processed.
+///
+/// # Algorithm
+///
+/// Uses 512-bit ZMM registers to compute 16 MD5 hashes in parallel through data-level
+/// parallelism. The implementation uses inline assembly to access AVX-512F and AVX-512BW
+/// instructions on stable Rust. Data is organized in a "transposed" layout where each
+/// ZMM register holds the same field (e.g., message word 0) from all 16 inputs.
+///
+/// # Performance
+///
+/// - **Throughput**: Processes 16 hashes with only ~16x the latency of a single hash
+/// - **Best for**: Batches of similarly-sized inputs (e.g., file checksums, password hashing)
+/// - **Fallback**: Inputs larger than 1MB automatically fall back to scalar implementation
+///   to avoid excessive memory allocation
+/// - **Requirements**: Requires AVX-512F and AVX-512BW CPU features (Intel Skylake-X or later,
+///   AMD Zen 4 or later)
+///
+/// # Parameters
+///
+/// * `inputs` - Array of exactly 16 byte slices to hash. Each slice can be any length,
+///   though performance is optimal when all inputs are similar in size.
+///
+/// # Returns
+///
+/// Array of 16 MD5 digests (16-byte arrays) corresponding to each input in the same order.
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX-512F and AVX-512BW are available.
-/// This is verified at runtime by the dispatcher.
+/// Caller must ensure AVX-512F and AVX-512BW CPU features are available at runtime.
+/// The dispatcher module verifies this before calling this function. Calling this
+/// function on a CPU without these features will result in an illegal instruction fault.
+///
+/// # Examples
+///
+/// ```no_run
+/// use md5_simd::Digest;
+///
+/// // Prepare 16 inputs to hash in parallel
+/// let inputs: [&[u8]; 16] = [
+///     b"input 0",
+///     b"input 1",
+///     b"input 2",
+///     b"input 3",
+///     b"input 4",
+///     b"input 5",
+///     b"input 6",
+///     b"input 7",
+///     b"input 8",
+///     b"input 9",
+///     b"input 10",
+///     b"input 11",
+///     b"input 12",
+///     b"input 13",
+///     b"input 14",
+///     b"input 15",
+/// ];
+///
+/// // Safety: This example assumes AVX-512F and AVX-512BW are available.
+/// // In production, use the dispatcher to verify CPU features first.
+/// # #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
+/// let digests: [Digest; 16] = unsafe {
+///     md5_simd::simd::avx512::digest_x16(&inputs)
+/// };
+///
+/// # #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512bw"))]
+/// // Each digest is a 16-byte MD5 hash
+/// for (i, digest) in digests.iter().enumerate() {
+///     println!("Input {}: {:02x?}", i, digest);
+/// }
+/// ```
+///
+/// # Implementation Notes
+///
+/// - Handles variable-length inputs by padding each to the nearest 64-byte block boundary
+/// - Processes blocks in lockstep, using masking to handle inputs of different lengths
+/// - Uses transposed data layout for efficient SIMD processing
+/// - Implements full MD5 specification (RFC 1321) including all 64 rounds
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     // Find the maximum length to determine block count
@@ -144,6 +267,40 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
 }
 
 /// Process a single MD5 block for 16 lanes using AVX-512 inline assembly.
+///
+/// This is the core computation kernel that implements the MD5 compression function
+/// for 16 independent hash states in parallel. It processes one 64-byte block for
+/// each of the 16 lanes simultaneously.
+///
+/// # Algorithm
+///
+/// Implements the 64-round MD5 compression function (RFC 1321):
+/// - Rounds 0-15: F function with message schedule [0..15]
+/// - Rounds 16-31: G function with permuted message schedule
+/// - Rounds 32-47: H function with permuted message schedule
+/// - Rounds 48-63: I function with permuted message schedule
+///
+/// # Parameters
+///
+/// * `state_a`, `state_b`, `state_c`, `state_d` - MD5 state registers for all 16 lanes
+/// * `m` - Transposed message words (16 arrays of 16 u32 values each)
+/// * `mask_bits` - Bitmask indicating which lanes are active (bit i = lane i)
+///
+/// # Implementation
+///
+/// Uses inline assembly to efficiently utilize AVX-512 instructions including:
+/// - `vpternlogd` for computing MD5 auxiliary functions
+/// - `vprold` for rotation operations
+/// - `vpblendmd` for conditional updates based on lane mask
+/// - `vmovdqa32/vmovdqu32` for aligned/unaligned loads and stores
+///
+/// The function is marked `#[inline(never)]` to reduce code size, as it contains
+/// substantial inline assembly that doesn't benefit from inlining.
+///
+/// # Safety
+///
+/// Requires AVX-512F and AVX-512BW to be available. Violating this precondition
+/// results in undefined behavior (illegal instruction fault).
 #[cfg(target_arch = "x86_64")]
 #[inline(never)]
 unsafe fn process_block_avx512(
@@ -392,6 +549,16 @@ unsafe fn process_block_avx512(
     );
 }
 
+/// Fallback implementation of parallel MD5 hashing for non-x86_64 platforms.
+///
+/// On platforms without x86_64 architecture, this function falls back to computing
+/// each hash sequentially using the scalar implementation. This provides API compatibility
+/// across platforms while sacrificing the performance benefits of parallel SIMD processing.
+///
+/// # Safety
+///
+/// This function is safe to call on any platform, though it is marked unsafe to match
+/// the signature of the x86_64 implementation.
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     // Fallback for non-x86_64 platforms
@@ -403,7 +570,12 @@ mod tests {
     use super::*;
 
     fn to_hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write;
+        let mut s = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            write!(s, "{b:02x}").unwrap();
+        }
+        s
     }
 
     #[test]
@@ -521,16 +693,16 @@ mod tests {
         let input3: Vec<u8> = (0..65).map(|i| (i % 256) as u8).collect();
         let input4: Vec<u8> = (0..128).map(|i| (i % 256) as u8).collect();
         let input5: Vec<u8> = (0..200).map(|i| (i % 256) as u8).collect();
-        let input6: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
+        let input6: Vec<u8> = (0..1_000).map(|i| (i % 256) as u8).collect();
         let input7: Vec<u8> = vec![];
         let input8: Vec<u8> = (0..63).map(|i| (i % 256) as u8).collect();
         let input9: Vec<u8> = (0..127).map(|i| (i % 256) as u8).collect();
         let input10: Vec<u8> = (0..129).map(|i| (i % 256) as u8).collect();
         let input11: Vec<u8> = (0..256).map(|i| (i % 256) as u8).collect();
         let input12: Vec<u8> = (0..512).map(|i| (i % 256) as u8).collect();
-        let input13: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
-        let input14: Vec<u8> = (0..2048).map(|i| (i % 256) as u8).collect();
-        let input15: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
+        let input13: Vec<u8> = (0..1_024).map(|i| (i % 256) as u8).collect();
+        let input14: Vec<u8> = (0..2_048).map(|i| (i % 256) as u8).collect();
+        let input15: Vec<u8> = (0..4_096).map(|i| (i % 256) as u8).collect();
 
         let inputs: [&[u8]; 16] = [
             &input0, &input1, &input2, &input3,
