@@ -63,8 +63,10 @@ use engine::signature::{FileSignature, generate_file_signature};
 
 use super::config::{ReferenceDirectory, ServerConfig};
 use super::handshake::HandshakeResult;
+use super::pipeline::{PipelineConfig, PipelineState};
 use super::shared::ChecksumFactory;
 use super::temp_guard::TempFileGuard;
+use super::transfer_ops::{RequestConfig, ResponseContext, process_file_response, send_file_request};
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry};
 
@@ -525,6 +527,20 @@ impl ReceiverContext {
     /// ```
     pub fn run<R: Read, W: Write + ?Sized>(
         &mut self,
+        reader: super::reader::ServerReader<R>,
+        writer: &mut W,
+    ) -> io::Result<TransferStats> {
+        // Use pipelined transfer by default for improved performance.
+        // The pipeline significantly reduces latency overhead for many-file transfers.
+        self.run_pipelined(reader, writer, PipelineConfig::default())
+    }
+
+    /// Runs the receiver with synchronous (non-pipelined) transfer.
+    ///
+    /// This method is kept for compatibility and testing purposes.
+    /// For production use, prefer the default `run()` which uses pipelining.
+    pub fn run_sync<R: Read, W: Write + ?Sized>(
+        &mut self,
         mut reader: super::reader::ServerReader<R>,
         writer: &mut W,
     ) -> io::Result<TransferStats> {
@@ -940,6 +956,232 @@ impl ReceiverContext {
             files_transferred,
             bytes_received,
             bytes_sent: 0, // Set by caller after run() via CountingWriter
+            total_source_bytes,
+            metadata_errors,
+        })
+    }
+
+    /// Runs the pipelined receiver transfer loop.
+    ///
+    /// This method implements request pipelining to reduce latency overhead.
+    /// Instead of waiting for each file's response before requesting the next,
+    /// it sends multiple requests ahead and processes responses as they arrive.
+    ///
+    /// # Performance Impact
+    ///
+    /// With 92,437 files and 0.5ms network latency:
+    /// - Synchronous: 46+ seconds latency overhead
+    /// - Pipelined (window=64): ~0.7 seconds latency overhead
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - Input stream from sender
+    /// * `writer` - Output stream to sender
+    /// * `pipeline_config` - Configuration for pipeline window size
+    ///
+    /// # Protocol Compatibility
+    ///
+    /// The pipelined receiver is fully compatible with upstream rsync daemons.
+    /// The protocol requires in-order response processing which is preserved.
+    pub fn run_pipelined<R: Read, W: Write + ?Sized>(
+        &mut self,
+        mut reader: super::reader::ServerReader<R>,
+        writer: &mut W,
+        pipeline_config: PipelineConfig,
+    ) -> io::Result<TransferStats> {
+        // CRITICAL: Activate INPUT multiplex BEFORE reading filter list for protocol >= 30.
+        if self.protocol.as_u8() >= 30 {
+            reader = reader.activate_multiplex().map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
+            })?;
+        }
+
+        // Read filter list from sender if appropriate
+        if self.should_read_filter_list() {
+            let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
+            })?;
+        }
+
+        let reader = &mut reader;
+
+        // Print verbose message before receiving file list
+        if self.config.flags.verbose && self.config.client_mode {
+            eprintln!("receiving incremental file list");
+        }
+
+        // Receive file list from sender
+        let file_count = self.receive_file_list(reader)?;
+
+        // Setup for transfer
+        let mut files_transferred = 0;
+        let mut bytes_received = 0u64;
+
+        let checksum_factory = ChecksumFactory::from_negotiation(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        );
+        let checksum_algorithm = checksum_factory.signature_algorithm();
+        let checksum_length = DEFAULT_CHECKSUM_LENGTH;
+
+        let metadata_opts = MetadataOptions::new()
+            .preserve_permissions(self.config.flags.perms)
+            .preserve_times(self.config.flags.times)
+            .preserve_owner(self.config.flags.owner)
+            .preserve_group(self.config.flags.group)
+            .numeric_ids(self.config.flags.numeric_ids);
+
+        let dest_dir = self
+            .config
+            .args
+            .first()
+            .map_or_else(|| PathBuf::from("."), PathBuf::from);
+
+        // First pass: create directories from file list
+        let mut metadata_errors = self.create_directories(&dest_dir, &metadata_opts)?;
+
+        // Setup codecs
+        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+
+        // Create request config
+        let request_config = RequestConfig {
+            protocol: self.protocol,
+            write_iflags: self.protocol.as_u8() >= 29,
+            checksum_length,
+            checksum_algorithm,
+            negotiated_algorithms: self.negotiated_algorithms.as_ref(),
+            compat_flags: self.compat_flags.as_ref(),
+            checksum_seed: self.checksum_seed,
+            use_sparse: self.config.flags.sparse,
+            do_fsync: self.config.fsync,
+        };
+
+        // Initialize pipeline state
+        let mut pipeline = PipelineState::new(pipeline_config);
+
+        // Build list of files to transfer (filter out non-regular files)
+        let files_to_transfer: Vec<(usize, &FileEntry)> = self
+            .file_list
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.is_file())
+            .collect();
+
+        let mut file_iter = files_to_transfer.into_iter();
+        let mut pending_files_info: Vec<(PathBuf, &FileEntry)> =
+            Vec::with_capacity(pipeline.window_size());
+
+        // Pipelined transfer loop
+        loop {
+            // Phase 1: Fill the pipeline with requests
+            while pipeline.can_send() {
+                if let Some((file_idx, file_entry)) = file_iter.next() {
+                    let relative_path = file_entry.path();
+                    let file_path = if relative_path.as_os_str() == "." {
+                        dest_dir.clone()
+                    } else {
+                        dest_dir.join(relative_path)
+                    };
+
+                    // Verbose output
+                    if self.config.flags.verbose && self.config.client_mode {
+                        eprintln!("{}", relative_path.display());
+                    }
+
+                    // Find basis file and generate signature
+                    let basis_config = BasisFileConfig {
+                        file_path: &file_path,
+                        dest_dir: &dest_dir,
+                        relative_path,
+                        target_size: file_entry.size(),
+                        fuzzy_enabled: self.config.flags.fuzzy,
+                        reference_directories: &self.config.reference_directories,
+                        protocol: self.protocol,
+                        checksum_length,
+                        checksum_algorithm,
+                    };
+                    let basis_result = find_basis_file_with_config(&basis_config);
+
+                    // Send request
+                    let pending = send_file_request(
+                        writer,
+                        &mut ndx_write_codec,
+                        file_idx as i32,
+                        file_path.clone(),
+                        basis_result.signature,
+                        basis_result.basis_path,
+                        file_entry.size(),
+                        &request_config,
+                    )?;
+
+                    // Track pending transfer
+                    pipeline.push(pending);
+                    pending_files_info.push((file_path, file_entry));
+                } else {
+                    // No more files to request
+                    break;
+                }
+            }
+
+            // Phase 2: Process responses if pipeline has outstanding requests
+            if pipeline.is_empty() {
+                break; // Done with all transfers
+            }
+
+            // Process one response
+            let pending = pipeline.pop().expect("pipeline not empty");
+            let (file_path, file_entry) = pending_files_info.remove(0);
+
+            let response_ctx = ResponseContext {
+                config: &request_config,
+            };
+
+            let total_bytes = process_file_response(reader, &mut ndx_read_codec, pending, &response_ctx)?;
+
+            // Apply metadata
+            if let Err(meta_err) =
+                apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
+            {
+                metadata_errors.push((file_path, meta_err.to_string()));
+            }
+
+            // Track stats
+            bytes_received += total_bytes;
+            files_transferred += 1;
+        }
+
+        // Print verbose directories that were skipped
+        for file_entry in &self.file_list {
+            if file_entry.is_dir() && self.config.flags.verbose && self.config.client_mode {
+                let relative_path = file_entry.path();
+                if relative_path.as_os_str() == "." {
+                    eprintln!("./");
+                } else {
+                    eprintln!("{}/", relative_path.display());
+                }
+            }
+        }
+
+        // Exchange phase transitions with sender
+        self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+
+        // Receive transfer statistics from sender
+        let _sender_stats = self.receive_stats(reader)?;
+
+        // Handle goodbye handshake
+        self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+
+        // Calculate total source bytes from file list
+        let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
+
+        Ok(TransferStats {
+            files_listed: file_count,
+            files_transferred,
+            bytes_received,
+            bytes_sent: 0,
             total_source_bytes,
             metadata_errors,
         })
