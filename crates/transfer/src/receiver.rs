@@ -51,6 +51,7 @@ use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 #[cfg(unix)]
 use metadata::id_lookup::{lookup_group_by_name, lookup_user_by_name};
 
+use super::adaptive_buffer::{adaptive_token_capacity, adaptive_writer_capacity};
 use super::delta_apply::{ChecksumVerifier, SparseWriteState};
 use super::map_file::MapFile;
 use super::token_buffer::TokenBuffer;
@@ -729,10 +730,14 @@ impl ReceiverContext {
             // Step 5: Apply delta to reconstruct file
             let temp_path = file_path.with_extension("oc-rsync.tmp");
             let mut temp_guard = TempFileGuard::new(temp_path.clone());
-            // Use BufWriter to reduce syscall overhead for many small writes
-            // 64KB buffer matches typical OS page size for efficient I/O
+            // Use BufWriter with adaptive capacity based on file size:
+            // - Small files (< 64KB): 4KB buffer to avoid wasted memory
+            // - Medium files (64KB - 1MB): 64KB buffer for balanced performance
+            // - Large files (> 1MB): 256KB buffer to maximize throughput
+            let target_size = file_entry.size();
             let file = fs::File::create(&temp_path)?;
-            let mut output = std::io::BufWriter::with_capacity(64 * 1024, file);
+            let writer_capacity = adaptive_writer_capacity(target_size);
+            let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
             let mut total_bytes: u64 = 0;
 
             // Sparse file support: track zero runs to create holes
@@ -757,8 +762,8 @@ impl ReceiverContext {
             // 1. MapFile: Cache basis file with 256KB sliding window to avoid
             //    repeated open/seek/read syscalls for each block reference.
             //    For a typical 16MB file with 700-byte blocks, this prevents ~23,000 syscalls.
-            // 2. TokenBuffer: Reuse allocation for literal data across all tokens
-            //    to avoid per-token heap allocation overhead.
+            // 2. TokenBuffer: Adaptive initial capacity based on file size to
+            //    avoid both memory waste and unnecessary reallocation.
             let mut basis_map = if let Some(ref path) = basis_path_opt {
                 Some(MapFile::open(path).map_err(|e| {
                     io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
@@ -766,7 +771,8 @@ impl ReceiverContext {
             } else {
                 None
             };
-            let mut token_buffer = TokenBuffer::with_default_capacity();
+            let token_capacity = adaptive_token_capacity(target_size);
+            let mut token_buffer = TokenBuffer::with_capacity(token_capacity);
 
             // Read tokens in a loop
             loop {

@@ -108,9 +108,10 @@ impl PendingTransfer {
     /// Consumes the pending transfer and returns its components.
     ///
     /// Used when processing the response to avoid cloning large data.
+    /// Returns (file_path, basis_path, signature, target_size).
     #[must_use]
-    pub fn into_parts(self) -> (PathBuf, Option<PathBuf>, Option<FileSignature>) {
-        (self.file_path, self.basis_path, self.signature)
+    pub fn into_parts(self) -> (PathBuf, Option<PathBuf>, Option<FileSignature>, u64) {
+        (self.file_path, self.basis_path, self.signature, self.target_size)
     }
 }
 
@@ -178,10 +179,11 @@ mod tests {
             100,
         );
 
-        let (file_path, basis_path, sig) = transfer.into_parts();
+        let (file_path, basis_path, sig, target_size) = transfer.into_parts();
 
         assert_eq!(file_path, PathBuf::from("/dest"));
         assert_eq!(basis_path, Some(PathBuf::from("/basis")));
         assert!(sig.is_some());
+        assert_eq!(target_size, 100);
     }
 }

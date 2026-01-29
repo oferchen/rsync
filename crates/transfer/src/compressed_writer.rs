@@ -4,7 +4,7 @@
 //! mirroring upstream rsync's io.c:io_start_buffering_out() behavior where compression
 //! is applied after multiplex framing.
 
-use std::io::{self, Write};
+use std::io::{self, IoSlice, Write};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::{CompressionLevel, CountingZlibEncoder};
@@ -236,6 +236,21 @@ impl<W: Write> Write for CompressedWriter<W> {
 
         // Always report full write to match upstream behavior
         Ok(buf.len())
+    }
+
+    /// Writes multiple buffers using vectored I/O.
+    ///
+    /// For compression, vectored writes are processed sequentially through the
+    /// encoder since compression state must be maintained across buffers.
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        let mut total_written = 0;
+        for buf in bufs {
+            if !buf.is_empty() {
+                self.write(buf)?;
+                total_written += buf.len();
+            }
+        }
+        Ok(total_written)
     }
 
     fn flush(&mut self) -> io::Result<()> {

@@ -107,6 +107,8 @@ pub mod temp_guard;
 /// Writer abstraction supporting plain and multiplex modes.
 mod writer;
 
+/// Adaptive buffer sizing based on file size.
+pub mod adaptive_buffer;
 /// Buffer size constants mirroring upstream rsync.
 pub mod constants;
 /// Memory-mapped file abstraction for basis file access.
@@ -118,6 +120,11 @@ pub mod token_buffer;
 /// Transfer operation helpers for pipelined requests.
 pub mod transfer_ops;
 
+pub use self::adaptive_buffer::{
+    AdaptiveTokenBuffer, LARGE_BUFFER_SIZE, MEDIUM_BUFFER_SIZE, MEDIUM_FILE_THRESHOLD,
+    SMALL_BUFFER_SIZE, SMALL_FILE_THRESHOLD, adaptive_buffer_size, adaptive_token_capacity,
+    adaptive_writer_capacity,
+};
 pub use self::config::{ReferenceDirectory, ReferenceDirectoryKind, ServerConfig};
 pub use self::flags::{InfoFlags, ParseFlagError, ParsedServerFlags};
 pub use self::generator::{GeneratorContext, GeneratorStats};

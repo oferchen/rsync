@@ -347,8 +347,40 @@ pub mod strong;
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
 
-pub use rolling::{
-    RollingChecksum, RollingDigest, RollingError, RollingSliceError, simd_acceleration_available,
-};
+/// Adler-32 style rolling checksum for efficient sliding window updates.
+///
+/// Enables O(1) window advancement during delta-transfer block matching.
+/// See the [module documentation](self) for usage examples.
+pub use rolling::RollingChecksum;
+
+/// Output type for the rolling checksum (32-bit value).
+pub use rolling::RollingDigest;
+
+/// Error type for rolling checksum operations.
+///
+/// Returned when attempting invalid operations such as rolling on an
+/// empty window or exceeding the 32-bit window size limit.
+pub use rolling::RollingError;
+
+/// Error returned when parsing a byte slice into a rolling digest fails.
+pub use rolling::RollingSliceError;
+
+/// Query whether SIMD acceleration is available for rolling checksums.
+///
+/// Returns `true` if the rolling checksum implementation can use SIMD
+/// instructions (AVX2/SSE2 on x86_64, NEON on aarch64).
+pub use rolling::simd_acceleration_available;
+
+/// Query whether OpenSSL acceleration is available for MD4/MD5.
+///
+/// Returns `true` if the `openssl` or `openssl-vendored` feature is enabled
+/// and OpenSSL is successfully linked. OpenSSL provides ~2x throughput
+/// improvement for legacy hash algorithms.
 pub use strong::openssl_acceleration_available;
+
+/// Query whether runtime SIMD detection is available for XXH3.
+///
+/// Returns `true` if the `xxh3-simd` feature is enabled (default), allowing
+/// automatic use of AVX2 (x86_64) or NEON (aarch64) instructions when
+/// available at runtime.
 pub use strong::xxh3_simd_available;
