@@ -62,6 +62,8 @@ mod layout;
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
 
+pub mod async_gen;
+
 pub use algorithm::SignatureAlgorithm;
 pub use block::SignatureBlock;
 pub use file::FileSignature;

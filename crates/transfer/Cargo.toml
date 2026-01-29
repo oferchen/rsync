@@ -18,6 +18,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 protocol = { path = "../protocol" }
 metadata = { path = "../metadata", default-features = false }
 engine = { path = "../engine", default-features = false }
+signature = { path = "../signature" }
 filters = { path = "../filters" }
 compress = { path = "../compress" }
 logging = { path = "../logging" }
