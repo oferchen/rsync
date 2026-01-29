@@ -23,9 +23,18 @@ permutation = "0.4"
 # Optional: memory-mapped I/O
 memmap2 = { version = "0.9", optional = true }
 
+# Optional: io_uring support (Linux 5.6+)
+io-uring = { version = "0.7", optional = true }
+
+# For kernel version detection on Linux
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { version = "0.2", optional = true }
+
 [features]
 default = ["mmap"]
 mmap = ["dep:memmap2"]
+# io_uring support for Linux 5.6+ with automatic fallback to standard I/O
+io_uring = ["dep:io-uring", "dep:libc"]
 
 [dev-dependencies]
 tempfile = "3.15"
