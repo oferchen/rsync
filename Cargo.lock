@@ -411,6 +411,8 @@ dependencies = [
  "serial_test",
  "tempfile",
  "time",
+ "tracing",
+ "tracing-subscriber",
  "uzers",
  "xattr",
 ]
@@ -1221,6 +1223,8 @@ version = "0.5.3"
 dependencies = [
  "serde",
  "serde_json",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -235,6 +235,10 @@ impl FileEntry {
     }
 
     /// Creates a file entry from raw components (used during decoding).
+    ///
+    /// This constructor is used only in tests. Production code should use
+    /// `from_raw_bytes` which avoids UTF-8 validation overhead.
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn from_raw(
         name: PathBuf,

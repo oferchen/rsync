@@ -9,3 +9,4 @@ mod argument;
 mod edge_cases;
 mod limit;
 mod numeric;
+mod parser_edge_cases;

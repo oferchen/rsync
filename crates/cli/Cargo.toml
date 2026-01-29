@@ -26,7 +26,7 @@ parallel = ["engine/parallel", "engine/optimized-buffers", "engine/lazy-metadata
 clap = { version = "4.5.17", features = ["std"] }
 core = { path = "../core", default-features = false }
 engine = { path = "../engine", default-features = false }
-logging = { path = "../logging" }
+logging = { path = "../logging", features = ["tracing"] }
 logging-sink = { path = "../logging-sink" }
 protocol = { path = "../protocol" }
 compress = { path = "../compress", default-features = false }
@@ -34,6 +34,8 @@ metadata = { path = "../metadata", default-features = false }
 rsync_io = { path = "../rsync_io", package = "rsync_io" }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = "3.15"
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 uzers = "0.12"
