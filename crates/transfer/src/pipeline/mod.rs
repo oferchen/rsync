@@ -55,6 +55,7 @@
 
 mod pending;
 mod state;
+pub mod async_signature;
 
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
