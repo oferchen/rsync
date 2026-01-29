@@ -28,6 +28,14 @@ pub mod mmap_reader;
 pub mod parallel;
 pub mod traits;
 
+/// io_uring-based async file I/O for Linux 5.6+.
+///
+/// This module is only available on Linux with the `io_uring` feature enabled.
+/// It provides high-performance file I/O with automatic fallback to standard I/O
+/// on unsupported systems.
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+pub mod io_uring;
+
 pub use buffer_pool::{BufferGuard, BufferPool};
 pub use cached_sort::{cached_sort_by, CachedSortKey};
 pub use parallel::{ParallelExecutor, ParallelResult};
@@ -35,3 +43,9 @@ pub use traits::{FileReader, FileWriter};
 
 #[cfg(feature = "mmap")]
 pub use mmap_reader::MmapReader;
+
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+pub use io_uring::{
+    is_io_uring_available, IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader,
+    IoUringReaderFactory, IoUringWriter, IoUringWriterFactory,
+};

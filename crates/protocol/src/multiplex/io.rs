@@ -37,6 +37,195 @@ pub fn send_frame<W: Write>(writer: &mut W, frame: &MessageFrame) -> io::Result<
     write_validated_message(writer, header, frame.payload())
 }
 
+/// Sends multiple multiplexed messages in a single vectored write operation.
+///
+/// This function batches multiple messages into a single `writev` syscall to reduce
+/// syscall overhead when sending multiple small messages. Each message is specified
+/// as a `(MessageCode, &[u8])` tuple. The payload length for each message is validated
+/// against [`crate::MAX_PAYLOAD_LENGTH`].
+///
+/// # Performance
+///
+/// This function is significantly more efficient than calling [`send_msg`] repeatedly
+/// when sending multiple messages, as it reduces the number of syscalls from N to 1.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Any payload exceeds [`crate::MAX_PAYLOAD_LENGTH`]
+/// - The underlying write operation fails
+/// - The writer reports writing more bytes than provided
+///
+/// # Example
+///
+/// ```no_run
+/// use protocol::{send_msgs_vectored, MessageCode};
+///
+/// let mut buffer = Vec::new();
+/// let messages = [
+///     (MessageCode::Info, b"first message".as_slice()),
+///     (MessageCode::Warning, b"second message".as_slice()),
+/// ];
+/// send_msgs_vectored(&mut buffer, &messages)?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn send_msgs_vectored<W: Write>(
+    writer: &mut W,
+    messages: &[(MessageCode, &[u8])],
+) -> io::Result<()> {
+    if messages.is_empty() {
+        return Ok(());
+    }
+
+    // Pre-validate all messages and encode headers
+    let mut headers = Vec::with_capacity(messages.len());
+    for (code, payload) in messages {
+        let payload_len = ensure_payload_length(payload.len())?;
+        let header = MessageHeader::new(*code, payload_len).map_err(map_envelope_error_for_input)?;
+        headers.push(header);
+    }
+
+    // Encode all headers first to avoid borrow conflicts
+    let encoded_headers: Vec<[u8; HEADER_LEN]> = headers.iter().map(|h| h.encode()).collect();
+
+    // Build IoSlice array: alternating headers and payloads
+    let mut slices = Vec::with_capacity(messages.len() * 2);
+    for (i, (_, payload)) in messages.iter().enumerate() {
+        // Add header slice
+        slices.push(IoSlice::new(&encoded_headers[i]));
+
+        // Add payload slice only if non-empty
+        if !payload.is_empty() {
+            slices.push(IoSlice::new(payload));
+        }
+    }
+
+    // Write all messages in a single vectored operation
+    write_all_vectored_slices(writer, &slices)
+}
+
+/// Writes all IoSlices using vectored I/O with proper error handling.
+///
+/// This is similar to `write_all_vectored` but works with a slice of IoSlices
+/// rather than just two buffers, allowing batching of multiple messages.
+fn write_all_vectored_slices<W: Write + ?Sized>(
+    writer: &mut W,
+    slices: &[IoSlice<'_>],
+) -> io::Result<()> {
+    if slices.is_empty() {
+        return Ok(());
+    }
+
+    let total_bytes: usize = slices.iter().map(|s| s.len()).sum();
+    let mut written_total = 0usize;
+    let mut use_vectored = true;
+
+    while written_total < total_bytes {
+        let remaining = total_bytes - written_total;
+
+        let written = if use_vectored {
+            // Calculate which slices still need to be written
+            let mut accumulated = 0;
+            let mut start_idx = 0;
+            let mut offset_in_first = 0;
+
+            for (i, slice) in slices.iter().enumerate() {
+                if accumulated + slice.len() > written_total {
+                    start_idx = i;
+                    offset_in_first = written_total - accumulated;
+                    break;
+                }
+                accumulated += slice.len();
+            }
+
+            loop {
+                // Build temporary slice view for remaining data
+                let mut remaining_slices = Vec::with_capacity(slices.len() - start_idx);
+
+                for (i, slice) in slices[start_idx..].iter().enumerate() {
+                    if i == 0 && offset_in_first > 0 {
+                        // First slice may be partially written
+                        let slice_data = &slice[offset_in_first..];
+                        if !slice_data.is_empty() {
+                            remaining_slices.push(IoSlice::new(slice_data));
+                        }
+                    } else {
+                        remaining_slices.push(IoSlice::new(slice));
+                    }
+                }
+
+                match writer.write_vectored(&remaining_slices) {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "failed to write multiplexed messages",
+                        ));
+                    }
+                    Ok(n) => break n,
+                    Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(ref err)
+                        if err.kind() == io::ErrorKind::Unsupported
+                            || err.kind() == io::ErrorKind::InvalidInput =>
+                    {
+                        use_vectored = false;
+                        break 0; // Signal fallback
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+        } else {
+            // Fallback to sequential writes
+            let mut accumulated = 0;
+            let mut current_idx = 0;
+            let mut offset = 0;
+
+            for (i, slice) in slices.iter().enumerate() {
+                if accumulated + slice.len() > written_total {
+                    current_idx = i;
+                    offset = written_total - accumulated;
+                    break;
+                }
+                accumulated += slice.len();
+            }
+
+            loop {
+                let current_slice = &slices[current_idx];
+                let slice_data = &current_slice[offset..];
+
+                match writer.write(slice_data) {
+                    Ok(0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "failed to write multiplexed messages",
+                        ));
+                    }
+                    Ok(n) => break n,
+                    Err(ref err) if err.kind() == io::ErrorKind::Interrupted => {}
+                    Err(err) => return Err(err),
+                }
+            }
+        };
+
+        if !use_vectored && written == 0 {
+            // Switch to fallback mode
+            continue;
+        }
+
+        if written > remaining {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "writer reported writing {written} bytes but only {remaining} bytes remained"
+                ),
+            ));
+        }
+
+        written_total += written;
+    }
+
+    Ok(())
+}
+
 fn write_validated_message<W: Write + ?Sized>(
     writer: &mut W,
     header: MessageHeader,
@@ -453,5 +642,299 @@ mod tests {
         let payload = b"PAYLOAD";
         write_all_vectored(&mut buffer, header, payload).unwrap();
         assert_eq!(buffer, b"HEADERPAYLOAD".as_slice());
+    }
+
+    // ==================== send_msgs_vectored tests ====================
+
+    #[test]
+    fn send_msgs_vectored_empty() {
+        let mut buffer = Vec::new();
+        send_msgs_vectored(&mut buffer, &[]).unwrap();
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn send_msgs_vectored_single_message() {
+        let mut buffer = Vec::new();
+        let messages = [(MessageCode::Info, b"test".as_slice())];
+        send_msgs_vectored(&mut buffer, &messages).unwrap();
+
+        // Verify it matches send_msg output
+        let mut expected = Vec::new();
+        send_msg(&mut expected, MessageCode::Info, b"test").unwrap();
+        assert_eq!(buffer, expected);
+    }
+
+    #[test]
+    fn send_msgs_vectored_multiple_messages() {
+        let mut buffer = Vec::new();
+        let messages = [
+            (MessageCode::Info, b"first".as_slice()),
+            (MessageCode::Warning, b"second".as_slice()),
+            (MessageCode::Error, b"third".as_slice()),
+        ];
+        send_msgs_vectored(&mut buffer, &messages).unwrap();
+
+        // Verify by parsing back
+        let mut cursor = Cursor::new(&buffer);
+        let frame1 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame1.code(), MessageCode::Info);
+        assert_eq!(frame1.payload(), b"first");
+
+        let frame2 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame2.code(), MessageCode::Warning);
+        assert_eq!(frame2.payload(), b"second");
+
+        let frame3 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame3.code(), MessageCode::Error);
+        assert_eq!(frame3.payload(), b"third");
+    }
+
+    #[test]
+    fn send_msgs_vectored_with_empty_payloads() {
+        let mut buffer = Vec::new();
+        let messages = [
+            (MessageCode::Info, b"".as_slice()),
+            (MessageCode::Data, b"content".as_slice()),
+            (MessageCode::Warning, b"".as_slice()),
+        ];
+        send_msgs_vectored(&mut buffer, &messages).unwrap();
+
+        // Verify by parsing back
+        let mut cursor = Cursor::new(&buffer);
+        let frame1 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame1.code(), MessageCode::Info);
+        assert!(frame1.payload().is_empty());
+
+        let frame2 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame2.code(), MessageCode::Data);
+        assert_eq!(frame2.payload(), b"content");
+
+        let frame3 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame3.code(), MessageCode::Warning);
+        assert!(frame3.payload().is_empty());
+    }
+
+    #[test]
+    fn send_msgs_vectored_matches_sequential_sends() {
+        let messages = [
+            (MessageCode::Info, b"first message".as_slice()),
+            (MessageCode::Data, b"some data content".as_slice()),
+            (MessageCode::Warning, b"warning text".as_slice()),
+        ];
+
+        // Send using vectored API
+        let mut vectored_buffer = Vec::new();
+        send_msgs_vectored(&mut vectored_buffer, &messages).unwrap();
+
+        // Send using sequential API
+        let mut sequential_buffer = Vec::new();
+        for (code, payload) in &messages {
+            send_msg(&mut sequential_buffer, *code, payload).unwrap();
+        }
+
+        assert_eq!(vectored_buffer, sequential_buffer);
+    }
+
+    #[test]
+    fn send_msgs_vectored_large_batch() {
+        let mut buffer = Vec::new();
+
+        // Create 100 messages
+        let payload = b"test payload data";
+        let messages: Vec<_> = (0..100)
+            .map(|_| (MessageCode::Data, payload.as_slice()))
+            .collect();
+
+        send_msgs_vectored(&mut buffer, &messages).unwrap();
+
+        // Verify all messages can be read back
+        let mut cursor = Cursor::new(&buffer);
+        for _ in 0..100 {
+            let frame = recv_msg(&mut cursor).unwrap();
+            assert_eq!(frame.code(), MessageCode::Data);
+            assert_eq!(frame.payload(), payload);
+        }
+    }
+
+    #[test]
+    fn send_msgs_vectored_validates_payload_size() {
+        use crate::MAX_PAYLOAD_LENGTH;
+
+        let mut buffer = Vec::new();
+        let oversized = vec![0u8; (MAX_PAYLOAD_LENGTH + 1) as usize];
+        let messages = [(MessageCode::Data, oversized.as_slice())];
+
+        let result = send_msgs_vectored(&mut buffer, &messages);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn send_msgs_vectored_mixed_sizes() {
+        let mut buffer = Vec::new();
+        let small = b"x";
+        let medium = vec![0u8; 1000];
+        let large = vec![0u8; 10000];
+
+        let messages = [
+            (MessageCode::Info, small.as_slice()),
+            (MessageCode::Data, medium.as_slice()),
+            (MessageCode::Warning, large.as_slice()),
+        ];
+
+        send_msgs_vectored(&mut buffer, &messages).unwrap();
+
+        // Verify by parsing back
+        let mut cursor = Cursor::new(&buffer);
+        let frame1 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame1.payload().len(), 1);
+
+        let frame2 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame2.payload().len(), 1000);
+
+        let frame3 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame3.payload().len(), 10000);
+    }
+
+    // Test with a writer that only supports non-vectored I/O
+    #[test]
+    fn send_msgs_vectored_fallback_to_sequential() {
+        struct NonVectoredWriter {
+            buffer: Vec<u8>,
+        }
+
+        impl Write for NonVectoredWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.buffer.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "vectored I/O not supported",
+                ))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = NonVectoredWriter { buffer: Vec::new() };
+        let messages = [
+            (MessageCode::Info, b"first".as_slice()),
+            (MessageCode::Data, b"second".as_slice()),
+        ];
+
+        send_msgs_vectored(&mut writer, &messages).unwrap();
+
+        // Verify output
+        let mut cursor = Cursor::new(&writer.buffer);
+        let frame1 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame1.code(), MessageCode::Info);
+        assert_eq!(frame1.payload(), b"first");
+
+        let frame2 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame2.code(), MessageCode::Data);
+        assert_eq!(frame2.payload(), b"second");
+    }
+
+    // Test with a writer that performs partial writes
+    #[test]
+    fn send_msgs_vectored_handles_partial_writes() {
+        struct PartialWriter {
+            buffer: Vec<u8>,
+            chunk_size: usize,
+        }
+
+        impl Write for PartialWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                let to_write = buf.len().min(self.chunk_size);
+                self.buffer.extend_from_slice(&buf[..to_write]);
+                Ok(to_write)
+            }
+
+            fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                let mut remaining = self.chunk_size;
+                for buf in bufs {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let to_write = buf.len().min(remaining);
+                    self.buffer.extend_from_slice(&buf[..to_write]);
+                    remaining -= to_write;
+                }
+                Ok(self.chunk_size - remaining)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = PartialWriter {
+            buffer: Vec::new(),
+            chunk_size: 10, // Write only 10 bytes at a time
+        };
+
+        let messages = [
+            (MessageCode::Info, b"message one".as_slice()),
+            (MessageCode::Data, b"message two".as_slice()),
+        ];
+
+        send_msgs_vectored(&mut writer, &messages).unwrap();
+
+        // Verify all data was written
+        let mut cursor = Cursor::new(&writer.buffer);
+        let frame1 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame1.payload(), b"message one");
+
+        let frame2 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame2.payload(), b"message two");
+    }
+
+    #[test]
+    fn send_msgs_vectored_detects_write_zero() {
+        struct ZeroWriter;
+
+        impl Write for ZeroWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Ok(0)
+            }
+
+            fn write_vectored(&mut self, _bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+                Ok(0)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = ZeroWriter;
+        let messages = [(MessageCode::Info, b"test".as_slice())];
+
+        let result = send_msgs_vectored(&mut writer, &messages);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WriteZero);
+    }
+
+    #[test]
+    fn send_msgs_vectored_all_message_codes() {
+        let mut buffer = Vec::new();
+        let payload = b"test";
+
+        for code in MessageCode::ALL {
+            buffer.clear();
+            let messages = [(code, payload.as_slice())];
+            send_msgs_vectored(&mut buffer, &messages).unwrap();
+
+            let mut cursor = Cursor::new(&buffer);
+            let frame = recv_msg(&mut cursor).unwrap();
+            assert_eq!(frame.code(), code);
+            assert_eq!(frame.payload(), payload);
+        }
     }
 }

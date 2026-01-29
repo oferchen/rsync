@@ -184,9 +184,44 @@ mod tests;
 
 // Re-exports for convenient access to commonly used types
 
-pub use error::{BatchError, BatchResult};
-pub use format::{BatchFlags, BatchHeader, FileEntry};
+/// Error type for batch operations.
+///
+/// See [`error::BatchError`] for detailed error variants.
+pub use error::BatchError;
+
+/// Result type alias for batch operations.
+///
+/// Equivalent to `Result<T, BatchError>`.
+pub use error::BatchResult;
+
+/// Bitmap of stream flags stored in batch file headers.
+///
+/// Encodes which rsync options were active when the batch was created
+/// (e.g., recursion, preserve-uid, preserve-gid). These flags must match
+/// when replaying the batch.
+pub use format::BatchFlags;
+
+/// Binary header structure at the start of every batch file.
+///
+/// Contains protocol version, compatibility flags, checksum seed, and
+/// stream flags. Used to validate batch file compatibility before replay.
+pub use format::BatchHeader;
+
+/// Metadata for a single file entry in the batch file list.
+///
+/// Includes path, mode, size, mtime, uid/gid, and other attributes.
+pub use format::FileEntry;
+
+/// Reader for replaying recorded batch files.
+///
+/// Opens an existing batch file and provides methods to read the header,
+/// file list, and delta operations for applying to a destination.
 pub use reader::BatchReader;
+
+/// Writer for recording transfers to batch files.
+///
+/// Creates a new batch file and provides methods to write the header,
+/// file list, and delta operations captured during a transfer.
 pub use writer::BatchWriter;
 
 /// Delta operation type re-exported from protocol for [`BatchReader::read_all_delta_ops`].
