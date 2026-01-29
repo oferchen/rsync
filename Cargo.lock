@@ -774,6 +774,7 @@ dependencies = [
 name = "fast_io"
 version = "0.5.3"
 dependencies = [
+ "criterion",
  "io-uring",
  "libc",
  "memmap2",
@@ -2079,6 +2080,7 @@ dependencies = [
  "checksums",
  "protocol",
  "rayon",
+ "tempfile",
  "thiserror 2.0.17",
  "tracing",
 ]
@@ -2422,6 +2424,7 @@ dependencies = [
  "metadata",
  "protocol",
  "rayon",
+ "signature",
  "tempfile",
  "thiserror 2.0.17",
  "tracing",
