@@ -565,4 +565,463 @@ mod tests {
             assert!(result.is_ok());
         }
     }
+
+    #[test]
+    fn test_cache_with_capacity() {
+        let cache = BatchedStatCache::with_capacity(50);
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_stat_batch_parallel_performance() {
+        let cache = BatchedStatCache::new();
+        let temp = create_test_tree();
+
+        // Create more files for parallel test
+        for i in 10..50 {
+            File::create(temp.path().join(format!("file{}.txt", i))).unwrap();
+        }
+
+        let paths: Vec<_> = (0..50)
+            .map(|i| temp.path().join(format!("file{}.txt", i)))
+            .collect();
+
+        let path_refs: Vec<&Path> = paths.iter()
+            .filter(|p| p.exists())
+            .map(|p| p.as_path())
+            .collect();
+
+        let results = cache.stat_batch(&path_refs, false);
+
+        // Verify all results are successful
+        for result in &results {
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_get_returns_none_for_missing() {
+        let cache = BatchedStatCache::new();
+        let path = PathBuf::from("/this/does/not/exist");
+
+        assert!(cache.get(&path).is_none());
+    }
+
+    #[test]
+    fn test_insert_and_get_same_path() {
+        let cache = BatchedStatCache::new();
+        let temp = create_test_tree();
+        let path = temp.path().join("file1.txt");
+
+        let metadata = fs::metadata(&path).unwrap();
+        cache.insert(path.clone(), metadata);
+
+        let retrieved = cache.get(&path);
+        assert!(retrieved.is_some());
+
+        // Verify it's the same Arc
+        let metadata2 = fs::metadata(&path).unwrap();
+        cache.insert(path.clone(), metadata2);
+        let retrieved2 = cache.get(&path);
+
+        // Should have 1 entry (replaced)
+        assert_eq!(cache.len(), 1);
+        assert!(retrieved2.is_some());
+    }
+
+    #[test]
+    fn test_get_or_fetch_error_not_cached() {
+        let cache = BatchedStatCache::new();
+        let nonexistent = PathBuf::from("/definitely/does/not/exist/12345");
+
+        let result1 = cache.get_or_fetch(&nonexistent, false);
+        assert!(result1.is_err());
+
+        // Error results should not be cached
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_follow_symlinks_option() {
+        let cache = BatchedStatCache::new();
+        let temp = create_test_tree();
+
+        #[cfg(unix)]
+        {
+            let target = temp.path().join("file1.txt");
+            let link = temp.path().join("link.txt");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+
+            // Test without following symlinks
+            let result_nofollow = cache.get_or_fetch(&link, false);
+            assert!(result_nofollow.is_ok());
+
+            // Clear and test with following symlinks
+            cache.clear();
+            let result_follow = cache.get_or_fetch(&link, true);
+            assert!(result_follow.is_ok());
+
+            // Both should be cached now
+            assert!(cache.get(&link).is_some());
+        }
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_stat_batch_mixed_results() {
+        let cache = BatchedStatCache::new();
+        let temp = create_test_tree();
+
+        let paths: Vec<PathBuf> = vec![
+            temp.path().join("file1.txt"),
+            PathBuf::from("/nonexistent1"),
+            temp.path().join("file2.txt"),
+            PathBuf::from("/nonexistent2"),
+            temp.path().join("file3.txt"),
+        ];
+
+        let path_refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
+        let results = cache.stat_batch(&path_refs, false);
+
+        assert_eq!(results.len(), 5);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err());
+        assert!(results[2].is_ok());
+        assert!(results[3].is_err());
+        assert!(results[4].is_ok());
+
+        // Only successful results should be cached
+        assert_eq!(cache.len(), 3);
+    }
+
+    #[test]
+    fn test_cache_clone_independence() {
+        let cache1 = BatchedStatCache::new();
+        let temp = create_test_tree();
+        let path1 = temp.path().join("file1.txt");
+        let path2 = temp.path().join("file2.txt");
+
+        cache1.get_or_fetch(&path1, false).unwrap();
+        assert_eq!(cache1.len(), 1);
+
+        let cache2 = cache1.clone();
+
+        // Both should see the same entry
+        assert_eq!(cache2.len(), 1);
+        assert!(cache2.get(&path1).is_some());
+
+        // Adding to one affects the other (shared Arc)
+        cache2.get_or_fetch(&path2, false).unwrap();
+        assert_eq!(cache1.len(), 2);
+        assert_eq!(cache2.len(), 2);
+    }
+
+    #[test]
+    fn test_clear_resets_length() {
+        let cache = BatchedStatCache::new();
+        let temp = create_test_tree();
+
+        for i in 1..=3 {
+            let path = temp.path().join(format!("file{}.txt", i));
+            cache.get_or_fetch(&path, false).unwrap();
+        }
+
+        assert_eq!(cache.len(), 3);
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+        assert!(cache.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_stat_batch_nonexistent() {
+        let temp = create_test_tree();
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+
+        let name = OsString::from("nonexistent.txt");
+        let result = batch.stat_relative(&name, false);
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_stat_batch_symlink() {
+        let temp = create_test_tree();
+        let target = temp.path().join("file1.txt");
+        let link = temp.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+
+        // Test without following symlinks
+        let name = OsString::from("link.txt");
+        let result_nofollow = batch.stat_relative(&name, false);
+        assert!(result_nofollow.is_ok());
+
+        // Test with following symlinks
+        let result_follow = batch.stat_relative(&name, true);
+        assert!(result_follow.is_ok());
+    }
+
+    #[cfg(all(unix, feature = "parallel"))]
+    #[test]
+    fn test_directory_stat_batch_parallel() {
+        let temp = create_test_tree();
+
+        // Create more files
+        for i in 10..30 {
+            File::create(temp.path().join(format!("file{}.txt", i))).unwrap();
+        }
+
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+
+        let names: Vec<OsString> = (1..30)
+            .map(|i| OsString::from(format!("file{}.txt", i)))
+            .collect();
+
+        let results = batch.stat_batch_relative(&names, false);
+
+        // Count successful results
+        let success_count = results.iter().filter(|r| r.is_ok()).count();
+        assert!(success_count >= 3); // At least the original 3 files
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_stat_batch_empty_names() {
+        let temp = create_test_tree();
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+
+        let names: Vec<OsString> = vec![];
+        let results = batch.stat_batch_relative(&names, false);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_stat_batch_invalid_filename() {
+        let temp = create_test_tree();
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+
+        // Filename with null byte
+        let name = OsString::from("file\0name.txt");
+        let result = batch.stat_relative(&name, false);
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_stat_batch_open_nonexistent() {
+        let result = DirectoryStatBatch::open("/this/directory/does/not/exist");
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_stat_batch_subdirectory() {
+        let temp = create_test_tree();
+        let batch = DirectoryStatBatch::open(temp.path().join("subdir")).unwrap();
+
+        let name = OsString::from("nested.txt");
+        let result = batch.stat_relative(&name, false);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_nonexistent() {
+        if has_statx_support() {
+            let result = statx("/nonexistent/path/xyz", false);
+            assert!(result.is_err());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_follow_symlinks() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let target = temp.path().join("file1.txt");
+        let link = temp.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        // Test without following
+        let result_nofollow = statx(&link, false);
+        assert!(result_nofollow.is_ok());
+
+        // Test with following
+        let result_follow = statx(&link, true);
+        assert!(result_follow.is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_directory() {
+        if !has_statx_support() {
+            return;
+        }
+
+        let temp = create_test_tree();
+        let result = statx(temp.path().join("subdir"), false);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_statx_invalid_path() {
+        if !has_statx_support() {
+            return;
+        }
+
+        // Path with null byte should fail
+        let result = statx("/invalid\0path", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_has_statx_support_does_not_panic() {
+        // Should not panic on any platform
+        let _ = has_statx_support();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn test_statx_not_supported_on_non_linux() {
+        assert!(!has_statx_support());
+    }
+
+    #[test]
+    fn test_cache_thread_safety() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let temp = create_test_tree();
+        let cache = Arc::new(BatchedStatCache::new());
+        let path = Arc::new(temp.path().join("file1.txt"));
+
+        let mut handles = vec![];
+
+        // Spawn multiple threads accessing the cache
+        for _ in 0..4 {
+            let cache_clone = Arc::clone(&cache);
+            let path_clone = Arc::clone(&path);
+
+            let handle = thread::spawn(move || {
+                for _ in 0..10 {
+                    let _ = cache_clone.get_or_fetch(&path_clone, false);
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Should have cached the result
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn test_cache_unicode_paths() {
+        let temp = create_test_tree();
+        let cache = BatchedStatCache::new();
+
+        // Create files with unicode names
+        let unicode_names = vec!["файл.txt", "文件.txt", "ファイル.txt"];
+
+        for name in &unicode_names {
+            let path = temp.path().join(name);
+            fs::write(&path, b"content").unwrap();
+            let result = cache.get_or_fetch(&path, false);
+            assert!(result.is_ok());
+        }
+
+        assert_eq!(cache.len(), unicode_names.len());
+    }
+
+    #[test]
+    fn test_cache_paths_with_spaces() {
+        let temp = create_test_tree();
+        let cache = BatchedStatCache::new();
+
+        let path = temp.path().join("file with spaces.txt");
+        fs::write(&path, b"content").unwrap();
+
+        let result = cache.get_or_fetch(&path, false);
+        assert!(result.is_ok());
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_stat_batch_empty_slice() {
+        let cache = BatchedStatCache::new();
+        let paths: Vec<&Path> = vec![];
+
+        let results = cache.stat_batch(&paths, false);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_cache_stress_test() {
+        let temp = create_test_tree();
+        let cache = BatchedStatCache::with_capacity(1000);
+
+        // Create and cache 100 files
+        let paths: Vec<_> = (0..100)
+            .map(|i| {
+                let path = temp.path().join(format!("stress{}.txt", i));
+                fs::write(&path, format!("content{}", i)).unwrap();
+                path
+            })
+            .collect();
+
+        // Fetch all paths multiple times
+        for _ in 0..3 {
+            for path in &paths {
+                let result = cache.get_or_fetch(path, false);
+                assert!(result.is_ok());
+            }
+        }
+
+        assert_eq!(cache.len(), 100);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_stat_batch_special_characters() {
+        let temp = create_test_tree();
+
+        // Create file with special characters
+        let special_name = "file-with-dash.txt";
+        File::create(temp.path().join(special_name)).unwrap();
+
+        let batch = DirectoryStatBatch::open(temp.path()).unwrap();
+        let name = OsString::from(special_name);
+        let result = batch.stat_relative(&name, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_or_fetch_consistency() {
+        let temp = create_test_tree();
+        let cache = BatchedStatCache::new();
+        let path = temp.path().join("file1.txt");
+
+        // Fetch multiple times
+        let result1 = cache.get_or_fetch(&path, false).unwrap();
+        let result2 = cache.get_or_fetch(&path, false).unwrap();
+        let result3 = cache.get(&path).unwrap();
+
+        // All should return the same Arc
+        assert!(Arc::ptr_eq(&result1, &result2));
+        assert!(Arc::ptr_eq(&result2, &result3));
+    }
 }
