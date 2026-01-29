@@ -298,3 +298,8 @@ include!("delete.rs");
 include!("backups.rs");
 include!("delete_protect.rs");
 include!("dest_guard.rs");
+include!("executor_file_comparison.rs");
+include!("executor_file_operations.rs");
+
+#[cfg(unix)]
+include!("execute_fsync.rs");

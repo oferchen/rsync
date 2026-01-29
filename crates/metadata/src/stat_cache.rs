@@ -222,6 +222,7 @@ pub fn check_ownership_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn metadata_cache_new_is_empty() {
@@ -256,6 +257,27 @@ mod tests {
         assert!(result2.is_ok());
         assert_eq!(cache.hits(), 1);
         assert_eq!(cache.misses(), 1);
+    }
+
+    #[test]
+    fn cache_hit_miss_ratio() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path1 = temp.path().join("file1.txt");
+        let path2 = temp.path().join("file2.txt");
+        fs::write(&path1, b"content1").expect("write");
+        fs::write(&path2, b"content2").expect("write");
+
+        let mut cache = MetadataCache::new();
+
+        // Access patterns that should generate specific hit/miss ratios
+        cache.get_or_fetch(&path1).expect("fetch"); // miss
+        cache.get_or_fetch(&path1).expect("fetch"); // hit
+        cache.get_or_fetch(&path1).expect("fetch"); // hit
+        cache.get_or_fetch(&path2).expect("fetch"); // miss
+        cache.get_or_fetch(&path2).expect("fetch"); // hit
+
+        assert_eq!(cache.hits(), 3);
+        assert_eq!(cache.misses(), 2);
     }
 
     #[test]
@@ -302,6 +324,34 @@ mod tests {
         assert_eq!(cache.misses(), 4);
     }
 
+    #[test]
+    fn multiple_paths_are_cached_independently() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths: Vec<PathBuf> = (0..10)
+            .map(|i| {
+                let path = temp.path().join(format!("file{}.txt", i));
+                fs::write(&path, format!("content{}", i)).expect("write");
+                path
+            })
+            .collect();
+
+        let mut cache = MetadataCache::new();
+
+        // Fetch all paths once
+        for path in &paths {
+            cache.get_or_fetch(path).expect("fetch");
+        }
+        assert_eq!(cache.misses(), 10);
+        assert_eq!(cache.hits(), 0);
+
+        // Fetch all paths again - should all be hits
+        for path in &paths {
+            cache.get_or_fetch(path).expect("fetch");
+        }
+        assert_eq!(cache.misses(), 10);
+        assert_eq!(cache.hits(), 10);
+    }
+
     #[cfg(unix)]
     #[test]
     fn mode_matches_returns_true_for_matching_mode() {
@@ -336,6 +386,87 @@ mod tests {
         assert!(!matches.unwrap());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn mode_matches_uses_cache() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::PermissionsExt::from_mode(0o644);
+        fs::set_permissions(&path, perms).expect("chmod");
+
+        let mut cache = MetadataCache::new();
+
+        // First call should miss
+        cache.mode_matches(&path, 0o644).expect("mode_matches");
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.hits(), 0);
+
+        // Second call should hit
+        cache.mode_matches(&path, 0o644).expect("mode_matches");
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.hits(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ownership_matches_returns_true_for_matching_ownership() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        use std::os::unix::fs::MetadataExt;
+        let meta = fs::metadata(&path).expect("metadata");
+        let uid = meta.uid();
+        let gid = meta.gid();
+
+        let mut cache = MetadataCache::new();
+        let matches = cache.ownership_matches(&path, uid, gid);
+        assert!(matches.is_ok());
+        assert!(matches.unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ownership_matches_returns_false_for_different_ownership() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        let mut cache = MetadataCache::new();
+        // Use impossible UIDs that won't match
+        let matches = cache.ownership_matches(&path, 99999, 99999);
+        assert!(matches.is_ok());
+        assert!(!matches.unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ownership_matches_uses_cache() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        use std::os::unix::fs::MetadataExt;
+        let meta = fs::metadata(&path).expect("metadata");
+        let uid = meta.uid();
+        let gid = meta.gid();
+
+        let mut cache = MetadataCache::new();
+
+        // First call should miss
+        cache.ownership_matches(&path, uid, gid).expect("ownership_matches");
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.hits(), 0);
+
+        // Second call should hit
+        cache.ownership_matches(&path, uid, gid).expect("ownership_matches");
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.hits(), 1);
+    }
+
     #[test]
     fn fetch_metadata_optimized_works_for_regular_file() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -347,8 +478,168 @@ mod tests {
     }
 
     #[test]
+    fn fetch_metadata_optimized_works_for_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir = temp.path().join("subdir");
+        fs::create_dir(&dir).expect("mkdir");
+
+        let result = fetch_metadata_optimized(&dir);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fetch_metadata_optimized_works_for_symlink() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        fs::write(&target, b"content").expect("write");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        let result = fetch_metadata_optimized(&link);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn fetch_metadata_optimized_fails_for_nonexistent() {
         let result = fetch_metadata_optimized(Path::new("/nonexistent/path/12345"));
         assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn get_or_fetch_handles_error_paths() {
+        let mut cache = MetadataCache::new();
+
+        // Nonexistent path should return error
+        let result = cache.get_or_fetch(Path::new("/nonexistent/xyz/abc"));
+        assert!(result.is_err());
+
+        // Should not be cached
+        assert_eq!(cache.misses(), 1);
+        assert_eq!(cache.hits(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_mode_matches_helper_function() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::PermissionsExt::from_mode(0o644);
+        fs::set_permissions(&path, perms).expect("chmod");
+
+        let mut cache = MetadataCache::new();
+        let matches = check_mode_matches(&mut cache, &path, 0o644);
+        assert!(matches.is_ok());
+        assert!(matches.unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_ownership_matches_helper_function() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        use std::os::unix::fs::MetadataExt;
+        let meta = fs::metadata(&path).expect("metadata");
+        let uid = meta.uid();
+        let gid = meta.gid();
+
+        let mut cache = MetadataCache::new();
+        let matches = check_ownership_matches(&mut cache, &path, uid, gid);
+        assert!(matches.is_ok());
+        assert!(matches.unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn try_statx_optimized_works() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        let result = try_statx_optimized(&path);
+        // May not be supported on older kernels
+        if result.is_ok() || result.as_ref().err().unwrap().raw_os_error() == Some(libc::ENOSYS) {
+            // Success or expected ENOSYS is fine
+        } else {
+            panic!("Unexpected error: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn cache_default_is_empty() {
+        let cache = MetadataCache::default();
+        assert_eq!(cache.hits(), 0);
+        assert_eq!(cache.misses(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_readonly_metadata() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("test.txt");
+        fs::write(&path, b"content").expect("write");
+
+        let result = fetch_metadata_optimized(&path);
+        assert!(result.is_ok());
+
+        let meta = result.unwrap();
+        // Just verify we can access readonly attribute
+        let _readonly = meta.readonly;
+    }
+
+    #[test]
+    fn stress_test_many_cache_entries() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut cache = MetadataCache::with_capacity(1000);
+
+        // Create and cache 1000 files
+        for i in 0..1000 {
+            let path = temp.path().join(format!("file{}.txt", i));
+            fs::write(&path, format!("content{}", i)).expect("write");
+            cache.get_or_fetch(&path).expect("fetch");
+        }
+
+        assert_eq!(cache.misses(), 1000);
+        assert_eq!(cache.hits(), 0);
+
+        // Access random entries - should all hit
+        for i in (0..1000).step_by(17) {
+            let path = temp.path().join(format!("file{}.txt", i));
+            cache.get_or_fetch(&path).expect("fetch");
+        }
+
+        assert!(cache.hits() > 0);
+    }
+
+    #[test]
+    fn invalidate_nonexistent_path_is_safe() {
+        let mut cache = MetadataCache::new();
+        let path = PathBuf::from("/this/path/does/not/exist");
+
+        // Should not panic
+        cache.invalidate(&path);
+    }
+
+    #[test]
+    fn paths_with_special_characters() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("file with spaces.txt");
+        fs::write(&path, b"content").expect("write");
+
+        let mut cache = MetadataCache::new();
+        let result = cache.get_or_fetch(&path);
+        assert!(result.is_ok());
+
+        // Unicode path
+        let unicode_path = temp.path().join("файл.txt");
+        fs::write(&unicode_path, b"content").expect("write");
+        let result = cache.get_or_fetch(&unicode_path);
+        assert!(result.is_ok());
     }
 }
