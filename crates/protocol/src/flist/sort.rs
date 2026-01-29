@@ -37,11 +37,12 @@ use super::FileEntry;
 /// that is transitive: if a < b and b < c, then a < c.
 #[must_use]
 pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
-    let name_a = a.name();
-    let name_b = b.name();
+    // Use byte comparison directly - rsync protocol uses bytes, not UTF-8
+    let bytes_a = a.name_bytes();
+    let bytes_b = b.name_bytes();
 
     // "." always comes first
-    match (name_a == ".", name_b == ".") {
+    match (bytes_a == b".", bytes_b == b".") {
         (true, true) => return Ordering::Equal,
         (true, false) => return Ordering::Less,
         (false, true) => return Ordering::Greater,
@@ -51,8 +52,6 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     // For directories, conceptually append '/' for comparison purposes.
     // This matches upstream rsync's f_name_cmp() which treats directories
     // as having an implicit trailing slash.
-    let bytes_a = name_a.as_bytes();
-    let bytes_b = name_b.as_bytes();
     let a_is_dir = a.is_dir();
     let b_is_dir = b.is_dir();
 

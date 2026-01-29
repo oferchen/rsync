@@ -934,8 +934,8 @@ impl FileListWriter {
         writer: &mut W,
         entry: &FileEntry,
     ) -> io::Result<()> {
-        // Step 1: Apply encoding conversion
-        let raw_name = entry.name().as_bytes();
+        // Step 1: Get name bytes and apply encoding conversion
+        let raw_name = entry.name_bytes();
         let name = self.apply_encoding_conversion(raw_name)?;
 
         // Step 2: Calculate name compression

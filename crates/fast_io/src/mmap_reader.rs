@@ -51,6 +51,15 @@ pub struct MmapReader {
     size: u64,
 }
 
+impl std::fmt::Debug for MmapReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MmapReader")
+            .field("position", &self.position)
+            .field("size", &self.size)
+            .finish_non_exhaustive()
+    }
+}
+
 impl MmapReader {
     /// Opens a file for memory-mapped reading.
     ///

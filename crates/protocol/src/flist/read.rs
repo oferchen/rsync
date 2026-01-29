@@ -916,10 +916,9 @@ impl FileListReader {
         // Step 8: Apply encoding conversion
         let converted_name = self.apply_encoding_conversion(name)?;
 
-        // Step 9: Construct entry
-        let path = PathBuf::from(String::from_utf8_lossy(&converted_name).into_owned());
-        let mut entry = FileEntry::from_raw(
-            path,
+        // Step 9: Construct entry from raw bytes (avoids UTF-8 validation on Unix)
+        let mut entry = FileEntry::from_raw_bytes(
+            converted_name,
             size,
             metadata.mode,
             metadata.mtime,

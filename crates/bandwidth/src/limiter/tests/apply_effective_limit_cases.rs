@@ -534,3 +534,194 @@ fn apply_effective_limit_explicitly_disables_burst_with_limit_change() {
     assert_eq!(limiter.limit_bytes(), lower_limit);
     assert_eq!(limiter.burst_bytes(), None); // Burst was explicitly cleared
 }
+
+// ==================== Comprehensive state transition tests ====================
+
+#[test]
+fn apply_effective_limit_state_transition_none_to_limited() {
+    let mut limiter: Option<BandwidthLimiter> = None;
+    let limit = NonZeroU64::new(1024).unwrap();
+
+    let change = apply_effective_limit(&mut limiter, Some(limit), true, None, false);
+
+    assert_eq!(change, LimiterChange::Enabled);
+    assert!(limiter.is_some());
+    assert_eq!(limiter.unwrap().limit_bytes(), limit);
+}
+
+#[test]
+fn apply_effective_limit_state_transition_limited_to_none() {
+    let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
+
+    let change = apply_effective_limit(&mut limiter, None, true, None, false);
+
+    assert_eq!(change, LimiterChange::Disabled);
+    assert!(limiter.is_none());
+}
+
+#[test]
+fn apply_effective_limit_state_transition_limited_to_limited_same() {
+    let limit = NonZeroU64::new(1024).unwrap();
+    let mut limiter = Some(BandwidthLimiter::new(limit));
+
+    let change = apply_effective_limit(&mut limiter, Some(limit), true, None, false);
+
+    assert_eq!(change, LimiterChange::Unchanged);
+    assert!(limiter.is_some());
+}
+
+#[test]
+fn apply_effective_limit_state_transition_limited_to_limited_lower() {
+    let high_limit = NonZeroU64::new(8192).unwrap();
+    let low_limit = NonZeroU64::new(1024).unwrap();
+    let mut limiter = Some(BandwidthLimiter::new(high_limit));
+
+    let change = apply_effective_limit(&mut limiter, Some(low_limit), true, None, false);
+
+    assert_eq!(change, LimiterChange::Updated);
+    assert!(limiter.is_some());
+    assert_eq!(limiter.unwrap().limit_bytes(), low_limit);
+}
+
+#[test]
+fn apply_effective_limit_state_transition_limited_to_limited_higher_unchanged() {
+    let low_limit = NonZeroU64::new(1024).unwrap();
+    let high_limit = NonZeroU64::new(8192).unwrap();
+    let mut limiter = Some(BandwidthLimiter::new(low_limit));
+
+    // Trying to set higher limit doesn't increase it
+    let change = apply_effective_limit(&mut limiter, Some(high_limit), true, None, false);
+
+    assert_eq!(change, LimiterChange::Unchanged);
+    assert!(limiter.is_some());
+    assert_eq!(limiter.unwrap().limit_bytes(), low_limit);
+}
+
+// ==================== Burst-only edge cases ====================
+
+#[test]
+fn apply_effective_limit_burst_only_from_none_to_some() {
+    let limit = NonZeroU64::new(4096).unwrap();
+    let mut limiter = Some(BandwidthLimiter::new(limit));
+    assert!(limiter.as_ref().unwrap().burst_bytes().is_none());
+
+    let burst = NonZeroU64::new(2048).unwrap();
+    let change = apply_effective_limit(&mut limiter, None, false, Some(burst), true);
+
+    assert_eq!(change, LimiterChange::Updated);
+    assert_eq!(limiter.as_ref().unwrap().burst_bytes(), Some(burst));
+}
+
+#[test]
+fn apply_effective_limit_burst_only_from_some_to_none() {
+    let limit = NonZeroU64::new(4096).unwrap();
+    let burst = NonZeroU64::new(2048).unwrap();
+    let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(burst)));
+
+    let change = apply_effective_limit(&mut limiter, None, false, None, true);
+
+    assert_eq!(change, LimiterChange::Updated);
+    assert!(limiter.as_ref().unwrap().burst_bytes().is_none());
+}
+
+#[test]
+fn apply_effective_limit_burst_only_from_some_to_different() {
+    let limit = NonZeroU64::new(4096).unwrap();
+    let burst1 = NonZeroU64::new(1024).unwrap();
+    let burst2 = NonZeroU64::new(2048).unwrap();
+    let mut limiter = Some(BandwidthLimiter::with_burst(limit, Some(burst1)));
+
+    let change = apply_effective_limit(&mut limiter, None, false, Some(burst2), true);
+
+    assert_eq!(change, LimiterChange::Updated);
+    assert_eq!(limiter.as_ref().unwrap().burst_bytes(), Some(burst2));
+}
+
+// ==================== Combined limit and burst changes ====================
+
+#[test]
+fn apply_effective_limit_both_limit_and_burst_change_simultaneously() {
+    let limit1 = NonZeroU64::new(8192).unwrap();
+    let burst1 = NonZeroU64::new(4096).unwrap();
+    let mut limiter = Some(BandwidthLimiter::with_burst(limit1, Some(burst1)));
+
+    let limit2 = NonZeroU64::new(2048).unwrap();
+    let burst2 = NonZeroU64::new(1024).unwrap();
+
+    let change = apply_effective_limit(&mut limiter, Some(limit2), true, Some(burst2), true);
+
+    assert_eq!(change, LimiterChange::Updated);
+    assert_eq!(limiter.as_ref().unwrap().limit_bytes(), limit2);
+    assert_eq!(limiter.as_ref().unwrap().burst_bytes(), Some(burst2));
+}
+
+#[test]
+fn apply_effective_limit_limit_changes_burst_cleared() {
+    let limit1 = NonZeroU64::new(8192).unwrap();
+    let burst = NonZeroU64::new(4096).unwrap();
+    let mut limiter = Some(BandwidthLimiter::with_burst(limit1, Some(burst)));
+
+    let limit2 = NonZeroU64::new(2048).unwrap();
+
+    // Change limit and explicitly clear burst
+    let change = apply_effective_limit(&mut limiter, Some(limit2), true, None, true);
+
+    assert_eq!(change, LimiterChange::Updated);
+    assert_eq!(limiter.as_ref().unwrap().limit_bytes(), limit2);
+    assert!(limiter.as_ref().unwrap().burst_bytes().is_none());
+}
+
+// ==================== No change scenarios ====================
+
+#[test]
+fn apply_effective_limit_all_params_none_with_no_limiter() {
+    let mut limiter: Option<BandwidthLimiter> = None;
+
+    // Nothing specified
+    let change = apply_effective_limit(&mut limiter, None, false, None, false);
+
+    assert_eq!(change, LimiterChange::Unchanged);
+    assert!(limiter.is_none());
+}
+
+#[test]
+fn apply_effective_limit_all_params_none_with_existing_limiter() {
+    let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
+
+    // Nothing specified - should not affect limiter
+    let change = apply_effective_limit(&mut limiter, None, false, None, false);
+
+    assert_eq!(change, LimiterChange::Unchanged);
+    assert!(limiter.is_some());
+}
+
+// ==================== Creating limiter with burst ====================
+
+#[test]
+fn apply_effective_limit_creates_limiter_with_burst_specified() {
+    let mut limiter: Option<BandwidthLimiter> = None;
+    let limit = NonZeroU64::new(4096).unwrap();
+    let burst = NonZeroU64::new(2048).unwrap();
+
+    let change = apply_effective_limit(&mut limiter, Some(limit), true, Some(burst), true);
+
+    assert_eq!(change, LimiterChange::Enabled);
+    let limiter = limiter.unwrap();
+    assert_eq!(limiter.limit_bytes(), limit);
+    assert_eq!(limiter.burst_bytes(), Some(burst));
+}
+
+#[test]
+fn apply_effective_limit_creates_limiter_ignoring_unspecified_burst() {
+    let mut limiter: Option<BandwidthLimiter> = None;
+    let limit = NonZeroU64::new(4096).unwrap();
+    let burst = NonZeroU64::new(2048).unwrap();
+
+    // burst_specified=false means the burst value is ignored
+    let change = apply_effective_limit(&mut limiter, Some(limit), true, Some(burst), false);
+
+    assert_eq!(change, LimiterChange::Enabled);
+    let limiter = limiter.unwrap();
+    assert_eq!(limiter.limit_bytes(), limit);
+    assert!(limiter.burst_bytes().is_none()); // Burst ignored
+}

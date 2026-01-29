@@ -26,7 +26,7 @@ tracing = ["dep:tracing", "core/tracing"]
 [dependencies]
 clap = { version = "4.5.49", features = ["std"] }
 base64 = "0.22"
-dns-lookup = "1.0"
+dns-lookup = "2.0"
 core = { path = "../core", default-features = false }
 protocol = { path = "../protocol" }
 logging-sink = { path = "../logging-sink" }

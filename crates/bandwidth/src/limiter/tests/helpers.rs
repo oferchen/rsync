@@ -83,3 +83,225 @@ fn sleep_for_splits_large_durations_into_chunks() {
             .all(|chunk| !chunk.is_zero() && *chunk <= MAX_SLEEP_DURATION)
     );
 }
+
+// ==================== Additional duration_from_microseconds tests ====================
+
+#[test]
+fn duration_from_microseconds_handles_exact_second_boundaries() {
+    // Exactly 1 second
+    let one_sec = super::super::MICROS_PER_SECOND;
+    assert_eq!(
+        duration_from_microseconds(one_sec),
+        Duration::from_secs(1)
+    );
+
+    // Exactly 60 seconds
+    let one_min = 60 * super::super::MICROS_PER_SECOND;
+    assert_eq!(
+        duration_from_microseconds(one_min),
+        Duration::from_secs(60)
+    );
+
+    // Exactly 3600 seconds (1 hour)
+    let one_hour = 3600 * super::super::MICROS_PER_SECOND;
+    assert_eq!(
+        duration_from_microseconds(one_hour),
+        Duration::from_secs(3600)
+    );
+}
+
+#[test]
+fn duration_from_microseconds_handles_small_values() {
+    // 1 microsecond
+    assert_eq!(
+        duration_from_microseconds(1),
+        Duration::from_micros(1)
+    );
+
+    // 999,999 microseconds (just under 1 second)
+    let almost_sec = duration_from_microseconds(999_999);
+    assert_eq!(almost_sec.as_secs(), 0);
+    assert_eq!(almost_sec.subsec_micros(), 999_999);
+}
+
+#[test]
+fn duration_from_microseconds_handles_millis_boundary() {
+    // Exactly 1 millisecond = 1000 microseconds
+    assert_eq!(
+        duration_from_microseconds(1_000),
+        Duration::from_millis(1)
+    );
+
+    // 1.5 milliseconds
+    let one_and_half = duration_from_microseconds(1_500);
+    assert_eq!(one_and_half.as_micros(), 1_500);
+}
+
+#[test]
+fn duration_from_microseconds_near_max_representable() {
+    // Just under MAX_REPRESENTABLE_MICROSECONDS
+    let near_max = super::super::MAX_REPRESENTABLE_MICROSECONDS - 1;
+    let duration = duration_from_microseconds(near_max);
+    assert!(duration < Duration::MAX);
+}
+
+// ==================== sleep_for comprehensive tests ====================
+
+#[test]
+fn sleep_for_small_durations_record_correctly() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // Various small durations
+    let durations = [
+        Duration::from_micros(1),
+        Duration::from_micros(100),
+        Duration::from_millis(1),
+        Duration::from_millis(10),
+        Duration::from_millis(100),
+    ];
+
+    for expected in durations {
+        session.clear();
+        sleep_for(expected);
+        let recorded = session.take();
+
+        // Should record the exact duration (single chunk)
+        let total: Duration = recorded.iter().copied().sum();
+        assert_eq!(total, expected);
+    }
+}
+
+#[test]
+fn sleep_for_exact_max_sleep_duration() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    sleep_for(MAX_SLEEP_DURATION);
+
+    let recorded = session.take();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0], MAX_SLEEP_DURATION);
+}
+
+#[test]
+fn sleep_for_just_over_max_creates_two_chunks() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let just_over = MAX_SLEEP_DURATION + Duration::from_micros(1);
+    sleep_for(just_over);
+
+    let recorded = session.take();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded[0], MAX_SLEEP_DURATION);
+    assert_eq!(recorded[1], Duration::from_micros(1));
+}
+
+#[test]
+fn sleep_for_double_max_creates_two_max_chunks() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    let double = MAX_SLEEP_DURATION.saturating_mul(2);
+    sleep_for(double);
+
+    let recorded = session.take();
+    let total: Duration = recorded.iter().copied().sum();
+    assert_eq!(total, double);
+
+    // All chunks should be at most MAX_SLEEP_DURATION
+    assert!(recorded.iter().all(|d| *d <= MAX_SLEEP_DURATION));
+}
+
+#[test]
+fn sleep_for_many_small_calls() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // Many small sleeps
+    for _ in 0..100 {
+        sleep_for(Duration::from_millis(10));
+    }
+
+    let recorded = session.take();
+    assert_eq!(recorded.len(), 100);
+
+    let total: Duration = recorded.iter().copied().sum();
+    assert_eq!(total, Duration::from_secs(1));
+}
+
+#[test]
+fn sleep_for_alternating_sizes() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // Alternating small and large durations
+    sleep_for(Duration::from_millis(1));
+    sleep_for(Duration::from_secs(1));
+    sleep_for(Duration::from_micros(100));
+    sleep_for(Duration::from_secs(2));
+
+    let recorded = session.take();
+    let total: Duration = recorded.iter().copied().sum();
+
+    let expected = Duration::from_millis(1)
+        + Duration::from_secs(1)
+        + Duration::from_micros(100)
+        + Duration::from_secs(2);
+    assert_eq!(total, expected);
+}
+
+#[test]
+fn sleep_for_nanoseconds() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // Very small duration (nanoseconds)
+    sleep_for(Duration::from_nanos(500));
+
+    let recorded = session.take();
+    // Should still record (non-zero)
+    assert!(!recorded.is_empty());
+
+    let total: Duration = recorded.iter().copied().sum();
+    assert_eq!(total, Duration::from_nanos(500));
+}
+
+// ==================== Boundary and overflow tests ====================
+
+#[test]
+fn duration_from_microseconds_various_overflow_boundaries() {
+    // Test values around potential overflow points
+    let test_values: Vec<u128> = vec![
+        u128::from(u64::MAX),
+        u128::from(u64::MAX) + 1,
+        u128::from(u64::MAX) * 2,
+        super::super::MICROS_PER_SECOND * u128::from(u64::MAX),
+    ];
+
+    for micros in test_values {
+        let result = duration_from_microseconds(micros);
+        // Should not panic, may return Duration::MAX
+        assert!(result <= Duration::MAX);
+    }
+}
+
+#[test]
+fn sleep_for_preserves_exact_total_duration() {
+    let mut session = recorded_sleep_session();
+    session.clear();
+
+    // A specific large duration that will be chunked
+    let specific = Duration::new(u64::MAX / 2, 123_456_789);
+    sleep_for(specific);
+
+    let recorded = session.take();
+    let total = recorded
+        .iter()
+        .copied()
+        .try_fold(Duration::ZERO, |acc, chunk| acc.checked_add(chunk))
+        .expect("sum should fit");
+
+    assert_eq!(total, specific);
+}

@@ -137,13 +137,24 @@ pub struct FileEntrySortKey {
 }
 
 impl FileEntrySortKey {
-    /// Creates a new sort key from a path and directory flag.
+    /// Creates a new sort key from raw path bytes and directory flag.
+    ///
+    /// This is the preferred constructor as it avoids UTF-8 validation.
     #[must_use]
-    pub fn new(path: &str, is_dir: bool) -> Self {
+    pub fn from_bytes(path_bytes: &[u8], is_dir: bool) -> Self {
         Self {
-            path_bytes: path.as_bytes().to_vec(),
+            path_bytes: path_bytes.to_vec(),
             is_dir,
         }
+    }
+
+    /// Creates a new sort key from a path string and directory flag.
+    ///
+    /// For better performance, prefer [`from_bytes`](Self::from_bytes) when
+    /// the path is already available as bytes.
+    #[must_use]
+    pub fn new(path: &str, is_dir: bool) -> Self {
+        Self::from_bytes(path.as_bytes(), is_dir)
     }
 }
 
@@ -267,6 +278,29 @@ mod tests {
     fn file_entry_sort_key_alphabetical_files() {
         let a = FileEntrySortKey::new("a.txt", false);
         let b = FileEntrySortKey::new("b.txt", false);
+        assert_eq!(a.cmp(&b), Ordering::Less);
+    }
+
+    #[test]
+    fn file_entry_sort_key_from_bytes() {
+        // Test that from_bytes produces the same result as new()
+        let from_str = FileEntrySortKey::new("test/path.txt", false);
+        let from_bytes = FileEntrySortKey::from_bytes(b"test/path.txt", false);
+        assert_eq!(from_str, from_bytes);
+    }
+
+    #[test]
+    fn file_entry_sort_key_from_bytes_non_utf8() {
+        // Test with non-UTF-8 bytes (valid in file paths on Unix)
+        let key = FileEntrySortKey::from_bytes(&[0x80, 0x81, 0x82], false);
+        assert_eq!(key.path_bytes, vec![0x80, 0x81, 0x82]);
+    }
+
+    #[test]
+    fn file_entry_sort_key_from_bytes_comparison() {
+        // Test that byte comparison works correctly
+        let a = FileEntrySortKey::from_bytes(b"aaa", false);
+        let b = FileEntrySortKey::from_bytes(b"bbb", false);
         assert_eq!(a.cmp(&b), Ordering::Less);
     }
 }

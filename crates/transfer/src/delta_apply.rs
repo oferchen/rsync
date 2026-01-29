@@ -22,7 +22,7 @@ use engine::signature::FileSignature;
 use protocol::{ChecksumAlgorithm, CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use crate::constants::{CHUNK_SIZE, leading_zero_count, trailing_zero_count};
-use crate::map_file::{BufferedMap, MapFile};
+use crate::map_file::{AdaptiveMapStrategy, MapFile};
 use crate::token_buffer::TokenBuffer;
 
 // ============================================================================
@@ -258,8 +258,9 @@ pub struct DeltaApplyResult {
 ///
 /// # Performance Optimizations
 ///
-/// - Uses `MapFile` for basis file access with 256KB sliding window cache,
-///   avoiding repeated open/seek/read syscalls for block references.
+/// - Uses `MapFile` with `AdaptiveMapStrategy` for basis file access:
+///   - Files < 1MB: Buffered I/O with 256KB sliding window cache
+///   - Files >= 1MB: Memory-mapped for zero-copy access
 /// - Uses `TokenBuffer` for literal data, reusing the same allocation across
 ///   all tokens to avoid per-token heap allocations.
 pub struct DeltaApplicator<'a> {
@@ -268,7 +269,8 @@ pub struct DeltaApplicator<'a> {
     checksum_verifier: ChecksumVerifier,
     basis_signature: Option<&'a FileSignature>,
     /// Cached basis file mapper - opened once and reused for all block refs
-    basis_map: Option<MapFile<BufferedMap>>,
+    /// Uses AdaptiveMapStrategy: mmap for large files, buffered for small
+    basis_map: Option<MapFile<AdaptiveMapStrategy>>,
     /// Reusable buffer for literal token data
     token_buffer: TokenBuffer,
     stats: DeltaApplyResult,
@@ -278,7 +280,8 @@ impl<'a> DeltaApplicator<'a> {
     /// Creates a new delta applicator.
     ///
     /// If `basis_path` is provided, opens the file once and caches it for
-    /// efficient block reference lookups.
+    /// efficient block reference lookups. Uses `AdaptiveMapStrategy` which
+    /// automatically selects mmap for files >= 1MB, buffered I/O for smaller.
     pub fn new(
         output: File,
         config: &DeltaApplyConfig,
@@ -287,8 +290,9 @@ impl<'a> DeltaApplicator<'a> {
         basis_path: Option<&'a Path>,
     ) -> io::Result<Self> {
         // Open basis file once if provided - cached for all block references
+        // Uses AdaptiveMapStrategy: mmap for large files, buffered for small
         let basis_map = if let Some(path) = basis_path {
-            Some(MapFile::open(path).map_err(|e| {
+            Some(MapFile::open_adaptive(path).map_err(|e| {
                 io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
             })?)
         } else {
@@ -323,8 +327,9 @@ impl<'a> DeltaApplicator<'a> {
 
     /// Applies a block reference by copying from basis file.
     ///
-    /// Uses cached `MapFile` with 256KB sliding window for efficient access,
-    /// avoiding repeated open/seek/read syscalls for each block reference.
+    /// Uses cached `MapFile` with `AdaptiveMapStrategy` for efficient access:
+    /// - Small files (< 1MB): 256KB sliding window buffer
+    /// - Large files (>= 1MB): Zero-copy memory-mapped access
     pub fn apply_block_ref(&mut self, block_idx: usize) -> io::Result<()> {
         let (Some(signature), Some(basis_map)) = (&self.basis_signature, self.basis_map.as_mut())
         else {

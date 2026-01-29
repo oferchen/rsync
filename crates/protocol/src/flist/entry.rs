@@ -270,6 +270,61 @@ impl FileEntry {
         }
     }
 
+    /// Creates a file entry from raw bytes (wire format, optimized).
+    ///
+    /// This avoids UTF-8 validation overhead during protocol decoding
+    /// by converting bytes directly to PathBuf on Unix (zero-copy).
+    /// UTF-8 validation is deferred until display via `name()`.
+    ///
+    /// This is the preferred constructor for wire protocol decoding.
+    #[must_use]
+    pub fn from_raw_bytes(
+        name: Vec<u8>,
+        size: u64,
+        mode: u32,
+        mtime: i64,
+        mtime_nsec: u32,
+        flags: super::flags::FileFlags,
+    ) -> Self {
+        // Convert bytes to PathBuf without UTF-8 validation
+        #[cfg(unix)]
+        let path = {
+            use std::ffi::OsStr;
+            use std::os::unix::ffi::OsStrExt;
+            PathBuf::from(OsStr::from_bytes(&name))
+        };
+        #[cfg(not(unix))]
+        let path = {
+            // On non-Unix, we need UTF-8 validation
+            PathBuf::from(String::from_utf8_lossy(&name).into_owned())
+        };
+
+        Self {
+            name: path,
+            link_target: None,
+            user_name: None,
+            group_name: None,
+            size,
+            mtime,
+            atime: 0,
+            crtime: 0,
+            uid: None,
+            gid: None,
+            rdev_major: None,
+            rdev_minor: None,
+            hardlink_idx: None,
+            hardlink_dev: None,
+            hardlink_ino: None,
+            checksum: None,
+            acl_ndx: None,
+            xattr_ndx: None,
+            mode,
+            mtime_nsec,
+            flags,
+            content_dir: true,
+        }
+    }
+
     /// Returns the relative path name of the entry.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -280,6 +335,27 @@ impl FileEntry {
     #[must_use]
     pub const fn path(&self) -> &PathBuf {
         &self.name
+    }
+
+    /// Returns the path as raw bytes without UTF-8 validation.
+    ///
+    /// This is an optimized accessor for protocol operations that work
+    /// with byte sequences. Use this for sorting, comparison, and wire
+    /// encoding to avoid repeated UTF-8 validation via `name().as_bytes()`.
+    ///
+    /// On Unix, paths are inherently byte sequences (OsStr), so this
+    /// provides zero-copy access. On other platforms, it performs UTF-8
+    /// encoding once rather than validating twice (name() then as_bytes()).
+    #[inline]
+    #[must_use]
+    pub fn name_bytes(&self) -> &[u8] {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            self.name.as_os_str().as_bytes()
+        }
+        #[cfg(not(unix))]
+        self.name().as_bytes()
     }
 
     /// Returns the file size in bytes.

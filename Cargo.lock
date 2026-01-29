@@ -674,14 +674,14 @@ dependencies = [
 
 [[package]]
 name = "dns-lookup"
-version = "1.0.8"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53ecafc952c4528d9b51a458d1a8904b81783feff9fde08ab6ed2545ff396872"
+checksum = "cf5597a4b7fe5275fc9dcf88ce26326bc8e4cb87d0130f33752d4c5f717793cf"
 dependencies = [
  "cfg-if",
  "libc",
- "socket2 0.4.10",
- "winapi",
+ "socket2 0.6.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -772,6 +772,8 @@ dependencies = [
 name = "fast_io"
 version = "0.5.3"
 dependencies = [
+ "io-uring",
+ "libc",
  "memmap2",
  "permutation",
  "rayon",
@@ -830,6 +832,7 @@ dependencies = [
 name = "flist"
 version = "0.5.3"
 dependencies = [
+ "libc",
  "logging",
  "rayon",
  "serde",
@@ -1058,6 +1061,17 @@ checksum = "6717a8d2a5a929a1a2eb43a12812498ed141a0bcfb7e8f7844fbdbe4303bba9f"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.0",
+]
+
+[[package]]
+name = "io-uring"
+version = "0.7.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd7bddefd0a8833b88a4b68f90dae22c7450d11b354198baee3874fd811b344"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "libc",
 ]
 
 [[package]]
@@ -2085,16 +2099,6 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "socket2"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
-name = "socket2"
 version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
@@ -2408,6 +2412,7 @@ dependencies = [
  "compress",
  "criterion",
  "engine",
+ "fast_io",
  "filters",
  "logging",
  "metadata",
