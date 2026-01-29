@@ -1,0 +1,178 @@
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    Batched Metadata Syscall Architecture                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                                User Application
+                                       │
+                                       ▼
+          ┌────────────────────────────────────────────────────┐
+          │    collect_with_batched_stats(path, follow_links)  │
+          └────────────────────────────────────────────────────┘
+                                       │
+                   ┌───────────────────┼───────────────────┐
+                   ▼                   ▼                   ▼
+          ┌─────────────┐     ┌─────────────┐     ┌──────────────┐
+          │   Phase 1   │     │   Phase 2   │     │   Phase 3    │
+          │  Enumerate  │────▶│  Batch Stat │────▶│ Merge & Sort │
+          └─────────────┘     └─────────────┘     └──────────────┘
+                 │                     │                   │
+                 │                     │                   │
+                 ▼                     ▼                   ▼
+          collect_paths_       BatchedStatCache    Vec<FileListEntry>
+          recursive()           .stat_batch()       (sorted results)
+                 │                     │
+                 │                     │
+                 ▼                     ▼
+          Vec<(path, rel,      ┌───────────────────┐
+          depth, is_root)>     │  Thread Pool      │
+                               │  (rayon)          │
+                               └───────────────────┘
+                                     │   │   │
+                           ┌─────────┼───┼───┼─────────┐
+                           ▼         ▼   ▼   ▼         ▼
+                      Thread 1   Thread 2 ... Thread N
+                           │         │         │
+                           ▼         ▼         ▼
+                      ┌─────────────────────────────┐
+                      │   Platform-Specific Stats   │
+                      └─────────────────────────────┘
+                                     │
+                     ┌───────────────┼───────────────┐
+                     ▼               ▼               ▼
+              ┌──────────┐    ┌──────────┐   ┌──────────┐
+              │  statx   │    │ fstatat  │   │   stat   │
+              │ (Linux)  │    │  (Unix)  │   │(fallback)│
+              └──────────┘    └──────────┘   └──────────┘
+                     │               │               │
+                     └───────────────┼───────────────┘
+                                     ▼
+                              Filesystem I/O
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         Component Interaction                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+FileListWalker (Sequential)          BatchedStatCache (Parallel)
+       │                                      │
+       │ readdir()                            │ stat_batch()
+       ▼                                      ▼
+┌─────────────┐                      ┌──────────────────┐
+│  Directory  │                      │   Path Queue     │
+│   Entry 1   │──stat()──▶ slow      │  [p1,p2,p3,...]  │
+│   Entry 2   │──stat()──▶ slow      └──────────────────┘
+│   Entry 3   │──stat()──▶ slow               │
+└─────────────┘                      ┌────────┴─────────┐
+                                     ▼                  ▼
+      One at a time               Thread 1           Thread 2
+      Sequential                  stat(p1,p4)        stat(p2,p5)
+      ~100μs each                 stat(p7,p10)       stat(p8,p11)
+                                     │                  │
+                                     └────────┬─────────┘
+                                              ▼
+                                    Parallel (4x faster)
+                                    ~25μs per stat
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          Cache Architecture                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+                         BatchedStatCache
+                                │
+                                ▼
+              Arc<Mutex<HashMap<PathBuf, Arc<Metadata>>>>
+                        │                      │
+                        │                      │
+              ┌─────────┴──────┐              │
+              ▼                ▼              ▼
+         Thread-safe      Fast lookup    Shared metadata
+         concurrent       O(1) average    (Arc = no cloning)
+         access                           (~200 bytes)
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         Performance Timeline                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Sequential (10 files, 1 thread):
+Thread 1: ▓░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░
+          stat1     stat2     stat3     stat4     stat5
+          ░░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░
+          stat6     stat7     stat8     stat9     stat10
+
+          ▓ = CPU work (10μs)
+          ░ = I/O wait (90μs)
+          Total: 10 × 100μs = 1,000μs
+
+Batched Parallel (10 files, 4 threads):
+Thread 1: ▓░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░
+          stat1     stat5     stat9
+Thread 2: ▓░░░░░░░░░▓░░░░░░░░░▓░░░░░░░░░
+          stat2     stat6     stat10
+Thread 3: ▓░░░░░░░░░▓░░░░░░░░░
+          stat3     stat7
+Thread 4: ▓░░░░░░░░░▓░░░░░░░░░
+          stat4     stat8
+
+          Total: 3 × 100μs = 300μs
+          Speedup: 3.3x
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                       Key Design Decisions                                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+1. Sequential enumeration, parallel stat
+   - Directory reading must be sequential (kernel limitation)
+   - Stat operations are independent → parallelize these
+
+2. Arc<Mutex<HashMap<>>> for cache
+   - Arc: cheap cloning for thread-safe sharing
+   - Mutex: safe concurrent access
+   - HashMap: O(1) lookup by path
+
+3. Arc<Metadata> for values
+   - Metadata is ~200 bytes
+   - Arc avoids expensive cloning
+   - Multiple consumers can share same metadata
+
+4. Platform-specific optimizations
+   - Linux: statx for better performance
+   - Unix: fstatat for reduced path resolution
+   - Windows: fallback to standard APIs
+
+5. Rayon for parallelism
+   - Work-stealing scheduler
+   - Automatic load balancing
+   - Zero-cost abstraction
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         Data Flow Example                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Input: /home/user/project
+
+Step 1: Enumerate paths
+  → (/home/user/project, "", 0, true)
+  → (/home/user/project/file1.rs, "file1.rs", 1, false)
+  → (/home/user/project/file2.rs, "file2.rs", 1, false)
+  → (/home/user/project/src, "src", 1, false)
+  → (/home/user/project/src/main.rs, "src/main.rs", 2, false)
+
+Step 2: Batch stat (parallel)
+  Thread 1: stat(/home/user/project)        → Metadata { size: 4096, ... }
+  Thread 2: stat(/home/user/project/file1.rs) → Metadata { size: 1234, ... }
+  Thread 3: stat(/home/user/project/file2.rs) → Metadata { size: 5678, ... }
+  Thread 4: stat(/home/user/project/src)    → Metadata { size: 4096, ... }
+  Thread 1: stat(.../src/main.rs)           → Metadata { size: 9012, ... }
+
+Step 3: Merge & sort
+  FileListEntry { full_path: /home/user/project, relative: "", ... }
+  FileListEntry { full_path: .../file1.rs, relative: "file1.rs", ... }
+  FileListEntry { full_path: .../file2.rs, relative: "file2.rs", ... }
+  FileListEntry { full_path: .../src, relative: "src", ... }
+  FileListEntry { full_path: .../src/main.rs, relative: "src/main.rs", ... }
+
+Output: Vec<FileListEntry> (sorted by relative_path)
