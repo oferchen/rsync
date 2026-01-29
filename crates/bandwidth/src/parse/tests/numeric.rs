@@ -187,3 +187,219 @@ fn parse_decimal_with_exponent_empty_integer_with_comma() {
     assert_eq!(denom, 10);
     assert_eq!(exp, 0);
 }
+
+// ==================== Additional pow_u128 edge cases ====================
+
+#[test]
+fn pow_u128_base_one_any_exponent() {
+    // 1^n = 1 for all n
+    for exp in [0, 1, 10, 100, 1000] {
+        assert_eq!(pow_u128(1, exp).unwrap(), 1);
+    }
+}
+
+#[test]
+fn pow_u128_exponent_one_any_base() {
+    // n^1 = n for all n
+    for base in [0, 1, 10, 100, 1000, u32::MAX] {
+        assert_eq!(pow_u128(base, 1).unwrap(), u128::from(base));
+    }
+}
+
+#[test]
+fn pow_u128_large_base_small_exponent() {
+    // Large base with small exponent should work
+    assert_eq!(pow_u128(u32::MAX, 1).unwrap(), u128::from(u32::MAX));
+    assert_eq!(pow_u128(u32::MAX, 2).unwrap(), u128::from(u32::MAX) * u128::from(u32::MAX));
+}
+
+#[test]
+fn pow_u128_overflow_at_specific_boundary() {
+    // Find boundary where overflow occurs
+    // 2^127 fits, 2^128 would be > u128::MAX
+    assert!(pow_u128(2, 127).is_ok());
+}
+
+#[test]
+fn pow_u128_ten_powers() {
+    // Common use case: powers of 10
+    assert_eq!(pow_u128(10, 0).unwrap(), 1);
+    assert_eq!(pow_u128(10, 1).unwrap(), 10);
+    assert_eq!(pow_u128(10, 2).unwrap(), 100);
+    assert_eq!(pow_u128(10, 9).unwrap(), 1_000_000_000);
+    assert_eq!(pow_u128(10, 18).unwrap(), 1_000_000_000_000_000_000);
+    assert_eq!(pow_u128(10, 38).unwrap(), 100_000_000_000_000_000_000_000_000_000_000_000_000);
+}
+
+#[test]
+fn pow_u128_overflow_with_ten() {
+    // 10^39 would overflow u128
+    let result = pow_u128(10, 39);
+    assert!(result.is_err());
+}
+
+// ==================== parse_decimal_with_exponent comprehensive tests ====================
+
+#[test]
+fn parse_decimal_with_exponent_pure_integer() {
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("42").unwrap();
+    assert_eq!(int, 42);
+    assert_eq!(frac, 0);
+    assert_eq!(denom, 1);
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_pure_fraction() {
+    // ".123" - just a fraction
+    let (int, frac, denom, exp) = parse_decimal_with_exponent(".123").unwrap();
+    assert_eq!(int, 0);
+    assert_eq!(frac, 123);
+    assert_eq!(denom, 1000);
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_trailing_decimal() {
+    // "42." - integer with trailing decimal
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("42.").unwrap();
+    assert_eq!(int, 42);
+    assert_eq!(frac, 0);
+    assert_eq!(denom, 1); // No fractional digits
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_leading_zeros_in_fraction() {
+    // "1.0025" - leading zeros in fraction
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("1.0025").unwrap();
+    assert_eq!(int, 1);
+    assert_eq!(frac, 25);
+    assert_eq!(denom, 10000);
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_large_integer_part() {
+    // Large integer that fits in u128
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("123456789012345").unwrap();
+    assert_eq!(int, 123_456_789_012_345);
+    assert_eq!(frac, 0);
+    assert_eq!(denom, 1);
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_both_parts_large() {
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("999999.999999").unwrap();
+    assert_eq!(int, 999999);
+    assert_eq!(frac, 999999);
+    assert_eq!(denom, 1_000_000);
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_exponent_boundary_values() {
+    // Maximum reasonable positive exponent
+    let (_, _, _, exp) = parse_decimal_with_exponent("1e999").unwrap();
+    assert_eq!(exp, 999);
+
+    // Maximum reasonable negative exponent
+    let (_, _, _, exp) = parse_decimal_with_exponent("1e-999").unwrap();
+    assert_eq!(exp, -999);
+}
+
+#[test]
+fn parse_decimal_with_exponent_combined_complex() {
+    // Complex: fraction + positive exponent
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("1.5e10").unwrap();
+    assert_eq!(int, 1);
+    assert_eq!(frac, 5);
+    assert_eq!(denom, 10);
+    assert_eq!(exp, 10);
+
+    // Complex: fraction + negative exponent
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("2.75e-5").unwrap();
+    assert_eq!(int, 2);
+    assert_eq!(frac, 75);
+    assert_eq!(denom, 100);
+    assert_eq!(exp, -5);
+}
+
+#[test]
+fn parse_decimal_with_exponent_explicit_positive_sign() {
+    // "1e+5" - explicit positive sign in exponent
+    let (int, _frac, _denom, exp) = parse_decimal_with_exponent("1e+5").unwrap();
+    assert_eq!(int, 1);
+    assert_eq!(exp, 5);
+}
+
+#[test]
+fn parse_decimal_with_exponent_zero_value() {
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("0").unwrap();
+    assert_eq!(int, 0);
+    assert_eq!(frac, 0);
+    assert_eq!(denom, 1);
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_zero_with_fraction() {
+    let (int, frac, denom, exp) = parse_decimal_with_exponent("0.0").unwrap();
+    assert_eq!(int, 0);
+    assert_eq!(frac, 0);
+    assert_eq!(denom, 10);
+    assert_eq!(exp, 0);
+}
+
+#[test]
+fn parse_decimal_with_exponent_zero_with_exponent() {
+    let (int, frac, _denom, exp) = parse_decimal_with_exponent("0e100").unwrap();
+    assert_eq!(int, 0);
+    assert_eq!(frac, 0);
+    assert_eq!(exp, 100);
+}
+
+// ==================== Error case coverage ====================
+
+#[test]
+fn parse_decimal_with_exponent_rejects_double_exponent() {
+    let error = parse_decimal_with_exponent("1e5e3").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_decimal_with_exponent_rejects_mixed_separators() {
+    let error = parse_decimal_with_exponent("1.5,3").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+
+    let error = parse_decimal_with_exponent("1,5.3").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_decimal_with_exponent_rejects_sign_only() {
+    let error = parse_decimal_with_exponent("+").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+
+    let error = parse_decimal_with_exponent("-").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_decimal_with_exponent_rejects_multiple_signs() {
+    let error = parse_decimal_with_exponent("++1").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+
+    let error = parse_decimal_with_exponent("+-1").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}
+
+#[test]
+fn parse_decimal_with_exponent_rejects_double_sign_in_exponent() {
+    let error = parse_decimal_with_exponent("1e++5").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+
+    let error = parse_decimal_with_exponent("1e--5").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
+}

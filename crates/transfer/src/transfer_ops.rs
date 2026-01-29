@@ -39,6 +39,7 @@ use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
 use protocol::ProtocolVersion;
 
+use crate::adaptive_buffer::{adaptive_token_capacity, adaptive_writer_capacity};
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
@@ -190,15 +191,19 @@ pub fn process_file_response<R: Read>(
     let _echoed_sum_head = SumHead::read(reader)?;
 
     // Decompose pending transfer
-    let (file_path, basis_path, signature) = pending.into_parts();
+    let (file_path, basis_path, signature, target_size) = pending.into_parts();
 
     // Apply delta to reconstruct file
     let temp_path = file_path.with_extension("oc-rsync.tmp");
     let mut temp_guard = TempFileGuard::new(temp_path.clone());
 
-    // Use BufWriter for efficient I/O
+    // Use BufWriter with adaptive capacity based on file size:
+    // - Small files (< 64KB): 4KB buffer to avoid wasted memory
+    // - Medium files (64KB - 1MB): 64KB buffer for balanced performance
+    // - Large files (> 1MB): 256KB buffer to maximize throughput
     let file = fs::File::create(&temp_path)?;
-    let mut output = std::io::BufWriter::with_capacity(64 * 1024, file);
+    let writer_capacity = adaptive_writer_capacity(target_size);
+    let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
     let mut total_bytes: u64 = 0;
 
     // Sparse file support
@@ -225,7 +230,9 @@ pub fn process_file_response<R: Read>(
         None
     };
 
-    let mut token_buffer = TokenBuffer::with_default_capacity();
+    // Use adaptive token buffer capacity based on file size
+    let token_capacity = adaptive_token_capacity(target_size);
+    let mut token_buffer = TokenBuffer::with_capacity(token_capacity);
 
     // Read and apply delta tokens
     loop {

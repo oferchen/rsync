@@ -1,6 +1,6 @@
 //! Server-side writer that can switch between plain and multiplexed modes.
 
-use std::io::{self, Write};
+use std::io::{self, IoSlice, Write};
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
@@ -215,6 +215,18 @@ impl<W: Write> Write for ServerWriter<W> {
         }
     }
 
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        match self {
+            Self::Plain(w) => w.write_vectored(bufs),
+            Self::Multiplex(w) => w.write_vectored(bufs),
+            Self::Compressed(w) => w.write_vectored(bufs),
+            Self::Taken => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "ServerWriter in invalid Taken state",
+            )),
+        }
+    }
+
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Self::Plain(w) => w.flush(),
@@ -310,6 +322,61 @@ impl<W: Write> Write for MultiplexWriter<W> {
         Ok(buf.len())
     }
 
+    /// Writes multiple buffers using vectored I/O to reduce syscall overhead.
+    ///
+    /// This method batches multiple small writes into the internal buffer,
+    /// reducing the number of MSG_DATA frames sent. When the total data
+    /// exceeds the buffer size, it flushes efficiently.
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        // Calculate total length of all buffers
+        let total_len: usize = bufs.iter().map(|b| b.len()).sum();
+
+        if total_len == 0 {
+            return Ok(0);
+        }
+
+        // Fast path: if everything fits in remaining buffer space, copy all at once
+        if self.buffer.len() + total_len <= self.buffer_size {
+            for buf in bufs {
+                self.buffer.extend_from_slice(buf);
+            }
+            return Ok(total_len);
+        }
+
+        // If total data is larger than buffer size and buffer is empty,
+        // we can potentially send a large chunk directly
+        if self.buffer.is_empty() && total_len > self.buffer_size {
+            // For very large vectored writes, concatenate and send directly
+            // This avoids multiple MSG_DATA frames for a single logical write
+            let mut combined = Vec::with_capacity(total_len);
+            for buf in bufs {
+                combined.extend_from_slice(buf);
+            }
+            protocol::send_msg(&mut self.inner, MessageCode::Data, &combined)?;
+            return Ok(total_len);
+        }
+
+        // General case: flush current buffer, then handle the new data
+        self.flush_buffer()?;
+
+        // Now buffer is empty - check if we should send directly or buffer
+        if total_len > self.buffer_size {
+            // Large write: concatenate and send directly
+            let mut combined = Vec::with_capacity(total_len);
+            for buf in bufs {
+                combined.extend_from_slice(buf);
+            }
+            protocol::send_msg(&mut self.inner, MessageCode::Data, &combined)?;
+        } else {
+            // Fits in buffer: copy all slices to buffer
+            for buf in bufs {
+                self.buffer.extend_from_slice(buf);
+            }
+        }
+
+        Ok(total_len)
+    }
+
     fn flush(&mut self) -> io::Result<()> {
         self.flush_buffer()?;
         self.inner.flush()
@@ -352,6 +419,12 @@ impl<W> CountingWriter<W> {
 impl<W: Write> Write for CountingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let n = self.inner.write(buf)?;
+        self.bytes_written = self.bytes_written.saturating_add(n as u64);
+        Ok(n)
+    }
+
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+        let n = self.inner.write_vectored(bufs)?;
         self.bytes_written = self.bytes_written.saturating_add(n as u64);
         Ok(n)
     }
@@ -675,5 +748,155 @@ mod tests {
         let n = writer.write(b"ab").unwrap();
         assert_eq!(n, 2);
         assert_eq!(writer.bytes_written(), 2);
+    }
+
+    // ==================== write_vectored tests ====================
+
+    #[test]
+    fn multiplex_writer_write_vectored_empty() {
+        let mut buf = Vec::new();
+        let mut mux = MultiplexWriter::new(&mut buf);
+        let bufs: [IoSlice<'_>; 0] = [];
+        let n = mux.write_vectored(&bufs).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn multiplex_writer_write_vectored_single_slice() {
+        let mut buf = Vec::new();
+        {
+            let mut mux = MultiplexWriter::new(&mut buf);
+            let data = b"hello";
+            let bufs = [IoSlice::new(data)];
+            let n = mux.write_vectored(&bufs).unwrap();
+            assert_eq!(n, 5);
+            mux.flush().unwrap();
+        }
+        // Should be wrapped in MSG_DATA frame (4 byte header + 5 byte payload)
+        assert_eq!(buf.len(), 4 + 5);
+        assert_eq!(&buf[4..], b"hello");
+    }
+
+    #[test]
+    fn multiplex_writer_write_vectored_multiple_slices() {
+        let mut buf = Vec::new();
+        {
+            let mut mux = MultiplexWriter::new(&mut buf);
+            let data1 = b"hello";
+            let data2 = b" ";
+            let data3 = b"world";
+            let bufs = [
+                IoSlice::new(data1),
+                IoSlice::new(data2),
+                IoSlice::new(data3),
+            ];
+            let n = mux.write_vectored(&bufs).unwrap();
+            assert_eq!(n, 11);
+            mux.flush().unwrap();
+        }
+        // Should be wrapped in single MSG_DATA frame (4 byte header + 11 byte payload)
+        assert_eq!(buf.len(), 4 + 11);
+        assert_eq!(&buf[4..], b"hello world");
+    }
+
+    #[test]
+    fn multiplex_writer_write_vectored_batches_small_writes() {
+        let mut buf = Vec::new();
+        {
+            let mut mux = MultiplexWriter::new(&mut buf);
+            // Multiple small vectored writes should be batched
+            for _ in 0..3 {
+                let data = b"x";
+                let bufs = [IoSlice::new(data)];
+                mux.write_vectored(&bufs).unwrap();
+            }
+            mux.flush().unwrap();
+        }
+        // All 3 writes should be in a single MSG_DATA frame
+        assert_eq!(buf.len(), 4 + 3);
+        assert_eq!(&buf[4..], b"xxx");
+    }
+
+    #[test]
+    fn server_writer_write_vectored_plain() {
+        let mut buf = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut buf);
+            let data1 = b"hello";
+            let data2 = b" world";
+            let bufs = [IoSlice::new(data1), IoSlice::new(data2)];
+            let n = writer.write_vectored(&bufs).unwrap();
+            assert_eq!(n, 11);
+        }
+        // Plain mode writes directly without framing
+        assert_eq!(buf, b"hello world");
+    }
+
+    #[test]
+    fn server_writer_write_vectored_multiplex() {
+        let mut buf = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut buf)
+                .activate_multiplex()
+                .unwrap();
+            let data1 = b"hello";
+            let data2 = b" world";
+            let bufs = [IoSlice::new(data1), IoSlice::new(data2)];
+            let n = writer.write_vectored(&bufs).unwrap();
+            assert_eq!(n, 11);
+            writer.flush().unwrap();
+        }
+        // Should be wrapped in MSG_DATA frame
+        assert_eq!(buf.len(), 4 + 11);
+        assert_eq!(&buf[4..], b"hello world");
+    }
+
+    #[test]
+    fn server_writer_write_vectored_taken_returns_error() {
+        let mut writer: ServerWriter<Vec<u8>> = ServerWriter::Taken;
+        let data = b"test";
+        let bufs = [IoSlice::new(data)];
+        let result = writer.write_vectored(&bufs);
+        match result {
+            Err(err) => {
+                assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+                assert!(err.to_string().contains("Taken"));
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn counting_writer_write_vectored() {
+        let mut buf = Vec::new();
+        let mut writer = CountingWriter::new(&mut buf);
+        let data1 = b"hello";
+        let data2 = b" world";
+        let bufs = [IoSlice::new(data1), IoSlice::new(data2)];
+        let n = writer.write_vectored(&bufs).unwrap();
+        assert_eq!(n, 11);
+        assert_eq!(writer.bytes_written(), 11);
+        assert_eq!(buf, b"hello world");
+    }
+
+    #[test]
+    fn multiplex_writer_write_vectored_with_empty_slices() {
+        let mut buf = Vec::new();
+        {
+            let mut mux = MultiplexWriter::new(&mut buf);
+            let data1 = b"hello";
+            let empty: &[u8] = b"";
+            let data2 = b"world";
+            let bufs = [
+                IoSlice::new(data1),
+                IoSlice::new(empty),
+                IoSlice::new(data2),
+            ];
+            let n = mux.write_vectored(&bufs).unwrap();
+            assert_eq!(n, 10);
+            mux.flush().unwrap();
+        }
+        assert_eq!(buf.len(), 4 + 10);
+        assert_eq!(&buf[4..], b"helloworld");
     }
 }
