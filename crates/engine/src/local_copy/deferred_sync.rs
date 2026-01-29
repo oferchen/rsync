@@ -31,7 +31,11 @@ use std::path::{Path, PathBuf};
 use std::os::unix::io::AsRawFd;
 
 /// Strategy for when to perform filesystem sync operations.
+///
+/// Note: Currently only `Batched` and `None` are used in production code.
+/// Other variants are reserved for future implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Most variants planned for future use
 pub enum SyncStrategy {
     /// Sync immediately after each file write.
     ///
@@ -69,15 +73,22 @@ impl Default for SyncStrategy {
 ///
 /// Tracks files that need syncing and flushes them according to the
 /// configured [`SyncStrategy`].
+///
+/// Note: Currently only `flush_if_threshold()` is used in production.
+/// Other methods are tested and ready for future integration.
 #[derive(Debug)]
 pub struct DeferredSync {
     /// Files pending sync.
+    #[allow(dead_code)] // Used in tests, planned for production use
     pending_files: Vec<PathBuf>,
     /// Directories pending sync (for DirectoryLevel strategy).
+    #[allow(dead_code)] // Used in tests, planned for production use
     pending_dirs: HashSet<PathBuf>,
     /// Sync strategy.
+    #[allow(dead_code)] // Used internally and in tests
     strategy: SyncStrategy,
     /// Batch threshold (for Batched strategy).
+    #[allow(dead_code)] // Used internally and in tests
     threshold: usize,
 }
 
@@ -100,6 +111,7 @@ impl DeferredSync {
 
     /// Creates a new manager with custom batch threshold.
     #[must_use]
+    #[allow(dead_code)] // Used in tests, planned for production use
     pub fn with_threshold(strategy: SyncStrategy, threshold: usize) -> Self {
         Self {
             pending_files: Vec::new(),
@@ -117,6 +129,7 @@ impl DeferredSync {
     /// # Errors
     ///
     /// Returns an error if immediate sync fails.
+    #[cfg_attr(not(feature = "batch-sync"), allow(dead_code))]
     pub fn register(&mut self, path: PathBuf) -> io::Result<()> {
         match self.strategy {
             SyncStrategy::Immediate => {
@@ -145,6 +158,7 @@ impl DeferredSync {
     /// # Errors
     ///
     /// Returns an error if any sync operation fails.
+    #[cfg_attr(not(feature = "batch-sync"), allow(dead_code))]
     pub fn flush_if_threshold(&mut self) -> io::Result<()> {
         if matches!(self.strategy, SyncStrategy::Batched(_))
             && self.pending_files.len() >= self.threshold
@@ -162,6 +176,7 @@ impl DeferredSync {
     ///
     /// Returns an error if any sync operation fails. Partial flush may occur
     /// on error.
+    #[allow(dead_code)] // Used in tests, planned for production use
     pub fn flush(&mut self) -> io::Result<()> {
         match self.strategy {
             SyncStrategy::None => {
@@ -221,12 +236,14 @@ impl DeferredSync {
 
     /// Returns the number of files pending sync.
     #[must_use]
+    #[allow(dead_code)] // Used in tests, planned for production use
     pub fn pending_count(&self) -> usize {
         self.pending_files.len() + self.pending_dirs.len()
     }
 
     /// Returns the current sync strategy.
     #[must_use]
+    #[allow(dead_code)] // Used in tests, planned for production use
     pub fn strategy(&self) -> SyncStrategy {
         self.strategy
     }
@@ -235,6 +252,7 @@ impl DeferredSync {
     ///
     /// Pending operations are not affected; they will be flushed with
     /// the current strategy on next flush.
+    #[allow(dead_code)] // Used in tests, planned for production use
     pub fn set_strategy(&mut self, strategy: SyncStrategy) {
         self.strategy = strategy;
         if let SyncStrategy::Batched(n) = strategy {
@@ -250,12 +268,14 @@ impl Default for DeferredSync {
 }
 
 /// Syncs a single file to disk.
+#[allow(dead_code)] // Used by flush methods which are tested
 fn sync_file(path: &Path) -> io::Result<()> {
     let file = File::open(path)?;
     file.sync_all()
 }
 
 /// Syncs a directory to disk.
+#[allow(dead_code)] // Used by flush methods which are tested
 fn sync_directory(path: &Path) -> io::Result<()> {
     let dir = File::open(path)?;
     dir.sync_all()
@@ -263,6 +283,7 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 
 /// Syncs an entire filesystem using syncfs() on Linux.
 #[cfg(target_os = "linux")]
+#[allow(dead_code)] // Used by flush methods which are tested
 fn sync_filesystem(path: &Path) -> io::Result<()> {
     let file = File::open(path)?;
     let fd = file.as_raw_fd();

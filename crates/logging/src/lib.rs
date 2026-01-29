@@ -26,9 +26,18 @@ mod levels;
 mod macros;
 mod thread_local;
 
+#[cfg(feature = "tracing")]
+mod tracing_bridge;
+
+#[cfg(feature = "tracing")]
+mod tracing_macros;
+
 pub use config::VerbosityConfig;
 pub use levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
 pub use thread_local::{
     DiagnosticEvent, apply_debug_flag, apply_info_flag, debug_gte, drain_events, emit_debug,
     emit_info, info_gte, init,
 };
+
+#[cfg(feature = "tracing")]
+pub use tracing_bridge::{RsyncLayer, init_tracing, init_tracing_with_filter};
