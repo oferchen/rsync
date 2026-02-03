@@ -1594,6 +1594,7 @@ impl FailedDirectories {
     }
 
     /// Returns the number of failed directories.
+    #[cfg(test)]
     fn count(&self) -> usize {
         self.paths.len()
     }
