@@ -649,8 +649,16 @@ impl ReceiverContext {
         writer: &mut W,
     ) -> io::Result<TransferStats> {
         // Use pipelined transfer by default for improved performance.
-        // The pipeline significantly reduces latency overhead for many-file transfers.
-        self.run_pipelined(reader, writer, PipelineConfig::default())
+        // When incremental-flist feature is enabled, use incremental mode
+        // which provides failed directory tracking and better error recovery.
+        #[cfg(feature = "incremental-flist")]
+        {
+            self.run_pipelined_incremental(reader, writer, PipelineConfig::default())
+        }
+        #[cfg(not(feature = "incremental-flist"))]
+        {
+            self.run_pipelined(reader, writer, PipelineConfig::default())
+        }
     }
 
     /// Runs the receiver with synchronous (non-pipelined) transfer.
