@@ -44,7 +44,7 @@ default-features = false
 features = ["xattr"]
 
 [features]
-default = ["zstd", "lz4", "acl", "xattr"]
+default = ["zstd", "lz4", "acl", "xattr", "incremental-flist"]
 acl = ["metadata/acl", "engine/acl"]
 xattr = []
 zstd = ["engine/zstd", "compress/zstd"]
