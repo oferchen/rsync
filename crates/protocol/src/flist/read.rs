@@ -1747,4 +1747,691 @@ mod tests {
         // Error can be UnexpectedEof or InvalidData depending on where truncation is detected
         assert!(result.is_err(), "Expected error for truncated name data");
     }
+
+    // =========================================================================
+    // Truncated Wire Format Tests
+    //
+    // These tests verify proper error handling when the wire format data is
+    // incomplete/truncated at various points. All should return UnexpectedEof
+    // errors with appropriate context.
+    // =========================================================================
+
+    /// Helper to assert UnexpectedEof error from truncated data
+    fn assert_unexpected_eof(result: io::Result<Option<FileEntry>>, context: &str) {
+        match result {
+            Err(e) => {
+                assert_eq!(
+                    e.kind(),
+                    io::ErrorKind::UnexpectedEof,
+                    "{}: expected UnexpectedEof, got {:?}",
+                    context,
+                    e.kind()
+                );
+            }
+            Ok(entry) => {
+                panic!(
+                    "{}: expected UnexpectedEof error, got Ok({:?})",
+                    context,
+                    entry.map(|e| e.name().to_string())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn truncated_empty_input() {
+        // Empty input should fail when trying to read flags
+        let data: &[u8] = &[];
+        let mut cursor = Cursor::new(data);
+        let mut reader = FileListReader::new(test_protocol());
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "empty input");
+    }
+
+    #[test]
+    fn truncated_flags_byte_nonvarint() {
+        // For non-varint mode, flags are a single byte - empty input truncates this
+        let data: &[u8] = &[];
+        let mut cursor = Cursor::new(data);
+        let mut reader = FileListReader::new(test_protocol());
+        // Default is non-varint mode
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated flags byte (non-varint)");
+    }
+
+    #[test]
+    fn truncated_flags_varint_incomplete() {
+        use crate::CompatibilityFlags;
+
+        // In varint mode, a multi-byte varint that's cut short
+        // Varint encoding: 0x80 indicates continuation needed
+        let data: &[u8] = &[0x80]; // Incomplete varint (continuation bit set but no more bytes)
+        let mut cursor = Cursor::new(data);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated varint flags");
+    }
+
+    #[test]
+    fn truncated_extended_flags_byte() {
+        // When XMIT_EXTENDED_FLAGS (0x40) is set, need an extra byte
+        use crate::flist::flags::XMIT_EXTENDED_FLAGS;
+
+        let data: &[u8] = &[XMIT_EXTENDED_FLAGS]; // Extended flags bit set but no extra byte
+        let mut cursor = Cursor::new(data);
+        let mut reader = FileListReader::new(test_protocol());
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated extended flags byte");
+    }
+
+    #[test]
+    fn truncated_name_length_byte() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Valid flags followed by no name length
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        // Missing: name length byte
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated name length byte");
+    }
+
+    #[test]
+    fn truncated_name_data_partial() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Valid flags + name length of 10, but only 3 bytes of name data
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(10u8); // Name length: 10 bytes
+        data.extend_from_slice(b"abc"); // Only 3 bytes provided
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated name data (partial)");
+    }
+
+    #[test]
+    fn truncated_same_name_prefix_byte() {
+        use crate::CompatibilityFlags;
+        use crate::flist::flags::XMIT_SAME_NAME;
+        use crate::varint::encode_varint_to_vec;
+
+        // XMIT_SAME_NAME flag set but no prefix length byte
+        let mut data = Vec::new();
+        encode_varint_to_vec(XMIT_SAME_NAME as i32, &mut data);
+        // Missing: same_len byte
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated same_name prefix byte");
+    }
+
+    #[test]
+    fn truncated_size_field() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Valid flags + complete name, but truncated size
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(4u8); // Name length: 4
+        data.extend_from_slice(b"test"); // Complete name
+        // Missing: size field (varlong)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated size field");
+    }
+
+    #[test]
+    fn truncated_size_field_partial_varlong() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Valid entry up to size, but size varlong is incomplete
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(4u8); // Name length: 4
+        data.extend_from_slice(b"test"); // Complete name
+        data.push(0xFF); // Start of varlong indicating large value, but incomplete
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated size field (partial varlong)");
+    }
+
+    #[test]
+    fn truncated_mtime_field() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Valid entry up to size, but missing mtime
+        // When XMIT_SAME_TIME is NOT set, mtime must be read
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags (no XMIT_SAME_TIME)
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"test"); // Name
+        data.push(100u8); // Size = 100 (simple varlong)
+        // Missing: mtime field
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated mtime field");
+    }
+
+    #[test]
+    fn truncated_mode_field() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Valid entry up to mtime, but missing mode (4 bytes LE)
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags (no XMIT_SAME_MODE)
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"test"); // Name
+        data.push(100u8); // Size = 100
+        data.push(0u8); // mtime varlong (small value)
+        // Missing: mode field (4 bytes)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated mode field");
+    }
+
+    #[test]
+    fn truncated_mode_field_partial() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Valid entry up to mtime, but mode is only 2 of 4 bytes
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"test"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&[0x44, 0x81]); // Partial mode (only 2 bytes of 4)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated mode field (partial)");
+    }
+
+    #[test]
+    fn truncated_uid_field_with_preserve_uid() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Entry with preserve_uid enabled, but UID field is missing
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags (no XMIT_SAME_UID)
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"test"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o100644u32.to_le_bytes()); // Mode (regular file)
+        // Missing: UID field
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_uid(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated uid field");
+    }
+
+    #[test]
+    fn truncated_gid_field_with_preserve_gid() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Entry with preserve_gid enabled, but GID field is missing
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags (no XMIT_SAME_GID)
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"test"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o100644u32.to_le_bytes()); // Mode
+        // Missing: GID field
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_gid(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated gid field");
+    }
+
+    #[test]
+    fn truncated_symlink_target_length() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Symlink entry but target length is missing
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"link"); // Name
+        data.push(0u8); // Size = 0 (symlinks have size 0)
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o120777u32.to_le_bytes()); // Mode (symlink)
+        // Missing: symlink target length
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_links(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated symlink target length");
+    }
+
+    #[test]
+    fn truncated_symlink_target_data() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Symlink entry with target length but truncated target data
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"link"); // Name
+        data.push(0u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o120777u32.to_le_bytes()); // Mode (symlink)
+        data.push(20u8); // Target length: 20 bytes
+        data.extend_from_slice(b"/etc"); // Only 4 bytes of 20
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_links(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated symlink target data");
+    }
+
+    #[test]
+    fn truncated_device_major() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Block device entry but missing rdev major
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags (no XMIT_SAME_RDEV_MAJOR)
+        data.push(7u8); // Name length
+        data.extend_from_slice(b"dev/sda"); // Name
+        data.push(0u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o060644u32.to_le_bytes()); // Mode (block device)
+        // Missing: rdev major (varint30)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_devices(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated device major");
+    }
+
+    #[test]
+    fn truncated_device_minor() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Block device entry with major but missing minor
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(7u8); // Name length
+        data.extend_from_slice(b"dev/sda"); // Name
+        data.push(0u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o060644u32.to_le_bytes()); // Mode (block device)
+        data.push(8u8); // rdev major = 8
+        // Missing: rdev minor (varint)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_devices(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated device minor");
+    }
+
+    #[test]
+    fn truncated_atime_field() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // File entry with preserve_atimes but atime is missing
+        // Note: atime only applies to non-directories
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags (no XMIT_SAME_ATIME)
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"file"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o100644u32.to_le_bytes()); // Mode (regular file, not dir)
+        // Missing: atime field
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_atimes(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated atime field");
+    }
+
+    #[test]
+    fn truncated_checksum_field() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // File entry with always_checksum but checksum is missing
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"file"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o100644u32.to_le_bytes()); // Mode (regular file)
+        // Missing: checksum (16 bytes for MD5)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_always_checksum(16); // MD5 = 16 bytes
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated checksum field");
+    }
+
+    #[test]
+    fn truncated_checksum_field_partial() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // File entry with checksum but only partial data
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"file"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o100644u32.to_le_bytes()); // Mode (regular file)
+        data.extend_from_slice(&[0xAB, 0xCD, 0xEF, 0x12]); // Only 4 bytes of 16-byte checksum
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_always_checksum(16);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated checksum field (partial)");
+    }
+
+    #[test]
+    fn truncated_hardlink_index() {
+        use crate::CompatibilityFlags;
+        use crate::flist::flags::XMIT_HLINKED;
+        use crate::varint::encode_varint_to_vec;
+
+        // Hardlink follower entry but index is missing
+        // XMIT_HLINKED without XMIT_HLINK_FIRST means follower
+        let flags_value = (0x01) | ((XMIT_HLINKED as i32) << 8);
+        let mut data = Vec::new();
+        encode_varint_to_vec(flags_value, &mut data);
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"link"); // Name
+        // Missing: hardlink index (varint)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_hard_links(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated hardlink index");
+    }
+
+    #[test]
+    fn truncated_user_name_length() {
+        use crate::CompatibilityFlags;
+        use crate::flist::flags::XMIT_USER_NAME_FOLLOWS;
+        use crate::varint::encode_varint_to_vec;
+
+        // Entry with XMIT_USER_NAME_FOLLOWS but name length missing
+        let flags_value = (0x01) | ((XMIT_USER_NAME_FOLLOWS as i32) << 8);
+        let mut data = Vec::new();
+        encode_varint_to_vec(flags_value, &mut data);
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"file"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o100644u32.to_le_bytes()); // Mode
+        data.push(100u8); // UID as varint (small value)
+        // Missing: user name length byte
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_uid(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated user name length");
+    }
+
+    #[test]
+    fn truncated_user_name_data() {
+        use crate::CompatibilityFlags;
+        use crate::flist::flags::XMIT_USER_NAME_FOLLOWS;
+        use crate::varint::encode_varint_to_vec;
+
+        // Entry with user name but truncated name data
+        let flags_value = (0x01) | ((XMIT_USER_NAME_FOLLOWS as i32) << 8);
+        let mut data = Vec::new();
+        encode_varint_to_vec(flags_value, &mut data);
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"file"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        data.extend_from_slice(&0o100644u32.to_le_bytes()); // Mode
+        data.push(100u8); // UID varint
+        data.push(10u8); // User name length: 10
+        data.extend_from_slice(b"user"); // Only 4 bytes of 10
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_uid(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated user name data");
+    }
+
+    #[test]
+    fn truncated_crtime_field() {
+        use crate::CompatibilityFlags;
+        use crate::varint::encode_varint_to_vec;
+
+        // Entry with preserve_crtimes but crtime is missing
+        // XMIT_CRTIME_EQ_MTIME not set means crtime must be read
+        let mut data = Vec::new();
+        encode_varint_to_vec(0x01, &mut data); // Valid flags (no XMIT_CRTIME_EQ_MTIME)
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"file"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        // Missing: crtime field (read before mode when preserve_crtimes)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        )
+        .with_preserve_crtimes(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated crtime field");
+    }
+
+    #[test]
+    fn truncated_nsec_field() {
+        use crate::CompatibilityFlags;
+        use crate::flist::flags::XMIT_MOD_NSEC;
+        use crate::varint::encode_varint_to_vec;
+
+        // Entry with XMIT_MOD_NSEC but nsec field is missing
+        // Protocol 31+ supports nanoseconds
+        let protocol = ProtocolVersion::try_from(31u8).unwrap();
+        let flags_value = (0x01) | ((XMIT_MOD_NSEC as i32) << 8);
+        let mut data = Vec::new();
+        encode_varint_to_vec(flags_value, &mut data);
+        data.push(4u8); // Name length
+        data.extend_from_slice(b"file"); // Name
+        data.push(100u8); // Size
+        data.push(0u8); // mtime
+        // Missing: nsec field (varint30)
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            protocol,
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated nsec field");
+    }
+
+    #[test]
+    fn truncated_long_name_varint() {
+        use crate::CompatibilityFlags;
+        use crate::flist::flags::XMIT_LONG_NAME;
+        use crate::varint::encode_varint_to_vec;
+
+        // Entry with XMIT_LONG_NAME but varint for name length is incomplete
+        let flags_value = XMIT_LONG_NAME as i32 | 0x01;
+        let mut data = Vec::new();
+        encode_varint_to_vec(flags_value, &mut data);
+        data.push(0x80); // Incomplete varint (continuation bit set)
+        // Missing: rest of varint
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::with_compat_flags(
+            test_protocol(),
+            CompatibilityFlags::VARINT_FLIST_FLAGS,
+        );
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated long name varint");
+    }
+
+    #[test]
+    fn truncated_protocol_29_device_minor_int() {
+        use super::super::write::FileListWriter;
+
+        // Protocol 29 uses 4-byte int for large minors (when > 255)
+        // Generate a complete entry with the writer, then truncate the last 2 bytes
+        // (the minor field for large values is 4 bytes, truncating to 2)
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol).with_preserve_devices(true);
+
+        // Block device with large minor (needs 4-byte int, not 1-byte)
+        let mut entry = FileEntry::new_block_device("dev/nvme0n1".into(), 0o644, 259, 65536);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        // Truncate the last 2 bytes (partial 4-byte minor)
+        let truncated_data = &data[..data.len() - 2];
+
+        let mut cursor = Cursor::new(truncated_data);
+        let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
+
+        let result = reader.read_entry(&mut cursor);
+        assert_unexpected_eof(result, "truncated protocol 29 device minor (int)");
+    }
 }
