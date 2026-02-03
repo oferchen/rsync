@@ -20,7 +20,7 @@ path = "src/bin/dhat_profile.rs"
 required-features = ["dhat-heap"]
 
 [features]
-default = ["zstd", "lz4", "acl", "xattr", "iconv"]
+default = ["zstd", "lz4", "acl", "xattr", "iconv", "parallel"]
 sd-notify = ["daemon/sd-notify"]
 zstd = ["core/zstd"]
 lz4 = ["core/lz4"]
