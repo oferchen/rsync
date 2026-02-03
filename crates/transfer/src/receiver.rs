@@ -1317,6 +1317,220 @@ impl ReceiverContext {
             files_skipped: 0,
         })
     }
+
+    /// Runs the receiver with incremental directory creation and failed-dir tracking.
+    ///
+    /// Unlike [`run_pipelined`], this method creates directories incrementally
+    /// as they appear in the file list, tracking failures and skipping children
+    /// of failed directories.
+    ///
+    /// # Benefits
+    ///
+    /// - Failed directory tracking: Skip children of directories that fail to create
+    /// - Better error recovery: Continue with unaffected subtrees
+    /// - Detailed statistics: Track directories created, failed, and files skipped
+    ///
+    /// # Note
+    ///
+    /// File list is received completely before transfer begins (protocol
+    /// requirement - rsync uses same connection for list and transfer data).
+    pub fn run_pipelined_incremental<R: Read, W: Write + ?Sized>(
+        &mut self,
+        mut reader: super::reader::ServerReader<R>,
+        writer: &mut W,
+        pipeline_config: PipelineConfig,
+    ) -> io::Result<TransferStats> {
+        // Phase 1: Setup
+        if self.protocol.as_u8() >= 30 {
+            reader = reader.activate_multiplex().map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to activate INPUT multiplex: {e}"))
+            })?;
+        }
+
+        if self.should_read_filter_list() {
+            let _wire_rules = read_filter_list(&mut reader, self.protocol).map_err(|e| {
+                io::Error::new(e.kind(), format!("failed to read filter list: {e}"))
+            })?;
+        }
+
+        if self.config.flags.verbose && self.config.client_mode {
+            eprintln!("receiving incremental file list");
+        }
+
+        // Phase 2: Receive file list
+        let file_count = self.receive_file_list(&mut reader)?;
+
+        // Statistics tracking
+        let mut stats = TransferStats {
+            files_listed: file_count,
+            entries_received: file_count as u64,
+            ..Default::default()
+        };
+
+        // Setup checksum and metadata
+        let checksum_factory = ChecksumFactory::from_negotiation(
+            self.negotiated_algorithms.as_ref(),
+            self.protocol,
+            self.checksum_seed,
+            self.compat_flags.as_ref(),
+        );
+        let checksum_algorithm = checksum_factory.signature_algorithm();
+        let checksum_length = DEFAULT_CHECKSUM_LENGTH;
+
+        let metadata_opts = MetadataOptions::new()
+            .preserve_permissions(self.config.flags.perms)
+            .preserve_times(self.config.flags.times)
+            .preserve_owner(self.config.flags.owner)
+            .preserve_group(self.config.flags.group)
+            .numeric_ids(self.config.flags.numeric_ids);
+
+        let dest_dir = self
+            .config
+            .args
+            .first()
+            .map_or_else(|| PathBuf::from("."), PathBuf::from);
+
+        // Phase 3: Incremental directory creation with failure tracking
+        let mut failed_dirs = FailedDirectories::new();
+        let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
+
+        for file_entry in &self.file_list {
+            if file_entry.is_dir() {
+                if self.create_directory_incremental(
+                    &dest_dir,
+                    file_entry,
+                    &metadata_opts,
+                    &mut failed_dirs,
+                )? {
+                    stats.directories_created += 1;
+                } else {
+                    stats.directories_failed += 1;
+                }
+            }
+        }
+
+        // Phase 4: Build file transfer list, skipping children of failed dirs
+        let mut files_to_transfer: Vec<(usize, &FileEntry)> = Vec::new();
+        for (idx, entry) in self.file_list.iter().enumerate() {
+            if entry.is_file() {
+                if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
+                    if self.config.flags.verbose && self.config.client_mode {
+                        eprintln!(
+                            "skipping {} (parent {} failed)",
+                            entry.name(),
+                            failed_parent
+                        );
+                    }
+                    stats.files_skipped += 1;
+                } else {
+                    files_to_transfer.push((idx, entry));
+                }
+            }
+        }
+
+        // Setup codecs
+        let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+
+        let request_config = RequestConfig {
+            protocol: self.protocol,
+            write_iflags: self.protocol.as_u8() >= 29,
+            checksum_length,
+            checksum_algorithm,
+            negotiated_algorithms: self.negotiated_algorithms.as_ref(),
+            compat_flags: self.compat_flags.as_ref(),
+            checksum_seed: self.checksum_seed,
+            use_sparse: self.config.flags.sparse,
+            do_fsync: self.config.fsync,
+        };
+
+        // Phase 5: Pipelined file transfer
+        let mut pipeline = PipelineState::new(pipeline_config);
+        let mut file_iter = files_to_transfer.into_iter();
+        let mut pending_files_info: Vec<(PathBuf, &FileEntry)> =
+            Vec::with_capacity(pipeline.window_size());
+
+        loop {
+            // Fill pipeline
+            while pipeline.can_send() {
+                if let Some((file_idx, file_entry)) = file_iter.next() {
+                    let relative_path = file_entry.path();
+                    let file_path = if relative_path.as_os_str() == "." {
+                        dest_dir.clone()
+                    } else {
+                        dest_dir.join(relative_path)
+                    };
+
+                    if self.config.flags.verbose && self.config.client_mode {
+                        eprintln!("{}", relative_path.display());
+                    }
+
+                    let basis_config = BasisFileConfig {
+                        file_path: &file_path,
+                        dest_dir: &dest_dir,
+                        relative_path,
+                        target_size: file_entry.size(),
+                        fuzzy_enabled: self.config.flags.fuzzy,
+                        reference_directories: &self.config.reference_directories,
+                        protocol: self.protocol,
+                        checksum_length,
+                        checksum_algorithm,
+                    };
+                    let basis_result = find_basis_file_with_config(&basis_config);
+
+                    let pending = send_file_request(
+                        writer,
+                        &mut ndx_write_codec,
+                        file_idx as i32,
+                        file_path.clone(),
+                        basis_result.signature,
+                        basis_result.basis_path,
+                        file_entry.size(),
+                        &request_config,
+                    )?;
+
+                    pipeline.push(pending);
+                    pending_files_info.push((file_path, file_entry));
+                } else {
+                    break;
+                }
+            }
+
+            if pipeline.is_empty() {
+                break;
+            }
+
+            // Process one response
+            let pending = pipeline.pop().expect("pipeline not empty");
+            let (file_path, file_entry) = pending_files_info.remove(0);
+
+            let response_ctx = ResponseContext {
+                config: &request_config,
+            };
+
+            let total_bytes =
+                process_file_response(&mut reader, &mut ndx_read_codec, pending, &response_ctx)?;
+
+            if let Err(meta_err) =
+                apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
+            {
+                metadata_errors.push((file_path, meta_err.to_string()));
+            }
+
+            stats.bytes_received += total_bytes;
+            stats.files_transferred += 1;
+        }
+
+        // Phase 6: Finalization
+        stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
+        stats.metadata_errors = metadata_errors;
+
+        self.exchange_phase_done(&mut reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+        let _sender_stats = self.receive_stats(&mut reader)?;
+        self.handle_goodbye(&mut reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+
+        Ok(stats)
+    }
 }
 
 // ============================================================================
@@ -3581,6 +3795,19 @@ mod tests {
 
             // Should return false since already finished
             assert!(!receiver.try_read_one().unwrap());
+        }
+    }
+
+    #[test]
+    fn run_pipelined_incremental_compiles() {
+        // This test just verifies the method signature is correct
+        // Full integration tests will be in Task 8
+        fn _check_signature<R: Read, W: Write + ?Sized>(
+            ctx: &mut ReceiverContext,
+            reader: super::super::reader::ServerReader<R>,
+            writer: &mut W,
+        ) {
+            let _ = ctx.run_pipelined_incremental(reader, writer, PipelineConfig::default());
         }
     }
 
