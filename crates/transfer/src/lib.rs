@@ -113,6 +113,8 @@ pub mod adaptive_buffer;
 pub mod constants;
 /// Memory-mapped file abstraction for basis file access.
 pub mod map_file;
+/// Batched acknowledgments for reduced network overhead.
+pub mod ack_batcher;
 /// Request pipelining for reduced latency in file transfers.
 pub mod pipeline;
 /// Reusable buffer for delta token data.
@@ -133,6 +135,10 @@ pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::ChecksumFactory;
 pub use self::writer::CountingWriter;
+pub use ack_batcher::{
+    AckBatcher, AckBatcherConfig, AckBatcherStats, AckEntry, AckStatus, DEFAULT_BATCH_SIZE,
+    DEFAULT_BATCH_TIMEOUT_MS, MAX_BATCH_SIZE, MAX_BATCH_TIMEOUT_MS, MIN_BATCH_SIZE,
+};
 pub use pipeline::{
     PendingTransfer, PipelineConfig, PipelineState, DEFAULT_PIPELINE_WINDOW, MAX_PIPELINE_WINDOW,
     MIN_PIPELINE_WINDOW,

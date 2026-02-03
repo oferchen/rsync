@@ -126,6 +126,28 @@ impl SignatureLayout {
     pub const fn strong_sum_length(self) -> NonZeroU8 {
         self.strong_sum_length
     }
+
+    /// Computes the total file size from the layout components.
+    ///
+    /// This is calculated as `(block_count - 1) * block_length + remainder`,
+    /// or `block_count * block_length` if there's no remainder.
+    #[inline]
+    #[must_use]
+    pub fn file_size(self) -> u64 {
+        if self.block_count == 0 {
+            return 0;
+        }
+
+        let block_len = u64::from(self.block_length.get());
+
+        if self.remainder == 0 {
+            // All blocks are full-size
+            self.block_count * block_len
+        } else {
+            // Last block is partial (remainder)
+            (self.block_count - 1) * block_len + u64::from(self.remainder)
+        }
+    }
 }
 
 /// Errors produced when calculating signature layouts.
