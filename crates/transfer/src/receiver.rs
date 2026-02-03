@@ -3906,4 +3906,95 @@ mod tests {
             assert_eq!(failed.count(), 2);
         }
     }
+
+    #[cfg(feature = "incremental-flist")]
+    mod incremental_mode_tests {
+        use super::*;
+        use tempfile::TempDir;
+
+        #[test]
+        fn failed_directories_skips_nested_children() {
+            let mut failed = super::super::FailedDirectories::new();
+            failed.mark_failed("a/b");
+
+            // Direct child
+            assert!(failed.failed_ancestor("a/b/file.txt").is_some());
+            // Nested child
+            assert!(failed.failed_ancestor("a/b/c/d/file.txt").is_some());
+            // Sibling - not affected
+            assert!(failed.failed_ancestor("a/c/file.txt").is_none());
+            // Parent - not affected
+            assert!(failed.failed_ancestor("a/file.txt").is_none());
+        }
+
+        #[test]
+        fn failed_directories_handles_root_level() {
+            let mut failed = super::super::FailedDirectories::new();
+            failed.mark_failed("toplevel");
+
+            assert!(failed.failed_ancestor("toplevel/sub/file.txt").is_some());
+            assert!(failed.failed_ancestor("other/file.txt").is_none());
+        }
+
+        #[test]
+        fn stats_tracks_incremental_fields() {
+            let mut stats = TransferStats::default();
+
+            stats.entries_received = 100;
+            stats.directories_created = 20;
+            stats.directories_failed = 2;
+            stats.files_skipped = 10;
+            stats.files_transferred = 68;
+
+            // Verify consistency
+            assert_eq!(
+                stats.directories_created + stats.directories_failed,
+                22 // total directories
+            );
+        }
+
+        #[test]
+        fn create_directory_incremental_nested() {
+            let temp = TempDir::new().unwrap();
+            let dest = temp.path();
+
+            // Create nested directory
+            let entry = FileEntry::new_directory("a/b/c".into(), 0o755);
+            let opts = MetadataOptions::default();
+            let mut failed = super::super::FailedDirectories::new();
+
+            let handshake = test_handshake();
+            let config = test_config();
+            let ctx = ReceiverContext::new(&handshake, config);
+
+            let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap());
+            assert!(dest.join("a/b/c").exists());
+        }
+
+        #[test]
+        fn failed_directories_propagates_to_deeply_nested() {
+            let mut failed = super::super::FailedDirectories::new();
+            failed.mark_failed("level1");
+
+            // All descendants should be affected
+            assert!(failed.failed_ancestor("level1/level2").is_some());
+            assert!(failed.failed_ancestor("level1/level2/level3").is_some());
+            assert!(failed.failed_ancestor("level1/level2/level3/file.txt").is_some());
+        }
+
+        #[test]
+        fn transfer_stats_default_values() {
+            let stats = TransferStats::default();
+
+            assert_eq!(stats.entries_received, 0);
+            assert_eq!(stats.directories_created, 0);
+            assert_eq!(stats.directories_failed, 0);
+            assert_eq!(stats.files_skipped, 0);
+            assert_eq!(stats.files_transferred, 0);
+            assert_eq!(stats.bytes_received, 0);
+        }
+    }
 }
