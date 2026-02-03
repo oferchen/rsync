@@ -1071,4 +1071,262 @@ mod tests {
         assert_eq!(batcher.batch_size(), 32);
         assert!(batcher.is_enabled());
     }
+
+    // ========================================================================
+    // Wire Format Tests (Task #67)
+    // ========================================================================
+
+    /// Verifies the exact wire format byte layout for AckEntry::write().
+    /// Wire format:
+    /// - ndx: 4 bytes (i32 LE)
+    /// - status: 1 byte
+    /// - if error: error_len (u16 LE) + error_msg bytes
+    #[test]
+    fn test_ack_entry_wire_format_success() {
+        let entry = AckEntry::success(0x12345678);
+        let mut buf = Vec::new();
+        entry.write(&mut buf).unwrap();
+
+        // Success: 4 bytes ndx + 1 byte status = 5 bytes total
+        assert_eq!(buf.len(), 5);
+        // NDX in little-endian
+        assert_eq!(&buf[0..4], &[0x78, 0x56, 0x34, 0x12]);
+        // Status byte (Success = 0)
+        assert_eq!(buf[4], 0);
+    }
+
+    #[test]
+    fn test_ack_entry_wire_format_skipped() {
+        let entry = AckEntry::skipped(-1); // Negative NDX
+        let mut buf = Vec::new();
+        entry.write(&mut buf).unwrap();
+
+        // Skipped: 4 bytes ndx + 1 byte status = 5 bytes total
+        assert_eq!(buf.len(), 5);
+        // NDX -1 in little-endian (0xFFFFFFFF)
+        assert_eq!(&buf[0..4], &[0xFF, 0xFF, 0xFF, 0xFF]);
+        // Status byte (Skipped = 2)
+        assert_eq!(buf[4], 2);
+    }
+
+    #[test]
+    fn test_ack_entry_wire_format_error_with_message() {
+        let entry = AckEntry::error(42, "test");
+        let mut buf = Vec::new();
+        entry.write(&mut buf).unwrap();
+
+        // Error with "test": 4 bytes ndx + 1 byte status + 2 bytes len + 4 bytes msg = 11 bytes
+        assert_eq!(buf.len(), 11);
+        // NDX in little-endian
+        assert_eq!(&buf[0..4], &[42, 0, 0, 0]);
+        // Status byte (Error = 1)
+        assert_eq!(buf[4], 1);
+        // Message length in little-endian (4)
+        assert_eq!(&buf[5..7], &[4, 0]);
+        // Message bytes
+        assert_eq!(&buf[7..11], b"test");
+    }
+
+    #[test]
+    fn test_ack_entry_wire_format_checksum_error() {
+        let entry = AckEntry::checksum_error(100, "bad");
+        let mut buf = Vec::new();
+        entry.write(&mut buf).unwrap();
+
+        // 4 bytes ndx + 1 byte status + 2 bytes len + 3 bytes msg = 10 bytes
+        assert_eq!(buf.len(), 10);
+        assert_eq!(&buf[0..4], &[100, 0, 0, 0]);
+        // Status byte (ChecksumError = 3)
+        assert_eq!(buf[4], 3);
+        // Message length (3)
+        assert_eq!(&buf[5..7], &[3, 0]);
+        assert_eq!(&buf[7..10], b"bad");
+    }
+
+    #[test]
+    fn test_ack_entry_wire_format_io_error() {
+        let entry = AckEntry::io_error(255, "IO");
+        let mut buf = Vec::new();
+        entry.write(&mut buf).unwrap();
+
+        // 4 bytes ndx + 1 byte status + 2 bytes len + 2 bytes msg = 9 bytes
+        assert_eq!(buf.len(), 9);
+        assert_eq!(&buf[0..4], &[255, 0, 0, 0]);
+        // Status byte (IoError = 4)
+        assert_eq!(buf[4], 4);
+        assert_eq!(&buf[5..7], &[2, 0]);
+        assert_eq!(&buf[7..9], b"IO");
+    }
+
+    /// Tests that error messages longer than 64KB are truncated.
+    #[test]
+    fn test_ack_entry_message_truncation_at_64kb() {
+        // Create a message larger than u16::MAX (65535)
+        let long_msg = "x".repeat(70000);
+        let entry = AckEntry::error(1, long_msg.clone());
+
+        let mut buf = Vec::new();
+        entry.write(&mut buf).unwrap();
+
+        // Read it back
+        let mut cursor = Cursor::new(&buf);
+        let read_entry = AckEntry::read(&mut cursor).unwrap();
+
+        // Message should be truncated to 65535 bytes
+        let read_msg = read_entry.error_msg.unwrap();
+        assert_eq!(read_msg.len(), u16::MAX as usize);
+        assert!(read_msg.chars().all(|c| c == 'x'));
+    }
+
+    /// Tests reading from truncated/incomplete data fails gracefully.
+    #[test]
+    fn test_ack_entry_read_truncated_ndx() {
+        // Only 2 bytes instead of 4 for NDX
+        let buf = [0x01, 0x02];
+        let mut cursor = Cursor::new(&buf);
+        let result = AckEntry::read(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ack_entry_read_truncated_status() {
+        // 4 bytes NDX but no status byte
+        let buf = [0x01, 0x00, 0x00, 0x00];
+        let mut cursor = Cursor::new(&buf);
+        let result = AckEntry::read(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ack_entry_read_truncated_error_len() {
+        // NDX + error status but no length bytes
+        let buf = [0x01, 0x00, 0x00, 0x00, 0x01]; // status=1 (Error)
+        let mut cursor = Cursor::new(&buf);
+        let result = AckEntry::read(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_ack_entry_read_truncated_error_msg() {
+        // NDX + error status + length says 10 bytes but only 2 present
+        let buf = [
+            0x01, 0x00, 0x00, 0x00, // ndx = 1
+            0x01, // status = Error
+            0x0A, 0x00, // len = 10
+            b'a', b'b', // only 2 bytes of message
+        ];
+        let mut cursor = Cursor::new(&buf);
+        let result = AckEntry::read(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    /// Tests reading with zero-length error message.
+    #[test]
+    fn test_ack_entry_read_zero_length_error_msg() {
+        // NDX + error status + length=0
+        let buf = [
+            0x2A, 0x00, 0x00, 0x00, // ndx = 42
+            0x01, // status = Error
+            0x00, 0x00, // len = 0
+        ];
+        let mut cursor = Cursor::new(&buf);
+        let result = AckEntry::read(&mut cursor).unwrap();
+
+        assert_eq!(result.ndx, 42);
+        assert_eq!(result.status, AckStatus::Error);
+        // Zero-length message results in None
+        assert!(result.error_msg.is_none());
+    }
+
+    /// Tests batch wire format: count prefix + entries.
+    #[test]
+    fn test_batch_wire_format_count_prefix() {
+        let batch = vec![
+            AckEntry::success(1),
+            AckEntry::success(2),
+            AckEntry::success(3),
+        ];
+
+        let mut buf = Vec::new();
+        AckBatcher::write_batch(&batch, &mut buf).unwrap();
+
+        // First 2 bytes should be count in little-endian
+        assert_eq!(&buf[0..2], &[3, 0]); // count = 3
+
+        // Each success entry is 5 bytes, so total = 2 + 3*5 = 17 bytes
+        assert_eq!(buf.len(), 17);
+    }
+
+    /// Tests reading batch with truncated count.
+    #[test]
+    fn test_batch_read_truncated_count() {
+        // Only 1 byte instead of 2 for count
+        let buf = [0x05];
+        let mut cursor = Cursor::new(&buf);
+        let result = AckBatcher::read_batch(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    /// Tests reading batch with count but truncated entries.
+    #[test]
+    fn test_batch_read_truncated_entries() {
+        // Count says 5 entries but only partial data for 1
+        let buf = [
+            0x05, 0x00, // count = 5
+            0x01, 0x00, 0x00, 0x00, 0x00, // entry 0 (success)
+            0x02, 0x00, // partial entry 1 (only 2 bytes of NDX)
+        ];
+        let mut cursor = Cursor::new(&buf);
+        let result = AckBatcher::read_batch(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    /// Tests that non-UTF8 bytes in error messages are handled gracefully.
+    #[test]
+    fn test_ack_entry_non_utf8_error_message() {
+        // Manually construct wire data with invalid UTF-8
+        let buf = [
+            0x01, 0x00, 0x00, 0x00, // ndx = 1
+            0x01, // status = Error
+            0x04, 0x00, // len = 4
+            0x80, 0x81, 0x82, 0x83, // invalid UTF-8 bytes
+        ];
+        let mut cursor = Cursor::new(&buf);
+        let result = AckEntry::read(&mut cursor).unwrap();
+
+        // Should use lossy conversion (replacement characters)
+        assert_eq!(result.ndx, 1);
+        assert_eq!(result.status, AckStatus::Error);
+        let msg = result.error_msg.unwrap();
+        // Invalid bytes become replacement characters
+        assert!(msg.contains('\u{FFFD}'));
+    }
+
+    /// Round-trip test for all status types verifying exact byte layout.
+    #[test]
+    fn test_ack_entry_roundtrip_all_statuses_wire_verified() {
+        let test_cases = vec![
+            (AckEntry::success(0), 0u8, None::<&str>),
+            (AckEntry::skipped(1), 2u8, None),
+            (AckEntry::error(2, "err"), 1u8, Some("err")),
+            (AckEntry::checksum_error(3, "chk"), 3u8, Some("chk")),
+            (AckEntry::io_error(4, "io"), 4u8, Some("io")),
+        ];
+
+        for (entry, expected_status, expected_msg) in test_cases {
+            let mut buf = Vec::new();
+            entry.write(&mut buf).unwrap();
+
+            // Verify status byte position (byte 4)
+            assert_eq!(buf[4], expected_status);
+
+            // Round-trip
+            let mut cursor = Cursor::new(&buf);
+            let read_entry = AckEntry::read(&mut cursor).unwrap();
+
+            assert_eq!(read_entry.ndx, entry.ndx);
+            assert_eq!(read_entry.status, entry.status);
+            assert_eq!(read_entry.error_msg.as_deref(), expected_msg);
+        }
+    }
 }
