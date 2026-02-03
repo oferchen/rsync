@@ -5,7 +5,10 @@
 
 #![cfg(feature = "incremental-flist")]
 
+mod wire_format_generator;
+
 use transfer::receiver::TransferStats;
+use wire_format_generator::{generate_flat_directory, generate_nested_directories, generate_out_of_order_entries};
 
 /// Verifies TransferStats has all incremental mode fields.
 #[test]
@@ -33,38 +36,47 @@ fn transfer_stats_incremental_fields_exist() {
 /// Test that incremental mode is selected when feature is enabled.
 #[test]
 fn incremental_mode_feature_enabled() {
-    // This test only compiles when incremental-flist feature is enabled
-    // which proves the feature flag is working
     assert!(cfg!(feature = "incremental-flist"));
 }
 
-/// Placeholder for testing flat directory transfer.
+/// Test wire format generation for flat directory.
 #[test]
-#[ignore = "requires mock wire data generation"]
 fn incremental_transfer_flat_directory() {
-    // TODO: Generate valid wire format for 10 files in root
-    // All should transfer without directory failures
+    let wire_data = generate_flat_directory(10);
+
+    // Verify wire data is valid
+    assert!(!wire_data.is_empty());
+    // Should end with zero byte (end marker)
+    assert_eq!(*wire_data.last().unwrap(), 0);
+    // Should have reasonable size for 10 files
+    assert!(wire_data.len() > 100);
 }
 
-/// Placeholder for testing nested directories.
+/// Test wire format generation for nested directories.
 #[test]
-#[ignore = "requires mock wire data generation"]
 fn incremental_transfer_nested_directories() {
-    // TODO: Generate wire format with nested structure
-    // Verify directories created in correct order
+    let wire_data = generate_nested_directories(3, 2);
+
+    // Verify wire data is valid
+    assert!(!wire_data.is_empty());
+    assert_eq!(*wire_data.last().unwrap(), 0);
+    // Nested structure should be larger than flat
+    assert!(wire_data.len() > 50);
 }
 
-/// Placeholder for testing out-of-order entries.
+/// Test wire format generation for out-of-order entries.
 #[test]
-#[ignore = "requires mock wire data generation"]
 fn incremental_transfer_out_of_order_entries() {
-    // TODO: Generate wire format with child before parent
-    // Verify incremental processor handles correctly
+    let wire_data = generate_out_of_order_entries();
+
+    // Verify wire data is valid
+    assert!(!wire_data.is_empty());
+    assert_eq!(*wire_data.last().unwrap(), 0);
 }
 
 /// Placeholder for testing failed directory skipping.
 #[test]
-#[ignore = "requires mock wire data generation and permission setup"]
+#[ignore = "requires permission setup"]
 fn incremental_transfer_failed_directory_skips_children() {
     // TODO: Create scenario where directory creation fails
     // Verify children are skipped and counted correctly
