@@ -32,6 +32,7 @@
 mod entry;
 mod flags;
 mod hardlink;
+mod incremental;
 mod macros;
 mod read;
 mod sort;
@@ -47,3 +48,6 @@ pub use sort::{
 };
 pub use state::{FileListCompressionState, FileListStats};
 pub use write::{FileListWriter, write_file_entry};
+pub use incremental::{
+    IncrementalFileList, IncrementalFileListBuilder, IncrementalFileListIter, StreamingFileList,
+};

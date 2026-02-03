@@ -67,14 +67,21 @@
 //! - [`zlib`] for the zlib encoder/decoder implementation and API surface.
 //! - [`lz4`] for LZ4 compression (frame format and raw wire protocol blocks).
 //! - [`zstd`] for the Zstandard encoder/decoder implementation.
+//! - [`skip_compress`] for compression tuning based on file type detection.
 //! - `engine` for the transfer pipeline that integrates these helpers.
 
 pub mod algorithm;
 mod common;
 #[cfg(feature = "lz4")]
 pub mod lz4;
+/// Compression tuning based on file type detection.
+pub mod skip_compress;
 pub mod zlib;
 #[cfg(feature = "zstd")]
 pub mod zstd;
 
 pub use common::CountingSink;
+pub use skip_compress::{
+    AdaptiveCompressor, CompressionDecider, CompressionDecision, FileCategory,
+    DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE,
+};
