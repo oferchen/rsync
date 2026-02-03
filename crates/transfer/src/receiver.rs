@@ -1019,6 +1019,10 @@ impl ReceiverContext {
             bytes_sent: 0, // Set by caller after run() via CountingWriter
             total_source_bytes,
             metadata_errors,
+            entries_received: 0,
+            directories_created: 0,
+            directories_failed: 0,
+            files_skipped: 0,
         })
     }
 
@@ -1245,6 +1249,10 @@ impl ReceiverContext {
             bytes_sent: 0,
             total_source_bytes,
             metadata_errors,
+            entries_received: 0,
+            directories_created: 0,
+            directories_failed: 0,
+            files_skipped: 0,
         })
     }
 }
@@ -1541,6 +1549,16 @@ pub struct TransferStats {
     pub total_source_bytes: u64,
     /// Metadata errors encountered (path, error message).
     pub metadata_errors: Vec<(PathBuf, String)>,
+
+    // Incremental mode statistics
+    /// Total entries received from wire (incremental mode).
+    pub entries_received: u64,
+    /// Directories successfully created (incremental mode).
+    pub directories_created: u64,
+    /// Directories that failed to create (incremental mode).
+    pub directories_failed: u64,
+    /// Files skipped due to failed parent directory (incremental mode).
+    pub files_skipped: u64,
 }
 
 /// Statistics received from the sender after transfer completion.
@@ -3452,6 +3470,28 @@ mod tests {
         // Now the nested file should be immediately ready
         let entry = receiver.next_ready().unwrap().unwrap();
         assert_eq!(entry.name(), "existing/nested.txt");
+    }
+
+    #[test]
+    fn transfer_stats_has_incremental_fields() {
+        let stats = TransferStats {
+            files_listed: 0,
+            files_transferred: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
+            total_source_bytes: 0,
+            metadata_errors: vec![],
+            // New fields
+            entries_received: 100,
+            directories_created: 10,
+            directories_failed: 2,
+            files_skipped: 5,
+        };
+
+        assert_eq!(stats.entries_received, 100);
+        assert_eq!(stats.directories_created, 10);
+        assert_eq!(stats.directories_failed, 2);
+        assert_eq!(stats.files_skipped, 5);
     }
 
     mod incremental_receiver_tests {
