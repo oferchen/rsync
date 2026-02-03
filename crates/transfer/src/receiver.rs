@@ -1432,6 +1432,36 @@ impl<R: Read> IncrementalFileListReceiver<R> {
         self.incremental.mark_directory_created(path);
     }
 
+    /// Attempts to read one entry from the wire without blocking on ready queue.
+    ///
+    /// Returns `Ok(true)` if an entry was read and added to the incremental
+    /// processor, `Ok(false)` if at EOF or already finished reading.
+    ///
+    /// Unlike [`next_ready`], this method does not wait for an entry to become
+    /// ready. It simply reads from the wire and adds to the dependency tracker.
+    pub fn try_read_one(&mut self) -> io::Result<bool> {
+        if self.finished_reading {
+            return Ok(false);
+        }
+
+        match self.flist_reader.read_entry(&mut self.source)? {
+            Some(entry) => {
+                self.entries_read += 1;
+                self.incremental.push(entry);
+                Ok(true)
+            }
+            None => {
+                self.finished_reading = true;
+                Ok(false)
+            }
+        }
+    }
+
+    /// Marks reading as finished (for error recovery).
+    pub fn mark_finished(&mut self) {
+        self.finished_reading = true;
+    }
+
     /// Reads all remaining entries and returns them as a sorted vector.
     ///
     /// This method consumes the receiver and returns entries suitable for
@@ -3422,6 +3452,34 @@ mod tests {
         // Now the nested file should be immediately ready
         let entry = receiver.next_ready().unwrap().unwrap();
         assert_eq!(entry.name(), "existing/nested.txt");
+    }
+
+    mod incremental_receiver_tests {
+        use super::*;
+
+        #[test]
+        fn try_read_one_returns_false_when_finished() {
+            // Create a receiver that's already marked as finished
+            let protocol = protocol::ProtocolVersion::try_from(32u8).unwrap();
+            let flist_reader = protocol::flist::FileListReader::new(protocol);
+
+            // Empty data - will hit EOF immediately
+            let empty_data: Vec<u8> = vec![0]; // Single zero byte = end of list marker
+            let source = Cursor::new(empty_data);
+
+            let incremental = protocol::flist::IncrementalFileList::new();
+
+            let mut receiver = super::super::IncrementalFileListReceiver {
+                flist_reader,
+                source,
+                incremental,
+                finished_reading: true, // Already finished
+                entries_read: 0,
+            };
+
+            // Should return false since already finished
+            assert!(!receiver.try_read_one().unwrap());
+        }
     }
 
     mod failed_directories_tests {
