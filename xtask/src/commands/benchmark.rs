@@ -3,8 +3,12 @@
 //! This module provides the `benchmark` xtask command which compares performance
 //! between upstream rsync, recent oc-rsync releases, and the current development
 //! snapshot.
+//!
+//! Supports two modes:
+//! - **Local**: Uses a local rsync daemon with Linux kernel source
+//! - **Remote**: Tests against public rsync:// mirrors
 
-use crate::cli::BenchmarkArgs;
+use crate::cli::{BenchmarkArgs, BenchmarkMode};
 use crate::error::{TaskError, TaskResult};
 use std::collections::HashMap;
 use std::fs;
@@ -22,6 +26,43 @@ const DEFAULT_DAEMON_PORT: u16 = 8873;
 /// Number of benchmark runs per version.
 const DEFAULT_RUNS: usize = 5;
 
+/// Public rsync mirrors for remote benchmarking (not kernel.org).
+const REMOTE_MIRRORS: &[RemoteMirror] = &[
+    RemoteMirror {
+        name: "GNU",
+        url: "rsync://ftp.gnu.org/gnu/coreutils/",
+        description: "GNU coreutils (~50MB)",
+    },
+    RemoteMirror {
+        name: "Apache",
+        url: "rsync://rsync.apache.org/apache-dist/httpd/",
+        description: "Apache HTTP Server distribution (~200MB)",
+    },
+    RemoteMirror {
+        name: "Ubuntu",
+        url: "rsync://archive.ubuntu.com/ubuntu/pool/main/b/bash/",
+        description: "Ubuntu bash packages (~30MB)",
+    },
+    RemoteMirror {
+        name: "FreeBSD",
+        url: "rsync://ftp.freebsd.org/pub/FreeBSD/README.TXT",
+        description: "FreeBSD README (small file test)",
+    },
+    RemoteMirror {
+        name: "Debian",
+        url: "rsync://ftp.debian.org/debian/doc/",
+        description: "Debian documentation (~100MB)",
+    },
+];
+
+/// A remote rsync mirror for benchmarking.
+#[derive(Debug, Clone, Copy)]
+struct RemoteMirror {
+    name: &'static str,
+    url: &'static str,
+    description: &'static str,
+}
+
 /// Benchmark configuration options.
 #[derive(Clone, Debug)]
 pub struct BenchmarkOptions {
@@ -37,6 +78,12 @@ pub struct BenchmarkOptions {
     pub skip_build: bool,
     /// Output format.
     pub json: bool,
+    /// Benchmark mode: local or remote.
+    pub mode: BenchmarkMode,
+    /// Custom remote URLs for benchmarking.
+    pub urls: Vec<String>,
+    /// List available mirrors and exit.
+    pub list_mirrors: bool,
 }
 
 impl Default for BenchmarkOptions {
@@ -48,6 +95,9 @@ impl Default for BenchmarkOptions {
             versions: Vec::new(),
             skip_build: false,
             json: false,
+            mode: BenchmarkMode::Local,
+            urls: Vec::new(),
+            list_mirrors: false,
         }
     }
 }
@@ -61,6 +111,9 @@ impl From<BenchmarkArgs> for BenchmarkOptions {
             versions: args.versions,
             skip_build: args.skip_build,
             json: args.json,
+            mode: args.mode,
+            urls: args.urls,
+            list_mirrors: args.list_mirrors,
         }
     }
 }
@@ -117,6 +170,11 @@ impl BenchmarkResult {
 
 /// Executes the benchmark command.
 pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
+    // Handle --list-mirrors
+    if options.list_mirrors {
+        return list_mirrors();
+    }
+
     println!("=== oc-rsync Performance Benchmark ===\n");
 
     // Ensure benchmark directory exists
@@ -127,14 +185,34 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
         ))
     })?;
 
-    // Check if daemon is running, start if needed
-    let daemon_url = format!("rsync://localhost:{}/kernel/arch/x86/", options.port);
-    if !check_daemon_running(options.port) {
-        println!("Starting rsync daemon on port {}...", options.port);
-        start_daemon(workspace, &options)?;
-    } else {
-        println!("Using existing rsync daemon on port {}", options.port);
+    // Determine benchmark URLs based on mode
+    let urls = match options.mode {
+        BenchmarkMode::Local => {
+            // Check if daemon is running, start if needed
+            if !check_daemon_running(options.port) {
+                println!("Starting rsync daemon on port {}...", options.port);
+                start_daemon(workspace, &options)?;
+            } else {
+                println!("Using existing rsync daemon on port {}", options.port);
+            }
+            vec![format!("rsync://localhost:{}/kernel/arch/x86/", options.port)]
+        }
+        BenchmarkMode::Remote => {
+            if options.urls.is_empty() {
+                // Use default public mirrors
+                REMOTE_MIRRORS.iter().map(|m| m.url.to_string()).collect()
+            } else {
+                options.urls.clone()
+            }
+        }
+    };
+
+    println!("Mode: {:?}", options.mode);
+    println!("URLs to benchmark:");
+    for url in &urls {
+        println!("  - {url}");
     }
+    println!();
 
     // Determine versions to benchmark
     let versions = if options.versions.is_empty() {
@@ -183,30 +261,77 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
 
     // Run benchmarks
     let dest_dir = options.bench_dir.join("bench-dest");
-    let mut results: Vec<BenchmarkResult> = Vec::new();
+    let mut all_results: Vec<BenchmarkResultSet> = Vec::new();
 
-    for (version, binary) in &binaries {
-        println!("\nBenchmarking {version}...");
-        let runs = run_benchmark(binary, &daemon_url, &dest_dir, options.runs)?;
-        if runs.is_empty() {
-            eprintln!("  Skipping {version} - all runs failed");
-            continue;
+    for url in &urls {
+        let url_name = url_short_name(url);
+        println!("\n=== Benchmarking against: {} ({}) ===", url_name, url);
+
+        let mut url_results: Vec<BenchmarkResult> = Vec::new();
+
+        for (version, binary) in &binaries {
+            println!("\nBenchmarking {version}...");
+            let runs = run_benchmark(binary, url, &dest_dir, options.runs)?;
+            if runs.is_empty() {
+                eprintln!("  Skipping {version} - all runs failed");
+                continue;
+            }
+            let result = BenchmarkResult::new(version.clone(), runs);
+            url_results.push(result);
         }
-        let result = BenchmarkResult::new(version.clone(), runs);
-        results.push(result);
-    }
 
-    // Sort by mean time
-    results.sort_by(|a, b| a.mean.cmp(&b.mean));
+        // Sort by mean time
+        url_results.sort_by(|a, b| a.mean.cmp(&b.mean));
+        all_results.push(BenchmarkResultSet {
+            url: url.clone(),
+            url_name,
+            results: url_results,
+        });
+    }
 
     // Output results
     if options.json {
-        output_json(&results)?;
+        output_json_multi(&all_results)?;
     } else {
-        output_table(&results);
+        output_table_multi(&all_results);
     }
 
     Ok(())
+}
+
+/// Lists available public rsync mirrors.
+fn list_mirrors() -> TaskResult<()> {
+    println!("=== Available Public Rsync Mirrors ===\n");
+    println!("{:<12} {:<55} {}", "Name", "URL", "Description");
+    println!("{}", "-".repeat(100));
+    for mirror in REMOTE_MIRRORS {
+        println!("{:<12} {:<55} {}", mirror.name, mirror.url, mirror.description);
+    }
+    println!("\nUsage: cargo xtask benchmark --mode remote [--url <custom-url>]");
+    Ok(())
+}
+
+/// Extracts a short name from a URL for display.
+fn url_short_name(url: &str) -> String {
+    // Check predefined mirrors first
+    for mirror in REMOTE_MIRRORS {
+        if url == mirror.url {
+            return mirror.name.to_string();
+        }
+    }
+    // Extract hostname
+    url.strip_prefix("rsync://")
+        .and_then(|s| s.split('/').next())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+/// Result set for a single URL.
+#[derive(Debug)]
+struct BenchmarkResultSet {
+    url: String,
+    url_name: String,
+    results: Vec<BenchmarkResult>,
 }
 
 /// Checks if rsync daemon is running on the given port.
@@ -476,67 +601,125 @@ fn run_benchmark(
     Ok(results)
 }
 
-/// Outputs results as a formatted table.
-fn output_table(results: &[BenchmarkResult]) {
+/// Outputs results for multiple URLs as formatted tables.
+fn output_table_multi(result_sets: &[BenchmarkResultSet]) {
     println!("\n=== Benchmark Results ===\n");
-    println!(
-        "{:<12} {:>10} {:>10} {:>10} {:>10}",
-        "Version", "Mean", "Min", "Max", "Stddev"
-    );
-    println!("{}", "-".repeat(54));
 
-    let baseline = results.first().map(|r| r.mean).unwrap_or(Duration::ZERO);
-
-    for result in results {
-        let diff_pct = if baseline > Duration::ZERO {
-            ((result.mean.as_secs_f64() - baseline.as_secs_f64()) / baseline.as_secs_f64()) * 100.0
-        } else {
-            0.0
-        };
-
-        let speedup_str = if diff_pct.abs() < 1.0 {
-            String::new()
-        } else if diff_pct > 0.0 {
-            format!(" ({diff_pct:.1}% slower)")
-        } else {
-            let faster = -diff_pct;
-            format!(" ({faster:.1}% faster)")
-        };
-
+    for result_set in result_sets {
+        println!("--- {} ({}) ---\n", result_set.url_name, result_set.url);
         println!(
-            "{:<12} {:>10.3}s {:>10.3}s {:>10.3}s {:>10.4}s{}",
-            result.version,
-            result.mean.as_secs_f64(),
-            result.min.as_secs_f64(),
-            result.max.as_secs_f64(),
-            result.stddev,
-            speedup_str
+            "{:<12} {:>10} {:>10} {:>10} {:>10}",
+            "Version", "Mean", "Min", "Max", "Stddev"
         );
+        println!("{}", "-".repeat(54));
+
+        let baseline = result_set.results.first().map(|r| r.mean).unwrap_or(Duration::ZERO);
+
+        for result in &result_set.results {
+            let diff_pct = if baseline > Duration::ZERO {
+                ((result.mean.as_secs_f64() - baseline.as_secs_f64()) / baseline.as_secs_f64()) * 100.0
+            } else {
+                0.0
+            };
+
+            let speedup_str = if diff_pct.abs() < 1.0 {
+                String::new()
+            } else if diff_pct > 0.0 {
+                format!(" ({diff_pct:.1}% slower)")
+            } else {
+                let faster = -diff_pct;
+                format!(" ({faster:.1}% faster)")
+            };
+
+            println!(
+                "{:<12} {:>10.3}s {:>10.3}s {:>10.3}s {:>10.4}s{}",
+                result.version,
+                result.mean.as_secs_f64(),
+                result.min.as_secs_f64(),
+                result.max.as_secs_f64(),
+                result.stddev,
+                speedup_str
+            );
+        }
+        println!();
+    }
+
+    // Print summary comparison
+    if result_sets.len() > 1 {
+        print_summary_table(result_sets);
     }
 }
 
-/// Outputs results as JSON.
-fn output_json(results: &[BenchmarkResult]) -> TaskResult<()> {
-    println!("{{");
-    println!("  \"results\": [");
-    for (i, result) in results.iter().enumerate() {
-        let comma = if i < results.len() - 1 { "," } else { "" };
-        println!("    {{");
-        println!("      \"version\": \"{}\",", result.version);
-        println!("      \"mean_ms\": {:.3},", result.mean.as_secs_f64() * 1000.0);
-        println!("      \"min_ms\": {:.3},", result.min.as_secs_f64() * 1000.0);
-        println!("      \"max_ms\": {:.3},", result.max.as_secs_f64() * 1000.0);
-        println!("      \"stddev_ms\": {:.3},", result.stddev * 1000.0);
-        println!(
-            "      \"runs_ms\": [{}]",
-            result
-                .runs
+/// Prints a summary table comparing all versions across all URLs.
+fn print_summary_table(result_sets: &[BenchmarkResultSet]) {
+    println!("=== Summary (Mean times in seconds) ===\n");
+
+    // Collect all unique versions
+    let mut versions: Vec<String> = Vec::new();
+    for result_set in result_sets {
+        for result in &result_set.results {
+            if !versions.contains(&result.version) {
+                versions.push(result.version.clone());
+            }
+        }
+    }
+
+    // Print header
+    print!("{:<12}", "URL");
+    for version in &versions {
+        print!(" {:>12}", version);
+    }
+    println!();
+    println!("{}", "-".repeat(12 + 13 * versions.len()));
+
+    // Print rows
+    for result_set in result_sets {
+        print!("{:<12}", result_set.url_name);
+        for version in &versions {
+            let time = result_set
+                .results
                 .iter()
-                .map(|d| format!("{:.3}", d.as_secs_f64() * 1000.0))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!("    }}{comma}");
+                .find(|r| r.version == *version)
+                .map(|r| format!("{:.3}s", r.mean.as_secs_f64()))
+                .unwrap_or_else(|| "-".to_string());
+            print!(" {:>12}", time);
+        }
+        println!();
+    }
+    println!();
+}
+
+/// Outputs results for multiple URLs as JSON.
+fn output_json_multi(result_sets: &[BenchmarkResultSet]) -> TaskResult<()> {
+    println!("{{");
+    println!("  \"benchmarks\": [");
+    for (i, result_set) in result_sets.iter().enumerate() {
+        let outer_comma = if i < result_sets.len() - 1 { "," } else { "" };
+        println!("    {{");
+        println!("      \"url\": \"{}\",", result_set.url);
+        println!("      \"url_name\": \"{}\",", result_set.url_name);
+        println!("      \"results\": [");
+        for (j, result) in result_set.results.iter().enumerate() {
+            let comma = if j < result_set.results.len() - 1 { "," } else { "" };
+            println!("        {{");
+            println!("          \"version\": \"{}\",", result.version);
+            println!("          \"mean_ms\": {:.3},", result.mean.as_secs_f64() * 1000.0);
+            println!("          \"min_ms\": {:.3},", result.min.as_secs_f64() * 1000.0);
+            println!("          \"max_ms\": {:.3},", result.max.as_secs_f64() * 1000.0);
+            println!("          \"stddev_ms\": {:.3},", result.stddev * 1000.0);
+            println!(
+                "          \"runs_ms\": [{}]",
+                result
+                    .runs
+                    .iter()
+                    .map(|d| format!("{:.3}", d.as_secs_f64() * 1000.0))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!("        }}{comma}");
+        }
+        println!("      ]");
+        println!("    }}{outer_comma}");
     }
     println!("  ]");
     println!("}}");

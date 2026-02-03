@@ -71,6 +71,16 @@ pub enum Command {
     Test(TestArgs),
 }
 
+/// Benchmark mode.
+#[derive(Debug, Clone, Copy, Default, ValueEnum, PartialEq, Eq)]
+pub enum BenchmarkMode {
+    /// Use local rsync daemon (requires kernel source download).
+    #[default]
+    Local,
+    /// Use remote rsync:// servers (public mirrors).
+    Remote,
+}
+
 /// Arguments for the `benchmark` command.
 #[derive(Parser, Debug, Default)]
 pub struct BenchmarkArgs {
@@ -78,7 +88,7 @@ pub struct BenchmarkArgs {
     #[arg(long, value_name = "DIR")]
     pub bench_dir: Option<std::path::PathBuf>,
 
-    /// Rsync daemon port.
+    /// Rsync daemon port (local mode only).
     #[arg(long, value_name = "PORT")]
     pub port: Option<u16>,
 
@@ -97,6 +107,18 @@ pub struct BenchmarkArgs {
     /// Output results as JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// Benchmark mode: local (daemon) or remote (public mirrors).
+    #[arg(long, value_enum, default_value = "local")]
+    pub mode: BenchmarkMode,
+
+    /// Custom remote rsync:// URLs to benchmark (can be specified multiple times).
+    #[arg(long = "url", value_name = "URL")]
+    pub urls: Vec<String>,
+
+    /// List available public rsync mirrors and exit.
+    #[arg(long)]
+    pub list_mirrors: bool,
 }
 
 /// Output format for branding command.
@@ -643,5 +665,70 @@ mod tests {
         let args = ReleaseArgs::default();
         let task = args.as_task();
         assert_eq!(task.name(), "release");
+    }
+
+    #[test]
+    fn parse_benchmark_remote_mode() {
+        let cli = Cli::parse_from(["cargo-xtask", "benchmark", "--mode", "remote"]);
+        match cli.command {
+            Command::Benchmark(args) => {
+                assert_eq!(args.mode, BenchmarkMode::Remote);
+            }
+            _ => panic!("expected benchmark command"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_custom_urls() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "benchmark",
+            "--mode",
+            "remote",
+            "--url",
+            "rsync://example.com/test/",
+            "--url",
+            "rsync://other.com/data/",
+        ]);
+        match cli.command {
+            Command::Benchmark(args) => {
+                assert_eq!(args.mode, BenchmarkMode::Remote);
+                assert_eq!(args.urls.len(), 2);
+                assert_eq!(args.urls[0], "rsync://example.com/test/");
+                assert_eq!(args.urls[1], "rsync://other.com/data/");
+            }
+            _ => panic!("expected benchmark command"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_list_mirrors() {
+        let cli = Cli::parse_from(["cargo-xtask", "benchmark", "--list-mirrors"]);
+        match cli.command {
+            Command::Benchmark(args) => {
+                assert!(args.list_mirrors);
+            }
+            _ => panic!("expected benchmark command"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_versions() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "benchmark",
+            "--versions",
+            "v0.5.2",
+            "--versions",
+            "v0.5.3",
+        ]);
+        match cli.command {
+            Command::Benchmark(args) => {
+                assert_eq!(args.versions.len(), 2);
+                assert_eq!(args.versions[0], "v0.5.2");
+                assert_eq!(args.versions[1], "v0.5.3");
+            }
+            _ => panic!("expected benchmark command"),
+        }
     }
 }
