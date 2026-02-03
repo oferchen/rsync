@@ -42,7 +42,7 @@ const DEFAULT_CHECKSUM_LENGTH: NonZeroU8 = NonZeroU8::new(16).unwrap();
 
 use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::filters::read_filter_list;
-use protocol::flist::{FileEntry, FileListReader, sort_file_list};
+use protocol::flist::{FileEntry, FileListReader, IncrementalFileListBuilder, sort_file_list};
 use protocol::idlist::IdList;
 #[cfg(test)]
 use protocol::wire::DeltaOp;
@@ -198,6 +198,61 @@ impl ReceiverContext {
         sort_file_list(&mut self.file_list);
 
         Ok(count)
+    }
+
+    /// Creates an incremental file list receiver for streaming processing.
+    ///
+    /// Instead of waiting for the complete file list before processing, this
+    /// method returns an [`IncrementalFileListReceiver`] that yields entries
+    /// as they arrive from the sender, with proper dependency tracking.
+    ///
+    /// # Benefits
+    ///
+    /// - Reduced startup latency: Transfers begin as soon as first entries arrive
+    /// - Better memory efficiency: Don't need entire list in memory before starting
+    /// - Improved progress feedback: Users see activity immediately
+    ///
+    /// # Dependency Tracking
+    ///
+    /// The incremental receiver tracks parent directory dependencies. Entries are
+    /// only yielded when their parent directory has been processed, ensuring:
+    ///
+    /// 1. Directories are created before their contents
+    /// 2. Nested directories are created in order
+    /// 3. Files can be transferred immediately once their parent exists
+    pub fn incremental_file_list_receiver<R: Read>(
+        &self,
+        reader: R,
+    ) -> IncrementalFileListReceiver<R> {
+        let mut flist_reader = if let Some(flags) = self.compat_flags {
+            FileListReader::with_compat_flags(self.protocol, flags)
+        } else {
+            FileListReader::new(self.protocol)
+        }
+        .with_preserve_uid(self.config.flags.owner)
+        .with_preserve_gid(self.config.flags.group)
+        .with_preserve_links(self.config.flags.links)
+        .with_preserve_devices(self.config.flags.devices)
+        .with_preserve_hard_links(self.config.flags.hard_links)
+        .with_preserve_acls(self.config.flags.acls)
+        .with_preserve_xattrs(self.config.flags.xattrs);
+
+        if let Some(ref converter) = self.config.iconv {
+            flist_reader = flist_reader.with_iconv(converter.clone());
+        }
+
+        // Build incremental processor with pre-existing destination directories
+        let incremental = IncrementalFileListBuilder::new()
+            .incremental_recursion(self.config.flags.incremental_recursion)
+            .build();
+
+        IncrementalFileListReceiver {
+            flist_reader,
+            source: reader,
+            incremental,
+            finished_reading: false,
+            entries_read: 0,
+        }
     }
 
     /// Reads UID/GID name-to-ID mapping lists from the sender.
@@ -1191,6 +1246,246 @@ impl ReceiverContext {
             total_source_bytes,
             metadata_errors,
         })
+    }
+}
+
+// ============================================================================
+// Incremental File List Receiver
+// ============================================================================
+
+/// Streaming receiver for incremental file list processing.
+///
+/// This struct wraps a [`FileListReader`] and provides iterator-like access
+/// to file entries as they become available from the wire. It handles parent
+// ============================================================================
+// Failed Directory Tracking
+// ============================================================================
+
+/// Tracks directories that failed to create.
+///
+/// Children of failed directories are skipped during incremental processing.
+#[derive(Debug, Default)]
+struct FailedDirectories {
+    /// Failed directory paths (normalized, no trailing slash).
+    paths: std::collections::HashSet<String>,
+}
+
+impl FailedDirectories {
+    /// Creates a new empty tracker.
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Marks a directory as failed.
+    fn mark_failed(&mut self, path: &str) {
+        self.paths.insert(path.to_string());
+    }
+
+    /// Checks if an entry path has a failed ancestor directory.
+    ///
+    /// Returns the failed ancestor path if found, `None` otherwise.
+    fn failed_ancestor(&self, entry_path: &str) -> Option<&str> {
+        // Check if exact path is failed
+        if self.paths.contains(entry_path) {
+            return self.paths.get(entry_path).map(|s| s.as_str());
+        }
+
+        // Check each parent path component
+        let mut check_path = entry_path;
+        while let Some(pos) = check_path.rfind('/') {
+            check_path = &check_path[..pos];
+            if let Some(failed) = self.paths.get(check_path) {
+                return Some(failed.as_str());
+            }
+        }
+        None
+    }
+
+    /// Returns the number of failed directories.
+    fn count(&self) -> usize {
+        self.paths.len()
+    }
+}
+
+// ============================================================================
+// Incremental File List Receiver
+// ============================================================================
+
+/// directory dependencies automatically, ensuring directories are yielded
+/// before their contents.
+///
+/// # Benefits
+///
+/// - **Reduced latency**: Start processing as soon as first entries arrive
+/// - **Lower memory**: Don't need full list in memory before starting
+/// - **Better UX**: Users see progress immediately
+///
+/// # Dependency Tracking
+///
+/// Entries are only yielded when their parent directory has been processed.
+/// If entries arrive out of order (child before parent), the child is held
+/// until its parent arrives.
+pub struct IncrementalFileListReceiver<R> {
+    /// Wire format reader for file entries.
+    flist_reader: FileListReader,
+    /// Data source (network stream).
+    source: R,
+    /// Incremental processor tracking dependencies.
+    incremental: protocol::flist::IncrementalFileList,
+    /// Whether we've finished reading from the wire.
+    finished_reading: bool,
+    /// Number of entries read from the wire.
+    entries_read: usize,
+}
+
+impl<R: Read> IncrementalFileListReceiver<R> {
+    /// Returns the next entry that is ready for processing.
+    ///
+    /// An entry is "ready" when its parent directory has already been yielded.
+    /// This method may need to read additional entries from the wire to find
+    /// one whose parent is available.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(entry))` - An entry ready for processing
+    /// - `Ok(None)` - No more entries (end of list reached and all processed)
+    /// - `Err(e)` - An I/O or protocol error occurred
+    pub fn next_ready(&mut self) -> io::Result<Option<FileEntry>> {
+        // First check if we have any ready entries
+        if let Some(entry) = self.incremental.pop() {
+            return Ok(Some(entry));
+        }
+
+        // If we've finished reading, nothing more to yield
+        if self.finished_reading {
+            return Ok(None);
+        }
+
+        // Read entries until we get one that's ready or hit end of list
+        loop {
+            match self.flist_reader.read_entry(&mut self.source)? {
+                Some(entry) => {
+                    self.entries_read += 1;
+                    self.incremental.push(entry);
+
+                    // Check if this or any other entry is now ready
+                    if let Some(ready) = self.incremental.pop() {
+                        return Ok(Some(ready));
+                    }
+                    // No entry ready yet, keep reading
+                }
+                None => {
+                    // End of file list
+                    self.finished_reading = true;
+                    // Return any remaining ready entry
+                    return Ok(self.incremental.pop());
+                }
+            }
+        }
+    }
+
+    /// Drains all entries that are currently ready for processing.
+    ///
+    /// This is useful for batch processing multiple ready entries at once.
+    /// Returns an empty vector if no entries are currently ready.
+    pub fn drain_ready(&mut self) -> Vec<FileEntry> {
+        self.incremental.drain_ready()
+    }
+
+    /// Returns the number of entries ready for immediate processing.
+    #[must_use]
+    pub fn ready_count(&self) -> usize {
+        self.incremental.ready_count()
+    }
+
+    /// Returns the number of entries waiting for their parent directory.
+    #[must_use]
+    pub fn pending_count(&self) -> usize {
+        self.incremental.pending_count()
+    }
+
+    /// Returns the total number of entries read from the wire.
+    #[must_use]
+    pub const fn entries_read(&self) -> usize {
+        self.entries_read
+    }
+
+    /// Returns `true` if all entries have been read from the wire.
+    #[must_use]
+    pub const fn is_finished_reading(&self) -> bool {
+        self.finished_reading
+    }
+
+    /// Returns `true` if there are no more entries to yield.
+    ///
+    /// This is `true` when reading is complete and all ready entries have been consumed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.finished_reading && self.incremental.is_empty()
+    }
+
+    /// Marks a directory as already created (for pre-existing destinations).
+    ///
+    /// Call this for destination directories that exist before the transfer.
+    /// This allows child entries to become ready immediately.
+    pub fn mark_directory_created(&mut self, path: &str) {
+        self.incremental.mark_directory_created(path);
+    }
+
+    /// Reads all remaining entries and returns them as a sorted vector.
+    ///
+    /// This method consumes the receiver and returns entries suitable for
+    /// traditional batch processing. Use this when you need the complete
+    /// sorted list for NDX indexing.
+    ///
+    /// # Note
+    ///
+    /// This method provides a fallback to traditional batch processing.
+    /// For truly incremental processing, use [`next_ready`] instead.
+    pub fn collect_sorted(mut self) -> io::Result<Vec<FileEntry>> {
+        let mut entries = Vec::new();
+
+        // Drain any already-ready entries
+        entries.extend(self.incremental.drain_ready());
+
+        // Read remaining entries
+        while !self.finished_reading {
+            match self.flist_reader.read_entry(&mut self.source)? {
+                Some(entry) => {
+                    self.entries_read += 1;
+                    entries.push(entry);
+                }
+                None => {
+                    self.finished_reading = true;
+                }
+            }
+        }
+
+        // Drain any pending entries (they may have become orphans)
+        entries.extend(self.incremental.drain_ready());
+
+        // Sort to match sender's order for NDX indexing
+        sort_file_list(&mut entries);
+
+        Ok(entries)
+    }
+
+    /// Returns the file list statistics from the reader.
+    #[must_use]
+    pub const fn stats(&self) -> &protocol::flist::FileListStats {
+        self.flist_reader.stats()
+    }
+}
+
+impl<R: Read> Iterator for IncrementalFileListReceiver<R> {
+    type Item = io::Result<FileEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.next_ready() {
+            Ok(Some(entry)) => Some(Ok(entry)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
     }
 }
 
@@ -2987,5 +3282,185 @@ mod tests {
         // File should extend to 4096 bytes of zeros
         assert_eq!(result.len(), 4096);
         assert!(result.iter().all(|&b| b == 0));
+    }
+
+    // ============================================================================
+    // IncrementalFileListReceiver tests
+    // ============================================================================
+
+    #[test]
+    fn incremental_receiver_reads_entries() {
+        // Create test data with a simple file list
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = protocol::flist::FileListWriter::new(protocol);
+
+        // Add a directory and a file
+        let dir = FileEntry::new_directory("testdir".into(), 0o755);
+        let file = FileEntry::new_file("testdir/file.txt".into(), 100, 0o644);
+
+        writer.write_entry(&mut data, &dir).unwrap();
+        writer.write_entry(&mut data, &file).unwrap();
+        writer.write_end(&mut data, None).unwrap();
+
+        // Create handshake and config
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        // Create incremental receiver
+        let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
+
+        // First entry should be the directory (it has no parent dependency)
+        let entry1 = receiver.next_ready().unwrap().unwrap();
+        assert!(entry1.is_dir());
+        assert_eq!(entry1.name(), "testdir");
+
+        // Second entry should be the file (parent dir now exists)
+        let entry2 = receiver.next_ready().unwrap().unwrap();
+        assert!(entry2.is_file());
+        assert_eq!(entry2.name(), "testdir/file.txt");
+
+        // No more entries
+        assert!(receiver.next_ready().unwrap().is_none());
+        assert!(receiver.is_empty());
+        assert_eq!(receiver.entries_read(), 2);
+    }
+
+    #[test]
+    fn incremental_receiver_handles_empty_list() {
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut data = Vec::new();
+        let writer = protocol::flist::FileListWriter::new(protocol);
+        writer.write_end(&mut data, None).unwrap();
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
+
+        assert!(receiver.next_ready().unwrap().is_none());
+        assert!(receiver.is_empty());
+        assert_eq!(receiver.entries_read(), 0);
+    }
+
+    #[test]
+    fn incremental_receiver_collect_sorted() {
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = protocol::flist::FileListWriter::new(protocol);
+
+        // Add entries in random order
+        let file1 = FileEntry::new_file("z_file.txt".into(), 50, 0o644);
+        let file2 = FileEntry::new_file("a_file.txt".into(), 100, 0o644);
+        let dir = FileEntry::new_directory("m_dir".into(), 0o755);
+
+        writer.write_entry(&mut data, &file1).unwrap();
+        writer.write_entry(&mut data, &file2).unwrap();
+        writer.write_entry(&mut data, &dir).unwrap();
+        writer.write_end(&mut data, None).unwrap();
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
+
+        // collect_sorted should return entries in sorted order
+        let entries = receiver.collect_sorted().unwrap();
+        assert_eq!(entries.len(), 3);
+
+        // Files should come before directories at the same level
+        assert_eq!(entries[0].name(), "a_file.txt");
+        assert_eq!(entries[1].name(), "z_file.txt");
+        assert_eq!(entries[2].name(), "m_dir");
+    }
+
+    #[test]
+    fn incremental_receiver_iterator_interface() {
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = protocol::flist::FileListWriter::new(protocol);
+
+        let file = FileEntry::new_file("test.txt".into(), 100, 0o644);
+        writer.write_entry(&mut data, &file).unwrap();
+        writer.write_end(&mut data, None).unwrap();
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
+
+        // Use iterator interface
+        let entries: Vec<_> = receiver.collect::<Result<Vec<_>, _>>().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name(), "test.txt");
+    }
+
+    #[test]
+    fn incremental_receiver_mark_directory_created() {
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = protocol::flist::FileListWriter::new(protocol);
+
+        // Add only a nested file (no directory entry)
+        let file = FileEntry::new_file("existing/nested.txt".into(), 100, 0o644);
+        writer.write_entry(&mut data, &file).unwrap();
+        writer.write_end(&mut data, None).unwrap();
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new(&handshake, config);
+
+        let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
+
+        // Mark the parent directory as already created
+        receiver.mark_directory_created("existing");
+
+        // Now the nested file should be immediately ready
+        let entry = receiver.next_ready().unwrap().unwrap();
+        assert_eq!(entry.name(), "existing/nested.txt");
+    }
+
+    mod failed_directories_tests {
+        use super::super::FailedDirectories;
+
+        #[test]
+        fn failed_directories_empty_has_no_ancestors() {
+            let failed = FailedDirectories::new();
+            assert!(failed.failed_ancestor("any/path/file.txt").is_none());
+        }
+
+        #[test]
+        fn failed_directories_marks_and_finds_exact() {
+            let mut failed = FailedDirectories::new();
+            failed.mark_failed("foo/bar");
+            assert!(failed.failed_ancestor("foo/bar").is_some());
+        }
+
+        #[test]
+        fn failed_directories_finds_child_of_failed() {
+            let mut failed = FailedDirectories::new();
+            failed.mark_failed("foo/bar");
+            assert_eq!(failed.failed_ancestor("foo/bar/baz/file.txt"), Some("foo/bar"));
+        }
+
+        #[test]
+        fn failed_directories_does_not_match_sibling() {
+            let mut failed = FailedDirectories::new();
+            failed.mark_failed("foo/bar");
+            assert!(failed.failed_ancestor("foo/other/file.txt").is_none());
+        }
+
+        #[test]
+        fn failed_directories_counts_failures() {
+            let mut failed = FailedDirectories::new();
+            assert_eq!(failed.count(), 0);
+            failed.mark_failed("a");
+            failed.mark_failed("b");
+            assert_eq!(failed.count(), 2);
+        }
     }
 }
