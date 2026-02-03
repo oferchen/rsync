@@ -410,6 +410,68 @@ impl ReceiverContext {
         Ok(metadata_errors)
     }
 
+    /// Creates a single directory during incremental processing.
+    ///
+    /// On success, returns `Ok(true)`. On failure or skip, marks the directory
+    /// as failed and returns `Ok(false)`. Only returns `Err` for unrecoverable errors.
+    fn create_directory_incremental(
+        &self,
+        dest_dir: &std::path::Path,
+        entry: &FileEntry,
+        metadata_opts: &MetadataOptions,
+        failed_dirs: &mut FailedDirectories,
+    ) -> io::Result<bool> {
+        let relative_path = entry.path();
+        let dir_path = if relative_path.as_os_str() == "." {
+            dest_dir.to_path_buf()
+        } else {
+            dest_dir.join(relative_path)
+        };
+
+        // Check if parent is under a failed directory
+        if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
+            if self.config.flags.verbose && self.config.client_mode {
+                eprintln!(
+                    "skipping directory {} (parent {} failed)",
+                    entry.name(),
+                    failed_parent
+                );
+            }
+            failed_dirs.mark_failed(entry.name());
+            return Ok(false);
+        }
+
+        // Try to create the directory
+        if !dir_path.exists() {
+            if let Err(e) = fs::create_dir_all(&dir_path) {
+                if self.config.flags.verbose && self.config.client_mode {
+                    eprintln!("failed to create directory {}: {}", dir_path.display(), e);
+                }
+                failed_dirs.mark_failed(entry.name());
+                return Ok(false);
+            }
+        }
+
+        // Apply metadata (non-fatal errors)
+        if let Err(e) = apply_metadata_from_file_entry(&dir_path, entry, metadata_opts) {
+            if self.config.flags.verbose && self.config.client_mode {
+                eprintln!("warning: metadata error for {}: {}", dir_path.display(), e);
+            }
+            // Don't mark as failed - directory exists, just metadata issue
+        }
+
+        // Verbose output
+        if self.config.flags.verbose && self.config.client_mode {
+            if relative_path.as_os_str() == "." {
+                eprintln!("./");
+            } else {
+                eprintln!("{}/", relative_path.display());
+            }
+        }
+
+        Ok(true)
+    }
+
     /// Exchanges NDX_DONE messages for phase transitions.
     ///
     /// After sending all file requests, exchanges NDX_DONEs with the sender
@@ -3519,6 +3581,54 @@ mod tests {
 
             // Should return false since already finished
             assert!(!receiver.try_read_one().unwrap());
+        }
+    }
+
+    mod create_directory_incremental_tests {
+        use super::*;
+        use tempfile::TempDir;
+
+        #[test]
+        fn creates_directory_successfully() {
+            let temp = TempDir::new().unwrap();
+            let dest = temp.path();
+
+            let entry = FileEntry::new_directory("subdir".into(), 0o755);
+            let opts = MetadataOptions::default();
+            let mut failed = super::super::FailedDirectories::new();
+
+            let handshake = test_handshake();
+            let config = test_config();
+            let ctx = ReceiverContext::new(&handshake, config);
+
+            let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+
+            assert!(result.is_ok());
+            assert!(result.unwrap()); // Returns true for success
+            assert!(dest.join("subdir").exists());
+            assert_eq!(failed.count(), 0);
+        }
+
+        #[test]
+        fn skips_child_of_failed_parent() {
+            let temp = TempDir::new().unwrap();
+            let dest = temp.path();
+
+            let entry = FileEntry::new_directory("failed_parent/child".into(), 0o755);
+            let opts = MetadataOptions::default();
+            let mut failed = super::super::FailedDirectories::new();
+            failed.mark_failed("failed_parent");
+
+            let handshake = test_handshake();
+            let config = test_config();
+            let ctx = ReceiverContext::new(&handshake, config);
+
+            let result = ctx.create_directory_incremental(dest, &entry, &opts, &mut failed);
+
+            assert!(result.is_ok());
+            assert!(!result.unwrap()); // Returns false for skipped
+            assert!(!dest.join("failed_parent/child").exists());
+            assert_eq!(failed.count(), 2); // Parent + child marked as failed
         }
     }
 
