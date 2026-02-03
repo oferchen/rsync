@@ -29,6 +29,7 @@
 //! assert_eq!(entry.file_type(), FileType::Regular);
 //! ```
 
+mod batched_writer;
 mod entry;
 mod flags;
 mod hardlink;
@@ -48,6 +49,7 @@ pub use sort::{
 };
 pub use state::{FileListCompressionState, FileListStats};
 pub use write::{FileListWriter, write_file_entry};
+pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use incremental::{
     IncrementalFileList, IncrementalFileListBuilder, IncrementalFileListIter, StreamingFileList,
 };
