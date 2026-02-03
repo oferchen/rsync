@@ -55,3 +55,7 @@ harness = false
 name = "parallel_benchmark"
 harness = false
 required-features = ["parallel"]
+
+[[bench]]
+name = "pipelined_benchmark"
+harness = false

@@ -347,6 +347,9 @@ pub mod strong;
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
 
+/// Pipelined checksum computation with double-buffering.
+pub mod pipelined;
+
 /// Adler-32 style rolling checksum for efficient sliding window updates.
 ///
 /// Enables O(1) window advancement during delta-transfer block matching.
