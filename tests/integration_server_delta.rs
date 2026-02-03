@@ -296,6 +296,138 @@ fn delta_transfer_empty_file() {
 }
 
 #[test]
+fn delta_transfer_empty_file_preserves_mtime() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    // Create empty source file with specific mtime
+    let src_file = src_dir.join("empty_timed.txt");
+    fs::write(&src_file, b"").unwrap();
+    let target_mtime = FileTime::from_unix_time(1700000000, 0);
+    set_file_times(&src_file, target_mtime, target_mtime).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-t", // Preserve times
+        src_file.to_str().unwrap(),
+        dest_dir.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    // Verify empty file created with preserved mtime
+    let dest_file = dest_dir.join("empty_timed.txt");
+    assert!(dest_file.exists(), "Empty file should exist");
+    assert_eq!(fs::read(&dest_file).unwrap().len(), 0, "File should be empty");
+
+    let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+    assert_eq!(
+        dest_mtime, target_mtime,
+        "Empty file mtime should be preserved"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn delta_transfer_empty_file_preserves_permissions() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    // Create empty source file with specific permissions
+    let src_file = src_dir.join("empty_perms.txt");
+    fs::write(&src_file, b"").unwrap();
+    fs::set_permissions(&src_file, PermissionsExt::from_mode(0o600)).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-p", // Preserve permissions
+        src_file.to_str().unwrap(),
+        dest_dir.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    // Verify empty file created with preserved permissions
+    let dest_file = dest_dir.join("empty_perms.txt");
+    assert!(dest_file.exists(), "Empty file should exist");
+    assert_eq!(fs::read(&dest_file).unwrap().len(), 0, "File should be empty");
+
+    let perms = fs::metadata(&dest_file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(perms, 0o600, "Empty file permissions should be preserved");
+}
+
+#[test]
+fn delta_transfer_empty_file_overwrites_existing() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    // Create empty source file
+    let src_file = src_dir.join("truncate.txt");
+    fs::write(&src_file, b"").unwrap();
+
+    // Create non-empty basis file in destination
+    let dest_file = dest_dir.join("truncate.txt");
+    fs::write(&dest_file, b"existing content that should be truncated").unwrap();
+
+    // Make basis older so rsync will transfer
+    let old_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_times(&dest_file, old_time, old_time).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([src_file.to_str().unwrap(), dest_file.to_str().unwrap()]);
+    cmd.assert_success();
+
+    // Verify file is now empty (delta transfer handled truncation)
+    assert!(dest_file.exists(), "File should still exist");
+    assert_eq!(
+        fs::read(&dest_file).unwrap().len(),
+        0,
+        "File should be truncated to empty"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn delta_transfer_empty_file_archive_mode() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    // Create empty source file with full metadata
+    let src_file = src_dir.join("empty_archive.txt");
+    fs::write(&src_file, b"").unwrap();
+    fs::set_permissions(&src_file, PermissionsExt::from_mode(0o640)).unwrap();
+    let target_mtime = FileTime::from_unix_time(1700000000, 0);
+    set_file_times(&src_file, target_mtime, target_mtime).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-a", // Archive mode (-rlptgoD)
+        src_file.to_str().unwrap(),
+        dest_dir.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    // Verify all metadata preserved for empty file
+    let dest_file = dest_dir.join("empty_archive.txt");
+    assert!(dest_file.exists(), "Empty file should exist");
+    assert_eq!(fs::read(&dest_file).unwrap().len(), 0, "File should be empty");
+
+    let meta = fs::metadata(&dest_file).unwrap();
+    assert_eq!(
+        meta.permissions().mode() & 0o777,
+        0o640,
+        "Archive mode should preserve permissions for empty file"
+    );
+    assert_eq!(
+        FileTime::from_last_modification_time(&meta),
+        target_mtime,
+        "Archive mode should preserve mtime for empty file"
+    );
+}
+
+#[test]
 fn delta_transfer_large_file() {
     let test_dir = TestDir::new().expect("create test dir");
     let src_dir = test_dir.mkdir("src").unwrap();
