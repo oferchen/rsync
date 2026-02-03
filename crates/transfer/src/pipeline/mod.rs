@@ -263,4 +263,57 @@ mod tests {
         let ack_config = pipeline_config.ack_batcher_config();
         assert!(!ack_config.is_enabled());
     }
+
+    #[test]
+    fn with_async_signatures_enables() {
+        let config = PipelineConfig::default().with_async_signatures(true);
+        assert!(config.async_signatures);
+    }
+
+    #[test]
+    fn with_async_signatures_disables() {
+        let config = PipelineConfig::default().with_async_signatures(false);
+        assert!(!config.async_signatures);
+    }
+
+    #[test]
+    fn with_window_size_accepts_valid_value() {
+        let config = PipelineConfig::default().with_window_size(128);
+        assert_eq!(config.window_size, 128);
+    }
+
+    #[test]
+    fn with_ack_batch_size_accepts_valid_value() {
+        let config = PipelineConfig::default().with_ack_batch_size(32);
+        assert_eq!(config.ack_batch_size, 32);
+    }
+
+    #[test]
+    fn with_ack_batch_timeout_accepts_valid_value() {
+        let config = PipelineConfig::default().with_ack_batch_timeout_ms(500);
+        assert_eq!(config.ack_batch_timeout_ms, 500);
+    }
+
+    #[test]
+    fn builder_method_chaining() {
+        let config = PipelineConfig::default()
+            .with_window_size(100)
+            .with_async_signatures(false)
+            .with_ack_batch_size(64)
+            .with_ack_batch_timeout_ms(200)
+            .with_ack_batching(true);
+
+        assert_eq!(config.window_size, 100);
+        assert!(!config.async_signatures);
+        assert_eq!(config.ack_batch_size, 64);
+        assert_eq!(config.ack_batch_timeout_ms, 200);
+        assert!(config.ack_batching_enabled);
+    }
+
+    #[test]
+    fn with_ack_batching_enables() {
+        // Start with disabled config and enable it
+        let config = PipelineConfig::synchronous().with_ack_batching(true);
+        assert!(config.ack_batching_enabled);
+    }
 }
