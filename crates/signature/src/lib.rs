@@ -58,6 +58,9 @@ mod file;
 mod generation;
 mod layout;
 
+/// Pipelined signature generation with double-buffered I/O.
+pub mod pipelined_gen;
+
 #[cfg(feature = "parallel")]
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
 pub mod parallel;
@@ -71,3 +74,4 @@ pub use generation::{SignatureError, generate_file_signature};
 pub use layout::{
     SignatureLayout, SignatureLayoutError, SignatureLayoutParams, calculate_signature_layout,
 };
+pub use pipelined_gen::{PipelinedSignatureConfig, generate_signature_pipelined};

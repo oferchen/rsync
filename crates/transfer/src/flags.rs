@@ -62,6 +62,12 @@ pub struct ParsedServerFlags {
     pub fuzzy: bool,
     /// Prune empty directories from destination (`m` flag, `--prune-empty-dirs`).
     pub prune_empty_dirs: bool,
+    /// Incremental recursion mode (`i` flag, `--inc-recursive`).
+    ///
+    /// When enabled, file lists are processed incrementally as entries arrive
+    /// rather than waiting for the complete list. This reduces startup latency
+    /// for large directory transfers.
+    pub incremental_recursion: bool,
 
     /// Info flags after the first `.` separator.
     pub info_flags: InfoFlags,
