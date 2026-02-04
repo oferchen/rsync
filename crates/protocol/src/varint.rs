@@ -2205,3 +2205,492 @@ mod proptest_tests {
         }
     }
 }
+
+// ===========================================================================
+// BYTE BOUNDARY TESTS (Task #362)
+// ===========================================================================
+
+/// Tests for varint encoding at exact byte boundaries.
+///
+/// The rsync varint encoding uses a variable number of bytes based on value magnitude:
+/// - 1 byte: 0-127 (7 bits of data)
+/// - 2 bytes: 128-16383 (14 bits of data)
+/// - 3 bytes: 16384-2097151 (21 bits of data)
+/// - 4 bytes: 2097152-268435455 (28 bits of data)
+/// - 5 bytes: larger values and negatives
+///
+/// These tests verify correct behavior at exact byte boundaries:
+/// - Maximum value for each byte count (127, 16383, 2097151, 268435455)
+/// - Minimum value requiring next byte count (128, 16384, 2097152, 268435456)
+/// - Encoding produces minimum bytes needed
+/// - Round-trip consistency for all boundary values
+#[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
+mod byte_boundary_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    // =========================================================================
+    // EXACT BOUNDARY VALUES
+    // =========================================================================
+
+    /// The exact boundary values where encoding size changes.
+    /// Format: (value, expected_byte_count, description)
+    const BYTE_BOUNDARIES: [(i32, usize, &str); 8] = [
+        (127, 1, "max 1-byte (7-bit boundary)"),
+        (128, 2, "min 2-byte (just above 7-bit)"),
+        (16383, 2, "max 2-byte (14-bit boundary)"),
+        (16384, 3, "min 3-byte (just above 14-bit)"),
+        (2097151, 3, "max 3-byte (21-bit boundary)"),
+        (2097152, 4, "min 4-byte (just above 21-bit)"),
+        (268435455, 4, "max 4-byte (28-bit boundary)"),
+        (268435456, 5, "min 5-byte (just above 28-bit)"),
+    ];
+
+    // =========================================================================
+    // TEST: Encoding produces minimum bytes needed
+    // =========================================================================
+
+    /// Verifies that each boundary value encodes to exactly the expected number of bytes.
+    #[test]
+    fn encoding_produces_minimum_bytes_at_boundaries() {
+        for (value, expected_len, desc) in BYTE_BOUNDARIES {
+            let (actual_len, _bytes) = encode_bytes(value);
+            assert_eq!(
+                actual_len, expected_len,
+                "Boundary '{}': value {} should encode to {} bytes, got {}",
+                desc, value, expected_len, actual_len
+            );
+        }
+    }
+
+    /// Verifies encode_varint_to_vec produces minimum bytes at boundaries.
+    #[test]
+    fn encode_varint_to_vec_minimum_bytes_at_boundaries() {
+        for (value, expected_len, desc) in BYTE_BOUNDARIES {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            assert_eq!(
+                encoded.len(),
+                expected_len,
+                "Boundary '{}': value {} should encode to {} bytes, got {}",
+                desc,
+                value,
+                expected_len,
+                encoded.len()
+            );
+        }
+    }
+
+    /// Verifies write_varint produces minimum bytes at boundaries.
+    #[test]
+    fn write_varint_minimum_bytes_at_boundaries() {
+        for (value, expected_len, desc) in BYTE_BOUNDARIES {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, value).expect("write succeeds");
+            assert_eq!(
+                buf.len(),
+                expected_len,
+                "Boundary '{}': value {} should write {} bytes, got {}",
+                desc,
+                value,
+                expected_len,
+                buf.len()
+            );
+        }
+    }
+
+    // =========================================================================
+    // TEST: Round-trip consistency for boundary values
+    // =========================================================================
+
+    /// Verifies decode_varint round-trips correctly for all boundary values.
+    #[test]
+    fn roundtrip_decode_varint_at_boundaries() {
+        for (value, expected_len, desc) in BYTE_BOUNDARIES {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(
+                decoded, value,
+                "Boundary '{}': round-trip failed, expected {}, got {}",
+                desc, value, decoded
+            );
+            assert!(
+                remainder.is_empty(),
+                "Boundary '{}': {} bytes should remain, found {}",
+                desc,
+                0,
+                remainder.len()
+            );
+            assert_eq!(
+                encoded.len(),
+                expected_len,
+                "Boundary '{}': encoding length mismatch",
+                desc
+            );
+        }
+    }
+
+    /// Verifies read_varint round-trips correctly for all boundary values.
+    #[test]
+    fn roundtrip_read_varint_at_boundaries() {
+        for (value, expected_len, desc) in BYTE_BOUNDARIES {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, value).expect("write succeeds");
+
+            let mut cursor = Cursor::new(&buf);
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            assert_eq!(
+                decoded, value,
+                "Boundary '{}': stream round-trip failed, expected {}, got {}",
+                desc, value, decoded
+            );
+            assert_eq!(
+                cursor.position() as usize,
+                expected_len,
+                "Boundary '{}': cursor should be at position {}, found {}",
+                desc,
+                expected_len,
+                cursor.position()
+            );
+        }
+    }
+
+    // =========================================================================
+    // TEST: 7-bit boundary (1-byte to 2-byte transition)
+    // =========================================================================
+
+    /// Tests the exact 7-bit boundary: 127 is max 1-byte, 128 is min 2-byte.
+    #[test]
+    fn boundary_7bit_127_to_128() {
+        // 127 = 0x7F = 0111_1111 - fits in 7 bits, should be 1 byte
+        let (len_127, bytes_127) = encode_bytes(127);
+        assert_eq!(len_127, 1, "127 should be 1 byte");
+        assert_eq!(bytes_127[0], 0x7F, "127 should encode as 0x7F");
+
+        // 128 = 0x80 - does NOT fit in 7 bits, needs 2 bytes
+        let (len_128, _) = encode_bytes(128);
+        assert_eq!(len_128, 2, "128 should be 2 bytes");
+
+        // Verify the transition is exact
+        assert_eq!(len_128, len_127 + 1, "128 should need exactly one more byte than 127");
+    }
+
+    /// Tests values immediately adjacent to the 7-bit boundary.
+    #[test]
+    fn boundary_7bit_adjacent_values() {
+        // Values 126, 127, 128, 129
+        let (len_126, _) = encode_bytes(126);
+        let (len_127, _) = encode_bytes(127);
+        let (len_128, _) = encode_bytes(128);
+        let (len_129, _) = encode_bytes(129);
+
+        assert_eq!(len_126, 1, "126 should be 1 byte");
+        assert_eq!(len_127, 1, "127 should be 1 byte");
+        assert_eq!(len_128, 2, "128 should be 2 bytes");
+        assert_eq!(len_129, 2, "129 should be 2 bytes");
+    }
+
+    // =========================================================================
+    // TEST: 14-bit boundary (2-byte to 3-byte transition)
+    // =========================================================================
+
+    /// Tests the exact 14-bit boundary: 16383 is max 2-byte, 16384 is min 3-byte.
+    #[test]
+    fn boundary_14bit_16383_to_16384() {
+        // 16383 = 0x3FFF = 0011_1111_1111_1111 - fits in 14 bits, should be 2 bytes
+        let (len_16383, _) = encode_bytes(16383);
+        assert_eq!(len_16383, 2, "16383 should be 2 bytes");
+
+        // 16384 = 0x4000 - does NOT fit in 14 bits, needs 3 bytes
+        let (len_16384, _) = encode_bytes(16384);
+        assert_eq!(len_16384, 3, "16384 should be 3 bytes");
+
+        // Verify the transition is exact
+        assert_eq!(
+            len_16384,
+            len_16383 + 1,
+            "16384 should need exactly one more byte than 16383"
+        );
+    }
+
+    /// Tests values immediately adjacent to the 14-bit boundary.
+    #[test]
+    fn boundary_14bit_adjacent_values() {
+        let (len_16382, _) = encode_bytes(16382);
+        let (len_16383, _) = encode_bytes(16383);
+        let (len_16384, _) = encode_bytes(16384);
+        let (len_16385, _) = encode_bytes(16385);
+
+        assert_eq!(len_16382, 2, "16382 should be 2 bytes");
+        assert_eq!(len_16383, 2, "16383 should be 2 bytes");
+        assert_eq!(len_16384, 3, "16384 should be 3 bytes");
+        assert_eq!(len_16385, 3, "16385 should be 3 bytes");
+    }
+
+    /// Tests round-trip for 14-bit boundary values.
+    #[test]
+    fn boundary_14bit_roundtrip() {
+        for value in [16382, 16383, 16384, 16385] {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for {}", value);
+            assert!(remainder.is_empty());
+        }
+    }
+
+    // =========================================================================
+    // TEST: 21-bit boundary (3-byte to 4-byte transition)
+    // =========================================================================
+
+    /// Tests the exact 21-bit boundary: 2097151 is max 3-byte, 2097152 is min 4-byte.
+    #[test]
+    fn boundary_21bit_2097151_to_2097152() {
+        // 2097151 = 0x1FFFFF = 0001_1111_1111_1111_1111_1111 - fits in 21 bits
+        let (len_2097151, _) = encode_bytes(2097151);
+        assert_eq!(len_2097151, 3, "2097151 should be 3 bytes");
+
+        // 2097152 = 0x200000 - does NOT fit in 21 bits, needs 4 bytes
+        let (len_2097152, _) = encode_bytes(2097152);
+        assert_eq!(len_2097152, 4, "2097152 should be 4 bytes");
+
+        // Verify the transition is exact
+        assert_eq!(
+            len_2097152,
+            len_2097151 + 1,
+            "2097152 should need exactly one more byte than 2097151"
+        );
+    }
+
+    /// Tests values immediately adjacent to the 21-bit boundary.
+    #[test]
+    fn boundary_21bit_adjacent_values() {
+        let (len_2097150, _) = encode_bytes(2097150);
+        let (len_2097151, _) = encode_bytes(2097151);
+        let (len_2097152, _) = encode_bytes(2097152);
+        let (len_2097153, _) = encode_bytes(2097153);
+
+        assert_eq!(len_2097150, 3, "2097150 should be 3 bytes");
+        assert_eq!(len_2097151, 3, "2097151 should be 3 bytes");
+        assert_eq!(len_2097152, 4, "2097152 should be 4 bytes");
+        assert_eq!(len_2097153, 4, "2097153 should be 4 bytes");
+    }
+
+    /// Tests round-trip for 21-bit boundary values.
+    #[test]
+    fn boundary_21bit_roundtrip() {
+        for value in [2097150, 2097151, 2097152, 2097153] {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for {}", value);
+            assert!(remainder.is_empty());
+        }
+    }
+
+    // =========================================================================
+    // TEST: 28-bit boundary (4-byte to 5-byte transition)
+    // =========================================================================
+
+    /// Tests the exact 28-bit boundary: 268435455 is max 4-byte, 268435456 is min 5-byte.
+    #[test]
+    fn boundary_28bit_268435455_to_268435456() {
+        // 268435455 = 0x0FFFFFFF - fits in 28 bits
+        let (len_max4, _) = encode_bytes(268435455);
+        assert_eq!(len_max4, 4, "268435455 should be 4 bytes");
+
+        // 268435456 = 0x10000000 - does NOT fit in 28 bits, needs 5 bytes
+        let (len_min5, _) = encode_bytes(268435456);
+        assert_eq!(len_min5, 5, "268435456 should be 5 bytes");
+
+        // Verify the transition is exact
+        assert_eq!(
+            len_min5,
+            len_max4 + 1,
+            "268435456 should need exactly one more byte than 268435455"
+        );
+    }
+
+    /// Tests values immediately adjacent to the 28-bit boundary.
+    #[test]
+    fn boundary_28bit_adjacent_values() {
+        let (len_268435454, _) = encode_bytes(268435454);
+        let (len_268435455, _) = encode_bytes(268435455);
+        let (len_268435456, _) = encode_bytes(268435456);
+        let (len_268435457, _) = encode_bytes(268435457);
+
+        assert_eq!(len_268435454, 4, "268435454 should be 4 bytes");
+        assert_eq!(len_268435455, 4, "268435455 should be 4 bytes");
+        assert_eq!(len_268435456, 5, "268435456 should be 5 bytes");
+        assert_eq!(len_268435457, 5, "268435457 should be 5 bytes");
+    }
+
+    /// Tests round-trip for 28-bit boundary values.
+    #[test]
+    fn boundary_28bit_roundtrip() {
+        for value in [268435454, 268435455, 268435456, 268435457] {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+            let (decoded, remainder) = decode_varint(&encoded).expect("decode succeeds");
+            assert_eq!(decoded, value, "round-trip failed for {}", value);
+            assert!(remainder.is_empty());
+        }
+    }
+
+    // =========================================================================
+    // TEST: All boundary transitions in one test
+    // =========================================================================
+
+    /// Comprehensive test: verifies all byte boundary transitions occur at exact values.
+    #[test]
+    fn all_byte_boundary_transitions() {
+        // (max value for N bytes, min value for N+1 bytes)
+        let transitions = [
+            (127_i32, 128_i32, 1, 2),           // 7-bit boundary
+            (16383, 16384, 2, 3),               // 14-bit boundary
+            (2097151, 2097152, 3, 4),           // 21-bit boundary
+            (268435455, 268435456, 4, 5),       // 28-bit boundary
+        ];
+
+        for (max_n, min_n_plus_1, n_bytes, n_plus_1_bytes) in transitions {
+            let (len_max, _) = encode_bytes(max_n);
+            let (len_min, _) = encode_bytes(min_n_plus_1);
+
+            assert_eq!(
+                len_max, n_bytes,
+                "Value {} should be {} bytes",
+                max_n, n_bytes
+            );
+            assert_eq!(
+                len_min, n_plus_1_bytes,
+                "Value {} should be {} bytes",
+                min_n_plus_1, n_plus_1_bytes
+            );
+
+            // Round-trip both values
+            for value in [max_n, min_n_plus_1] {
+                let mut encoded = Vec::new();
+                encode_varint_to_vec(value, &mut encoded);
+                let (decoded, _) = decode_varint(&encoded).expect("decode succeeds");
+                assert_eq!(decoded, value, "round-trip failed for {}", value);
+            }
+        }
+    }
+
+    // =========================================================================
+    // TEST: Verify exact wire format at boundaries
+    // =========================================================================
+
+    /// Tests the exact wire format for 7-bit boundary values.
+    #[test]
+    fn wire_format_7bit_boundary() {
+        // 127 = 0x7F should encode as single byte 0x7F
+        let mut enc_127 = Vec::new();
+        encode_varint_to_vec(127, &mut enc_127);
+        assert_eq!(enc_127, vec![0x7F], "127 should encode as [0x7F]");
+
+        // 128 = 0x80 should encode as 2 bytes with high bit set
+        let mut enc_128 = Vec::new();
+        encode_varint_to_vec(128, &mut enc_128);
+        assert_eq!(enc_128.len(), 2, "128 should encode as 2 bytes");
+        // First byte should have high bit set (10xx_xxxx pattern)
+        assert!(
+            enc_128[0] & 0x80 != 0,
+            "128's first byte should have high bit set"
+        );
+    }
+
+    /// Tests the exact wire format for 14-bit boundary values.
+    #[test]
+    fn wire_format_14bit_boundary() {
+        // 16383 = 0x3FFF should encode as 2 bytes
+        let mut enc_16383 = Vec::new();
+        encode_varint_to_vec(16383, &mut enc_16383);
+        assert_eq!(enc_16383.len(), 2, "16383 should encode as 2 bytes");
+
+        // 16384 = 0x4000 should encode as 3 bytes
+        let mut enc_16384 = Vec::new();
+        encode_varint_to_vec(16384, &mut enc_16384);
+        assert_eq!(enc_16384.len(), 3, "16384 should encode as 3 bytes");
+        // First byte should have 110x_xxxx pattern
+        assert!(
+            enc_16384[0] & 0xC0 == 0xC0,
+            "16384's first byte should have 110x_xxxx pattern"
+        );
+    }
+
+    // =========================================================================
+    // TEST: Stream operations at boundaries
+    // =========================================================================
+
+    /// Tests streaming multiple boundary values and verifying cursor positions.
+    #[test]
+    fn stream_multiple_boundary_values() {
+        let values: Vec<i32> = BYTE_BOUNDARIES.iter().map(|(v, _, _)| *v).collect();
+        let expected_lengths: Vec<usize> = BYTE_BOUNDARIES.iter().map(|(_, l, _)| *l).collect();
+
+        // Write all values
+        let mut buf = Vec::new();
+        for &value in &values {
+            write_varint(&mut buf, value).expect("write succeeds");
+        }
+
+        // Verify total length
+        let expected_total: usize = expected_lengths.iter().sum();
+        assert_eq!(
+            buf.len(),
+            expected_total,
+            "total encoded length should be {}",
+            expected_total
+        );
+
+        // Read all values back and verify cursor positions
+        let mut cursor = Cursor::new(&buf);
+        let mut cumulative_pos = 0usize;
+        for (i, (&expected_value, &expected_len)) in values.iter().zip(expected_lengths.iter()).enumerate()
+        {
+            let decoded = read_varint(&mut cursor).expect("read succeeds");
+            assert_eq!(
+                decoded, expected_value,
+                "value {} mismatch at index {}",
+                expected_value, i
+            );
+            cumulative_pos += expected_len;
+            assert_eq!(
+                cursor.position() as usize,
+                cumulative_pos,
+                "cursor position mismatch after reading value {} at index {}",
+                expected_value,
+                i
+            );
+        }
+    }
+
+    // =========================================================================
+    // TEST: decode_bytes at boundaries
+    // =========================================================================
+
+    /// Tests decode_bytes returns correct consumed byte count at boundaries.
+    #[test]
+    fn decode_bytes_consumed_at_boundaries() {
+        for (value, expected_len, desc) in BYTE_BOUNDARIES {
+            let mut encoded = Vec::new();
+            encode_varint_to_vec(value, &mut encoded);
+
+            let (decoded, consumed) = decode_bytes(&encoded).expect("decode succeeds");
+            assert_eq!(
+                decoded, value,
+                "Boundary '{}': decoded value mismatch",
+                desc
+            );
+            assert_eq!(
+                consumed, expected_len,
+                "Boundary '{}': consumed byte count should be {}",
+                desc, expected_len
+            );
+        }
+    }
+}

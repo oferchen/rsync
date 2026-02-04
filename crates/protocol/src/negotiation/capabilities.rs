@@ -2121,4 +2121,606 @@ mod tests {
             }
         }
     }
+
+    // ========================================================================
+    // CAPABILITY NEGOTIATION FALLBACK TESTS - Task #80
+    // ========================================================================
+    //
+    // These tests verify graceful fallback behavior when:
+    // 1. Server doesn't support a requested capability
+    // 2. Client sends unknown capability strings
+    // 3. Features must degrade gracefully
+    //
+    // Upstream rsync (compat.c) implements graceful degradation when
+    // capabilities cannot be negotiated, falling back to safe defaults.
+
+    // ------------------------------------------------------------------------
+    // FALLBACK: Server doesn't support requested capability
+    // ------------------------------------------------------------------------
+
+    /// Tests fallback when server offers only algorithms client doesn't prefer.
+    /// Client wants xxh128, but server only offers md5/md4/sha1.
+    #[test]
+    fn capability_fallback_server_missing_preferred_checksum() {
+        // Remote only offers legacy checksums, not modern xxhash variants
+        let remote_list = "md5 md4 sha1";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // Should fall back to first supported algorithm: md5
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests fallback when server offers only legacy MD4.
+    #[test]
+    fn capability_fallback_server_only_md4() {
+        let remote_list = "md4";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD4);
+    }
+
+    /// Tests fallback when server offers only 'none' checksum.
+    #[test]
+    fn capability_fallback_server_only_none_checksum() {
+        let remote_list = "none";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::None);
+    }
+
+    /// Tests fallback when server offers compression we don't have compiled in.
+    #[test]
+    fn capability_fallback_server_offers_unavailable_compression() {
+        // Server offers brotli (not supported) first, then zlib
+        let remote_list = "brotli lzma xz zlib";
+        let result = choose_compression_algorithm(remote_list).unwrap();
+        // Should skip unsupported and use zlib
+        assert_eq!(result, CompressionAlgorithm::Zlib);
+    }
+
+    /// Tests fallback when server offers only unavailable compressions.
+    #[test]
+    fn capability_fallback_server_only_unavailable_compression() {
+        let remote_list = "brotli lzma xz";
+        let result = choose_compression_algorithm(remote_list).unwrap();
+        // Should fall back to None when nothing matches
+        assert_eq!(result, CompressionAlgorithm::None);
+    }
+
+    /// Tests fallback when server offers only 'none' compression.
+    #[test]
+    fn capability_fallback_server_only_none_compression() {
+        let remote_list = "none";
+        let result = choose_compression_algorithm(remote_list).unwrap();
+        assert_eq!(result, CompressionAlgorithm::None);
+    }
+
+    // ------------------------------------------------------------------------
+    // FALLBACK: Unknown capability strings
+    // ------------------------------------------------------------------------
+
+    /// Tests handling of completely unknown checksum algorithm names.
+    #[test]
+    fn capability_fallback_unknown_checksum_strings() {
+        // All algorithm names are unknown
+        let remote_list = "blake2b blake3 argon2 scrypt";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // Should fall back to default (MD5)
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests handling of completely unknown compression algorithm names.
+    #[test]
+    fn capability_fallback_unknown_compression_strings() {
+        let remote_list = "snappy lzo lzf brotli";
+        let result = choose_compression_algorithm(remote_list).unwrap();
+        // Should fall back to None
+        assert_eq!(result, CompressionAlgorithm::None);
+    }
+
+    /// Tests mixed known and unknown checksums - unknown first.
+    #[test]
+    fn capability_fallback_mixed_unknown_known_checksum() {
+        let remote_list = "blake3 blake2b sha1 md5";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // Should skip unknown and pick first known (sha1)
+        assert_eq!(result, ChecksumAlgorithm::SHA1);
+    }
+
+    /// Tests mixed known and unknown compressions - unknown first.
+    #[test]
+    fn capability_fallback_mixed_unknown_known_compression() {
+        let remote_list = "snappy lzo zlibx zlib";
+        let result = choose_compression_algorithm(remote_list).unwrap();
+        // Should skip unknown and pick first known (zlibx)
+        assert_eq!(result, CompressionAlgorithm::ZlibX);
+    }
+
+    /// Tests handling of malformed algorithm names (typos, case errors).
+    #[test]
+    fn capability_fallback_malformed_algorithm_names() {
+        // Various malformed names that might occur due to typos or bugs
+        let remote_list = "MD5 Md5 mD5 md-5 md_5 md55 mdv md5!";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // None match (case-sensitive, exact match required), falls back to MD5
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests handling of empty algorithm string between spaces.
+    #[test]
+    fn capability_fallback_empty_between_spaces() {
+        let remote_list = "blake3  sha1"; // Double space
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // split_whitespace handles this correctly
+        assert_eq!(result, ChecksumAlgorithm::SHA1);
+    }
+
+    /// Tests handling of numeric-only strings.
+    #[test]
+    fn capability_fallback_numeric_strings() {
+        let remote_list = "123 456 789";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // None are valid, falls back to MD5
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests handling of special characters in algorithm names.
+    #[test]
+    fn capability_fallback_special_chars() {
+        let remote_list = "md5@ sha1# xxh* md5-v2";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // None match exactly, falls back to MD5
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests handling of very long unknown algorithm names.
+    #[test]
+    fn capability_fallback_long_unknown_names() {
+        let long_name = "a".repeat(100);
+        let remote_list = format!("{} {}", long_name, "md5");
+        let result = choose_checksum_algorithm(&remote_list).unwrap();
+        // Long name is unknown, should use md5
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests handling of unicode in algorithm names.
+    /// Non-breaking space (\u{00A0}) is Unicode whitespace, so split_whitespace()
+    /// will treat "md5\u{00A0}fake" as two tokens: "md5" and "fake".
+    /// Therefore "md5" is found and selected.
+    #[test]
+    fn capability_fallback_unicode_names() {
+        let remote_list = "md5\u{00A0}fake sha1 zlib";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // \u{00A0} is Unicode whitespace, so "md5" is a valid token and matches
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    // ------------------------------------------------------------------------
+    // FALLBACK: Graceful feature degradation
+    // ------------------------------------------------------------------------
+
+    /// Tests graceful degradation from modern to legacy checksums.
+    #[test]
+    fn capability_fallback_graceful_checksum_degradation() {
+        // Simulate negotiating with increasingly legacy servers
+
+        // Modern server: full support
+        let modern_list = "xxh128 xxh3 xxh64 md5 md4 sha1 none";
+        assert_eq!(
+            choose_checksum_algorithm(modern_list).unwrap(),
+            ChecksumAlgorithm::XXH128
+        );
+
+        // Intermediate server: no xxh128, has xxh64
+        let intermediate_list = "xxh64 md5 md4 sha1 none";
+        assert_eq!(
+            choose_checksum_algorithm(intermediate_list).unwrap(),
+            ChecksumAlgorithm::XXH64
+        );
+
+        // Legacy server: only md5 and md4
+        let legacy_list = "md5 md4 none";
+        assert_eq!(
+            choose_checksum_algorithm(legacy_list).unwrap(),
+            ChecksumAlgorithm::MD5
+        );
+
+        // Very old server: only md4
+        let ancient_list = "md4 none";
+        assert_eq!(
+            choose_checksum_algorithm(ancient_list).unwrap(),
+            ChecksumAlgorithm::MD4
+        );
+    }
+
+    /// Tests graceful degradation from modern to legacy compression.
+    #[test]
+    fn capability_fallback_graceful_compression_degradation() {
+        // Simulate negotiating with increasingly legacy servers
+
+        // Modern server: has zstd
+        #[cfg(feature = "zstd")]
+        {
+            let modern_list = "zstd lz4 zlibx zlib none";
+            assert_eq!(
+                choose_compression_algorithm(modern_list).unwrap(),
+                CompressionAlgorithm::Zstd
+            );
+        }
+
+        // Server without zstd: use lz4 if available
+        #[cfg(feature = "lz4")]
+        {
+            let no_zstd_list = "lz4 zlibx zlib none";
+            assert_eq!(
+                choose_compression_algorithm(no_zstd_list).unwrap(),
+                CompressionAlgorithm::LZ4
+            );
+        }
+
+        // Server with only zlib variants
+        let zlib_only = "zlibx zlib none";
+        assert_eq!(
+            choose_compression_algorithm(zlib_only).unwrap(),
+            CompressionAlgorithm::ZlibX
+        );
+
+        // Server preferring classic zlib
+        let classic_zlib = "zlib none";
+        assert_eq!(
+            choose_compression_algorithm(classic_zlib).unwrap(),
+            CompressionAlgorithm::Zlib
+        );
+    }
+
+    /// Tests protocol version fallback behavior.
+    #[test]
+    fn capability_fallback_protocol_version_behavior() {
+        // Protocol 28-29: Uses legacy defaults without negotiation
+        for version in [28, 29] {
+            let protocol = ProtocolVersion::try_from(version).unwrap();
+            let mut stdin = &b""[..];
+            let mut stdout = Vec::new();
+
+            let result = negotiate_capabilities(
+                protocol,
+                &mut stdin,
+                &mut stdout,
+                true,  // do_negotiation
+                true,  // send_compression
+                false, // is_daemon_mode
+                true,  // is_server
+            )
+            .unwrap();
+
+            // Legacy protocols use MD4 and Zlib as defaults
+            assert_eq!(result.checksum, ChecksumAlgorithm::MD4);
+            assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+            // No I/O should occur for legacy protocols
+            assert!(stdout.is_empty());
+        }
+    }
+
+    /// Tests do_negotiation=false fallback (client lacks VARINT_FLIST_FLAGS).
+    #[test]
+    fn capability_fallback_no_varint_flist_flags() {
+        // When client lacks VARINT_FLIST_FLAGS capability, we skip negotiation
+        // and use protocol 30+ defaults without any wire exchange
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+        let mut stdin = &b""[..]; // No input needed
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            false, // do_negotiation = false (client lacks capability)
+            true,  // send_compression
+            false, // is_daemon_mode
+            true,  // is_server
+        )
+        .unwrap();
+
+        // Should use MD5 (protocol 30+ default) and None (safe default)
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(result.compression, CompressionAlgorithm::None);
+        // No data should be sent when do_negotiation is false
+        assert!(stdout.is_empty());
+    }
+
+    /// Tests graceful handling when remote sends preference order we disagree with.
+    #[test]
+    fn capability_fallback_disagreeing_preference_order() {
+        // Remote prefers md4 over md5, but we still respect their order
+        let remote_list = "md4 md5 sha1";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // We pick first from THEIR list that we support
+        assert_eq!(result, ChecksumAlgorithm::MD4);
+    }
+
+    /// Tests that we handle duplicate algorithm names gracefully.
+    #[test]
+    fn capability_fallback_duplicate_algorithms() {
+        let remote_list = "md5 md5 md5 sha1 sha1";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // Should still work, picks first md5
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    // ------------------------------------------------------------------------
+    // FALLBACK: Full negotiation flow with fallback scenarios
+    // ------------------------------------------------------------------------
+
+    /// Tests full negotiation where remote only supports legacy checksums.
+    #[test]
+    fn capability_fallback_full_negotiation_legacy_remote() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Remote is a legacy server that only knows md5 and zlib
+        let remote_response = b"\x03md5\x04zlib";
+        let mut stdin = &remote_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            true,  // send_compression
+            false, // is_daemon_mode
+            true,  // is_server
+        )
+        .unwrap();
+
+        // We should accept their capabilities
+        assert_eq!(result.checksum, ChecksumAlgorithm::MD5);
+        assert_eq!(result.compression, CompressionAlgorithm::Zlib);
+    }
+
+    /// Tests full negotiation where remote only supports 'none' for both.
+    #[test]
+    fn capability_fallback_full_negotiation_none_only() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Remote disables both checksum and compression
+        let remote_response = b"\x04none\x04none";
+        let mut stdin = &remote_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            true,  // send_compression
+            false, // is_daemon_mode
+            true,  // is_server
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::None);
+        assert_eq!(result.compression, CompressionAlgorithm::None);
+    }
+
+    /// Tests negotiation fallback with compression disabled.
+    #[test]
+    fn capability_fallback_compression_disabled() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Only checksum negotiation, no compression
+        let remote_response = b"\x04sha1";
+        let mut stdin = &remote_response[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,  // do_negotiation
+            false, // send_compression = false
+            false, // is_daemon_mode
+            true,  // is_server
+        )
+        .unwrap();
+
+        assert_eq!(result.checksum, ChecksumAlgorithm::SHA1);
+        // Compression should be None when not negotiated
+        assert_eq!(result.compression, CompressionAlgorithm::None);
+    }
+
+    // ------------------------------------------------------------------------
+    // FALLBACK: Edge cases in algorithm parsing
+    // ------------------------------------------------------------------------
+
+    /// Tests that ChecksumAlgorithm::parse returns error for unknown names.
+    #[test]
+    fn capability_fallback_checksum_parse_unknown() {
+        let result = ChecksumAlgorithm::parse("blake2");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("unsupported checksum algorithm"));
+        assert!(err.to_string().contains("blake2"));
+    }
+
+    /// Tests that CompressionAlgorithm::parse returns error for unknown names.
+    #[test]
+    fn capability_fallback_compression_parse_unknown() {
+        let result = CompressionAlgorithm::parse("bzip2");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("unsupported compression algorithm"));
+        assert!(err.to_string().contains("bzip2"));
+    }
+
+    /// Tests that xxh alias parsing works correctly for fallback.
+    #[test]
+    fn capability_fallback_xxh_alias_in_list() {
+        // "xxh" should be recognized as xxh64
+        let remote_list = "xxh md5";
+        let result = choose_checksum_algorithm(remote_list).unwrap();
+        // Note: "xxh" parses to XXH64, but SUPPORTED_CHECKSUMS has "xxh64" not "xxh"
+        // So this should skip "xxh" and match "md5"
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests that algorithm names must be exact matches.
+    #[test]
+    fn capability_fallback_exact_match_required() {
+        // These should NOT match any algorithm
+        let test_cases = [
+            ("md5-hmac", ChecksumAlgorithm::MD5), // suffix
+            ("prefix-md5", ChecksumAlgorithm::MD5), // prefix
+            ("MD5", ChecksumAlgorithm::MD5),      // uppercase
+            ("Md5", ChecksumAlgorithm::MD5),      // mixed case
+        ];
+
+        for (name, _) in test_cases {
+            let list = name;
+            let result = choose_checksum_algorithm(list).unwrap();
+            // Should fall back to MD5 (default), not match the variant
+            assert_eq!(result, ChecksumAlgorithm::MD5);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // FALLBACK: Robustness tests
+    // ------------------------------------------------------------------------
+
+    /// Tests behavior with extremely long algorithm lists.
+    #[test]
+    fn capability_fallback_very_long_list() {
+        // Generate a list with 1000 unknown algorithms followed by md5
+        let mut list = Vec::new();
+        for i in 0..1000 {
+            list.push(format!("unknown_{}", i));
+        }
+        list.push("md5".to_string());
+        let remote_list = list.join(" ");
+
+        let result = choose_checksum_algorithm(&remote_list).unwrap();
+        assert_eq!(result, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests behavior with list containing only whitespace variations.
+    #[test]
+    fn capability_fallback_whitespace_variations() {
+        // Various whitespace-only or whitespace-heavy lists
+        let lists = [
+            "   ",                  // only spaces
+            "\t\t\t",              // only tabs
+            "  \t  \n  ",         // mixed whitespace
+            "   md5   ",          // md5 with lots of space
+            "  \t md5 \n sha1  ", // mixed with valid algorithms
+        ];
+
+        for list in lists {
+            let result = choose_checksum_algorithm(list).unwrap();
+            // Should either find md5/sha1 or fall back to MD5
+            assert!(
+                result == ChecksumAlgorithm::MD5 || result == ChecksumAlgorithm::SHA1,
+                "list '{}' should result in MD5 or SHA1",
+                list.escape_debug()
+            );
+        }
+    }
+
+    /// Tests that negotiation handles truncated input gracefully.
+    #[test]
+    fn capability_fallback_truncated_vstring() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Truncated input - claims 10 bytes but only provides 3
+        let truncated = [0x0A, b'm', b'd', b'5']; // Length 10, but only 3 bytes follow
+        let mut stdin = &truncated[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,
+            false,
+            false,
+            true,
+        );
+
+        // Should fail with UnexpectedEof
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    /// Tests handling of empty vstring (length 0).
+    #[test]
+    fn capability_fallback_empty_vstring() {
+        let protocol = ProtocolVersion::try_from(31).unwrap();
+
+        // Empty checksum list vstring: length=0
+        let empty_vstring = [0x00]; // Zero-length vstring
+        let mut stdin = &empty_vstring[..];
+        let mut stdout = Vec::new();
+
+        let result = negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true,
+            false, // no compression
+            false,
+            true,
+        );
+
+        // Should succeed with MD5 fallback (empty list → default)
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().checksum, ChecksumAlgorithm::MD5);
+    }
+
+    /// Tests that all protocol versions handle fallback consistently.
+    #[test]
+    fn capability_fallback_all_protocol_versions() {
+        for version in 28..=32 {
+            let protocol = ProtocolVersion::try_from(version).unwrap();
+
+            // For legacy protocols, no exchange happens
+            if protocol.uses_fixed_encoding() {
+                let mut stdin = &b""[..];
+                let mut stdout = Vec::new();
+                let result = negotiate_capabilities(
+                    protocol,
+                    &mut stdin,
+                    &mut stdout,
+                    true,
+                    true,
+                    false,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(
+                    result.checksum,
+                    ChecksumAlgorithm::MD4,
+                    "Protocol {} should use MD4",
+                    version
+                );
+            } else {
+                // For modern protocols, test with a fallback scenario
+                let remote = b"\x03md5\x04zlib";
+                let mut stdin = &remote[..];
+                let mut stdout = Vec::new();
+                let result = negotiate_capabilities(
+                    protocol,
+                    &mut stdin,
+                    &mut stdout,
+                    true,
+                    true,
+                    false,
+                    true,
+                )
+                .unwrap();
+                assert_eq!(
+                    result.checksum,
+                    ChecksumAlgorithm::MD5,
+                    "Protocol {} should accept MD5",
+                    version
+                );
+            }
+        }
+    }
 }
