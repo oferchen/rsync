@@ -2,7 +2,11 @@ use crate::local_copy::{
     test_support::take_fsync_call_count, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan,
 };
 
+/// Tests immediate fsync behavior when batch-sync is disabled.
+/// When batch-sync is enabled (default), fsync calls are deferred and batched,
+/// so the immediate fsync count will be 0 - this is expected behavior.
 #[test]
+#[cfg_attr(feature = "batch-sync", ignore = "batch-sync defers fsync calls")]
 fn execute_performs_fsync_when_requested() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
