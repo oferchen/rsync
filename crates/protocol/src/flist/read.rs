@@ -2434,4 +2434,141 @@ mod tests {
         let result = reader.read_entry(&mut cursor);
         assert_unexpected_eof(result, "truncated protocol 29 device minor (int)");
     }
+
+    // ========================================================================
+    // Large file size encoding tests (>2GB, >4GB)
+    // ========================================================================
+
+    /// Test reading a 3GB file entry (above 2^31 = 2GB boundary).
+    /// Verifies the reader correctly decodes varlong-encoded large file sizes.
+    #[test]
+    fn read_large_file_size_3gb() {
+        use super::super::write::FileListWriter;
+
+        const SIZE_3GB: u64 = 3 * 1024 * 1024 * 1024; // 3 * 1024^3 = 3,221,225,472 bytes
+
+        let protocol = test_protocol();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        let mut entry = FileEntry::new_file("huge_3gb.dat".into(), SIZE_3GB, 0o100644);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "huge_3gb.dat");
+        assert_eq!(
+            read_entry.size(),
+            SIZE_3GB,
+            "Reader should correctly decode 3GB file size (above 2^31 boundary)"
+        );
+    }
+
+    /// Test reading a 5GB file entry (above 2^32 = 4GB boundary).
+    /// Verifies the reader correctly decodes varlong-encoded very large file sizes.
+    #[test]
+    fn read_large_file_size_5gb() {
+        use super::super::write::FileListWriter;
+
+        const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024; // 5 * 1024^3 = 5,368,709,120 bytes
+
+        let protocol = test_protocol();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        let mut entry = FileEntry::new_file("huge_5gb.dat".into(), SIZE_5GB, 0o100644);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "huge_5gb.dat");
+        assert_eq!(
+            read_entry.size(),
+            SIZE_5GB,
+            "Reader should correctly decode 5GB file size (above 2^32 boundary)"
+        );
+    }
+
+    /// Test reading file entries at critical size boundaries (2^31, 2^32).
+    /// These boundaries are important because they represent the limits of
+    /// 32-bit signed and unsigned integer ranges.
+    #[test]
+    fn read_large_file_sizes_at_boundaries() {
+        use super::super::write::FileListWriter;
+
+        // Critical boundary values
+        let boundary_sizes: &[(u64, &str)] = &[
+            ((1u64 << 31) - 1, "max_i32"), // 2,147,483,647 (max signed 32-bit)
+            (1u64 << 31, "2gb"),           // 2,147,483,648 (2GB exactly)
+            ((1u64 << 31) + 1, "2gb_plus_1"),
+            ((1u64 << 32) - 1, "max_u32"), // 4,294,967,295 (max unsigned 32-bit)
+            (1u64 << 32, "4gb"),           // 4,294,967,296 (4GB exactly)
+            ((1u64 << 32) + 1, "4gb_plus_1"),
+        ];
+
+        let protocol = test_protocol();
+
+        for (size, label) in boundary_sizes {
+            let mut data = Vec::new();
+            let mut writer = FileListWriter::new(protocol);
+
+            let filename = format!("boundary_{label}.bin");
+            let mut entry = FileEntry::new_file(filename.clone().into(), *size, 0o100644);
+            entry.set_mtime(1700000000, 0);
+
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(read_entry.name(), &filename);
+            assert_eq!(
+                read_entry.size(),
+                *size,
+                "Reader should correctly decode size {size} at {label} boundary"
+            );
+        }
+    }
+
+    /// Test reading large file sizes with legacy protocol 29 (longint encoding).
+    /// Protocol 29 uses a different encoding: 4 bytes for small values,
+    /// 12 bytes (marker + 8 bytes) for values > 0x7FFFFFFF.
+    #[test]
+    fn read_large_file_size_legacy_protocol() {
+        use super::super::write::FileListWriter;
+
+        const SIZE_3GB: u64 = 3 * 1024 * 1024 * 1024;
+        const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024;
+
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+
+        for (size, label) in [(SIZE_3GB, "3GB"), (SIZE_5GB, "5GB")] {
+            let mut data = Vec::new();
+            let mut writer = FileListWriter::new(protocol);
+
+            let mut entry = FileEntry::new_file("legacy_large.bin".into(), size, 0o100644);
+            entry.set_mtime(1700000000, 0);
+
+            writer.write_entry(&mut data, &entry).unwrap();
+
+            let mut cursor = Cursor::new(&data[..]);
+            let mut reader = FileListReader::new(protocol);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(
+                read_entry.size(),
+                size,
+                "Legacy protocol reader should correctly decode {label} file size"
+            );
+        }
+    }
 }
