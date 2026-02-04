@@ -330,6 +330,12 @@ impl<'a> DeltaApplicator<'a> {
     /// Uses cached `MapFile` with `AdaptiveMapStrategy` for efficient access:
     /// - Small files (< 1MB): 256KB sliding window buffer
     /// - Large files (>= 1MB): Zero-copy memory-mapped access
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No basis file is available
+    /// - The block index is out of bounds (>= block count)
     pub fn apply_block_ref(&mut self, block_idx: usize) -> io::Result<()> {
         let (Some(signature), Some(basis_map)) = (&self.basis_signature, self.basis_map.as_mut())
         else {
@@ -341,8 +347,19 @@ impl<'a> DeltaApplicator<'a> {
 
         let layout = signature.layout();
         let block_len = layout.block_length().get() as u64;
-        let offset = block_idx as u64 * block_len;
         let block_count = layout.block_count() as usize;
+
+        // Validate block index bounds
+        if block_idx >= block_count {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "block reference {block_idx} out of bounds (block count: {block_count})"
+                ),
+            ));
+        }
+
+        let offset = block_idx as u64 * block_len;
 
         let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
             let remainder = layout.remainder();

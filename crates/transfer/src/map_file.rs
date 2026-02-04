@@ -2034,6 +2034,258 @@ mod tests {
     }
 
     // =========================================================================
+    // Adaptive Map Strategy Selection Tests
+    // =========================================================================
+
+    #[test]
+    fn adaptive_strategy_selection_small_file_uses_buffered() {
+        // Files below MMAP_THRESHOLD should use buffered strategy
+        let small_size = 512 * 1024; // 512 KB - well below 1MB threshold
+        let temp = create_test_file(small_size);
+        let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+        assert!(strategy.is_buffered());
+        assert!(!strategy.is_mmap());
+        assert_eq!(strategy.file_size(), small_size as u64);
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_large_file_uses_mmap() {
+        // Files at or above MMAP_THRESHOLD should use mmap strategy
+        let large_size = 2 * 1024 * 1024; // 2 MB - above 1MB threshold
+        let temp = create_test_file(large_size);
+        let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+        assert!(strategy.is_mmap());
+        assert!(!strategy.is_buffered());
+        assert_eq!(strategy.file_size(), large_size as u64);
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_boundary_below_threshold() {
+        // File 1 byte below threshold should use buffered
+        let size = (MMAP_THRESHOLD - 1) as usize;
+        let temp = create_test_file(size);
+        let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+        assert!(
+            strategy.is_buffered(),
+            "File at {} bytes (1 below threshold) should use buffered",
+            size
+        );
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_boundary_exactly_at_threshold() {
+        // File exactly at threshold should use mmap
+        let size = MMAP_THRESHOLD as usize;
+        let temp = create_test_file(size);
+        let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+        assert!(
+            strategy.is_mmap(),
+            "File at {} bytes (exactly at threshold) should use mmap",
+            size
+        );
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_boundary_above_threshold() {
+        // File 1 byte above threshold should use mmap
+        let size = (MMAP_THRESHOLD + 1) as usize;
+        let temp = create_test_file(size);
+        let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+        assert!(
+            strategy.is_mmap(),
+            "File at {} bytes (1 above threshold) should use mmap",
+            size
+        );
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_empty_file_uses_buffered() {
+        // Empty files (0 bytes) should use buffered strategy
+        let temp = create_test_file(0);
+        let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+        assert!(strategy.is_buffered());
+        assert_eq!(strategy.file_size(), 0);
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_tiny_file_uses_buffered() {
+        // Very small files (1 byte) should use buffered strategy
+        let temp = create_test_file(1);
+        let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+        assert!(strategy.is_buffered());
+        assert_eq!(strategy.file_size(), 1);
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_custom_threshold_zero() {
+        // With threshold 0, all files should use mmap
+        let temp = create_test_file(100);
+        let strategy = AdaptiveMapStrategy::open_with_threshold(temp.path(), 0).unwrap();
+
+        assert!(strategy.is_mmap());
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_custom_threshold_max() {
+        // With very large threshold, all reasonable files use buffered
+        let temp = create_test_file(1000);
+        let strategy = AdaptiveMapStrategy::open_with_threshold(temp.path(), u64::MAX).unwrap();
+
+        assert!(strategy.is_buffered());
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_window_size_differs() {
+        // Verify window_size() behavior differs between strategies
+        let small_temp = create_test_file(1000);
+        let large_temp = create_test_file((MMAP_THRESHOLD + 1024) as usize);
+
+        let small_strategy = AdaptiveMapStrategy::open(small_temp.path()).unwrap();
+        let large_strategy = AdaptiveMapStrategy::open(large_temp.path()).unwrap();
+
+        // Buffered has MAX_MAP_SIZE window
+        assert_eq!(small_strategy.window_size(), MAX_MAP_SIZE);
+
+        // Mmap window is the entire file
+        assert_eq!(large_strategy.window_size(), (MMAP_THRESHOLD + 1024) as usize);
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_data_consistency() {
+        // Verify that both strategies return identical data for the same file
+        let size = 10000;
+        let temp = create_test_file(size);
+
+        // Force buffered (high threshold)
+        let mut buffered = AdaptiveMapStrategy::open_with_threshold(temp.path(), u64::MAX).unwrap();
+        // Force mmap (low threshold)
+        let mut mmap = AdaptiveMapStrategy::open_with_threshold(temp.path(), 0).unwrap();
+
+        assert!(buffered.is_buffered());
+        assert!(mmap.is_mmap());
+
+        // Read same data from both and compare
+        for offset in (0..size - 100).step_by(500) {
+            let buf_data = buffered.map_ptr(offset as u64, 100).unwrap().to_vec();
+            let mmap_data = mmap.map_ptr(offset as u64, 100).unwrap();
+
+            assert_eq!(
+                buf_data,
+                mmap_data,
+                "Data mismatch at offset {} between buffered and mmap strategies",
+                offset
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_map_file_convenience_methods() {
+        // Test MapFile convenience methods for adaptive strategy
+        let small_temp = create_test_file(1000);
+        let large_temp = create_test_file((MMAP_THRESHOLD + 1024) as usize);
+
+        let small_map = MapFile::open_adaptive(small_temp.path()).unwrap();
+        let large_map = MapFile::open_adaptive(large_temp.path()).unwrap();
+
+        // Verify is_mmap() and is_buffered() work through MapFile
+        assert!(small_map.is_buffered());
+        assert!(!small_map.is_mmap());
+
+        assert!(large_map.is_mmap());
+        assert!(!large_map.is_buffered());
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_map_file_with_custom_threshold() {
+        // Test MapFile::open_adaptive_with_threshold
+        let temp = create_test_file(500);
+
+        // With threshold 100, should use mmap
+        let map_low = MapFile::open_adaptive_with_threshold(temp.path(), 100).unwrap();
+        assert!(map_low.is_mmap());
+
+        // With threshold 1000, should use buffered
+        let map_high = MapFile::open_adaptive_with_threshold(temp.path(), 1000).unwrap();
+        assert!(map_high.is_buffered());
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_multiple_threshold_boundaries() {
+        // Test multiple boundary values to ensure consistent behavior
+        let boundaries = [
+            (100, 99, true, false),   // threshold=100, size=99 -> buffered
+            (100, 100, false, true),  // threshold=100, size=100 -> mmap
+            (100, 101, false, true),  // threshold=100, size=101 -> mmap
+            (1, 0, true, false),      // threshold=1, size=0 -> buffered
+            (1, 1, false, true),      // threshold=1, size=1 -> mmap
+        ];
+
+        for (threshold, size, expect_buffered, expect_mmap) in boundaries {
+            let temp = create_test_file(size);
+            let strategy =
+                AdaptiveMapStrategy::open_with_threshold(temp.path(), threshold as u64).unwrap();
+
+            assert_eq!(
+                strategy.is_buffered(),
+                expect_buffered,
+                "threshold={}, size={}: expected is_buffered={}",
+                threshold,
+                size,
+                expect_buffered
+            );
+            assert_eq!(
+                strategy.is_mmap(),
+                expect_mmap,
+                "threshold={}, size={}: expected is_mmap={}",
+                threshold,
+                size,
+                expect_mmap
+            );
+        }
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_read_after_strategy_check() {
+        // Ensure strategy selection doesn't affect subsequent reads
+        let temp = create_test_file(1000);
+
+        let mut strategy = AdaptiveMapStrategy::open_with_threshold(temp.path(), 500).unwrap();
+        assert!(strategy.is_mmap());
+
+        // Read should still work correctly
+        let data = strategy.map_ptr(0, 100).unwrap();
+        assert_eq!(data.len(), 100);
+        for (i, &byte) in data.iter().enumerate() {
+            assert_eq!(byte, i as u8);
+        }
+    }
+
+    #[test]
+    fn adaptive_strategy_selection_file_size_preserved() {
+        // Ensure file_size() works correctly for both strategies
+        let sizes = [0, 1, 100, 1000, MMAP_THRESHOLD as usize - 1, MMAP_THRESHOLD as usize, MMAP_THRESHOLD as usize + 1];
+
+        for size in sizes {
+            let temp = create_test_file(size);
+            let strategy = AdaptiveMapStrategy::open(temp.path()).unwrap();
+
+            assert_eq!(
+                strategy.file_size(),
+                size as u64,
+                "File size mismatch for size={}",
+                size
+            );
+        }
+    }
+
+    // =========================================================================
     // MmapStrategy::as_slice() Tests
     // =========================================================================
 

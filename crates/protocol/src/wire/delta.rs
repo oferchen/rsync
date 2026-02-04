@@ -753,4 +753,394 @@ mod tests {
         // Should be at end
         assert!(cursor.is_empty());
     }
+
+    // ========================================================================
+    // Oversized literal block tests (Task #79)
+    // ========================================================================
+
+    /// Helper function to decode a token stream and reconstruct literal data.
+    ///
+    /// Returns (literals, block_indices) where literals is concatenated literal data
+    /// and block_indices contains the block references encountered.
+    fn decode_token_stream(data: &[u8]) -> io::Result<(Vec<u8>, Vec<u32>)> {
+        let mut cursor = &data[..];
+        let mut literals = Vec::new();
+        let mut block_indices = Vec::new();
+
+        loop {
+            match read_token(&mut cursor)? {
+                None => break, // End marker
+                Some(token) if token > 0 => {
+                    // Literal data
+                    let len = token as usize;
+                    let mut chunk = vec![0u8; len];
+                    cursor.read_exact(&mut chunk)?;
+                    literals.extend_from_slice(&chunk);
+                }
+                Some(token) => {
+                    // Block match: token is -(block_index + 1)
+                    let block_index = (-(token + 1)) as u32;
+                    block_indices.push(block_index);
+                }
+            }
+        }
+
+        Ok((literals, block_indices))
+    }
+
+    #[test]
+    fn delta_oversized_literal_exactly_chunk_size() {
+        // Test literal exactly at CHUNK_SIZE boundary (should be single chunk)
+        let data = vec![0xABu8; CHUNK_SIZE];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Should be exactly one chunk: write_int(CHUNK_SIZE) + CHUNK_SIZE bytes
+        assert_eq!(buf.len(), 4 + CHUNK_SIZE);
+
+        let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert_eq!(len, CHUNK_SIZE as i32);
+
+        // Verify all data bytes are correct
+        assert!(buf[4..].iter().all(|&b| b == 0xAB));
+    }
+
+    #[test]
+    fn delta_oversized_literal_one_byte_over_chunk_size() {
+        // Test literal at CHUNK_SIZE + 1 (boundary condition - should split into 2 chunks)
+        let data = vec![0xCDu8; CHUNK_SIZE + 1];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Should be two chunks:
+        // First: write_int(CHUNK_SIZE) + CHUNK_SIZE bytes
+        // Second: write_int(1) + 1 byte
+        assert_eq!(buf.len(), 4 + CHUNK_SIZE + 4 + 1);
+
+        let len1 = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert_eq!(len1, CHUNK_SIZE as i32);
+
+        let second_header_start = 4 + CHUNK_SIZE;
+        let len2 = i32::from_le_bytes([
+            buf[second_header_start],
+            buf[second_header_start + 1],
+            buf[second_header_start + 2],
+            buf[second_header_start + 3],
+        ]);
+        assert_eq!(len2, 1);
+
+        // Verify the single byte in second chunk
+        assert_eq!(buf[second_header_start + 4], 0xCD);
+    }
+
+    #[test]
+    fn delta_oversized_literal_multiple_chunks() {
+        // Test literal spanning exactly 3 full chunks
+        let data = vec![0xEFu8; CHUNK_SIZE * 3];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Should be 3 chunks, each: write_int(CHUNK_SIZE) + CHUNK_SIZE bytes
+        assert_eq!(buf.len(), (4 + CHUNK_SIZE) * 3);
+
+        // Verify each chunk header
+        for i in 0..3 {
+            let offset = i * (4 + CHUNK_SIZE);
+            let len = i32::from_le_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]);
+            assert_eq!(len, CHUNK_SIZE as i32, "chunk {i} header mismatch");
+        }
+    }
+
+    #[test]
+    fn delta_oversized_literal_multiple_chunks_with_remainder() {
+        // Test 2.5 chunks worth of data
+        let remainder = CHUNK_SIZE / 2;
+        let data = vec![0x12u8; CHUNK_SIZE * 2 + remainder];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Should be 3 chunks:
+        // Two full: write_int(CHUNK_SIZE) + CHUNK_SIZE bytes each
+        // One partial: write_int(remainder) + remainder bytes
+        assert_eq!(buf.len(), (4 + CHUNK_SIZE) * 2 + 4 + remainder);
+
+        // Verify first two chunk headers
+        for i in 0..2 {
+            let offset = i * (4 + CHUNK_SIZE);
+            let len = i32::from_le_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]);
+            assert_eq!(len, CHUNK_SIZE as i32);
+        }
+
+        // Verify third (partial) chunk header
+        let third_offset = 2 * (4 + CHUNK_SIZE);
+        let len3 = i32::from_le_bytes([
+            buf[third_offset],
+            buf[third_offset + 1],
+            buf[third_offset + 2],
+            buf[third_offset + 3],
+        ]);
+        assert_eq!(len3, remainder as i32);
+    }
+
+    #[test]
+    fn delta_oversized_literal_reconstruction() {
+        // Test that oversized literal data can be correctly reconstructed
+        // by reading the chunked token stream
+
+        // Create distinctive pattern that helps verify correct reconstruction
+        let size = CHUNK_SIZE * 2 + 1234;
+        let mut data = Vec::with_capacity(size);
+        for i in 0..size {
+            data.push((i % 256) as u8);
+        }
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        // Decode and reconstruct
+        let (reconstructed, block_indices) = decode_token_stream(&buf).unwrap();
+
+        assert!(block_indices.is_empty(), "should have no block references");
+        assert_eq!(reconstructed.len(), data.len());
+        assert_eq!(reconstructed, data, "reconstructed data should match original");
+    }
+
+    #[test]
+    fn delta_oversized_literal_reconstruction_exact_multiple() {
+        // Test reconstruction when data is exact multiple of CHUNK_SIZE
+        let size = CHUNK_SIZE * 4;
+        let data: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(7)).collect();
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+
+        assert_eq!(reconstructed.len(), data.len());
+        assert_eq!(reconstructed, data);
+    }
+
+    #[test]
+    fn delta_oversized_literal_mixed_with_blocks() {
+        // Test oversized literals mixed with block references
+        let large_literal = vec![0xAAu8; CHUNK_SIZE + 500];
+        let small_literal = b"small".to_vec();
+
+        let ops = vec![
+            DeltaOp::Literal(large_literal.clone()),
+            DeltaOp::Copy {
+                block_index: 0,
+                length: 4096,
+            },
+            DeltaOp::Literal(small_literal.clone()),
+            DeltaOp::Copy {
+                block_index: 5,
+                length: 4096,
+            },
+            DeltaOp::Literal(vec![0xBBu8; CHUNK_SIZE * 2]),
+        ];
+
+        let mut buf = Vec::new();
+        write_token_stream(&mut buf, &ops).unwrap();
+
+        let (reconstructed_literals, block_indices) = decode_token_stream(&buf).unwrap();
+
+        // Verify block references
+        assert_eq!(block_indices, vec![0, 5]);
+
+        // Verify total literal size
+        let expected_literal_size = large_literal.len() + small_literal.len() + CHUNK_SIZE * 2;
+        assert_eq!(reconstructed_literals.len(), expected_literal_size);
+
+        // Verify first large literal
+        assert_eq!(&reconstructed_literals[..large_literal.len()], &large_literal[..]);
+
+        // Verify small literal after first large
+        let small_start = large_literal.len();
+        assert_eq!(
+            &reconstructed_literals[small_start..small_start + small_literal.len()],
+            &small_literal[..]
+        );
+
+        // Verify last large literal
+        let last_start = small_start + small_literal.len();
+        assert!(reconstructed_literals[last_start..].iter().all(|&b| b == 0xBB));
+    }
+
+    #[test]
+    fn delta_oversized_literal_via_whole_file() {
+        // Test whole file transfer with oversized data
+        let size = CHUNK_SIZE * 3 + 789;
+        let data: Vec<u8> = (0..size).map(|i| ((i * 13) % 256) as u8).collect();
+
+        let mut buf = Vec::new();
+        write_whole_file_delta(&mut buf, &data).unwrap();
+
+        let (reconstructed, block_indices) = decode_token_stream(&buf).unwrap();
+
+        assert!(block_indices.is_empty());
+        assert_eq!(reconstructed, data);
+    }
+
+    #[test]
+    fn delta_oversized_literal_empty() {
+        // Edge case: empty literal should not produce any chunks
+        let data: Vec<u8> = vec![];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Empty literal produces no output (no chunks written)
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn delta_oversized_literal_single_byte() {
+        // Edge case: single byte literal
+        let data = vec![0x42u8];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        assert_eq!(buf.len(), 4 + 1);
+        let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert_eq!(len, 1);
+        assert_eq!(buf[4], 0x42);
+    }
+
+    #[test]
+    fn delta_oversized_literal_chunk_boundary_minus_one() {
+        // Test literal at CHUNK_SIZE - 1 (just under boundary)
+        let data = vec![0x99u8; CHUNK_SIZE - 1];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Should be single chunk
+        assert_eq!(buf.len(), 4 + CHUNK_SIZE - 1);
+
+        let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert_eq!(len, (CHUNK_SIZE - 1) as i32);
+    }
+
+    #[test]
+    fn delta_oversized_literal_very_large() {
+        // Test very large literal (1MB) to ensure no overflow issues
+        let size = 1024 * 1024; // 1MB
+        let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        // Verify we can reconstruct it
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+        assert_eq!(reconstructed.len(), size);
+        assert_eq!(reconstructed, data);
+
+        // Verify number of chunks (1MB / 32KB = 32 chunks)
+        let expected_chunks = (size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        assert_eq!(expected_chunks, 32);
+    }
+
+    #[test]
+    fn delta_oversized_literal_data_integrity() {
+        // Test that chunking preserves data integrity with varied content
+        // Use a pattern that would expose any off-by-one errors
+
+        let size = CHUNK_SIZE * 2 + CHUNK_SIZE / 2;
+        let mut data = Vec::with_capacity(size);
+
+        // First chunk: ascending bytes
+        for i in 0..CHUNK_SIZE {
+            data.push((i % 256) as u8);
+        }
+        // Second chunk: descending bytes
+        for i in 0..CHUNK_SIZE {
+            data.push((255 - (i % 256)) as u8);
+        }
+        // Third partial chunk: alternating pattern
+        for i in 0..(CHUNK_SIZE / 2) {
+            data.push(if i % 2 == 0 { 0xAA } else { 0x55 });
+        }
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+
+        // Verify chunk boundaries maintained data correctly
+        for i in 0..CHUNK_SIZE {
+            assert_eq!(
+                reconstructed[i],
+                (i % 256) as u8,
+                "first chunk byte {i} mismatch"
+            );
+        }
+        for i in 0..CHUNK_SIZE {
+            assert_eq!(
+                reconstructed[CHUNK_SIZE + i],
+                (255 - (i % 256)) as u8,
+                "second chunk byte {i} mismatch"
+            );
+        }
+        for i in 0..(CHUNK_SIZE / 2) {
+            let expected = if i % 2 == 0 { 0xAA } else { 0x55 };
+            assert_eq!(
+                reconstructed[CHUNK_SIZE * 2 + i],
+                expected,
+                "third chunk byte {i} mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn delta_stream_with_consecutive_oversized_literals() {
+        // Test multiple consecutive oversized literals in a stream
+        let literal1 = vec![0x11u8; CHUNK_SIZE + 100];
+        let literal2 = vec![0x22u8; CHUNK_SIZE * 2 + 200];
+        let literal3 = vec![0x33u8; CHUNK_SIZE + 50];
+
+        let ops = vec![
+            DeltaOp::Literal(literal1.clone()),
+            DeltaOp::Literal(literal2.clone()),
+            DeltaOp::Literal(literal3.clone()),
+        ];
+
+        let mut buf = Vec::new();
+        write_token_stream(&mut buf, &ops).unwrap();
+
+        let (reconstructed, block_indices) = decode_token_stream(&buf).unwrap();
+
+        assert!(block_indices.is_empty());
+
+        let total_size = literal1.len() + literal2.len() + literal3.len();
+        assert_eq!(reconstructed.len(), total_size);
+
+        // Verify each literal's content
+        let mut offset = 0;
+        assert!(reconstructed[offset..offset + literal1.len()]
+            .iter()
+            .all(|&b| b == 0x11));
+        offset += literal1.len();
+
+        assert!(reconstructed[offset..offset + literal2.len()]
+            .iter()
+            .all(|&b| b == 0x22));
+        offset += literal2.len();
+
+        assert!(reconstructed[offset..offset + literal3.len()]
+            .iter()
+            .all(|&b| b == 0x33));
+    }
 }

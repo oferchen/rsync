@@ -3203,4 +3203,162 @@ mod tests {
             assert_eq!(read.mtime_nsec(), 500000000);
         }
     }
+
+    // ========================================================================
+    // Large file size encoding tests (>2GB, >4GB)
+    // ========================================================================
+
+    /// Test encoding and decoding a 3GB file (above 2^31 = 2GB boundary).
+    /// This verifies that the varlong encoding correctly handles file sizes
+    /// that exceed the signed 32-bit integer range.
+    #[test]
+    fn large_file_size_3gb_round_trip() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        const SIZE_3GB: u64 = 3 * 1024 * 1024 * 1024; // 3 * 1024^3 = 3,221,225,472 bytes
+
+        let protocol = test_protocol();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        let mut entry = FileEntry::new_file("large_3gb.bin".into(), SIZE_3GB, 0o644);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "large_3gb.bin");
+        assert_eq!(
+            read_entry.size(),
+            SIZE_3GB,
+            "3GB file size should round-trip correctly (above 2^31 boundary)"
+        );
+    }
+
+    /// Test encoding and decoding a 5GB file (above 2^32 = 4GB boundary).
+    /// This verifies that the varlong encoding correctly handles file sizes
+    /// that exceed the unsigned 32-bit integer range.
+    #[test]
+    fn large_file_size_5gb_round_trip() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024; // 5 * 1024^3 = 5,368,709,120 bytes
+
+        let protocol = test_protocol();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+
+        let mut entry = FileEntry::new_file("large_5gb.bin".into(), SIZE_5GB, 0o644);
+        entry.set_mtime(1700000000, 0);
+
+        writer.write_entry(&mut buf, &entry).unwrap();
+        writer.write_end(&mut buf, None).unwrap();
+
+        let mut cursor = Cursor::new(&buf[..]);
+        let mut reader = FileListReader::new(protocol);
+
+        let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(read_entry.name(), "large_5gb.bin");
+        assert_eq!(
+            read_entry.size(),
+            SIZE_5GB,
+            "5GB file size should round-trip correctly (above 2^32 boundary)"
+        );
+    }
+
+    /// Test multiple large file sizes to ensure consistent encoding/decoding
+    /// across the 2GB and 4GB boundaries.
+    #[test]
+    fn large_file_sizes_boundary_values_round_trip() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        // Key boundary values for large file support
+        let test_sizes: &[(u64, &str)] = &[
+            // Just below 2^31 (max signed 32-bit positive)
+            ((1u64 << 31) - 1, "just_below_2gb"),
+            // Exactly 2^31 (2GB boundary)
+            (1u64 << 31, "exactly_2gb"),
+            // Just above 2^31
+            ((1u64 << 31) + 1, "just_above_2gb"),
+            // Just below 2^32 (max unsigned 32-bit)
+            ((1u64 << 32) - 1, "just_below_4gb"),
+            // Exactly 2^32 (4GB boundary)
+            (1u64 << 32, "exactly_4gb"),
+            // Just above 2^32
+            ((1u64 << 32) + 1, "just_above_4gb"),
+            // 3GB (3 * 1024^3)
+            (3 * 1024 * 1024 * 1024, "3gb"),
+            // 5GB (5 * 1024^3)
+            (5 * 1024 * 1024 * 1024, "5gb"),
+            // 1TB
+            (1024 * 1024 * 1024 * 1024, "1tb"),
+        ];
+
+        let protocol = test_protocol();
+
+        for (size, name) in test_sizes {
+            let mut buf = Vec::new();
+            let mut writer = FileListWriter::new(protocol);
+
+            let filename = format!("{name}.bin");
+            let mut entry = FileEntry::new_file(filename.clone().into(), *size, 0o644);
+            entry.set_mtime(1700000000, 0);
+
+            writer.write_entry(&mut buf, &entry).unwrap();
+            writer.write_end(&mut buf, None).unwrap();
+
+            let mut cursor = Cursor::new(&buf[..]);
+            let mut reader = FileListReader::new(protocol);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(read_entry.name(), &filename);
+            assert_eq!(
+                read_entry.size(),
+                *size,
+                "File size {size} ({name}) should round-trip correctly"
+            );
+        }
+    }
+
+    /// Test large file sizes with legacy protocol (< 30) which uses longint encoding.
+    /// The longint format uses 4 bytes for values <= 0x7FFFFFFF and 12 bytes for larger.
+    #[test]
+    fn large_file_size_legacy_protocol_round_trip() {
+        use super::super::read::FileListReader;
+        use std::io::Cursor;
+
+        const SIZE_3GB: u64 = 3 * 1024 * 1024 * 1024;
+        const SIZE_5GB: u64 = 5 * 1024 * 1024 * 1024;
+
+        // Protocol 29 uses longint encoding
+        let protocol = ProtocolVersion::try_from(29u8).unwrap();
+
+        for size in [SIZE_3GB, SIZE_5GB] {
+            let mut buf = Vec::new();
+            let mut writer = FileListWriter::new(protocol);
+
+            let mut entry = FileEntry::new_file("large_legacy.bin".into(), size, 0o644);
+            entry.set_mtime(1700000000, 0);
+
+            writer.write_entry(&mut buf, &entry).unwrap();
+            writer.write_end(&mut buf, None).unwrap();
+
+            let mut cursor = Cursor::new(&buf[..]);
+            let mut reader = FileListReader::new(protocol);
+
+            let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+            assert_eq!(
+                read_entry.size(),
+                size,
+                "Legacy protocol should handle {size} byte files correctly"
+            );
+        }
+    }
 }
