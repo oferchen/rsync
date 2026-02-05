@@ -79,7 +79,10 @@ pub use plan::{
     LocalCopySummary, TimeChange,
 };
 
-pub use options::{DeleteTiming, LocalCopyOptions, ReferenceDirectory, ReferenceDirectoryKind};
+pub use options::{
+    BuilderError, DeleteTiming, LocalCopyOptions, LocalCopyOptionsBuilder, ReferenceDirectory,
+    ReferenceDirectoryKind,
+};
 
 pub use error::{LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind};
 
