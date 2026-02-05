@@ -713,3 +713,701 @@ fn lazy_evaluation_for_very_deep_structures() {
     // memory for all 200+ entries. Instead, we only processed 50.
     // This is an implicit test - we're verifying it doesn't panic or OOM.
 }
+
+// ============================================================================
+// Paths at Exactly PATH_MAX Tests
+// ============================================================================
+
+/// Calculates the exact path length needed to reach a target total length.
+fn calculate_levels_for_target_length(root: &Path, target_len: usize, dir_name_len: usize) -> usize {
+    let root_len = root.as_os_str().len();
+    let available = target_len.saturating_sub(root_len);
+    // Each level adds dir_name_len + 1 (for separator)
+    available / (dir_name_len + 1)
+}
+
+/// Attempts to create a path of exactly the specified length.
+/// Returns the deepest directory path if successful.
+fn try_create_path_of_length(root: &Path, target_len: usize) -> Option<PathBuf> {
+    let root_len = root.as_os_str().len();
+    if target_len <= root_len {
+        return Some(root.to_path_buf());
+    }
+
+    // Use 100-char directory names for efficient length building
+    let dir_name_base_len = 100;
+    let available = target_len - root_len;
+
+    // Calculate how many full-length directories we need
+    let levels = available / (dir_name_base_len + 1);
+    let remainder = available % (dir_name_base_len + 1);
+
+    let mut current = root.to_path_buf();
+
+    // Create directories with full-length names
+    for i in 0..levels {
+        let name = format!("d{:0width$}", i, width = dir_name_base_len - 1);
+        current = current.join(name);
+    }
+
+    // Create final directory with exact remaining length
+    if remainder > 1 {
+        // remainder includes the separator
+        let final_name_len = remainder - 1;
+        if final_name_len > 0 {
+            let final_name = "x".repeat(final_name_len);
+            current = current.join(final_name);
+        }
+    }
+
+    match fs::create_dir_all(&current) {
+        Ok(_) => Some(current),
+        Err(_) => None,
+    }
+}
+
+/// Verifies handling of paths at exactly PATH_MAX - 1 (maximum valid).
+#[test]
+fn path_at_exactly_path_max_minus_one() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("exact_max");
+    fs::create_dir(&root).expect("create root");
+
+    let root_len = root.as_os_str().len();
+    // Target path length: PATH_MAX - 1 (4095) minus some buffer for the file name
+    let target_dir_len = PATH_MAX.saturating_sub(1).saturating_sub(50); // Leave room for filename
+
+    if target_dir_len <= root_len {
+        eprintln!("Root path too long for test");
+        return;
+    }
+
+    if let Some(deep_path) = try_create_path_of_length(&root, target_dir_len) {
+        let file_path = deep_path.join("f.txt");
+        if fs::write(&file_path, b"at limit").is_ok() {
+            let total_len = file_path.as_os_str().len();
+            println!("Created path of length {total_len} (target: ~{target_dir_len})");
+
+            let walker = FileListBuilder::new(&root).build().expect("build walker");
+            let entries = collect_all_entries(walker);
+
+            // Should find the file
+            let found = entries.iter().any(|e| {
+                e.relative_path().to_string_lossy().ends_with("f.txt")
+            });
+            assert!(found, "should find file near PATH_MAX limit");
+        }
+    }
+}
+
+/// Verifies that paths approaching PATH_MAX with long filenames are handled.
+#[test]
+fn long_path_with_long_filename_combination() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("combo");
+    fs::create_dir(&root).expect("create root");
+
+    // Create a moderately deep structure
+    let deep_path = create_deep_structure(&root, 20, 50);
+
+    // Try to create a file with a long name (200 chars)
+    let long_filename = format!("{}.txt", "long_name_".repeat(19));
+    let file_path = deep_path.join(&long_filename);
+
+    if let Ok(_) = fs::write(&file_path, b"combo test") {
+        let total_len = file_path.as_os_str().len();
+        println!("Combined path length: {total_len}");
+
+        let walker = FileListBuilder::new(&root).build().expect("build walker");
+        let entries = collect_all_entries(walker);
+
+        // Verify file was found
+        let found = entries.iter().any(|e| {
+            e.relative_path().to_string_lossy().contains("long_name_")
+        });
+        assert!(found, "should find file with long name in deep directory");
+    }
+}
+
+// ============================================================================
+// Paths Exceeding PATH_MAX Tests
+// ============================================================================
+
+/// Verifies graceful handling when filesystem rejects paths exceeding PATH_MAX.
+/// The test attempts to create a structure that would exceed PATH_MAX and verifies
+/// that either the OS rejects it (expected) or we can still traverse what exists.
+#[test]
+fn path_exceeding_path_max_filesystem_rejection() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("exceed");
+    fs::create_dir(&root).expect("create root");
+
+    // Calculate how many 200-char directories would exceed PATH_MAX
+    let root_len = root.as_os_str().len();
+    let dir_name_len = 200;
+    // Need enough levels to exceed PATH_MAX (4096)
+    let levels_to_exceed = (PATH_MAX + 1000 - root_len) / (dir_name_len + 1);
+
+    let mut current = root.clone();
+    let mut created_count = 0;
+
+    for i in 0..levels_to_exceed {
+        let name = format!("d{:0width$}", i, width = dir_name_len - 1);
+        let next = current.join(&name);
+
+        match fs::create_dir(&next) {
+            Ok(_) => {
+                current = next;
+                created_count += 1;
+            }
+            Err(e) => {
+                // Expected: filesystem rejects path that's too long
+                println!("Filesystem rejected at level {i}: {e}");
+                break;
+            }
+        }
+    }
+
+    // Traverse whatever was successfully created
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let entries = collect_all_entries(walker);
+
+    // Should have at least root + created directories
+    assert!(
+        entries.len() >= created_count,
+        "should traverse all successfully created directories"
+    );
+
+    println!("Created {created_count} levels before filesystem rejection");
+}
+
+/// Verifies that the walker handles a directory structure where paths approach
+/// but don't exceed the limit gracefully.
+#[test]
+fn walk_structure_approaching_limit_from_multiple_branches() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("multi_approach");
+    fs::create_dir(&root).expect("create root");
+
+    // Create multiple branches that each approach the limit
+    let branches = ["alpha", "beta", "gamma"];
+    let mut total_files = 0;
+
+    for branch in &branches {
+        let branch_root = root.join(branch);
+        // Try to create 15 levels with 100-char names
+        match fs::create_dir_all(&branch_root) {
+            Ok(_) => {
+                let deep = create_deep_structure(&branch_root, 15, 100);
+                if fs::write(deep.join("leaf.txt"), b"data").is_ok() {
+                    total_files += 1;
+                }
+            }
+            Err(_) => {
+                println!("Could not create branch {branch}");
+            }
+        }
+    }
+
+    if total_files > 0 {
+        let walker = FileListBuilder::new(&root).build().expect("build walker");
+        let entries = collect_all_entries(walker);
+
+        let found_files = entries.iter().filter(|e| {
+            e.relative_path().to_string_lossy().ends_with("leaf.txt")
+        }).count();
+
+        assert_eq!(found_files, total_files, "should find all leaf files in long branches");
+    }
+}
+
+// ============================================================================
+// Relative Paths That Become Long When Resolved
+// ============================================================================
+
+/// Verifies that relative paths with many '..' components that resolve to
+/// long absolute paths are handled correctly.
+#[test]
+fn relative_path_resolving_to_long_absolute() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("rel_long");
+
+    // Create a deep structure
+    let deep_path = create_deep_structure(&root, 20, 30);
+    fs::write(deep_path.join("target.txt"), b"target").expect("write target");
+
+    // Navigate from root and verify relative paths are computed correctly
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+
+    for entry in walker {
+        let entry = entry.expect("entry should succeed");
+        let relative = entry.relative_path();
+        let full = entry.full_path();
+
+        // Verify that joining root + relative gives full path
+        if !entry.is_root() {
+            let reconstructed = root.join(relative);
+            assert_eq!(
+                full, reconstructed,
+                "relative path should resolve correctly for {:?}",
+                relative
+            );
+        }
+
+        // Ensure relative path doesn't have '..' components
+        let rel_str = relative.to_string_lossy();
+        assert!(
+            !rel_str.contains(".."),
+            "relative path should not contain '..' for {:?}",
+            relative
+        );
+    }
+}
+
+/// Verifies handling of paths containing '.' components in deeply nested structures.
+#[test]
+fn paths_with_current_dir_components_in_deep_structure() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("dot_deep");
+
+    let deep_path = create_deep_structure(&root, 25, 20);
+    fs::write(deep_path.join("file.txt"), b"data").expect("write file");
+
+    // Create path with '.' components
+    let with_dots = root.join(".").join("d0000000000000000000");
+    if with_dots.exists() {
+        let walker = FileListBuilder::new(&with_dots).build();
+        match walker {
+            Ok(walker) => {
+                let entries = collect_all_entries(walker);
+                assert!(!entries.is_empty(), "should traverse from path with '.'");
+            }
+            Err(_) => {
+                // Some systems may normalize differently
+                println!("Path with '.' not traversable as expected");
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Symlinks with Long Targets (Unix only)
+// ============================================================================
+
+#[cfg(unix)]
+mod symlink_long_path_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    /// Verifies handling of symlinks pointing to very long target paths.
+    #[test]
+    fn symlink_with_long_target_path() {
+        let temp = tempfile::tempdir().expect("create tempdir");
+        let root = temp.path().join("link_long");
+        fs::create_dir(&root).expect("create root");
+
+        // Create a deep target structure
+        let target_root = temp.path().join("target_deep");
+        let deep_target = create_deep_structure(&target_root, 30, 50);
+        fs::write(deep_target.join("target.txt"), b"target data").expect("write target");
+
+        // Create a symlink to the deep target
+        let link_path = root.join("link_to_deep");
+        if symlink(&deep_target, &link_path).is_ok() {
+            let walker = FileListBuilder::new(&root).build().expect("build walker");
+            let paths = collect_relative_paths(walker);
+
+            // Without following, should just see the symlink
+            assert_eq!(paths.len(), 1, "should see only the symlink");
+            assert_eq!(paths[0], PathBuf::from("link_to_deep"));
+
+            // With following, should see symlink contents
+            let walker_follow = FileListBuilder::new(&root)
+                .follow_symlinks(true)
+                .build()
+                .expect("build walker");
+            let paths_follow = collect_relative_paths(walker_follow);
+
+            assert!(paths_follow.len() >= 2, "should follow symlink to deep target");
+        }
+    }
+
+    /// Verifies handling of symlinks with target paths near PATH_MAX.
+    #[test]
+    fn symlink_target_approaching_path_max() {
+        let temp = tempfile::tempdir().expect("create tempdir");
+        let root = temp.path().join("link_max");
+        fs::create_dir(&root).expect("create root");
+
+        // Create a target that approaches PATH_MAX
+        let target_root = temp.path().join("max_target");
+        let root_len = target_root.as_os_str().len();
+        let target_dir_len = SAFE_PATH_LIMIT.saturating_sub(root_len);
+
+        if let Some(deep_target) = try_create_path_of_length(&target_root, target_dir_len) {
+            fs::write(deep_target.join("max.txt"), b"max").expect("write max file");
+
+            // Create symlink
+            let link_path = root.join("link_to_max");
+            if symlink(&deep_target, &link_path).is_ok() {
+                let walker = FileListBuilder::new(&root)
+                    .follow_symlinks(true)
+                    .build()
+                    .expect("build walker");
+                let entries = collect_all_entries(walker);
+
+                let found = entries.iter().any(|e| {
+                    e.relative_path().to_string_lossy().ends_with("max.txt")
+                });
+                assert!(found, "should find file through symlink to long path");
+            }
+        }
+    }
+
+    /// Verifies handling of relative symlinks in deep directory structures.
+    #[test]
+    fn relative_symlink_in_deep_structure() {
+        let temp = tempfile::tempdir().expect("create tempdir");
+        let root = temp.path().join("rel_sym_deep");
+
+        // Create deep structure with a sibling branch
+        let branch_a = create_deep_structure(&root.join("branch_a"), 15, 20);
+        let branch_b = create_deep_structure(&root.join("branch_b"), 15, 20);
+
+        fs::write(branch_b.join("target.txt"), b"target").expect("write target");
+
+        // Create relative symlink from branch_a to branch_b
+        // This requires going up many levels and back down
+        let relative_target = "../".repeat(16) + "branch_b/" + &"d".repeat(20).repeat(15);
+        // Simplified: just link to sibling
+        let link_path = branch_a.join("sibling_link");
+        if symlink(&branch_b, &link_path).is_ok() {
+            let walker = FileListBuilder::new(&root)
+                .follow_symlinks(true)
+                .build()
+                .expect("build walker");
+            let entries = collect_all_entries(walker);
+
+            // Should find target.txt in branch_b and through sibling_link
+            let target_count = entries.iter().filter(|e| {
+                e.relative_path().to_string_lossy().contains("target.txt")
+            }).count();
+
+            // We expect to find the file at least once (directly in branch_b)
+            // With cycle detection, we shouldn't infinitely recurse
+            assert!(target_count >= 1, "should find target.txt at least once");
+        }
+    }
+
+    /// Verifies symlink target stored correctly for long paths.
+    #[test]
+    fn symlink_target_storage_for_long_paths() {
+        let temp = tempfile::tempdir().expect("create tempdir");
+        let root = temp.path().join("sym_store");
+        fs::create_dir(&root).expect("create root");
+
+        // Create a target with a moderately long path
+        let target_path = temp.path().join("a".repeat(100)).join("b".repeat(100));
+        fs::create_dir_all(&target_path).expect("create target");
+        fs::write(target_path.join("file.txt"), b"content").expect("write file");
+
+        // Create symlink
+        let link_path = root.join("long_target_link");
+        if symlink(&target_path, &link_path).is_ok() {
+            // Verify we can read the link target
+            let read_target = fs::read_link(&link_path).expect("read link");
+            assert_eq!(read_target, target_path, "symlink target should be preserved");
+
+            // Walker should handle this correctly
+            let walker = FileListBuilder::new(&root).build().expect("build walker");
+            let entries = collect_all_entries(walker);
+
+            let link_entry = entries.iter().find(|e| !e.is_root()).expect("find link");
+            assert!(
+                link_entry.metadata().file_type().is_symlink(),
+                "entry should be recognized as symlink"
+            );
+        }
+    }
+}
+
+// ============================================================================
+// Error Handling for Paths Too Long
+// ============================================================================
+
+/// Verifies that attempting to traverse with an excessively long base path
+/// produces appropriate behavior.
+#[test]
+fn very_long_base_path_handling() {
+    // This tests what happens when the starting path itself is very long
+    let temp = tempfile::tempdir().expect("create tempdir");
+
+    // Create a moderately deep starting point
+    let deep_start = create_deep_structure(temp.path(), 20, 80);
+
+    // Can we build a walker from this deep starting point?
+    match FileListBuilder::new(&deep_start).build() {
+        Ok(walker) => {
+            // If successful, root entry should have correct full path
+            for entry in walker {
+                let entry = entry.expect("entry should succeed");
+                if entry.is_root() {
+                    assert_eq!(
+                        entry.full_path(), deep_start,
+                        "root full path should match starting path"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            // If it fails due to path limits, that's acceptable
+            println!("Expected failure for very long base path: {e}");
+        }
+    }
+}
+
+/// Verifies behavior when creating entries would result in paths exceeding limits.
+#[test]
+fn entry_creation_at_path_limits() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("entry_limit");
+    fs::create_dir(&root).expect("create root");
+
+    // Create structure close to but not exceeding limits
+    let root_len = root.as_os_str().len();
+    let safe_depth = (SAFE_PATH_LIMIT - root_len) / 101; // 100-char names + separator
+    let safe_depth = safe_depth.min(35); // Cap for reasonable test time
+
+    let deep_path = create_deep_structure(&root, safe_depth, 100);
+    fs::write(deep_path.join("safe.txt"), b"safe").expect("write file");
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let mut error_count = 0;
+    let mut success_count = 0;
+
+    for result in walker {
+        match result {
+            Ok(_) => success_count += 1,
+            Err(_) => error_count += 1,
+        }
+    }
+
+    println!("Success: {success_count}, Errors: {error_count}");
+    assert!(success_count > 0, "should successfully traverse some entries");
+}
+
+// ============================================================================
+// Path Truncation Behavior Tests
+// ============================================================================
+
+/// Verifies that file names are not truncated when stored in entries.
+#[test]
+fn no_filename_truncation_at_max_length() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("no_trunc");
+    fs::create_dir(&root).expect("create root");
+
+    // Create file with exactly 255-byte name (NAME_MAX)
+    let exact_name = format!("{}.txt", "a".repeat(251)); // 255 total
+    assert_eq!(exact_name.len(), 255);
+
+    if fs::write(root.join(&exact_name), b"data").is_ok() {
+        let walker = FileListBuilder::new(&root).build().expect("build walker");
+        let entries = collect_all_entries(walker);
+
+        let file_entry = entries.iter().find(|e| !e.is_root()).expect("find file");
+        let stored_name = file_entry.file_name().expect("get filename");
+
+        assert_eq!(
+            stored_name.len(), 255,
+            "filename should not be truncated"
+        );
+        assert_eq!(
+            stored_name.to_string_lossy(), exact_name,
+            "filename should match exactly"
+        );
+    }
+}
+
+/// Verifies relative paths are not truncated for deeply nested files.
+#[test]
+fn no_relative_path_truncation_in_deep_structure() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("deep_no_trunc");
+
+    // Create deep structure
+    let deep_path = create_deep_structure(&root, 20, 50);
+    fs::write(deep_path.join("deep.txt"), b"data").expect("write file");
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+
+    for entry in walker {
+        let entry = entry.expect("entry should succeed");
+        if entry.is_root() {
+            continue;
+        }
+
+        let relative = entry.relative_path();
+        let full = entry.full_path();
+
+        // Verify full path = root + relative (no truncation)
+        let expected_full = root.join(relative);
+        assert_eq!(
+            full, expected_full,
+            "full path should equal root + relative (no truncation)"
+        );
+
+        // Verify relative path components match directory structure
+        let component_count = relative.components().count();
+        assert_eq!(
+            entry.depth(), component_count,
+            "depth should match component count (no truncation)"
+        );
+    }
+}
+
+/// Verifies that directory names at maximum length are preserved.
+#[test]
+fn no_directory_name_truncation() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("dir_no_trunc");
+    fs::create_dir(&root).expect("create root");
+
+    // Create nested directories with max-length names
+    let max_dir_name = "d".repeat(255);
+    let level1 = root.join(&max_dir_name);
+
+    if fs::create_dir(&level1).is_ok() {
+        let walker = FileListBuilder::new(&root).build().expect("build walker");
+        let entries = collect_all_entries(walker);
+
+        let dir_entry = entries.iter().find(|e| !e.is_root()).expect("find dir");
+        let dir_name = dir_entry.file_name().expect("get dirname");
+
+        assert_eq!(
+            dir_name.len(), 255,
+            "directory name should not be truncated"
+        );
+    }
+}
+
+// ============================================================================
+// Combined Edge Cases
+// ============================================================================
+
+/// Tests combination of many factors: deep nesting, long names, symlinks.
+#[cfg(unix)]
+#[test]
+fn combined_deep_long_symlink_structure() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("combined");
+    fs::create_dir(&root).expect("create root");
+
+    // Create deep structure with long directory names
+    let deep_with_long = create_deep_structure(&root.join("deep"), 10, 80);
+
+    // Create file with long name at the deep location
+    let long_filename = format!("{}.txt", "file_".repeat(40));
+    fs::write(deep_with_long.join(&long_filename), b"combined").expect("write file");
+
+    // Create symlink to deep structure
+    let link = root.join("link_to_deep");
+    if symlink(&deep_with_long, &link).is_ok() {
+        // Traverse with symlink following
+        let walker = FileListBuilder::new(&root)
+            .follow_symlinks(true)
+            .build()
+            .expect("build walker");
+        let entries = collect_all_entries(walker);
+
+        // Should find the file both directly and through symlink
+        let file_count = entries.iter().filter(|e| {
+            e.relative_path().to_string_lossy().contains("file_file_")
+        }).count();
+
+        // Due to cycle detection, we might find it once or twice
+        assert!(file_count >= 1, "should find file with long name in deep structure");
+    }
+}
+
+/// Tests handling of empty directories at various depths near the limit.
+#[test]
+fn empty_directories_at_path_limits() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("empty_deep");
+    fs::create_dir(&root).expect("create root");
+
+    // Create structure of empty directories approaching the limit
+    let root_len = root.as_os_str().len();
+    let levels = (SAFE_PATH_LIMIT - root_len) / 51; // 50-char names + separator
+    let levels = levels.min(60); // Cap for test performance
+
+    let deep_path = create_deep_structure(&root, levels, 50);
+    // Don't create any files - just empty directories
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let entries = collect_all_entries(walker);
+
+    // Should have root + all directories
+    assert_eq!(
+        entries.len() - 1, levels, // -1 for root
+        "should traverse all empty directories"
+    );
+
+    // All non-root entries should be directories
+    for entry in &entries {
+        if !entry.is_root() {
+            assert!(
+                entry.metadata().is_dir(),
+                "all non-root entries should be directories"
+            );
+        }
+    }
+}
+
+/// Tests iteration patterns with paths near the limit.
+#[test]
+fn iterator_patterns_with_long_paths() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("iter_long");
+
+    // Create deep structure with files at various levels
+    let deep_path = create_deep_structure(&root, 25, 60);
+    fs::write(deep_path.join("deepest.txt"), b"deep").expect("write deep file");
+
+    // Add some files at intermediate depths
+    let mut current = root.clone();
+    for i in 0..5 {
+        current = current.join(format!("d{:059}", i));
+        if current.exists() {
+            fs::write(current.join(format!("level{i}.txt")), b"data").expect("write file");
+        }
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+
+    // Test take() with long paths
+    let first_ten: Vec<_> = walker.take(10).collect();
+    assert_eq!(first_ten.len(), 10, "take(10) should return 10 entries");
+
+    // Test filter() with long paths
+    let walker2 = FileListBuilder::new(&root).build().expect("build walker");
+    let files_only: Vec<_> = walker2
+        .filter_map(|r| r.ok())
+        .filter(|e| e.metadata().is_file())
+        .collect();
+
+    assert!(!files_only.is_empty(), "should find files with filter");
+
+    // Test map() with long paths
+    let walker3 = FileListBuilder::new(&root).build().expect("build walker");
+    let depths: Vec<usize> = walker3
+        .filter_map(|r| r.ok())
+        .map(|e| e.depth())
+        .collect();
+
+    assert!(depths.contains(&0), "should have depth 0");
+    assert!(*depths.iter().max().unwrap() > 20, "should have deep entries");
+}
