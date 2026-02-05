@@ -122,8 +122,8 @@ fn omit_dir_times_works_with_nested_directories() {
 
     set_file_mtime(&source_file, file_mtime).expect("set file mtime");
     set_file_mtime(&nested, level3_mtime).expect("set level3 mtime");
-    set_file_mtime(&nested.parent().unwrap(), level2_mtime).expect("set level2 mtime");
-    set_file_mtime(&nested.parent().unwrap().parent().unwrap(), level1_mtime).expect("set level1 mtime");
+    set_file_mtime(nested.parent().unwrap(), level2_mtime).expect("set level2 mtime");
+    set_file_mtime(nested.parent().unwrap().parent().unwrap(), level1_mtime).expect("set level1 mtime");
     set_file_mtime(&source_root, root_mtime).expect("set root mtime");
 
     let dest_root = temp.path().join("dest");

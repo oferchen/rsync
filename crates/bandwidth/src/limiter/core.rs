@@ -1667,12 +1667,12 @@ mod tests {
 
         // Test various extreme configurations
         let configurations: Vec<(u64, Option<u64>)> = vec![
-            (1, None),             // Minimum rate, no burst
-            (u64::MAX, None),      // Maximum rate, no burst
-            (1, Some(u64::MAX)),   // Min rate, max burst
-            (u64::MAX, Some(1)),   // Max rate, min burst
-            (1000, Some(1)),       // Normal rate, tiny burst
-            (1, Some(1)),          // Both minimum
+            (1, None),           // Minimum rate, no burst
+            (u64::MAX, None),    // Maximum rate, no burst
+            (1, Some(u64::MAX)), // Min rate, max burst
+            (u64::MAX, Some(1)), // Max rate, min burst
+            (1000, Some(1)),     // Normal rate, tiny burst
+            (1, Some(1)),        // Both minimum
         ];
 
         for (rate, burst) in configurations {

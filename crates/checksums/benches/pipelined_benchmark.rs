@@ -153,7 +153,8 @@ fn bench_pipelined_sha256(c: &mut Criterion) {
             &data,
             |b, data| {
                 b.iter(|| {
-                    let result = compute_checksums_sequential::<Sha256>(black_box(data), block_size);
+                    let result =
+                        compute_checksums_sequential::<Sha256>(black_box(data), block_size);
                     black_box(result)
                 });
             },
@@ -293,24 +294,20 @@ fn bench_block_sizes(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(file_size as u64));
 
     for block_size in [16 * 1024, 32 * 1024, 64 * 1024, 128 * 1024, 256 * 1024] {
-        group.bench_with_input(
-            BenchmarkId::new("md5", block_size),
-            &data,
-            |b, data| {
-                b.iter(|| {
-                    let config = PipelineConfig::default()
-                        .with_block_size(block_size)
-                        .with_min_file_size(0);
-                    let result = compute_checksums_pipelined::<Md5, _>(
-                        Cursor::new(black_box(data.clone())),
-                        config,
-                        Some(file_size as u64),
-                    )
-                    .unwrap();
-                    black_box(result)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("md5", block_size), &data, |b, data| {
+            b.iter(|| {
+                let config = PipelineConfig::default()
+                    .with_block_size(block_size)
+                    .with_min_file_size(0);
+                let result = compute_checksums_pipelined::<Md5, _>(
+                    Cursor::new(black_box(data.clone())),
+                    config,
+                    Some(file_size as u64),
+                )
+                .unwrap();
+                black_box(result)
+            });
+        });
     }
 
     group.finish();

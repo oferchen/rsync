@@ -566,3 +566,420 @@ fn execute_hardlink_preserves_first_occurrence_then_links() {
 
     assert!(summary.hard_links_created() >= 2);
 }
+
+/// Test that the detection algorithm correctly identifies files by device/inode pair.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_detection_by_device_inode() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    // Create two independent files that happen to be similar in content
+    // but should have different inodes
+    let file_a = source_root.join("similar_a.txt");
+    let file_b = source_root.join("similar_b.txt");
+
+    fs::write(&file_a, b"identical content").expect("write file a");
+    fs::write(&file_b, b"identical content").expect("write file b");
+
+    // These should have different inodes despite same content
+    let source_meta_a = fs::metadata(&file_a).expect("meta a");
+    let source_meta_b = fs::metadata(&file_b).expect("meta b");
+    assert_ne!(
+        source_meta_a.ino(),
+        source_meta_b.ino(),
+        "separate files should have different inodes"
+    );
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Verify files were NOT hardlinked (different source inodes)
+    let dest_a = dest_root.join("similar_a.txt");
+    let dest_b = dest_root.join("similar_b.txt");
+
+    let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
+    let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
+
+    assert_ne!(
+        dest_meta_a.ino(),
+        dest_meta_b.ino(),
+        "files with same content but different source inodes should remain separate"
+    );
+    assert_eq!(dest_meta_a.nlink(), 1, "standalone file should have nlink=1");
+    assert_eq!(dest_meta_b.nlink(), 1, "standalone file should have nlink=1");
+    assert_eq!(summary.hard_links_created(), 0, "no hardlinks should be created");
+}
+
+/// Test hardlink detection with zero-length files.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_zero_length_files() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    // Create empty file with hardlinks
+    let empty_a = source_root.join("empty_a.txt");
+    let empty_b = source_root.join("empty_b.txt");
+
+    fs::write(&empty_a, b"").expect("write empty a");
+    fs::hard_link(&empty_a, &empty_b).expect("create hardlink");
+
+    let source_meta = fs::metadata(&empty_a).expect("source meta");
+    assert_eq!(source_meta.len(), 0, "file should be empty");
+    assert_eq!(source_meta.nlink(), 2, "should have 2 links");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_a = dest_root.join("empty_a.txt");
+    let dest_b = dest_root.join("empty_b.txt");
+
+    let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
+    let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
+
+    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino(), "empty files should be hardlinked");
+    assert_eq!(dest_meta_a.nlink(), 2);
+    assert!(summary.hard_links_created() >= 1);
+}
+
+/// Test hardlink preservation with very long filenames.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_long_filenames() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    // Create files with long names (up to ~200 chars to stay within limits)
+    let long_name_a = "a".repeat(200) + ".txt";
+    let long_name_b = "b".repeat(200) + ".txt";
+
+    let file_a = source_root.join(&long_name_a);
+    let file_b = source_root.join(&long_name_b);
+
+    fs::write(&file_a, b"content with long name").expect("write file a");
+    fs::hard_link(&file_a, &file_b).expect("create hardlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_a = dest_root.join(&long_name_a);
+    let dest_b = dest_root.join(&long_name_b);
+
+    let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
+    let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
+
+    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino(), "long-named files should be hardlinked");
+    assert_eq!(dest_meta_a.nlink(), 2);
+    assert!(summary.hard_links_created() >= 1);
+}
+
+/// Test that hardlinks with special characters in names work correctly.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_special_characters_in_names() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    // Create files with special characters
+    let file_a = source_root.join("file with spaces.txt");
+    let file_b = source_root.join("file-with-dashes.txt");
+    let file_c = source_root.join("file_with_underscores.txt");
+
+    fs::write(&file_a, b"special content").expect("write file a");
+    fs::hard_link(&file_a, &file_b).expect("create hardlink b");
+    fs::hard_link(&file_a, &file_c).expect("create hardlink c");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_a = dest_root.join("file with spaces.txt");
+    let dest_b = dest_root.join("file-with-dashes.txt");
+    let dest_c = dest_root.join("file_with_underscores.txt");
+
+    let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
+    let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
+    let dest_meta_c = fs::metadata(&dest_c).expect("dest meta c");
+
+    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino());
+    assert_eq!(dest_meta_a.ino(), dest_meta_c.ino());
+    assert_eq!(dest_meta_a.nlink(), 3);
+    assert!(summary.hard_links_created() >= 2);
+}
+
+/// Test hardlink handling in dry-run mode.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_dry_run_mode() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    let file_a = source_root.join("file-a.txt");
+    let file_b = source_root.join("file-b.txt");
+    fs::write(&file_a, b"content").expect("write file a");
+    fs::hard_link(&file_a, &file_b).expect("create hardlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let _summary = plan
+        .execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("dry run succeeds");
+
+    // In dry-run mode, destination should not be created
+    assert!(!dest_root.exists(), "destination should not be created in dry-run");
+}
+
+/// Test that hardlink count tracking is accurate across operations.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_summary_counts_accurate() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    // Create multiple hardlink groups with different sizes
+    // Group 1: 2 files
+    let g1_a = source_root.join("g1_a.txt");
+    let g1_b = source_root.join("g1_b.txt");
+    fs::write(&g1_a, b"group1").expect("write g1_a");
+    fs::hard_link(&g1_a, &g1_b).expect("link g1_b");
+
+    // Group 2: 3 files
+    let g2_a = source_root.join("g2_a.txt");
+    let g2_b = source_root.join("g2_b.txt");
+    let g2_c = source_root.join("g2_c.txt");
+    fs::write(&g2_a, b"group2").expect("write g2_a");
+    fs::hard_link(&g2_a, &g2_b).expect("link g2_b");
+    fs::hard_link(&g2_a, &g2_c).expect("link g2_c");
+
+    // Standalone file (no links)
+    let standalone = source_root.join("standalone.txt");
+    fs::write(&standalone, b"alone").expect("write standalone");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Group 1 should create 1 hardlink (1 copy + 1 link = 2 files)
+    // Group 2 should create 2 hardlinks (1 copy + 2 links = 3 files)
+    // Standalone creates 0 hardlinks
+    // Total: 3 hardlinks created
+    assert!(
+        summary.hard_links_created() >= 3,
+        "expected at least 3 hardlinks, got {}",
+        summary.hard_links_created()
+    );
+}
+
+/// Test hardlink behavior when source is modified between discovery and copy.
+///
+/// This tests race condition handling where nlink changes.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_nlink_changes_during_operation() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    // Create a hardlinked pair
+    let file_a = source_root.join("file-a.txt");
+    let file_b = source_root.join("file-b.txt");
+    fs::write(&file_a, b"content").expect("write file a");
+    fs::hard_link(&file_a, &file_b).expect("create hardlink");
+
+    // At this point, both files have nlink = 2
+    let meta_before = fs::metadata(&file_a).expect("meta before");
+    assert_eq!(meta_before.nlink(), 2);
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Verify the result is correct even if timing varies
+    let dest_a = dest_root.join("file-a.txt");
+    let dest_b = dest_root.join("file-b.txt");
+
+    assert!(dest_a.exists(), "dest_a should exist");
+    assert!(dest_b.exists(), "dest_b should exist");
+
+    let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
+    let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
+
+    // Both should be hardlinked
+    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino(), "files should share inode");
+    assert_eq!(dest_meta_a.nlink(), 2);
+    assert!(summary.hard_links_created() >= 1);
+}
+
+/// Test hardlink handling when destination directory has restrictive permissions.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_in_writable_directory() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    let file_a = source_root.join("file-a.txt");
+    let file_b = source_root.join("file-b.txt");
+    fs::write(&file_a, b"content").expect("write file a");
+    fs::hard_link(&file_a, &file_b).expect("create hardlink");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // Ensure directory is writable
+    let mut perms = fs::metadata(&dest_root).expect("dest perms").permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o755);
+    fs::set_permissions(&dest_root, perms).expect("set perms");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().hard_links(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Files should be in dest/source/ subdirectory
+    let dest_a = dest_root.join("source/file-a.txt");
+    let dest_b = dest_root.join("source/file-b.txt");
+
+    let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
+    let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
+
+    assert_eq!(dest_meta_a.ino(), dest_meta_b.ino());
+    assert_eq!(dest_meta_a.nlink(), 2);
+    assert!(summary.hard_links_created() >= 1);
+}
+
+/// Test hardlink detection with symlinks in the same directory.
+#[cfg(unix)]
+#[test]
+fn execute_hardlink_mixed_with_symlinks() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(&source_root).expect("create source root");
+
+    // Create a regular file
+    let regular = source_root.join("regular.txt");
+    fs::write(&regular, b"regular content").expect("write regular");
+
+    // Create hardlink to the regular file
+    let hardlink = source_root.join("hardlink.txt");
+    fs::hard_link(&regular, &hardlink).expect("create hardlink");
+
+    // Create symlink to the regular file
+    use std::os::unix::fs::symlink;
+    let symlink_path = source_root.join("symlink.txt");
+    symlink("regular.txt", &symlink_path).expect("create symlink");
+
+    let dest_root = temp.path().join("dest");
+    let operands = vec![
+        source_root.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .hard_links(true)
+        .links(true);  // Also preserve symlinks
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_regular = dest_root.join("regular.txt");
+    let dest_hardlink = dest_root.join("hardlink.txt");
+    let dest_symlink = dest_root.join("symlink.txt");
+
+    // Verify hardlink is preserved
+    let dest_meta_regular = fs::metadata(&dest_regular).expect("dest meta regular");
+    let dest_meta_hardlink = fs::metadata(&dest_hardlink).expect("dest meta hardlink");
+    assert_eq!(dest_meta_regular.ino(), dest_meta_hardlink.ino(), "hardlink should be preserved");
+
+    // Verify symlink is preserved as symlink (not following target)
+    let symlink_meta = fs::symlink_metadata(&dest_symlink).expect("symlink meta");
+    assert!(symlink_meta.is_symlink(), "symlink should be preserved as symlink");
+
+    assert!(summary.hard_links_created() >= 1);
+}

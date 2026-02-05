@@ -11,7 +11,7 @@ fn min_size_excludes_files_smaller_than_limit() {
     fs::write(source.join("tiny.txt"), b"x").expect("write 1-byte file");
     fs::write(source.join("small.txt"), b"hello").expect("write 5-byte file");
     fs::write(source.join("medium.txt"), b"hello world!").expect("write 12-byte file");
-    fs::write(source.join("large.txt"), &vec![b'a'; 100]).expect("write 100-byte file");
+    fs::write(source.join("large.txt"), vec![b'a'; 100]).expect("write 100-byte file");
 
     let operands = vec![
         source.into_os_string(),
@@ -49,9 +49,9 @@ fn min_size_includes_files_equal_to_limit() {
     fs::create_dir_all(&dest).expect("create dest");
 
     // Create files around the boundary
-    fs::write(source.join("below.txt"), &vec![b'x'; 99]).expect("write 99-byte file");
-    fs::write(source.join("exact.txt"), &vec![b'x'; 100]).expect("write 100-byte file");
-    fs::write(source.join("above.txt"), &vec![b'x'; 101]).expect("write 101-byte file");
+    fs::write(source.join("below.txt"), vec![b'x'; 99]).expect("write 99-byte file");
+    fs::write(source.join("exact.txt"), vec![b'x'; 100]).expect("write 100-byte file");
+    fs::write(source.join("above.txt"), vec![b'x'; 101]).expect("write 101-byte file");
 
     let operands = vec![
         source.into_os_string(),
@@ -91,9 +91,9 @@ fn min_size_includes_files_larger_than_limit() {
 
     // Create small and large files
     fs::write(source.join("small.txt"), b"tiny").expect("write small file");
-    fs::write(source.join("large1.txt"), &vec![b'a'; 1000]).expect("write 1KB file");
-    fs::write(source.join("large2.txt"), &vec![b'b'; 5000]).expect("write 5KB file");
-    fs::write(source.join("huge.txt"), &vec![b'c'; 10000]).expect("write 10KB file");
+    fs::write(source.join("large1.txt"), vec![b'a'; 1000]).expect("write 1KB file");
+    fs::write(source.join("large2.txt"), vec![b'b'; 5000]).expect("write 5KB file");
+    fs::write(source.join("huge.txt"), vec![b'c'; 10000]).expect("write 10KB file");
 
     let operands = vec![
         source.into_os_string(),
@@ -131,9 +131,9 @@ fn min_size_with_kilobyte_suffix() {
     fs::create_dir_all(&dest).expect("create dest");
 
     // Create files around 1KB boundary
-    fs::write(source.join("small.txt"), &vec![b'x'; 500]).expect("write 500-byte file");
-    fs::write(source.join("exact.txt"), &vec![b'x'; 1024]).expect("write 1KB file");
-    fs::write(source.join("large.txt"), &vec![b'x'; 2048]).expect("write 2KB file");
+    fs::write(source.join("small.txt"), vec![b'x'; 500]).expect("write 500-byte file");
+    fs::write(source.join("exact.txt"), vec![b'x'; 1024]).expect("write 1KB file");
+    fs::write(source.join("large.txt"), vec![b'x'; 2048]).expect("write 2KB file");
 
     let operands = vec![
         source.into_os_string(),
@@ -169,9 +169,9 @@ fn min_size_with_megabyte_suffix() {
     fs::create_dir_all(&dest).expect("create dest");
 
     // Create files around 1MB boundary
-    fs::write(source.join("small.txt"), &vec![b'x'; 512 * 1024]).expect("write 512KB file");
-    fs::write(source.join("exact.txt"), &vec![b'x'; 1024 * 1024]).expect("write 1MB file");
-    fs::write(source.join("large.txt"), &vec![b'x'; 2 * 1024 * 1024]).expect("write 2MB file");
+    fs::write(source.join("small.txt"), vec![b'x'; 512 * 1024]).expect("write 512KB file");
+    fs::write(source.join("exact.txt"), vec![b'x'; 1024 * 1024]).expect("write 1MB file");
+    fs::write(source.join("large.txt"), vec![b'x'; 2 * 1024 * 1024]).expect("write 2MB file");
 
     let operands = vec![
         source.into_os_string(),
@@ -208,7 +208,7 @@ fn min_size_with_gigabyte_suffix() {
 
     // Create files below 1GB (we won't actually create 1GB files for test speed)
     fs::write(source.join("tiny.txt"), b"small").expect("write tiny file");
-    fs::write(source.join("medium.txt"), &vec![b'x'; 100 * 1024 * 1024]).expect("write 100MB file");
+    fs::write(source.join("medium.txt"), vec![b'x'; 100 * 1024 * 1024]).expect("write 100MB file");
 
     let operands = vec![
         source.into_os_string(),
@@ -243,7 +243,7 @@ fn min_size_zero_includes_all_files() {
     // Create files of various sizes including empty
     fs::write(source.join("empty.txt"), b"").expect("write empty file");
     fs::write(source.join("small.txt"), b"x").expect("write 1-byte file");
-    fs::write(source.join("medium.txt"), &vec![b'x'; 100]).expect("write 100-byte file");
+    fs::write(source.join("medium.txt"), vec![b'x'; 100]).expect("write 100-byte file");
 
     let operands = vec![
         source.into_os_string(),
@@ -279,7 +279,7 @@ fn min_size_none_includes_all_files() {
     // Create files of various sizes
     fs::write(source.join("tiny.txt"), b"x").expect("write tiny file");
     fs::write(source.join("small.txt"), b"hello").expect("write small file");
-    fs::write(source.join("large.txt"), &vec![b'x'; 1000]).expect("write large file");
+    fs::write(source.join("large.txt"), vec![b'x'; 1000]).expect("write large file");
 
     let operands = vec![
         source.into_os_string(),
@@ -315,7 +315,7 @@ fn min_size_does_not_affect_directories() {
 
     // Create small file in subdirectory
     fs::write(source.join("subdir1/small.txt"), b"x").expect("write small file");
-    fs::write(source.join("subdir2/nested/large.txt"), &vec![b'x'; 1000])
+    fs::write(source.join("subdir2/nested/large.txt"), vec![b'x'; 1000])
         .expect("write large file");
 
     let operands = vec![
@@ -354,9 +354,9 @@ fn min_size_works_with_other_filters() {
 
     // Create files with different extensions and sizes
     fs::write(source.join("small.txt"), b"x").expect("write small txt");
-    fs::write(source.join("large.txt"), &vec![b'x'; 1000]).expect("write large txt");
+    fs::write(source.join("large.txt"), vec![b'x'; 1000]).expect("write large txt");
     fs::write(source.join("small.tmp"), b"y").expect("write small tmp");
-    fs::write(source.join("large.tmp"), &vec![b'y'; 1000]).expect("write large tmp");
+    fs::write(source.join("large.tmp"), vec![b'y'; 1000]).expect("write large tmp");
 
     let operands = vec![
         source.into_os_string(),

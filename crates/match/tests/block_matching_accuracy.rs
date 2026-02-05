@@ -24,8 +24,7 @@
 use matching::{DeltaSignatureIndex, DeltaToken, apply_delta, generate_delta};
 use protocol::ProtocolVersion;
 use signature::{
-    SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout,
-    generate_file_signature,
+    SignatureAlgorithm, SignatureLayoutParams, calculate_signature_layout, generate_file_signature,
 };
 use std::collections::HashSet;
 use std::io::Cursor;
@@ -49,10 +48,7 @@ fn build_index(data: &[u8]) -> Option<DeltaSignatureIndex> {
 }
 
 /// Creates a signature index with a specific block size hint.
-fn build_index_with_block_hint(
-    data: &[u8],
-    block_hint: u32,
-) -> Option<DeltaSignatureIndex> {
+fn build_index_with_block_hint(data: &[u8], block_hint: u32) -> Option<DeltaSignatureIndex> {
     use std::num::NonZeroU32;
     let params = SignatureLayoutParams::new(
         data.len() as u64,
@@ -73,8 +69,7 @@ fn apply_and_reconstruct(
 ) -> Vec<u8> {
     let mut basis_cursor = Cursor::new(basis);
     let mut output = Vec::new();
-    apply_delta(&mut basis_cursor, &mut output, index, script)
-        .expect("apply_delta should succeed");
+    apply_delta(&mut basis_cursor, &mut output, index, script).expect("apply_delta should succeed");
     output
 }
 
@@ -261,8 +256,7 @@ fn block_matches_at_different_alignments() {
 
         assert_eq!(
             reconstructed, input,
-            "block at offset {} should reconstruct correctly",
-            offset
+            "block at offset {offset} should reconstruct correctly"
         );
 
         // Should find the matching block
@@ -273,8 +267,7 @@ fn block_matches_at_different_alignments() {
             .count();
         assert!(
             copy_count >= 1,
-            "should find matching block at offset {}",
-            offset
+            "should find matching block at offset {offset}"
         );
     }
 }
@@ -304,7 +297,9 @@ fn rolling_checksum_consistency() {
     for i in window_size..data.len() {
         let outgoing = data[i - window_size];
         let incoming = data[i];
-        rolling.roll(outgoing, incoming).expect("roll should succeed");
+        rolling
+            .roll(outgoing, incoming)
+            .expect("roll should succeed");
         checksums_via_rolling.push(rolling.digest());
     }
 
@@ -330,8 +325,7 @@ fn rolling_checksum_consistency() {
     {
         assert_eq!(
             rolled, fresh,
-            "checksum at position {} should match: rolled={:?}, fresh={:?}",
-            i, rolled, fresh
+            "checksum at position {i} should match: rolled={rolled:?}, fresh={fresh:?}"
         );
     }
 }
@@ -341,7 +335,7 @@ fn rolling_checksum_consistency() {
 fn rolling_checksum_stability_across_patterns() {
     use checksums::RollingChecksum;
 
-    let test_cases = vec![
+    let test_cases: [Vec<u8>; 4] = [
         // Uniform data
         vec![0xAA; 100],
         // Incrementing bytes
@@ -368,7 +362,9 @@ fn rolling_checksum_stability_across_patterns() {
             let outgoing = data[i - window_size];
             let incoming = data[i];
 
-            rolling.roll(outgoing, incoming).expect("roll should succeed");
+            rolling
+                .roll(outgoing, incoming)
+                .expect("roll should succeed");
             let _after = rolling.digest();
 
             // Verify checksum changed (unless outgoing == incoming and window unchanged)
@@ -379,9 +375,7 @@ fn rolling_checksum_stability_across_patterns() {
                 assert_eq!(
                     rolling.digest(),
                     fresh.digest(),
-                    "case {}: rolling should match fresh at position {}",
-                    case_idx,
-                    i
+                    "case {case_idx}: rolling should match fresh at position {i}"
                 );
             }
         }
@@ -452,8 +446,7 @@ fn strong_checksum_distinguishes_different_blocks() {
 
             assert_eq!(
                 reconstructed, input,
-                "block {} should reconstruct correctly",
-                block_id
+                "block {block_id} should reconstruct correctly"
             );
 
             // Should have exactly one copy token for this block
@@ -469,15 +462,12 @@ fn strong_checksum_distinguishes_different_blocks() {
             assert_eq!(
                 copy_tokens.len(),
                 1,
-                "block {} should produce exactly one copy token",
-                block_id
+                "block {block_id} should produce exactly one copy token"
             );
 
             assert_eq!(
                 copy_tokens[0], block_id as u64,
-                "block {} should match itself (index {}), not another block",
-                block_id,
-                block_id
+                "block {block_id} should match itself (index {block_id}), not another block"
             );
         }
     }
@@ -495,9 +485,7 @@ fn strong_checksum_rejects_weak_checksum_collisions() {
     let block_len = index.block_length();
 
     // Create input with different content (won't match strong checksum)
-    let input: Vec<u8> = (0..block_len)
-        .map(|i| ((i * 7 + 13) % 256) as u8)
-        .collect();
+    let input: Vec<u8> = (0..block_len).map(|i| ((i * 7 + 13) % 256) as u8).collect();
 
     let script = generate_delta(&input[..], &index).expect("should generate delta");
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
@@ -580,9 +568,7 @@ fn false_positive_rate_is_low() {
     let index = build_index(&basis).expect("should build index");
 
     // Create completely different input that should NOT match
-    let input: Vec<u8> = (0..50_000)
-        .map(|i| ((i * 17 + 31) % 256) as u8)
-        .collect();
+    let input: Vec<u8> = (0..50_000).map(|i| ((i * 17 + 31) % 256) as u8).collect();
 
     let script = generate_delta(&input[..], &index).expect("should generate delta");
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
@@ -659,10 +645,7 @@ fn strong_checksum_rejects_crafted_collisions() {
 
     // Verify correct reconstruction
     let reconstructed = apply_and_reconstruct(&basis, &index, &script);
-    assert_eq!(
-        reconstructed, input,
-        "block 1 should reconstruct correctly"
-    );
+    assert_eq!(reconstructed, input, "block 1 should reconstruct correctly");
 }
 
 /// Measures false positive rate with random data.
@@ -701,8 +684,7 @@ fn accidental_weak_matches_rejected_by_strong_checksum() {
         .map(|i| ((i * 13) % 256) as u8)
         .collect();
 
-    let index = build_index_with_block_hint(&basis, block_size as u32)
-        .expect("should build index");
+    let index = build_index_with_block_hint(&basis, block_size as u32).expect("should build index");
 
     // Create input with different data
     let input: Vec<u8> = (0..block_size * num_blocks)
@@ -760,8 +742,7 @@ fn matching_at_exact_block_boundaries() {
 
     assert_eq!(
         copy_count, num_blocks,
-        "should have exactly {} copy tokens for {} blocks",
-        num_blocks, num_blocks
+        "should have exactly {num_blocks} copy tokens for {num_blocks} blocks"
     );
 }
 
@@ -921,7 +902,7 @@ fn matching_precision_measurement() {
         input.extend_from_slice(&basis[start..start + block_len]);
 
         // Add garbage
-        input.extend_from_slice(&vec![0xFFu8; 50]);
+        input.extend_from_slice(&[0xFFu8; 50]);
     }
 
     let script = generate_delta(&input[..], &index).expect("should generate delta");

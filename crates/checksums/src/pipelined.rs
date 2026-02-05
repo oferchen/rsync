@@ -63,8 +63,8 @@ use std::io::{self, Read};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use crate::strong::StrongDigest;
 use crate::RollingDigest;
+use crate::strong::StrongDigest;
 
 /// Configuration for the double-buffered checksum pipeline.
 #[derive(Clone, Copy, Debug)]
@@ -92,8 +92,8 @@ pub struct PipelineConfig {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            block_size: 64 * 1024,       // 64 KiB
-            min_file_size: 256 * 1024,   // 256 KiB
+            block_size: 64 * 1024,     // 64 KiB
+            min_file_size: 256 * 1024, // 256 KiB
             enabled: true,
         }
     }
@@ -189,8 +189,8 @@ impl<R: Read + Send + 'static> DoubleBufferedReader<R> {
     /// mode is used.
     #[must_use]
     pub fn with_size_hint(mut reader: R, config: PipelineConfig, size_hint: Option<u64>) -> Self {
-        let should_pipeline = config.enabled
-            && size_hint.map_or(true, |size| size >= config.min_file_size);
+        let should_pipeline =
+            config.enabled && size_hint.is_none_or(|size| size >= config.min_file_size);
 
         if !should_pipeline {
             // Synchronous mode: no background thread
@@ -519,7 +519,7 @@ where
     /// # Errors
     ///
     /// Returns an error if reading fails.
-    pub fn next(&mut self) -> io::Result<Option<BlockChecksums<D::Digest>>> {
+    pub fn next_block_checksums(&mut self) -> io::Result<Option<BlockChecksums<D::Digest>>> {
         match self.reader.next_block()? {
             Some(block) => {
                 let rolling = RollingDigest::from_bytes(block);
@@ -574,8 +574,11 @@ mod tests {
             .with_block_size(32 * 1024)
             .with_min_file_size(128 * 1024);
 
-        let mut reader =
-            DoubleBufferedReader::with_size_hint(Cursor::new(data.clone()), config, Some(64 * 1024));
+        let mut reader = DoubleBufferedReader::with_size_hint(
+            Cursor::new(data.clone()),
+            config,
+            Some(64 * 1024),
+        );
 
         // Should be in synchronous mode
         assert!(!reader.is_pipelined());
@@ -688,7 +691,7 @@ mod tests {
             PipelinedChecksumIterator::new(Cursor::new(data.clone()), config);
 
         let mut count = 0;
-        while let Some(cs) = iter.next().unwrap() {
+        while let Some(cs) = iter.next_block_checksums().unwrap() {
             assert_eq!(cs.len, 32 * 1024);
             count += 1;
         }

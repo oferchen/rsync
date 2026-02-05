@@ -89,11 +89,9 @@
 //! 4. **Consider bloom filter** for quick negative match filtering
 
 use std::hint::black_box;
-use std::num::{NonZeroU32, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU32};
 
-use criterion::{
-    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
-};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use checksums::RollingChecksum;
 use matching::DeltaSignatureIndex;
@@ -125,7 +123,11 @@ fn make_collision_prone_data(size: usize, block_size: usize) -> Vec<u8> {
 }
 
 /// Builds signature index with specified block size
-fn build_index(data: &[u8], block_size: Option<u32>, algorithm: SignatureAlgorithm) -> DeltaSignatureIndex {
+fn build_index(
+    data: &[u8],
+    block_size: Option<u32>,
+    algorithm: SignatureAlgorithm,
+) -> DeltaSignatureIndex {
     let params = SignatureLayoutParams::new(
         data.len() as u64,
         block_size.and_then(NonZeroU32::new),
@@ -257,7 +259,9 @@ fn bench_hash_table_lookup_detailed(c: &mut Criterion) {
         let block_len = index.block_length();
 
         // Create different data that won't match
-        let other: Vec<u8> = (0..10 * 1024 * 1024).map(|i| ((i + 127) % 251) as u8).collect();
+        let other: Vec<u8> = (0..10 * 1024 * 1024)
+            .map(|i| ((i + 127) % 251) as u8)
+            .collect();
 
         let checksums: Vec<_> = (0..other.len() / block_len)
             .map(|i| {
@@ -327,7 +331,9 @@ fn bench_rolling_checksum_detailed(c: &mut Criterion) {
 
     // Benchmark roll operation (the hot path)
     for window_size in [512, 1024, 2048, 4096] {
-        let data: Vec<u8> = (0..window_size + 100_000).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..window_size + 100_000)
+            .map(|i| (i % 251) as u8)
+            .collect();
 
         group.throughput(Throughput::Elements(100_000));
         group.bench_with_input(
@@ -407,13 +413,9 @@ fn bench_strong_checksum_detailed(c: &mut Criterion) {
         let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
 
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("md4_compute", size),
-            &data,
-            |b, data| {
-                b.iter(|| black_box(Md4::digest(black_box(data))));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("md4_compute", size), &data, |b, data| {
+            b.iter(|| black_box(Md4::digest(black_box(data))));
+        });
     }
 
     // XXH3 computation at various block sizes
@@ -421,13 +423,9 @@ fn bench_strong_checksum_detailed(c: &mut Criterion) {
         let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
 
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("xxh3_compute", size),
-            &data,
-            |b, data| {
-                b.iter(|| black_box(Xxh3::digest(0, black_box(data))));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("xxh3_compute", size), &data, |b, data| {
+            b.iter(|| black_box(Xxh3::digest(0, black_box(data))));
+        });
     }
 
     // Benchmark checksum comparison (the fast path after computation)
@@ -455,7 +453,8 @@ fn bench_strong_checksum_detailed(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(16 * 1024));
         group.bench_function("md4_batch_16x1KB", |b| {
             b.iter(|| {
-                let digests: Vec<_> = block_refs.iter()
+                let digests: Vec<_> = block_refs
+                    .iter()
                     .map(|data| Md4::digest(black_box(data)))
                     .collect();
                 black_box(digests)
@@ -500,7 +499,7 @@ fn bench_memory_patterns_detailed(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(num_blocks as u64));
         group.bench_with_input(
-            BenchmarkId::new("sequential_access", format!("{}MB", size_mb)),
+            BenchmarkId::new("sequential_access", format!("{size_mb}MB")),
             &sequential_indices,
             |b, indices| {
                 b.iter(|| {
@@ -515,12 +514,11 @@ fn bench_memory_patterns_detailed(c: &mut Criterion) {
         );
 
         // Random access pattern (simulates hash table lookups)
-        let random_indices: Vec<usize> = (0..num_blocks)
-            .map(|i| (i * 31337) % num_blocks)
-            .collect();
+        let random_indices: Vec<usize> =
+            (0..num_blocks).map(|i| (i * 31337) % num_blocks).collect();
 
         group.bench_with_input(
-            BenchmarkId::new("random_access", format!("{}MB", size_mb)),
+            BenchmarkId::new("random_access", format!("{size_mb}MB")),
             &random_indices,
             |b, indices| {
                 b.iter(|| {
@@ -551,7 +549,7 @@ fn bench_memory_patterns_detailed(c: &mut Criterion) {
             .expect("signature");
 
         group.bench_with_input(
-            BenchmarkId::new("index_build", format!("{}MB", size_mb)),
+            BenchmarkId::new("index_build", format!("{size_mb}MB")),
             &signature,
             |b, sig| {
                 b.iter(|| {
@@ -629,18 +627,14 @@ fn bench_bottleneck_analysis(c: &mut Criterion) {
 
         let index = build_index(&basis, Some(block_size as u32), SignatureAlgorithm::Md4);
 
-        let id = format!("{}MB_{}pct_{}B", size_mb, change_pct, block_size);
+        let id = format!("{size_mb}MB_{change_pct}pct_{block_size}B");
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("delta", id),
-            &modified,
-            |b, data| {
-                b.iter(|| {
-                    let script = generate_delta(black_box(data.as_slice()), &index);
-                    black_box(script)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("delta", id), &modified, |b, data| {
+            b.iter(|| {
+                let script = generate_delta(black_box(data.as_slice()), &index);
+                black_box(script)
+            });
+        });
     }
 
     group.finish();

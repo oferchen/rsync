@@ -37,7 +37,7 @@ pub mod traits;
 pub mod io_uring;
 
 pub use buffer_pool::{BufferGuard, BufferPool};
-pub use cached_sort::{cached_sort_by, CachedSortKey};
+pub use cached_sort::{CachedSortKey, cached_sort_by};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use traits::{FileReader, FileWriter};
 
@@ -46,6 +46,6 @@ pub use mmap_reader::MmapReader;
 
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 pub use io_uring::{
-    is_io_uring_available, IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader,
-    IoUringReaderFactory, IoUringWriter, IoUringWriterFactory,
+    IoUringConfig, IoUringOrStdReader, IoUringOrStdWriter, IoUringReader, IoUringReaderFactory,
+    IoUringWriter, IoUringWriterFactory, is_io_uring_available,
 };

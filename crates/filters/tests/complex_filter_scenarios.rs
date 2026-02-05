@@ -18,9 +18,9 @@ use std::path::Path;
 fn three_layer_include_exclude_pattern() {
     // rsync uses first-match-wins: most specific rules first
     let rules = vec![
-        FilterRule::include("src/important.txt"),     // Most specific
-        FilterRule::exclude("src/*.txt"),              // Mid-level
-        FilterRule::include("src/"),                   // General directory
+        FilterRule::include("src/important.txt"), // Most specific
+        FilterRule::exclude("src/*.txt"),         // Mid-level
+        FilterRule::include("src/"),              // General directory
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -103,10 +103,7 @@ fn protect_overrides_exclude_for_deletion() {
 
 #[test]
 fn risk_removes_protection() {
-    let rules = vec![
-        FilterRule::protect("*.dat"),
-        FilterRule::risk("temp.dat"),
-    ];
+    let rules = vec![FilterRule::protect("*.dat"), FilterRule::risk("temp.dat")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Transfer: all allowed (no excludes)
@@ -199,10 +196,7 @@ fn multiple_clear_rules() {
 
 #[test]
 fn clear_at_start() {
-    let rules = vec![
-        FilterRule::clear(),
-        FilterRule::exclude("*.tmp"),
-    ];
+    let rules = vec![FilterRule::clear(), FilterRule::exclude("*.tmp")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Clear at start is a no-op (nothing to clear)
@@ -284,7 +278,7 @@ fn sender_only_vs_receiver_only() {
 #[test]
 fn both_sides_vs_one_side() {
     let rules = vec![
-        FilterRule::exclude("*.tmp"), // Both sides
+        FilterRule::exclude("*.tmp"),                         // Both sides
         FilterRule::exclude("*.log").with_sides(true, false), // Sender only
     ];
     let set = FilterSet::from_rules(rules).unwrap();
@@ -408,10 +402,7 @@ fn anchored_vs_unanchored() {
 
 #[test]
 fn directory_only_vs_file_pattern() {
-    let rules = vec![
-        FilterRule::exclude("cache/"),
-        FilterRule::include("cache"),
-    ];
+    let rules = vec![FilterRule::exclude("cache/"), FilterRule::include("cache")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Directory named cache excluded
@@ -537,10 +528,7 @@ fn exclude_all_then_selective_include() {
 
 #[test]
 fn protect_everything_risk_specific() {
-    let rules = vec![
-        FilterRule::protect("**"),
-        FilterRule::risk("temp/"),
-    ];
+    let rules = vec![FilterRule::protect("**"), FilterRule::risk("temp/")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Everything protected (rule 1 protect("**") matches first)

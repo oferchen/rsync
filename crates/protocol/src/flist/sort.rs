@@ -119,7 +119,7 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
             match (a_is_dir_here, b_is_dir_here) {
                 (true, false) => return Ordering::Greater, // a is dir, b is file -> b first
                 (false, true) => return Ordering::Less,    // a is file, b is dir -> a first
-                _ => {} // Same type, compare bytes
+                _ => {}                                    // Same type, compare bytes
             }
 
             // Same type at this level - compare the effective bytes

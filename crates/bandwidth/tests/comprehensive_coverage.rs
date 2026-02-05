@@ -11,8 +11,8 @@
 //! so we verify behavior through observable effects (sleep durations, etc.).
 
 use bandwidth::{
-    BandwidthLimiter, LimiterChange, apply_effective_limit,
-    parse_bandwidth_argument, parse_bandwidth_limit, recorded_sleep_session,
+    BandwidthLimiter, LimiterChange, apply_effective_limit, parse_bandwidth_argument,
+    parse_bandwidth_limit, recorded_sleep_session,
 };
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -32,12 +32,7 @@ fn assert_duration_within_tolerance(actual: Duration, expected: Duration, tolera
     let max = expected.saturating_add(tolerance);
     assert!(
         actual >= min && actual <= max,
-        "Duration {:?} not within {}% of expected {:?} (range {:?} to {:?})",
-        actual,
-        tolerance_percent,
-        expected,
-        min,
-        max
+        "Duration {actual:?} not within {tolerance_percent}% of expected {expected:?} (range {min:?} to {max:?})"
     );
 }
 
@@ -340,11 +335,11 @@ mod rate_limiting_accuracy {
         session.clear();
 
         let test_cases: Vec<(u64, usize)> = vec![
-            (1000, 1000),     // 1000 bytes at 1000 B/s = 1s
-            (2000, 2000),     // 2000 bytes at 2000 B/s = 1s
-            (1024, 1024),     // 1024 bytes at 1024 B/s = 1s
-            (500, 500),       // 500 bytes at 500 B/s = 1s
-            (10000, 10000),   // 10000 bytes at 10000 B/s = 1s
+            (1000, 1000),   // 1000 bytes at 1000 B/s = 1s
+            (2000, 2000),   // 2000 bytes at 2000 B/s = 1s
+            (1024, 1024),   // 1024 bytes at 1024 B/s = 1s
+            (500, 500),     // 500 bytes at 500 B/s = 1s
+            (10000, 10000), // 10000 bytes at 10000 B/s = 1s
         ];
 
         for (rate, bytes) in test_cases {
@@ -354,9 +349,7 @@ mod rate_limiting_accuracy {
             assert_eq!(
                 sleep.requested(),
                 Duration::from_secs(1),
-                "Rate {}, bytes {} should result in 1 second",
-                rate,
-                bytes
+                "Rate {rate}, bytes {bytes} should result in 1 second"
             );
         }
     }
@@ -367,11 +360,11 @@ mod rate_limiting_accuracy {
         session.clear();
 
         let test_cases: Vec<(u64, usize, Duration)> = vec![
-            (1000, 500, Duration::from_millis(500)),     // 0.5s
-            (1000, 250, Duration::from_millis(250)),     // 0.25s
-            (1000, 750, Duration::from_millis(750)),     // 0.75s
-            (2000, 500, Duration::from_millis(250)),     // 0.25s
-            (4000, 1000, Duration::from_millis(250)),    // 0.25s
+            (1000, 500, Duration::from_millis(500)),  // 0.5s
+            (1000, 250, Duration::from_millis(250)),  // 0.25s
+            (1000, 750, Duration::from_millis(750)),  // 0.75s
+            (2000, 500, Duration::from_millis(250)),  // 0.25s
+            (4000, 1000, Duration::from_millis(250)), // 0.25s
         ];
 
         for (rate, bytes, expected) in test_cases {
@@ -381,10 +374,7 @@ mod rate_limiting_accuracy {
             assert_eq!(
                 sleep.requested(),
                 expected,
-                "Rate {}, bytes {} should result in {:?}",
-                rate,
-                bytes,
-                expected
+                "Rate {rate}, bytes {bytes} should result in {expected:?}"
             );
         }
     }
@@ -395,11 +385,11 @@ mod rate_limiting_accuracy {
         session.clear();
 
         let test_cases: Vec<(u64, usize, u64)> = vec![
-            (1000, 2000, 2),    // 2s
-            (1000, 5000, 5),    // 5s
-            (1000, 10000, 10),  // 10s
-            (500, 5000, 10),    // 10s
-            (100, 1000, 10),    // 10s
+            (1000, 2000, 2),   // 2s
+            (1000, 5000, 5),   // 5s
+            (1000, 10000, 10), // 10s
+            (500, 5000, 10),   // 10s
+            (100, 1000, 10),   // 10s
         ];
 
         for (rate, bytes, expected_secs) in test_cases {
@@ -409,10 +399,7 @@ mod rate_limiting_accuracy {
             assert_eq!(
                 sleep.requested(),
                 Duration::from_secs(expected_secs),
-                "Rate {}, bytes {} should result in {} seconds",
-                rate,
-                bytes,
-                expected_secs
+                "Rate {rate}, bytes {bytes} should result in {expected_secs} seconds"
             );
         }
     }
@@ -712,7 +699,7 @@ mod zero_unlimited_bandwidth {
         let cases = ["0K", "0M", "0G", "0b", "0KB", "0MB", "0GB"];
         for case in cases {
             let result = parse_bandwidth_argument(case).expect("parse succeeds");
-            assert!(result.is_none(), "{} should represent unlimited", case);
+            assert!(result.is_none(), "{case} should represent unlimited");
         }
     }
 
@@ -746,8 +733,8 @@ mod zero_unlimited_bandwidth {
 
         let change = apply_effective_limit(
             &mut limiter,
-            None,  // Unlimited
-            true,  // Specified
+            None, // Unlimited
+            true, // Specified
             None,
             false,
         );
@@ -763,7 +750,7 @@ mod zero_unlimited_bandwidth {
         let change = apply_effective_limit(
             &mut limiter,
             None,
-            false,  // Not specified
+            false, // Not specified
             None,
             false,
         );
@@ -776,13 +763,7 @@ mod zero_unlimited_bandwidth {
     fn apply_effective_limit_enables_new_limiter() {
         let mut limiter: Option<BandwidthLimiter> = None;
 
-        let change = apply_effective_limit(
-            &mut limiter,
-            Some(nz(1000)),
-            true,
-            None,
-            false,
-        );
+        let change = apply_effective_limit(&mut limiter, Some(nz(1000)), true, None, false);
 
         assert_eq!(change, LimiterChange::Enabled);
         assert!(limiter.is_some());
@@ -796,7 +777,7 @@ mod zero_unlimited_bandwidth {
 
         let change = apply_effective_limit(
             &mut limiter,
-            Some(nz(1000)),  // Lower limit
+            Some(nz(1000)), // Lower limit
             true,
             None,
             false,
@@ -812,7 +793,7 @@ mod zero_unlimited_bandwidth {
 
         let change = apply_effective_limit(
             &mut limiter,
-            Some(nz(2000)),  // Higher limit (ignored)
+            Some(nz(2000)), // Higher limit (ignored)
             true,
             None,
             false,
@@ -844,7 +825,7 @@ mod additional_edge_cases {
     #[test]
     fn debug_format_contains_key_info() {
         let limiter = BandwidthLimiter::with_burst(nz(1000), Some(nz(500)));
-        let debug = format!("{:?}", limiter);
+        let debug = format!("{limiter:?}");
 
         assert!(debug.contains("BandwidthLimiter"));
         assert!(debug.contains("1000"));
@@ -886,11 +867,11 @@ mod additional_edge_cases {
     #[test]
     fn write_max_scales_with_rate() {
         let rates_and_expected: Vec<(u64, usize)> = vec![
-            (1, 512),                    // Tiny rate -> MIN_WRITE_MAX
-            (512, 512),                  // Below 1K -> MIN_WRITE_MAX
-            (1024, 512),                 // 1K -> MIN_WRITE_MAX (128 < 512)
-            (1024 * 10, 1280),           // 10K -> 10 * 128 = 1280
-            (1024 * 100, 12800),         // 100K -> 100 * 128 = 12800
+            (1, 512),            // Tiny rate -> MIN_WRITE_MAX
+            (512, 512),          // Below 1K -> MIN_WRITE_MAX
+            (1024, 512),         // 1K -> MIN_WRITE_MAX (128 < 512)
+            (1024 * 10, 1280),   // 10K -> 10 * 128 = 1280
+            (1024 * 100, 12800), // 100K -> 100 * 128 = 12800
         ];
 
         for (rate, expected) in rates_and_expected {
@@ -898,9 +879,7 @@ mod additional_edge_cases {
             assert_eq!(
                 limiter.write_max_bytes(),
                 expected,
-                "Rate {} should have write_max {}",
-                rate,
-                expected
+                "Rate {rate} should have write_max {expected}"
             );
         }
     }
@@ -1066,7 +1045,11 @@ mod parsing_coverage {
             let result = parse_bandwidth_argument(input)
                 .expect("parse succeeds")
                 .expect("non-zero limit");
-            assert_eq!(result.get(), expected, "Input '{}' should parse to {}", input, expected);
+            assert_eq!(
+                result.get(),
+                expected,
+                "Input '{input}' should parse to {expected}"
+            );
         }
     }
 
@@ -1083,7 +1066,11 @@ mod parsing_coverage {
             let result = parse_bandwidth_argument(input)
                 .expect("parse succeeds")
                 .expect("non-zero limit");
-            assert_eq!(result.get(), expected, "Input '{}' should parse to {}", input, expected);
+            assert_eq!(
+                result.get(),
+                expected,
+                "Input '{input}' should parse to {expected}"
+            );
         }
     }
 
@@ -1102,8 +1089,7 @@ mod parsing_coverage {
 
     #[test]
     fn parse_minimum_value_512_bytes() {
-        let at_min = parse_bandwidth_argument("512b")
-            .expect("parse succeeds");
+        let at_min = parse_bandwidth_argument("512b").expect("parse succeeds");
         assert!(at_min.is_some());
 
         let below_min = parse_bandwidth_argument("511b");

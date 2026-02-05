@@ -68,8 +68,7 @@ mod rfc1320_test_vectors {
     fn rfc1320_alphanumeric_mixed_case() {
         // MD4("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
         // = 043f8582f241db351ce627e153e7f0e4
-        let digest =
-            Md4::digest(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+        let digest = Md4::digest(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
         assert_eq!(to_hex(&digest), "043f8582f241db351ce627e153e7f0e4");
     }
 
@@ -235,7 +234,7 @@ mod various_sizes {
         for offset in [-3_i32, -2, -1, 0, 1, 2, 3] {
             for multiplier in [1, 2, 4, 8, 16] {
                 let base_size = 64 * multiplier;
-                let size = (base_size as i32 + offset).max(0) as usize;
+                let size = (base_size + offset).max(0) as usize;
                 let data = generate_data(size);
 
                 let oneshot = Md4::digest(&data);
@@ -621,7 +620,7 @@ mod single_byte {
     #[test]
     fn single_byte_a() {
         // Same as RFC vector
-        let digest = Md4::digest(&[b'a']);
+        let digest = Md4::digest(b"a");
         assert_eq!(to_hex(&digest), "bde52cb31de33e46245e05fbdbd6fb24");
     }
 
@@ -653,7 +652,13 @@ mod single_byte {
         for byte in 0u8..255 {
             let d1 = Md4::digest(&[byte]);
             let d2 = Md4::digest(&[byte + 1]);
-            assert_ne!(d1, d2, "Adjacent bytes {} and {} should differ", byte, byte + 1);
+            assert_ne!(
+                d1,
+                d2,
+                "Adjacent bytes {} and {} should differ",
+                byte,
+                byte + 1
+            );
         }
     }
 }
@@ -761,7 +766,7 @@ mod edge_cases {
     #[test]
     fn debug_format_contains_md4() {
         let hasher = Md4::new();
-        let debug = format!("{:?}", hasher);
+        let debug = format!("{hasher:?}");
         assert!(debug.contains("Md4"));
     }
 
@@ -822,16 +827,11 @@ mod edge_cases {
     #[test]
     fn repeated_patterns() {
         // Test with repeated patterns of various sizes
-        let patterns: &[&[u8]] = &[
-            &[0xAA; 1000],
-            &[0x00; 1000],
-            &[0xFF; 1000],
-            &[0x55; 1000],
-        ];
+        let patterns: &[&[u8]] = &[&[0xAA; 1000], &[0x00; 1000], &[0xFF; 1000], &[0x55; 1000]];
 
         let mut digests = Vec::new();
         for pattern in patterns {
-            let digest = Md4::digest(*pattern);
+            let digest = Md4::digest(pattern);
             assert_eq!(digest.len(), 16);
             digests.push(digest);
         }
@@ -839,15 +839,19 @@ mod edge_cases {
         // All patterns should produce unique digests
         for i in 0..digests.len() {
             for j in (i + 1)..digests.len() {
-                assert_ne!(digests[i], digests[j], "Patterns {} and {} should differ", i, j);
+                assert_ne!(digests[i], digests[j], "Patterns {i} and {j} should differ");
             }
         }
     }
 
     #[test]
     fn alternating_patterns() {
-        let pattern1: Vec<u8> = (0..1000).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
-        let pattern2: Vec<u8> = (0..1000).map(|i| if i % 2 == 0 { 0x55 } else { 0xAA }).collect();
+        let pattern1: Vec<u8> = (0..1000)
+            .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+            .collect();
+        let pattern2: Vec<u8> = (0..1000)
+            .map(|i| if i % 2 == 0 { 0x55 } else { 0xAA })
+            .collect();
 
         let d1 = Md4::digest(&pattern1);
         let d2 = Md4::digest(&pattern2);

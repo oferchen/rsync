@@ -543,7 +543,7 @@ fn large_file_list_sorting() {
     let file_count = 1000;
     for i in 0..file_count {
         // Format with leading zeros to ensure lexicographic = numeric order
-        let name = format!("file_{:04}.txt", i);
+        let name = format!("file_{i:04}.txt");
         fs::write(root.join(&name), b"data").expect("write file");
     }
 
@@ -553,12 +553,9 @@ fn large_file_list_sorting() {
     assert_eq!(paths.len(), file_count, "should find all files");
 
     // Verify files are in expected order
-    for i in 0..file_count {
-        let expected = PathBuf::from(format!("file_{:04}.txt", i));
-        assert_eq!(
-            paths[i], expected,
-            "file at index {i} should be {expected:?}"
-        );
+    for (i, path) in paths.iter().enumerate() {
+        let expected = PathBuf::from(format!("file_{i:04}.txt"));
+        assert_eq!(path, &expected, "file at index {i} should be {expected:?}");
     }
 }
 
@@ -587,9 +584,9 @@ fn large_file_list_similar_names() {
     assert_eq!(paths.len(), file_count);
 
     // Verify sorted order
-    for i in 0..file_count {
+    for (i, path) in paths.iter().enumerate() {
         let expected = PathBuf::from(format!("{prefix}{i:04}.txt"));
-        assert_eq!(paths[i], expected);
+        assert_eq!(path, &expected);
     }
 }
 
@@ -608,12 +605,12 @@ fn large_nested_directory_sorting() {
     let files_per_dir = 50;
 
     for d in 0..dir_count {
-        let dir_name = format!("dir_{:02}", d);
+        let dir_name = format!("dir_{d:02}");
         let dir_path = root.join(&dir_name);
         fs::create_dir(&dir_path).expect("create dir");
 
         for f in 0..files_per_dir {
-            let file_name = format!("file_{:02}.txt", f);
+            let file_name = format!("file_{f:02}.txt");
             fs::write(dir_path.join(&file_name), b"data").expect("write file");
         }
     }
@@ -628,7 +625,7 @@ fn large_nested_directory_sorting() {
     // Verify directories are visited in order
     let mut dir_indices = Vec::new();
     for d in 0..dir_count {
-        let dir_name = format!("dir_{:02}", d);
+        let dir_name = format!("dir_{d:02}");
         let idx = paths
             .iter()
             .position(|p| p == &PathBuf::from(&dir_name))
@@ -665,12 +662,12 @@ fn binary_byte_sorting() {
     // Create files with specific byte sequences
     // Using raw bytes to ensure we test byte-level sorting
     let byte_sequences = [
-        b"file_\x00.txt".as_slice(),  // null byte
-        b"file_\x01.txt",             // control char
-        b"file_\x7f.txt",             // DEL
-        b"file_\x80.txt",             // high bit set
-        b"file_\xff.txt",             // max byte
-        b"file_a.txt",                // normal ASCII
+        b"file_\x00.txt".as_slice(), // null byte
+        b"file_\x01.txt",            // control char
+        b"file_\x7f.txt",            // DEL
+        b"file_\x80.txt",            // high bit set
+        b"file_\xff.txt",            // max byte
+        b"file_a.txt",               // normal ASCII
     ];
 
     for bytes in byte_sequences {
@@ -689,9 +686,7 @@ fn binary_byte_sorting() {
         let bytes2 = paths[i + 1].as_os_str().as_bytes();
         assert!(
             bytes1 < bytes2,
-            "files should be sorted by byte values: {:?} < {:?}",
-            bytes1,
-            bytes2
+            "files should be sorted by byte values: {bytes1:?} < {bytes2:?}"
         );
     }
 }
@@ -988,17 +983,7 @@ fn prefix_length_sorting() {
     fs::create_dir(&root).expect("create root");
 
     let names = [
-        "a",
-        "aa",
-        "aaa",
-        "aaaa",
-        "ab",
-        "aba",
-        "abaa",
-        "abb",
-        "b",
-        "ba",
-        "baa",
+        "a", "aa", "aaa", "aaaa", "ab", "aba", "abaa", "abb", "b", "ba", "baa",
     ];
 
     for name in &names {

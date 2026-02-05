@@ -36,8 +36,8 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 
 use engine::signature::FileSignature;
-use protocol::codec::NdxCodec;
 use protocol::ProtocolVersion;
+use protocol::codec::NdxCodec;
 
 use crate::adaptive_buffer::{adaptive_token_capacity, adaptive_writer_capacity};
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};

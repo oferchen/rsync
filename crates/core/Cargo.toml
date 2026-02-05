@@ -62,15 +62,37 @@ features = ["xattr"]
 
 [features]
 default = ["zstd", "lz4", "acl", "xattr", "iconv"]
-acl = ["metadata/acl", "engine/acl", "transfer/acl"]
-# xattr in core is a no-op on Windows; on Unix the target deps above add the real bits
-xattr = ["transfer/xattr"]
+
+# ============================================================================
+# Compression Features
+# ============================================================================
 zstd = ["engine/zstd", "compress/zstd", "transfer/zstd"]
 lz4 = ["engine/lz4", "compress/lz4", "transfer/lz4"]
+
+# ============================================================================
+# Metadata Features
+# ============================================================================
+# xattr in core is a no-op on Windows; on Unix the target deps above add the real bits
+xattr = ["transfer/xattr"]
+acl = ["metadata/acl", "engine/acl", "transfer/acl"]
+
+# Character encoding conversion for filenames (iconv)
 iconv = ["protocol/iconv"]
-sd-notify = []
+
+# ============================================================================
+# Runtime Features
+# ============================================================================
+
 # Async runtime support - enables tokio-based async I/O for core operations
 async = ["dep:tokio", "engine/async"]
+
+# systemd sd-notify integration
+sd-notify = []
+
+# ============================================================================
+# Debugging Features
+# ============================================================================
+
 # Structured logging instrumentation for performance analysis and diagnostics
 tracing = ["dep:tracing"]
 

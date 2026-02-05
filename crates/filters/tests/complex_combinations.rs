@@ -30,7 +30,10 @@ fn deeply_nested_include_exclude_hierarchy() {
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Most specific: golden files in fixtures are included
-    assert!(set.allows(Path::new("src/lib/tests/unit/fixtures/expected.golden"), false));
+    assert!(set.allows(
+        Path::new("src/lib/tests/unit/fixtures/expected.golden"),
+        false
+    ));
 
     // Other fixtures files are excluded
     assert!(!set.allows(Path::new("src/lib/tests/unit/fixtures/data.json"), false));
@@ -83,10 +86,7 @@ fn overlapping_wildcard_patterns() {
 #[test]
 fn same_pattern_different_actions() {
     // Testing first-match-wins with identical patterns
-    let rules = [
-        FilterRule::include("*.log"),
-        FilterRule::exclude("*.log"),
-    ];
+    let rules = [FilterRule::include("*.log"), FilterRule::exclude("*.log")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // First rule wins - files are included
@@ -384,8 +384,8 @@ fn anchored_unanchored_interaction() {
 #[test]
 fn directory_file_pattern_interaction() {
     let rules = [
-        FilterRule::include("output/"),   // Directory only
-        FilterRule::exclude("output"),    // Any type
+        FilterRule::include("output/"), // Directory only
+        FilterRule::exclude("output"),  // Any type
         FilterRule::include("logs/"),
         FilterRule::exclude("logs/**/*.tmp"),
     ];

@@ -1,0 +1,582 @@
+# Behavior comparison scenarios for upstream rsync parity testing
+#
+# Each scenario defines:
+# - name: unique identifier
+# - description: what behavior is being tested
+# - args: common rsync arguments (applied to both implementations)
+# - setup: shell commands to create test fixtures
+# - compare: what to compare (exit_code, files, output, metadata)
+# - skip: skip this scenario if true
+# - known_difference: document known behavioral differences
+#
+# The harness runs both oc-rsync and upstream rsync with identical
+# arguments and compares the results.
+
+# ============== Basic File Operations ==============
+
+[[scenario]]
+name = "copy_single_file"
+description = "Copy a single file"
+args = ["-av", "src/file.txt", "dest/"]
+setup = """
+mkdir -p src
+echo "hello world" > src/file.txt
+mkdir -p dest
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "copy_directory"
+description = "Copy a directory recursively"
+args = ["-av", "src/", "dest/"]
+setup = """
+mkdir -p src/subdir
+echo "file1" > src/file1.txt
+echo "file2" > src/subdir/file2.txt
+mkdir -p dest
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "copy_empty_directory"
+description = "Copy an empty directory"
+args = ["-av", "src/", "dest/"]
+setup = """
+mkdir -p src/empty_subdir
+mkdir -p dest
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "copy_with_existing_dest"
+description = "Copy to existing destination with same files"
+args = ["-av", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "content" > src/file.txt
+echo "content" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "copy_with_different_dest"
+description = "Copy to destination with different content"
+args = ["-av", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new content" > src/file.txt
+echo "old content" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Symlink Handling ==============
+
+[[scenario]]
+name = "copy_symlink_as_symlink"
+description = "Copy symbolic link as link (default)"
+args = ["-av", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "target content" > src/target.txt
+ln -s target.txt src/link.txt
+"""
+compare = ["exit_code", "files", "symlinks"]
+
+[[scenario]]
+name = "copy_symlink_as_file"
+description = "Copy symbolic link as regular file with -L"
+args = ["-avL", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "target content" > src/target.txt
+ln -s target.txt src/link.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "copy_symlink_keep_dirlinks"
+description = "Keep directory symlinks with -K"
+args = ["-avK", "src/", "dest/"]
+setup = """
+mkdir -p src/realdir dest
+echo "content" > src/realdir/file.txt
+ln -s realdir src/linkdir
+"""
+compare = ["exit_code", "files", "symlinks"]
+
+# ============== Hardlink Handling ==============
+
+[[scenario]]
+name = "preserve_hardlinks"
+description = "Preserve hard links with -H"
+args = ["-avH", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "shared content" > src/original.txt
+ln src/original.txt src/hardlink.txt
+"""
+compare = ["exit_code", "files", "hardlinks"]
+
+# ============== Delete Options ==============
+
+[[scenario]]
+name = "delete_extra_files"
+description = "Delete files in dest not in source"
+args = ["-av", "--delete", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "keep" > src/keep.txt
+echo "extra" > dest/extra.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "delete_excluded"
+description = "Delete with exclusion pattern"
+args = ["-av", "--delete", "--exclude=*.bak", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "keep" > src/file.txt
+echo "backup" > dest/file.bak
+echo "extra" > dest/extra.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "max_delete_limit"
+description = "Limit number of deletions"
+args = ["-av", "--delete", "--max-delete=2", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+touch dest/d1 dest/d2 dest/d3 dest/d4 dest/d5
+"""
+compare = ["exit_code", "files"]
+
+# ============== Dry Run ==============
+
+[[scenario]]
+name = "dry_run_no_changes"
+description = "Dry run should not modify files"
+args = ["-avn", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new" > src/file.txt
+echo "old" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+# Note: files should remain unchanged in dest
+
+[[scenario]]
+name = "dry_run_with_delete"
+description = "Dry run with delete should not delete"
+args = ["-avn", "--delete", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "extra" > dest/extra.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Filter Rules ==============
+
+[[scenario]]
+name = "exclude_pattern"
+description = "Exclude files matching pattern"
+args = ["-av", "--exclude=*.log", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "data" > src/data.txt
+echo "log" > src/debug.log
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "include_exclude_combination"
+description = "Include pattern overrides exclude"
+args = ["-av", "--include=important.log", "--exclude=*.log", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "important" > src/important.log
+echo "debug" > src/debug.log
+echo "data" > src/data.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "cvs_exclude"
+description = "CVS exclude patterns"
+args = ["-avC", "src/", "dest/"]
+setup = """
+mkdir -p src/.git src/CVS dest
+echo "code" > src/code.c
+echo "git" > src/.git/config
+echo "cvs" > src/CVS/Root
+"""
+compare = ["exit_code", "files"]
+
+# ============== Archive Mode ==============
+
+[[scenario]]
+name = "archive_mode"
+description = "Archive mode (-a = -rlptgoD)"
+args = ["-a", "src/", "dest/"]
+setup = """
+mkdir -p src/subdir dest
+echo "file" > src/file.txt
+echo "sub" > src/subdir/sub.txt
+chmod 755 src/file.txt
+"""
+compare = ["exit_code", "files", "permissions"]
+
+# ============== Update Mode ==============
+
+[[scenario]]
+name = "update_skip_newer"
+description = "Update mode skips newer files"
+args = ["-avu", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "old source" > src/file.txt
+sleep 1
+echo "new dest" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "update_copy_newer"
+description = "Update mode copies newer source files"
+args = ["-avu", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "old dest" > dest/file.txt
+sleep 1
+echo "new source" > src/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Checksum Mode ==============
+
+[[scenario]]
+name = "checksum_mode"
+description = "Checksum mode (-c) compares checksums"
+args = ["-avc", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "content" > src/file.txt
+echo "content" > dest/file.txt
+touch -t 202001010000 src/file.txt dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "checksum_different"
+description = "Checksum mode detects content differences"
+args = ["-avc", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new content" > src/file.txt
+echo "old content" > dest/file.txt
+touch -t 202001010000 src/file.txt dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Compression ==============
+
+[[scenario]]
+name = "compress_transfer"
+description = "Compression during transfer"
+args = ["-avz", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+dd if=/dev/zero of=src/zeros.bin bs=1024 count=100 2>/dev/null
+"""
+compare = ["exit_code", "files"]
+
+# ============== Incremental Transfer ==============
+
+[[scenario]]
+name = "incremental_update"
+description = "Delta transfer of modified file"
+args = ["-av", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+dd if=/dev/urandom of=src/data.bin bs=1024 count=100 2>/dev/null
+cp src/data.bin dest/data.bin
+# Modify a small part of the source
+echo "modified" | dd of=src/data.bin bs=1 seek=500 conv=notrunc 2>/dev/null
+"""
+compare = ["exit_code", "files"]
+
+# ============== Sparse Files ==============
+
+[[scenario]]
+name = "sparse_file_handling"
+description = "Preserve sparse files with -S"
+args = ["-avS", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+dd if=/dev/zero of=src/sparse.bin bs=1 count=1 seek=1048575 2>/dev/null
+"""
+compare = ["exit_code", "files"]
+skip = false
+
+# ============== Backup Options ==============
+
+[[scenario]]
+name = "backup_replaced_files"
+description = "Create backups of replaced files"
+args = ["-av", "--backup", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new content" > src/file.txt
+echo "old content" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "backup_with_suffix"
+description = "Custom backup suffix"
+args = ["-av", "--backup", "--suffix=.bak", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new" > src/file.txt
+echo "old" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "backup_dir"
+description = "Backup to separate directory"
+args = ["-av", "--backup", "--backup-dir=backups", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new" > src/file.txt
+echo "old" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Partial/Resume ==============
+
+[[scenario]]
+name = "partial_transfer"
+description = "Keep partial files with --partial"
+args = ["-av", "--partial", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "complete content" > src/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Whole File Mode ==============
+
+[[scenario]]
+name = "whole_file_mode"
+description = "Whole file transfer (no delta)"
+args = ["-avW", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+dd if=/dev/urandom of=src/data.bin bs=1024 count=100 2>/dev/null
+cp src/data.bin dest/data.bin
+echo "modified" >> src/data.bin
+"""
+compare = ["exit_code", "files"]
+
+# ============== Ownership and Permissions ==============
+
+[[scenario]]
+name = "preserve_permissions"
+description = "Preserve file permissions"
+args = ["-av", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "executable" > src/script.sh
+chmod 755 src/script.sh
+echo "readonly" > src/readonly.txt
+chmod 444 src/readonly.txt
+"""
+compare = ["exit_code", "files", "permissions"]
+
+[[scenario]]
+name = "chmod_option"
+description = "Apply chmod to transferred files"
+args = ["-av", "--chmod=F644,D755", "src/", "dest/"]
+setup = """
+mkdir -p src/subdir dest
+echo "file" > src/file.txt
+chmod 600 src/file.txt
+chmod 700 src/subdir
+"""
+compare = ["exit_code", "files", "permissions"]
+
+# ============== Size Filtering ==============
+
+[[scenario]]
+name = "max_size_filter"
+description = "Filter by maximum file size"
+args = ["-av", "--max-size=1k", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "small" > src/small.txt
+dd if=/dev/zero of=src/large.bin bs=1024 count=10 2>/dev/null
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "min_size_filter"
+description = "Filter by minimum file size"
+args = ["-av", "--min-size=1k", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "small" > src/small.txt
+dd if=/dev/zero of=src/large.bin bs=1024 count=10 2>/dev/null
+"""
+compare = ["exit_code", "files"]
+
+# ============== List Only Mode ==============
+
+[[scenario]]
+name = "list_only"
+description = "List files without transferring"
+args = ["--list-only", "src/"]
+setup = """
+mkdir -p src
+echo "file1" > src/file1.txt
+echo "file2" > src/file2.txt
+"""
+compare = ["exit_code"]
+# Note: output format comparison might be needed
+
+# ============== Relative Path Handling ==============
+
+[[scenario]]
+name = "relative_paths"
+description = "Relative path handling with -R"
+args = ["-avR", "src/./subdir/file.txt", "dest/"]
+setup = """
+mkdir -p src/subdir dest
+echo "content" > src/subdir/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Files-From ==============
+
+[[scenario]]
+name = "files_from"
+description = "Copy files listed in a file"
+args = ["-av", "--files-from=filelist.txt", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "file1.txt" > filelist.txt
+echo "file2.txt" >> filelist.txt
+echo "content1" > src/file1.txt
+echo "content2" > src/file2.txt
+echo "content3" > src/file3.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Prune Empty Dirs ==============
+
+[[scenario]]
+name = "prune_empty_dirs"
+description = "Prune empty directories"
+args = ["-av", "--prune-empty-dirs", "src/", "dest/"]
+setup = """
+mkdir -p src/empty src/nonempty dest
+echo "file" > src/nonempty/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Ignore Times ==============
+
+[[scenario]]
+name = "ignore_times"
+description = "Ignore timestamps for comparison"
+args = ["-av", "--ignore-times", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "content" > src/file.txt
+echo "content" > dest/file.txt
+touch -t 202001010000 src/file.txt dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Size Only ==============
+
+[[scenario]]
+name = "size_only"
+description = "Compare by size only"
+args = ["-av", "--size-only", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "same size" > src/file.txt
+echo "same size" > dest/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Itemize Changes ==============
+
+[[scenario]]
+name = "itemize_changes"
+description = "Show itemized changes"
+args = ["-avi", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new file" > src/new.txt
+echo "modified" > src/existing.txt
+echo "original" > dest/existing.txt
+"""
+compare = ["exit_code", "files"]
+# Note: might want to compare itemized output format
+
+# ============== Existing/Ignore Existing ==============
+
+[[scenario]]
+name = "ignore_existing"
+description = "Ignore files that exist in destination"
+args = ["-av", "--ignore-existing", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "new from src" > src/file.txt
+echo "existing in dest" > dest/file.txt
+echo "only in src" > src/new.txt
+"""
+compare = ["exit_code", "files"]
+
+[[scenario]]
+name = "existing_only"
+description = "Only update existing files"
+args = ["-av", "--existing", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "updated" > src/existing.txt
+echo "original" > dest/existing.txt
+echo "new file" > src/new.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Append Mode ==============
+
+[[scenario]]
+name = "append_mode"
+description = "Append mode for growing files"
+args = ["-av", "--append", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+echo "original content" > dest/file.txt
+echo "original content" > src/file.txt
+echo "appended content" >> src/file.txt
+"""
+compare = ["exit_code", "files"]
+
+# ============== Inplace Mode ==============
+
+[[scenario]]
+name = "inplace_update"
+description = "Update files in place"
+args = ["-av", "--inplace", "src/", "dest/"]
+setup = """
+mkdir -p src dest
+dd if=/dev/urandom of=src/data.bin bs=1024 count=100 2>/dev/null
+cp src/data.bin dest/data.bin
+echo "modified" | dd of=src/data.bin bs=1 seek=500 conv=notrunc 2>/dev/null
+"""
+compare = ["exit_code", "files"]
