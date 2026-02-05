@@ -808,7 +808,7 @@ mod tests {
             for _ in 0..3 {
                 let data = b"x";
                 let bufs = [IoSlice::new(data)];
-                mux.write_vectored(&bufs).unwrap();
+                let _ = mux.write_vectored(&bufs).unwrap();
             }
             mux.flush().unwrap();
         }

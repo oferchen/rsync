@@ -1,14 +1,15 @@
 //! Interoperability validation commands for testing against upstream rsync.
 //!
-//! This module provides subcommands to validate exit codes and message formats
-//! against upstream rsync versions (3.0.9, 3.1.3, 3.4.1).
+//! This module provides subcommands to validate exit codes, message formats,
+//! and behavior against upstream rsync versions (3.0.9, 3.1.3, 3.4.1).
 
 #![allow(clippy::uninlined_format_args)]
 
 mod args;
+pub mod behavior;
 mod exit_codes;
 mod messages;
-mod shared;
+pub mod shared;
 
 use crate::error::TaskResult;
 use std::path::Path;
@@ -24,8 +25,11 @@ pub fn execute(workspace: &Path, options: InteropOptions) -> TaskResult<()> {
         InteropCommand::Messages(opts) => {
             messages::execute(workspace, opts)?;
         }
+        InteropCommand::Behavior(opts) => {
+            behavior::execute(workspace, opts)?;
+        }
         InteropCommand::All => {
-            // Run both exit codes and messages validation
+            // Run exit codes and messages validation (not behavior by default)
             eprintln!("Running exit code validation...");
             exit_codes::execute(workspace, args::ExitCodesOptions::default())?;
 

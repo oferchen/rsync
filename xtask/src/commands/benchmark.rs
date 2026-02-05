@@ -105,7 +105,9 @@ impl Default for BenchmarkOptions {
 impl From<BenchmarkArgs> for BenchmarkOptions {
     fn from(args: BenchmarkArgs) -> Self {
         Self {
-            bench_dir: args.bench_dir.unwrap_or_else(|| PathBuf::from(DEFAULT_BENCH_DIR)),
+            bench_dir: args
+                .bench_dir
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_BENCH_DIR)),
             port: args.port.unwrap_or(DEFAULT_DAEMON_PORT),
             runs: args.runs.unwrap_or(DEFAULT_RUNS),
             versions: args.versions,
@@ -195,7 +197,10 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
             } else {
                 println!("Using existing rsync daemon on port {}", options.port);
             }
-            vec![format!("rsync://localhost:{}/kernel/arch/x86/", options.port)]
+            vec![format!(
+                "rsync://localhost:{}/kernel/arch/x86/",
+                options.port
+            )]
         }
         BenchmarkMode::Remote => {
             if options.urls.is_empty() {
@@ -265,7 +270,7 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
 
     for url in &urls {
         let url_name = url_short_name(url);
-        println!("\n=== Benchmarking against: {} ({}) ===", url_name, url);
+        println!("\n=== Benchmarking against: {url_name} ({url}) ===");
 
         let mut url_results: Vec<BenchmarkResult> = Vec::new();
 
@@ -302,10 +307,13 @@ pub fn execute(workspace: &Path, options: BenchmarkOptions) -> TaskResult<()> {
 /// Lists available public rsync mirrors.
 fn list_mirrors() -> TaskResult<()> {
     println!("=== Available Public Rsync Mirrors ===\n");
-    println!("{:<12} {:<55} {}", "Name", "URL", "Description");
+    println!("{:<12} {:<55} Description", "Name", "URL");
     println!("{}", "-".repeat(100));
     for mirror in REMOTE_MIRRORS {
-        println!("{:<12} {:<55} {}", mirror.name, mirror.url, mirror.description);
+        println!(
+            "{:<12} {:<55} {}",
+            mirror.name, mirror.url, mirror.description
+        );
     }
     println!("\nUsage: cargo xtask benchmark --mode remote [--url <custom-url>]");
     Ok(())
@@ -517,7 +525,12 @@ fn build_version(workspace: &Path, version: &str, output: &Path) -> TaskResult<(
 
     // Clean up existing worktree
     let _ = Command::new("git")
-        .args(["worktree", "remove", "--force", worktree_dir.to_str().unwrap()])
+        .args([
+            "worktree",
+            "remove",
+            "--force",
+            worktree_dir.to_str().unwrap(),
+        ])
         .current_dir(workspace)
         .status();
 
@@ -553,7 +566,12 @@ fn build_version(workspace: &Path, version: &str, output: &Path) -> TaskResult<(
 
     // Clean up worktree
     let _ = Command::new("git")
-        .args(["worktree", "remove", "--force", worktree_dir.to_str().unwrap()])
+        .args([
+            "worktree",
+            "remove",
+            "--force",
+            worktree_dir.to_str().unwrap(),
+        ])
         .current_dir(workspace)
         .status();
 
@@ -613,11 +631,16 @@ fn output_table_multi(result_sets: &[BenchmarkResultSet]) {
         );
         println!("{}", "-".repeat(54));
 
-        let baseline = result_set.results.first().map(|r| r.mean).unwrap_or(Duration::ZERO);
+        let baseline = result_set
+            .results
+            .first()
+            .map(|r| r.mean)
+            .unwrap_or(Duration::ZERO);
 
         for result in &result_set.results {
             let diff_pct = if baseline > Duration::ZERO {
-                ((result.mean.as_secs_f64() - baseline.as_secs_f64()) / baseline.as_secs_f64()) * 100.0
+                ((result.mean.as_secs_f64() - baseline.as_secs_f64()) / baseline.as_secs_f64())
+                    * 100.0
             } else {
                 0.0
             };
@@ -667,7 +690,7 @@ fn print_summary_table(result_sets: &[BenchmarkResultSet]) {
     // Print header
     print!("{:<12}", "URL");
     for version in &versions {
-        print!(" {:>12}", version);
+        print!(" {version:>12}");
     }
     println!();
     println!("{}", "-".repeat(12 + 13 * versions.len()));
@@ -682,7 +705,7 @@ fn print_summary_table(result_sets: &[BenchmarkResultSet]) {
                 .find(|r| r.version == *version)
                 .map(|r| format!("{:.3}s", r.mean.as_secs_f64()))
                 .unwrap_or_else(|| "-".to_string());
-            print!(" {:>12}", time);
+            print!(" {time:>12}");
         }
         println!();
     }
@@ -700,12 +723,25 @@ fn output_json_multi(result_sets: &[BenchmarkResultSet]) -> TaskResult<()> {
         println!("      \"url_name\": \"{}\",", result_set.url_name);
         println!("      \"results\": [");
         for (j, result) in result_set.results.iter().enumerate() {
-            let comma = if j < result_set.results.len() - 1 { "," } else { "" };
+            let comma = if j < result_set.results.len() - 1 {
+                ","
+            } else {
+                ""
+            };
             println!("        {{");
             println!("          \"version\": \"{}\",", result.version);
-            println!("          \"mean_ms\": {:.3},", result.mean.as_secs_f64() * 1000.0);
-            println!("          \"min_ms\": {:.3},", result.min.as_secs_f64() * 1000.0);
-            println!("          \"max_ms\": {:.3},", result.max.as_secs_f64() * 1000.0);
+            println!(
+                "          \"mean_ms\": {:.3},",
+                result.mean.as_secs_f64() * 1000.0
+            );
+            println!(
+                "          \"min_ms\": {:.3},",
+                result.min.as_secs_f64() * 1000.0
+            );
+            println!(
+                "          \"max_ms\": {:.3},",
+                result.max.as_secs_f64() * 1000.0
+            );
             println!("          \"stddev_ms\": {:.3},", result.stddev * 1000.0);
             println!(
                 "          \"runs_ms\": [{}]",

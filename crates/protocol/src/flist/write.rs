@@ -2913,7 +2913,11 @@ mod tests {
             let mut cursor = Cursor::new(&buf[..]);
             let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
             let read = reader.read_entry(&mut cursor).unwrap().unwrap();
-            assert_eq!(read.hardlink_idx(), Some(42), "follower should have index 42");
+            assert_eq!(
+                read.hardlink_idx(),
+                Some(42),
+                "follower should have index 42"
+            );
         }
     }
 
@@ -2939,7 +2943,11 @@ mod tests {
             let mut reader = FileListReader::new(protocol);
             let read = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-            assert_eq!(read.mtime_nsec(), 123456789, "XMIT_MOD_NSEC should round-trip");
+            assert_eq!(
+                read.mtime_nsec(),
+                123456789,
+                "XMIT_MOD_NSEC should round-trip"
+            );
         }
 
         // Test XMIT_SAME_ATIME (protocol 30+ with preserve_atimes)
@@ -2965,9 +2973,7 @@ mod tests {
             // Second entry should be smaller (atime compressed)
             assert!(
                 second_len < first_len,
-                "XMIT_SAME_ATIME should compress: {} < {}",
-                second_len,
-                first_len
+                "XMIT_SAME_ATIME should compress: {second_len} < {first_len}"
             );
 
             let mut cursor = Cursor::new(&buf[..]);
@@ -3038,7 +3044,11 @@ mod tests {
 
             let read = reader.read_entry(&mut cursor).unwrap().unwrap();
             // Protocol 29 should NOT have user/group names
-            assert_eq!(read.user_name(), None, "protocol 29 should not have user name");
+            assert_eq!(
+                read.user_name(),
+                None,
+                "protocol 29 should not have user name"
+            );
             assert_eq!(
                 read.group_name(),
                 None,
@@ -3068,8 +3078,16 @@ mod tests {
                 let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
                 let read = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-                assert_eq!(read.rdev_major(), Some(8), "proto {proto_ver} 8-bit minor major");
-                assert_eq!(read.rdev_minor(), Some(255), "proto {proto_ver} 8-bit minor");
+                assert_eq!(
+                    read.rdev_major(),
+                    Some(8),
+                    "proto {proto_ver} 8-bit minor major"
+                );
+                assert_eq!(
+                    read.rdev_minor(),
+                    Some(255),
+                    "proto {proto_ver} 8-bit minor"
+                );
             }
 
             // Test device with >8-bit minor (does NOT use XMIT_RDEV_MINOR_8_PRE30)
@@ -3084,8 +3102,16 @@ mod tests {
                 let mut reader = FileListReader::new(protocol).with_preserve_devices(true);
                 let read = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-                assert_eq!(read.rdev_major(), Some(8), "proto {proto_ver} 32-bit minor major");
-                assert_eq!(read.rdev_minor(), Some(256), "proto {proto_ver} 32-bit minor");
+                assert_eq!(
+                    read.rdev_major(),
+                    Some(8),
+                    "proto {proto_ver} 32-bit minor major"
+                );
+                assert_eq!(
+                    read.rdev_minor(),
+                    Some(256),
+                    "proto {proto_ver} 32-bit minor"
+                );
             }
 
             // Test XMIT_SAME_RDEV_MAJOR with two devices having same major
@@ -3104,9 +3130,7 @@ mod tests {
                 // Second entry should be smaller due to XMIT_SAME_RDEV_MAJOR
                 assert!(
                     second_len < first_len,
-                    "proto {proto_ver} XMIT_SAME_RDEV_MAJOR should compress: {} < {}",
-                    second_len,
-                    first_len
+                    "proto {proto_ver} XMIT_SAME_RDEV_MAJOR should compress: {second_len} < {first_len}"
                 );
 
                 let mut cursor = Cursor::new(&buf[..]);

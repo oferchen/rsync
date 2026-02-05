@@ -12,14 +12,13 @@
 use std::io::{Cursor, Read};
 
 use compress::lz4::frame::{
-    compress_to_vec as frame_compress, decompress_to_vec as frame_decompress,
-    CountingLz4Decoder, CountingLz4Encoder,
+    CountingLz4Decoder, CountingLz4Encoder, compress_to_vec as frame_compress,
+    decompress_to_vec as frame_decompress,
 };
 use compress::lz4::raw::{
-    compress_block, compress_block_to_vec, decode_header, decompress_block,
-    decompress_block_to_vec, encode_header, is_deflated_data, read_compressed_block,
-    write_compressed_block, RawLz4Error, DEFLATED_DATA, HEADER_SIZE, MAX_BLOCK_SIZE,
-    MAX_DECOMPRESSED_SIZE,
+    DEFLATED_DATA, HEADER_SIZE, MAX_BLOCK_SIZE, MAX_DECOMPRESSED_SIZE, RawLz4Error, compress_block,
+    compress_block_to_vec, decode_header, decompress_block, decompress_block_to_vec, encode_header,
+    is_deflated_data, read_compressed_block, write_compressed_block,
 };
 use compress::zlib::CompressionLevel;
 
@@ -79,9 +78,10 @@ mod test_data {
             for j in 0..data_len.min(size - data.len()) {
                 data.push((j + i) as u8);
             }
-            for _ in 0..zero_len.min(size.saturating_sub(data.len())) {
-                data.push(0);
-            }
+            data.extend(std::iter::repeat_n(
+                0,
+                zero_len.min(size.saturating_sub(data.len())),
+            ));
             i += 1;
         }
         data.truncate(size);
@@ -105,7 +105,10 @@ mod frame_round_trips {
     fn frame_round_trip_empty() {
         let data = b"";
         let compressed = frame_compress(data, CompressionLevel::Default).unwrap();
-        assert!(!compressed.is_empty(), "empty input should produce frame header");
+        assert!(
+            !compressed.is_empty(),
+            "empty input should produce frame header"
+        );
         let decompressed = frame_decompress(&compressed).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -138,7 +141,10 @@ mod frame_round_trips {
     fn frame_round_trip_repetitive_text() {
         let data = test_data::repetitive_text(10_000);
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
-        assert!(compressed.len() < data.len(), "repetitive text should compress");
+        assert!(
+            compressed.len() < data.len(),
+            "repetitive text should compress"
+        );
         let decompressed = frame_decompress(&compressed).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -171,7 +177,10 @@ mod frame_round_trips {
     fn frame_round_trip_sparse_data() {
         let data = test_data::sparse_data(10_000);
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
-        assert!(compressed.len() < data.len(), "sparse data should compress well");
+        assert!(
+            compressed.len() < data.len(),
+            "sparse data should compress well"
+        );
         let decompressed = frame_decompress(&compressed).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -202,7 +211,10 @@ mod frame_round_trips {
     fn frame_round_trip_all_zeros() {
         let data = vec![0u8; 10_000];
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
-        assert!(compressed.len() < data.len() / 10, "zeros should compress very well");
+        assert!(
+            compressed.len() < data.len() / 10,
+            "zeros should compress very well"
+        );
         let decompressed = frame_decompress(&compressed).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -211,7 +223,10 @@ mod frame_round_trips {
     fn frame_round_trip_all_ones() {
         let data = vec![255u8; 10_000];
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
-        assert!(compressed.len() < data.len() / 10, "ones should compress very well");
+        assert!(
+            compressed.len() < data.len() / 10,
+            "ones should compress very well"
+        );
         let decompressed = frame_decompress(&compressed).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -434,7 +449,10 @@ mod frame_streaming {
 
         encoder.write(b"first chunk").unwrap();
         let after_first = encoder.bytes_written();
-        assert!(after_first >= initial, "bytes should increase after first write");
+        assert!(
+            after_first >= initial,
+            "bytes should increase after first write"
+        );
 
         encoder.write(b"second chunk").unwrap();
         let after_second = encoder.bytes_written();
@@ -443,7 +461,10 @@ mod frame_streaming {
         assert!(after_second >= after_first, "bytes should not decrease");
 
         let (_, final_bytes) = encoder.finish_into_inner().unwrap();
-        assert!(final_bytes >= after_second, "final should be >= intermediate");
+        assert!(
+            final_bytes >= after_second,
+            "final should be >= intermediate"
+        );
         assert!(final_bytes > 0, "should have written some bytes");
     }
 
@@ -552,7 +573,10 @@ mod raw_round_trips {
     fn raw_round_trip_repetitive_text() {
         let data = test_data::repetitive_text(10_000);
         let compressed = compress_block_to_vec(&data).unwrap();
-        assert!(compressed.len() < data.len(), "repetitive text should compress");
+        assert!(
+            compressed.len() < data.len(),
+            "repetitive text should compress"
+        );
         let decompressed = decompress_block_to_vec(&compressed, data.len()).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -561,7 +585,10 @@ mod raw_round_trips {
     fn raw_round_trip_all_zeros() {
         let data = vec![0u8; 10_000];
         let compressed = compress_block_to_vec(&data).unwrap();
-        assert!(compressed.len() < data.len() / 10, "zeros should compress very well");
+        assert!(
+            compressed.len() < data.len() / 10,
+            "zeros should compress very well"
+        );
         let decompressed = decompress_block_to_vec(&compressed, data.len()).unwrap();
         assert_eq!(decompressed, data);
     }
@@ -589,7 +616,8 @@ mod raw_round_trips {
     #[test]
     fn raw_round_trip_into_buffer() {
         let data = b"buffer compression test";
-        let mut compressed = vec![0u8; HEADER_SIZE + lz4_flex::block::get_maximum_output_size(data.len())];
+        let mut compressed =
+            vec![0u8; HEADER_SIZE + lz4_flex::block::get_maximum_output_size(data.len())];
 
         let total = compress_block(data, &mut compressed).unwrap();
         compressed.truncate(total);
@@ -625,7 +653,10 @@ mod raw_error_handling {
         let compressed = compress_block_to_vec(data).unwrap();
 
         let result = decompress_block_to_vec(&compressed, MAX_DECOMPRESSED_SIZE + 1);
-        assert!(matches!(result, Err(RawLz4Error::DecompressedSizeTooLarge(_))));
+        assert!(matches!(
+            result,
+            Err(RawLz4Error::DecompressedSizeTooLarge(_))
+        ));
 
         if let Err(RawLz4Error::DecompressedSizeTooLarge(size)) = result {
             assert_eq!(size, MAX_DECOMPRESSED_SIZE + 1);
@@ -706,7 +737,10 @@ mod raw_error_handling {
         assert!(msg.contains("20000"));
         assert!(msg.contains("exceeds"));
 
-        let err = RawLz4Error::BufferTooSmall { needed: 100, available: 50 };
+        let err = RawLz4Error::BufferTooSmall {
+            needed: 100,
+            available: 50,
+        };
         let msg = err.to_string();
         assert!(msg.contains("100"));
         assert!(msg.contains("50"));
@@ -737,7 +771,10 @@ mod raw_header {
     fn header_has_deflated_flag() {
         for size in [0, 1, 100, 1000, MAX_BLOCK_SIZE] {
             let header = encode_header(size);
-            assert!(is_deflated_data(header[0]), "header for size {size} missing DEFLATED_DATA flag");
+            assert!(
+                is_deflated_data(header[0]),
+                "header for size {size} missing DEFLATED_DATA flag"
+            );
         }
     }
 
@@ -750,7 +787,10 @@ mod raw_header {
 
         // Non-deflated flags
         for flag in [0x00, 0x3F, 0x80, 0xC0, 0xFF] {
-            assert!(!is_deflated_data(flag), "0x{flag:02x} should not be deflated");
+            assert!(
+                !is_deflated_data(flag),
+                "0x{flag:02x} should not be deflated"
+            );
         }
     }
 
@@ -859,7 +899,10 @@ mod raw_io {
 
         let mut cursor = Cursor::new(buffer);
         let result = read_compressed_block(&mut cursor, MAX_DECOMPRESSED_SIZE + 1);
-        assert!(matches!(result, Err(RawLz4Error::DecompressedSizeTooLarge(_))));
+        assert!(matches!(
+            result,
+            Err(RawLz4Error::DecompressedSizeTooLarge(_))
+        ));
     }
 }
 
@@ -875,7 +918,10 @@ mod large_inputs {
         // 10MB of highly compressible data
         let data = vec![0u8; 10_000_000];
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
-        assert!(compressed.len() < data.len() / 100, "zeros should compress extremely well");
+        assert!(
+            compressed.len() < data.len() / 100,
+            "zeros should compress extremely well"
+        );
 
         let decompressed = frame_decompress(&compressed).unwrap();
         assert_eq!(decompressed.len(), data.len());
@@ -886,7 +932,10 @@ mod large_inputs {
         // 5MB of structured data
         let data = test_data::structured_binary(5_000_000);
         let compressed = frame_compress(&data, CompressionLevel::Default).unwrap();
-        assert!(compressed.len() < data.len(), "structured data should compress");
+        assert!(
+            compressed.len() < data.len(),
+            "structured data should compress"
+        );
 
         let decompressed = frame_decompress(&compressed).unwrap();
         assert_eq!(decompressed, data);
@@ -909,7 +958,10 @@ mod large_inputs {
     fn raw_max_block_size_compressible() {
         let data = vec![0u8; MAX_BLOCK_SIZE];
         let compressed = compress_block_to_vec(&data).unwrap();
-        assert!(compressed.len() < MAX_BLOCK_SIZE / 10, "max-size zeros should compress well");
+        assert!(
+            compressed.len() < MAX_BLOCK_SIZE / 10,
+            "max-size zeros should compress well"
+        );
 
         let decompressed = decompress_block_to_vec(&compressed, MAX_BLOCK_SIZE).unwrap();
         assert_eq!(decompressed, data);
@@ -969,12 +1021,18 @@ mod comparison {
 
             // Random data should not compress well
             if *name == "random" {
-                assert!(ratio < 1.2, "{name}: unexpectedly compressible (ratio: {ratio:.2})");
+                assert!(
+                    ratio < 1.2,
+                    "{name}: unexpectedly compressible (ratio: {ratio:.2})"
+                );
             }
 
             // Highly repetitive data should compress very well
             if *name == "repetitive" || *name == "sparse" {
-                assert!(ratio > 2.0, "{name}: expected high compression (ratio: {ratio:.2})");
+                assert!(
+                    ratio > 2.0,
+                    "{name}: expected high compression (ratio: {ratio:.2})"
+                );
             }
         }
     }

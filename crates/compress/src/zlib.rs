@@ -656,10 +656,10 @@ mod tests {
         // Collect sizes for all levels
         let mut sizes = Vec::new();
         for level in 1..=9 {
-            let compression_level = CompressionLevel::from_numeric(level)
-                .expect("levels 1-9 are valid");
-            let compressed = compress_to_vec(&payload, compression_level)
-                .expect("compression succeeds");
+            let compression_level =
+                CompressionLevel::from_numeric(level).expect("levels 1-9 are valid");
+            let compressed =
+                compress_to_vec(&payload, compression_level).expect("compression succeeds");
             sizes.push((level, compressed.len()));
         }
 
@@ -669,26 +669,20 @@ mod tests {
         let level9_size = sizes[8].1;
         assert!(
             level9_size < level1_size,
-            "level 9 ({} bytes) should be smaller than level 1 ({} bytes)",
-            level9_size,
-            level1_size
+            "level 9 ({level9_size} bytes) should be smaller than level 1 ({level1_size} bytes)"
         );
 
         // Level 5 should be no larger than level 1 (intermediate levels should improve or match)
         let level5_size = sizes[4].1;
         assert!(
             level5_size <= level1_size,
-            "level 5 ({} bytes) should be <= level 1 ({} bytes)",
-            level5_size,
-            level1_size
+            "level 5 ({level5_size} bytes) should be <= level 1 ({level1_size} bytes)"
         );
 
         // Level 9 should be no larger than level 5
         assert!(
             level9_size <= level5_size,
-            "level 9 ({} bytes) should be <= level 5 ({} bytes)",
-            level9_size,
-            level5_size
+            "level 9 ({level9_size} bytes) should be <= level 5 ({level5_size} bytes)"
         );
     }
 
@@ -697,17 +691,15 @@ mod tests {
         let payload = b"Test payload with various characters: 123!@# ABC xyz".repeat(20);
 
         for level in 1..=9 {
-            let compression_level = CompressionLevel::from_numeric(level)
-                .expect("levels 1-9 are valid");
-            let compressed = compress_to_vec(&payload, compression_level)
-                .expect("compression succeeds");
-            let decompressed = decompress_to_vec(&compressed)
-                .expect("decompression succeeds");
+            let compression_level =
+                CompressionLevel::from_numeric(level).expect("levels 1-9 are valid");
+            let compressed =
+                compress_to_vec(&payload, compression_level).expect("compression succeeds");
+            let decompressed = decompress_to_vec(&compressed).expect("decompression succeeds");
 
             assert_eq!(
                 decompressed, payload,
-                "level {} failed to roundtrip correctly",
-                level
+                "level {level} failed to roundtrip correctly"
             );
         }
     }
@@ -715,17 +707,14 @@ mod tests {
     #[test]
     fn all_levels_handle_empty_input() {
         for level in 1..=9 {
-            let compression_level = CompressionLevel::from_numeric(level)
-                .expect("levels 1-9 are valid");
-            let compressed = compress_to_vec(b"", compression_level)
-                .expect("compress empty input");
-            let decompressed = decompress_to_vec(&compressed)
-                .expect("decompress empty input");
+            let compression_level =
+                CompressionLevel::from_numeric(level).expect("levels 1-9 are valid");
+            let compressed = compress_to_vec(b"", compression_level).expect("compress empty input");
+            let decompressed = decompress_to_vec(&compressed).expect("decompress empty input");
 
             assert!(
                 decompressed.is_empty(),
-                "level {} failed to handle empty input",
-                level
+                "level {level} failed to handle empty input"
             );
         }
     }
@@ -733,18 +722,16 @@ mod tests {
     #[test]
     fn all_levels_handle_single_byte() {
         for level in 1..=9 {
-            let compression_level = CompressionLevel::from_numeric(level)
-                .expect("levels 1-9 are valid");
+            let compression_level =
+                CompressionLevel::from_numeric(level).expect("levels 1-9 are valid");
             let payload = b"X";
-            let compressed = compress_to_vec(payload, compression_level)
-                .expect("compress single byte");
-            let decompressed = decompress_to_vec(&compressed)
-                .expect("decompress single byte");
+            let compressed =
+                compress_to_vec(payload, compression_level).expect("compress single byte");
+            let decompressed = decompress_to_vec(&compressed).expect("decompress single byte");
 
             assert_eq!(
                 decompressed, payload,
-                "level {} failed to handle single byte",
-                level
+                "level {level} failed to handle single byte"
             );
         }
     }
@@ -755,25 +742,23 @@ mod tests {
         let payload: Vec<u8> = (0..256).map(|i| (i * 137 + 73) as u8).collect();
 
         for level in 1..=9 {
-            let compression_level = CompressionLevel::from_numeric(level)
-                .expect("levels 1-9 are valid");
-            let compressed = compress_to_vec(&payload, compression_level)
-                .expect("compress incompressible data");
-            let decompressed = decompress_to_vec(&compressed)
-                .expect("decompress incompressible data");
+            let compression_level =
+                CompressionLevel::from_numeric(level).expect("levels 1-9 are valid");
+            let compressed =
+                compress_to_vec(&payload, compression_level).expect("compress incompressible data");
+            let decompressed =
+                decompress_to_vec(&compressed).expect("decompress incompressible data");
 
             assert_eq!(
                 decompressed, payload,
-                "level {} failed with incompressible data",
-                level
+                "level {level} failed with incompressible data"
             );
 
             // Incompressible data may actually expand slightly due to framing overhead
             // Just verify it didn't balloon unreasonably
             assert!(
                 compressed.len() < payload.len() * 2,
-                "level {} produced unreasonably large output for incompressible data",
-                level
+                "level {level} produced unreasonably large output for incompressible data"
             );
         }
     }
@@ -783,28 +768,23 @@ mod tests {
         let payload = b"Counting encoder test payload".repeat(5);
 
         for level in 1..=9 {
-            let compression_level = CompressionLevel::from_numeric(level)
-                .expect("levels 1-9 are valid");
+            let compression_level =
+                CompressionLevel::from_numeric(level).expect("levels 1-9 are valid");
 
             let mut encoder = CountingZlibEncoder::with_sink(Vec::new(), compression_level);
             encoder.write(&payload).expect("write to encoder");
-            let (compressed, bytes_written) = encoder
-                .finish_into_inner()
-                .expect("finish encoder");
+            let (compressed, bytes_written) = encoder.finish_into_inner().expect("finish encoder");
 
             assert_eq!(
                 bytes_written as usize,
                 compressed.len(),
-                "level {} counting encoder byte count mismatch",
-                level
+                "level {level} counting encoder byte count mismatch"
             );
 
-            let decompressed = decompress_to_vec(&compressed)
-                .expect("decompress");
+            let decompressed = decompress_to_vec(&compressed).expect("decompress");
             assert_eq!(
                 decompressed, payload,
-                "level {} counting encoder roundtrip failed",
-                level
+                "level {level} counting encoder roundtrip failed"
             );
         }
     }

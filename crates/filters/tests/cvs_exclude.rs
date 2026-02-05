@@ -7,7 +7,7 @@
 //!
 //! Reference: rsync 3.4.1 options.c and exclude.c for CVS exclusion handling.
 
-use filters::{FilterRule, FilterSet, cvs_exclusion_rules, cvs_default_patterns};
+use filters::{FilterRule, FilterSet, cvs_default_patterns, cvs_exclusion_rules};
 use std::path::Path;
 
 // ============================================================================

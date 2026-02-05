@@ -14,10 +14,7 @@ use std::path::Path;
 
 #[test]
 fn anchored_pattern_with_leading_slash() {
-    let rules = [
-        FilterRule::exclude("/root.txt"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("/root.txt"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches at root
@@ -29,10 +26,7 @@ fn anchored_pattern_with_leading_slash() {
 
 #[test]
 fn unanchored_pattern_without_slash() {
-    let rules = [
-        FilterRule::exclude("test.txt"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("test.txt"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches at any level
@@ -43,10 +37,7 @@ fn unanchored_pattern_without_slash() {
 
 #[test]
 fn wildcard_anchored_at_root() {
-    let rules = [
-        FilterRule::exclude("/*.txt"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("/*.txt"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches .txt at root only
@@ -59,10 +50,7 @@ fn wildcard_anchored_at_root() {
 
 #[test]
 fn wildcard_unanchored() {
-    let rules = [
-        FilterRule::exclude("*.txt"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("*.txt"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches at any level
@@ -105,10 +93,7 @@ fn pattern_with_double_star_and_internal_slash() {
 
 #[test]
 fn anchored_directory_pattern() {
-    let rules = [
-        FilterRule::exclude("/build/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("/build/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches build directory at root only
@@ -165,9 +150,9 @@ fn anchor_to_root_with_wildcard() {
 #[test]
 fn mixed_anchored_and_unanchored() {
     let rules = [
-        FilterRule::exclude("/config.ini"),      // Anchored
-        FilterRule::exclude("*.log"),             // Unanchored
-        FilterRule::exclude("/logs/"),            // Anchored directory
+        FilterRule::exclude("/config.ini"), // Anchored
+        FilterRule::exclude("*.log"),       // Unanchored
+        FilterRule::exclude("/logs/"),      // Anchored directory
         FilterRule::include("**"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
@@ -189,8 +174,8 @@ fn mixed_anchored_and_unanchored() {
 fn anchored_vs_unanchored_same_name() {
     // Test precedence when both anchored and unanchored rules exist
     let rules = [
-        FilterRule::include("/special.txt"),     // Include at root
-        FilterRule::exclude("special.txt"),       // Exclude everywhere else
+        FilterRule::include("/special.txt"), // Include at root
+        FilterRule::exclude("special.txt"),  // Exclude everywhere else
         FilterRule::include("**"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
@@ -275,10 +260,7 @@ fn unanchored_directory_only_pattern() {
 
 #[test]
 fn root_only_pattern() {
-    let rules = [
-        FilterRule::exclude("/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("/"), FilterRule::include("**")];
     // This is a degenerate case - pattern is just "/"
     let set = FilterSet::from_rules(rules).unwrap();
     // Behavior may vary, but shouldn't panic
@@ -301,10 +283,7 @@ fn anchored_empty_after_slash() {
 #[test]
 fn trailing_slash_does_not_anchor() {
     // Trailing slash makes it directory-only, not anchored
-    let rules = [
-        FilterRule::exclude("build/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("build/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Should match build directories at any level
@@ -314,10 +293,7 @@ fn trailing_slash_does_not_anchor() {
 
 #[test]
 fn multiple_slashes_in_pattern() {
-    let rules = [
-        FilterRule::exclude("a/b/c/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("a/b/c/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Pattern with / is anchored
@@ -405,7 +381,7 @@ fn monorepo_structure() {
         // Exclude build artifacts
         FilterRule::exclude("dist/"),
         FilterRule::exclude("node_modules/"),
-        FilterRule::exclude("**"),  // Default exclude
+        FilterRule::exclude("**"), // Default exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 

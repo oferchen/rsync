@@ -1,6 +1,8 @@
 //! CLI argument parsing for interop validation commands.
 
-use crate::cli::{InteropArgs, InteropCommand as CliInteropCommand, InteropCommonArgs};
+use crate::cli::{
+    BehaviorArgs, InteropArgs, InteropCommand as CliInteropCommand, InteropCommonArgs,
+};
 
 /// Options for the interop command.
 #[derive(Debug, Clone)]
@@ -16,6 +18,8 @@ pub enum InteropCommand {
     ExitCodes(ExitCodesOptions),
     /// Validate message formats against upstream rsync.
     Messages(MessagesOptions),
+    /// Compare behavior between oc-rsync and upstream rsync.
+    Behavior(BehaviorOptions),
     /// Run all validation (exit codes + messages).
     All,
 }
@@ -56,6 +60,21 @@ pub struct MessagesOptions {
     pub log_dir: Option<String>,
 }
 
+/// Options for behavior comparison testing.
+#[derive(Debug, Clone, Default)]
+pub struct BehaviorOptions {
+    /// Specific upstream version to test (default: latest).
+    pub version: Option<String>,
+    /// Run only a specific scenario by name.
+    pub scenario: Option<String>,
+    /// Enable verbose output.
+    pub verbose: bool,
+    /// Show stdout/stderr output from rsync commands.
+    pub show_output: bool,
+    /// Stop on first failure.
+    pub fail_fast: bool,
+}
+
 impl From<InteropCommonArgs> for ExitCodesOptions {
     fn from(args: InteropCommonArgs) -> Self {
         Self {
@@ -82,12 +101,25 @@ impl From<InteropCommonArgs> for MessagesOptions {
     }
 }
 
+impl From<BehaviorArgs> for BehaviorOptions {
+    fn from(args: BehaviorArgs) -> Self {
+        Self {
+            version: args.version,
+            scenario: args.scenario,
+            verbose: args.verbose,
+            show_output: args.show_output,
+            fail_fast: args.fail_fast,
+        }
+    }
+}
+
 impl From<InteropArgs> for InteropOptions {
     fn from(args: InteropArgs) -> Self {
         let command = args.command.unwrap_or(CliInteropCommand::All);
         let command = match command {
             CliInteropCommand::ExitCodes(common) => InteropCommand::ExitCodes(common.into()),
             CliInteropCommand::Messages(common) => InteropCommand::Messages(common.into()),
+            CliInteropCommand::Behavior(behavior) => InteropCommand::Behavior(behavior.into()),
             CliInteropCommand::All => InteropCommand::All,
         };
         Self { command }

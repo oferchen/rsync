@@ -8,12 +8,12 @@
 //! 5. All supported algorithms
 
 use checksums::pipelined::{
-    compute_checksums_pipelined, BlockChecksums, DoubleBufferedReader, PipelineConfig,
-    PipelinedChecksumIterator,
+    BlockChecksums, DoubleBufferedReader, PipelineConfig, PipelinedChecksumIterator,
+    compute_checksums_pipelined,
 };
 use checksums::strong::{
-    md4_digest_batch, md5_digest_batch, Md4, Md5, Md5Seed, Sha1, Sha256, Sha512, StrongDigest,
-    Xxh3, Xxh3_128, Xxh64,
+    Md4, Md5, Md5Seed, Sha1, Sha256, Sha512, StrongDigest, Xxh3, Xxh3_128, Xxh64, md4_digest_batch,
+    md5_digest_batch,
 };
 use checksums::{RollingChecksum, RollingDigest, RollingError, RollingSliceError};
 use std::io::{Cursor, IoSlice};
@@ -154,11 +154,7 @@ mod rolling_edge_cases {
         let empty: &[u8] = b"";
 
         let mut vectored = RollingChecksum::new();
-        let slices = [
-            IoSlice::new(empty),
-            IoSlice::new(data),
-            IoSlice::new(empty),
-        ];
+        let slices = [IoSlice::new(empty), IoSlice::new(data), IoSlice::new(empty)];
         vectored.update_vectored(&slices);
 
         let mut direct = RollingChecksum::new();
@@ -421,10 +417,7 @@ mod strong_truncation {
     fn sha1_known_vector_truncation() {
         // SHA1("abc") = a9993e364706816aba3e25717850c26c9cd0d89d
         let digest = Sha1::digest(b"abc");
-        assert_eq!(
-            to_hex(&digest),
-            "a9993e364706816aba3e25717850c26c9cd0d89d"
-        );
+        assert_eq!(to_hex(&digest), "a9993e364706816aba3e25717850c26c9cd0d89d");
 
         // Verify first 8 bytes
         assert_eq!(to_hex(&digest[..8]), "a9993e364706816a");
@@ -701,8 +694,11 @@ mod pipelined_operations {
         // File smaller than min_file_size should use sync mode
         let data = vec![0xABu8; 64 * 1024]; // 64KB, less than default 256KB min
         let config = PipelineConfig::default();
-        let mut reader =
-            DoubleBufferedReader::with_size_hint(Cursor::new(data.clone()), config, Some(64 * 1024));
+        let mut reader = DoubleBufferedReader::with_size_hint(
+            Cursor::new(data.clone()),
+            config,
+            Some(64 * 1024),
+        );
 
         // Should be in synchronous mode
         assert!(!reader.is_pipelined());
@@ -853,7 +849,7 @@ mod pipelined_operations {
             PipelinedChecksumIterator::new(Cursor::new(data.clone()), config);
 
         let mut count = 0;
-        while let Some(cs) = iter.next().unwrap() {
+        while let Some(cs) = iter.next_block_checksums().unwrap() {
             assert_eq!(cs.len, 32 * 1024);
             count += 1;
         }
@@ -899,16 +895,23 @@ mod pipelined_operations {
             .with_min_file_size(0);
 
         // Test with various strong digest algorithms
-        let _md5_checksums =
-            compute_checksums_pipelined::<Md5, _>(Cursor::new(data.clone()), config, Some(64 * 1024))
-                .unwrap();
+        let _md5_checksums = compute_checksums_pipelined::<Md5, _>(
+            Cursor::new(data.clone()),
+            config,
+            Some(64 * 1024),
+        )
+        .unwrap();
 
-        let _sha256_checksums =
-            compute_checksums_pipelined::<Sha256, _>(Cursor::new(data.clone()), config, Some(64 * 1024))
-                .unwrap();
+        let _sha256_checksums = compute_checksums_pipelined::<Sha256, _>(
+            Cursor::new(data.clone()),
+            config,
+            Some(64 * 1024),
+        )
+        .unwrap();
 
         let _md4_checksums =
-            compute_checksums_pipelined::<Md4, _>(Cursor::new(data), config, Some(64 * 1024)).unwrap();
+            compute_checksums_pipelined::<Md4, _>(Cursor::new(data), config, Some(64 * 1024))
+                .unwrap();
     }
 
     #[test]
@@ -1057,10 +1060,7 @@ mod all_algorithms {
     #[test]
     fn sha1_known_vectors() {
         let vectors = [
-            (
-                b"".as_slice(),
-                "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-            ),
+            (b"".as_slice(), "da39a3ee5e6b4b0d3255bfef95601890afd80709"),
             (
                 b"abc".as_slice(),
                 "a9993e364706816aba3e25717850c26c9cd0d89d",
@@ -1376,11 +1376,11 @@ mod all_algorithms {
         let sha256 = Sha256::new();
         let sha512 = Sha512::new();
 
-        assert!(format!("{:?}", md4).contains("Md4"));
-        assert!(format!("{:?}", md5).contains("Md5"));
-        assert!(format!("{:?}", sha1).contains("Sha1"));
-        assert!(format!("{:?}", sha256).contains("Sha256"));
-        assert!(format!("{:?}", sha512).contains("Sha512"));
+        assert!(format!("{md4:?}").contains("Md4"));
+        assert!(format!("{md5:?}").contains("Md5"));
+        assert!(format!("{sha1:?}").contains("Sha1"));
+        assert!(format!("{sha256:?}").contains("Sha256"));
+        assert!(format!("{sha512:?}").contains("Sha512"));
     }
 }
 
@@ -1442,11 +1442,7 @@ mod integration {
         for (i, &checksum) in checksums.iter().enumerate() {
             let mut direct = RollingChecksum::new();
             direct.update(&data[i..i + window_size]);
-            assert_eq!(
-                checksum,
-                direct.value(),
-                "Mismatch at position {i}"
-            );
+            assert_eq!(checksum, direct.value(), "Mismatch at position {i}");
         }
     }
 
@@ -1487,9 +1483,12 @@ mod integration {
             .with_block_size(block_size)
             .with_min_file_size(0);
 
-        let checksums =
-            compute_checksums_pipelined::<Sha256, _>(Cursor::new(data.clone()), config, Some(file_size as u64))
-                .unwrap();
+        let checksums = compute_checksums_pipelined::<Sha256, _>(
+            Cursor::new(data.clone()),
+            config,
+            Some(file_size as u64),
+        )
+        .unwrap();
 
         assert_eq!(checksums.len(), file_size / block_size);
 
@@ -1618,4 +1617,3 @@ mod property_tests {
         }
     }
 }
-

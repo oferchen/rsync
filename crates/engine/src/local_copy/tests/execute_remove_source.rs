@@ -68,9 +68,9 @@ fn remove_source_files_preserves_unchanged_files() {
 
     // Set same mtime on both files so they're considered identical
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
-    set_file_times(&ctx.source.join("file.txt"), timestamp, timestamp)
+    set_file_times(ctx.source.join("file.txt"), timestamp, timestamp)
         .expect("set source times");
-    set_file_times(&ctx.dest.join("file.txt"), timestamp, timestamp)
+    set_file_times(ctx.dest.join("file.txt"), timestamp, timestamp)
         .expect("set dest times");
 
     let operands = vec![
@@ -174,9 +174,9 @@ fn remove_source_files_with_update_preserves_newer_dest() {
     // Make source older than dest
     let old_time = FileTime::from_unix_time(1_600_000_000, 0);
     let new_time = FileTime::from_unix_time(1_700_000_000, 0);
-    set_file_times(&ctx.source.join("file.txt"), old_time, old_time)
+    set_file_times(ctx.source.join("file.txt"), old_time, old_time)
         .expect("set source times");
-    set_file_times(&ctx.dest.join("file.txt"), new_time, new_time)
+    set_file_times(ctx.dest.join("file.txt"), new_time, new_time)
         .expect("set dest times");
 
     let operands = vec![

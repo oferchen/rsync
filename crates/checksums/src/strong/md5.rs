@@ -402,8 +402,10 @@ impl StrongDigest for Md5 {
 /// Batch compute MD5 digests using SIMD when available.
 ///
 /// This function computes MD5 digests for multiple inputs in parallel using
-/// SIMD instructions (AVX2/AVX-512/NEON) when the `md5-simd` feature is enabled.
+/// SIMD instructions (AVX2/AVX-512/NEON) when the `simd-batch` feature is enabled.
 /// Falls back to sequential computation when SIMD is unavailable.
+///
+/// All implementations maintain RFC 1321 compatibility.
 ///
 /// # Examples
 ///
@@ -418,9 +420,9 @@ impl StrongDigest for Md5 {
 ///     assert_eq!(digest.len(), 16);
 /// }
 /// ```
-#[cfg(feature = "md5-simd")]
+#[cfg(feature = "simd-batch")]
 pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
-    md5_simd::digest_batch(inputs)
+    crate::simd_batch::digest_batch(inputs)
 }
 
 /// Batch compute MD5 digests (sequential fallback when SIMD unavailable).
@@ -438,7 +440,7 @@ pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
 ///     assert_eq!(digest.len(), 16);
 /// }
 /// ```
-#[cfg(not(feature = "md5-simd"))]
+#[cfg(not(feature = "simd-batch"))]
 pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
     inputs.iter().map(|i| Md5::digest(i.as_ref())).collect()
 }

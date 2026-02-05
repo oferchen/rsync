@@ -327,9 +327,7 @@ fn unknown_flag_error() {
     let result = parse_info_flags(&mut config, "invalid");
 
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .contains("unknown info flag: invalid"));
+    assert!(result.unwrap_err().contains("unknown info flag: invalid"));
 }
 
 /// Verifies unknown flag in list returns error.

@@ -183,7 +183,7 @@ fn handle_paths_near_path_max() {
     fs::write(&test_file, b"near the limit").expect("write file");
 
     let total_path_len = test_file.as_os_str().len();
-    println!("Created path length: {} (PATH_MAX: {})", total_path_len, PATH_MAX);
+    println!("Created path length: {total_path_len} (PATH_MAX: {PATH_MAX})");
 
     // Should successfully traverse despite long paths
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -265,7 +265,9 @@ fn handle_long_individual_component_names() {
     // Should find both the directory and file
     assert_eq!(paths.len(), 2, "should find directory and file");
     assert!(
-        paths.iter().any(|p| p.to_string_lossy().contains(&long_name)),
+        paths
+            .iter()
+            .any(|p| p.to_string_lossy().contains(&long_name)),
         "should find long directory name"
     );
     assert!(
@@ -326,11 +328,10 @@ fn files_at_various_depths_discovered() {
     for &depth in &depths {
         let mut path = root.clone();
         for i in 0..depth {
-            path = path.join(format!("level{}", i));
+            path = path.join(format!("level{i}"));
         }
         fs::create_dir_all(&path).expect("create path");
-        fs::write(path.join(format!("file_at_depth_{}.txt", depth)), b"data")
-            .expect("write file");
+        fs::write(path.join(format!("file_at_depth_{depth}.txt")), b"data").expect("write file");
     }
 
     let walker = FileListBuilder::new(&root).build().expect("build walker");
@@ -342,9 +343,9 @@ fn files_at_various_depths_discovered() {
             e.metadata().is_file()
                 && e.relative_path()
                     .to_string_lossy()
-                    .contains(&format!("file_at_depth_{}", expected_depth))
+                    .contains(&format!("file_at_depth_{expected_depth}"))
         });
-        assert!(found, "should find file at depth {}", expected_depth);
+        assert!(found, "should find file at depth {expected_depth}");
     }
 }
 
@@ -463,7 +464,7 @@ fn realistic_node_modules_style_structure() {
     // Simulate nested node_modules: project/node_modules/pkg1/node_modules/pkg2/node_modules/pkg3
     let mut current = root.clone();
     for i in 0..10 {
-        current = current.join("node_modules").join(format!("package{}", i));
+        current = current.join("node_modules").join(format!("package{i}"));
         fs::create_dir_all(&current).expect("create nested modules");
         fs::write(current.join("index.js"), b"module.exports = {};").expect("write js file");
         fs::write(current.join("package.json"), b"{}").expect("write package.json");
@@ -501,7 +502,7 @@ fn deep_tree_with_many_leaf_files() {
 
     // Add 50 files at the deepest level
     for i in 0..50 {
-        fs::write(deep_path.join(format!("file{:03}.txt", i)), b"leaf data")
+        fs::write(deep_path.join(format!("file{i:03}.txt")), b"leaf data")
             .expect("write leaf file");
     }
 
@@ -514,12 +515,7 @@ fn deep_tree_with_many_leaf_files() {
     // Verify all files are at depth 21
     let leaf_files: Vec<_> = entries
         .iter()
-        .filter(|e| {
-            e.metadata().is_file()
-                && e.relative_path()
-                    .to_string_lossy()
-                    .starts_with("d0")
-        })
+        .filter(|e| e.metadata().is_file() && e.relative_path().to_string_lossy().starts_with("d0"))
         .collect();
 
     assert_eq!(leaf_files.len(), 50, "should find all leaf files");
@@ -625,8 +621,7 @@ fn no_parent_references_in_deep_relative_paths() {
             use std::path::Component;
             assert!(
                 !matches!(component, Component::ParentDir),
-                "should not contain '..' component in {:?}",
-                relative
+                "should not contain '..' component in {relative:?}"
             );
         }
     }
@@ -647,18 +642,12 @@ fn full_paths_always_absolute_for_deep_structures() {
         let entry = entry.expect("entry should succeed");
         let full = entry.full_path();
 
-        assert!(
-            full.is_absolute(),
-            "full path should be absolute: {:?}",
-            full
-        );
+        assert!(full.is_absolute(), "full path should be absolute: {full:?}");
 
         // Verify it starts with root
         assert!(
             full.starts_with(&root),
-            "full path {:?} should start with root {:?}",
-            full,
-            root
+            "full path {full:?} should start with root {root:?}"
         );
     }
 }
@@ -706,11 +695,11 @@ fn lazy_evaluation_for_very_deep_structures() {
     let deep_path = create_deep_structure(&root, 200, 8);
     fs::write(deep_path.join("bottom.txt"), b"deepest point").expect("write file");
 
-    let mut walker = FileListBuilder::new(&root).build().expect("build walker");
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
 
     // Take only the first 50 entries
     let mut count = 0;
-    while let Some(entry) = walker.next() {
+    for entry in walker {
         entry.expect("entry should succeed");
         count += 1;
         if count >= 50 {

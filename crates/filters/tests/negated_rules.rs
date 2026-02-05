@@ -3,6 +3,7 @@
 //! In rsync filter rules, the `!` modifier inverts the match result:
 //! - A negated exclude rule excludes files that do NOT match the pattern
 //! - A negated include rule includes files that do NOT match the pattern
+//!
 //! This allows for "exclude everything except X" patterns.
 
 use filters::{FilterAction, FilterRule, FilterSet};
@@ -342,7 +343,7 @@ fn negation_affects_equality() {
 #[test]
 fn negation_in_debug_output() {
     let rule = FilterRule::exclude("*.txt").with_negate(true);
-    let debug = format!("{:?}", rule);
+    let debug = format!("{rule:?}");
     assert!(debug.contains("negate: true") || debug.contains("negate"));
 }
 
@@ -435,7 +436,7 @@ fn only_include_specific_extensions() {
     let rules = [
         FilterRule::include("*.rs"),
         FilterRule::include("*.toml"),
-        FilterRule::include("*/"),  // Include directories for traversal
+        FilterRule::include("*/"), // Include directories for traversal
         FilterRule::exclude("**"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
@@ -452,7 +453,7 @@ fn exclude_everything_except_pattern_using_negation() {
     let rules = [
         FilterRule::include("*.rs"),
         FilterRule::include("*.toml"),
-        FilterRule::exclude("*.rs").with_negate(true),  // Exclude non-.rs
+        FilterRule::exclude("*.rs").with_negate(true), // Exclude non-.rs
         // Note: This is a somewhat convoluted way to do it
         FilterRule::include("**"),
     ];

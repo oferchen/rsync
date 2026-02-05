@@ -650,7 +650,11 @@ fn combined_rlptgod_equals_full_expansion() {
     assert_eq!(args.times, Some(true), "-t component should be enabled");
     assert_eq!(args.group, Some(true), "-g component should be enabled");
     assert_eq!(args.owner, Some(true), "-o component should be enabled");
-    assert_eq!(args.devices, Some(true), "-D component should enable devices");
+    assert_eq!(
+        args.devices,
+        Some(true),
+        "-D component should enable devices"
+    );
     assert_eq!(
         args.specials,
         Some(true),

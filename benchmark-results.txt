@@ -1,0 +1,11 @@
+=== Benchmark Results Tue Feb  3 11:08:14 PM CET 2026 ===
+Mode: quick, Files: 1000, Size: 1024
+
+oc-rsync: .033450346s (29.19 MB/s)
+upstream rsync: .068769800s (14.20 MB/s)
+oc-rsync (no-change): .039099195s (24.97 MB/s)
+upstream rsync (no-change): .072762472s (13.42 MB/s)
+oc-rsync (incremental): .033152357s (29.45 MB/s)
+upstream rsync (incremental): .067818166s (14.39 MB/s)
+oc-rsync (compressed): .079145848s (12.33 MB/s)
+upstream rsync (compressed): .074394023s (13.12 MB/s)

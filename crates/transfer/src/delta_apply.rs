@@ -377,9 +377,7 @@ impl<'a> DeltaApplicator<'a> {
         if block_idx >= block_count {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "block reference {block_idx} out of bounds (block count: {block_count})"
-                ),
+                format!("block reference {block_idx} out of bounds (block count: {block_count})"),
             ));
         }
 
@@ -436,14 +434,25 @@ impl<'a> DeltaApplicator<'a> {
         let token = i32::from_le_bytes(buf);
 
         // DEBUG_DELTASUM level 4: Per-token tracking (very verbose)
-        debug_log!(Deltasum, 4, "recv token={} offset={}", token, self.stats.bytes_written);
+        debug_log!(
+            Deltasum,
+            4,
+            "recv token={} offset={}",
+            token,
+            self.stats.bytes_written
+        );
 
         match token.cmp(&0) {
             std::cmp::Ordering::Equal => {
                 // DEBUG_DELTASUM level 2: Token stream end marker
-                debug_log!(Deltasum, 2, "recv data complete, final offset={}", self.stats.bytes_written);
+                debug_log!(
+                    Deltasum,
+                    2,
+                    "recv data complete, final offset={}",
+                    self.stats.bytes_written
+                );
                 Ok(false)
-            },
+            }
             std::cmp::Ordering::Greater => {
                 let len = token as usize;
                 // Reuse TokenBuffer - grows but never shrinks

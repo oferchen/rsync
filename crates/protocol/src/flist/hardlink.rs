@@ -357,8 +357,7 @@ mod collision_tests {
             assert_eq!(
                 result,
                 HardlinkLookup::First(i),
-                "inode {} should be first occurrence",
-                i
+                "inode {i} should be first occurrence"
             );
         }
 
@@ -565,7 +564,7 @@ mod large_scale_tests {
                     if let HardlinkLookup::LinkTo(first) = result {
                         assert_eq!(first, file_ndx - link);
                     } else {
-                        panic!("Expected LinkTo for link {} in group {}", link, group);
+                        panic!("Expected LinkTo for link {link} in group {group}");
                     }
                 }
                 file_ndx += 1;
@@ -581,8 +580,7 @@ mod large_scale_tests {
             let entry = table.get(&dev_ino).unwrap();
             assert_eq!(
                 entry.link_count, expected_links,
-                "Group {} should have {} links",
-                group, expected_links
+                "Group {group} should have {expected_links} links"
             );
         }
     }
@@ -767,8 +765,7 @@ mod interleaved_access_tests {
             assert_eq!(
                 result,
                 HardlinkLookup::LinkTo(42),
-                "Link {} should reference first index 42",
-                i
+                "Link {i} should reference first index 42"
             );
         }
 

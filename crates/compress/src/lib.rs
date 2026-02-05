@@ -82,6 +82,6 @@ pub mod zstd;
 
 pub use common::CountingSink;
 pub use skip_compress::{
-    AdaptiveCompressor, CompressionDecider, CompressionDecision, FileCategory,
-    DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE,
+    AdaptiveCompressor, CompressionDecider, CompressionDecision, DEFAULT_COMPRESSION_THRESHOLD,
+    DEFAULT_SAMPLE_SIZE, FileCategory,
 };
