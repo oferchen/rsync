@@ -14,10 +14,7 @@ use std::path::Path;
 
 #[test]
 fn directory_only_pattern_matches_directory() {
-    let rules = [
-        FilterRule::exclude("build/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("build/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches directory
@@ -26,10 +23,7 @@ fn directory_only_pattern_matches_directory() {
 
 #[test]
 fn directory_only_pattern_does_not_match_file() {
-    let rules = [
-        FilterRule::exclude("build/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("build/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Does not match file with same name
@@ -38,10 +32,7 @@ fn directory_only_pattern_does_not_match_file() {
 
 #[test]
 fn pattern_without_trailing_slash_matches_both() {
-    let rules = [
-        FilterRule::exclude("target"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("target"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches both file and directory
@@ -55,10 +46,7 @@ fn pattern_without_trailing_slash_matches_both() {
 
 #[test]
 fn wildcard_directory_only() {
-    let rules = [
-        FilterRule::exclude("*/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("*/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches any directory at current level
@@ -71,10 +59,7 @@ fn wildcard_directory_only() {
 
 #[test]
 fn double_star_directory_only() {
-    let rules = [
-        FilterRule::exclude("**/cache/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("**/cache/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches cache directory at any depth
@@ -88,10 +73,7 @@ fn double_star_directory_only() {
 
 #[test]
 fn pattern_with_extension_directory_only() {
-    let rules = [
-        FilterRule::exclude("*.tmp/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("*.tmp/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Matches directories with .tmp extension
@@ -107,10 +89,7 @@ fn pattern_with_extension_directory_only() {
 
 #[test]
 fn anchored_directory_only() {
-    let rules = [
-        FilterRule::exclude("/dist/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("/dist/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Only matches at root
@@ -141,10 +120,7 @@ fn unanchored_directory_only() {
 
 #[test]
 fn directory_contents_excluded_with_directory() {
-    let rules = [
-        FilterRule::exclude("build/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("build/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // When directory is excluded, contents are also excluded
@@ -197,10 +173,10 @@ fn multiple_directory_only_patterns() {
 #[test]
 fn directory_only_with_other_patterns() {
     let rules = [
-        FilterRule::exclude("target/"),       // Directory only
-        FilterRule::exclude("*.bak"),          // Files
-        FilterRule::include("src/"),          // Include directory
-        FilterRule::exclude("**"),             // Default exclude
+        FilterRule::exclude("target/"), // Directory only
+        FilterRule::exclude("*.bak"),   // Files
+        FilterRule::include("src/"),    // Include directory
+        FilterRule::exclude("**"),      // Default exclude
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
@@ -222,10 +198,7 @@ fn directory_only_with_other_patterns() {
 
 #[test]
 fn include_directory_only() {
-    let rules = [
-        FilterRule::include("important/"),
-        FilterRule::exclude("**"),
-    ];
+    let rules = [FilterRule::include("important/"), FilterRule::exclude("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Directory included
@@ -311,10 +284,7 @@ fn directory_only_with_special_characters() {
 
 #[test]
 fn directory_only_with_dots() {
-    let rules = [
-        FilterRule::exclude("..tmp/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::exclude("..tmp/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     assert!(!set.allows(Path::new("..tmp"), true));
@@ -324,7 +294,7 @@ fn directory_only_with_dots() {
 #[test]
 fn directory_only_unicode() {
     let rules = [
-        FilterRule::exclude("кэш/"),  // Russian "cache"
+        FilterRule::exclude("кэш/"), // Russian "cache"
         FilterRule::include("**"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
@@ -439,11 +409,12 @@ fn general_build_directories() {
     let set = FilterSet::from_rules(rules).unwrap();
 
     // All directories excluded
-    for dir in &["build", "dist", "out", "output", "bin", "obj", "lib", ".git", ".svn", ".hg"] {
+    for dir in &[
+        "build", "dist", "out", "output", "bin", "obj", "lib", ".git", ".svn", ".hg",
+    ] {
         assert!(
             !set.allows(Path::new(dir), true),
-            "{} should be excluded as directory",
-            dir
+            "{dir} should be excluded as directory"
         );
     }
 
@@ -451,8 +422,7 @@ fn general_build_directories() {
     for file in &["build", "dist", "out", "output", "bin", "obj", "lib"] {
         assert!(
             set.allows(Path::new(file), false),
-            "{} should be included as file",
-            file
+            "{file} should be included as file"
         );
     }
 }
@@ -486,10 +456,7 @@ fn directory_only_with_perishable() {
 
 #[test]
 fn directory_only_sender_side() {
-    let rules = [
-        FilterRule::hide("secret/"),
-        FilterRule::include("**"),
-    ];
+    let rules = [FilterRule::hide("secret/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
     // Hidden directory - `allows` uses sender context by default for transfer

@@ -667,7 +667,7 @@ fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
     // Create multiple files of varying sizes
     for i in 0..10 {
         let content = vec![i as u8; (i + 1) * 1024];
-        fs::write(source_root.join(format!("file{}.bin", i)), &content).expect("write file");
+        fs::write(source_root.join(format!("file{i}.bin")), &content).expect("write file");
     }
 
     let mut source_operand = source_root.into_os_string();
@@ -687,8 +687,8 @@ fn execute_with_temp_dir_cleans_up_on_successful_multi_file_transfer() {
 
     // Verify all files exist in destination
     for i in 0..10 {
-        let dest_file = dest_root.join(format!("file{}.bin", i));
-        assert!(dest_file.exists(), "file{}.bin should exist", i);
+        let dest_file = dest_root.join(format!("file{i}.bin"));
+        assert!(dest_file.exists(), "file{i}.bin should exist");
         let expected_content = vec![i as u8; (i + 1) * 1024];
         assert_eq!(fs::read(&dest_file).expect("read"), expected_content);
     }

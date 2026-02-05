@@ -245,17 +245,13 @@ mod tests {
 
         // Test levels 1-22 (zstd's supported range)
         for level in 1..=22 {
-            let level_config = CompressionLevel::Precise(
-                std::num::NonZeroU8::new(level).expect("non-zero level")
-            );
+            let level_config =
+                CompressionLevel::Precise(std::num::NonZeroU8::new(level).expect("non-zero level"));
             let compressed = compress_to_vec(input, level_config)
                 .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
             let decompressed = decompress_to_vec(&compressed)
                 .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
-            assert_eq!(
-                decompressed, input,
-                "round-trip failed at level {level}"
-            );
+            assert_eq!(decompressed, input, "round-trip failed at level {level}");
         }
     }
 
@@ -319,25 +315,18 @@ mod tests {
                 .unwrap_or_else(|e| panic!("compress failed at {level_config:?}: {e}"));
             let decompressed = decompress_to_vec(&compressed)
                 .unwrap_or_else(|e| panic!("decompress failed at {level_config:?}: {e}"));
-            assert_eq!(
-                decompressed, input,
-                "round-trip failed at {level_config:?}"
-            );
+            assert_eq!(decompressed, input, "round-trip failed at {level_config:?}");
         }
 
         // Test all precise levels 1-22
         for level in 1..=22 {
-            let level_config = CompressionLevel::Precise(
-                std::num::NonZeroU8::new(level).expect("non-zero level")
-            );
+            let level_config =
+                CompressionLevel::Precise(std::num::NonZeroU8::new(level).expect("non-zero level"));
             let compressed = compress_to_vec(input, level_config)
                 .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
             let decompressed = decompress_to_vec(&compressed)
                 .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
-            assert_eq!(
-                decompressed, input,
-                "round-trip failed at level {level}"
-            );
+            assert_eq!(decompressed, input, "round-trip failed at level {level}");
         }
     }
 
@@ -347,14 +336,15 @@ mod tests {
 
         // Test that CountingZstdEncoder works with all levels
         for level in 1..=22 {
-            let level_config = CompressionLevel::Precise(
-                std::num::NonZeroU8::new(level).expect("non-zero level")
-            );
+            let level_config =
+                CompressionLevel::Precise(std::num::NonZeroU8::new(level).expect("non-zero level"));
             let mut encoder = CountingZstdEncoder::new(level_config)
                 .unwrap_or_else(|e| panic!("encoder creation failed at level {level}: {e}"));
-            encoder.write(input)
+            encoder
+                .write(input)
                 .unwrap_or_else(|e| panic!("write failed at level {level}: {e}"));
-            let bytes = encoder.finish()
+            let bytes = encoder
+                .finish()
                 .unwrap_or_else(|e| panic!("finish failed at level {level}: {e}"));
             assert!(bytes > 0, "no bytes written at level {level}");
         }
@@ -413,7 +403,10 @@ mod tests {
                 .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
             let decompressed = decompress_to_vec(&compressed)
                 .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
-            assert_eq!(decompressed, input, "empty input round-trip failed at level {level}");
+            assert_eq!(
+                decompressed, input,
+                "empty input round-trip failed at level {level}"
+            );
         }
     }
 
@@ -432,7 +425,10 @@ mod tests {
                 .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
             let decompressed = decompress_to_vec(&compressed)
                 .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
-            assert_eq!(decompressed, input, "single byte round-trip failed at level {level}");
+            assert_eq!(
+                decompressed, input,
+                "single byte round-trip failed at level {level}"
+            );
         }
     }
 }

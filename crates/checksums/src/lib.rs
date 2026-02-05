@@ -336,12 +336,22 @@
 //! - `parallel` module for concurrent computation (with `parallel` feature)
 //! - [`RollingChecksum`] for sliding window checksum details
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![deny(unsafe_code)]
+// Allow unsafe code for SIMD intrinsics in simd_batch module
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
 mod rolling;
 pub mod strong;
+
+/// SIMD-accelerated batch hashing for MD4/MD5.
+///
+/// This module provides parallel MD4/MD5 computation using SIMD instructions
+/// when available. All implementations maintain RFC compatibility:
+/// - MD5: RFC 1321 test vectors pass
+/// - MD4: RFC 1320 test vectors pass
+#[cfg(feature = "simd-batch")]
+#[cfg_attr(docsrs, doc(cfg(feature = "simd-batch")))]
+pub(crate) mod simd_batch;
 
 #[cfg(feature = "parallel")]
 #[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]

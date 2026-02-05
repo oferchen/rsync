@@ -312,7 +312,12 @@ impl FileListReader {
                 // In varint mode, error code follows zero flags
                 let io_error = read_varint(reader)?;
                 if io_error != 0 {
-                    debug_log!(Flist, 4, "read_flags: end-of-list with io_error={}", io_error);
+                    debug_log!(
+                        Flist,
+                        4,
+                        "read_flags: end-of-list with io_error={}",
+                        io_error
+                    );
                     return Ok(FlagsResult::IoError(io_error));
                 }
             }
@@ -2455,10 +2460,8 @@ mod tests {
         // Missing: nsec field (varint30)
 
         let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::with_compat_flags(
-            protocol,
-            CompatibilityFlags::VARINT_FLIST_FLAGS,
-        );
+        let mut reader =
+            FileListReader::with_compat_flags(protocol, CompatibilityFlags::VARINT_FLIST_FLAGS);
 
         let result = reader.read_entry(&mut cursor);
         assert_unexpected_eof(result, "truncated nsec field");

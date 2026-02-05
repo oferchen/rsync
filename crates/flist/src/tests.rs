@@ -298,7 +298,11 @@ fn walk_detects_indirect_symlink_loop() {
 
     // Due to loop detection, we may not see all symlinks traversed,
     // but we should not have infinite entries
-    assert!(paths.len() < 20, "Loop detection failed, got {} entries", paths.len());
+    assert!(
+        paths.len() < 20,
+        "Loop detection failed, got {} entries",
+        paths.len()
+    );
 }
 
 #[cfg(unix)]
@@ -332,7 +336,11 @@ fn walk_detects_parent_symlink_loop() {
     assert!(paths.contains(&PathBuf::from("child/parent_link")));
 
     // Should not infinitely recurse
-    assert!(paths.len() < 10, "Loop detection failed, got {} entries", paths.len());
+    assert!(
+        paths.len() < 10,
+        "Loop detection failed, got {} entries",
+        paths.len()
+    );
 }
 
 #[cfg(unix)]
@@ -379,7 +387,7 @@ fn walk_continues_after_detecting_loop() {
     assert!(paths.contains(&PathBuf::from("normal_dir/nested.txt")));
 
     // Check we got all expected entries and no duplicates from infinite loop
-    assert_eq!(paths.len(), 5, "Expected 5 entries, got: {:?}", paths);
+    assert_eq!(paths.len(), 5, "Expected 5 entries, got: {paths:?}");
 }
 
 #[cfg(unix)]
@@ -421,14 +429,18 @@ fn walk_loop_detection_with_multiple_paths_to_same_dir() {
     assert!(paths.contains(&PathBuf::from("target")));
 
     // Count how many times file.txt appears
-    let file_count = paths.iter().filter(|p| {
-        p.file_name().and_then(|n| n.to_str()) == Some("file.txt")
-    }).count();
+    let file_count = paths
+        .iter()
+        .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("file.txt"))
+        .count();
 
     // Due to loop detection using canonical paths, file.txt only appears once
     // under whichever path is visited first (link1 comes before link2 and target
     // in sorted order, so it's visited via link1)
-    assert_eq!(file_count, 1, "Expected file.txt to appear once due to canonical path loop detection, got {} times in {:?}", file_count, paths);
+    assert_eq!(
+        file_count, 1,
+        "Expected file.txt to appear once due to canonical path loop detection, got {file_count} times in {paths:?}"
+    );
 }
 
 #[cfg(unix)]

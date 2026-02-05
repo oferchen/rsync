@@ -250,9 +250,7 @@ fn delete_after_deletes_after_all_transfers_complete() {
     if let (Some(last_copy), Some(first_delete)) = (last_copy_index, first_delete_index) {
         assert!(
             last_copy < first_delete,
-            "All file copies (last at {}) should complete before any deletions (first at {})",
-            last_copy,
-            first_delete
+            "All file copies (last at {last_copy}) should complete before any deletions (first at {first_delete})"
         );
     }
 }
@@ -459,8 +457,8 @@ fn delete_after_timing_differs_from_delete_during() {
     // Verify delete-during: deletes can be interleaved (not all at the end)
     // This is harder to verify precisely, but we can check that there's no strict ordering
     // If we have both copies and deletes, in delete-during they may be interleaved
-    assert!(during_copy_indices.len() > 0, "should have copies");
-    assert!(during_delete_indices.len() > 0, "should have deletes");
+    assert!(!during_copy_indices.is_empty(), "should have copies");
+    assert!(!during_delete_indices.is_empty(), "should have deletes");
 }
 
 #[test]

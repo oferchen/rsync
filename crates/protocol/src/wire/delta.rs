@@ -763,7 +763,7 @@ mod tests {
     /// Returns (literals, block_indices) where literals is concatenated literal data
     /// and block_indices contains the block references encountered.
     fn decode_token_stream(data: &[u8]) -> io::Result<(Vec<u8>, Vec<u32>)> {
-        let mut cursor = &data[..];
+        let mut cursor = data;
         let mut literals = Vec::new();
         let mut block_indices = Vec::new();
 
@@ -913,7 +913,10 @@ mod tests {
 
         assert!(block_indices.is_empty(), "should have no block references");
         assert_eq!(reconstructed.len(), data.len());
-        assert_eq!(reconstructed, data, "reconstructed data should match original");
+        assert_eq!(
+            reconstructed, data,
+            "reconstructed data should match original"
+        );
     }
 
     #[test]
@@ -965,7 +968,10 @@ mod tests {
         assert_eq!(reconstructed_literals.len(), expected_literal_size);
 
         // Verify first large literal
-        assert_eq!(&reconstructed_literals[..large_literal.len()], &large_literal[..]);
+        assert_eq!(
+            &reconstructed_literals[..large_literal.len()],
+            &large_literal[..]
+        );
 
         // Verify small literal after first large
         let small_start = large_literal.len();
@@ -976,7 +982,11 @@ mod tests {
 
         // Verify last large literal
         let last_start = small_start + small_literal.len();
-        assert!(reconstructed_literals[last_start..].iter().all(|&b| b == 0xBB));
+        assert!(
+            reconstructed_literals[last_start..]
+                .iter()
+                .all(|&b| b == 0xBB)
+        );
     }
 
     #[test]
@@ -1048,7 +1058,7 @@ mod tests {
         assert_eq!(reconstructed, data);
 
         // Verify number of chunks (1MB / 32KB = 32 chunks)
-        let expected_chunks = (size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        let expected_chunks = size.div_ceil(CHUNK_SIZE);
         assert_eq!(expected_chunks, 32);
     }
 
@@ -1080,16 +1090,17 @@ mod tests {
         let (reconstructed, _) = decode_token_stream(&buf).unwrap();
 
         // Verify chunk boundaries maintained data correctly
-        for i in 0..CHUNK_SIZE {
-            assert_eq!(
-                reconstructed[i],
-                (i % 256) as u8,
-                "first chunk byte {i} mismatch"
-            );
+        for (i, &byte) in reconstructed.iter().enumerate().take(CHUNK_SIZE) {
+            assert_eq!(byte, (i % 256) as u8, "first chunk byte {i} mismatch");
         }
-        for i in 0..CHUNK_SIZE {
+        for (i, &byte) in reconstructed
+            .iter()
+            .skip(CHUNK_SIZE)
+            .enumerate()
+            .take(CHUNK_SIZE)
+        {
             assert_eq!(
-                reconstructed[CHUNK_SIZE + i],
+                byte,
                 (255 - (i % 256)) as u8,
                 "second chunk byte {i} mismatch"
             );
@@ -1129,19 +1140,25 @@ mod tests {
 
         // Verify each literal's content
         let mut offset = 0;
-        assert!(reconstructed[offset..offset + literal1.len()]
-            .iter()
-            .all(|&b| b == 0x11));
+        assert!(
+            reconstructed[offset..offset + literal1.len()]
+                .iter()
+                .all(|&b| b == 0x11)
+        );
         offset += literal1.len();
 
-        assert!(reconstructed[offset..offset + literal2.len()]
-            .iter()
-            .all(|&b| b == 0x22));
+        assert!(
+            reconstructed[offset..offset + literal2.len()]
+                .iter()
+                .all(|&b| b == 0x22)
+        );
         offset += literal2.len();
 
-        assert!(reconstructed[offset..offset + literal3.len()]
-            .iter()
-            .all(|&b| b == 0x33));
+        assert!(
+            reconstructed[offset..offset + literal3.len()]
+                .iter()
+                .all(|&b| b == 0x33)
+        );
     }
 
     // ========================================================================
@@ -1229,9 +1246,7 @@ mod tests {
         }
 
         // Third chunk (partial): pattern C
-        for _ in 0..1000 {
-            data.push(0xCC);
-        }
+        data.extend(std::iter::repeat_n(0xCC, 1000));
 
         let mut buf = Vec::new();
         write_token_literal(&mut buf, &data).unwrap();
@@ -1241,18 +1256,28 @@ mod tests {
         assert_eq!(reconstructed, data);
 
         // Verify each chunk maintained its pattern
-        for i in 0..CHUNK_SIZE {
-            assert_eq!(reconstructed[i], (i & 0xFF) as u8, "first chunk mismatch at {i}");
+        for (i, &byte) in reconstructed.iter().enumerate().take(CHUNK_SIZE) {
+            assert_eq!(byte, (i & 0xFF) as u8, "first chunk mismatch at {i}");
         }
-        for i in 0..CHUNK_SIZE {
+        for (i, &byte) in reconstructed
+            .iter()
+            .skip(CHUNK_SIZE)
+            .enumerate()
+            .take(CHUNK_SIZE)
+        {
             assert_eq!(
-                reconstructed[CHUNK_SIZE + i],
+                byte,
                 ((i + 128) & 0xFF) as u8,
                 "second chunk mismatch at {i}"
             );
         }
-        for i in 0..1000 {
-            assert_eq!(reconstructed[CHUNK_SIZE * 2 + i], 0xCC, "third chunk mismatch at {i}");
+        for (i, &byte) in reconstructed
+            .iter()
+            .skip(CHUNK_SIZE * 2)
+            .enumerate()
+            .take(1000)
+        {
+            assert_eq!(byte, 0xCC, "third chunk mismatch at {i}");
         }
     }
 
@@ -1298,12 +1323,16 @@ mod tests {
 
         // Verify content of each literal section
         assert!(reconstructed_literals[..100].iter().all(|&b| b == 0xAA));
-        assert!(reconstructed_literals[100..100 + literal1.len()]
-            .iter()
-            .all(|&b| b == 0xF1));
-        assert!(reconstructed_literals[100 + literal1.len()..]
-            .iter()
-            .all(|&b| b == 0xF2));
+        assert!(
+            reconstructed_literals[100..100 + literal1.len()]
+                .iter()
+                .all(|&b| b == 0xF1)
+        );
+        assert!(
+            reconstructed_literals[100 + literal1.len()..]
+                .iter()
+                .all(|&b| b == 0xF2)
+        );
     }
 
     #[test]
@@ -1343,7 +1372,9 @@ mod tests {
             let end = start + CHUNK_SIZE;
             let expected_value = chunk_idx as u8;
             assert!(
-                reconstructed[start..end].iter().all(|&b| b == expected_value),
+                reconstructed[start..end]
+                    .iter()
+                    .all(|&b| b == expected_value),
                 "chunk {chunk_idx} has wrong value"
             );
         }
@@ -1359,7 +1390,7 @@ mod tests {
             write_token_literal(&mut buf, &data).unwrap();
 
             // All should be single chunk
-            assert_eq!(buf.len(), 4 + size, "size {} failed", size);
+            assert_eq!(buf.len(), 4 + size, "size {size} failed");
 
             let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
             assert_eq!(len, size as i32);
@@ -1434,7 +1465,9 @@ mod tests {
     fn chunk_boundary_alternating_pattern_integrity() {
         // Ensure chunk boundaries don't corrupt alternating bit patterns
         let size = CHUNK_SIZE * 2 + 100;
-        let data: Vec<u8> = (0..size).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+        let data: Vec<u8> = (0..size)
+            .map(|i| if i % 2 == 0 { 0xAA } else { 0x55 })
+            .collect();
 
         let mut buf = Vec::new();
         write_token_literal(&mut buf, &data).unwrap();
@@ -1446,10 +1479,7 @@ mod tests {
         for (i, (&reconstructed_byte, &original_byte)) in
             reconstructed.iter().zip(data.iter()).enumerate()
         {
-            assert_eq!(
-                reconstructed_byte, original_byte,
-                "mismatch at byte {i}"
-            );
+            assert_eq!(reconstructed_byte, original_byte, "mismatch at byte {i}");
         }
     }
 
@@ -1490,30 +1520,29 @@ mod tests {
     #[test]
     fn chunk_boundary_stress_test_many_operations() {
         // Stress test with many operations mixing small and large literals
-        let mut ops = Vec::new();
-
-        // Add various sized literals and blocks
-        ops.push(DeltaOp::Literal(vec![0x01u8; CHUNK_SIZE + 1]));
-        ops.push(DeltaOp::Copy {
-            block_index: 0,
-            length: 4096,
-        });
-        ops.push(DeltaOp::Literal(vec![0x02u8; CHUNK_SIZE * 2]));
-        ops.push(DeltaOp::Copy {
-            block_index: 1,
-            length: 4096,
-        });
-        ops.push(DeltaOp::Literal(vec![0x03u8; CHUNK_SIZE - 1]));
-        ops.push(DeltaOp::Copy {
-            block_index: 2,
-            length: 4096,
-        });
-        ops.push(DeltaOp::Literal(vec![0x04u8; CHUNK_SIZE]));
-        ops.push(DeltaOp::Copy {
-            block_index: 3,
-            length: 4096,
-        });
-        ops.push(DeltaOp::Literal(vec![0x05u8; CHUNK_SIZE + 100]));
+        let ops = vec![
+            DeltaOp::Literal(vec![0x01u8; CHUNK_SIZE + 1]),
+            DeltaOp::Copy {
+                block_index: 0,
+                length: 4096,
+            },
+            DeltaOp::Literal(vec![0x02u8; CHUNK_SIZE * 2]),
+            DeltaOp::Copy {
+                block_index: 1,
+                length: 4096,
+            },
+            DeltaOp::Literal(vec![0x03u8; CHUNK_SIZE - 1]),
+            DeltaOp::Copy {
+                block_index: 2,
+                length: 4096,
+            },
+            DeltaOp::Literal(vec![0x04u8; CHUNK_SIZE]),
+            DeltaOp::Copy {
+                block_index: 3,
+                length: 4096,
+            },
+            DeltaOp::Literal(vec![0x05u8; CHUNK_SIZE + 100]),
+        ];
 
         let mut buf = Vec::new();
         write_token_stream(&mut buf, &ops).unwrap();
@@ -1580,10 +1609,7 @@ mod tests {
                 data.len(),
                 "size mismatch for input size {size}"
             );
-            assert_eq!(
-                reconstructed, data,
-                "data mismatch for input size {size}"
-            );
+            assert_eq!(reconstructed, data, "data mismatch for input size {size}");
         }
     }
 }

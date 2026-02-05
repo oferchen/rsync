@@ -2375,7 +2375,11 @@ mod byte_boundary_tests {
         assert_eq!(len_128, 2, "128 should be 2 bytes");
 
         // Verify the transition is exact
-        assert_eq!(len_128, len_127 + 1, "128 should need exactly one more byte than 127");
+        assert_eq!(
+            len_128,
+            len_127 + 1,
+            "128 should need exactly one more byte than 127"
+        );
     }
 
     /// Tests values immediately adjacent to the 7-bit boundary.
@@ -2549,10 +2553,10 @@ mod byte_boundary_tests {
     fn all_byte_boundary_transitions() {
         // (max value for N bytes, min value for N+1 bytes)
         let transitions = [
-            (127_i32, 128_i32, 1, 2),           // 7-bit boundary
-            (16383, 16384, 2, 3),               // 14-bit boundary
-            (2097151, 2097152, 3, 4),           // 21-bit boundary
-            (268435455, 268435456, 4, 5),       // 28-bit boundary
+            (127_i32, 128_i32, 1, 2),     // 7-bit boundary
+            (16383, 16384, 2, 3),         // 14-bit boundary
+            (2097151, 2097152, 3, 4),     // 21-bit boundary
+            (268435455, 268435456, 4, 5), // 28-bit boundary
         ];
 
         for (max_n, min_n_plus_1, n_bytes, n_plus_1_bytes) in transitions {
@@ -2650,7 +2654,8 @@ mod byte_boundary_tests {
         // Read all values back and verify cursor positions
         let mut cursor = Cursor::new(&buf);
         let mut cumulative_pos = 0usize;
-        for (i, (&expected_value, &expected_len)) in values.iter().zip(expected_lengths.iter()).enumerate()
+        for (i, (&expected_value, &expected_len)) in
+            values.iter().zip(expected_lengths.iter()).enumerate()
         {
             let decoded = read_varint(&mut cursor).expect("read succeeds");
             assert_eq!(

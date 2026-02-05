@@ -12,7 +12,7 @@ use std::path::Path;
 use compress::skip_compress::{
     AdaptiveCompressor, CompressionDecider, CompressionDecision, FileCategory,
 };
-use compress::zlib::{compress_to_vec, decompress_to_vec, CompressionLevel};
+use compress::zlib::{CompressionLevel, compress_to_vec, decompress_to_vec};
 
 // =============================================================================
 // Test Data Generators
@@ -156,8 +156,8 @@ mod random_data_handling {
             CompressionLevel::Default,
             CompressionLevel::Best,
         ] {
-            let compressed = compress_to_vec(&data, level)
-                .expect("compression should not fail on random data");
+            let compressed =
+                compress_to_vec(&data, level).expect("compression should not fail on random data");
 
             // Random data should not expand by more than ~6% due to compression overhead
             // (deflate adds minimal framing, but high-entropy data may expand slightly more)
@@ -204,8 +204,8 @@ mod random_data_handling {
         for level in 1..=9 {
             let compression_level =
                 CompressionLevel::from_numeric(level).expect("valid compression level");
-            let compressed = compress_to_vec(&data, compression_level)
-                .expect("compression should succeed");
+            let compressed =
+                compress_to_vec(&data, compression_level).expect("compression should succeed");
 
             // High entropy data should not expand significantly at any level
             let ratio = compressed.len() as f64 / data.len() as f64;
@@ -277,8 +277,8 @@ mod precompressed_files {
     #[test]
     fn jpeg_file_does_not_expand_significantly() {
         let jpeg = test_data::jpeg_file(10_000);
-        let compressed = compress_to_vec(&jpeg, CompressionLevel::Default)
-            .expect("compression should not fail");
+        let compressed =
+            compress_to_vec(&jpeg, CompressionLevel::Default).expect("compression should not fail");
 
         let ratio = compressed.len() as f64 / jpeg.len() as f64;
         assert!(
@@ -371,9 +371,8 @@ mod precompressed_files {
         let first_compression =
             compress_to_vec(&original, CompressionLevel::Default).expect("first compression");
 
-        let second_compression =
-            compress_to_vec(&first_compression, CompressionLevel::Default)
-                .expect("second compression");
+        let second_compression = compress_to_vec(&first_compression, CompressionLevel::Default)
+            .expect("second compression");
 
         // Double compression should not expand much
         let ratio = second_compression.len() as f64 / first_compression.len() as f64;
@@ -521,15 +520,9 @@ mod graceful_fallback {
             .auto_detect_compressible(&moderate)
             .expect("lenient detection succeeds");
 
-        // Both should make a decision without error
-        assert!(
-            strict_result || !strict_result,
-            "Strict threshold made a decision"
-        );
-        assert!(
-            lenient_result || !lenient_result,
-            "Lenient threshold made a decision"
-        );
+        // Both should make a decision without error (booleans can be true or false)
+        let _ = strict_result;
+        let _ = lenient_result;
     }
 
     #[test]
@@ -580,8 +573,11 @@ mod graceful_fallback {
 
         // Force compression off
         let mut output_no_compress = Vec::new();
-        let mut compressor =
-            AdaptiveCompressor::new(&mut output_no_compress, decider.clone(), CompressionLevel::Default);
+        let mut compressor = AdaptiveCompressor::new(
+            &mut output_no_compress,
+            decider.clone(),
+            CompressionLevel::Default,
+        );
         compressor.set_decision(false);
 
         compressor
@@ -1074,8 +1070,8 @@ mod edge_cases {
     #[test]
     fn compression_level_none_with_random_data() {
         let data = test_data::random_data(10_000, 0x99999999);
-        let compressed = compress_to_vec(&data, CompressionLevel::None)
-            .expect("level 0 compression succeeds");
+        let compressed =
+            compress_to_vec(&data, CompressionLevel::None).expect("level 0 compression succeeds");
 
         // Level 0 adds framing but no compression
         // For incompressible data, this should be close to original size

@@ -11,8 +11,7 @@
 //! instead of actually sleeping, enabling fast deterministic testing.
 
 use bandwidth::{
-    parse_bandwidth_argument, parse_bandwidth_limit, BandwidthLimiter,
-    recorded_sleep_session,
+    BandwidthLimiter, parse_bandwidth_argument, parse_bandwidth_limit, recorded_sleep_session,
 };
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -249,7 +248,10 @@ fn bwlimit_small_file_accumulated_debt() {
 
     // Total: 1024 bytes at 1 KB/s should have required 1 second total sleep
     let total = session.total_duration();
-    assert!(total >= Duration::from_millis(900), "Total sleep {total:?} should be at least 900ms");
+    assert!(
+        total >= Duration::from_millis(900),
+        "Total sleep {total:?} should be at least 900ms"
+    );
 }
 
 // ============================================================================
@@ -445,8 +447,7 @@ fn bwlimit_burst_repeated_writes_stay_clamped() {
 
 #[test]
 fn bwlimit_burst_parsing_with_limit() {
-    let components = parse_bandwidth_limit("4M:32K")
-        .expect("parse succeeds");
+    let components = parse_bandwidth_limit("4M:32K").expect("parse succeeds");
 
     assert_eq!(components.rate().unwrap().get(), 4 * 1024 * 1024);
     assert_eq!(components.burst().map(|b| b.get()), Some(32 * 1024));
@@ -454,8 +455,7 @@ fn bwlimit_burst_parsing_with_limit() {
 
 #[test]
 fn bwlimit_burst_parsing_without_burst() {
-    let components = parse_bandwidth_limit("2M")
-        .expect("parse succeeds");
+    let components = parse_bandwidth_limit("2M").expect("parse succeeds");
 
     assert_eq!(components.rate().unwrap().get(), 2 * 1024 * 1024);
     assert!(components.burst().is_none());
@@ -475,7 +475,10 @@ fn bwlimit_write_max_scales_with_rate() {
     let fast = BandwidthLimiter::new(nz(10 * 1024 * 1024)); // 10 MB/s
     let fast_max = fast.write_max_bytes();
 
-    assert!(fast_max > slow_max, "Fast rate should have larger write_max");
+    assert!(
+        fast_max > slow_max,
+        "Fast rate should have larger write_max"
+    );
 }
 
 #[test]
@@ -550,7 +553,10 @@ fn bwlimit_register_zero_bytes_is_noop() {
 
     let sleep = limiter.register(0);
     assert!(sleep.is_noop(), "Zero bytes should be a noop");
-    assert!(session.is_empty(), "No sleep should be recorded for zero bytes");
+    assert!(
+        session.is_empty(),
+        "No sleep should be recorded for zero bytes"
+    );
 }
 
 #[test]
@@ -743,8 +749,7 @@ fn bwlimit_behavior_matches_upstream_semantics_minimum_512() {
 #[test]
 fn bwlimit_behavior_matches_upstream_semantics_burst() {
     // Upstream rsync: RATE:BURST syntax
-    let components = parse_bandwidth_limit("1M:32K")
-        .expect("parse succeeds");
+    let components = parse_bandwidth_limit("1M:32K").expect("parse succeeds");
 
     assert_eq!(components.rate().unwrap().get(), 1024 * 1024);
     assert_eq!(components.burst().unwrap().get(), 32 * 1024);

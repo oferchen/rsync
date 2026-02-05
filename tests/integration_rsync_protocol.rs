@@ -27,7 +27,7 @@ fn rsync_with_timeout(args: &[&str], timeout_secs: u64) -> std::process::Output 
     let binary = locate_oc_rsync().expect("oc-rsync binary must be available");
 
     Command::new("timeout")
-        .arg(format!("{}", timeout_secs))
+        .arg(format!("{timeout_secs}"))
         .arg(&binary)
         .args(args)
         .output()
@@ -74,11 +74,7 @@ fn rsync_protocol_gnu_ftp_small_file() {
     let test_dir = TestDir::new().expect("create test dir");
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
-    let output = rsync_with_timeout(&[
-        "-av",
-        url,
-        dest_dir.to_str().unwrap(),
-    ], 30);
+    let output = rsync_with_timeout(&["-av", url, dest_dir.to_str().unwrap()], 30);
 
     if !output.status.success() {
         eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
@@ -108,14 +104,17 @@ fn rsync_protocol_gnu_ftp_directory() {
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     // Only get the README and small files to keep test fast
-    let output = rsync_with_timeout(&[
-        "-av",
-        "--include=README",
-        "--include=*.sig",
-        "--exclude=*",
-        url,
-        dest_dir.to_str().unwrap(),
-    ], 60);
+    let output = rsync_with_timeout(
+        &[
+            "-av",
+            "--include=README",
+            "--include=*.sig",
+            "--exclude=*",
+            url,
+            dest_dir.to_str().unwrap(),
+        ],
+        60,
+    );
 
     if !output.status.success() {
         eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
@@ -141,11 +140,7 @@ fn rsync_protocol_apache_small_file() {
     let test_dir = TestDir::new().expect("create test dir");
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
-    let output = rsync_with_timeout(&[
-        "-av",
-        url,
-        dest_dir.to_str().unwrap(),
-    ], 30);
+    let output = rsync_with_timeout(&["-av", url, dest_dir.to_str().unwrap()], 30);
 
     if !output.status.success() {
         eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
@@ -174,11 +169,7 @@ fn rsync_protocol_debian_readme() {
     let test_dir = TestDir::new().expect("create test dir");
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
-    let output = rsync_with_timeout(&[
-        "-av",
-        url,
-        dest_dir.to_str().unwrap(),
-    ], 30);
+    let output = rsync_with_timeout(&["-av", url, dest_dir.to_str().unwrap()], 30);
 
     if !output.status.success() {
         eprintln!("stdout: {}", String::from_utf8_lossy(&output.stdout));
@@ -199,11 +190,14 @@ fn rsync_protocol_invalid_server() {
     let test_dir = TestDir::new().expect("create test dir");
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
-    let output = rsync_with_timeout(&[
-        "-av",
-        "rsync://nonexistent.invalid.example/module/",
-        dest_dir.to_str().unwrap(),
-    ], 10);
+    let output = rsync_with_timeout(
+        &[
+            "-av",
+            "rsync://nonexistent.invalid.example/module/",
+            dest_dir.to_str().unwrap(),
+        ],
+        10,
+    );
 
     // Should fail with connection error
     assert!(!output.status.success(), "should fail with invalid server");
@@ -219,11 +213,14 @@ fn rsync_protocol_invalid_module() {
     let test_dir = TestDir::new().expect("create test dir");
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
-    let output = rsync_with_timeout(&[
-        "-av",
-        "rsync://ftp.gnu.org/nonexistent_module_12345/",
-        dest_dir.to_str().unwrap(),
-    ], 15);
+    let output = rsync_with_timeout(
+        &[
+            "-av",
+            "rsync://ftp.gnu.org/nonexistent_module_12345/",
+            dest_dir.to_str().unwrap(),
+        ],
+        15,
+    );
 
     // Should fail - module doesn't exist
     assert!(!output.status.success(), "should fail with invalid module");
@@ -247,19 +244,11 @@ fn rsync_protocol_incremental_sync() {
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
     // First sync
-    let output1 = rsync_with_timeout(&[
-        "-av",
-        url,
-        dest_dir.to_str().unwrap(),
-    ], 30);
+    let output1 = rsync_with_timeout(&["-av", url, dest_dir.to_str().unwrap()], 30);
     assert!(output1.status.success(), "first sync should succeed");
 
     // Second sync (should be fast - no changes)
-    let output2 = rsync_with_timeout(&[
-        "-av",
-        url,
-        dest_dir.to_str().unwrap(),
-    ], 30);
+    let output2 = rsync_with_timeout(&["-av", url, dest_dir.to_str().unwrap()], 30);
     assert!(output2.status.success(), "incremental sync should succeed");
 
     // Verify the output indicates no transfer needed
@@ -288,15 +277,21 @@ fn rsync_protocol_dry_run() {
     let test_dir = TestDir::new().expect("create test dir");
     let dest_dir = test_dir.mkdir("dest").unwrap();
 
-    let output = rsync_with_timeout(&[
-        "-avn",  // dry-run
-        url,
-        dest_dir.to_str().unwrap(),
-    ], 30);
+    let output = rsync_with_timeout(
+        &[
+            "-avn", // dry-run
+            url,
+            dest_dir.to_str().unwrap(),
+        ],
+        30,
+    );
 
     assert!(output.status.success(), "dry-run should succeed");
 
     // File should NOT be downloaded
     let would_be_downloaded = dest_dir.join("coreutils-5.0.tar.bz2.sig");
-    assert!(!would_be_downloaded.exists(), "dry-run should not create file");
+    assert!(
+        !would_be_downloaded.exists(),
+        "dry-run should not create file"
+    );
 }

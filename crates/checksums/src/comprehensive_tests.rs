@@ -1273,7 +1273,7 @@ mod pipelined_tests {
             PipelinedChecksumIterator::new(Cursor::new(data), config);
 
         let mut count = 0;
-        while let Some(_cs) = iter.next().unwrap() {
+        while let Some(_cs) = iter.next_block_checksums().unwrap() {
             count += 1;
         }
 

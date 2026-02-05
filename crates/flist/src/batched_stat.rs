@@ -84,10 +84,7 @@ impl BatchedStatCache {
 
     /// Inserts metadata into the cache.
     pub fn insert(&self, path: PathBuf, metadata: fs::Metadata) {
-        self.cache
-            .lock()
-            .unwrap()
-            .insert(path, Arc::new(metadata));
+        self.cache.lock().unwrap().insert(path, Arc::new(metadata));
     }
 
     /// Checks the cache and fetches if not present.
@@ -225,7 +222,11 @@ impl DirectoryStatBatch {
     /// # Errors
     ///
     /// Returns an error if the file cannot be stat'd.
-    pub fn stat_relative(&self, name: &OsString, follow_symlinks: bool) -> io::Result<fs::Metadata> {
+    pub fn stat_relative(
+        &self,
+        name: &OsString,
+        follow_symlinks: bool,
+    ) -> io::Result<fs::Metadata> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
 
@@ -245,14 +246,7 @@ impl DirectoryStatBatch {
 
         let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
 
-        let ret = unsafe {
-            libc::fstatat(
-                self.dir_fd,
-                c_name.as_ptr(),
-                &mut stat_buf,
-                flags,
-            )
-        };
+        let ret = unsafe { libc::fstatat(self.dir_fd, c_name.as_ptr(), &mut stat_buf, flags) };
 
         if ret != 0 {
             return Err(io::Error::last_os_error());
@@ -357,12 +351,8 @@ pub fn statx<P: AsRef<Path>>(path: P, follow_symlinks: bool) -> io::Result<fs::M
 
     let path = path.as_ref();
     let path_bytes = path.as_os_str().as_bytes();
-    let c_path = CString::new(path_bytes).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid path: {e}"),
-        )
-    })?;
+    let c_path = CString::new(path_bytes)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, format!("invalid path: {e}")))?;
 
     let flags = if follow_symlinks {
         0
@@ -581,14 +571,15 @@ mod tests {
 
         // Create more files for parallel test
         for i in 10..50 {
-            File::create(temp.path().join(format!("file{}.txt", i))).unwrap();
+            File::create(temp.path().join(format!("file{i}.txt"))).unwrap();
         }
 
         let paths: Vec<_> = (0..50)
-            .map(|i| temp.path().join(format!("file{}.txt", i)))
+            .map(|i| temp.path().join(format!("file{i}.txt")))
             .collect();
 
-        let path_refs: Vec<&Path> = paths.iter()
+        let path_refs: Vec<&Path> = paths
+            .iter()
             .filter(|p| p.exists())
             .map(|p| p.as_path())
             .collect();
@@ -724,7 +715,7 @@ mod tests {
         let temp = create_test_tree();
 
         for i in 1..=3 {
-            let path = temp.path().join(format!("file{}.txt", i));
+            let path = temp.path().join(format!("file{i}.txt"));
             cache.get_or_fetch(&path, false).unwrap();
         }
 
@@ -772,13 +763,13 @@ mod tests {
 
         // Create more files
         for i in 10..30 {
-            File::create(temp.path().join(format!("file{}.txt", i))).unwrap();
+            File::create(temp.path().join(format!("file{i}.txt"))).unwrap();
         }
 
         let batch = DirectoryStatBatch::open(temp.path()).unwrap();
 
         let names: Vec<OsString> = (1..30)
-            .map(|i| OsString::from(format!("file{}.txt", i)))
+            .map(|i| OsString::from(format!("file{i}.txt")))
             .collect();
 
         let results = batch.stat_batch_relative(&names, false);
@@ -977,8 +968,8 @@ mod tests {
         // Create and cache 100 files
         let paths: Vec<_> = (0..100)
             .map(|i| {
-                let path = temp.path().join(format!("stress{}.txt", i));
-                fs::write(&path, format!("content{}", i)).unwrap();
+                let path = temp.path().join(format!("stress{i}.txt"));
+                fs::write(&path, format!("content{i}")).unwrap();
                 path
             })
             .collect();

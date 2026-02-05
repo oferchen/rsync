@@ -355,7 +355,7 @@ fn itemize_new_directory_shows_creation() {
     let records = report.records();
 
     // Should have records for directory and file
-    assert!(records.len() >= 1);
+    assert!(!records.is_empty());
 
     // Find the directory record
     let dir_record = records.iter()

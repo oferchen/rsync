@@ -318,7 +318,11 @@ fn delta_transfer_empty_file_preserves_mtime() {
     // Verify empty file created with preserved mtime
     let dest_file = dest_dir.join("empty_timed.txt");
     assert!(dest_file.exists(), "Empty file should exist");
-    assert_eq!(fs::read(&dest_file).unwrap().len(), 0, "File should be empty");
+    assert_eq!(
+        fs::read(&dest_file).unwrap().len(),
+        0,
+        "File should be empty"
+    );
 
     let dest_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
     assert_eq!(
@@ -350,7 +354,11 @@ fn delta_transfer_empty_file_preserves_permissions() {
     // Verify empty file created with preserved permissions
     let dest_file = dest_dir.join("empty_perms.txt");
     assert!(dest_file.exists(), "Empty file should exist");
-    assert_eq!(fs::read(&dest_file).unwrap().len(), 0, "File should be empty");
+    assert_eq!(
+        fs::read(&dest_file).unwrap().len(),
+        0,
+        "File should be empty"
+    );
 
     let perms = fs::metadata(&dest_file).unwrap().permissions().mode() & 0o777;
     assert_eq!(perms, 0o600, "Empty file permissions should be preserved");
@@ -412,7 +420,11 @@ fn delta_transfer_empty_file_archive_mode() {
     // Verify all metadata preserved for empty file
     let dest_file = dest_dir.join("empty_archive.txt");
     assert!(dest_file.exists(), "Empty file should exist");
-    assert_eq!(fs::read(&dest_file).unwrap().len(), 0, "File should be empty");
+    assert_eq!(
+        fs::read(&dest_file).unwrap().len(),
+        0,
+        "File should be empty"
+    );
 
     let meta = fs::metadata(&dest_file).unwrap();
     assert_eq!(

@@ -593,12 +593,12 @@ fn compare_with_upstream_rsync_symlink_preservation() {
     // Run upstream rsync with -l flag
     let rsync_output = Command::new("rsync")
         .args([
-            "-l",        // Preserve symlinks
-            "-r",        // Recursive
-            "--no-t",    // Don't preserve times (simplify comparison)
-            "--no-p",    // Don't preserve permissions
-            "--no-o",    // Don't preserve owner
-            "--no-g",    // Don't preserve group
+            "-l",     // Preserve symlinks
+            "-r",     // Recursive
+            "--no-t", // Don't preserve times (simplify comparison)
+            "--no-p", // Don't preserve permissions
+            "--no-o", // Don't preserve owner
+            "--no-g", // Don't preserve group
         ])
         .arg(format!("{}/", fixture.source().display()))
         .arg(&upstream_dest)
@@ -617,9 +617,18 @@ fn compare_with_upstream_rsync_symlink_preservation() {
     let upstream_broken = upstream_dest.join("broken_link");
     let upstream_dir = upstream_dest.join("dir_link");
 
-    assert!(is_symlink(&upstream_rel), "upstream: relative should be symlink");
-    assert!(is_symlink(&upstream_abs), "upstream: absolute should be symlink");
-    assert!(is_symlink(&upstream_broken), "upstream: broken should be symlink");
+    assert!(
+        is_symlink(&upstream_rel),
+        "upstream: relative should be symlink"
+    );
+    assert!(
+        is_symlink(&upstream_abs),
+        "upstream: absolute should be symlink"
+    );
+    assert!(
+        is_symlink(&upstream_broken),
+        "upstream: broken should be symlink"
+    );
     assert!(is_symlink(&upstream_dir), "upstream: dir should be symlink");
 
     assert_eq!(
@@ -750,7 +759,10 @@ fn symlink_with_special_characters() {
     symlink(&source_target, &dest_link).expect("create dest link");
 
     assert!(is_symlink(&dest_link));
-    assert_eq!(read_symlink_target(&dest_link), Some(PathBuf::from("target.txt")));
+    assert_eq!(
+        read_symlink_target(&dest_link),
+        Some(PathBuf::from("target.txt"))
+    );
 }
 
 /// Verifies symlink with special characters in target path.
@@ -810,7 +822,9 @@ fn symlink_with_unicode_path() {
     let fixture = SymlinkTestFixture::new();
 
     // Create target with Unicode name
-    let unicode_target = fixture.source().join("archivo_\u{00e9}\u{00e0}\u{00fc}.txt");
+    let unicode_target = fixture
+        .source()
+        .join("archivo_\u{00e9}\u{00e0}\u{00fc}.txt");
     fs::write(&unicode_target, b"unicode content").expect("write unicode target");
 
     let link_path = fixture.source().join("enlace_\u{00f1}");
@@ -850,14 +864,14 @@ fn multiple_symlinks_to_same_target() {
 
     // Create multiple symlinks to the same target
     for i in 1..=5 {
-        let link_path = fixture.source().join(format!("link{}", i));
+        let link_path = fixture.source().join(format!("link{i}"));
         symlink("shared_target.txt", &link_path).expect("create symlink");
     }
 
     // All should be preserved independently
     for i in 1..=5 {
-        let source_link = fixture.source().join(format!("link{}", i));
-        let dest_link = fixture.dest().join(format!("link{}", i));
+        let source_link = fixture.source().join(format!("link{i}"));
+        let dest_link = fixture.dest().join(format!("link{i}"));
 
         let target = fs::read_link(&source_link).expect("read source link");
         symlink(&target, &dest_link).expect("create dest link");
@@ -866,8 +880,7 @@ fn multiple_symlinks_to_same_target() {
         assert_eq!(
             read_symlink_target(&dest_link),
             Some(PathBuf::from("shared_target.txt")),
-            "symlink {} should point to shared_target.txt",
-            i
+            "symlink {i} should point to shared_target.txt"
         );
     }
 }

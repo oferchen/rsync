@@ -15,17 +15,37 @@ targets = ["x86_64-unknown-linux-gnu"]
 [features]
 # Default: pure-Rust implementations with automatic hardware acceleration
 # (SHA-NI on x86_64, crypto extensions on aarch64 via cpufeatures)
-# OpenSSL features below are optional for legacy MD4/MD5 acceleration only
-# md5-simd enables SIMD-accelerated batch hashing for maximum performance
-default = ["xxh3-simd", "md5-simd"]
+# SIMD features enabled by default for best performance
+default = ["xxh3-simd", "simd-batch"]
+
+# ============================================================================
+# SIMD Optimization Features
+# ============================================================================
+# Runtime SIMD detection for XXH3 (AVX2/NEON) - recommended for portable binaries
+# Benefits: 2-3x faster XXH3 hashing on x86_64 with AVX2, ARM with NEON
+xxh3-simd = ["dep:xxh3"]
+
+# SIMD-accelerated MD4/MD5 batch hashing (AVX2/AVX-512/NEON)
+# Benefits: 3-4x faster MD5 checksums with parallel batch processing
+# All implementations maintain RFC compatibility (RFC 1320 for MD4, RFC 1321 for MD5)
+simd-batch = []
+
+# Backward compatibility alias for the old feature name
+md5-simd = ["simd-batch"]
+
+# ============================================================================
+# Parallel Computation Features
+# ============================================================================
+# Parallel checksum computation using rayon
+# Benefits: Multi-threaded checksum calculation for large files
+parallel = ["rayon"]
+
+# ============================================================================
+# Legacy OpenSSL Features (optional)
+# ============================================================================
+# OpenSSL-based checksums (fallback for platforms without native acceleration)
 openssl = ["dep:openssl"]
 openssl-vendored = ["openssl", "openssl/vendored"]
-# Parallel checksum computation using rayon
-parallel = ["rayon"]
-# Runtime SIMD detection for XXH3 (AVX2/NEON) - recommended for portable binaries
-xxh3-simd = ["dep:xxh3"]
-# SIMD-accelerated MD5 batch hashing (AVX2/AVX-512/NEON)
-md5-simd = ["dep:md5-simd"]
 
 [dependencies]
 md4 = { version = "0.10", default-features = false, features = ["std"] }
@@ -39,13 +59,13 @@ xxh3 = { version = "0.1", optional = true }
 thiserror = "2.0"
 openssl = { version = "0.10", optional = true }
 rayon = { version = "1.10", optional = true }
-md5-simd = { path = "../md5-simd", optional = true, default-features = false }
 logging = { path = "../logging" }
 
 [dev-dependencies]
 proptest = "1.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+tempfile = "3.14"
 
 [[bench]]
 name = "checksums_benchmark"

@@ -34,7 +34,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use io_uring::{opcode, types, IoUring as RawIoUring};
+use io_uring::{IoUring as RawIoUring, opcode, types};
 
 use crate::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
 
@@ -186,9 +186,8 @@ impl IoUringReader {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
 
-        let ring = RawIoUring::new(config.sq_entries).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("io_uring init failed: {e}"))
-        })?;
+        let ring = RawIoUring::new(config.sq_entries)
+            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
 
         Ok(Self {
             ring,
@@ -226,7 +225,7 @@ impl IoUringReader {
             self.ring
                 .submission()
                 .push(&read_op)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "submission queue full"))?;
+                .map_err(|_| io::Error::other("submission queue full"))?;
         }
 
         self.ring.submit_and_wait(1)?;
@@ -236,7 +235,7 @@ impl IoUringReader {
             .ring
             .completion()
             .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no completion"))?;
+            .ok_or_else(|| io::Error::other("no completion"))?;
 
         let result = cqe.result();
         if result < 0 {
@@ -327,9 +326,8 @@ impl IoUringWriter {
     pub fn create<P: AsRef<Path>>(path: P, config: &IoUringConfig) -> io::Result<Self> {
         let file = File::create(path)?;
 
-        let ring = RawIoUring::new(config.sq_entries).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("io_uring init failed: {e}"))
-        })?;
+        let ring = RawIoUring::new(config.sq_entries)
+            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
 
         Ok(Self {
             ring,
@@ -350,9 +348,8 @@ impl IoUringWriter {
         let file = File::create(path)?;
         file.set_len(size)?;
 
-        let ring = RawIoUring::new(config.sq_entries).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("io_uring init failed: {e}"))
-        })?;
+        let ring = RawIoUring::new(config.sq_entries)
+            .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))?;
 
         Ok(Self {
             ring,
@@ -383,7 +380,7 @@ impl IoUringWriter {
             self.ring
                 .submission()
                 .push(&write_op)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "submission queue full"))?;
+                .map_err(|_| io::Error::other("submission queue full"))?;
         }
 
         self.ring.submit_and_wait(1)?;
@@ -393,7 +390,7 @@ impl IoUringWriter {
             .ring
             .completion()
             .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no completion"))?;
+            .ok_or_else(|| io::Error::other("no completion"))?;
 
         let result = cqe.result();
         if result < 0 {
@@ -478,7 +475,7 @@ impl FileWriter for IoUringWriter {
             self.ring
                 .submission()
                 .push(&fsync_op)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "submission queue full"))?;
+                .map_err(|_| io::Error::other("submission queue full"))?;
         }
 
         self.ring.submit_and_wait(1)?;
@@ -487,7 +484,7 @@ impl FileWriter for IoUringWriter {
             .ring
             .completion()
             .next()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no completion"))?;
+            .ok_or_else(|| io::Error::other("no completion"))?;
 
         let result = cqe.result();
         if result < 0 {
@@ -514,19 +511,10 @@ impl Drop for IoUringWriter {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Factory that creates io_uring readers when available, with fallback to standard I/O.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IoUringReaderFactory {
     config: IoUringConfig,
     force_fallback: bool,
-}
-
-impl Default for IoUringReaderFactory {
-    fn default() -> Self {
-        Self {
-            config: IoUringConfig::default(),
-            force_fallback: false,
-        }
-    }
 }
 
 impl IoUringReaderFactory {
@@ -554,6 +542,7 @@ impl IoUringReaderFactory {
 }
 
 /// Reader that can be either io_uring-based or standard I/O.
+#[allow(clippy::large_enum_variant)]
 pub enum IoUringOrStdReader {
     /// io_uring-based reader.
     IoUring(IoUringReader),
@@ -620,19 +609,10 @@ impl FileReaderFactory for IoUringReaderFactory {
 }
 
 /// Factory that creates io_uring writers when available, with fallback to standard I/O.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct IoUringWriterFactory {
     config: IoUringConfig,
     force_fallback: bool,
-}
-
-impl Default for IoUringWriterFactory {
-    fn default() -> Self {
-        Self {
-            config: IoUringConfig::default(),
-            force_fallback: false,
-        }
-    }
 }
 
 impl IoUringWriterFactory {
@@ -660,6 +640,7 @@ impl IoUringWriterFactory {
 }
 
 /// Writer that can be either io_uring-based or standard I/O.
+#[allow(clippy::large_enum_variant)]
 pub enum IoUringOrStdWriter {
     /// io_uring-based writer.
     IoUring(IoUringWriter),
@@ -719,7 +700,9 @@ impl FileWriterFactory for IoUringWriterFactory {
             }
         }
 
-        Ok(IoUringOrStdWriter::Std(crate::traits::StdFileWriter::create(path)?))
+        Ok(IoUringOrStdWriter::Std(
+            crate::traits::StdFileWriter::create(path)?,
+        ))
     }
 
     fn create_with_size(&self, path: &Path, size: u64) -> io::Result<Self::Writer> {
@@ -1024,7 +1007,7 @@ mod tests {
         let mut expected_data = Vec::with_capacity(chunk_size * num_chunks);
         for i in 0..num_chunks {
             let pattern = (i % 256) as u8;
-            expected_data.extend(std::iter::repeat(pattern).take(chunk_size));
+            expected_data.extend(std::iter::repeat_n(pattern, chunk_size));
         }
         std::fs::write(&path, &expected_data).unwrap();
 
@@ -1047,7 +1030,7 @@ mod tests {
         let mut test_data = Vec::with_capacity(chunk_size * num_chunks);
         for i in 0..num_chunks {
             let pattern = (i % 256) as u8;
-            test_data.extend(std::iter::repeat(pattern).take(chunk_size));
+            test_data.extend(std::iter::repeat_n(pattern, chunk_size));
         }
 
         let factory = IoUringWriterFactory::default();

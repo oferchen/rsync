@@ -38,15 +38,16 @@ fn temp_file_is_created_during_transfer() {
     // Verify temp file exists and is different from destination
     let staging = guard.staging_path();
     assert!(staging.exists(), "staging file should exist");
-    assert_ne!(staging, dest.as_path(), "staging path should differ from destination");
+    assert_ne!(
+        staging,
+        dest.as_path(),
+        "staging path should differ from destination"
+    );
     assert!(
         staging.to_string_lossy().contains(".rsync-tmp-"),
         "staging path should have rsync temp prefix"
     );
-    assert!(
-        !dest.exists(),
-        "destination should not exist until commit"
-    );
+    assert!(!dest.exists(), "destination should not exist until commit");
 
     // Read back content from staging file
     drop(file);
@@ -160,7 +161,10 @@ fn atomic_rename_on_successful_commit() {
 
     // After commit: dest exists, staging doesn't
     assert!(dest.exists(), "destination should exist after commit");
-    assert!(!staging.exists(), "staging file should be removed after commit");
+    assert!(
+        !staging.exists(),
+        "staging file should be removed after commit"
+    );
 
     // Verify content
     let content = fs::read(&dest).expect("read dest");
@@ -185,7 +189,10 @@ fn atomic_rename_replaces_existing_file() {
     guard.commit().expect("commit");
 
     let content = fs::read(&dest).expect("read dest");
-    assert_eq!(content, b"new content", "destination should have new content");
+    assert_eq!(
+        content, b"new content",
+        "destination should have new content"
+    );
 }
 
 #[test]
@@ -200,7 +207,8 @@ fn atomic_rename_is_truly_atomic() {
     let (guard, mut file) =
         DestinationWriteGuard::new(&dest, false, None, None).expect("create guard");
 
-    file.write_all(b"new content that is also very long").expect("write");
+    file.write_all(b"new content that is also very long")
+        .expect("write");
     drop(file);
 
     // Commit should be atomic - dest has either old or new content, never partial
@@ -293,8 +301,14 @@ fn temp_file_cleaned_up_on_explicit_discard() {
 
     guard.discard();
 
-    assert!(!staging.exists(), "staging file should be cleaned up after discard");
-    assert!(!dest.exists(), "destination should not be created on discard");
+    assert!(
+        !staging.exists(),
+        "staging file should be cleaned up after discard"
+    );
+    assert!(
+        !dest.exists(),
+        "destination should not be created on discard"
+    );
 }
 
 #[test]
@@ -339,7 +353,10 @@ fn temp_file_not_cleaned_up_after_successful_commit() {
     guard.commit().expect("commit");
 
     // After successful commit, staging is moved (not deleted)
-    assert!(!staging.exists(), "staging should be moved, not exist at original path");
+    assert!(
+        !staging.exists(),
+        "staging should be moved, not exist at original path"
+    );
     assert!(dest.exists(), "destination should exist");
 }
 
@@ -432,7 +449,10 @@ fn remove_existing_destination_succeeds_if_missing() {
 
     let result = remove_existing_destination(&dest);
 
-    assert!(result.is_ok(), "remove should succeed even if file doesn't exist");
+    assert!(
+        result.is_ok(),
+        "remove should succeed even if file doesn't exist"
+    );
 }
 
 // ==================== Race Condition Tests ====================
@@ -473,7 +493,10 @@ fn concurrent_guards_get_unique_temp_files() {
     let (dest2, staging2) = handle2.join().expect("join2");
 
     // Staging paths should be unique
-    assert_ne!(staging1, staging2, "concurrent guards should get unique temp files");
+    assert_ne!(
+        staging1, staging2,
+        "concurrent guards should get unique temp files"
+    );
 
     // Both destinations should exist with correct content
     assert_eq!(fs::read(&dest1).expect("read1"), b"content1");
@@ -526,12 +549,11 @@ fn guard_handles_temp_file_collision_gracefully() {
     let mut stagings = Vec::new();
 
     for i in 0..100 {
-        let (guard, mut file) =
-            DestinationWriteGuard::new(&dest, false, None, None)
-                .expect(&format!("create guard {}", i));
+        let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None)
+            .unwrap_or_else(|_| panic!("create guard {i}"));
 
-        file.write_all(format!("content{}", i).as_bytes())
-            .expect(&format!("write {}", i));
+        file.write_all(format!("content{i}").as_bytes())
+            .unwrap_or_else(|_| panic!("write {i}"));
         drop(file);
 
         let staging = guard.staging_path().to_path_buf();
@@ -544,8 +566,7 @@ fn guard_handles_temp_file_collision_gracefully() {
         for j in (i + 1)..stagings.len() {
             assert_ne!(
                 stagings[i], stagings[j],
-                "staging paths {} and {} should be unique",
-                i, j
+                "staging paths {i} and {j} should be unique"
             );
         }
     }
@@ -569,18 +590,17 @@ fn concurrent_commits_to_same_destination_are_safe() {
         let barrier = barrier.clone();
 
         let handle = thread::spawn(move || {
-            let (guard, mut file) =
-                DestinationWriteGuard::new(&dest, false, None, None)
-                    .expect(&format!("create guard {}", i));
+            let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None)
+                .unwrap_or_else(|_| panic!("create guard {i}"));
 
-            file.write_all(format!("thread {} content", i).as_bytes())
-                .expect(&format!("write {}", i));
+            file.write_all(format!("thread {i} content").as_bytes())
+                .unwrap_or_else(|_| panic!("write {i}"));
             drop(file);
 
             // Synchronize to make all threads commit at approximately the same time
             barrier.wait();
 
-            guard.commit().expect(&format!("commit {}", i));
+            guard.commit().unwrap_or_else(|_| panic!("commit {i}"));
         });
 
         handles.push(handle);
@@ -596,7 +616,7 @@ fn concurrent_commits_to_same_destination_are_safe() {
     let content = fs::read(dest.as_ref()).expect("read dest");
 
     // Content should match one of the threads (not corrupted)
-    let valid_contents = vec![
+    let valid_contents = [
         b"thread 0 content".to_vec(),
         b"thread 1 content".to_vec(),
         b"thread 2 content".to_vec(),
@@ -617,17 +637,16 @@ fn guard_from_different_threads_get_unique_temps() {
         .map(|i| {
             let base = base_path.clone();
             thread::spawn(move || {
-                let dest = base.join(format!("file{}.txt", i));
-                let (guard, mut file) =
-                    DestinationWriteGuard::new(&dest, false, None, None)
-                        .expect(&format!("create guard {}", i));
+                let dest = base.join(format!("file{i}.txt"));
+                let (guard, mut file) = DestinationWriteGuard::new(&dest, false, None, None)
+                    .unwrap_or_else(|_| panic!("create guard {i}"));
 
-                file.write_all(format!("content from thread {}", i).as_bytes())
-                    .expect(&format!("write {}", i));
+                file.write_all(format!("content from thread {i}").as_bytes())
+                    .unwrap_or_else(|_| panic!("write {i}"));
                 drop(file);
 
                 let staging = guard.staging_path().to_path_buf();
-                guard.commit().expect(&format!("commit {}", i));
+                guard.commit().unwrap_or_else(|_| panic!("commit {i}"));
 
                 (dest, staging)
             })
@@ -641,7 +660,7 @@ fn guard_from_different_threads_get_unique_temps() {
 
     // All destinations should exist
     for (dest, _) in &results {
-        assert!(dest.exists(), "destination {:?} should exist", dest);
+        assert!(dest.exists(), "destination {dest:?} should exist");
     }
 
     // All staging paths should have been unique
@@ -663,8 +682,7 @@ fn empty_file_transfer_works() {
     let temp = tempdir().expect("tempdir");
     let dest = temp.path().join("empty.txt");
 
-    let (guard, file) =
-        DestinationWriteGuard::new(&dest, false, None, None).expect("create guard");
+    let (guard, file) = DestinationWriteGuard::new(&dest, false, None, None).expect("create guard");
 
     // Write nothing
     drop(file);
@@ -691,7 +709,10 @@ fn large_file_transfer_works() {
 
     guard.commit().expect("commit");
 
-    assert_eq!(fs::metadata(&dest).expect("metadata").len(), 10 * 1024 * 1024);
+    assert_eq!(
+        fs::metadata(&dest).expect("metadata").len(),
+        10 * 1024 * 1024
+    );
 }
 
 #[test]
@@ -783,8 +804,7 @@ fn cross_device_rename_falls_back_to_copy() {
     let _ = fs::create_dir_all(&staging_dir);
 
     let (guard, mut file) =
-        DestinationWriteGuard::new(&dest, false, None, Some(&staging_dir))
-            .expect("create guard");
+        DestinationWriteGuard::new(&dest, false, None, Some(&staging_dir)).expect("create guard");
 
     file.write_all(b"cross-device content").expect("write");
     drop(file);
@@ -803,7 +823,7 @@ fn cross_device_rename_falls_back_to_copy() {
         }
         Err(e) => {
             // If commit failed for other reasons, that's okay for this test
-            eprintln!("Cross-device test commit failed (expected on some systems): {}", e);
+            eprintln!("Cross-device test commit failed (expected on some systems): {e}");
         }
     }
 }

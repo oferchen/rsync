@@ -55,8 +55,7 @@ fn size_only_same_size_different_content_no_transfer() {
         "File content should be unchanged when sizes match"
     );
     assert_eq!(
-        dest_content_after,
-        b"BBBBB",
+        dest_content_after, b"BBBBB",
         "Destination should retain original content"
     );
 }
@@ -84,8 +83,7 @@ fn size_only_different_size_transfers() {
     // Verify destination was updated to source content
     let dest_content = fs::read(&dest_file).unwrap();
     assert_eq!(
-        dest_content,
-        b"longer source content",
+        dest_content, b"longer source content",
         "File should be transferred when sizes differ"
     );
 }
@@ -451,7 +449,9 @@ fn size_only_nonempty_dest_empty_source_transfers() {
     let test_dir = TestDir::new().expect("create test dir");
 
     let src_file = test_dir.write_file("source.txt", b"").unwrap();
-    let dest_file = test_dir.write_file("dest.txt", b"existing content").unwrap();
+    let dest_file = test_dir
+        .write_file("dest.txt", b"existing content")
+        .unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([

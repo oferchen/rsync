@@ -22,9 +22,11 @@ pub use self::delta::{
     // Internal format
     DeltaOp,
     read_delta,
+    read_delta_op,
     read_int,
     read_token,
     write_delta,
+    write_delta_op,
     write_int,
     write_token_block_match,
     write_token_end,

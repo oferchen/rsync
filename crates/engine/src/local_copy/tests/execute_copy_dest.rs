@@ -334,10 +334,10 @@ fn copy_dest_works_with_directory_trees() {
     fs::write(copy_dest_root.join("dir1/subdir/file2.txt"), b"file2").expect("write copy_dest file2");
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
-    set_file_mtime(&source_root.join("dir1/file1.txt"), timestamp).expect("source file1 mtime");
-    set_file_mtime(&source_root.join("dir1/subdir/file2.txt"), timestamp).expect("source file2 mtime");
-    set_file_mtime(&copy_dest_root.join("dir1/file1.txt"), timestamp).expect("copy_dest file1 mtime");
-    set_file_mtime(&copy_dest_root.join("dir1/subdir/file2.txt"), timestamp).expect("copy_dest file2 mtime");
+    set_file_mtime(source_root.join("dir1/file1.txt"), timestamp).expect("source file1 mtime");
+    set_file_mtime(source_root.join("dir1/subdir/file2.txt"), timestamp).expect("source file2 mtime");
+    set_file_mtime(copy_dest_root.join("dir1/file1.txt"), timestamp).expect("copy_dest file1 mtime");
+    set_file_mtime(copy_dest_root.join("dir1/subdir/file2.txt"), timestamp).expect("copy_dest file2 mtime");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -385,11 +385,11 @@ fn copy_dest_mixed_existing_and_new_files() {
 
     let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
     let old_timestamp = FileTime::from_unix_time(1_600_000_000, 0);
-    set_file_mtime(&source_root.join("file1.txt"), timestamp).expect("source file1 mtime");
-    set_file_mtime(&source_root.join("file2.txt"), timestamp).expect("source file2 mtime");
-    set_file_mtime(&source_root.join("file3.txt"), timestamp).expect("source file3 mtime");
-    set_file_mtime(&copy_dest_root.join("file1.txt"), timestamp).expect("copy_dest file1 mtime");
-    set_file_mtime(&copy_dest_root.join("file2.txt"), old_timestamp).expect("copy_dest file2 mtime");
+    set_file_mtime(source_root.join("file1.txt"), timestamp).expect("source file1 mtime");
+    set_file_mtime(source_root.join("file2.txt"), timestamp).expect("source file2 mtime");
+    set_file_mtime(source_root.join("file3.txt"), timestamp).expect("source file3 mtime");
+    set_file_mtime(copy_dest_root.join("file1.txt"), timestamp).expect("copy_dest file1 mtime");
+    set_file_mtime(copy_dest_root.join("file2.txt"), old_timestamp).expect("copy_dest file2 mtime");
 
     let mut source_operand = source_root.into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());

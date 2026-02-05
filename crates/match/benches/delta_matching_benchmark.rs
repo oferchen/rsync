@@ -13,12 +13,9 @@
 //! 3. 100MB file with scattered changes (large file performance)
 //! 4. File with many small blocks (hash table stress test)
 
-use std::io::Cursor;
-use std::num::{NonZeroU32, NonZeroU8};
+use std::num::{NonZeroU8, NonZeroU32};
 
-use criterion::{
-    BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 use checksums::RollingChecksum;
 use matching::{DeltaGenerator, DeltaSignatureIndex, generate_delta};
@@ -54,7 +51,11 @@ fn create_test_data(size: usize, change_percent: u8) -> (Vec<u8>, Vec<u8>) {
 }
 
 /// Creates test data with scattered small changes throughout.
-fn create_scattered_changes(size: usize, num_changes: usize, change_size: usize) -> (Vec<u8>, Vec<u8>) {
+fn create_scattered_changes(
+    size: usize,
+    num_changes: usize,
+    change_size: usize,
+) -> (Vec<u8>, Vec<u8>) {
     let basis: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     let mut modified = basis.clone();
 
@@ -62,8 +63,8 @@ fn create_scattered_changes(size: usize, num_changes: usize, change_size: usize)
     for i in 0..num_changes {
         let start = (i + 1) * spacing;
         let end = (start + change_size).min(size);
-        for pos in start..end {
-            modified[pos] = modified[pos].wrapping_add(1);
+        for byte in modified.iter_mut().skip(start).take(end - start) {
+            *byte = byte.wrapping_add(1);
         }
     }
 
@@ -74,7 +75,7 @@ fn create_scattered_changes(size: usize, num_changes: usize, change_size: usize)
 fn build_signature_index(data: &[u8], block_size: Option<u32>) -> DeltaSignatureIndex {
     let params = SignatureLayoutParams::new(
         data.len() as u64,
-        block_size.map(NonZeroU32::new).flatten(),
+        block_size.and_then(NonZeroU32::new),
         ProtocolVersion::NEWEST,
         NonZeroU8::new(16).unwrap(),
     );
@@ -101,51 +102,43 @@ fn bench_signature_generation(c: &mut Criterion) {
         };
 
         group.throughput(Throughput::Bytes(size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("md4", size_name),
-            &size,
-            |b, &size| {
-                let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-                b.iter(|| {
-                    let params = SignatureLayoutParams::new(
-                        data.len() as u64,
-                        None,
-                        ProtocolVersion::NEWEST,
-                        NonZeroU8::new(16).unwrap(),
-                    );
-                    let layout = calculate_signature_layout(params).expect("layout");
-                    let sig = generate_file_signature(
-                        black_box(data.as_slice()),
-                        layout,
-                        SignatureAlgorithm::Md4,
-                    );
-                    black_box(sig)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("md4", size_name), &size, |b, &size| {
+            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            b.iter(|| {
+                let params = SignatureLayoutParams::new(
+                    data.len() as u64,
+                    None,
+                    ProtocolVersion::NEWEST,
+                    NonZeroU8::new(16).unwrap(),
+                );
+                let layout = calculate_signature_layout(params).expect("layout");
+                let sig = generate_file_signature(
+                    black_box(data.as_slice()),
+                    layout,
+                    SignatureAlgorithm::Md4,
+                );
+                black_box(sig)
+            });
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("xxh3", size_name),
-            &size,
-            |b, &size| {
-                let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-                b.iter(|| {
-                    let params = SignatureLayoutParams::new(
-                        data.len() as u64,
-                        None,
-                        ProtocolVersion::NEWEST,
-                        NonZeroU8::new(8).unwrap(),
-                    );
-                    let layout = calculate_signature_layout(params).expect("layout");
-                    let sig = generate_file_signature(
-                        black_box(data.as_slice()),
-                        layout,
-                        SignatureAlgorithm::Xxh3 { seed: 0 },
-                    );
-                    black_box(sig)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("xxh3", size_name), &size, |b, &size| {
+            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            b.iter(|| {
+                let params = SignatureLayoutParams::new(
+                    data.len() as u64,
+                    None,
+                    ProtocolVersion::NEWEST,
+                    NonZeroU8::new(8).unwrap(),
+                );
+                let layout = calculate_signature_layout(params).expect("layout");
+                let sig = generate_file_signature(
+                    black_box(data.as_slice()),
+                    layout,
+                    SignatureAlgorithm::Xxh3 { seed: 0 },
+                );
+                black_box(sig)
+            });
+        });
     }
 
     group.finish();
@@ -219,7 +212,7 @@ fn bench_hash_table_lookup(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(block_count as u64));
         group.bench_with_input(
-            BenchmarkId::new("lookup", format!("{}B_blocks", block_size)),
+            BenchmarkId::new("lookup", format!("{block_size}B_blocks")),
             &(data, index),
             |b, (data, index)| {
                 b.iter(|| {
@@ -261,7 +254,7 @@ fn bench_rolling_checksum(c: &mut Criterion) {
 
         group.throughput(Throughput::Bytes(block_size as u64));
         group.bench_with_input(
-            BenchmarkId::new("update", format!("{}B", block_size)),
+            BenchmarkId::new("update", format!("{block_size}B")),
             &data,
             |b, data| {
                 b.iter(|| {
@@ -284,9 +277,7 @@ fn bench_rolling_checksum(c: &mut Criterion) {
                 let mut rolling = RollingChecksum::new();
                 rolling.update(&data[..window_size]);
                 for i in 0..10000 {
-                    rolling
-                        .roll(data[i], data[i + window_size])
-                        .expect("roll");
+                    rolling.roll(data[i], data[i + window_size]).expect("roll");
                 }
                 black_box(rolling.value())
             });
@@ -301,7 +292,7 @@ fn bench_rolling_checksum(c: &mut Criterion) {
 // ============================================================================
 
 fn bench_strong_checksum(c: &mut Criterion) {
-    use checksums::strong::{Md4, Xxh3, StrongDigest};
+    use checksums::strong::{Md4, Xxh3};
 
     let mut group = c.benchmark_group("strong_checksum");
 
@@ -312,7 +303,7 @@ fn bench_strong_checksum(c: &mut Criterion) {
 
         // MD4 (legacy)
         group.bench_with_input(
-            BenchmarkId::new("md4", format!("{}B", block_size)),
+            BenchmarkId::new("md4", format!("{block_size}B")),
             &data,
             |b, data| {
                 b.iter(|| {
@@ -324,7 +315,7 @@ fn bench_strong_checksum(c: &mut Criterion) {
 
         // XXH3 (fast)
         group.bench_with_input(
-            BenchmarkId::new("xxh3", format!("{}B", block_size)),
+            BenchmarkId::new("xxh3", format!("{block_size}B")),
             &data,
             |b, data| {
                 b.iter(|| {
@@ -351,7 +342,7 @@ fn bench_memory_patterns(c: &mut Criterion) {
         let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
 
         group.bench_with_input(
-            BenchmarkId::new("index_construction", format!("{}MB", size_mb)),
+            BenchmarkId::new("index_construction", format!("{size_mb}MB")),
             &data,
             |b, data| {
                 let params = SignatureLayoutParams::new(
@@ -361,12 +352,9 @@ fn bench_memory_patterns(c: &mut Criterion) {
                     NonZeroU8::new(16).unwrap(),
                 );
                 let layout = calculate_signature_layout(params).expect("layout");
-                let signature = generate_file_signature(
-                    data.as_slice(),
-                    layout,
-                    SignatureAlgorithm::Md4,
-                )
-                .expect("signature");
+                let signature =
+                    generate_file_signature(data.as_slice(), layout, SignatureAlgorithm::Md4)
+                        .expect("signature");
 
                 b.iter(|| {
                     let index =

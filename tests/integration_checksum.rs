@@ -44,7 +44,11 @@ fn checksum_flag_short_form_accepted() {
     let dest_file = test_dir.path().join("dest.txt");
 
     let mut cmd = RsyncCommand::new();
-    cmd.args(["-c", src_file.to_str().unwrap(), dest_file.to_str().unwrap()]);
+    cmd.args([
+        "-c",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
     cmd.assert_success();
 
     assert_eq!(fs::read(&dest_file).unwrap(), b"content");
@@ -119,8 +123,12 @@ fn checksum_mode_transfers_different_content_same_size() {
 #[test]
 fn checksum_mode_transfers_different_content_same_mtime() {
     let test_dir = TestDir::new().expect("create test dir");
-    let src_file = test_dir.write_file("source.txt", b"new content here").unwrap();
-    let dest_file = test_dir.write_file("dest.txt", b"old content here").unwrap();
+    let src_file = test_dir
+        .write_file("source.txt", b"new content here")
+        .unwrap();
+    let dest_file = test_dir
+        .write_file("dest.txt", b"old content here")
+        .unwrap();
 
     // Set identical mtimes
     let same_time = FileTime::from_unix_time(1700000000, 0);
@@ -190,8 +198,7 @@ fn checksum_skips_identical_files_with_verbose() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("sent 0 bytes") || stdout.contains("0 bytes/sec"),
-        "Identical file should not transfer any data: {}",
-        stdout
+        "Identical file should not transfer any data: {stdout}"
     );
 }
 
@@ -202,8 +209,12 @@ fn checksum_skips_identical_files_with_verbose() {
 #[test]
 fn checksum_transfers_changed_files() {
     let test_dir = TestDir::new().expect("create test dir");
-    let src_file = test_dir.write_file("source.txt", b"updated content").unwrap();
-    let dest_file = test_dir.write_file("dest.txt", b"original content").unwrap();
+    let src_file = test_dir
+        .write_file("source.txt", b"updated content")
+        .unwrap();
+    let dest_file = test_dir
+        .write_file("dest.txt", b"original content")
+        .unwrap();
 
     let mut cmd = RsyncCommand::new();
     cmd.args([
@@ -219,7 +230,9 @@ fn checksum_transfers_changed_files() {
 #[test]
 fn checksum_transfers_new_files() {
     let test_dir = TestDir::new().expect("create test dir");
-    let src_file = test_dir.write_file("source.txt", b"new file content").unwrap();
+    let src_file = test_dir
+        .write_file("source.txt", b"new file content")
+        .unwrap();
     let dest_file = test_dir.path().join("dest.txt");
 
     let mut cmd = RsyncCommand::new();
@@ -283,7 +296,10 @@ fn checksum_small_files() {
     cmd.assert_success();
 
     let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
-    assert_eq!(final_time, preserved_time, "Small identical files should match");
+    assert_eq!(
+        final_time, preserved_time,
+        "Small identical files should match"
+    );
 }
 
 #[test]
@@ -308,7 +324,10 @@ fn checksum_medium_files() {
     cmd.assert_success();
 
     let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
-    assert_eq!(final_time, preserved_time, "Medium identical files should match");
+    assert_eq!(
+        final_time, preserved_time,
+        "Medium identical files should match"
+    );
 }
 
 #[test]
@@ -333,7 +352,10 @@ fn checksum_large_files() {
     cmd.assert_success();
 
     let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
-    assert_eq!(final_time, preserved_time, "Large identical files should match");
+    assert_eq!(
+        final_time, preserved_time,
+        "Large identical files should match"
+    );
 }
 
 #[test]
@@ -405,7 +427,7 @@ fn checksum_recursive_directory() {
     // All files should have preserved times (no transfer needed)
     let check_preserved = |path: &Path| {
         let time = FileTime::from_last_modification_time(&fs::metadata(path).unwrap());
-        assert_eq!(time, preserved_time, "File {:?} should not be modified", path);
+        assert_eq!(time, preserved_time, "File {path:?} should not be modified");
     };
     check_preserved(&dest_dir.join("file1.txt"));
     check_preserved(&dest_dir.join("file2.txt"));
@@ -444,9 +466,13 @@ fn checksum_recursive_with_some_changes() {
     cmd.assert_success();
 
     // unchanged.txt should NOT be modified
-    let unchanged_time =
-        FileTime::from_last_modification_time(&fs::metadata(dest_dir.join("unchanged.txt")).unwrap());
-    assert_eq!(unchanged_time, preserved_time, "Unchanged file should not be modified");
+    let unchanged_time = FileTime::from_last_modification_time(
+        &fs::metadata(dest_dir.join("unchanged.txt")).unwrap(),
+    );
+    assert_eq!(
+        unchanged_time, preserved_time,
+        "Unchanged file should not be modified"
+    );
 
     // changed.txt should be updated
     assert_eq!(
@@ -506,7 +532,9 @@ fn checksum_with_archive_mode() {
 fn checksum_itemize_shows_checksum_indicator() {
     let test_dir = TestDir::new().expect("create test dir");
     // Use same-length content so only checksum differs
-    let src_file = test_dir.write_file("source.txt", b"changed_content").unwrap();
+    let src_file = test_dir
+        .write_file("source.txt", b"changed_content")
+        .unwrap();
     let dest_file = test_dir.write_file("dest.txt", b"old_content!!!!").unwrap();
 
     // Same size to ensure checksum is what triggers transfer
@@ -534,8 +562,7 @@ fn checksum_itemize_shows_checksum_indicator() {
     // The 'c' in position 3 indicates checksum differs
     assert!(
         stdout.contains("source.txt") || stdout.contains("dest.txt"),
-        "Itemize should show transferred file: {}",
-        stdout
+        "Itemize should show transferred file: {stdout}"
     );
 }
 
@@ -597,8 +624,12 @@ fn upstream_comparison_checksum_skips_identical() {
     let test_dir = TestDir::new().expect("create test dir");
 
     // Test with upstream rsync
-    let upstream_src = test_dir.write_file("upstream_src.txt", b"same content").unwrap();
-    let upstream_dest = test_dir.write_file("upstream_dest.txt", b"same content").unwrap();
+    let upstream_src = test_dir
+        .write_file("upstream_src.txt", b"same content")
+        .unwrap();
+    let upstream_dest = test_dir
+        .write_file("upstream_dest.txt", b"same content")
+        .unwrap();
 
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&upstream_dest, preserved_time).unwrap();
@@ -631,7 +662,10 @@ fn upstream_comparison_checksum_skips_identical() {
     let _oc_output = cmd.assert_success();
 
     // Both should succeed
-    assert!(upstream_output.status.success(), "Upstream rsync should succeed");
+    assert!(
+        upstream_output.status.success(),
+        "Upstream rsync should succeed"
+    );
 
     // Both should skip the file (check that dest mtime unchanged)
     let upstream_dest_time =
@@ -659,8 +693,12 @@ fn upstream_comparison_checksum_transfers_different() {
     let test_dir = TestDir::new().expect("create test dir");
 
     // Test with upstream rsync - same size, different content
-    let upstream_src = test_dir.write_file("upstream_src.txt", b"new data").unwrap();
-    let upstream_dest = test_dir.write_file("upstream_dest.txt", b"old data").unwrap();
+    let upstream_src = test_dir
+        .write_file("upstream_src.txt", b"new data")
+        .unwrap();
+    let upstream_dest = test_dir
+        .write_file("upstream_dest.txt", b"old data")
+        .unwrap();
 
     // Set same mtime to ensure checksum is what triggers transfer
     let same_time = FileTime::from_unix_time(1700000000, 0);
@@ -690,7 +728,10 @@ fn upstream_comparison_checksum_transfers_different() {
     cmd.assert_success();
 
     // Both should transfer the file
-    assert!(upstream_output.status.success(), "Upstream rsync should succeed");
+    assert!(
+        upstream_output.status.success(),
+        "Upstream rsync should succeed"
+    );
     assert_eq!(
         fs::read(&upstream_dest).unwrap(),
         b"new data",
@@ -714,8 +755,12 @@ fn upstream_comparison_checksum_with_itemize() {
     let test_dir = TestDir::new().expect("create test dir");
 
     // Create files that will be transferred
-    let upstream_src = test_dir.write_file("upstream_src.txt", b"content A").unwrap();
-    let upstream_dest = test_dir.write_file("upstream_dest.txt", b"content B").unwrap();
+    let upstream_src = test_dir
+        .write_file("upstream_src.txt", b"content A")
+        .unwrap();
+    let upstream_dest = test_dir
+        .write_file("upstream_dest.txt", b"content B")
+        .unwrap();
 
     let upstream_output = run_upstream_rsync(&[
         "--checksum",
@@ -748,7 +793,10 @@ fn upstream_comparison_checksum_with_itemize() {
         !upstream_stdout.is_empty(),
         "Upstream should produce itemized output"
     );
-    assert!(!oc_stdout.is_empty(), "oc-rsync should produce itemized output");
+    assert!(
+        !oc_stdout.is_empty(),
+        "oc-rsync should produce itemized output"
+    );
 }
 
 // ============================================================================
@@ -767,7 +815,9 @@ fn checksum_binary_files() {
     binary_data.extend(&[0u8; 100]); // Add some null bytes
 
     let src_file = test_dir.write_file("binary_src.bin", &binary_data).unwrap();
-    let dest_file = test_dir.write_file("binary_dest.bin", &binary_data).unwrap();
+    let dest_file = test_dir
+        .write_file("binary_dest.bin", &binary_data)
+        .unwrap();
 
     let preserved_time = FileTime::from_unix_time(1600000000, 0);
     set_file_mtime(&dest_file, preserved_time).unwrap();
@@ -784,7 +834,10 @@ fn checksum_binary_files() {
 
     // Should skip transfer
     let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
-    assert_eq!(final_time, preserved_time, "Identical binary files should match");
+    assert_eq!(
+        final_time, preserved_time,
+        "Identical binary files should match"
+    );
 }
 
 #[test]
@@ -840,4 +893,327 @@ fn checksum_dry_run_no_changes() {
         stdout.contains("source.txt") || stdout.contains("dest.txt"),
         "Dry-run should show what would be transferred"
     );
+}
+
+// ============================================================================
+// Hash Algorithm Behavior Tests
+// ============================================================================
+
+/// Test that checksum mode detects single-byte differences.
+#[test]
+fn checksum_detects_single_byte_difference() {
+    let test_dir = TestDir::new().expect("create test dir");
+
+    // Create files that differ by only one byte
+    let src_data: Vec<u8> = (0..1000).map(|i| (i % 256) as u8).collect();
+    let mut dest_data = src_data.clone();
+    dest_data[500] = dest_data[500].wrapping_add(1); // Change middle byte
+
+    let src_file = test_dir.write_file("source.bin", &src_data).unwrap();
+    let dest_file = test_dir.write_file("dest.bin", &dest_data).unwrap();
+
+    // Set same mtime to ensure checksum is what detects the change
+    let same_time = FileTime::from_unix_time(1700000000, 0);
+    set_file_mtime(&src_file, same_time).unwrap();
+    set_file_mtime(&dest_file, same_time).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "--checksum",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    // Content should be updated
+    assert_eq!(fs::read(&dest_file).unwrap(), src_data);
+}
+
+/// Test checksum with very small files (1-3 bytes).
+#[test]
+fn checksum_very_small_files() {
+    for size in 1..=3 {
+        let test_dir = TestDir::new().expect("create test dir");
+        let content: Vec<u8> = (0..size).map(|i| (i + 65) as u8).collect(); // "A", "AB", "ABC"
+
+        let src_file = test_dir.write_file("small_src.txt", &content).unwrap();
+        let dest_file = test_dir.write_file("small_dest.txt", &content).unwrap();
+
+        let preserved_time = FileTime::from_unix_time(1600000000, 0);
+        set_file_mtime(&dest_file, preserved_time).unwrap();
+
+        std::thread::sleep(Duration::from_millis(10));
+
+        let mut cmd = RsyncCommand::new();
+        cmd.args([
+            "--checksum",
+            src_file.to_str().unwrap(),
+            dest_file.to_str().unwrap(),
+        ]);
+        cmd.assert_success();
+
+        // Verify mtime wasn't changed (file should be skipped)
+        let final_time =
+            FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+        assert_eq!(
+            final_time, preserved_time,
+            "Small file of size {} should match",
+            size
+        );
+    }
+}
+
+/// Test checksum correctly handles files at buffer boundary sizes.
+#[test]
+fn checksum_buffer_boundary_sizes() {
+    // Test sizes around common buffer sizes
+    for size in [4095, 4096, 4097, 8191, 8192, 8193, 65535, 65536, 65537] {
+        let test_dir = TestDir::new().expect("create test dir");
+        let content = vec![0xABu8; size];
+
+        let src_file = test_dir.write_file("buffer_src.bin", &content).unwrap();
+        let dest_file = test_dir.write_file("buffer_dest.bin", &content).unwrap();
+
+        let preserved_time = FileTime::from_unix_time(1600000000, 0);
+        set_file_mtime(&dest_file, preserved_time).unwrap();
+
+        std::thread::sleep(Duration::from_millis(10));
+
+        let mut cmd = RsyncCommand::new();
+        cmd.args([
+            "--checksum",
+            src_file.to_str().unwrap(),
+            dest_file.to_str().unwrap(),
+        ]);
+        cmd.assert_success();
+
+        let final_time =
+            FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+        assert_eq!(
+            final_time, preserved_time,
+            "File of size {} should match",
+            size
+        );
+    }
+}
+
+/// Test checksum handles files with all zero bytes.
+#[test]
+fn checksum_all_zeros_file() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let content = vec![0u8; 10000];
+
+    let src_file = test_dir.write_file("zeros_src.bin", &content).unwrap();
+    let dest_file = test_dir.write_file("zeros_dest.bin", &content).unwrap();
+
+    let preserved_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_mtime(&dest_file, preserved_time).unwrap();
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "--checksum",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+    assert_eq!(final_time, preserved_time, "All-zeros files should match");
+}
+
+/// Test checksum handles files with all 0xFF bytes.
+#[test]
+fn checksum_all_ones_file() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let content = vec![0xFFu8; 10000];
+
+    let src_file = test_dir.write_file("ones_src.bin", &content).unwrap();
+    let dest_file = test_dir.write_file("ones_dest.bin", &content).unwrap();
+
+    let preserved_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_mtime(&dest_file, preserved_time).unwrap();
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "--checksum",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+    assert_eq!(final_time, preserved_time, "All-ones files should match");
+}
+
+/// Test checksum with alternating byte patterns.
+#[test]
+fn checksum_alternating_pattern() {
+    let test_dir = TestDir::new().expect("create test dir");
+
+    // Create alternating pattern
+    let content: Vec<u8> = (0..10000).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+
+    let src_file = test_dir.write_file("pattern_src.bin", &content).unwrap();
+    let dest_file = test_dir.write_file("pattern_dest.bin", &content).unwrap();
+
+    let preserved_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_mtime(&dest_file, preserved_time).unwrap();
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "--checksum",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+    assert_eq!(final_time, preserved_time, "Alternating pattern files should match");
+}
+
+// ============================================================================
+// Checksum Verification Tests
+// ============================================================================
+
+/// Test that transferred file content is byte-for-byte correct.
+#[test]
+fn checksum_transfer_preserves_content_exactly() {
+    let test_dir = TestDir::new().expect("create test dir");
+
+    // Create file with every possible byte value
+    let mut content: Vec<u8> = (0..=255).collect();
+    // Repeat to make it larger
+    for _ in 0..100 {
+        let bytes: Vec<u8> = (0..=255).collect();
+        content.extend(bytes);
+    }
+
+    let src_file = test_dir.write_file("exact_src.bin", &content).unwrap();
+    let dest_file = test_dir.path().join("exact_dest.bin");
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "--checksum",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    let dest_content = fs::read(&dest_file).unwrap();
+    assert_eq!(dest_content.len(), content.len(), "Content length should match");
+    assert_eq!(dest_content, content, "Content should be byte-for-byte identical");
+}
+
+/// Test checksum handles repeated transfers correctly (idempotent).
+#[test]
+fn checksum_repeated_transfer_is_idempotent() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let content = b"idempotent transfer test content";
+
+    let src_file = test_dir.write_file("idem_src.txt", content).unwrap();
+    let dest_file = test_dir.write_file("idem_dest.txt", content).unwrap();
+
+    // Set specific time on dest
+    let preserved_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_mtime(&dest_file, preserved_time).unwrap();
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    // Run transfer multiple times
+    for _ in 0..3 {
+        let mut cmd = RsyncCommand::new();
+        cmd.args([
+            "--checksum",
+            src_file.to_str().unwrap(),
+            dest_file.to_str().unwrap(),
+        ]);
+        cmd.assert_success();
+    }
+
+    // After multiple runs, dest should still have original mtime (no changes)
+    let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+    assert_eq!(final_time, preserved_time, "Repeated transfers should be idempotent");
+    assert_eq!(fs::read(&dest_file).unwrap(), content);
+}
+
+// ============================================================================
+// Protocol Behavior Tests
+// ============================================================================
+
+/// Test that checksum combined with archive mode works correctly.
+/// Note: Archive mode includes --times, so mtime is part of what gets synced.
+/// With checksum mode AND --no-times, identical content skips transfer.
+#[test]
+fn checksum_with_archive_preserves_all_metadata() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_dir = test_dir.mkdir("src").unwrap();
+    let dest_dir = test_dir.mkdir("dest").unwrap();
+
+    let content = b"archive + checksum test";
+    fs::write(src_dir.join("file.txt"), content).unwrap();
+    fs::write(dest_dir.join("file.txt"), content).unwrap();
+
+    // Set specific mtime on both to be identical
+    let same_time = FileTime::from_unix_time(1650000000, 0);
+    set_file_mtime(src_dir.join("file.txt"), same_time).unwrap();
+    set_file_mtime(dest_dir.join("file.txt"), same_time).unwrap();
+
+    // Record dest mtime before
+    let dest_time_before = FileTime::from_last_modification_time(
+        &fs::metadata(dest_dir.join("file.txt")).unwrap(),
+    );
+
+    std::thread::sleep(Duration::from_millis(50));
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "-ac", // archive + checksum
+        &format!("{}/", src_dir.display()),
+        dest_dir.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    // With identical content AND identical mtime, file should be skipped
+    // Dest mtime should remain unchanged
+    let final_time = FileTime::from_last_modification_time(
+        &fs::metadata(dest_dir.join("file.txt")).unwrap(),
+    );
+    assert_eq!(final_time, dest_time_before, "Archive+checksum should skip identical files");
+}
+
+/// Test checksum with times preservation.
+#[test]
+fn checksum_with_times_updates_mtime_when_content_differs() {
+    let test_dir = TestDir::new().expect("create test dir");
+
+    let src_file = test_dir.write_file("src.txt", b"new content!").unwrap();
+    let dest_file = test_dir.write_file("dest.txt", b"old content!").unwrap();
+
+    // Set different times
+    let source_time = FileTime::from_unix_time(1700000000, 0);
+    let dest_time = FileTime::from_unix_time(1600000000, 0);
+    set_file_mtime(&src_file, source_time).unwrap();
+    set_file_mtime(&dest_file, dest_time).unwrap();
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "--checksum",
+        "--times",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
+    cmd.assert_success();
+
+    // Content should be updated
+    assert_eq!(fs::read(&dest_file).unwrap(), b"new content!");
+
+    // With --times, mtime should be copied from source
+    let final_time = FileTime::from_last_modification_time(&fs::metadata(&dest_file).unwrap());
+    assert_eq!(final_time, source_time, "mtime should be updated when content differs");
 }

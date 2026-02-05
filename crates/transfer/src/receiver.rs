@@ -67,7 +67,9 @@ use super::handshake::HandshakeResult;
 use super::pipeline::{PipelineConfig, PipelineState};
 use super::shared::ChecksumFactory;
 use super::temp_guard::TempFileGuard;
-use super::transfer_ops::{RequestConfig, ResponseContext, process_file_response, send_file_request};
+use super::transfer_ops::{
+    RequestConfig, ResponseContext, process_file_response, send_file_request,
+};
 
 use metadata::{MetadataOptions, apply_metadata_from_file_entry};
 
@@ -1274,7 +1276,8 @@ impl ReceiverContext {
                 config: &request_config,
             };
 
-            let total_bytes = process_file_response(reader, &mut ndx_read_codec, pending, &response_ctx)?;
+            let total_bytes =
+                process_file_response(reader, &mut ndx_read_codec, pending, &response_ctx)?;
 
             // Apply metadata
             if let Err(meta_err) =
@@ -1328,7 +1331,7 @@ impl ReceiverContext {
 
     /// Runs the receiver with incremental directory creation and failed-dir tracking.
     ///
-    /// Unlike [`run_pipelined`], this method creates directories incrementally
+    /// Unlike [`Self::run_pipelined`], this method creates directories incrementally
     /// as they appear in the file list, tracking failures and skipping children
     /// of failed directories.
     ///
@@ -1533,22 +1536,25 @@ impl ReceiverContext {
         stats.total_source_bytes = self.file_list.iter().map(|e| e.size()).sum();
         stats.metadata_errors = metadata_errors;
 
-        self.exchange_phase_done(&mut reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+        self.exchange_phase_done(
+            &mut reader,
+            writer,
+            &mut ndx_write_codec,
+            &mut ndx_read_codec,
+        )?;
         let _sender_stats = self.receive_stats(&mut reader)?;
-        self.handle_goodbye(&mut reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+        self.handle_goodbye(
+            &mut reader,
+            writer,
+            &mut ndx_write_codec,
+            &mut ndx_read_codec,
+        )?;
 
         Ok(stats)
     }
 }
 
 // ============================================================================
-// Incremental File List Receiver
-// ============================================================================
-
-/// Streaming receiver for incremental file list processing.
-///
-/// This struct wraps a [`FileListReader`] and provides iterator-like access
-/// to file entries as they become available from the wire. It handles parent
 // ============================================================================
 // Failed Directory Tracking
 // ============================================================================
@@ -1730,7 +1736,7 @@ impl<R: Read> IncrementalFileListReceiver<R> {
     /// Returns `Ok(true)` if an entry was read and added to the incremental
     /// processor, `Ok(false)` if at EOF or already finished reading.
     ///
-    /// Unlike [`next_ready`], this method does not wait for an entry to become
+    /// Unlike [`Self::next_ready`], this method does not wait for an entry to become
     /// ready. It simply reads from the wire and adds to the dependency tracker.
     pub fn try_read_one(&mut self) -> io::Result<bool> {
         if self.finished_reading {
@@ -1764,7 +1770,7 @@ impl<R: Read> IncrementalFileListReceiver<R> {
     /// # Note
     ///
     /// This method provides a fallback to traditional batch processing.
-    /// For truly incremental processing, use [`next_ready`] instead.
+    /// For truly incremental processing, use [`Self::next_ready`] instead.
     pub fn collect_sorted(mut self) -> io::Result<Vec<FileEntry>> {
         let mut entries = Vec::new();
 
@@ -3888,7 +3894,10 @@ mod tests {
         fn failed_directories_finds_child_of_failed() {
             let mut failed = FailedDirectories::new();
             failed.mark_failed("foo/bar");
-            assert_eq!(failed.failed_ancestor("foo/bar/baz/file.txt"), Some("foo/bar"));
+            assert_eq!(
+                failed.failed_ancestor("foo/bar/baz/file.txt"),
+                Some("foo/bar")
+            );
         }
 
         #[test]
@@ -3939,13 +3948,14 @@ mod tests {
 
         #[test]
         fn stats_tracks_incremental_fields() {
-            let mut stats = TransferStats::default();
-
-            stats.entries_received = 100;
-            stats.directories_created = 20;
-            stats.directories_failed = 2;
-            stats.files_skipped = 10;
-            stats.files_transferred = 68;
+            let stats = TransferStats {
+                entries_received: 100,
+                directories_created: 20,
+                directories_failed: 2,
+                files_skipped: 10,
+                files_transferred: 68,
+                ..Default::default()
+            };
 
             // Verify consistency
             assert_eq!(
@@ -3983,7 +3993,11 @@ mod tests {
             // All descendants should be affected
             assert!(failed.failed_ancestor("level1/level2").is_some());
             assert!(failed.failed_ancestor("level1/level2/level3").is_some());
-            assert!(failed.failed_ancestor("level1/level2/level3/file.txt").is_some());
+            assert!(
+                failed
+                    .failed_ancestor("level1/level2/level3/file.txt")
+                    .is_some()
+            );
         }
 
         #[test]

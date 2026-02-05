@@ -11,8 +11,8 @@
 use std::path::Path;
 
 use compress::skip_compress::{
-    CompressionDecider, CompressionDecision, FileCategory, MagicSignature,
-    DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE, KNOWN_SIGNATURES,
+    CompressionDecider, CompressionDecision, DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE,
+    FileCategory, KNOWN_SIGNATURES, MagicSignature,
 };
 
 // =============================================================================
@@ -97,7 +97,9 @@ mod default_skip_list {
         let extensions = decider.skip_extensions();
 
         // Basic archive formats
-        let archives = ["zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar"];
+        let archives = [
+            "zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar",
+        ];
         for ext in archives {
             assert!(
                 extensions.contains(ext),
@@ -139,8 +141,8 @@ mod default_skip_list {
         let extensions = decider.skip_extensions();
 
         let packages = [
-            "deb", "rpm", "apk", "jar", "war", "ear", "egg", "whl", "gem", "nupkg", "snap",
-            "appx", "msix",
+            "deb", "rpm", "apk", "jar", "war", "ear", "egg", "whl", "gem", "nupkg", "snap", "appx",
+            "msix",
         ];
         for ext in packages {
             assert!(
@@ -472,7 +474,10 @@ mod custom_patterns {
         let mut decider = CompressionDecider::new();
 
         let removed = decider.remove_skip_extension("xyz");
-        assert!(!removed, "Should return false when extension was not present");
+        assert!(
+            !removed,
+            "Should return false when extension was not present"
+        );
     }
 
     #[test]
@@ -652,7 +657,9 @@ mod list_parsing {
         let decider =
             CompressionDecider::from_skip_compress_list("gz/zip/z/rpm/deb/iso/bz2/tbz/tbz2/gz2");
 
-        let expected = ["gz", "zip", "z", "rpm", "deb", "iso", "bz2", "tbz", "tbz2", "gz2"];
+        let expected = [
+            "gz", "zip", "z", "rpm", "deb", "iso", "bz2", "tbz", "tbz2", "gz2",
+        ];
         assert_eq!(decider.skip_extensions().len(), expected.len());
 
         for ext in expected {
@@ -677,9 +684,9 @@ mod magic_byte_detection {
 
         // JPEG magic bytes: FF D8 FF
         let jpeg_headers = [
-            vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10],      // JFIF
-            vec![0xff, 0xd8, 0xff, 0xe1, 0x00, 0x00],      // EXIF
-            vec![0xff, 0xd8, 0xff, 0xdb],                  // Minimal
+            vec![0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10], // JFIF
+            vec![0xff, 0xd8, 0xff, 0xe1, 0x00, 0x00], // EXIF
+            vec![0xff, 0xd8, 0xff, 0xdb],             // Minimal
         ];
 
         for (i, header) in jpeg_headers.iter().enumerate() {
@@ -759,7 +766,13 @@ mod magic_byte_detection {
         let decider = CompressionDecider::with_default_skip_list();
 
         // PDF magic bytes: %PDF
-        let pdf_headers = [b"%PDF-1.4", b"%PDF-1.5", b"%PDF-1.6", b"%PDF-1.7", b"%PDF-2.0"];
+        let pdf_headers = [
+            b"%PDF-1.4",
+            b"%PDF-1.5",
+            b"%PDF-1.6",
+            b"%PDF-1.7",
+            b"%PDF-2.0",
+        ];
 
         for (i, header) in pdf_headers.iter().enumerate() {
             let result = decider.should_compress(Path::new("unknown"), Some(*header));
@@ -1034,11 +1047,8 @@ mod auto_detection {
 
         // The thresholds should affect the decision
         // (exact behavior depends on compression ratio of moderate_data)
-        assert!(
-            default_result || !default_result,
-            "Default threshold should produce a decision"
-        );
-        assert!(!low_threshold_result || low_threshold_result);
+        let _ = default_result; // Default threshold produces a decision
+        let _ = low_threshold_result; // Low threshold produces a decision
         assert!(high_threshold_result);
     }
 
@@ -1214,23 +1224,11 @@ mod configuration {
     #[test]
     fn constants_are_reasonable() {
         // Verify the constants have reasonable values
-        assert!(
-            DEFAULT_SAMPLE_SIZE >= 1024,
-            "Sample size should be at least 1KB"
-        );
-        assert!(
-            DEFAULT_SAMPLE_SIZE <= 1024 * 1024,
-            "Sample size should not exceed 1MB"
-        );
+        // Sample size should be at least 1KB and not exceed 1MB
+        assert_eq!(DEFAULT_SAMPLE_SIZE, 4096); // Verify exact expected value
 
-        assert!(
-            DEFAULT_COMPRESSION_THRESHOLD > 0.5,
-            "Threshold should be above 0.5"
-        );
-        assert!(
-            DEFAULT_COMPRESSION_THRESHOLD <= 1.0,
-            "Threshold should not exceed 1.0"
-        );
+        // Verify threshold is expected value (0.90, which is > 0.5 and <= 1.0)
+        assert!((DEFAULT_COMPRESSION_THRESHOLD - 0.90).abs() < f64::EPSILON);
     }
 }
 
@@ -1313,10 +1311,7 @@ mod integration {
 
         for (file, expected) in test_files {
             let result = decider.should_compress(Path::new(file), None);
-            assert_eq!(
-                result, expected,
-                "File {file} classification mismatch"
-            );
+            assert_eq!(result, expected, "File {file} classification mismatch");
         }
     }
 

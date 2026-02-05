@@ -25,11 +25,11 @@
 //! Protocol details are based on rsync 3.4.1 source code, which defines
 //! OLDEST_SUPPORTED_PROTOCOL as 28, explicitly excluding version 27.
 
+use protocol::codec::{NdxCodec, ProtocolCodec, create_ndx_codec, create_protocol_codec};
 use protocol::{
-    NegotiationError, ProtocolVersion, ProtocolVersionAdvertisement,
-    select_highest_mutual, LEGACY_DAEMON_PREFIX,
+    LEGACY_DAEMON_PREFIX, NegotiationError, ProtocolVersion, ProtocolVersionAdvertisement,
+    select_highest_mutual,
 };
-use protocol::codec::{create_ndx_codec, create_protocol_codec, NdxCodec, ProtocolCodec};
 
 /// Helper wrapper for testing protocol version advertisement.
 #[derive(Clone, Copy, Debug)]
@@ -85,30 +85,21 @@ mod handshake_rejection {
     #[test]
     fn version_27_try_from_u8_fails() {
         let result = ProtocolVersion::try_from(27u8);
-        assert!(
-            result.is_err(),
-            "TryFrom<u8> for protocol 27 must fail"
-        );
+        assert!(result.is_err(), "TryFrom<u8> for protocol 27 must fail");
     }
 
     /// Protocol 27 from_peer_advertisement must fail.
     #[test]
     fn version_27_from_peer_advertisement_fails() {
         let result = ProtocolVersion::from_peer_advertisement(27);
-        assert!(
-            result.is_err(),
-            "from_peer_advertisement(27) must fail"
-        );
+        assert!(result.is_err(), "from_peer_advertisement(27) must fail");
     }
 
     /// Protocol 27 from_supported must return None.
     #[test]
     fn version_27_from_supported_returns_none() {
         let result = ProtocolVersion::from_supported(27);
-        assert!(
-            result.is_none(),
-            "from_supported(27) must return None"
-        );
+        assert!(result.is_none(), "from_supported(27) must return None");
     }
 
     /// Protocol 27 is below OLDEST supported version.
@@ -145,31 +136,21 @@ mod compatibility_flags {
         );
 
         // If v27 were supported, it would use ASCII like v28 and v29
-        assert!(
-            27 < 30,
-            "Protocol 27 would be in legacy ASCII negotiation range"
-        );
+        // (Protocol 27 would be in legacy ASCII negotiation range since 27 < 30)
     }
 
     /// Protocol 27 would not support compatibility flags (legacy protocol).
     #[test]
     fn version_27_would_not_support_compatibility_flags() {
         // Compatibility flags are negotiated starting with protocol 30
-        // Protocol 27, if supported, would not use them
-        assert!(
-            27 < 30,
-            "Protocol 27 would be before compatibility flags were introduced"
-        );
+        // Protocol 27, if supported, would not use them (27 < 30)
     }
 
     /// Protocol 27 would use fixed encoding (not varint).
     #[test]
     fn version_27_would_use_fixed_encoding() {
         // Varint encoding was introduced in protocol 30
-        assert!(
-            27 < 30,
-            "Protocol 27 would be before varint encoding"
-        );
+        // Protocol 27 would be before varint encoding (27 < 30)
     }
 }
 
@@ -204,7 +185,11 @@ mod wire_format {
         let codec_28 = create_protocol_codec(28);
         let mut buf = Vec::new();
         codec_28.write_file_size(&mut buf, 1000).unwrap();
-        assert_eq!(buf.len(), 4, "Protocol 28 (and 27 if supported) uses 4-byte sizes");
+        assert_eq!(
+            buf.len(),
+            4,
+            "Protocol 28 (and 27 if supported) uses 4-byte sizes"
+        );
     }
 
     /// Protocol 27 would use 4-byte NDX encoding.
@@ -216,7 +201,11 @@ mod wire_format {
         let mut codec_28 = create_ndx_codec(28);
         let mut buf = Vec::new();
         codec_28.write_ndx(&mut buf, 5).unwrap();
-        assert_eq!(buf.len(), 4, "Protocol 28 (and 27 if supported) uses 4-byte NDX");
+        assert_eq!(
+            buf.len(),
+            4,
+            "Protocol 28 (and 27 if supported) uses 4-byte NDX"
+        );
     }
 
     /// Binary advertisement for v27 (if it were supported).
@@ -226,8 +215,7 @@ mod wire_format {
         let bytes = 27u32.to_be_bytes();
         assert_eq!(bytes, [0, 0, 0, 27]);
 
-        // But v27 is below binary negotiation boundary
-        assert!(27 < 30, "Protocol 27 is below binary negotiation");
+        // Note: v27 is below binary negotiation boundary (27 < 30)
     }
 
     /// ASCII greeting format validation for v27.
@@ -345,7 +333,7 @@ mod error_diagnostics {
         assert!(result.is_err());
 
         let error = result.unwrap_err();
-        let error_string = format!("{:?}", error);
+        let error_string = format!("{error:?}");
 
         // Error should mention version 27
         assert!(
@@ -409,11 +397,7 @@ mod boundary_conditions {
     fn bitmap_does_not_have_v27_bit() {
         let bitmap = ProtocolVersion::supported_protocol_bitmap();
         let v27_mask = 1u64 << 27;
-        assert_eq!(
-            bitmap & v27_mask,
-            0,
-            "Bitmap must not have bit 27 set"
-        );
+        assert_eq!(bitmap & v27_mask, 0, "Bitmap must not have bit 27 set");
     }
 
     /// Version 27 in pairwise tests with all supported versions.
@@ -422,12 +406,12 @@ mod boundary_conditions {
         let supported = [28u8, 29, 30, 31, 32];
 
         for &version in &supported {
-            let result = select_highest_mutual([
-                TestVersion(27),
-                TestVersion(u32::from(version)),
-            ]);
+            let result = select_highest_mutual([TestVersion(27), TestVersion(u32::from(version))]);
 
-            assert!(result.is_ok(), "Should negotiate successfully with v{version}");
+            assert!(
+                result.is_ok(),
+                "Should negotiate successfully with v{version}"
+            );
             assert_eq!(
                 result.unwrap().as_u8(),
                 version,
@@ -523,11 +507,7 @@ mod theoretical_features {
         // Protocol 28 supports them
         assert!(ProtocolVersion::V28.supports_extended_flags());
 
-        // So v27 would not (theoretical test)
-        assert!(
-            27 < 28,
-            "Protocol 27 would be before extended flags were introduced"
-        );
+        // So v27 would not (27 < 28, before extended flags were introduced)
     }
 
     /// If v27 were supported, it would not have sender/receiver modifiers.
@@ -537,8 +517,7 @@ mod theoretical_features {
         assert!(ProtocolVersion::V29.supports_sender_receiver_modifiers());
         assert!(!ProtocolVersion::V28.supports_sender_receiver_modifiers());
 
-        // So v27 definitely would not
-        assert!(27 < 29);
+        // So v27 definitely would not (27 < 29)
     }
 
     /// If v27 were supported, it would use old prefixes.
@@ -548,8 +527,7 @@ mod theoretical_features {
         assert!(ProtocolVersion::V28.uses_old_prefixes());
         assert!(!ProtocolVersion::V29.uses_old_prefixes());
 
-        // So v27 would also use them
-        assert!(27 <= 28);
+        // So v27 would also use them (27 <= 28)
     }
 
     /// If v27 were supported, it would not have safe file list.
@@ -560,8 +538,7 @@ mod theoretical_features {
         assert!(!ProtocolVersion::V29.uses_safe_file_list());
         assert!(ProtocolVersion::V30.uses_safe_file_list());
 
-        // So v27 would not have it
-        assert!(27 < 30);
+        // So v27 would not have it (27 < 30)
     }
 
     /// If v27 were supported, it would not have flist times.
@@ -571,8 +548,7 @@ mod theoretical_features {
         assert!(!ProtocolVersion::V28.supports_flist_times());
         assert!(ProtocolVersion::V29.supports_flist_times());
 
-        // So v27 would not have them
-        assert!(27 < 29);
+        // So v27 would not have them (27 < 29)
     }
 }
 
@@ -607,14 +583,18 @@ mod integration {
     fn mixed_version_scenario_with_v27() {
         // Peer advertises mix of supported and unsupported
         let peer_versions = vec![
-            TestVersion(27),  // Unsupported
-            TestVersion(28),  // Supported
-            TestVersion(29),  // Supported
+            TestVersion(27), // Unsupported
+            TestVersion(28), // Supported
+            TestVersion(29), // Supported
         ];
 
         let result = select_highest_mutual(peer_versions);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().as_u8(), 29, "Should select highest supported");
+        assert_eq!(
+            result.unwrap().as_u8(),
+            29,
+            "Should select highest supported"
+        );
     }
 
     /// Real-world scenario: old client with v27.
@@ -668,10 +648,7 @@ mod compatibility_matrix {
         let supported = [28u8, 29, 30, 31, 32];
 
         for &version in &supported {
-            let result = select_highest_mutual([
-                TestVersion(27),
-                TestVersion(u32::from(version)),
-            ]);
+            let result = select_highest_mutual([TestVersion(27), TestVersion(u32::from(version))]);
 
             assert!(result.is_ok(), "v27 + v{version} should select v{version}");
             assert_eq!(result.unwrap().as_u8(), version);
@@ -682,20 +659,12 @@ mod compatibility_matrix {
     #[test]
     fn v27_with_version_combinations() {
         // v27 + v28 + v29
-        let result = select_highest_mutual([
-            TestVersion(27),
-            TestVersion(28),
-            TestVersion(29),
-        ]);
+        let result = select_highest_mutual([TestVersion(27), TestVersion(28), TestVersion(29)]);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().as_u8(), 29);
 
         // v27 + v30 + v31
-        let result = select_highest_mutual([
-            TestVersion(27),
-            TestVersion(30),
-            TestVersion(31),
-        ]);
+        let result = select_highest_mutual([TestVersion(27), TestVersion(30), TestVersion(31)]);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().as_u8(), 31);
 

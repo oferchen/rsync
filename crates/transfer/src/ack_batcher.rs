@@ -781,8 +781,7 @@ mod tests {
 
     #[test]
     fn test_time_until_timeout_with_pending() {
-        let mut batcher =
-            AckBatcher::new(AckBatcherConfig::default().with_timeout_ms(1000));
+        let mut batcher = AckBatcher::new(AckBatcherConfig::default().with_timeout_ms(1000));
         batcher.queue_success(0);
 
         let timeout = batcher.time_until_timeout();
