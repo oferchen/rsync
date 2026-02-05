@@ -191,6 +191,7 @@ pub const fn default_algorithm() -> CompressionAlgorithm {
 
 fn zstd_level(level: CompressionLevel) -> i32 {
     match level {
+        CompressionLevel::None => 0,
         CompressionLevel::Fast => 1,
         CompressionLevel::Default => 3,
         CompressionLevel::Best => 19,
@@ -228,5 +229,210 @@ mod tests {
         decoder.read_to_end(&mut output).expect("decompress");
         assert_eq!(output, b"payload");
         assert_eq!(decoder.bytes_read(), output.len() as u64);
+    }
+
+    #[test]
+    fn level_0_no_compression_works() {
+        let input = b"test data that should not be compressed";
+        let compressed = compress_to_vec(input, CompressionLevel::None).expect("compress level 0");
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 0");
+        assert_eq!(decompressed, input);
+    }
+
+    #[test]
+    fn all_levels_produce_valid_output() {
+        let input = b"The quick brown fox jumps over the lazy dog";
+
+        // Test levels 1-22 (zstd's supported range)
+        for level in 1..=22 {
+            let level_config = CompressionLevel::Precise(
+                std::num::NonZeroU8::new(level).expect("non-zero level")
+            );
+            let compressed = compress_to_vec(input, level_config)
+                .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
+            let decompressed = decompress_to_vec(&compressed)
+                .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
+            assert_eq!(
+                decompressed, input,
+                "round-trip failed at level {level}"
+            );
+        }
+    }
+
+    #[test]
+    fn higher_levels_produce_smaller_output() {
+        // Use highly compressible data with larger size for meaningful compression differences
+        let mut input = Vec::new();
+        for _ in 0..50 {
+            input.extend_from_slice(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            input.extend_from_slice(b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+            input.extend_from_slice(b"cccccccccccccccccccccccccccccccccccccccc");
+            input.extend_from_slice(b"dddddddddddddddddddddddddddddddddddddddd");
+        }
+
+        let level_1 = CompressionLevel::Precise(std::num::NonZeroU8::new(1).unwrap());
+        let level_10 = CompressionLevel::Precise(std::num::NonZeroU8::new(10).unwrap());
+        let level_19 = CompressionLevel::Precise(std::num::NonZeroU8::new(19).unwrap());
+
+        let compressed_1 = compress_to_vec(&input, level_1).expect("compress level 1");
+        let compressed_10 = compress_to_vec(&input, level_10).expect("compress level 10");
+        let compressed_19 = compress_to_vec(&input, level_19).expect("compress level 19");
+
+        // Higher levels should compress better or equal for highly compressible data
+        // Note: We use level 19 instead of 22 since ultra-high levels may have diminishing returns
+        assert!(
+            compressed_10.len() <= compressed_1.len(),
+            "level 10 ({} bytes) should be <= level 1 ({} bytes)",
+            compressed_10.len(),
+            compressed_1.len()
+        );
+        assert!(
+            compressed_19.len() <= compressed_10.len(),
+            "level 19 ({} bytes) should be <= level 10 ({} bytes)",
+            compressed_19.len(),
+            compressed_10.len()
+        );
+
+        // Verify all decompress correctly
+        assert_eq!(decompress_to_vec(&compressed_1).unwrap(), input);
+        assert_eq!(decompress_to_vec(&compressed_10).unwrap(), input);
+        assert_eq!(decompress_to_vec(&compressed_19).unwrap(), input);
+    }
+
+    #[test]
+    fn round_trip_all_levels() {
+        let input = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. \
+                      Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
+
+        // Test level 0 (None)
+        let compressed = compress_to_vec(input, CompressionLevel::None).expect("compress level 0");
+        let decompressed = decompress_to_vec(&compressed).expect("decompress level 0");
+        assert_eq!(decompressed, input, "round-trip failed at level 0");
+
+        // Test preset levels
+        for level_config in [
+            CompressionLevel::Fast,
+            CompressionLevel::Default,
+            CompressionLevel::Best,
+        ] {
+            let compressed = compress_to_vec(input, level_config)
+                .unwrap_or_else(|e| panic!("compress failed at {level_config:?}: {e}"));
+            let decompressed = decompress_to_vec(&compressed)
+                .unwrap_or_else(|e| panic!("decompress failed at {level_config:?}: {e}"));
+            assert_eq!(
+                decompressed, input,
+                "round-trip failed at {level_config:?}"
+            );
+        }
+
+        // Test all precise levels 1-22
+        for level in 1..=22 {
+            let level_config = CompressionLevel::Precise(
+                std::num::NonZeroU8::new(level).expect("non-zero level")
+            );
+            let compressed = compress_to_vec(input, level_config)
+                .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
+            let decompressed = decompress_to_vec(&compressed)
+                .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
+            assert_eq!(
+                decompressed, input,
+                "round-trip failed at level {level}"
+            );
+        }
+    }
+
+    #[test]
+    fn counting_encoder_all_levels() {
+        let input = b"test data for counting encoder";
+
+        // Test that CountingZstdEncoder works with all levels
+        for level in 1..=22 {
+            let level_config = CompressionLevel::Precise(
+                std::num::NonZeroU8::new(level).expect("non-zero level")
+            );
+            let mut encoder = CountingZstdEncoder::new(level_config)
+                .unwrap_or_else(|e| panic!("encoder creation failed at level {level}: {e}"));
+            encoder.write(input)
+                .unwrap_or_else(|e| panic!("write failed at level {level}: {e}"));
+            let bytes = encoder.finish()
+                .unwrap_or_else(|e| panic!("finish failed at level {level}: {e}"));
+            assert!(bytes > 0, "no bytes written at level {level}");
+        }
+    }
+
+    #[test]
+    fn compression_ratio_improves_with_level() {
+        // Create highly repetitive data
+        let mut input = Vec::new();
+        for _ in 0..100 {
+            input.extend_from_slice(b"The same text repeated over and over again. ");
+        }
+
+        let level_1 = CompressionLevel::Precise(std::num::NonZeroU8::new(1).unwrap());
+        let level_5 = CompressionLevel::Precise(std::num::NonZeroU8::new(5).unwrap());
+        let level_15 = CompressionLevel::Precise(std::num::NonZeroU8::new(15).unwrap());
+
+        let compressed_1 = compress_to_vec(&input, level_1).expect("compress level 1");
+        let compressed_5 = compress_to_vec(&input, level_5).expect("compress level 5");
+        let compressed_15 = compress_to_vec(&input, level_15).expect("compress level 15");
+
+        // Verify all produce valid output
+        assert_eq!(decompress_to_vec(&compressed_1).unwrap(), input);
+        assert_eq!(decompress_to_vec(&compressed_5).unwrap(), input);
+        assert_eq!(decompress_to_vec(&compressed_15).unwrap(), input);
+
+        // Verify compression ratio improves
+        assert!(
+            compressed_5.len() <= compressed_1.len(),
+            "level 5 should compress better than level 1"
+        );
+        assert!(
+            compressed_15.len() <= compressed_5.len(),
+            "level 15 should compress better than level 5"
+        );
+
+        // Verify we actually achieved compression
+        assert!(
+            compressed_15.len() < input.len() / 2,
+            "highly repetitive data should compress to less than 50%"
+        );
+    }
+
+    #[test]
+    fn edge_case_empty_input() {
+        let input = b"";
+
+        for level in [0, 1, 10, 22] {
+            let level_config = if level == 0 {
+                CompressionLevel::None
+            } else {
+                CompressionLevel::Precise(std::num::NonZeroU8::new(level).unwrap())
+            };
+
+            let compressed = compress_to_vec(input, level_config)
+                .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
+            let decompressed = decompress_to_vec(&compressed)
+                .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
+            assert_eq!(decompressed, input, "empty input round-trip failed at level {level}");
+        }
+    }
+
+    #[test]
+    fn edge_case_single_byte() {
+        let input = b"x";
+
+        for level in [0, 1, 10, 22] {
+            let level_config = if level == 0 {
+                CompressionLevel::None
+            } else {
+                CompressionLevel::Precise(std::num::NonZeroU8::new(level).unwrap())
+            };
+
+            let compressed = compress_to_vec(input, level_config)
+                .unwrap_or_else(|e| panic!("compress failed at level {level}: {e}"));
+            let decompressed = decompress_to_vec(&compressed)
+                .unwrap_or_else(|e| panic!("decompress failed at level {level}: {e}"));
+            assert_eq!(decompressed, input, "single byte round-trip failed at level {level}");
+        }
     }
 }

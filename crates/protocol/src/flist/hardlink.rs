@@ -279,6 +279,7 @@ mod tests {
 /// - Multiple files have the same dev/ino pair (from different systems)
 /// - Hash collisions occur in the underlying FxHashMap
 /// - Large numbers of hardlinks stress the table
+#[cfg(test)]
 mod collision_tests {
     use super::*;
     use std::collections::hash_map::DefaultHasher;
@@ -479,6 +480,7 @@ mod collision_tests {
 }
 
 /// Tests for edge cases with large numbers of hardlinks.
+#[cfg(test)]
 mod large_scale_tests {
     use super::*;
 
@@ -660,6 +662,7 @@ mod large_scale_tests {
 }
 
 /// Tests for concurrent/interleaved access patterns.
+#[cfg(test)]
 mod interleaved_access_tests {
     use super::*;
 

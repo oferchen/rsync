@@ -11,6 +11,8 @@
 use std::io::{self, Read};
 use std::path::PathBuf;
 
+use logging::debug_log;
+
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
 use crate::codec::{ProtocolCodec, ProtocolCodecEnum, create_protocol_codec};
@@ -295,15 +297,26 @@ impl FileListReader {
             buf[0] as i32
         };
 
+        // Level 4: Wire format bytes for flags
+        debug_log!(
+            Flist,
+            4,
+            "read_flags: raw={:#x} varint={}",
+            flags_value,
+            use_varint
+        );
+
         // Check for end-of-list marker
         if flags_value == 0 {
             if use_varint {
                 // In varint mode, error code follows zero flags
                 let io_error = read_varint(reader)?;
                 if io_error != 0 {
+                    debug_log!(Flist, 4, "read_flags: end-of-list with io_error={}", io_error);
                     return Ok(FlagsResult::IoError(io_error));
                 }
             }
+            debug_log!(Flist, 4, "read_flags: end-of-list marker");
             return Ok(FlagsResult::EndOfList);
         }
 
@@ -324,6 +337,18 @@ impl FileListReader {
         let primary_byte = flags_value as u8;
 
         // Check for I/O error marker
+        // Level 4: Extended flags detail
+        if ext_byte != 0 || ext16_byte != 0 {
+            debug_log!(
+                Flist,
+                4,
+                "read_flags: primary={:#x} ext={:#x} ext16={:#x}",
+                primary_byte,
+                ext_byte,
+                ext16_byte
+            );
+        }
+
         if let Some(error) = self.check_error_marker(primary_byte, ext_byte, reader)? {
             return Ok(FlagsResult::IoError(error));
         }
@@ -538,6 +563,18 @@ impl FileListReader {
             // Non-directories or older protocols: default to true
             true
         };
+
+        // Level 3: Encoding/decoding details for metadata
+        debug_log!(
+            Flist,
+            3,
+            "read_metadata: mtime={} nsec={} mode={:o} uid={:?} gid={:?}",
+            mtime,
+            nsec,
+            mode,
+            uid,
+            gid
+        );
 
         Ok(MetadataResult {
             mtime,
@@ -990,6 +1027,27 @@ impl FileListReader {
         // Step 22: Update statistics
         self.update_stats(&entry);
 
+        // Level 2: Individual file entry
+        debug_log!(
+            Flist,
+            2,
+            "recv_file_entry: {:?} size={} mode={:o}",
+            entry.name(),
+            entry.size(),
+            entry.mode()
+        );
+
+        // Level 3: Encoding/decoding details
+        debug_log!(
+            Flist,
+            3,
+            "recv_file_entry details: mtime={} uid={:?} gid={:?} flags={:#x}",
+            entry.mtime(),
+            entry.uid(),
+            entry.gid(),
+            flags.primary as u32 | ((flags.extended as u32) << 8)
+        );
+
         Ok(Some(entry))
     }
 
@@ -1028,6 +1086,16 @@ impl FileListReader {
             byte[0] as usize
         };
 
+        // Level 4: Wire format bytes for name compression
+        debug_log!(
+            Flist,
+            4,
+            "read_name: same_len={} suffix_len={} long_name={}",
+            same_len,
+            suffix_len,
+            flags.long_name()
+        );
+
         // Validate lengths
         if same_len > self.state.prev_name().len() {
             return Err(io::Error::new(
@@ -1050,6 +1118,15 @@ impl FileListReader {
             reader.read_exact(&mut name[start..])?;
         }
 
+        // Level 3: Encoding/decoding details for name
+        debug_log!(
+            Flist,
+            3,
+            "read_name: total_len={} name={:?}",
+            name.len(),
+            String::from_utf8_lossy(&name)
+        );
+
         // Update state
         self.state.update_name(&name);
 
@@ -1063,6 +1140,8 @@ impl FileListReader {
     /// - Protocol 30+: Variable-length encoding (varlong30)
     fn read_size<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<u64> {
         let size = self.codec.read_file_size(reader)?;
+        // Level 4: Wire format bytes for file size
+        debug_log!(Flist, 4, "read_size: size={}", size);
         Ok(size as u64)
     }
 }

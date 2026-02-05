@@ -285,7 +285,7 @@ impl CompressionDecider {
         // Archives and compressed files
         for ext in &[
             "zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar", "zst", "zstd", "lz4",
-            "lzo", "z", "cab", "arj", "lzh", "tar.gz", "tar.bz2", "tar.xz", "tgz", "tbz", "tbz2",
+            "lzo", "z", "cab", "arj", "lzh", "tar.gz", "tar.bz2", "tar.xz", "tar.zst", "tgz", "tbz", "tbz2",
             "txz",
         ] {
             self.skip_extensions.insert((*ext).to_owned());
@@ -318,7 +318,7 @@ impl CompressionDecider {
     ///
     /// The extension is normalized: leading dots are stripped and it's converted to lowercase.
     pub fn add_skip_extension(&mut self, ext: &str) {
-        let normalized = ext.trim_start_matches('.').to_ascii_lowercase();
+        let normalized = ext.trim_start_matches('.').trim().to_ascii_lowercase();
         if !normalized.is_empty() {
             self.skip_extensions.insert(normalized);
         }
@@ -480,14 +480,19 @@ impl CompressionDecider {
         for sig in KNOWN_SIGNATURES {
             if sig.matches(data) {
                 // Special handling for RIFF container (can be AVI, WAV, or WEBP)
-                if sig.bytes == b"RIFF" && data.len() >= 12 {
-                    let fourcc = &data[8..12];
-                    return Some(match fourcc {
-                        b"AVI " => FileCategory::Video,
-                        b"WAVE" => FileCategory::Audio,
-                        b"WEBP" => FileCategory::Image,
-                        _ => continue, // Unknown RIFF subtype, check other signatures
-                    });
+                if sig.bytes == b"RIFF" {
+                    if data.len() >= 12 {
+                        let fourcc = &data[8..12];
+                        return Some(match fourcc {
+                            b"AVI " => FileCategory::Video,
+                            b"WAVE" => FileCategory::Audio,
+                            b"WEBP" => FileCategory::Image,
+                            _ => continue, // Unknown RIFF subtype, check other signatures
+                        });
+                    } else {
+                        // Incomplete RIFF header - not enough data to determine type
+                        continue;
+                    }
                 }
 
                 return Some(sig.category);

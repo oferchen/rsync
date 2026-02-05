@@ -40,10 +40,47 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
-    let mut human_readable = matches
-        .remove_one::<OsString>("human-readable")
-        .map(|value| parse_human_readable_level(value.as_os_str()))
-        .transpose()?;
+
+    // Handle human-readable flag: supports both explicit values (--human-readable=2)
+    // and counting (-h -h). When explicit values are provided, use the highest one.
+    // When no explicit values, count occurrences.
+    let mut human_readable = None;
+    if let Some(values) = matches.remove_many::<OsString>("human-readable") {
+        let values: Vec<OsString> = values.collect();
+
+        // Check if any explicit values were provided (will be non-"1" or we need to check count)
+        let mut max_explicit_level = None;
+        for value in &values {
+            let level = parse_human_readable_level(value.as_os_str())?;
+            max_explicit_level = Some(match max_explicit_level {
+                None => level,
+                Some(existing) => {
+                    // Use the higher level
+                    match (existing, level) {
+                        (HumanReadableMode::Disabled, other) | (other, HumanReadableMode::Disabled) => other,
+                        (HumanReadableMode::Enabled, HumanReadableMode::Combined) |
+                        (HumanReadableMode::Combined, _) => HumanReadableMode::Combined,
+                        _ => existing,
+                    }
+                }
+            });
+        }
+
+        // If we have values, use the counting logic: 1 -> Enabled, 2+ -> Combined
+        if let Some(level) = max_explicit_level {
+            // Special case: if all values are "1" (default_missing_value), count them
+            let all_default = values.iter().all(|v| v == "1");
+            if all_default && values.len() >= 2 {
+                human_readable = Some(HumanReadableMode::Combined);
+            } else if values.len() >= 2 {
+                // Multiple occurrences with explicit values - use the highest
+                human_readable = Some(HumanReadableMode::Combined);
+            } else {
+                human_readable = Some(level);
+            }
+        }
+    }
+
     if matches.get_flag("no-human-readable") {
         human_readable = Some(HumanReadableMode::Disabled);
     }

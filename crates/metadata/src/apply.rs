@@ -1164,4 +1164,231 @@ mod tests {
         // Should still be original mode
         assert_eq!(mode, 0o666);
     }
+
+    // -------------------------------------------------------------------------
+    // Unix Epoch Timestamp Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn epoch_timestamp_zero_seconds_is_preserved() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("epoch-source.txt");
+        let dest = temp.path().join("epoch-dest.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        // Set timestamp to Unix epoch (1970-01-01 00:00:00)
+        let epoch_time = FileTime::from_unix_time(0, 0);
+        set_file_times(&source, epoch_time, epoch_time).expect("set epoch time");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+        apply_file_metadata(&dest, &metadata).expect("apply file metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_atime = FileTime::from_last_access_time(&dest_meta);
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        assert_eq!(dest_atime, epoch_time, "atime should be preserved at epoch");
+        assert_eq!(dest_mtime, epoch_time, "mtime should be preserved at epoch");
+    }
+
+    #[test]
+    fn epoch_timestamp_with_nanoseconds_is_preserved() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("epoch-nsec-source.txt");
+        let dest = temp.path().join("epoch-nsec-dest.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        // Set timestamp to Unix epoch with nanosecond precision
+        let epoch_time = FileTime::from_unix_time(0, 123_456_789);
+        set_file_times(&source, epoch_time, epoch_time).expect("set epoch time with nsec");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+        apply_file_metadata(&dest, &metadata).expect("apply file metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        assert_eq!(
+            dest_mtime, epoch_time,
+            "mtime with nanoseconds should be preserved at epoch"
+        );
+    }
+
+    #[test]
+    fn epoch_timestamp_round_trip_file() {
+        let temp = tempdir().expect("tempdir");
+        let file1 = temp.path().join("epoch-rt1.txt");
+        let file2 = temp.path().join("epoch-rt2.txt");
+        let file3 = temp.path().join("epoch-rt3.txt");
+        fs::write(&file1, b"data").expect("write file1");
+        fs::write(&file2, b"data").expect("write file2");
+        fs::write(&file3, b"data").expect("write file3");
+
+        // Set epoch timestamp on file1
+        let epoch_time = FileTime::from_unix_time(0, 999_999_999);
+        set_file_times(&file1, epoch_time, epoch_time).expect("set file1 epoch time");
+
+        // Round-trip 1: file1 -> file2
+        let meta1 = fs::metadata(&file1).expect("metadata file1");
+        apply_file_metadata(&file2, &meta1).expect("apply to file2");
+
+        // Round-trip 2: file2 -> file3
+        let meta2 = fs::metadata(&file2).expect("metadata file2");
+        apply_file_metadata(&file3, &meta2).expect("apply to file3");
+
+        // Verify all three have the same epoch timestamp
+        let time1 = FileTime::from_last_modification_time(&meta1);
+        let time2 = FileTime::from_last_modification_time(&meta2);
+        let time3 = FileTime::from_last_modification_time(&fs::metadata(&file3).expect("metadata file3"));
+
+        assert_eq!(time1, epoch_time);
+        assert_eq!(time2, epoch_time);
+        assert_eq!(time3, epoch_time);
+    }
+
+    #[test]
+    fn epoch_timestamp_directory_preserved() {
+        let temp = tempdir().expect("tempdir");
+        let source_dir = temp.path().join("epoch-source-dir");
+        let dest_dir = temp.path().join("epoch-dest-dir");
+        fs::create_dir(&source_dir).expect("create source dir");
+        fs::create_dir(&dest_dir).expect("create dest dir");
+
+        // Set directory timestamp to Unix epoch
+        let epoch_time = FileTime::from_unix_time(0, 0);
+        set_file_times(&source_dir, epoch_time, epoch_time).expect("set dir epoch time");
+
+        let metadata = fs::metadata(&source_dir).expect("metadata");
+        apply_directory_metadata(&dest_dir, &metadata).expect("apply directory metadata");
+
+        let dest_meta = fs::metadata(&dest_dir).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        assert_eq!(dest_mtime, epoch_time, "directory mtime should be preserved at epoch");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn epoch_timestamp_symlink_preserved() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let target = temp.path().join("epoch-target.txt");
+        let source_link = temp.path().join("epoch-source-link");
+        let dest_link = temp.path().join("epoch-dest-link");
+        fs::write(&target, b"target data").expect("write target");
+        symlink(&target, &source_link).expect("create source link");
+        symlink(&target, &dest_link).expect("create dest link");
+
+        // Set symlink timestamp to Unix epoch
+        let epoch_time = FileTime::from_unix_time(0, 500_000_000);
+        set_symlink_file_times(&source_link, epoch_time, epoch_time)
+            .expect("set link epoch time");
+
+        let metadata = fs::symlink_metadata(&source_link).expect("metadata");
+        apply_symlink_metadata(&dest_link, &metadata).expect("apply symlink metadata");
+
+        let dest_meta = fs::symlink_metadata(&dest_link).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        assert_eq!(dest_mtime, epoch_time, "symlink mtime should be preserved at epoch");
+    }
+
+    #[test]
+    fn epoch_timestamp_from_file_entry() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("epoch-entry.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        // Create FileEntry with epoch timestamp
+        let mut entry = FileEntry::new_file("epoch-entry.txt".into(), 4, 0o644);
+        entry.set_mtime(0, 0);
+
+        let opts = MetadataOptions::new().preserve_times(true);
+        apply_metadata_from_file_entry(&dest, &entry, &opts)
+            .expect("apply from entry with epoch");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        assert_eq!(
+            dest_mtime,
+            FileTime::from_unix_time(0, 0),
+            "FileEntry epoch timestamp should be preserved"
+        );
+    }
+
+    #[test]
+    fn epoch_timestamp_from_file_entry_with_nanoseconds() {
+        use protocol::flist::FileEntry;
+
+        let temp = tempdir().expect("tempdir");
+        let dest = temp.path().join("epoch-entry-nsec.txt");
+        fs::write(&dest, b"data").expect("write dest");
+
+        // Create FileEntry with epoch timestamp and nanoseconds
+        let mut entry = FileEntry::new_file("epoch-entry-nsec.txt".into(), 4, 0o644);
+        entry.set_mtime(0, 987_654_321);
+
+        let opts = MetadataOptions::new().preserve_times(true);
+        apply_metadata_from_file_entry(&dest, &entry, &opts)
+            .expect("apply from entry with epoch nsec");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        assert_eq!(
+            dest_mtime,
+            FileTime::from_unix_time(0, 987_654_321),
+            "FileEntry epoch timestamp with nanoseconds should be preserved"
+        );
+    }
+
+    #[test]
+    fn epoch_timestamp_formatting_is_correct() {
+        // Test that FileTime can represent and compare epoch correctly
+        let epoch_zero = FileTime::from_unix_time(0, 0);
+        let epoch_nsec = FileTime::from_unix_time(0, 123_456_789);
+        let one_second = FileTime::from_unix_time(1, 0);
+
+        // Verify ordering
+        assert!(epoch_zero < one_second);
+        assert!(epoch_zero < epoch_nsec);
+        assert!(epoch_nsec < one_second);
+
+        // Verify equality
+        assert_eq!(epoch_zero, FileTime::from_unix_time(0, 0));
+        assert_ne!(epoch_zero, epoch_nsec);
+
+        // Test that we can format for debugging (this just ensures no panic)
+        let debug_str = format!("{:?}", epoch_zero);
+        assert!(!debug_str.is_empty());
+    }
+
+    #[test]
+    fn epoch_timestamp_edge_case_one_nanosecond() {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("epoch-one-nsec-source.txt");
+        let dest = temp.path().join("epoch-one-nsec-dest.txt");
+        fs::write(&source, b"data").expect("write source");
+        fs::write(&dest, b"data").expect("write dest");
+
+        // Test the smallest possible non-zero timestamp
+        let one_nsec = FileTime::from_unix_time(0, 1);
+        set_file_times(&source, one_nsec, one_nsec).expect("set one nsec time");
+
+        let metadata = fs::metadata(&source).expect("metadata");
+        apply_file_metadata(&dest, &metadata).expect("apply file metadata");
+
+        let dest_meta = fs::metadata(&dest).expect("dest metadata");
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        // Note: Some filesystems may not support nanosecond precision,
+        // so we check that we at least preserved the second (0)
+        assert_eq!(dest_mtime.seconds(), 0, "seconds should be zero");
+    }
 }

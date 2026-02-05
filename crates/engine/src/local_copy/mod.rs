@@ -99,6 +99,7 @@ pub(crate) use dir_merge::{
     resolve_dir_merge_path,
 };
 
+pub use executor::{DestinationWriteGuard, remove_existing_destination, remove_incomplete_destination};
 pub(crate) use executor::*;
 
 pub(crate) use hard_links::HardLinkTracker;

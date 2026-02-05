@@ -17,6 +17,8 @@
 
 use std::cmp::Ordering;
 
+use logging::debug_log;
+
 use super::FileEntry;
 
 /// Compares two file entries according to rsync's sorting rules.
@@ -138,6 +140,7 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
 /// - `flist.c:flist_sort_and_clean()` - Called after `send_file_list()`
 ///   and `recv_file_list()` to sort entries.
 pub fn sort_file_list(file_list: &mut [FileEntry]) {
+    debug_log!(Flist, 2, "sorting {} entries", file_list.len());
     file_list.sort_by(compare_file_entries);
 }
 
@@ -226,6 +229,15 @@ pub fn flist_clean(file_list: Vec<FileEntry>) -> (Vec<FileEntry>, CleanResult) {
 
         result.push(current);
     }
+
+    debug_log!(
+        Flist,
+        2,
+        "cleaned file list: {} entries, {} duplicates removed, {} flags merged",
+        result.len(),
+        stats.duplicates_removed,
+        stats.flags_merged
+    );
 
     (result, stats)
 }

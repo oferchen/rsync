@@ -16,6 +16,30 @@ use super::openssl_support;
 ///
 /// This ordering difference affects checksum compatibility between protocol
 /// versions.
+///
+/// # Examples
+///
+/// ```
+/// use checksums::strong::{Md5, Md5Seed, StrongDigest};
+///
+/// // No seed (default behavior)
+/// let unseeded = Md5::digest(b"data");
+///
+/// // Modern protocol (30+) with CHECKSUM_SEED_FIX: seed before data
+/// let mut proper = Md5::with_seed(Md5Seed::proper(0x12345678));
+/// proper.update(b"data");
+/// let proper_digest = proper.finalize();
+///
+/// // Legacy protocol: seed after data
+/// let mut legacy = Md5::with_seed(Md5Seed::legacy(0x12345678));
+/// legacy.update(b"data");
+/// let legacy_digest = legacy.finalize();
+///
+/// // All three produce different results
+/// assert_ne!(unseeded, proper_digest);
+/// assert_ne!(unseeded, legacy_digest);
+/// assert_ne!(proper_digest, legacy_digest);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Md5Seed {
     /// Seed value to mix into the hash.
@@ -26,6 +50,19 @@ pub struct Md5Seed {
 
 impl Md5Seed {
     /// Creates a seed configuration with no seed value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::strong::{Md5, Md5Seed, StrongDigest};
+    ///
+    /// let mut hasher = Md5::with_seed(Md5Seed::none());
+    /// hasher.update(b"test");
+    /// let seeded = hasher.finalize();
+    ///
+    /// // Equivalent to unseeded hash
+    /// assert_eq!(seeded, Md5::digest(b"test"));
+    /// ```
     #[must_use]
     pub const fn none() -> Self {
         Self {
@@ -35,6 +72,23 @@ impl Md5Seed {
     }
 
     /// Creates a seed configuration with seed-before-data ordering (protocol 30+ with CHECKSUM_SEED_FIX).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::strong::{Md5, Md5Seed, StrongDigest};
+    ///
+    /// let seed_value: i32 = 0x12345678;
+    /// let mut hasher = Md5::with_seed(Md5Seed::proper(seed_value));
+    /// hasher.update(b"file contents");
+    /// let digest = hasher.finalize();
+    ///
+    /// // This is equivalent to: hash(seed_bytes || data)
+    /// let mut manual = Md5::new();
+    /// manual.update(&seed_value.to_le_bytes());
+    /// manual.update(b"file contents");
+    /// assert_eq!(digest, manual.finalize());
+    /// ```
     #[must_use]
     pub const fn proper(value: i32) -> Self {
         Self {
@@ -44,6 +98,23 @@ impl Md5Seed {
     }
 
     /// Creates a seed configuration with seed-after-data ordering (legacy protocols).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::strong::{Md5, Md5Seed, StrongDigest};
+    ///
+    /// let seed_value: i32 = 0x12345678;
+    /// let mut hasher = Md5::with_seed(Md5Seed::legacy(seed_value));
+    /// hasher.update(b"file contents");
+    /// let digest = hasher.finalize();
+    ///
+    /// // This is equivalent to: hash(data || seed_bytes)
+    /// let mut manual = Md5::new();
+    /// manual.update(b"file contents");
+    /// manual.update(&seed_value.to_le_bytes());
+    /// assert_eq!(digest, manual.finalize());
+    /// ```
     #[must_use]
     pub const fn legacy(value: i32) -> Self {
         Self {
@@ -63,6 +134,60 @@ impl Default for Md5Seed {
 ///
 /// Supports optional seeded hashing with configurable ordering for protocol
 /// compatibility. See [`Md5Seed`] for details on seed ordering behavior.
+///
+/// # Examples
+///
+/// Basic one-shot hashing:
+///
+/// ```
+/// use checksums::strong::Md5;
+///
+/// let digest = Md5::digest(b"hello world");
+/// assert_eq!(digest.len(), 16); // MD5 produces 128-bit output
+/// ```
+///
+/// Incremental hashing for large files:
+///
+/// ```
+/// use checksums::strong::Md5;
+///
+/// let mut hasher = Md5::new();
+///
+/// // Process data in chunks (e.g., from a file)
+/// hasher.update(b"chunk 1");
+/// hasher.update(b"chunk 2");
+/// hasher.update(b"chunk 3");
+///
+/// let digest = hasher.finalize();
+/// assert_eq!(digest, Md5::digest(b"chunk 1chunk 2chunk 3"));
+/// ```
+///
+/// Seeded hashing for rsync protocol compatibility:
+///
+/// ```
+/// use checksums::strong::{Md5, Md5Seed, StrongDigest};
+///
+/// // Protocol 30+ uses seed-before-data ordering
+/// let mut hasher = Md5::with_seed(Md5Seed::proper(0x12345678));
+/// hasher.update(b"file data");
+/// let digest = hasher.finalize();
+/// ```
+///
+/// Verifying data integrity:
+///
+/// ```
+/// use checksums::strong::Md5;
+///
+/// fn verify_checksum(data: &[u8], expected: &[u8; 16]) -> bool {
+///     Md5::digest(data) == *expected
+/// }
+///
+/// let data = b"important data";
+/// let checksum = Md5::digest(data);
+///
+/// assert!(verify_checksum(data, &checksum));
+/// assert!(!verify_checksum(b"tampered data", &checksum));
+/// ```
 #[derive(Clone)]
 pub struct Md5 {
     inner: Md5Backend,
@@ -114,6 +239,17 @@ impl Default for Md5 {
 
 impl Md5 {
     /// Creates a hasher with an empty state and no seed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::strong::Md5;
+    ///
+    /// let mut hasher = Md5::new();
+    /// hasher.update(b"data");
+    /// let digest = hasher.finalize();
+    /// assert_eq!(digest.len(), 16);
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -123,6 +259,22 @@ impl Md5 {
     }
 
     /// Feeds additional bytes into the digest state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::strong::Md5;
+    ///
+    /// let mut hasher = Md5::new();
+    ///
+    /// // Multiple updates are concatenated
+    /// hasher.update(b"hello");
+    /// hasher.update(b" ");
+    /// hasher.update(b"world");
+    ///
+    /// // Same as hashing "hello world" at once
+    /// assert_eq!(hasher.finalize(), Md5::digest(b"hello world"));
+    /// ```
     pub fn update(&mut self, data: &[u8]) {
         match &mut self.inner {
             #[cfg(feature = "openssl")]
@@ -137,6 +289,26 @@ impl Md5 {
     ///
     /// If a seed was configured with `proper_order = false` (legacy ordering),
     /// the seed bytes are hashed after the data before finalizing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::strong::Md5;
+    ///
+    /// let mut hasher = Md5::new();
+    /// hasher.update(b"data");
+    /// let digest = hasher.finalize();
+    ///
+    /// // Hasher is consumed; use clone for intermediate results
+    /// let mut h1 = Md5::new();
+    /// h1.update(b"prefix");
+    /// let prefix_hash = h1.clone().finalize();
+    ///
+    /// h1.update(b"suffix");
+    /// let full_hash = h1.finalize();
+    ///
+    /// assert_ne!(prefix_hash, full_hash);
+    /// ```
     #[must_use]
     pub fn finalize(mut self) -> [u8; 16] {
         // If we have a pending seed (legacy order), hash it AFTER the data
@@ -157,6 +329,22 @@ impl Md5 {
     }
 
     /// Convenience helper that computes the MD5 digest for `data` in one shot.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use checksums::strong::Md5;
+    ///
+    /// // Compute hash of a message
+    /// let digest = Md5::digest(b"The quick brown fox");
+    /// assert_eq!(digest.len(), 16);
+    ///
+    /// // Same input always produces same output
+    /// assert_eq!(Md5::digest(b"test"), Md5::digest(b"test"));
+    ///
+    /// // Different input produces different output
+    /// assert_ne!(Md5::digest(b"test1"), Md5::digest(b"test2"));
+    /// ```
     #[must_use]
     pub fn digest(data: &[u8]) -> [u8; 16] {
         <Self as StrongDigest>::digest(data)
@@ -216,12 +404,40 @@ impl StrongDigest for Md5 {
 /// This function computes MD5 digests for multiple inputs in parallel using
 /// SIMD instructions (AVX2/AVX-512/NEON) when the `md5-simd` feature is enabled.
 /// Falls back to sequential computation when SIMD is unavailable.
+///
+/// # Examples
+///
+/// ```
+/// use checksums::strong::md5_digest_batch;
+///
+/// let inputs = [b"block1".as_slice(), b"block2", b"block3"];
+/// let digests = md5_digest_batch(&inputs);
+///
+/// assert_eq!(digests.len(), 3);
+/// for digest in &digests {
+///     assert_eq!(digest.len(), 16);
+/// }
+/// ```
 #[cfg(feature = "md5-simd")]
 pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
     md5_simd::digest_batch(inputs)
 }
 
 /// Batch compute MD5 digests (sequential fallback when SIMD unavailable).
+///
+/// # Examples
+///
+/// ```
+/// use checksums::strong::md5_digest_batch;
+///
+/// let inputs = [b"block1".as_slice(), b"block2", b"block3"];
+/// let digests = md5_digest_batch(&inputs);
+///
+/// assert_eq!(digests.len(), 3);
+/// for digest in &digests {
+///     assert_eq!(digest.len(), 16);
+/// }
+/// ```
 #[cfg(not(feature = "md5-simd"))]
 pub fn digest_batch<T: AsRef<[u8]>>(inputs: &[T]) -> Vec<[u8; 16]> {
     inputs.iter().map(|i| Md5::digest(i.as_ref())).collect()

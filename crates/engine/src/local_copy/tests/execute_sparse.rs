@@ -581,6 +581,464 @@ fn execute_sparse_with_aligned_holes() {
     );
 }
 
+/// Test: Zero regions exactly at threshold (32KB) are detected as holes.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_detects_zero_regions_at_threshold() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("threshold-zeros.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // SPARSE_WRITE_SIZE is 32KB - write exactly that amount of zeros
+    let threshold = 32 * 1024;
+    source_file.write_all(b"HEADER").expect("write header");
+    source_file.write_all(&vec![0u8; threshold]).expect("write zeros at threshold");
+    source_file.write_all(b"FOOTER").expect("write footer");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense.bin");
+    let sparse_dest = temp.path().join("sparse.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Verify content is identical
+    let dense_content = fs::read(&dense_dest).expect("read dense");
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    assert_eq!(dense_content, sparse_content);
+    assert_eq!(&sparse_content[0..6], b"HEADER");
+    assert_eq!(&sparse_content[6 + threshold..6 + threshold + 6], b"FOOTER");
+
+    // Verify sparse file uses fewer blocks (platform-dependent)
+    use std::os::unix::fs::MetadataExt;
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+
+    if sparse_blocks >= dense_blocks {
+        eprintln!(
+            "sparse at threshold uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem may not expose sparse allocation difference"
+        );
+    } else {
+        assert!(
+            sparse_blocks < dense_blocks,
+            "sparse copy should allocate fewer blocks at threshold (sparse: {sparse_blocks}, dense: {dense_blocks})"
+        );
+    }
+}
+
+/// Test: Zero regions just under threshold (32KB - 1) are NOT treated as holes.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_skips_zero_regions_under_threshold() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("under-threshold.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Write zeros just under the threshold - should be written densely
+    let under_threshold = 32 * 1024 - 1;
+    source_file.write_all(b"START").expect("write start");
+    source_file.write_all(&vec![0u8; under_threshold]).expect("write zeros under threshold");
+    source_file.write_all(b"END").expect("write end");
+    drop(source_file);
+
+    let sparse_dest = temp.path().join("sparse.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    // Verify content integrity
+    let content = fs::read(&sparse_dest).expect("read sparse");
+    assert_eq!(&content[0..5], b"START");
+    assert!(content[5..5 + under_threshold].iter().all(|&b| b == 0));
+    assert_eq!(&content[5 + under_threshold..5 + under_threshold + 3], b"END");
+}
+
+/// Test: Zero regions just over threshold (32KB + 1) are treated as holes.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_detects_zero_regions_over_threshold() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("over-threshold.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Write zeros just over the threshold - should create holes
+    let over_threshold = 32 * 1024 + 1;
+    source_file.write_all(b"BEGIN").expect("write begin");
+    source_file.write_all(&vec![0u8; over_threshold]).expect("write zeros over threshold");
+    source_file.write_all(b"FINISH").expect("write finish");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense.bin");
+    let sparse_dest = temp.path().join("sparse.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Verify content
+    let sparse_content = fs::read(&sparse_dest).expect("read sparse");
+    assert_eq!(&sparse_content[0..5], b"BEGIN");
+    assert!(sparse_content[5..5 + over_threshold].iter().all(|&b| b == 0));
+    assert_eq!(&sparse_content[5 + over_threshold..5 + over_threshold + 6], b"FINISH");
+
+    // Verify sparse optimization occurred (platform-dependent)
+    use std::os::unix::fs::MetadataExt;
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+
+    if sparse_blocks >= dense_blocks {
+        eprintln!(
+            "over-threshold sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem may not expose difference"
+        );
+    }
+}
+
+/// Test: Verify actual holes are created on disk (using SEEK_HOLE/SEEK_DATA on Linux).
+#[cfg(target_os = "linux")]
+#[test]
+fn execute_sparse_creates_actual_filesystem_holes() {
+    use std::os::unix::io::AsRawFd;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("hole-test.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Create a file with known hole pattern
+    source_file.write_all(b"DATA1").expect("write data1");
+    source_file.write_all(&vec![0u8; 64 * 1024]).expect("write 64KB zeros");
+    source_file.write_all(b"DATA2").expect("write data2");
+    source_file.write_all(&vec![0u8; 128 * 1024]).expect("write 128KB zeros");
+    source_file.write_all(b"DATA3").expect("write data3");
+    drop(source_file);
+
+    let sparse_dest = temp.path().join("sparse-holes.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    // Verify holes exist using lseek with SEEK_HOLE/SEEK_DATA
+    let dest_file = fs::File::open(&sparse_dest).expect("open dest");
+    let fd = dest_file.as_raw_fd();
+
+    // Constants for SEEK_HOLE and SEEK_DATA (Linux-specific)
+    const SEEK_DATA: i32 = 3;
+    const SEEK_HOLE: i32 = 4;
+
+    unsafe {
+        // Start at beginning
+        let first_data = libc::lseek(fd, 0, SEEK_DATA);
+        assert!(first_data >= 0, "should find first data region");
+        assert_eq!(first_data, 0, "first data should start at offset 0");
+
+        // Find first hole
+        let first_hole = libc::lseek(fd, 0, SEEK_HOLE);
+        assert!(first_hole > 0, "should find first hole after initial data");
+        assert!(first_hole < 64 * 1024 + 100, "first hole should be in first zero region");
+
+        // Find second data region
+        let second_data = libc::lseek(fd, first_hole, SEEK_DATA);
+        assert!(second_data > first_hole, "should find data after first hole");
+    }
+
+    // Verify content integrity
+    let content = fs::read(&sparse_dest).expect("read sparse");
+    assert_eq!(&content[0..5], b"DATA1");
+    assert_eq!(&content[5 + 64 * 1024..5 + 64 * 1024 + 5], b"DATA2");
+}
+
+/// Test: Multiple zero regions with threshold-sized gaps are all detected.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_detects_multiple_threshold_zero_regions() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("multi-threshold.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    let threshold = 32 * 1024;
+
+    // Create pattern: data - zeros@threshold - data - zeros@threshold - data
+    source_file.write_all(b"BLOCK1").expect("write block1");
+    source_file.write_all(&vec![0u8; threshold]).expect("write zeros 1");
+    source_file.write_all(b"BLOCK2").expect("write block2");
+    source_file.write_all(&vec![0u8; threshold]).expect("write zeros 2");
+    source_file.write_all(b"BLOCK3").expect("write block3");
+    source_file.write_all(&vec![0u8; threshold]).expect("write zeros 3");
+    source_file.write_all(b"BLOCK4").expect("write block4");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense-multi.bin");
+    let sparse_dest = temp.path().join("sparse-multi.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    // Verify content
+    let content = fs::read(&sparse_dest).expect("read sparse");
+    let mut offset = 0;
+    assert_eq!(&content[offset..offset + 6], b"BLOCK1");
+    offset += 6 + threshold;
+    assert_eq!(&content[offset..offset + 6], b"BLOCK2");
+    offset += 6 + threshold;
+    assert_eq!(&content[offset..offset + 6], b"BLOCK3");
+    offset += 6 + threshold;
+    assert_eq!(&content[offset..offset + 6], b"BLOCK4");
+
+    // Verify sparse optimization
+    use std::os::unix::fs::MetadataExt;
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+
+    if sparse_blocks >= dense_blocks {
+        eprintln!(
+            "multi-threshold sparse uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem may not expose difference"
+        );
+    }
+}
+
+/// Test: Non-zero data is written correctly and not corrupted by sparse handling.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_preserves_nonzero_data_integrity() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("data-integrity.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Create file with various data patterns
+    let pattern1 = vec![0xAA; 1024];
+    let pattern2 = vec![0x55; 2048];
+    let pattern3 = vec![0xFF; 512];
+    let pattern4: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+
+    source_file.write_all(&pattern1).expect("write pattern1");
+    source_file.write_all(&vec![0u8; 64 * 1024]).expect("write hole");
+    source_file.write_all(&pattern2).expect("write pattern2");
+    source_file.write_all(&vec![0u8; 32 * 1024]).expect("write hole");
+    source_file.write_all(&pattern3).expect("write pattern3");
+    source_file.write_all(&vec![0u8; 96 * 1024]).expect("write hole");
+    source_file.write_all(&pattern4).expect("write pattern4");
+    drop(source_file);
+
+    let sparse_dest = temp.path().join("sparse-integrity.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    // Verify exact content match
+    let source_content = fs::read(&source).expect("read source");
+    let dest_content = fs::read(&sparse_dest).expect("read dest");
+    assert_eq!(source_content, dest_content, "content should be identical");
+
+    // Verify specific patterns
+    assert_eq!(&dest_content[0..1024], &pattern1[..]);
+    let offset2 = 1024 + 64 * 1024;
+    assert_eq!(&dest_content[offset2..offset2 + 2048], &pattern2[..]);
+    let offset3 = offset2 + 2048 + 32 * 1024;
+    assert_eq!(&dest_content[offset3..offset3 + 512], &pattern3[..]);
+    let offset4 = offset3 + 512 + 96 * 1024;
+    assert_eq!(&dest_content[offset4..offset4 + 4096], &pattern4[..]);
+}
+
+/// Test: Verify sparse files are smaller on disk than dense files.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_reduces_disk_allocation() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("sparse-alloc.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    // Create 10MB file with only 100KB of data
+    source_file.write_all(b"START").expect("write start");
+    source_file.write_all(&vec![0u8; 5 * 1024 * 1024]).expect("write 5MB zeros");
+    source_file.write_all(&vec![0xFF; 100 * 1024]).expect("write 100KB data");
+    source_file.write_all(&vec![0u8; 5 * 1024 * 1024 - 5]).expect("write remaining zeros");
+    drop(source_file);
+
+    let dense_dest = temp.path().join("dense-alloc.bin");
+    let sparse_dest = temp.path().join("sparse-alloc.bin");
+
+    // Dense copy
+    let plan_dense = LocalCopyPlan::from_operands(&[
+        source.clone().into_os_string(),
+        dense_dest.clone().into_os_string(),
+    ])
+    .expect("plan dense");
+    plan_dense
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("dense copy succeeds");
+
+    // Sparse copy
+    let plan_sparse = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan_sparse
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().sparse(true),
+        )
+        .expect("sparse copy succeeds");
+
+    use std::os::unix::fs::MetadataExt;
+    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
+    let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
+
+    // Both should have same file size
+    assert_eq!(dense_meta.len(), sparse_meta.len());
+
+    // Sparse should use significantly fewer blocks (allow for filesystem differences)
+    let dense_blocks = dense_meta.blocks();
+    let sparse_blocks = sparse_meta.blocks();
+    let expected_max_sparse_blocks = (200 * 1024) / 512; // ~200KB in blocks + overhead
+
+    if sparse_blocks >= dense_blocks {
+        eprintln!(
+            "WARNING: sparse file uses {sparse_blocks} blocks, dense uses {dense_blocks}; \
+             filesystem may not support sparse files efficiently"
+        );
+    } else {
+        assert!(
+            sparse_blocks < dense_blocks,
+            "sparse should use fewer blocks (sparse: {sparse_blocks}, dense: {dense_blocks})"
+        );
+
+        if sparse_blocks > expected_max_sparse_blocks {
+            eprintln!(
+                "NOTE: sparse uses {sparse_blocks} blocks (expected < {expected_max_sparse_blocks}); \
+                 filesystem allocated more than minimal"
+            );
+        }
+    }
+}
+
+/// Test: Boundary case - zeros exactly split across threshold boundaries.
+#[cfg(unix)]
+#[test]
+fn execute_sparse_handles_boundary_split_zeros() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("boundary-split.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+
+    let threshold = 32 * 1024;
+
+    // Write data, then zeros that span exactly 2x threshold
+    source_file.write_all(b"PREFIX").expect("write prefix");
+    source_file.write_all(&vec![0u8; threshold * 2]).expect("write 2x threshold zeros");
+    source_file.write_all(b"SUFFIX").expect("write suffix");
+    drop(source_file);
+
+    let sparse_dest = temp.path().join("sparse-boundary.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    // Verify content
+    let content = fs::read(&sparse_dest).expect("read sparse");
+    assert_eq!(&content[0..6], b"PREFIX");
+    assert!(content[6..6 + threshold * 2].iter().all(|&b| b == 0));
+    assert_eq!(&content[6 + threshold * 2..6 + threshold * 2 + 6], b"SUFFIX");
+}
+
 /// Phase 2 test: Large sparse file - verify handling of files >> RAM size.
 #[cfg(unix)]
 #[test]

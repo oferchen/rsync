@@ -247,14 +247,15 @@ fn unanchored_pattern_matches_at_any_depth() {
 /// Verifies patterns with internal slashes become anchored.
 ///
 /// From rsync man page: "if the pattern contains a / (not counting a
-/// trailing /) or a ** then it is matched against the full pathname."
+/// trailing /) then it is anchored to the root of the transfer."
 #[test]
 fn pattern_with_slash_is_implicitly_anchored() {
     let set = FilterSet::from_rules([FilterRule::exclude("src/temp")]).unwrap();
 
-    // Matches the path component sequence anywhere
+    // Pattern with internal / is anchored, matches only at root
     assert!(!set.allows(Path::new("src/temp"), false));
-    assert!(!set.allows(Path::new("project/src/temp"), false));
+    // Not matched in nested paths (pattern is anchored)
+    assert!(set.allows(Path::new("project/src/temp"), false));
 
     // Different path doesn't match
     assert!(set.allows(Path::new("lib/temp"), false));
