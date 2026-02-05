@@ -66,6 +66,8 @@ mod format_tests;
 mod h_tests;
 #[path = "help.rs"]
 mod help_tests;
+#[path = "human_readable_format.rs"]
+mod human_readable_format_tests;
 #[path = "iconv.rs"]
 mod iconv_tests;
 #[path = "info_debug.rs"]

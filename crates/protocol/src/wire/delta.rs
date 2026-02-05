@@ -1143,4 +1143,447 @@ mod tests {
             .iter()
             .all(|&b| b == 0x33));
     }
+
+    // ========================================================================
+    // Additional CHUNK_SIZE boundary splitting tests
+    // ========================================================================
+
+    #[test]
+    fn chunk_boundary_exact_double_chunk_size() {
+        // Test literal exactly at 2 * CHUNK_SIZE boundary
+        let data = vec![0xDDu8; CHUNK_SIZE * 2];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Should be exactly 2 chunks
+        assert_eq!(buf.len(), (4 + CHUNK_SIZE) * 2);
+
+        // Verify first chunk
+        let len1 = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert_eq!(len1, CHUNK_SIZE as i32);
+
+        // Verify second chunk
+        let offset2 = 4 + CHUNK_SIZE;
+        let len2 = i32::from_le_bytes([
+            buf[offset2],
+            buf[offset2 + 1],
+            buf[offset2 + 2],
+            buf[offset2 + 3],
+        ]);
+        assert_eq!(len2, CHUNK_SIZE as i32);
+
+        // Verify all data
+        assert!(buf[4..4 + CHUNK_SIZE].iter().all(|&b| b == 0xDD));
+        assert!(buf[offset2 + 4..].iter().all(|&b| b == 0xDD));
+    }
+
+    #[test]
+    fn chunk_boundary_two_chunks_plus_one_byte() {
+        // Test literal at 2 * CHUNK_SIZE + 1 (should split into 3 chunks)
+        let data = vec![0xEEu8; CHUNK_SIZE * 2 + 1];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        // Should be 3 chunks: full, full, 1 byte
+        assert_eq!(buf.len(), (4 + CHUNK_SIZE) * 2 + 4 + 1);
+
+        // Verify chunk sizes
+        let len1 = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert_eq!(len1, CHUNK_SIZE as i32);
+
+        let offset2 = 4 + CHUNK_SIZE;
+        let len2 = i32::from_le_bytes([
+            buf[offset2],
+            buf[offset2 + 1],
+            buf[offset2 + 2],
+            buf[offset2 + 3],
+        ]);
+        assert_eq!(len2, CHUNK_SIZE as i32);
+
+        let offset3 = (4 + CHUNK_SIZE) * 2;
+        let len3 = i32::from_le_bytes([
+            buf[offset3],
+            buf[offset3 + 1],
+            buf[offset3 + 2],
+            buf[offset3 + 3],
+        ]);
+        assert_eq!(len3, 1);
+
+        // Verify the single byte in third chunk
+        assert_eq!(buf[offset3 + 4], 0xEE);
+    }
+
+    #[test]
+    fn chunk_boundary_split_verification() {
+        // Verify that chunks are split exactly at boundaries with distinctive content
+        let mut data = Vec::new();
+
+        // First chunk: pattern A
+        for i in 0..CHUNK_SIZE {
+            data.push((i & 0xFF) as u8);
+        }
+
+        // Second chunk: pattern B
+        for i in 0..CHUNK_SIZE {
+            data.push(((i + 128) & 0xFF) as u8);
+        }
+
+        // Third chunk (partial): pattern C
+        for _ in 0..1000 {
+            data.push(0xCC);
+        }
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+        assert_eq!(reconstructed, data);
+
+        // Verify each chunk maintained its pattern
+        for i in 0..CHUNK_SIZE {
+            assert_eq!(reconstructed[i], (i & 0xFF) as u8, "first chunk mismatch at {i}");
+        }
+        for i in 0..CHUNK_SIZE {
+            assert_eq!(
+                reconstructed[CHUNK_SIZE + i],
+                ((i + 128) & 0xFF) as u8,
+                "second chunk mismatch at {i}"
+            );
+        }
+        for i in 0..1000 {
+            assert_eq!(reconstructed[CHUNK_SIZE * 2 + i], 0xCC, "third chunk mismatch at {i}");
+        }
+    }
+
+    #[test]
+    fn chunk_boundary_reassembly_interleaved_with_blocks() {
+        // Test that chunked literals are correctly reassembled when interleaved with blocks
+        let literal1 = vec![0xF1u8; CHUNK_SIZE + 10];
+        let literal2 = vec![0xF2u8; CHUNK_SIZE * 3 + 20];
+
+        let ops = vec![
+            DeltaOp::Literal(vec![0xAAu8; 100]), // Small literal
+            DeltaOp::Copy {
+                block_index: 0,
+                length: 4096,
+            },
+            DeltaOp::Literal(literal1.clone()), // Chunked literal
+            DeltaOp::Copy {
+                block_index: 1,
+                length: 4096,
+            },
+            DeltaOp::Copy {
+                block_index: 2,
+                length: 4096,
+            },
+            DeltaOp::Literal(literal2.clone()), // Larger chunked literal
+            DeltaOp::Copy {
+                block_index: 3,
+                length: 4096,
+            },
+        ];
+
+        let mut buf = Vec::new();
+        write_token_stream(&mut buf, &ops).unwrap();
+
+        let (reconstructed_literals, block_indices) = decode_token_stream(&buf).unwrap();
+
+        // Verify blocks are in correct order
+        assert_eq!(block_indices, vec![0, 1, 2, 3]);
+
+        // Verify total literal size
+        let expected_size = 100 + literal1.len() + literal2.len();
+        assert_eq!(reconstructed_literals.len(), expected_size);
+
+        // Verify content of each literal section
+        assert!(reconstructed_literals[..100].iter().all(|&b| b == 0xAA));
+        assert!(reconstructed_literals[100..100 + literal1.len()]
+            .iter()
+            .all(|&b| b == 0xF1));
+        assert!(reconstructed_literals[100 + literal1.len()..]
+            .iter()
+            .all(|&b| b == 0xF2));
+    }
+
+    #[test]
+    fn chunk_boundary_max_i32_size_handling() {
+        // Test that chunk sizes fit in i32 (CHUNK_SIZE should be well under i32::MAX)
+        assert!(CHUNK_SIZE < i32::MAX as usize);
+
+        let data = vec![0x77u8; CHUNK_SIZE];
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+
+        let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        assert!(len > 0, "chunk size should be positive");
+        assert_eq!(len, CHUNK_SIZE as i32);
+    }
+
+    #[test]
+    fn chunk_boundary_many_small_chunks_edge() {
+        // Test 10 chunks worth of data (320KB) to ensure no accumulation issues
+        let size = CHUNK_SIZE * 10;
+        let mut data = Vec::with_capacity(size);
+        for i in 0..size {
+            data.push((i / CHUNK_SIZE) as u8); // Each chunk has different byte value
+        }
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+        assert_eq!(reconstructed.len(), size);
+        assert_eq!(reconstructed, data);
+
+        // Verify each chunk has the correct pattern
+        for chunk_idx in 0..10 {
+            let start = chunk_idx * CHUNK_SIZE;
+            let end = start + CHUNK_SIZE;
+            let expected_value = chunk_idx as u8;
+            assert!(
+                reconstructed[start..end].iter().all(|&b| b == expected_value),
+                "chunk {chunk_idx} has wrong value"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_boundary_off_by_one_before_boundary() {
+        // Test sizes around CHUNK_SIZE boundary to catch off-by-one errors
+        for offset in [2, 1, 0] {
+            let size = CHUNK_SIZE - offset;
+            let data = vec![0x88u8; size];
+            let mut buf = Vec::new();
+            write_token_literal(&mut buf, &data).unwrap();
+
+            // All should be single chunk
+            assert_eq!(buf.len(), 4 + size, "size {} failed", size);
+
+            let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            assert_eq!(len, size as i32);
+        }
+    }
+
+    #[test]
+    fn chunk_boundary_off_by_one_after_boundary() {
+        // Test sizes just after CHUNK_SIZE boundary
+        for offset in [0, 1, 2] {
+            let size = CHUNK_SIZE + offset;
+            let data = vec![0x99u8; size];
+            let mut buf = Vec::new();
+            write_token_literal(&mut buf, &data).unwrap();
+
+            if offset == 0 {
+                // Exactly at boundary: single chunk
+                assert_eq!(buf.len(), 4 + CHUNK_SIZE);
+                let len = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                assert_eq!(len, CHUNK_SIZE as i32);
+            } else {
+                // Past boundary: two chunks
+                assert_eq!(buf.len(), 4 + CHUNK_SIZE + 4 + offset);
+
+                let len1 = i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                assert_eq!(len1, CHUNK_SIZE as i32);
+
+                let offset2 = 4 + CHUNK_SIZE;
+                let len2 = i32::from_le_bytes([
+                    buf[offset2],
+                    buf[offset2 + 1],
+                    buf[offset2 + 2],
+                    buf[offset2 + 3],
+                ]);
+                assert_eq!(len2, offset as i32);
+            }
+        }
+    }
+
+    #[test]
+    fn chunk_boundary_streaming_reconstruction() {
+        // Test that chunks can be read as they arrive (streaming scenario)
+        let data: Vec<u8> = (0..CHUNK_SIZE * 2 + 500)
+            .map(|i| (i % 251) as u8) // Use prime to avoid patterns
+            .collect();
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        // Simulate streaming: reconstruct one token at a time
+        let mut cursor = &buf[..];
+        let mut reconstructed = Vec::new();
+
+        loop {
+            match read_token(&mut cursor).unwrap() {
+                None => break,
+                Some(token) if token > 0 => {
+                    let len = token as usize;
+                    let mut chunk = vec![0u8; len];
+                    cursor.read_exact(&mut chunk).unwrap();
+                    reconstructed.extend_from_slice(&chunk);
+                }
+                Some(_) => panic!("unexpected block token"),
+            }
+        }
+
+        assert_eq!(reconstructed, data);
+    }
+
+    #[test]
+    fn chunk_boundary_alternating_pattern_integrity() {
+        // Ensure chunk boundaries don't corrupt alternating bit patterns
+        let size = CHUNK_SIZE * 2 + 100;
+        let data: Vec<u8> = (0..size).map(|i| if i % 2 == 0 { 0xAA } else { 0x55 }).collect();
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+
+        assert_eq!(reconstructed.len(), data.len());
+        for (i, (&reconstructed_byte, &original_byte)) in
+            reconstructed.iter().zip(data.iter()).enumerate()
+        {
+            assert_eq!(
+                reconstructed_byte, original_byte,
+                "mismatch at byte {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_boundary_zero_filled_chunks() {
+        // Test that zero-filled data is correctly chunked (may compress differently)
+        let data = vec![0x00u8; CHUNK_SIZE * 3];
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+        assert_eq!(reconstructed.len(), data.len());
+        assert!(reconstructed.iter().all(|&b| b == 0x00));
+    }
+
+    #[test]
+    fn chunk_boundary_all_different_bytes() {
+        // Test with maximum entropy data (all 256 byte values repeated)
+        let mut data = Vec::new();
+        let repetitions = (CHUNK_SIZE * 2) / 256 + 1;
+        for _ in 0..repetitions {
+            for b in 0..=255u8 {
+                data.push(b);
+            }
+        }
+        data.truncate(CHUNK_SIZE * 2 + 50);
+
+        let mut buf = Vec::new();
+        write_token_literal(&mut buf, &data).unwrap();
+        write_token_end(&mut buf).unwrap();
+
+        let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+        assert_eq!(reconstructed, data);
+    }
+
+    #[test]
+    fn chunk_boundary_stress_test_many_operations() {
+        // Stress test with many operations mixing small and large literals
+        let mut ops = Vec::new();
+
+        // Add various sized literals and blocks
+        ops.push(DeltaOp::Literal(vec![0x01u8; CHUNK_SIZE + 1]));
+        ops.push(DeltaOp::Copy {
+            block_index: 0,
+            length: 4096,
+        });
+        ops.push(DeltaOp::Literal(vec![0x02u8; CHUNK_SIZE * 2]));
+        ops.push(DeltaOp::Copy {
+            block_index: 1,
+            length: 4096,
+        });
+        ops.push(DeltaOp::Literal(vec![0x03u8; CHUNK_SIZE - 1]));
+        ops.push(DeltaOp::Copy {
+            block_index: 2,
+            length: 4096,
+        });
+        ops.push(DeltaOp::Literal(vec![0x04u8; CHUNK_SIZE]));
+        ops.push(DeltaOp::Copy {
+            block_index: 3,
+            length: 4096,
+        });
+        ops.push(DeltaOp::Literal(vec![0x05u8; CHUNK_SIZE + 100]));
+
+        let mut buf = Vec::new();
+        write_token_stream(&mut buf, &ops).unwrap();
+
+        let (reconstructed_literals, block_indices) = decode_token_stream(&buf).unwrap();
+
+        // Verify blocks
+        assert_eq!(block_indices, vec![0, 1, 2, 3]);
+
+        // Verify literals were reconstructed correctly
+        let expected_size = (CHUNK_SIZE + 1)
+            + (CHUNK_SIZE * 2)
+            + (CHUNK_SIZE - 1)
+            + CHUNK_SIZE
+            + (CHUNK_SIZE + 100);
+        assert_eq!(reconstructed_literals.len(), expected_size);
+
+        // Verify content integrity
+        let mut offset = 0;
+        let sizes = [
+            (CHUNK_SIZE + 1, 0x01u8),
+            (CHUNK_SIZE * 2, 0x02u8),
+            (CHUNK_SIZE - 1, 0x03u8),
+            (CHUNK_SIZE, 0x04u8),
+            (CHUNK_SIZE + 100, 0x05u8),
+        ];
+
+        for (size, expected_byte) in sizes.iter() {
+            assert!(
+                reconstructed_literals[offset..offset + size]
+                    .iter()
+                    .all(|&b| b == *expected_byte),
+                "literal at offset {offset} with size {size} has wrong value"
+            );
+            offset += size;
+        }
+    }
+
+    #[test]
+    fn chunk_boundary_write_read_symmetry() {
+        // Verify that write_token_literal and read_token are perfectly symmetric
+        let test_sizes = vec![
+            0,
+            1,
+            CHUNK_SIZE - 1,
+            CHUNK_SIZE,
+            CHUNK_SIZE + 1,
+            CHUNK_SIZE * 2,
+            CHUNK_SIZE * 2 + 1,
+            CHUNK_SIZE * 5 + 12345,
+        ];
+
+        for size in test_sizes {
+            let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+
+            let mut buf = Vec::new();
+            write_token_literal(&mut buf, &data).unwrap();
+            write_token_end(&mut buf).unwrap();
+
+            let (reconstructed, _) = decode_token_stream(&buf).unwrap();
+
+            assert_eq!(
+                reconstructed.len(),
+                data.len(),
+                "size mismatch for input size {size}"
+            );
+            assert_eq!(
+                reconstructed, data,
+                "data mismatch for input size {size}"
+            );
+        }
+    }
 }

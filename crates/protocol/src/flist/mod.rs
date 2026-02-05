@@ -38,6 +38,7 @@ mod macros;
 mod read;
 mod sort;
 mod state;
+mod trace;
 mod write;
 
 pub use entry::{FileEntry, FileType};
@@ -52,4 +53,11 @@ pub use write::{FileListWriter, write_file_entry};
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use incremental::{
     IncrementalFileList, IncrementalFileListBuilder, IncrementalFileListIter, StreamingFileList,
+};
+pub use trace::{
+    ProcessRole, output_flist, output_flist_entry, trace_clean_result, trace_file_count_progress,
+    trace_file_list_stats, trace_files_to_consider, trace_flist_eof, trace_flist_expand,
+    trace_hardlink, trace_hardlink_dev_ino, trace_read_entry, trace_received_names,
+    trace_receiving_flist_for_dir, trace_recv_file_list_done, trace_send_file_list_done,
+    trace_sort_start, trace_struct_sizes, trace_write_entry,
 };

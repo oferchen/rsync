@@ -10,3 +10,4 @@ mod helpers;
 mod pacing;
 mod rate_algorithm;
 mod recording;
+mod token_bucket_edge_cases;

@@ -18,6 +18,7 @@ impl Default for ProtocolVersion {
 
 /// Configuration for file list wire format generation.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WireFormatConfig {
     pub protocol: ProtocolVersion,
     pub preserve_times: bool,
@@ -89,18 +90,21 @@ impl TestFileEntry {
     }
 
     /// Sets the file mode.
+    #[allow(dead_code)]
     pub fn with_mode(mut self, mode: u32) -> Self {
         self.mode = mode;
         self
     }
 
     /// Sets the modification time.
+    #[allow(dead_code)]
     pub fn with_mtime(mut self, mtime: i64) -> Self {
         self.mtime = mtime;
         self
     }
 
     /// Sets the file size.
+    #[allow(dead_code)]
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
         self
@@ -111,8 +115,11 @@ impl TestFileEntry {
 mod flags {
     pub const XMIT_TOP_DIR: u8 = 0x01;
     pub const XMIT_SAME_MODE: u8 = 0x02;
+    #[allow(dead_code)]
     pub const XMIT_EXTENDED_FLAGS: u8 = 0x04;
+    #[allow(dead_code)]
     pub const XMIT_SAME_UID: u8 = 0x08;
+    #[allow(dead_code)]
     pub const XMIT_SAME_GID: u8 = 0x10;
     pub const XMIT_SAME_NAME: u8 = 0x20;
     pub const XMIT_LONG_NAME: u8 = 0x40;
