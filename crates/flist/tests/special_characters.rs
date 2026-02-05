@@ -1297,3 +1297,741 @@ fn sorting_with_special_characters() {
         );
     }
 }
+
+// ============================================================================
+// 10. Windows Reserved Names (Valid on Unix)
+// ============================================================================
+
+/// Verifies handling of Windows reserved device names (valid on Unix).
+#[test]
+fn windows_reserved_names() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("reserved");
+    fs::create_dir(&root).expect("create root");
+
+    // These are reserved on Windows but valid on Unix
+    let reserved_names = [
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "COM1",
+        "COM2",
+        "COM3",
+        "COM4",
+        "COM5",
+        "COM6",
+        "COM7",
+        "COM8",
+        "COM9",
+        "LPT1",
+        "LPT2",
+        "LPT3",
+        "LPT4",
+        "LPT5",
+        "LPT6",
+        "LPT7",
+        "LPT8",
+        "LPT9",
+    ];
+
+    for name in &reserved_names {
+        create_test_file(&root, OsStr::new(name));
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), reserved_names.len());
+
+    for name in &reserved_names {
+        assert!(
+            paths.contains(&PathBuf::from(*name)),
+            "should contain reserved name: {name}"
+        );
+    }
+}
+
+/// Verifies handling of Windows reserved names with extensions.
+#[test]
+fn windows_reserved_names_with_extensions() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("reserved_ext");
+    fs::create_dir(&root).expect("create root");
+
+    // Windows also reserves names like CON.txt, NUL.dat, etc.
+    let reserved_with_ext = [
+        "CON.txt",
+        "PRN.dat",
+        "AUX.log",
+        "NUL.bin",
+        "COM1.cfg",
+        "LPT1.doc",
+    ];
+
+    for name in &reserved_with_ext {
+        create_test_file(&root, OsStr::new(name));
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), reserved_with_ext.len());
+
+    for name in &reserved_with_ext {
+        assert!(
+            paths.contains(&PathBuf::from(*name)),
+            "should contain reserved name with extension: {name}"
+        );
+    }
+}
+
+/// Verifies handling of Windows reserved names in lowercase.
+#[test]
+fn windows_reserved_names_lowercase() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("reserved_lower");
+    fs::create_dir(&root).expect("create root");
+
+    // Lowercase versions (Windows is case-insensitive, Unix is not)
+    let lowercase_reserved = ["con", "prn", "aux", "nul", "com1", "lpt1"];
+
+    for name in &lowercase_reserved {
+        create_test_file(&root, OsStr::new(name));
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), lowercase_reserved.len());
+}
+
+/// Verifies handling of Windows reserved names as directory names.
+#[test]
+fn windows_reserved_names_as_directories() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("reserved_dirs");
+    fs::create_dir(&root).expect("create root");
+
+    let dir_path = create_test_dir(&root, OsStr::new("CON"));
+    create_test_file(&dir_path, OsStr::new("file.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 2);
+    assert!(paths.contains(&PathBuf::from("CON")));
+    assert!(paths.contains(&PathBuf::from("CON/file.txt")));
+}
+
+// ============================================================================
+// 11. Colon Character (Path Separator on Windows)
+// ============================================================================
+
+/// Verifies handling of colon in filename (valid on Unix, invalid on Windows).
+#[test]
+fn colon_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("colon");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("file:with:colons.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0], PathBuf::from("file:with:colons.txt"));
+}
+
+/// Verifies handling of colon at various positions.
+#[test]
+fn colon_positions() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("colon_pos");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new(":leading.txt"));
+    create_test_file(&root, OsStr::new("trailing:.txt"));
+    create_test_file(&root, OsStr::new("::double.txt"));
+    create_test_file(&root, OsStr::new("time:12:30:45.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 4);
+    assert!(paths.contains(&PathBuf::from(":leading.txt")));
+    assert!(paths.contains(&PathBuf::from("trailing:.txt")));
+    assert!(paths.contains(&PathBuf::from("::double.txt")));
+    assert!(paths.contains(&PathBuf::from("time:12:30:45.txt")));
+}
+
+/// Verifies handling of directory with colon.
+#[test]
+fn directory_with_colon() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("colon_dir");
+    fs::create_dir(&root).expect("create root");
+
+    let dir_path = create_test_dir(&root, OsStr::new("dir:with:colon"));
+    create_test_file(&dir_path, OsStr::new("inner.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 2);
+    assert!(paths.contains(&PathBuf::from("dir:with:colon")));
+    assert!(paths.contains(&PathBuf::from("dir:with:colon/inner.txt")));
+}
+
+// ============================================================================
+// 12. Additional Punctuation Characters
+// ============================================================================
+
+/// Verifies handling of hash/pound sign in filename.
+#[test]
+fn hash_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("hash");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("#hashtag.txt"));
+    create_test_file(&root, OsStr::new("file#123.txt"));
+    create_test_file(&root, OsStr::new("##double.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 3);
+    assert!(paths.contains(&PathBuf::from("#hashtag.txt")));
+    assert!(paths.contains(&PathBuf::from("file#123.txt")));
+    assert!(paths.contains(&PathBuf::from("##double.txt")));
+}
+
+/// Verifies handling of at sign in filename.
+#[test]
+fn at_sign_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("at");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("@mention.txt"));
+    create_test_file(&root, OsStr::new("email@domain.txt"));
+    create_test_file(&root, OsStr::new("@@double.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 3);
+    assert!(paths.contains(&PathBuf::from("@mention.txt")));
+    assert!(paths.contains(&PathBuf::from("email@domain.txt")));
+    assert!(paths.contains(&PathBuf::from("@@double.txt")));
+}
+
+/// Verifies handling of percent sign in filename.
+#[test]
+fn percent_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("percent");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("100%.txt"));
+    create_test_file(&root, OsStr::new("%HOME%.txt"));
+    create_test_file(&root, OsStr::new("file%20space.txt")); // URL encoding style
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 3);
+    assert!(paths.contains(&PathBuf::from("100%.txt")));
+    assert!(paths.contains(&PathBuf::from("%HOME%.txt")));
+    assert!(paths.contains(&PathBuf::from("file%20space.txt")));
+}
+
+/// Verifies handling of caret in filename.
+#[test]
+fn caret_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("caret");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("x^2.txt"));
+    create_test_file(&root, OsStr::new("^start.txt"));
+    create_test_file(&root, OsStr::new("end^.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 3);
+    assert!(paths.contains(&PathBuf::from("x^2.txt")));
+    assert!(paths.contains(&PathBuf::from("^start.txt")));
+    assert!(paths.contains(&PathBuf::from("end^.txt")));
+}
+
+/// Verifies handling of tilde in filename.
+#[test]
+fn tilde_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("tilde");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("~backup.txt"));
+    create_test_file(&root, OsStr::new("file~.txt"));
+    create_test_file(&root, OsStr::new("file.txt~"));
+    create_test_file(&root, OsStr::new("~~double.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 4);
+    assert!(paths.contains(&PathBuf::from("~backup.txt")));
+    assert!(paths.contains(&PathBuf::from("file~.txt")));
+    assert!(paths.contains(&PathBuf::from("file.txt~")));
+    assert!(paths.contains(&PathBuf::from("~~double.txt")));
+}
+
+/// Verifies handling of plus sign in filename.
+#[test]
+fn plus_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("plus");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("+file.txt"));
+    create_test_file(&root, OsStr::new("file+.txt"));
+    create_test_file(&root, OsStr::new("1+1=2.txt"));
+    create_test_file(&root, OsStr::new("++increment.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 4);
+    assert!(paths.contains(&PathBuf::from("+file.txt")));
+    assert!(paths.contains(&PathBuf::from("file+.txt")));
+    assert!(paths.contains(&PathBuf::from("1+1=2.txt")));
+    assert!(paths.contains(&PathBuf::from("++increment.txt")));
+}
+
+/// Verifies handling of equals sign in filename.
+#[test]
+fn equals_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("equals");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("a=b.txt"));
+    create_test_file(&root, OsStr::new("=leading.txt"));
+    create_test_file(&root, OsStr::new("trailing=.txt"));
+    create_test_file(&root, OsStr::new("key=value.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 4);
+    assert!(paths.contains(&PathBuf::from("a=b.txt")));
+    assert!(paths.contains(&PathBuf::from("=leading.txt")));
+    assert!(paths.contains(&PathBuf::from("trailing=.txt")));
+    assert!(paths.contains(&PathBuf::from("key=value.txt")));
+}
+
+/// Verifies handling of exclamation mark in filename.
+#[test]
+fn exclamation_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("exclaim");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("!important.txt"));
+    create_test_file(&root, OsStr::new("file!.txt"));
+    create_test_file(&root, OsStr::new("hello!world.txt"));
+    create_test_file(&root, OsStr::new("!!bang.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 4);
+    assert!(paths.contains(&PathBuf::from("!important.txt")));
+    assert!(paths.contains(&PathBuf::from("file!.txt")));
+    assert!(paths.contains(&PathBuf::from("hello!world.txt")));
+    assert!(paths.contains(&PathBuf::from("!!bang.txt")));
+}
+
+/// Verifies handling of comma in filename.
+#[test]
+fn comma_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("comma");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("file,name.txt"));
+    create_test_file(&root, OsStr::new(",leading.txt"));
+    create_test_file(&root, OsStr::new("trailing,.txt"));
+    create_test_file(&root, OsStr::new("a,b,c.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 4);
+    assert!(paths.contains(&PathBuf::from("file,name.txt")));
+    assert!(paths.contains(&PathBuf::from(",leading.txt")));
+    assert!(paths.contains(&PathBuf::from("trailing,.txt")));
+    assert!(paths.contains(&PathBuf::from("a,b,c.txt")));
+}
+
+// ============================================================================
+// 13. Non-UTF8 Byte Sequences (Unix-specific)
+// ============================================================================
+
+/// Verifies handling of non-UTF8 byte sequences in filenames.
+#[test]
+fn non_utf8_bytes_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("nonutf8");
+    fs::create_dir(&root).expect("create root");
+
+    // Create filename with invalid UTF-8 bytes
+    // 0x80-0xBF are continuation bytes that shouldn't appear standalone
+    create_test_file(&root, OsStr::from_bytes(b"file\x80invalid.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\xff\xfe.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 2);
+    assert!(paths.contains(&PathBuf::from(OsStr::from_bytes(
+        b"file\x80invalid.txt"
+    ))));
+    assert!(paths.contains(&PathBuf::from(OsStr::from_bytes(b"file\xff\xfe.txt"))));
+}
+
+/// Verifies handling of high bytes (0x80-0xFF) in filenames.
+#[test]
+fn high_bytes_in_filename() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("highbytes");
+    fs::create_dir(&root).expect("create root");
+
+    // Various high-byte patterns
+    create_test_file(&root, OsStr::from_bytes(b"file\x80.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\x90.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\xa0.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\xb0.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\xc0.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\xd0.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\xe0.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\xf0.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 8);
+}
+
+/// Verifies handling of directory with non-UTF8 name.
+#[test]
+fn directory_with_non_utf8_name() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("nonutf8_dir");
+    fs::create_dir(&root).expect("create root");
+
+    let dir_path = create_test_dir(&root, OsStr::from_bytes(b"dir\x80\x81"));
+    create_test_file(&dir_path, OsStr::new("inner.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 2);
+}
+
+// ============================================================================
+// 14. Null Byte Handling
+// ============================================================================
+
+// Note: Null bytes (0x00) cannot be in Unix filenames - the kernel rejects them.
+// This is a fundamental limitation, not something we need to test.
+
+// ============================================================================
+// 15. All ASCII Printable Characters Combined
+// ============================================================================
+
+/// Verifies handling of all ASCII printable characters in one filename.
+#[test]
+fn all_ascii_printable_combined() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("allascii");
+    fs::create_dir(&root).expect("create root");
+
+    // All printable ASCII except / (path separator) and null
+    // Space (32) through tilde (126), excluding / (47)
+    let mut chars = Vec::new();
+    for c in 32u8..127 {
+        if c != b'/' {
+            chars.push(c);
+        }
+    }
+    let name = OsStr::from_bytes(&chars);
+    create_test_file(&root, name);
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0], PathBuf::from(name));
+}
+
+/// Verifies each ASCII printable character in separate files.
+#[test]
+fn each_ascii_printable_separately() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("eachascii");
+    fs::create_dir(&root).expect("create root");
+
+    // Create file for each printable ASCII except / and null
+    let mut expected_count = 0;
+    for c in 32u8..127 {
+        if c != b'/' {
+            let name_bytes = [c, b'.', b't', b'x', b't'];
+            create_test_file(&root, OsStr::from_bytes(&name_bytes));
+            expected_count += 1;
+        }
+    }
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), expected_count);
+}
+
+// ============================================================================
+// 16. Edge Cases with Path Components
+// ============================================================================
+
+/// Verifies handling of filename that looks like current directory.
+#[test]
+fn filename_looks_like_current_dir() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("dotlike");
+    fs::create_dir(&root).expect("create root");
+
+    // These are NOT . or .. but look similar
+    create_test_file(&root, OsStr::new("..."));
+    create_test_file(&root, OsStr::new("...."));
+    create_test_file(&root, OsStr::new(". ."));
+    create_test_file(&root, OsStr::new("..x"));
+    create_test_file(&root, OsStr::new(".x."));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 5);
+    assert!(paths.contains(&PathBuf::from("...")));
+    assert!(paths.contains(&PathBuf::from("....")));
+    assert!(paths.contains(&PathBuf::from(". .")));
+    assert!(paths.contains(&PathBuf::from("..x")));
+    assert!(paths.contains(&PathBuf::from(".x.")));
+}
+
+/// Verifies handling of very short filenames.
+#[test]
+fn very_short_filenames() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("short");
+    fs::create_dir(&root).expect("create root");
+
+    // Single character filenames
+    create_test_file(&root, OsStr::new("a"));
+    create_test_file(&root, OsStr::new("1"));
+    create_test_file(&root, OsStr::new("_"));
+    create_test_file(&root, OsStr::new("-"));
+    create_test_file(&root, OsStr::new(" "));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 5);
+    assert!(paths.contains(&PathBuf::from("a")));
+    assert!(paths.contains(&PathBuf::from("1")));
+    assert!(paths.contains(&PathBuf::from("_")));
+    assert!(paths.contains(&PathBuf::from("-")));
+    assert!(paths.contains(&PathBuf::from(" ")));
+}
+
+/// Verifies handling of files with only special characters.
+#[test]
+fn only_special_characters() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("onlyspecial");
+    fs::create_dir(&root).expect("create root");
+
+    create_test_file(&root, OsStr::new("!!!"));
+    create_test_file(&root, OsStr::new("@@@"));
+    create_test_file(&root, OsStr::new("###"));
+    create_test_file(&root, OsStr::new("$$$"));
+    create_test_file(&root, OsStr::new("%%%"));
+    create_test_file(&root, OsStr::new("^^^"));
+    create_test_file(&root, OsStr::new("&&&"));
+    create_test_file(&root, OsStr::new("***"));
+    create_test_file(&root, OsStr::new("((("));
+    create_test_file(&root, OsStr::new(")))"));
+    create_test_file(&root, OsStr::new("___"));
+    create_test_file(&root, OsStr::new("+++"));
+    create_test_file(&root, OsStr::new("==="));
+    create_test_file(&root, OsStr::new("~~~"));
+    create_test_file(&root, OsStr::new("```"));
+    create_test_file(&root, OsStr::new("[[["));
+    create_test_file(&root, OsStr::new("]]]"));
+    create_test_file(&root, OsStr::new("{{{"));
+    create_test_file(&root, OsStr::new("}}}"));
+    create_test_file(&root, OsStr::new("|||"));
+    create_test_file(&root, OsStr::new(":::"));
+    create_test_file(&root, OsStr::new(";;;"));
+    create_test_file(&root, OsStr::new("'''"));
+    create_test_file(&root, OsStr::new("\"\"\""));
+    create_test_file(&root, OsStr::new(",,,"));
+    create_test_file(&root, OsStr::new("<<<"));
+    create_test_file(&root, OsStr::new(">>>"));
+    create_test_file(&root, OsStr::new("???"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 28);
+}
+
+// ============================================================================
+// 17. Mixed Whitespace Characters
+// ============================================================================
+
+/// Verifies handling of various whitespace characters.
+#[test]
+fn various_whitespace_characters() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("whitespace");
+    fs::create_dir(&root).expect("create root");
+
+    // Different whitespace: space, tab, vertical tab, form feed
+    create_test_file(&root, OsStr::new("file with space.txt"));
+    create_test_file(&root, OsStr::new("file\twith\ttab.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\x0bvtab.txt"));
+    create_test_file(&root, OsStr::from_bytes(b"file\x0cformfeed.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 4);
+}
+
+/// Verifies handling of mixed whitespace in single filename.
+#[test]
+fn mixed_whitespace_single_file() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("mixedws");
+    fs::create_dir(&root).expect("create root");
+
+    // Space, tab, space, tab pattern
+    create_test_file(&root, OsStr::new("a b\tc d\te.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0], PathBuf::from("a b\tc d\te.txt"));
+}
+
+// ============================================================================
+// 18. Comprehensive Shell Injection Prevention
+// ============================================================================
+
+/// Verifies handling of filenames that could cause shell injection.
+#[test]
+fn shell_injection_patterns() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("injection");
+    fs::create_dir(&root).expect("create root");
+
+    // Patterns that could cause issues if improperly escaped
+    // Note: Can't use / in filenames as it's a path separator on Unix
+    create_test_file(&root, OsStr::new("; rm -rf ~.txt"));
+    create_test_file(&root, OsStr::new("| cat etc_passwd.txt"));
+    create_test_file(&root, OsStr::new("$(whoami).txt"));
+    create_test_file(&root, OsStr::new("`whoami`.txt"));
+    create_test_file(&root, OsStr::new("&& echo pwned.txt"));
+    create_test_file(&root, OsStr::new("|| true.txt"));
+    create_test_file(&root, OsStr::new("> dev_null.txt"));
+    create_test_file(&root, OsStr::new("< dev_zero.txt"));
+    create_test_file(&root, OsStr::new("2>&1.txt"));
+    create_test_file(&root, OsStr::new("$((1+1)).txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 10);
+
+    // Verify exact names are preserved
+    assert!(paths.contains(&PathBuf::from("; rm -rf ~.txt")));
+    assert!(paths.contains(&PathBuf::from("| cat etc_passwd.txt")));
+    assert!(paths.contains(&PathBuf::from("$(whoami).txt")));
+    assert!(paths.contains(&PathBuf::from("`whoami`.txt")));
+}
+
+/// Verifies handling of filenames with escape sequences.
+#[test]
+fn escape_sequence_patterns() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("escape");
+    fs::create_dir(&root).expect("create root");
+
+    // Literal backslash sequences (not actual escapes)
+    create_test_file(&root, OsStr::new("file\\nname.txt"));
+    create_test_file(&root, OsStr::new("file\\tname.txt"));
+    create_test_file(&root, OsStr::new("file\\rname.txt"));
+    create_test_file(&root, OsStr::new("file\\\\name.txt"));
+    create_test_file(&root, OsStr::new("file\\'name.txt"));
+    create_test_file(&root, OsStr::new("file\\\"name.txt"));
+    create_test_file(&root, OsStr::new("file\\0name.txt"));
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 7);
+}
+
+// ============================================================================
+// 19. Unicode Normalization Edge Cases
+// ============================================================================
+
+/// Verifies handling of Unicode look-alikes.
+#[test]
+fn unicode_lookalikes() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("lookalikes");
+    fs::create_dir(&root).expect("create root");
+
+    // Latin 'a' vs Cyrillic 'a' (U+0430) - they look the same!
+    create_test_file(&root, OsStr::new("a.txt")); // Latin
+    create_test_file(&root, OsStr::new("\u{0430}.txt")); // Cyrillic
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    // On case-sensitive filesystems, both should exist as separate files
+    assert_eq!(paths.len(), 2);
+}
+
+/// Verifies handling of fullwidth characters.
+#[test]
+fn fullwidth_characters() {
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let root = temp.path().join("fullwidth");
+    fs::create_dir(&root).expect("create root");
+
+    // Fullwidth Latin letters (used in CJK contexts)
+    create_test_file(&root, OsStr::new("\u{FF21}.txt")); // Fullwidth A
+    create_test_file(&root, OsStr::new("\u{FF22}.txt")); // Fullwidth B
+    create_test_file(&root, OsStr::new("\u{FF23}.txt")); // Fullwidth C
+
+    let walker = FileListBuilder::new(&root).build().expect("build walker");
+    let paths = collect_relative_paths(walker);
+
+    assert_eq!(paths.len(), 3);
+}
