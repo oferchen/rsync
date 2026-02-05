@@ -25,6 +25,7 @@
 //! # Modules
 //!
 //! - [`strong`] - Strong checksum algorithms (MD4, MD5, SHA-1, SHA-256, SHA-512, XXH64, XXH3)
+//! - [`strong::strategy`] - Strategy pattern for runtime algorithm selection
 //! - `parallel` - Parallel checksum computation using rayon (requires `parallel` feature)
 //!
 //! # Checksum Algorithms
@@ -277,6 +278,29 @@
 //! assert_eq!(streaming_result, oneshot_result);
 //! ```
 //!
+//! # Strategy Pattern for Runtime Algorithm Selection
+//!
+//! For runtime algorithm selection (e.g., based on protocol version or
+//! negotiated capabilities), use the [`strong::strategy`] module:
+//!
+//! ```rust
+//! use checksums::{ChecksumStrategySelector, ChecksumAlgorithmKind};
+//!
+//! // Select algorithm based on protocol version
+//! let strategy = ChecksumStrategySelector::for_protocol_version(30, 0x12345678);
+//! let digest = strategy.compute(b"data");
+//!
+//! // Or select explicitly by algorithm
+//! let xxh3 = ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Xxh3, 42);
+//! let fast_hash = xxh3.compute(b"fast hashing");
+//! ```
+//!
+//! The Strategy pattern provides:
+//! - Runtime algorithm selection via trait objects
+//! - Protocol version-aware defaults (MD4 < v30, MD5 >= v30)
+//! - Unified digest representation avoiding heap allocation
+//! - Easy extension with new algorithms
+//!
 //! # Performance Optimization
 //!
 //! ## SIMD Acceleration
@@ -397,3 +421,10 @@ pub use strong::openssl_acceleration_available;
 /// automatic use of AVX2 (x86_64) or NEON (aarch64) instructions when
 /// available at runtime.
 pub use strong::xxh3_simd_available;
+
+// Re-export strategy pattern types for convenient access
+pub use strong::strategy::{
+    ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
+    Md4Strategy, Md5SeedConfig, Md5Strategy, SeedConfig, Sha1Strategy, Sha256Strategy,
+    Sha512Strategy, Xxh3Strategy, Xxh3_128Strategy, Xxh64Strategy, MAX_DIGEST_LEN,
+};
